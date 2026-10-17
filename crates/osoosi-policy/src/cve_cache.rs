@@ -1,6 +1,6 @@
+use osoosi_types::Kev;
 use rusqlite::{params, Connection};
 use std::path::Path;
-use osoosi_types::Kev;
 use tracing::info;
 
 pub struct CveCache {
@@ -50,7 +50,10 @@ impl CveCache {
     }
 
     pub fn bulk_import(&self, kevs: &[Kev]) -> anyhow::Result<()> {
-        info!("[CveCache] Bulk importing {} records into local cache...", kevs.len());
+        info!(
+            "[CveCache] Bulk importing {} records into local cache...",
+            kevs.len()
+        );
         for kev in kevs {
             self.conn.execute(
                 "INSERT OR REPLACE INTO nvd_cache (product, version, cve_id, summary) VALUES (?1, 'any', ?2, ?3)",

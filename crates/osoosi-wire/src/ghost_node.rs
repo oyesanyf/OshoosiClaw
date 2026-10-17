@@ -57,7 +57,8 @@ impl GhostNodeManager {
             "Coy Deception: Ghost service '{}' active on 0.0.0.0:{}",
             service_name, bound_port
         );
-        self.active_services.insert(service_name.to_string(), bound_port);
+        self.active_services
+            .insert(service_name.to_string(), bound_port);
 
         let service_name = service_name.to_string();
         let node_id = self.node_id.clone();
@@ -71,60 +72,51 @@ impl GhostNodeManager {
                 sensitivity: 1.0,
             });
 
-            loop {
-                match listener.accept().await {
-                    Ok((mut socket, addr)) => {
-                        total_interactions.fetch_add(1, Ordering::Relaxed);
-                        let jitter = dp.laplace_noise();
-                        let noisy_addr = if jitter > 0.5 {
-                            addr.to_string()
-                        } else {
-                            "REDACTED".to_string()
-                        };
+            while let Ok((mut socket, addr)) = listener.accept().await {
+                total_interactions.fetch_add(1, Ordering::Relaxed);
+                let jitter = dp.laplace_noise();
+                let noisy_addr = if jitter > 0.5 {
+                    addr.to_string()
+                } else {
+                    "REDACTED".to_string()
+                };
 
-                        warn!(
-                            "DECEPTION ALERT: Interaction from {} on '{}' (Node: {})",
-                            noisy_addr, service_name, node_id
-                        );
+                warn!(
+                    "DECEPTION ALERT: Interaction from {} on '{}' (Node: {})",
+                    noisy_addr, service_name, node_id
+                );
 
-                        // Notify mesh (Tarpit)
-                        let tx_guard = mesh_tx.lock().await;
-                        if let Some(ref tx) = *tx_guard {
-                            let _ = tx.try_send(crate::MeshCommand::BroadcastTarpit(
-                                crate::TarpitSignal {
-                                    target_ip: addr.ip().to_string(),
-                                    confidence: 1.0,
-                                    attack_type: format!("Ghost Node (Coy): {}", service_name),
-                                },
-                            ));
-                        }
-                        drop(tx_guard);
-
-                        // "Coy" Behavior: Send dynamic, teasing banners
-                        let banner: &[u8] = match service_name.as_str() {
-                            "SSH" => {
-                                if jitter > 0.0 {
-                                    b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n"
-                                } else {
-                                    b"SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3\r\n"
-                                    // Look older/vulnerable
-                                }
-                            }
-                            "SMB" => {
-                                b"\x00\x00\x00\x85\xffSMB\x72\x00\x00\x00\x00\x18\x53\xc8\x00\x00"
-                            }
-                            _ => b"Access Denied. Internal Resource Only.\r\n",
-                        };
-
-                        let _ = socket.write_all(banner).await;
-
-                        // Adaptive Tarpitting: wait longer based on noise
-                        let sleep_secs = 5 + (jitter.abs() as u64 % 10);
-                        tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
-                        let _ = socket.shutdown().await;
-                    }
-                    Err(_) => break,
+                // Notify mesh (Tarpit)
+                let tx_guard = mesh_tx.lock().await;
+                if let Some(ref tx) = *tx_guard {
+                    let _ = tx.try_send(crate::MeshCommand::BroadcastTarpit(crate::TarpitSignal {
+                        target_ip: addr.ip().to_string(),
+                        confidence: 1.0,
+                        attack_type: format!("Ghost Node (Coy): {}", service_name),
+                    }));
                 }
+                drop(tx_guard);
+
+                // "Coy" Behavior: Send dynamic, teasing banners
+                let banner: &[u8] = match service_name.as_str() {
+                    "SSH" => {
+                        if jitter > 0.0 {
+                            b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n"
+                        } else {
+                            b"SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3\r\n"
+                            // Look older/vulnerable
+                        }
+                    }
+                    "SMB" => b"\x00\x00\x00\x85\xffSMB\x72\x00\x00\x00\x00\x18\x53\xc8\x00\x00",
+                    _ => b"Access Denied. Internal Resource Only.\r\n",
+                };
+
+                let _ = socket.write_all(banner).await;
+
+                // Adaptive Tarpitting: wait longer based on noise
+                let sleep_secs = 5 + (jitter.abs() as u64 % 10);
+                tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+                let _ = socket.shutdown().await;
             }
         });
     }

@@ -50,7 +50,7 @@ impl Default for EbpfProcessEvent {
 
 /// Binary struct layout matching `struct ebpf_network_event` in kernel memory.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct EbpfNetworkEvent {
     pub pid: u32,
     pub family: u16,     // AF_INET (2) or AF_INET6 (10)
@@ -62,39 +62,41 @@ pub struct EbpfNetworkEvent {
     pub timestamp_ns: u64,
 }
 
-impl Default for EbpfNetworkEvent {
-    fn default() -> Self {
-        Self {
-            pid: 0,
-            family: 0,
-            dport: 0,
-            daddr: [0u8; 16],
-            sport: 0,
-            _pad1: 0,
-            _pad2: 0,
-            timestamp_ns: 0,
-        }
-    }
-}
-
 /// Parses raw kernel bytes from `process_ring` into a normalized `HostSecurityEvent`.
 pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
     if bytes.len() < std::mem::size_of::<EbpfProcessEvent>() {
         return None;
     }
 
-    let event: EbpfProcessEvent = unsafe {
-        std::ptr::read_unaligned(bytes.as_ptr() as *const EbpfProcessEvent)
-    };
+    let event: EbpfProcessEvent =
+        unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const EbpfProcessEvent) };
 
-    let comm_len = event.comm.iter().position(|&c| c == 0).unwrap_or(event.comm.len());
-    let comm = String::from_utf8_lossy(&event.comm[..comm_len]).trim().to_string();
+    let comm_len = event
+        .comm
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(event.comm.len());
+    let comm = String::from_utf8_lossy(&event.comm[..comm_len])
+        .trim()
+        .to_string();
 
-    let fn_len = event.filename.iter().position(|&c| c == 0).unwrap_or(event.filename.len());
-    let filename = String::from_utf8_lossy(&event.filename[..fn_len]).trim().to_string();
+    let fn_len = event
+        .filename
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(event.filename.len());
+    let filename = String::from_utf8_lossy(&event.filename[..fn_len])
+        .trim()
+        .to_string();
 
-    let args_len = event.args.iter().position(|&c| c == 0).unwrap_or(event.args.len());
-    let args = String::from_utf8_lossy(&event.args[..args_len]).trim().to_string();
+    let args_len = event
+        .args
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(event.args.len());
+    let args = String::from_utf8_lossy(&event.args[..args_len])
+        .trim()
+        .to_string();
 
     let command_line = if !args.is_empty() {
         if !filename.is_empty() {
@@ -113,7 +115,14 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
             let mut map = serde_json::Map::new();
             map.insert("ProcessId".to_string(), serde_json::json!(event.pid));
             map.insert("ParentProcessId".to_string(), serde_json::json!(event.ppid));
-            map.insert("Image".to_string(), serde_json::json!(if !filename.is_empty() { &filename } else { &comm }));
+            map.insert(
+                "Image".to_string(),
+                serde_json::json!(if !filename.is_empty() {
+                    &filename
+                } else {
+                    &comm
+                }),
+            );
             map.insert("CommandLine".to_string(), serde_json::json!(command_line));
             map.insert("User".to_string(), serde_json::json!(event.uid.to_string()));
             map.insert("Gid".to_string(), serde_json::json!(event.gid));
@@ -145,7 +154,10 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
         _ => return None,
     };
 
-    data.insert("TimestampNs".to_string(), serde_json::json!(event.timestamp_ns));
+    data.insert(
+        "TimestampNs".to_string(),
+        serde_json::json!(event.timestamp_ns),
+    );
 
     Some(HostSecurityEvent {
         source: HostEventSource::Ebpf,
@@ -163,9 +175,8 @@ pub fn parse_network_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
         return None;
     }
 
-    let event: EbpfNetworkEvent = unsafe {
-        std::ptr::read_unaligned(bytes.as_ptr() as *const EbpfNetworkEvent)
-    };
+    let event: EbpfNetworkEvent =
+        unsafe { std::ptr::read_unaligned(bytes.as_ptr() as *const EbpfNetworkEvent) };
 
     let dest_port = u16::from_be(event.dport);
     let dest_ip = match event.family {
@@ -189,7 +200,10 @@ pub fn parse_network_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
     data.insert("DestinationIp".to_string(), serde_json::json!(dest_ip));
     data.insert("DestinationPort".to_string(), serde_json::json!(dest_port));
     data.insert("SourcePort".to_string(), serde_json::json!(event.sport));
-    data.insert("TimestampNs".to_string(), serde_json::json!(event.timestamp_ns));
+    data.insert(
+        "TimestampNs".to_string(),
+        serde_json::json!(event.timestamp_ns),
+    );
 
     Some(HostSecurityEvent {
         source: HostEventSource::Ebpf,
@@ -252,7 +266,9 @@ impl EbpfTelemetryEngine {
                 b
             }
             None => {
-                warn!("eBPF object not found in candidate locations. Linux eBPF telemetry disabled.");
+                warn!(
+                    "eBPF object not found in candidate locations. Linux eBPF telemetry disabled."
+                );
                 return Ok(());
             }
         };
@@ -260,18 +276,34 @@ impl EbpfTelemetryEngine {
         let mut bpf = Ebpf::load(&bytes)?;
 
         // Attach tracepoints
-        self.attach_tracepoint(&mut bpf, "handle_process_exec", "sched", "sched_process_exec")?;
-        self.attach_tracepoint(&mut bpf, "handle_process_exit", "sched", "sched_process_exit")?;
+        self.attach_tracepoint(
+            &mut bpf,
+            "handle_process_exec",
+            "sched",
+            "sched_process_exec",
+        )?;
+        self.attach_tracepoint(
+            &mut bpf,
+            "handle_process_exit",
+            "sched",
+            "sched_process_exit",
+        )?;
         self.attach_tracepoint(&mut bpf, "handle_connect", "syscalls", "sys_enter_connect")?;
 
-        let process_map = bpf.take_map("process_ring")
+        let process_map = bpf
+            .take_map("process_ring")
             .or_else(|| bpf.take_map("PROCESS_RING"))
-            .ok_or_else(|| anyhow::anyhow!("Required eBPF ringbuffer map 'process_ring' not found"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Required eBPF ringbuffer map 'process_ring' not found")
+            })?;
         let process_ring: RingBuf<MapData> = RingBuf::try_from(process_map)?;
 
-        let network_map = bpf.take_map("network_ring")
+        let network_map = bpf
+            .take_map("network_ring")
             .or_else(|| bpf.take_map("NETWORK_RING"))
-            .ok_or_else(|| anyhow::anyhow!("Required eBPF ringbuffer map 'network_ring' not found"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("Required eBPF ringbuffer map 'network_ring' not found")
+            })?;
         let network_ring: RingBuf<MapData> = RingBuf::try_from(network_map)?;
 
         let tx = self.tx.clone();
@@ -322,7 +354,8 @@ impl EbpfTelemetryEngine {
         category: &str,
         name: &str,
     ) -> anyhow::Result<()> {
-        let prog_mut = bpf.program_mut(prog_name)
+        let prog_mut = bpf
+            .program_mut(prog_name)
             .ok_or_else(|| anyhow::anyhow!("eBPF program '{}' not found in object", prog_name))?;
         let prog: &mut aya::programs::TracePoint = prog_mut.try_into()?;
         prog.load()?;
@@ -346,6 +379,7 @@ impl EbpfTelemetryEngine {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 

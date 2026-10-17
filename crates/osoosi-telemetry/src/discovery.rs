@@ -76,7 +76,7 @@ impl RouteScraper {
                 let mut size = 0u32;
                 let _ = GetIpAddrTable(std::ptr::null_mut(), &mut size, 0);
                 if size > 0 {
-                    let mut buffer: Vec<u32> = vec![0u32; (size as usize + 3) / 4];
+                    let mut buffer: Vec<u32> = vec![0u32; (size as usize).div_ceil(4)];
                     if GetIpAddrTable(buffer.as_mut_ptr() as *mut _, &mut size, 0) == 0 {
                         let table = &*(buffer.as_ptr() as *const MIB_IPADDRTABLE);
                         let entries = std::slice::from_raw_parts(
@@ -116,7 +116,10 @@ impl RouteScraper {
                 if GetIpNetTable2(0, &mut table_ptr) == 0 {
                     let table = &*table_ptr;
                     // Use the Table field directly; it's a flexible array member pattern in C
-                    let entries = std::slice::from_raw_parts(&table.Table as *const _ as *const MIB_IPNET_ROW2, table.NumEntries as usize);
+                    let entries = std::slice::from_raw_parts(
+                        &table.Table as *const _ as *const MIB_IPNET_ROW2,
+                        table.NumEntries as usize,
+                    );
                     for entry in entries {
                         // NL_NEIGHBOR_STATE: Reachable = 5, Stale = 4
                         let state = entry.State;
@@ -137,10 +140,15 @@ impl RouteScraper {
                                 _ => continue,
                             };
 
-                            let mac = format!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-                                entry.PhysicalAddress[0], entry.PhysicalAddress[1],
-                                entry.PhysicalAddress[2], entry.PhysicalAddress[3],
-                                entry.PhysicalAddress[4], entry.PhysicalAddress[5]);
+                            let mac = format!(
+                                "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                                entry.PhysicalAddress[0],
+                                entry.PhysicalAddress[1],
+                                entry.PhysicalAddress[2],
+                                entry.PhysicalAddress[3],
+                                entry.PhysicalAddress[4],
+                                entry.PhysicalAddress[5]
+                            );
 
                             hosts.push(DiscoveredHost {
                                 ip,
@@ -159,14 +167,15 @@ impl RouteScraper {
         {
             // Linux: Native /proc/net/arp parsing
             if let Ok(content) = std::fs::read_to_string("/proc/net/arp") {
-                for line in content.lines().skip(1) { // Skip header
+                for line in content.lines().skip(1) {
+                    // Skip header
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 6 {
                         let ip = parts[0];
                         let mac = parts[3];
                         let dev = parts[5];
                         let flags = parts[2];
-                        
+
                         // Flags 0x2 = ATF_COM (Completed), 0x4 = ATF_PERM (Permanent)
                         if flags != "0x0" {
                             hosts.push(DiscoveredHost {
@@ -184,7 +193,7 @@ impl RouteScraper {
         #[cfg(target_os = "macos")]
         {
             // macOS: Native sysctl/routing socket approach is complex in raw Rust.
-            // For now, we use the sysinfo-integrated network discovery or 
+            // For now, we use the sysinfo-integrated network discovery or
             // fallback to a clean internal implementation if possible.
             // (Re-using the arp -an parser but wrapped in a way that minimizes EDR impact)
             if let Ok(output) = Command::new("arp").arg("-an").output() {
@@ -194,8 +203,18 @@ impl RouteScraper {
                         let ip = &line[start + 1..end];
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         let mac = parts.get(3).map(|&m| m.to_string());
-                        let iface = parts.iter().position(|&p| p == "on").and_then(|i| parts.get(i + 1)).unwrap_or(&"unknown").to_string();
-                        hosts.push(DiscoveredHost { ip: ip.to_string(), mac, interface: iface, is_osoosi_peer: false });
+                        let iface = parts
+                            .iter()
+                            .position(|&p| p == "on")
+                            .and_then(|i| parts.get(i + 1))
+                            .unwrap_or(&"unknown")
+                            .to_string();
+                        hosts.push(DiscoveredHost {
+                            ip: ip.to_string(),
+                            mac,
+                            interface: iface,
+                            is_osoosi_peer: false,
+                        });
                     }
                 }
             }
@@ -218,7 +237,10 @@ impl RouteScraper {
         #[cfg(target_os = "windows")]
         {
             // Windows: route print -4
-            if let Ok(output) = Command::new(osoosi_types::resolve_system_binary("route.exe")).args(["print", "-4"]).output() {
+            if let Ok(output) = Command::new(osoosi_types::resolve_system_binary("route.exe"))
+                .args(["print", "-4"])
+                .output()
+            {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut in_table = false;
 
@@ -328,33 +350,55 @@ impl RouteScraper {
         unsafe {
             let channel = windows::core::w!("Microsoft-Windows-Sysmon/Operational");
             let query = windows::core::w!("*[System[(EventID=3)]]");
-            
-            let handle = EvtQuery(None, channel, query, EvtQueryChannelPath.0 as u32);
+
+            let handle = EvtQuery(None, channel, query, EvtQueryChannelPath.0);
             if let Ok(h) = handle {
                 let mut events = vec![0isize; 64]; // EvtNext expects &mut [isize]
                 let mut returned = 0u32;
-                
+
                 // windows-rs EvtNext: (session, events_slice, timeout_ms, flags, returned)
                 if EvtNext(h, &mut events, 0, 0, &mut returned).is_ok() && returned > 0 {
-                    for i in 0..returned as usize {
-                        let event = EVT_HANDLE(events[i]);
+                    for &evt_val in events.iter().take(returned as usize) {
+                        let event = EVT_HANDLE(evt_val);
                         let mut buffer_used = 0u32;
                         let mut property_count = 0u32;
-                        
+
                         // Get XML length first
-                        let _ = EvtRender(None, event, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
-                        
+                        let _ = EvtRender(
+                            None,
+                            event,
+                            EvtRenderEventXml.0,
+                            0,
+                            None,
+                            &mut buffer_used,
+                            &mut property_count,
+                        );
+
                         if buffer_used > 0 {
                             let mut buffer = vec![0u16; (buffer_used / 2 + 1) as usize];
-                            if EvtRender(None, event, EvtRenderEventXml.0 as u32, buffer_used, Some(buffer.as_mut_ptr() as *mut _), &mut buffer_used, &mut property_count).is_ok() {
+                            if EvtRender(
+                                None,
+                                event,
+                                EvtRenderEventXml.0,
+                                buffer_used,
+                                Some(buffer.as_mut_ptr() as *mut _),
+                                &mut buffer_used,
+                                &mut property_count,
+                            )
+                            .is_ok()
+                            {
                                 let xml = String::from_utf16_lossy(&buffer);
-                                if let Some(dst_ip) = Self::extract_sysmon_event_data_value(&xml, "DestinationIp") {
+                                if let Some(dst_ip) =
+                                    Self::extract_sysmon_event_data_value(&xml, "DestinationIp")
+                                {
                                     if dst_ip != "127.0.0.1" && dst_ip != "::1" {
-                                        hosts.entry(dst_ip.to_string()).or_insert_with(|| DiscoveredHost {
-                                            ip: dst_ip.to_string(),
-                                            mac: None,
-                                            interface: "sysmon-native".to_string(),
-                                            is_osoosi_peer: false,
+                                        hosts.entry(dst_ip.to_string()).or_insert_with(|| {
+                                            DiscoveredHost {
+                                                ip: dst_ip.to_string(),
+                                                mac: None,
+                                                interface: "sysmon-native".to_string(),
+                                                is_osoosi_peer: false,
+                                            }
                                         });
                                     }
                                 }
@@ -396,7 +440,7 @@ impl RouteScraper {
     /// Identify subnet boundaries using sysinfo's network interface list.
     pub fn list_interfaces(&self) -> Vec<String> {
         let networks = Networks::new_with_refreshed_list();
-        let ifaces: Vec<String> = networks.iter().map(|(name, _)| name.clone()).collect();
+        let ifaces: Vec<String> = networks.keys().cloned().collect();
         info!("Detected {} network interfaces", ifaces.len());
         ifaces
     }
@@ -408,14 +452,14 @@ impl RouteScraper {
     /// Given a list of discovered hosts, probe each one's OshoosiClaw listen
     /// port to check if it's a peer agent. Uses a short TCP timeout to stay
     /// low-and-slow.
-    pub fn probe_for_peers(&self, hosts: &mut Vec<DiscoveredHost>) {
+    pub fn probe_for_peers(&self, hosts: &mut [DiscoveredHost]) {
         let port = self.osoosi_port;
         let timeout = Duration::from_millis(300);
 
         for host in hosts.iter_mut() {
             let addr = format!("{}:{}", host.ip, port);
-            match addr.parse::<SocketAddr>() {
-                Ok(sock_addr) => match TcpStream::connect_timeout(&sock_addr, timeout) {
+            if let Ok(sock_addr) = addr.parse::<SocketAddr>() {
+                match TcpStream::connect_timeout(&sock_addr, timeout) {
                     Ok(_) => {
                         host.is_osoosi_peer = true;
                         info!("OshoosiClaw peer discovered: {}", host.ip);
@@ -423,8 +467,7 @@ impl RouteScraper {
                     Err(_) => {
                         debug!("No OshoosiClaw peer at {}", host.ip);
                     }
-                },
-                Err(_) => {}
+                }
             }
         }
     }

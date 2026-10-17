@@ -1,6 +1,5 @@
 use super::models::{
-    BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest, DecisionResponse,
-    ScoreAnswer,
+    BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest, DecisionResponse, ScoreAnswer,
 };
 use anyhow::{Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
@@ -79,23 +78,14 @@ impl StrandsClient {
         let url = format!("{}/decide", self.endpoint);
 
         let http_future = async {
-            let resp = self
-                .http_client
-                .post(&url)
-                .json(request)
-                .send()
-                .await?;
+            let resp = self.http_client.post(&url).json(request).send().await?;
 
             if !resp.status().is_success() {
                 // Try fallback endpoint /ask
                 if resp.status().as_u16() == 404 {
                     let ask_url = format!("{}/ask", self.endpoint);
-                    let fallback_resp = self
-                        .http_client
-                        .post(&ask_url)
-                        .json(request)
-                        .send()
-                        .await?;
+                    let fallback_resp =
+                        self.http_client.post(&ask_url).json(request).send().await?;
                     if fallback_resp.status().is_success() {
                         return fallback_resp
                             .json::<serde_json::Value>()
@@ -111,7 +101,8 @@ impl StrandsClient {
                 .context("Failed to parse Strands Decider response JSON")
         };
 
-        let result = tokio::time::timeout(Duration::from_millis(self.timeout_ms), http_future).await;
+        let result =
+            tokio::time::timeout(Duration::from_millis(self.timeout_ms), http_future).await;
 
         match result {
             Ok(Ok(val)) => {
@@ -165,7 +156,10 @@ impl StrandsClient {
         request: &DecisionRequest,
         latency_ms: f64,
     ) -> Option<DecisionResponse> {
-        let action = val.get("action").or_else(|| val.get("prediction")).and_then(|v| v.as_str());
+        let action = val
+            .get("action")
+            .or_else(|| val.get("prediction"))
+            .and_then(|v| v.as_str());
         let probs_val = val.get("probabilities");
 
         if let Some(act) = action {
@@ -196,7 +190,8 @@ impl StrandsClient {
     /// Always produces valid normalized probability distributions summing to 1.0 +/- 1e-5.
     pub fn local_calibrated_estimation(request: &DecisionRequest) -> DecisionResponse {
         let state_lower = request.state.to_lowercase();
-        let is_signed = state_lower.contains("issigned: true") || state_lower.contains("signed: true");
+        let is_signed =
+            state_lower.contains("issigned: true") || state_lower.contains("signed: true");
         let is_destructive = state_lower.contains("delete shadows")
             || state_lower.contains("vssadmin")
             || state_lower.contains("recoveryenabled no")

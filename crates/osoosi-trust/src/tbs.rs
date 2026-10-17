@@ -60,14 +60,27 @@ fn inspect_tpm_wmi() -> Option<TpmHardwareInspection> {
     use wmi::{COMLibrary, WMIConnection};
 
     let com_lib = COMLibrary::new().ok()?;
-    let wmi_con = WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib).ok()?;
+    let wmi_con =
+        WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib).ok()?;
     let query = "SELECT SpecVersion, ManufacturerId, ManufacturerIdTxt FROM Win32_Tpm";
     let results: Vec<serde_json::Value> = wmi_con.raw_query(query).ok()?;
 
     if let Some(res) = results.first() {
-        let spec = res.get("SpecVersion").and_then(|v| v.as_str()).unwrap_or("2.0").to_string();
-        let mfg_id = res.get("ManufacturerId").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
-        let mfg_txt = res.get("ManufacturerIdTxt").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        let spec = res
+            .get("SpecVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("2.0")
+            .to_string();
+        let mfg_id = res
+            .get("ManufacturerId")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as u32;
+        let mfg_txt = res
+            .get("ManufacturerIdTxt")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
 
         let vendor = map_manufacturer_to_vendor(mfg_id, &mfg_txt);
 
@@ -189,7 +202,8 @@ fn read_ek_cert_windows_wmi() -> Option<TpmEkCertificate> {
     use wmi::{COMLibrary, WMIConnection};
 
     let com_lib = COMLibrary::new().ok()?;
-    let wmi_con = WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib).ok()?;
+    let wmi_con =
+        WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib).ok()?;
     let query = "SELECT AdditionalCertificates FROM Win32_Tpm";
     let results: Vec<serde_json::Value> = wmi_con.raw_query(query).ok()?;
 

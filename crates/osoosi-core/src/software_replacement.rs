@@ -199,7 +199,7 @@ async fn resolve_github_release(
             name_lower.contains(&filter.to_lowercase())
         } else {
             name_lower.ends_with(&target_lower)
-                || (ext.len() > 0 && name_lower.ends_with(&format!(".{}", ext)))
+                || (!ext.is_empty() && name_lower.ends_with(&format!(".{}", ext)))
         };
         if matches {
             return Ok(Some(url.to_string()));

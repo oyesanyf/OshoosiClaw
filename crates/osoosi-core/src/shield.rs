@@ -17,7 +17,10 @@ pub struct ShieldLayer {
 }
 
 impl ShieldLayer {
-    pub fn new(memory: Arc<osoosi_memory::MemoryStore>, yara_rules: Option<Arc<yara_x::Rules>>) -> Self {
+    pub fn new(
+        memory: Arc<osoosi_memory::MemoryStore>,
+        yara_rules: Option<Arc<yara_x::Rules>>,
+    ) -> Self {
         Self {
             ssrf_enabled: true,
             strict_taint: true,
@@ -30,7 +33,10 @@ impl ShieldLayer {
     }
 
     /// Construct ShieldLayer with dynamic YaraManager to ensure real-time rule hot-swapping.
-    pub fn with_manager(memory: Arc<osoosi_memory::MemoryStore>, yara_manager: Arc<crate::yara::YaraManager>) -> Self {
+    pub fn with_manager(
+        memory: Arc<osoosi_memory::MemoryStore>,
+        yara_manager: Arc<crate::yara::YaraManager>,
+    ) -> Self {
         Self {
             ssrf_enabled: true,
             strict_taint: true,
@@ -88,13 +94,18 @@ impl ShieldLayer {
 
     /// Protect the agent and LSASS from unauthorized handle acquisition.
     /// Returns true if the access should be allowed, false if it's a violation.
-    pub fn verify_process_access(&self, source_pid: u32, target_pid: u32, access_mask: u32) -> bool {
+    pub fn verify_process_access(
+        &self,
+        source_pid: u32,
+        target_pid: u32,
+        access_mask: u32,
+    ) -> bool {
         if !self.self_defense_enabled {
             return true;
         }
 
         let my_pid = std::process::id();
-        
+
         // 1. Agent Self-Defense: Block termination/suspension of OshoosiClaw
         if target_pid == my_pid && source_pid != my_pid {
             // Check for PROCESS_TERMINATE (0x0001) or PROCESS_SUSPEND_RESUME (0x0800)
@@ -117,7 +128,9 @@ impl ShieldLayer {
                     source_pid, target_pid
                 );
                 // Log this as a high-confidence threat event
-                let _ = self.memory.log_threat_event("CREDENTIAL_DUMP_ATTEMPT", source_pid, target_pid);
+                let _ =
+                    self.memory
+                        .log_threat_event("CREDENTIAL_DUMP_ATTEMPT", source_pid, target_pid);
                 return false;
             }
         }
@@ -132,7 +145,11 @@ impl ShieldLayer {
         }
 
         // If domain is a known C2 or malicious destination, return loopback for redirection
-        if self.memory.is_known_malicious_domain(domain).unwrap_or(false) {
+        if self
+            .memory
+            .is_known_malicious_domain(domain)
+            .unwrap_or(false)
+        {
             warn!("Shield Sinkhole: Redirecting malicious C2 domain '{}' to local loopback deception field.", domain);
             return Some("127.0.0.1".to_string());
         }
@@ -285,25 +302,40 @@ mod tests {
 
         // Initially, the buffer is not known as malicious: injection check passes (returns true)
         let allowed_before = shield.scan_injection_buffer(&shellcode_buffer).await;
-        assert!(allowed_before, "Buffer must pass before signature is loaded");
+        assert!(
+            allowed_before,
+            "Buffer must pass before signature is loaded"
+        );
 
         // Dynamically hot-swap a new rule into YaraManager on the fly
-        let rule_src = format!(r#"
+        let rule_src = format!(
+            r#"
             rule {} {{
                 strings:
                     $sc = "{}"
                 condition:
                     $sc
             }}
-        "#, rule_name, sig);
-        yara_mgr.hot_load_rule(&rule_src, &rule_name).expect("hot load must succeed");
+        "#,
+            rule_name, sig
+        );
+        yara_mgr
+            .hot_load_rule(&rule_src, &rule_name)
+            .expect("hot load must succeed");
 
         // Immediately after hot-swap, ShieldLayer MUST detect the malicious buffer and block it (returns false)
         let allowed_after = shield.scan_injection_buffer(&shellcode_buffer).await;
-        assert!(!allowed_after, "Buffer must be blocked immediately after dynamic rule hot-swap");
+        assert!(
+            !allowed_after,
+            "Buffer must be blocked immediately after dynamic rule hot-swap"
+        );
 
         // Harmless buffer still passes
-        assert!(shield.scan_injection_buffer(b"Harmless harmless bytes").await);
+        assert!(
+            shield
+                .scan_injection_buffer(b"Harmless harmless bytes")
+                .await
+        );
 
         let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
         let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));

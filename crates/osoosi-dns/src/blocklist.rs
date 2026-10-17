@@ -36,7 +36,11 @@ impl DnsBlocklist {
         for i in 1..labels.len() {
             let parent = labels[i..].join(".");
             if let Some(reason) = self.domains.get(&parent) {
-                return Some(format!("Wildcard match via parent '{}': {}", parent, reason.value()));
+                return Some(format!(
+                    "Wildcard match via parent '{}': {}",
+                    parent,
+                    reason.value()
+                ));
             }
         }
 
@@ -83,12 +87,21 @@ impl DnsBlocklist {
             ("cobalt-strike.com", "Known Cobalt Strike C2 infrastructure"),
             ("cobaltstrike.com", "Known Cobalt Strike C2 infrastructure"),
             // Cryptocurrency mining pools (cryptojacking)
-            ("coinhive.com", "Cryptojacking: browser-based cryptocurrency miner"),
-            ("coin-hive.com", "Cryptojacking: browser-based cryptocurrency miner"),
+            (
+                "coinhive.com",
+                "Cryptojacking: browser-based cryptocurrency miner",
+            ),
+            (
+                "coin-hive.com",
+                "Cryptojacking: browser-based cryptocurrency miner",
+            ),
             ("minero.cc", "Cryptojacking pool"),
             ("crypto-loot.com", "Cryptojacking pool"),
             // Phishing/malware distribution
-            ("malware-traffic-analysis.net", "Malware analysis tracker (not malicious itself, but often queried by samples)"),
+            (
+                "malware-traffic-analysis.net",
+                "Malware analysis tracker (not malicious itself, but often queried by samples)",
+            ),
             // Abuse infrastructure
             ("ddns.net", "Dynamic DNS: frequently abused for C2"),
             ("no-ip.org", "Dynamic DNS: frequently abused for C2"),
@@ -98,14 +111,23 @@ impl DnsBlocklist {
             ("pagekite.me", "Tunnel service: frequently abused for C2"),
             // Data exfiltration services
             ("transfer.sh", "File sharing: potential data exfiltration"),
-            ("file.io", "Ephemeral file sharing: potential data exfiltration"),
-            ("anonfiles.com", "Anonymous file sharing: potential data exfiltration"),
+            (
+                "file.io",
+                "Ephemeral file sharing: potential data exfiltration",
+            ),
+            (
+                "anonfiles.com",
+                "Anonymous file sharing: potential data exfiltration",
+            ),
         ];
 
         for (domain, reason) in builtins {
             self.add(domain, reason);
         }
-        info!("DNS Shield: Loaded {} built-in blocklist entries", builtins.len());
+        info!(
+            "DNS Shield: Loaded {} built-in blocklist entries",
+            builtins.len()
+        );
     }
 }
 

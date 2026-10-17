@@ -68,7 +68,10 @@ pub fn validate_atlas_version(version: &str) -> bool {
         if tag.is_empty() || tag.len() > 48 {
             return false;
         }
-        if !tag.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        if !tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        {
             return false;
         }
     }
@@ -87,22 +90,21 @@ pub struct AtlasSyncManager {
 
 impl Default for AtlasSyncManager {
     fn default() -> Self {
-        Self::new(
-            "2026.09-stix2.1-golden-airgap",
-            PINNED_ATLAS_GOLDEN_SHA256,
-        )
+        Self::new("2026.09-stix2.1-golden-airgap", PINNED_ATLAS_GOLDEN_SHA256)
     }
 }
 
 impl AtlasSyncManager {
     pub fn new(version: &str, pinned_checksum: &str) -> Self {
         // Disallow empty content SHA-256 (e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855)
-        const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        let verified_checksum = if pinned_checksum == EMPTY_SHA256 || pinned_checksum.trim().is_empty() {
-            PINNED_ATLAS_GOLDEN_SHA256.to_string()
-        } else {
-            pinned_checksum.to_string()
-        };
+        const EMPTY_SHA256: &str =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        let verified_checksum =
+            if pinned_checksum == EMPTY_SHA256 || pinned_checksum.trim().is_empty() {
+                PINNED_ATLAS_GOLDEN_SHA256.to_string()
+            } else {
+                pinned_checksum.to_string()
+            };
 
         let arm_ring = std::sync::Arc::new(crate::containment_ring::AgentContainmentRing::new());
 
@@ -120,12 +122,17 @@ impl AtlasSyncManager {
         }
     }
 
-    pub fn with_containment_ring(mut self, ring: std::sync::Arc<crate::containment_ring::AgentContainmentRing>) -> Self {
+    pub fn with_containment_ring(
+        mut self,
+        ring: std::sync::Arc<crate::containment_ring::AgentContainmentRing>,
+    ) -> Self {
         self.arm_ring = ring;
         self
     }
 
-    pub fn containment_ring(&self) -> &std::sync::Arc<crate::containment_ring::AgentContainmentRing> {
+    pub fn containment_ring(
+        &self,
+    ) -> &std::sync::Arc<crate::containment_ring::AgentContainmentRing> {
         &self.arm_ring
     }
 
@@ -158,34 +165,40 @@ impl AtlasSyncManager {
         }
 
         // 1. Provenance check using strict RFC 3986 URL parsing to prevent prefix-matching bypasses
-        let is_trusted_provenance = if source == "local://atlas_bundle" || source.starts_with("local://atlas_bundle/") {
-            true
-        } else if let Ok(parsed_url) = url::Url::parse(source) {
-            if parsed_url.scheme() != "https" {
-                false
-            } else if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
-                false
-            } else if parsed_url.port().map_or(false, |p| p != 443) {
-                false
-            } else {
-                let host = parsed_url.host_str().unwrap_or("").to_lowercase();
-                let path = parsed_url.path();
-                match host.as_str() {
-                    "raw.githubusercontent.com" | "github.com" => {
-                        path == "/mitre-atlas/atlas-data" || path.starts_with("/mitre-atlas/atlas-data/")
+        let is_trusted_provenance =
+            if source == "local://atlas_bundle" || source.starts_with("local://atlas_bundle/") {
+                true
+            } else if let Ok(parsed_url) = url::Url::parse(source) {
+                if parsed_url.scheme() != "https"
+                    || !parsed_url.username().is_empty()
+                    || parsed_url.password().is_some()
+                    || parsed_url.port().is_some_and(|p| p != 443)
+                {
+                    false
+                } else {
+                    let host = parsed_url.host_str().unwrap_or("").to_lowercase();
+                    let path = parsed_url.path();
+                    match host.as_str() {
+                        "raw.githubusercontent.com" | "github.com" => {
+                            path == "/mitre-atlas/atlas-data"
+                                || path.starts_with("/mitre-atlas/atlas-data/")
+                        }
+                        "release-assets.githubusercontent.com" => {
+                            path == "/mitre-atlas/atlas-data"
+                                || path.starts_with("/mitre-atlas/atlas-data/")
+                        }
+                        "atlas.mitre.org" => {
+                            path.is_empty()
+                                || path == "/"
+                                || path == "/api/v1/matrix"
+                                || path.starts_with("/api/v1/")
+                        }
+                        _ => false,
                     }
-                    "release-assets.githubusercontent.com" => {
-                        path == "/mitre-atlas/atlas-data" || path.starts_with("/mitre-atlas/atlas-data/")
-                    }
-                    "atlas.mitre.org" => {
-                        path == "" || path == "/" || path == "/api/v1/matrix" || path.starts_with("/api/v1/")
-                    }
-                    _ => false,
                 }
-            }
-        } else {
-            false
-        };
+            } else {
+                false
+            };
 
         if !is_trusted_provenance {
             return Err(AtlasSyncError::UntrustedSource(format!(
@@ -212,8 +225,12 @@ impl AtlasSyncManager {
         let target_expected = expected_checksum.unwrap_or(PINNED_ATLAS_GOLDEN_SHA256);
 
         // Reject empty-content SHA-256 hashes
-        const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-        if target_expected.is_empty() || target_expected == EMPTY_SHA256 || target_expected.len() != 64 {
+        const EMPTY_SHA256: &str =
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        if target_expected.is_empty()
+            || target_expected == EMPTY_SHA256
+            || target_expected.len() != 64
+        {
             return Err(AtlasSyncError::ChecksumMismatch {
                 expected: "Valid Non-Empty SHA-256".to_string(),
                 computed: computed_checksum,
@@ -247,7 +264,8 @@ impl AtlasSyncManager {
 }
 
 /// Authoritative pinned cryptographic SHA-256 digest of the verified MITRE ATLAS STIX 2.1 bundle.
-pub const PINNED_ATLAS_GOLDEN_SHA256: &str = "827995ff5b753916a411a854f9f1b0d83fe272043bff2090ca45f2e424477e75";
+pub const PINNED_ATLAS_GOLDEN_SHA256: &str =
+    "827995ff5b753916a411a854f9f1b0d83fe272043bff2090ca45f2e424477e75";
 
 /// Compile-time embedded verified golden MITRE ATLAS STIX 2.1 knowledge base (air-gapped resilience).
 pub const EMBEDDED_GOLDEN_STIX: &str = include_str!("../../../../data/atlas_stix/stix-atlas.json");
@@ -271,8 +289,9 @@ impl AtlasSyncManager {
             ));
         }
 
-        let text = std::str::from_utf8(raw_bytes)
-            .map_err(|e| AtlasSyncError::UntrustedSource(format!("Invalid UTF-8 encoding: {}", e)))?;
+        let text = std::str::from_utf8(raw_bytes).map_err(|e| {
+            AtlasSyncError::UntrustedSource(format!("Invalid UTF-8 encoding: {}", e))
+        })?;
 
         // 3. Scan for adversarial prompt injection signatures embedded in technique definitions
         let lower = text.to_lowercase();
@@ -297,12 +316,22 @@ impl AtlasSyncManager {
     }
 
     /// Loads the verified compile-time embedded golden STIX bundle (100% offline & air-gapped).
-    pub fn load_embedded_golden_bundle(&self) -> Result<(AtlasSyncMetadata, super::atlas_parser::ParsedAtlasKnowledgeBase), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load_embedded_golden_bundle(
+        &self,
+    ) -> Result<
+        (
+            AtlasSyncMetadata,
+            super::atlas_parser::ParsedAtlasKnowledgeBase,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let mut hasher = Sha256::new();
         hasher.update(EMBEDDED_GOLDEN_STIX.as_bytes());
         let embedded_checksum = hex::encode(hasher.finalize());
         if embedded_checksum != PINNED_ATLAS_GOLDEN_SHA256 {
-            return Err("Embedded STIX bundle fails cryptographic golden digest verification".into());
+            return Err(
+                "Embedded STIX bundle fails cryptographic golden digest verification".into(),
+            );
         }
 
         let kb = super::atlas_parser::AtlasParser::parse_stix_bundle(EMBEDDED_GOLDEN_STIX)?;
@@ -311,7 +340,10 @@ impl AtlasSyncManager {
             publication_date: "2026-09-15".to_string(),
             source_url: "embedded://atlas_arm/stix-atlas.golden.json".to_string(),
             sha256_checksum: PINNED_ATLAS_GOLDEN_SHA256.to_string(),
-            synced_at_secs: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
+            synced_at_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
             total_tactics: kb.tactics.len(),
             total_techniques: kb.techniques.len(),
             total_mitigations: kb.mitigations.len(),
@@ -327,7 +359,16 @@ impl AtlasSyncManager {
     ///   3. Validates SHA-256 against the pinned golden digest.
     ///   4. Scans payload against prompt injection tokens.
     ///   5. Seamlessly falls back to the embedded golden baseline if any network anomaly occurs.
-    pub fn sync_or_load_stix(&self, cache_file_path: &str) -> Result<(AtlasSyncMetadata, super::atlas_parser::ParsedAtlasKnowledgeBase), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn sync_or_load_stix(
+        &self,
+        cache_file_path: &str,
+    ) -> Result<
+        (
+            AtlasSyncMetadata,
+            super::atlas_parser::ParsedAtlasKnowledgeBase,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         // Level 1: Mandatory Arm Containment Ring check on the ATLAS threat arm
         if self.arm_ring.is_severed() {
             return Err(Box::new(std::io::Error::new(
@@ -422,7 +463,9 @@ impl AtlasSyncManager {
         let metadata = AtlasSyncMetadata {
             dataset_version: "2026.09-stix2.1-verified".to_string(),
             publication_date: "2026-09-15".to_string(),
-            source_url: "https://github.com/mitre-atlas/atlas-data/releases/latest/download/stix-atlas.json".to_string(),
+            source_url:
+                "https://github.com/mitre-atlas/atlas-data/releases/latest/download/stix-atlas.json"
+                    .to_string(),
             sha256_checksum: checksum,
             synced_at_secs: now_secs,
             total_tactics: kb.tactics.len(),
@@ -434,4 +477,3 @@ impl AtlasSyncManager {
         Ok((metadata, kb))
     }
 }
-

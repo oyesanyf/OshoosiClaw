@@ -113,7 +113,7 @@ impl NsrlIngester {
                 }
             }
 
-            if count % 500_000 == 0 && count > 0 {
+            if count.is_multiple_of(500_000) && count > 0 {
                 debug!("NSRL CSV progress: {} hashes processed", count);
             }
         }
@@ -126,14 +126,14 @@ impl NsrlIngester {
     /// Check if a SHA-256 hash is in the NSRL whitelist (known-good).
     pub fn is_known_good(&self, sha256: &str) -> bool {
         let normalized = sha256.to_lowercase();
-        match self.conn.query_row(
-            "SELECT 1 FROM nsrl_whitelist WHERE sha256 = ?1 LIMIT 1",
-            params![normalized],
-            |_row| Ok(true),
-        ) {
-            Ok(true) => true,
-            _ => false,
-        }
+        matches!(
+            self.conn.query_row(
+                "SELECT 1 FROM nsrl_whitelist WHERE sha256 = ?1 LIMIT 1",
+                params![normalized],
+                |_row| Ok(true),
+            ),
+            Ok(true)
+        )
     }
 
     /// Get the total count of known-good hashes in the whitelist.

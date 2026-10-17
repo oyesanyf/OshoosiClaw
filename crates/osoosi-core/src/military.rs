@@ -1,11 +1,11 @@
+use chrono::{DateTime, Duration, Utc};
+use osoosi_types::{HostSecurityEvent, ResponseAction, ThreatSignature};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use chrono::{DateTime, Utc, Duration};
-use osoosi_types::{HostSecurityEvent, ResponseAction, ThreatSignature};
 
 /// MilitaryGuard: Tactical detection for asymmetric warfare patterns.
-/// 
+///
 /// Translates drone concepts (Geran-2E) into EDR heuristics:
 /// - Mesh Networking: Detecting workstation-to-workstation P2P whispers.
 /// - Loitering: Detecting idle processes that perform "Alpha Strikes".
@@ -25,6 +25,12 @@ struct DecoyTracker {
     similarity_hits: u64,
 }
 
+impl Default for MilitaryGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MilitaryGuard {
     pub fn new() -> Self {
         Self {
@@ -39,13 +45,21 @@ impl MilitaryGuard {
         match event.event_id {
             3 => self.analyze_network_tactics(event).await, // NetworkConnect
             11 | 26 => self.analyze_loitering_strike(event).await, // FileCreate | FileDeleteLogged
-            1 => { // ProcessCreate
-                let pid = event.data.get("ProcessId").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            1 => {
+                // ProcessCreate
+                let pid = event
+                    .data
+                    .get("ProcessId")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if pid != 0 {
-                    self.process_start_times.write().await.insert(pid, Utc::now());
+                    self.process_start_times
+                        .write()
+                        .await
+                        .insert(pid, Utc::now());
                 }
                 self.analyze_process_legitimacy(event).await
-            },
+            }
             _ => None,
         }
     }
@@ -54,7 +68,11 @@ impl MilitaryGuard {
     async fn analyze_network_tactics(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
         let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
         let dest_ip = event.data.get("DestinationIp")?.as_str()?;
-        let dest_port = event.data.get("DestinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
+        let dest_port = event
+            .data
+            .get("DestinationPort")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
 
         // --- MESH DETECTION (P2P Whispering) ---
         if is_private_ip(dest_ip) {
@@ -76,12 +94,14 @@ impl MilitaryGuard {
 
         // --- DECOY DETECTION (Chaff/Noise Evasion) ---
         let mut decoy_trackers = self.decoy_trackers.write().await;
-        let tracker = decoy_trackers.entry(pid).or_insert_with(DecoyTracker::default);
+        let tracker = decoy_trackers
+            .entry(pid)
+            .or_insert_with(DecoyTracker::default);
         tracker.destinations.insert(dest_ip.to_string());
-        
+
         // High-similarity traffic on standard ports (C2 masking as HTTPS)
         if dest_port == 443 || dest_port == 80 {
-             tracker.similarity_hits += 1;
+            tracker.similarity_hits += 1;
         }
 
         if tracker.destinations.len() > 100 && tracker.similarity_hits > 200 {
@@ -122,32 +142,50 @@ impl MilitaryGuard {
     }
 
     /// 3. Decoys: Detecting "Phantom" Processes (Windows/Linux/macOS)
-    async fn analyze_process_legitimacy(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
+    async fn analyze_process_legitimacy(
+        &self,
+        event: &HostSecurityEvent,
+    ) -> Option<ThreatSignature> {
         let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
         let image_path = event.data.get("Image")?.as_str()?.to_lowercase();
-        let process_name = image_path.split('\\').last()?.split('/').last()?.to_lowercase();
+        let process_name = image_path
+            .split('\\')
+            .next_back()?
+            .split('/')
+            .next_back()?
+            .to_lowercase();
 
         // --- WINDOWS: Phantom System Process Detection ---
         #[cfg(target_os = "windows")]
         {
-            let critical_procs = ["svchost.exe", "lsass.exe", "wininit.exe", "services.exe", "csrss.exe"];
-            if critical_procs.contains(&process_name.as_str()) {
-                if !image_path.contains("system32") && !image_path.contains("syswow64") {
-                    return Some(ThreatSignature {
+            let critical_procs = [
+                "svchost.exe",
+                "lsass.exe",
+                "wininit.exe",
+                "services.exe",
+                "csrss.exe",
+            ];
+            if critical_procs.contains(&process_name.as_str())
+                && !image_path.contains("system32")
+                && !image_path.contains("syswow64")
+            {
+                return Some(ThreatSignature {
                         id: format!("MIL-DECOY-PROC-{}", pid),
                         confidence: 1.0,
                         reason: Some(format!("Decoy Detected: System process '{}' running from unauthorized location: {}. Tactical masquerading attempt.", process_name, image_path)),
                         recommended_action: ResponseAction::Isolate,
                         ..ThreatSignature::new("military".to_string())
                     });
-                }
             }
         }
 
         // --- LINUX/macOS: Hidden/Stealthy Execution ---
         #[cfg(not(target_os = "windows"))]
         {
-            if process_name.starts_with('.') || image_path.contains("/tmp/") || image_path.contains("/dev/shm/") {
+            if process_name.starts_with('.')
+                || image_path.contains("/tmp/")
+                || image_path.contains("/dev/shm/")
+            {
                 return Some(ThreatSignature {
                     id: format!("MIL-STEALTH-PROC-{}", pid),
                     confidence: 0.85,
@@ -165,15 +203,19 @@ impl MilitaryGuard {
 /// Helper: Identify sensitive targets for loitering detection
 fn is_sensitive_target(path: &str) -> bool {
     let p = path.to_lowercase();
-    p.contains("lsass") || 
-    p.contains("config\\sam") || 
-    p.contains(".ssh\\") || 
-    p.contains("/etc/shadow") || 
-    p.contains("ntds.dit") || 
-    p.contains("wallet")
+    p.contains("lsass")
+        || p.contains("config\\sam")
+        || p.contains(".ssh\\")
+        || p.contains("/etc/shadow")
+        || p.contains("ntds.dit")
+        || p.contains("wallet")
 }
 
 /// Helper: Identify private IP ranges for mesh detection
 fn is_private_ip(ip: &str) -> bool {
-    ip.starts_with("10.") || ip.starts_with("192.168.") || ip.starts_with("172.16.") || ip == "127.0.0.1" || ip == "::1"
+    ip.starts_with("10.")
+        || ip.starts_with("192.168.")
+        || ip.starts_with("172.16.")
+        || ip == "127.0.0.1"
+        || ip == "::1"
 }

@@ -41,7 +41,7 @@ pub fn otx_match_sysmon_event(
         .data
         .get("DestinationIp")
         .and_then(|v| v.as_str())
-        .map(|s| normalize_ip_for_otx(s))
+        .map(normalize_ip_for_otx)
         .unwrap_or_default();
 
     let source_ip = event

@@ -7,14 +7,15 @@ pub mod strands_client;
 pub use cloudflare_client::CloudflareClient;
 pub use engine::{ClefDecisionEngine, DecisionMetrics, DecisionMetricsSummary};
 pub use local_engine::LocalDecisionEngine;
-pub use strands_client::StrandsClient;
 pub use models::{
     build_security_incident_request, build_standard_incident_questions,
     parse_security_incident_response, BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest,
     DecisionResponse, QuestionDefinition, QuestionType, ScoreAnswer, SecurityIncidentDecision,
 };
+pub use strands_client::StrandsClient;
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use osoosi_types::config::DecisionModelConfig;
@@ -127,12 +128,23 @@ mod tests {
                     sum,
                     probs
                 );
-                for (&ref opt, &p) in probs {
-                    assert!(p >= 0.0 && p <= 1.0, "Prob for {} option {} out of bounds: {}", q_name, opt, p);
+                for (opt, &p) in probs {
+                    assert!(
+                        (0.0..=1.0).contains(&p),
+                        "Prob for {} option {} out of bounds: {}",
+                        q_name,
+                        opt,
+                        p
+                    );
                 }
             }
             if let Some(p) = ans.probability {
-                assert!(p >= 0.0 && p <= 1.0, "Prob for bool {} out of bounds: {}", q_name, p);
+                assert!(
+                    (0.0..=1.0).contains(&p),
+                    "Prob for bool {} out of bounds: {}",
+                    q_name,
+                    p
+                );
             }
         }
 
@@ -197,11 +209,10 @@ mod tests {
     fn test_load_custom_weights_and_empty_state_evaluates_benign_allow() {
         // Test empty/neutral input gives benign + allow
         let engine = LocalDecisionEngine::new("models/clef");
-        let req = build_security_incident_request(
-            "@cf/cloudflare/clef-flash",
-            "",
-        );
-        let resp = engine.evaluate(&req).expect("Evaluation should succeed on empty state");
+        let req = build_security_incident_request("@cf/cloudflare/clef-flash", "");
+        let resp = engine
+            .evaluate(&req)
+            .expect("Evaluation should succeed on empty state");
         let decision = parse_security_incident_response(&resp);
         assert_eq!(decision.verdict, "benign");
         assert_eq!(decision.containment_action, "allow");
@@ -225,14 +236,18 @@ mod tests {
             "http://127.0.0.1:4003".to_string(),
             "StrandsAgents/strands-decider-2B-hobson-v19".to_string(),
             100, // fast timeout
-        ).expect("StrandsClient creation must succeed");
+        )
+        .expect("StrandsClient creation must succeed");
 
         let req = build_security_incident_request(
             "StrandsAgents/strands-decider-2B-hobson-v19",
             "Process Image: C:\\Users\\Public\\mimikatz.exe | CommandLine: sekurlsa::logonpasswords | MITRE: T1003.001 | IsSigned: false",
         );
 
-        let resp = client.run_decision(&req).await.expect("Run decision must fall back gracefully");
+        let resp = client
+            .run_decision(&req)
+            .await
+            .expect("Run decision must fall back gracefully");
         assert_eq!(resp.provider, "strands-decider-2b");
 
         // Validate probabilities sum to 1.0 within 1e-5

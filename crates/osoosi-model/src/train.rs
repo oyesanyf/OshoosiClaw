@@ -4,7 +4,7 @@ use osoosi_types::ThreatSignature;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// Configuration for model storage and training.
 #[derive(Debug, Clone)]
@@ -50,9 +50,9 @@ pub struct ThreatModel {
 
 impl ThreatModel {
     pub fn new(config: ModelConfig) -> Self {
-        let mut model = Self { 
-            config, 
-            weights: ModelWeights::default() 
+        let mut model = Self {
+            config,
+            weights: ModelWeights::default(),
         };
         let _ = model.load();
         model
@@ -76,7 +76,10 @@ impl ThreatModel {
         if bulk_path.exists() {
             if let Ok(data) = std::fs::read_to_string(&bulk_path) {
                 if let Ok(bulk_w) = serde_json::from_str::<ModelWeights>(&data) {
-                    debug!("Integrating {} bulk-trained CVE features into threat model.", bulk_w.features.len());
+                    debug!(
+                        "Integrating {} bulk-trained CVE features into threat model.",
+                        bulk_w.features.len()
+                    );
                     for (feat, &weight) in &bulk_w.features {
                         // Merge logic: Average or Insert
                         // Merge logic: Weighted Blend if exists, otherwise Insert
@@ -168,12 +171,18 @@ impl ThreatModel {
     }
 
     /// Infer threat score for given features (process_name, cve_id, version, lineage).
-    pub fn infer(&self, process_name: Option<&str>, cve_id: Option<&str>, version: Option<&str>, lineage: Vec<String>) -> f32 {
+    pub fn infer(
+        &self,
+        process_name: Option<&str>,
+        cve_id: Option<&str>,
+        version: Option<&str>,
+        lineage: Vec<String>,
+    ) -> f32 {
         let mut score = 0.0f32;
 
         if let Some(p) = process_name {
             let p_low = p.to_lowercase();
-            
+
             // 1. Version-Specific Risk
             if let Some(v) = version {
                 let ver_key = format!("ver:{}:{}", p_low, v.to_lowercase());
@@ -241,7 +250,12 @@ impl ThreatModel {
         osoosi_types::FederatedModelDelta {
             source_node: node_id.to_string(),
             features: self.weights.features.clone(),
-            epsilon: self.config.dp_config.as_ref().map(|c| c.epsilon).unwrap_or(0.0),
+            epsilon: self
+                .config
+                .dp_config
+                .as_ref()
+                .map(|c| c.epsilon)
+                .unwrap_or(0.0),
             timestamp: chrono::Utc::now(),
         }
     }

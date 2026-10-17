@@ -69,13 +69,13 @@ impl SandboxSecurityConfig {
         if self.wasm_hash_required && self.allowed_wasm_hashes.is_empty() {
             return Err("WASM hash required but no hashes in allowlist".to_string());
         }
-        if self.wasm_hash_required || !self.allowed_wasm_hashes.is_empty() {
-            if !self.allowed_wasm_hashes.contains(&hash) {
-                return Err(format!(
-                    "WASM module hash {} not in allowlist",
-                    &hash[..hash.len().min(16)]
-                ));
-            }
+        if (self.wasm_hash_required || !self.allowed_wasm_hashes.is_empty())
+            && !self.allowed_wasm_hashes.contains(&hash)
+        {
+            return Err(format!(
+                "WASM module hash {} not in allowlist",
+                &hash[..hash.len().min(16)]
+            ));
         }
         Ok(())
     }
@@ -90,7 +90,7 @@ impl SandboxSecurityConfig {
             for pattern in &self.url_allowlist {
                 if pattern.starts_with("*.") {
                     let suffix = &pattern[1..];
-                    if host.ends_with(suffix) || host == &suffix[2..] {
+                    if host.ends_with(suffix) || host == suffix[2..] {
                         return true;
                     }
                 } else if host == pattern.as_str() || host.ends_with(&format!(".{}", pattern)) {
@@ -149,10 +149,12 @@ impl SandboxSecurityConfig {
 
         // Reject dangerous SQL keywords
         let dangerous_keywords = [
-            "ATTACH", "DETACH", "PRAGMA", "UNION", "DROP", "DELETE",
-            "UPDATE", "INSERT", "ALTER", "CREATE", "REPLACE", "VACUUM",
+            "ATTACH", "DETACH", "PRAGMA", "UNION", "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
+            "CREATE", "REPLACE", "VACUUM",
         ];
-        for token in upper.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';') {
+        for token in
+            upper.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';')
+        {
             let token = token.trim();
             if dangerous_keywords.contains(&token) {
                 return false;
@@ -190,18 +192,13 @@ pub fn extract_host_from_url(url: &str) -> String {
         return String::new();
     };
     let authority = rest.split('/').next().unwrap_or(rest);
-    let host_port = authority.split('@').last().unwrap_or(authority);
+    let host_port = authority.split('@').next_back().unwrap_or(authority);
     if host_port.starts_with('[') {
         if let Some(end) = host_port.find(']') {
             return host_port[1..end].to_ascii_lowercase();
         }
     }
-    to_ascii_lower(
-        host_port
-            .split(':')
-            .next()
-            .unwrap_or(host_port),
-    )
+    to_ascii_lower(host_port.split(':').next().unwrap_or(host_port))
 }
 
 fn to_ascii_lower(s: &str) -> String {

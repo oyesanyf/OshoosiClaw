@@ -71,7 +71,7 @@ fn update_spine(spine: &mut Vec<String>, leaf_hash: &str, n: usize) {
             break;
         }
 
-        if level_count % 2 == 0 {
+        if level_count.is_multiple_of(2) {
             carry = hash_pair(&spine[level], &carry);
             level_count /= 2;
             level += 1;
@@ -223,7 +223,7 @@ impl MerkleAuditTree {
         }
         let mut current_level: Vec<String> = leaf_hashes.to_vec();
         while current_level.len() > 1 {
-            let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
             for i in (0..current_level.len()).step_by(2) {
                 let left = &current_level[i];
                 let right = if i + 1 < current_level.len() {
@@ -271,7 +271,7 @@ impl MerkleAuditTree {
         let mut current_level: Vec<String> = leaf_hashes.clone();
 
         while current_level.len() > 1 {
-            let sibling_index = if current_index % 2 == 0 {
+            let sibling_index = if current_index.is_multiple_of(2) {
                 current_index + 1
             } else {
                 current_index - 1
@@ -284,7 +284,7 @@ impl MerkleAuditTree {
             }
 
             // Move up to the next level
-            let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
             for i in (0..current_level.len()).step_by(2) {
                 let left = &current_level[i];
                 let right = if i + 1 < current_level.len() {
@@ -307,11 +307,19 @@ impl MerkleAuditTree {
     }
 
     pub fn root(&self) -> String {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).root.clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .root
+            .clone()
     }
 
     pub fn entries(&self) -> Vec<AuditEntry> {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).entries.clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entries
+            .clone()
     }
 
     pub fn get_recent_entries(&self, limit: usize) -> Vec<AuditEntry> {

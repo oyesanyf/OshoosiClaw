@@ -12,6 +12,12 @@ static ISOLATION_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub struct RemediationController;
 
+impl Default for RemediationController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RemediationController {
     pub fn new() -> Self {
         Self
@@ -72,7 +78,16 @@ impl RemediationController {
             #[cfg(windows)]
             cmd1.creation_flags(0x08000000);
             let _ = cmd1
-                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-In", "dir=in", "action=block", "profile=any"])
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-In",
+                    "dir=in",
+                    "action=block",
+                    "profile=any",
+                ])
                 .status();
 
             let mut cmd2 = Command::new(&netsh_bin);
@@ -81,7 +96,16 @@ impl RemediationController {
             #[cfg(windows)]
             cmd2.creation_flags(0x08000000);
             let _ = cmd2
-                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Out", "dir=out", "action=block", "profile=any"])
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-Out",
+                    "dir=out",
+                    "action=block",
+                    "profile=any",
+                ])
                 .status();
 
             let mut cmd3 = Command::new(&netsh_bin);
@@ -90,7 +114,18 @@ impl RemediationController {
             #[cfg(windows)]
             cmd3.creation_flags(0x08000000);
             let _ = cmd3
-                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Mesh", "dir=in", "action=allow", "protocol=TCP", "localport=4001,8080,22,3389", "profile=any"])
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-Mesh",
+                    "dir=in",
+                    "action=allow",
+                    "protocol=TCP",
+                    "localport=4001,8080,22,3389",
+                    "profile=any",
+                ])
                 .status();
 
             info!("Network isolation applied via Windows Firewall (netsh). Preserved admin ports (22, 3389) and mesh ports (4001, 8080).");
@@ -103,14 +138,40 @@ impl RemediationController {
             let commands = [
                 vec!["-A", "INPUT", "-i", "lo", "-j", "ACCEPT"],
                 vec!["-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"],
-                vec!["-A", "INPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-                vec!["-A", "OUTPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                vec![
+                    "-A",
+                    "INPUT",
+                    "-m",
+                    "conntrack",
+                    "--ctstate",
+                    "ESTABLISHED,RELATED",
+                    "-j",
+                    "ACCEPT",
+                ],
+                vec![
+                    "-A",
+                    "OUTPUT",
+                    "-m",
+                    "conntrack",
+                    "--ctstate",
+                    "ESTABLISHED,RELATED",
+                    "-j",
+                    "ACCEPT",
+                ],
                 vec!["-A", "INPUT", "-p", "tcp", "--dport", "22", "-j", "ACCEPT"],
                 vec!["-A", "OUTPUT", "-p", "tcp", "--sport", "22", "-j", "ACCEPT"],
-                vec!["-A", "INPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT"],
-                vec!["-A", "OUTPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT"],
-                vec!["-A", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"],
-                vec!["-A", "OUTPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"],
+                vec![
+                    "-A", "INPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT",
+                ],
+                vec![
+                    "-A", "OUTPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT",
+                ],
+                vec![
+                    "-A", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT",
+                ],
+                vec![
+                    "-A", "OUTPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT",
+                ],
                 vec!["-P", "INPUT", "DROP"],
                 vec!["-P", "OUTPUT", "DROP"],
             ];
@@ -142,8 +203,23 @@ impl RemediationController {
 
     /// Terminate a process and all its children.
     pub fn kill_process_tree(&self, pid: u32) -> anyhow::Result<()> {
+        let is_dry_run = std::env::var("OSOOSI_DRY_RUN")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if is_dry_run {
+            info!(
+                "AUTONOMOUS RESPONSE: [DRY-RUN] Process tree termination simulated for PID {}.",
+                pid
+            );
+            return Ok(());
+        }
+
         if pid <= 4 || pid == std::process::id() {
-            warn!("AUTONOMOUS RESPONSE: Refusing to kill protected system or self process (PID {})", pid);
+            warn!(
+                "AUTONOMOUS RESPONSE: Refusing to kill protected system or self process (PID {})",
+                pid
+            );
             return Err(anyhow::anyhow!("Cannot kill protected process PID {}", pid));
         }
 
@@ -155,7 +231,9 @@ impl RemediationController {
         #[cfg(target_os = "windows")]
         {
             use windows::Win32::Foundation::CloseHandle;
-            use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+            use windows::Win32::System::Threading::{
+                OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+            };
 
             if let Ok(handle) = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) } {
                 let _ = unsafe { TerminateProcess(handle, 1) };
@@ -165,21 +243,21 @@ impl RemediationController {
         }
 
         use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-        let mut sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+        let mut sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+        );
         sys.refresh_processes();
 
         let target_pid = Pid::from(pid as usize);
-        
+
         // Collect all descendants
         let mut to_kill = vec![target_pid];
         let mut i = 0;
         while i < to_kill.len() {
             let parent_pid = to_kill[i];
             for (p, proc) in sys.processes() {
-                if proc.parent() == Some(parent_pid) {
-                    if !to_kill.contains(p) {
-                        to_kill.push(*p);
-                    }
+                if proc.parent() == Some(parent_pid) && !to_kill.contains(p) {
+                    to_kill.push(*p);
                 }
             }
             i += 1;

@@ -1,6 +1,6 @@
+use async_trait::async_trait;
 use osoosi_model::malware::is_ide_or_build_path;
 use osoosi_model::{MalwareScanResult, MalwareScanner};
-use async_trait::async_trait;
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
 use osoosi_types::{HostSecurityEvent, Priority, ResourceCategory};
 use std::path::Path;
@@ -221,22 +221,27 @@ impl ThreatVoter for YaraXVoter {
             // Perform scan via the dynamic yara manager with adaptive concurrency
             let ym = self.yara_manager.clone();
             let adaptive = self.adaptive.clone();
-            
-            let scan_result = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-                if let Ok(matches) = ym.scan_file(&path_buf) {
-                    if let Some(primary) = matches.first() {
-                        return Some(VoteResult {
-                            confidence: 1.0,
-                            reason: format!("YaraX: THREAT detected - {}", primary),
-                            weight: 1.0,
-                        });
+
+            let scan_result = adaptive
+                .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                    if let Ok(matches) = ym.scan_file(&path_buf) {
+                        if let Some(primary) = matches.first() {
+                            return Some(VoteResult {
+                                confidence: 1.0,
+                                reason: format!("YaraX: THREAT detected - {}", primary),
+                                weight: 1.0,
+                            });
+                        }
                     }
-                }
-                None
-            }).await.ok().flatten();
+                    None
+                })
+                .await
+                .ok()
+                .flatten();
 
             if scan_result.is_some() {
-                self.total_detections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.total_detections
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             return scan_result;
         }
@@ -288,7 +293,7 @@ impl ThreatVoter for MalConvVoter {
         const MAX_BYTES: u64 = 48 * 1024 * 1024;
         let adaptive = self.adaptive.clone();
         let scanner = self.scanner.clone();
-        
+
         // Extract paths before the async block to avoid lifetime issues
         let mut paths_to_scan = Vec::new();
         for key in ["Image", "TargetImage", "TargetFilename"] {
@@ -303,40 +308,44 @@ impl ThreatVoter for MalConvVoter {
             return None;
         }
 
-        let best_result = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-            let mut best: Option<MalwareScanResult> = None;
-            let mut best_path: Option<String> = None;
+        let best_result = adaptive
+            .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                let mut best: Option<MalwareScanResult> = None;
+                let mut best_path: Option<String> = None;
 
-            for p in paths_to_scan {
-                let path = Path::new(&p);
-                if !path.is_file() {
-                    continue;
-                }
-                if let Ok(m) = path.metadata() {
-                    if m.len() > MAX_BYTES {
+                for p in paths_to_scan {
+                    let path = Path::new(&p);
+                    if !path.is_file() {
                         continue;
                     }
-                }
-                if let Some(res) = scanner.scan_file(path).await {
-                    let replace = best
-                        .as_ref()
-                        .map(|b| res.combined_score > b.combined_score)
-                        .unwrap_or(true);
-                    if replace {
-                        best_path = Some(p.clone());
-                        best = Some(res);
+                    if let Ok(m) = path.metadata() {
+                        if m.len() > MAX_BYTES {
+                            continue;
+                        }
+                    }
+                    if let Some(res) = scanner.scan_file(path).await {
+                        let replace = best
+                            .as_ref()
+                            .map(|b| res.combined_score > b.combined_score)
+                            .unwrap_or(true);
+                        if replace {
+                            best_path = Some(p.clone());
+                            best = Some(res);
+                        }
                     }
                 }
-            }
-            best.map(|b| (b, best_path))
-        }).await.ok().flatten();
+                best.map(|b| (b, best_path))
+            })
+            .await
+            .ok()
+            .flatten();
 
         let (res, best_path) = best_result?;
         let path_note = best_path.as_deref().unwrap_or("?");
-        
+
         // Removed clam_detected check as it is decommissioned in the Zero-Process stack.
         let weak_signature_only = res.ml_score <= 0.0 && res.signature_score >= 1.0;
-        
+
         if trusted_identity_signal(event, path_note) && weak_signature_only {
             return None;
         }
@@ -349,7 +358,9 @@ impl ThreatVoter for MalConvVoter {
         let mut weight = 0.88f32;
         if is_ide_or_build_path(path_note) || scanner_skip_path(path_note) {
             weight *= 0.25;
-        } else if trusted_identity_signal(event, path_note) || osoosi_types::is_trusted_signed_binary(Path::new(path_note)) {
+        } else if trusted_identity_signal(event, path_note)
+            || osoosi_types::is_trusted_signed_binary(Path::new(path_note))
+        {
             weight *= 0.35;
         }
         Some(VoteResult {
@@ -399,24 +410,32 @@ impl ThreatVoter for CapaVoter {
             let analyzer = self.analyzer.clone();
             let adaptive = self.adaptive.clone();
 
-            let res = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-                if !path.exists() {
-                    return None;
-                }
-                analyzer.analyze_file(&path).await.ok().flatten()
-            }).await.ok().flatten()?;
+            let res = adaptive
+                .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                    if !path.exists() {
+                        return None;
+                    }
+                    analyzer.analyze_file(&path).await.ok().flatten()
+                })
+                .await
+                .ok()
+                .flatten()?;
 
             // If CAPA found specific persistence/c2 capabilities, we yield a vote
             if res.confidence > 0.4 {
                 let mut weight = 0.85f32;
                 if is_ide_or_build_path(image_path) || scanner_skip_path(image_path) {
                     weight *= 0.25;
-                } else if trusted_identity_signal(event, image_path) || osoosi_types::is_trusted_signed_binary(Path::new(image_path)) {
+                } else if trusted_identity_signal(event, image_path)
+                    || osoosi_types::is_trusted_signed_binary(Path::new(image_path))
+                {
                     weight *= 0.35;
                 }
                 return Some(VoteResult {
                     confidence: res.confidence,
-                    reason: res.reason.unwrap_or_else(|| "CAPA: Detected suspicious capabilities".to_string()),
+                    reason: res
+                        .reason
+                        .unwrap_or_else(|| "CAPA: Detected suspicious capabilities".to_string()),
                     weight,
                 });
             }
@@ -427,7 +446,7 @@ impl ThreatVoter for CapaVoter {
 
 /// Composition (Nabla) Voter
 ///
-/// Executes high-speed static heuristic analysis to identify malicious 
+/// Executes high-speed static heuristic analysis to identify malicious
 /// binary structures, suspicious imports, and "shadow" dependencies.
 pub struct CompositionVoter {
     pub analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
@@ -457,24 +476,32 @@ impl ThreatVoter for CompositionVoter {
             let analyzer = self.analyzer.clone();
             let adaptive = self.adaptive.clone();
 
-            let res = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-                if !path.exists() {
-                    return None;
-                }
-                analyzer.analyze_file(&path).await.ok().flatten()
-            }).await.ok().flatten()?;
+            let res = adaptive
+                .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                    if !path.exists() {
+                        return None;
+                    }
+                    analyzer.analyze_file(&path).await.ok().flatten()
+                })
+                .await
+                .ok()
+                .flatten()?;
 
             // If it looks like a composition threat (ID starts with COMP-)
             if res.id.starts_with("COMP-") && res.confidence >= 0.5 {
                 let mut weight = 0.9f32;
                 if is_ide_or_build_path(image_path) || scanner_skip_path(image_path) {
                     weight *= 0.25;
-                } else if trusted_identity_signal(event, image_path) || osoosi_types::is_trusted_signed_binary(Path::new(image_path)) {
+                } else if trusted_identity_signal(event, image_path)
+                    || osoosi_types::is_trusted_signed_binary(Path::new(image_path))
+                {
                     weight *= 0.35;
                 }
                 return Some(VoteResult {
                     confidence: res.confidence as f32,
-                    reason: res.reason.unwrap_or_else(|| "Nabla: Suspicious composition detected".to_string()),
+                    reason: res
+                        .reason
+                        .unwrap_or_else(|| "Nabla: Suspicious composition detected".to_string()),
                     weight,
                 });
             }
@@ -484,7 +511,7 @@ impl ThreatVoter for CompositionVoter {
 }
 
 /// Behavioral YARA-X Voter
-/// 
+///
 /// Replaces Hayabusa/Sigma with native YARA-X rules matching on event JSON.
 #[derive(Clone)]
 pub struct BehavioralYaraVoter {
@@ -517,10 +544,14 @@ impl ThreatVoter for BehavioralYaraVoter {
                 }
             }
             None
-        }).await.ok().flatten();
+        })
+        .await
+        .ok()
+        .flatten();
 
         if res.is_some() {
-            self.total_detections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.total_detections
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         res
     }
@@ -547,25 +578,34 @@ impl ThreatVoter for DotscopeVoter {
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
-            if !image_path.to_lowercase().ends_with(".exe") && !image_path.to_lowercase().ends_with(".dll") {
+            if !image_path.to_lowercase().ends_with(".exe")
+                && !image_path.to_lowercase().ends_with(".dll")
+            {
                 return None;
             }
             let path = std::path::PathBuf::from(image_path);
             let analyzer = self.analyzer.clone();
             let adaptive = self.adaptive.clone();
 
-            adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-                if let Ok(results) = analyzer.analyze_file(&path).await {
-                    if results.is_suspicious {
-                        return Some(VoteResult {
-                            confidence: 0.88,
-                            reason: format!("Dotscope: Suspicious .NET CIL detected - {}", results.reason),
-                            weight: 0.9,
-                        });
+            adaptive
+                .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                    if let Ok(results) = analyzer.analyze_file(&path).await {
+                        if results.is_suspicious {
+                            return Some(VoteResult {
+                                confidence: 0.88,
+                                reason: format!(
+                                    "Dotscope: Suspicious .NET CIL detected - {}",
+                                    results.reason
+                                ),
+                                weight: 0.9,
+                            });
+                        }
                     }
-                }
-                None
-            }).await.ok().flatten()
+                    None
+                })
+                .await
+                .ok()
+                .flatten()
         } else {
             None
         }
@@ -631,7 +671,7 @@ impl ThreatVoter for MemoryInspectionVoter {
             }
         }
 
-#[cfg(target_os = "windows")]
+        #[cfg(target_os = "windows")]
         {
             let findings = match tokio::time::timeout(
                 std::time::Duration::from_secs(2),
@@ -646,7 +686,10 @@ impl ThreatVoter for MemoryInspectionVoter {
             if findings.hollowing_detected {
                 return Some(VoteResult {
                     confidence: 1.0,
-                    reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
+                    reason: format!(
+                        "MemoryInspection: Process hollowing detected in PID {}",
+                        pid
+                    ),
                     weight: 1.0,
                 });
             }
@@ -664,13 +707,16 @@ impl ThreatVoter for MemoryInspectionVoter {
             if findings.has_spoofed_stack {
                 return Some(VoteResult {
                     confidence: 0.95,
-                    reason: format!("MemoryInspection: Call stack spoofing detected in PID {}", pid),
+                    reason: format!(
+                        "MemoryInspection: Call stack spoofing detected in PID {}",
+                        pid
+                    ),
                     weight: 0.95,
                 });
             }
             None
         }
-#[cfg(not(target_os = "windows"))]
+        #[cfg(not(target_os = "windows"))]
         {
             let _ = pid;
             None
@@ -714,24 +760,30 @@ impl ThreatVoter for BehavioralClassifierVoter {
                     downweight = 0.25;
                     break;
                 }
-                if trusted_identity_signal(event, p) || osoosi_types::is_trusted_signed_binary(Path::new(p)) {
+                if trusted_identity_signal(event, p)
+                    || osoosi_types::is_trusted_signed_binary(Path::new(p))
+                {
                     downweight = 0.35;
                     break;
                 }
             }
         }
 
-        adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-            let (is_suspicious, score, reason) = classifier.classify_sentence(&sentence).await;
-            if is_suspicious {
-                return Some(VoteResult {
-                    confidence: score,
-                    reason: format!("BehavioralAI: {} - {}", reason, sentence),
-                    weight: 0.95 * downweight,
-                });
-            }
-            None
-        }).await.ok().flatten()
+        adaptive
+            .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                let (is_suspicious, score, reason) = classifier.classify_sentence(&sentence).await;
+                if is_suspicious {
+                    return Some(VoteResult {
+                        confidence: score,
+                        reason: format!("BehavioralAI: {} - {}", reason, sentence),
+                        weight: 0.95 * downweight,
+                    });
+                }
+                None
+            })
+            .await
+            .ok()
+            .flatten()
     }
 }
 
@@ -742,33 +794,71 @@ mod tests {
     #[test]
     fn test_voter_skip_and_trusted_paths() {
         assert!(scanner_skip_path(r"D:\dev\project\.vscode\settings.json"));
-        assert!(scanner_skip_path(r"D:\dev\project\target\debug\build_artifact.pdb"));
+        assert!(scanner_skip_path(
+            r"D:\dev\project\target\debug\build_artifact.pdb"
+        ));
         assert!(scanner_skip_path(r"D:\dev\project\src\main.rs"));
-        assert!(scanner_skip_path(r"C:\Users\dev\.cargo\registry\cache.lock"));
-        assert!(scanner_skip_path(r"D:\dev\project\.git\objects\pack\pack-123.idx"));
-        assert!(scanner_skip_path(r"C:\Program Files\Git\mingw64\bin\git.exe"));
-        assert!(scanner_skip_path(r"C:\Users\dev\AppData\Local\Google\DriveFS\temp\sync.tmp"));
-        assert!(scanner_skip_path(r"C:\Users\dev\.cache\huggingface\hub\models--bert\snapshots\model.bin"));
-        assert!(scanner_skip_path(r"C:\Users\dev\.ollama\models\blobs\sha256-abc"));
-        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"));
-        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"));
-        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node"));
-        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"));
-        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node"));
+        assert!(scanner_skip_path(
+            r"C:\Users\dev\.cargo\registry\cache.lock"
+        ));
+        assert!(scanner_skip_path(
+            r"D:\dev\project\.git\objects\pack\pack-123.idx"
+        ));
+        assert!(scanner_skip_path(
+            r"C:\Program Files\Git\mingw64\bin\git.exe"
+        ));
+        assert!(scanner_skip_path(
+            r"C:\Users\dev\AppData\Local\Google\DriveFS\temp\sync.tmp"
+        ));
+        assert!(scanner_skip_path(
+            r"C:\Users\dev\.cache\huggingface\hub\models--bert\snapshots\model.bin"
+        ));
+        assert!(scanner_skip_path(
+            r"C:\Users\dev\.ollama\models\blobs\sha256-abc"
+        ));
+        assert!(scanner_skip_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
+        ));
+        assert!(scanner_skip_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"
+        ));
+        assert!(scanner_skip_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node"
+        ));
+        assert!(scanner_skip_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"
+        ));
+        assert!(scanner_skip_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node"
+        ));
 
         assert!(!scanner_skip_path(r"C:\Windows\System32\evil.exe"));
         assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\payload.exe"));
         assert!(!scanner_skip_path(r"C:\Windows\Temp\mimikatz.exe"));
         assert!(!scanner_skip_path(r"C:\Windows\Temp\vulkan-1.dll"));
-        assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\msalruntime.dll"));
+        assert!(!scanner_skip_path(
+            r"C:\Users\victim\Downloads\msalruntime.dll"
+        ));
         assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\vsda.node"));
-        assert!(!scanner_skip_path(r"C:\Windows\Temp\win32-app-container-tokens.node"));
+        assert!(!scanner_skip_path(
+            r"C:\Windows\Temp\win32-app-container-tokens.node"
+        ));
 
-        assert!(trusted_operational_path(r"C:\Program Files\Git\bin\git.exe"));
-        assert!(trusted_operational_path(r"D:\dev\project\.vscode\extensions\bin\tool.exe"));
-        assert!(trusted_operational_path(r"D:\dev\project\target\release\my_tool.exe"));
-        assert!(trusted_operational_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"));
-        assert!(trusted_operational_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"));
+        assert!(trusted_operational_path(
+            r"C:\Program Files\Git\bin\git.exe"
+        ));
+        assert!(trusted_operational_path(
+            r"D:\dev\project\.vscode\extensions\bin\tool.exe"
+        ));
+        assert!(trusted_operational_path(
+            r"D:\dev\project\target\release\my_tool.exe"
+        ));
+        assert!(trusted_operational_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
+        ));
+        assert!(trusted_operational_path(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"
+        ));
     }
 
     #[tokio::test]
@@ -828,9 +918,19 @@ mod tests {
 
         // PID <= 4 returns None immediately (testing PIDs 0..=4 as integer, string, whitespace, and hex)
         for pid_val in [
-            json!(0), json!(1), json!(2), json!(3), json!(4),
-            json!("0"), json!("1"), json!("2"), json!("3"), json!("4"),
-            json!(" 4 "), json!("0x4"), json!("0x0")
+            json!(0),
+            json!(1),
+            json!(2),
+            json!(3),
+            json!(4),
+            json!("0"),
+            json!("1"),
+            json!("2"),
+            json!("3"),
+            json!("4"),
+            json!(" 4 "),
+            json!("0x4"),
+            json!("0x0"),
         ] {
             let ev_system_pid = HostSecurityEvent {
                 source: HostEventSource::WindowsEventLog,
@@ -932,12 +1032,15 @@ mod tests {
         assert!(voter.vote(&ev_non_existent).await.is_none());
 
         // Consensus integration test: PolicyEngine skips MemoryInspectionVoter when TelemetryController is in SILENT mode
-        let mut policy = osoosi_policy::PolicyEngine::new(memory.clone(), osoosi_types::PolicyConfig::default());
+        let mut policy =
+            osoosi_policy::PolicyEngine::new(memory.clone(), osoosi_types::PolicyConfig::default());
         policy.telemetry_controller = Some(adaptive.clone());
-        policy.add_voter(Box::new(MemoryInspectionVoter {
-            memory: memory.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(MemoryInspectionVoter {
+                memory: memory.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
 
         *adaptive.current_mode.write().unwrap() = osoosi_types::TelemetryMode::Silent;
         assert!(adaptive.is_silent_mode());
@@ -978,11 +1081,15 @@ mod tests {
         };
 
         // Assert contract
-        assert!(voter.is_heavy(), "BehavioralClassifierVoter must be marked heavy");
+        assert!(
+            voter.is_heavy(),
+            "BehavioralClassifierVoter must be marked heavy"
+        );
         assert_eq!(voter.name(), "BehavioralAI-Cortex");
 
         // Consensus integration test: PolicyEngine skips BehavioralClassifierVoter in SILENT mode
-        let mut policy = osoosi_policy::PolicyEngine::new(memory.clone(), osoosi_types::PolicyConfig::default());
+        let mut policy =
+            osoosi_policy::PolicyEngine::new(memory.clone(), osoosi_types::PolicyConfig::default());
         policy.telemetry_controller = Some(adaptive.clone());
         policy.add_voter(Box::new(voter)).await;
 
@@ -1043,7 +1150,10 @@ mod tests {
         };
 
         // Assert contract
-        assert!(!yara_voter.is_heavy(), "BehavioralYaraVoter must NOT be heavy");
+        assert!(
+            !yara_voter.is_heavy(),
+            "BehavioralYaraVoter must NOT be heavy"
+        );
         assert_eq!(yara_voter.name(), "BehavioralYara");
 
         // 1. Positive match
@@ -1065,8 +1175,13 @@ mod tests {
         let v = vote.unwrap();
         assert_eq!(v.confidence, 0.9);
         assert_eq!(v.weight, 0.8);
-        assert!(v.reason.contains("BehavioralYara: DETECTED - Suspicious_Curl_Download"));
-        assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert!(v
+            .reason
+            .contains("BehavioralYara: DETECTED - Suspicious_Curl_Download"));
+        assert_eq!(
+            total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
 
         // 2. Benign event (no match)
         let ev_benign = HostSecurityEvent {
@@ -1084,7 +1199,10 @@ mod tests {
 
         let vote_benign = yara_voter.vote(&ev_benign).await;
         assert!(vote_benign.is_none());
-        assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(
+            total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            1
+        );
 
         // 3. High-volume concurrent burst test (50 tasks executing concurrently via spawn_blocking)
         let voter_arc = Arc::new(yara_voter);
@@ -1092,9 +1210,9 @@ mod tests {
         for _ in 0..50 {
             let voter_clone = voter_arc.clone();
             let ev_clone = ev_malicious.clone();
-            handles.push(tokio::spawn(async move {
-                voter_clone.vote(&ev_clone).await
-            }));
+            handles.push(tokio::spawn(
+                async move { voter_clone.vote(&ev_clone).await },
+            ));
         }
 
         for h in handles {
@@ -1103,7 +1221,10 @@ mod tests {
         }
 
         // 1 initial + 50 burst detections = 51
-        assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 51);
+        assert_eq!(
+            total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            51
+        );
     }
 
     #[tokio::test]
@@ -1136,22 +1257,33 @@ mod tests {
 
         // 1. Before dynamic rule addition, vote must return None
         let vote_before = voter.vote(&event).await;
-        assert!(vote_before.is_none(), "Must not vote threat before dynamic rule exists");
+        assert!(
+            vote_before.is_none(),
+            "Must not vote threat before dynamic rule exists"
+        );
 
         // 2. Hot-swap new rule on the fly
-        let rule_src = format!(r#"
+        let rule_src = format!(
+            r#"
             rule {} {{
                 strings:
                     $sig = "{}"
                 condition:
                     $sig
             }}
-        "#, rule_name, sig);
-        yara_mgr.hot_load_rule(&rule_src, &rule_name).expect("hot load ok");
+        "#,
+            rule_name, sig
+        );
+        yara_mgr
+            .hot_load_rule(&rule_src, &rule_name)
+            .expect("hot load ok");
 
         // 3. Immediately after hot-swap, YaraXVoter MUST detect and vote threat on the exact same event!
         let vote_after = voter.vote(&event).await;
-        assert!(vote_after.is_some(), "YaraXVoter must detect newly hot-swapped rule on the fly");
+        assert!(
+            vote_after.is_some(),
+            "YaraXVoter must detect newly hot-swapped rule on the fly"
+        );
         let res = vote_after.unwrap();
         assert!(res.reason.contains(&rule_name));
         assert_eq!(res.confidence, 1.0);
@@ -1161,5 +1293,3 @@ mod tests {
         let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
     }
 }
-
-

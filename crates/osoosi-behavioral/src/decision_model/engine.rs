@@ -155,13 +155,17 @@ impl ClefDecisionEngine {
     /// Evaluates a raw DecisionRequest across configured or fallback providers.
     pub async fn evaluate_request(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
         let start = Instant::now();
-        self.metrics.total_evaluations.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .total_evaluations
+            .fetch_add(1, Ordering::Relaxed);
 
         let prov = self.config.provider.to_lowercase();
 
         // 1. Hybrid Provider Strategy Routing
         if prov == "hybrid" {
-            self.metrics.hybrid_evaluations.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .hybrid_evaluations
+                .fetch_add(1, Ordering::Relaxed);
             let strategy = self.config.hybrid_strategy.to_lowercase();
             let mut res = match strategy.as_str() {
                 "consensus" => self.evaluate_hybrid_consensus(request).await,
@@ -169,7 +173,9 @@ impl ClefDecisionEngine {
                 _ => self.evaluate_hybrid_cascade(request).await, // default: cascade
             }?;
             let elapsed_micros = start.elapsed().as_micros() as u64;
-            self.metrics.total_latency_micros.fetch_add(elapsed_micros, Ordering::Relaxed);
+            self.metrics
+                .total_latency_micros
+                .fetch_add(elapsed_micros, Ordering::Relaxed);
             res.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
             return Ok(res);
         }
@@ -180,9 +186,13 @@ impl ClefDecisionEngine {
             let client = self.cf_client.as_ref().unwrap();
             match client.run_decision(request).await {
                 Ok(resp) => {
-                    self.metrics.cloudflare_evaluations.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .cloudflare_evaluations
+                        .fetch_add(1, Ordering::Relaxed);
                     let elapsed_micros = start.elapsed().as_micros() as u64;
-                    self.metrics.total_latency_micros.fetch_add(elapsed_micros, Ordering::Relaxed);
+                    self.metrics
+                        .total_latency_micros
+                        .fetch_add(elapsed_micros, Ordering::Relaxed);
                     return Ok(resp);
                 }
                 Err(err) => {
@@ -191,12 +201,18 @@ impl ClefDecisionEngine {
                             "[DECISION] Cloudflare Workers AI call failed ({}); falling back to local engine.",
                             err
                         );
-                        self.metrics.fallback_evaluations.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .fallback_evaluations
+                            .fetch_add(1, Ordering::Relaxed);
                         match self.local_engine.evaluate(request) {
                             Ok(mut local_resp) => {
-                                self.metrics.local_evaluations.fetch_add(1, Ordering::Relaxed);
+                                self.metrics
+                                    .local_evaluations
+                                    .fetch_add(1, Ordering::Relaxed);
                                 let elapsed_micros = start.elapsed().as_micros() as u64;
-                                self.metrics.total_latency_micros.fetch_add(elapsed_micros, Ordering::Relaxed);
+                                self.metrics
+                                    .total_latency_micros
+                                    .fetch_add(elapsed_micros, Ordering::Relaxed);
                                 local_resp.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
                                 return Ok(local_resp);
                             }
@@ -216,9 +232,13 @@ impl ClefDecisionEngine {
         // Default or explicit local execution
         match self.local_engine.evaluate(request) {
             Ok(mut local_resp) => {
-                self.metrics.local_evaluations.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .local_evaluations
+                    .fetch_add(1, Ordering::Relaxed);
                 let elapsed_micros = start.elapsed().as_micros() as u64;
-                self.metrics.total_latency_micros.fetch_add(elapsed_micros, Ordering::Relaxed);
+                self.metrics
+                    .total_latency_micros
+                    .fetch_add(elapsed_micros, Ordering::Relaxed);
                 local_resp.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
                 Ok(local_resp)
             }
@@ -234,14 +254,19 @@ impl ClefDecisionEngine {
     /// Tier 2: Cloudflare Clef Flash Non-Autoregressive Edge (~38ms)
     /// Tier 3: Local Strands Decider 2B SLM (~115ms)
     /// Tier 4: Native local heuristic engine fallback
-    pub async fn evaluate_hybrid_cascade(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
+    pub async fn evaluate_hybrid_cascade(
+        &self,
+        request: &DecisionRequest,
+    ) -> Result<DecisionResponse> {
         // Tier 1: In-process Brier check (< 5ms)
         let local_res = self.local_engine.evaluate(request);
         if let Ok(local_resp) = local_res {
             let parsed = parse_security_incident_response(&local_resp);
             // If confidence >= 0.95 or <= 0.10, decisive answer on hot-path: return immediately
             if parsed.action_probability >= 0.95 || parsed.action_probability <= 0.10 {
-                self.metrics.local_evaluations.fetch_add(1, Ordering::Relaxed);
+                self.metrics
+                    .local_evaluations
+                    .fetch_add(1, Ordering::Relaxed);
                 return Ok(local_resp);
             }
 
@@ -249,7 +274,9 @@ impl ClefDecisionEngine {
             if let Some(ref cf) = self.cf_client {
                 match cf.run_decision(request).await {
                     Ok(cf_resp) => {
-                        self.metrics.cloudflare_evaluations.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .cloudflare_evaluations
+                            .fetch_add(1, Ordering::Relaxed);
                         return Ok(cf_resp);
                     }
                     Err(err) => {
@@ -265,7 +292,9 @@ impl ClefDecisionEngine {
             if let Some(ref sc) = self.strands_client {
                 match sc.run_decision(request).await {
                     Ok(strands_resp) => {
-                        self.metrics.strands_evaluations.fetch_add(1, Ordering::Relaxed);
+                        self.metrics
+                            .strands_evaluations
+                            .fetch_add(1, Ordering::Relaxed);
                         return Ok(strands_resp);
                     }
                     Err(err) => {
@@ -278,19 +307,25 @@ impl ClefDecisionEngine {
             }
 
             // Tier 4: Native local heuristic fallback
-            self.metrics.fallback_evaluations.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .fallback_evaluations
+                .fetch_add(1, Ordering::Relaxed);
             Ok(local_resp)
         } else {
             // Local evaluation failed, fallback to strands or cf
             if let Some(ref sc) = self.strands_client {
                 if let Ok(s) = sc.run_decision(request).await {
-                    self.metrics.strands_evaluations.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .strands_evaluations
+                        .fetch_add(1, Ordering::Relaxed);
                     return Ok(s);
                 }
             }
             if let Some(ref cf) = self.cf_client {
                 if let Ok(c) = cf.run_decision(request).await {
-                    self.metrics.cloudflare_evaluations.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .cloudflare_evaluations
+                        .fetch_add(1, Ordering::Relaxed);
                     return Ok(c);
                 }
             }
@@ -303,7 +338,10 @@ impl ClefDecisionEngine {
     /// Combines action probability distributions with Bayesian weighting.
     /// If both models agree on containment (P >= 0.80), proceed autonomously.
     /// If models disagree, sets human_escalation_required = true, increments dispute counter, and logs.
-    pub async fn evaluate_hybrid_consensus(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
+    pub async fn evaluate_hybrid_consensus(
+        &self,
+        request: &DecisionRequest,
+    ) -> Result<DecisionResponse> {
         let cf_fut = async {
             if let Some(ref cf) = self.cf_client {
                 cf.run_decision(request).await.ok()
@@ -327,8 +365,8 @@ impl ClefDecisionEngine {
             .or_else(|| self.local_engine.evaluate(request).ok())
             .unwrap_or_else(|| StrandsClient::local_calibrated_estimation(request));
 
-        let resp_strands = strands_opt
-            .unwrap_or_else(|| StrandsClient::local_calibrated_estimation(request));
+        let resp_strands =
+            strands_opt.unwrap_or_else(|| StrandsClient::local_calibrated_estimation(request));
 
         let dec_clef = parse_security_incident_response(&resp_clef);
         let dec_strands = parse_security_incident_response(&resp_strands);
@@ -337,7 +375,14 @@ impl ClefDecisionEngine {
         let w_strands = 0.45;
 
         // Extract action probabilities
-        let candidate_actions = ["allow", "alert", "tarpit", "ghost_tarpit", "quarantine", "isolate"];
+        let candidate_actions = [
+            "allow",
+            "alert",
+            "tarpit",
+            "ghost_tarpit",
+            "quarantine",
+            "isolate",
+        ];
         let mut fused_probs: HashMap<String, f64> = HashMap::new();
 
         let probs_clef = resp_clef
@@ -350,12 +395,20 @@ impl ClefDecisionEngine {
             .and_then(|a| a.probabilities.as_ref());
 
         for &act in &candidate_actions {
-            let p_c = probs_clef
-                .and_then(|m| m.get(act).copied())
-                .unwrap_or(if act == dec_clef.containment_action { dec_clef.action_probability } else { 0.05 });
-            let p_s = probs_strands
-                .and_then(|m| m.get(act).copied())
-                .unwrap_or(if act == dec_strands.containment_action { dec_strands.action_probability } else { 0.05 });
+            let p_c = probs_clef.and_then(|m| m.get(act).copied()).unwrap_or(
+                if act == dec_clef.containment_action {
+                    dec_clef.action_probability
+                } else {
+                    0.05
+                },
+            );
+            let p_s = probs_strands.and_then(|m| m.get(act).copied()).unwrap_or(
+                if act == dec_strands.containment_action {
+                    dec_strands.action_probability
+                } else {
+                    0.05
+                },
+            );
             fused_probs.insert(act.to_string(), w_clef * p_c + w_strands * p_s);
         }
 
@@ -377,18 +430,22 @@ impl ClefDecisionEngine {
             }
         }
 
-        let is_containment = |act: &str| matches!(act, "isolate" | "quarantine" | "tarpit" | "ghost_tarpit");
+        let is_containment =
+            |act: &str| matches!(act, "isolate" | "quarantine" | "tarpit" | "ghost_tarpit");
         let clef_contains = is_containment(&dec_clef.containment_action);
         let strands_contains = is_containment(&dec_strands.containment_action);
 
         let mut disagreement = false;
-        let mut human_escalation = dec_clef.human_escalation_required || dec_strands.human_escalation_required;
+        let mut human_escalation =
+            dec_clef.human_escalation_required || dec_strands.human_escalation_required;
 
         // Disagreement detection: e.g. Clef says isolate while Strands says allow
         if clef_contains != strands_contains {
             disagreement = true;
             human_escalation = true;
-            self.metrics.consensus_disagreements.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .consensus_disagreements
+                .fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
                 "[DECISION-CONSENSUS] Model dispute detected: Clef action '{}' (P={:.2}) vs Strands action '{}' (P={:.2}). Human escalation flagged.",
                 dec_clef.containment_action, dec_clef.action_probability,
@@ -426,12 +483,17 @@ impl ClefDecisionEngine {
     /// 100% Air-Gapped Local-First Execution:
     /// Tier 1 Brier Gate (< 5ms) + Tier 3 Strands Decider 2B SLM exclusively.
     /// Strict zero-network egress.
-    pub async fn evaluate_hybrid_local_first(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
+    pub async fn evaluate_hybrid_local_first(
+        &self,
+        request: &DecisionRequest,
+    ) -> Result<DecisionResponse> {
         // Tier 1 in-process Brier check
         let local_resp = self.local_engine.evaluate(request)?;
         let parsed = parse_security_incident_response(&local_resp);
         if parsed.action_probability >= 0.95 || parsed.action_probability <= 0.10 {
-            self.metrics.local_evaluations.fetch_add(1, Ordering::Relaxed);
+            self.metrics
+                .local_evaluations
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(local_resp);
         }
 
@@ -439,23 +501,33 @@ impl ClefDecisionEngine {
         if let Some(ref sc) = self.strands_client {
             match sc.run_decision(request).await {
                 Ok(mut strands_resp) => {
-                    self.metrics.strands_evaluations.fetch_add(1, Ordering::Relaxed);
+                    self.metrics
+                        .strands_evaluations
+                        .fetch_add(1, Ordering::Relaxed);
                     strands_resp.provider = "hybrid-local-first".to_string();
                     return Ok(strands_resp);
                 }
                 Err(e) => {
-                    tracing::debug!("[DECISION-LOCAL] Strands SLM failed ({}). Fallback to Brier.", e);
+                    tracing::debug!(
+                        "[DECISION-LOCAL] Strands SLM failed ({}). Fallback to Brier.",
+                        e
+                    );
                 }
             }
         }
 
         // Fallback to Tier 1
-        self.metrics.fallback_evaluations.fetch_add(1, Ordering::Relaxed);
+        self.metrics
+            .fallback_evaluations
+            .fetch_add(1, Ordering::Relaxed);
         Ok(local_resp)
     }
 
     /// Evaluates a security incident state string on the hot path in sub-5ms.
-    pub async fn evaluate_security_incident(&self, state_text: &str) -> Result<SecurityIncidentDecision> {
+    pub async fn evaluate_security_incident(
+        &self,
+        state_text: &str,
+    ) -> Result<SecurityIncidentDecision> {
         let req = build_security_incident_request(&self.config.model, state_text);
         let resp = self.evaluate_request(&req).await?;
         Ok(parse_security_incident_response(&resp))
@@ -463,7 +535,8 @@ impl ClefDecisionEngine {
 
     /// Record Reinforcement Learning for Calibrated Decisions (RLCD) feedback.
     pub fn record_rl_feedback(&self, decision_id: &str, reward: f64, actual_outcome: &str) {
-        self.local_engine.record_rl_feedback(decision_id, reward, actual_outcome);
+        self.local_engine
+            .record_rl_feedback(decision_id, reward, actual_outcome);
     }
 
     /// Returns a point-in-time metrics summary for supervisor telemetry.

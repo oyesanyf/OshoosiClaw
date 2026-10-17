@@ -71,7 +71,7 @@ impl MemoryWatchdogDebouncer {
             MemoryPressureLevel::Critical => {
                 let emit = self
                     .last_critical
-                    .map_or(true, |t| now.saturating_duration_since(t) >= self.critical_debounce);
+                    .is_none_or(|t| now.saturating_duration_since(t) >= self.critical_debounce);
                 if emit {
                     self.last_critical = Some(now);
                 }
@@ -80,7 +80,7 @@ impl MemoryWatchdogDebouncer {
             MemoryPressureLevel::Warning => {
                 let emit = self
                     .last_warn
-                    .map_or(true, |t| now.saturating_duration_since(t) >= self.warn_debounce);
+                    .is_none_or(|t| now.saturating_duration_since(t) >= self.warn_debounce);
                 if emit {
                     self.last_warn = Some(now);
                 }
@@ -178,12 +178,27 @@ mod tests {
     #[test]
     fn test_evaluate_memory_pressure_thresholds() {
         assert_eq!(evaluate_memory_pressure(0.0), MemoryPressureLevel::Critical);
-        assert_eq!(evaluate_memory_pressure(100.0), MemoryPressureLevel::Critical);
-        assert_eq!(evaluate_memory_pressure(249.99), MemoryPressureLevel::Critical);
-        assert_eq!(evaluate_memory_pressure(250.0), MemoryPressureLevel::Warning);
-        assert_eq!(evaluate_memory_pressure(599.99), MemoryPressureLevel::Warning);
+        assert_eq!(
+            evaluate_memory_pressure(100.0),
+            MemoryPressureLevel::Critical
+        );
+        assert_eq!(
+            evaluate_memory_pressure(249.99),
+            MemoryPressureLevel::Critical
+        );
+        assert_eq!(
+            evaluate_memory_pressure(250.0),
+            MemoryPressureLevel::Warning
+        );
+        assert_eq!(
+            evaluate_memory_pressure(599.99),
+            MemoryPressureLevel::Warning
+        );
         assert_eq!(evaluate_memory_pressure(600.0), MemoryPressureLevel::Normal);
-        assert_eq!(evaluate_memory_pressure(8192.0), MemoryPressureLevel::Normal);
+        assert_eq!(
+            evaluate_memory_pressure(8192.0),
+            MemoryPressureLevel::Normal
+        );
     }
 
     #[test]
@@ -195,25 +210,45 @@ mod tests {
         assert!(debouncer.should_emit(MemoryPressureLevel::Critical, start));
 
         // 2. Next tick at +2s is debounced
-        assert!(!debouncer.should_emit(MemoryPressureLevel::Critical, start + Duration::from_secs(2)));
+        assert!(!debouncer.should_emit(
+            MemoryPressureLevel::Critical,
+            start + Duration::from_secs(2)
+        ));
 
         // 3. Tick at +9s is still debounced
-        assert!(!debouncer.should_emit(MemoryPressureLevel::Critical, start + Duration::from_secs(9)));
+        assert!(!debouncer.should_emit(
+            MemoryPressureLevel::Critical,
+            start + Duration::from_secs(9)
+        ));
 
         // 4. Tick at +10s emits
-        assert!(debouncer.should_emit(MemoryPressureLevel::Critical, start + Duration::from_secs(10)));
+        assert!(debouncer.should_emit(
+            MemoryPressureLevel::Critical,
+            start + Duration::from_secs(10)
+        ));
 
         // 5. Warning level is independent: initial warning emits immediately
-        assert!(debouncer.should_emit(MemoryPressureLevel::Warning, start + Duration::from_secs(11)));
+        assert!(debouncer.should_emit(
+            MemoryPressureLevel::Warning,
+            start + Duration::from_secs(11)
+        ));
 
         // 6. Next warning at +20s (9s after last warning) is debounced
-        assert!(!debouncer.should_emit(MemoryPressureLevel::Warning, start + Duration::from_secs(20)));
+        assert!(!debouncer.should_emit(
+            MemoryPressureLevel::Warning,
+            start + Duration::from_secs(20)
+        ));
 
         // 7. Warning at +41s (30s after +11s) emits
-        assert!(debouncer.should_emit(MemoryPressureLevel::Warning, start + Duration::from_secs(41)));
+        assert!(debouncer.should_emit(
+            MemoryPressureLevel::Warning,
+            start + Duration::from_secs(41)
+        ));
 
         // 8. Normal pressure never emits
-        assert!(!debouncer.should_emit(MemoryPressureLevel::Normal, start + Duration::from_secs(42)));
+        assert!(
+            !debouncer.should_emit(MemoryPressureLevel::Normal, start + Duration::from_secs(42))
+        );
     }
 
     #[test]
@@ -234,6 +269,9 @@ mod tests {
     #[test]
     fn test_trim_process_working_set_executes_cleanly() {
         let trimmed = trim_process_working_set();
-        assert!(trimmed, "trim_process_working_set should execute cleanly without panicking");
+        assert!(
+            trimmed,
+            "trim_process_working_set should execute cleanly without panicking"
+        );
     }
 }

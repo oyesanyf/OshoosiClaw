@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use tracing::{info, warn};
-use smoltcp::iface::{Interface, Config, SocketSet};
+use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::time::Instant;
 use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+use std::sync::Arc;
+use tracing::{info, warn};
 use wintun::Adapter;
 
 /// A wrapper around Wintun Session to implement smoltcp's Device trait.
@@ -67,8 +67,11 @@ pub struct SmolSandbox {
 impl SmolSandbox {
     /// Initialize a new userspace stack on a private Wintun interface.
     pub fn new(adapter_name: &str) -> anyhow::Result<Self> {
-        info!("Initializing Forensic Isolation Stack via Wintun: {}...", adapter_name);
-        
+        info!(
+            "Initializing Forensic Isolation Stack via Wintun: {}...",
+            adapter_name
+        );
+
         let wintun = unsafe { wintun::load()? };
         let adapter = Adapter::create(&wintun, "OpenOsoosi", adapter_name, None)?;
         let session = adapter.start_session(wintun::MAX_RING_CAPACITY)?;
@@ -82,7 +85,9 @@ impl SmolSandbox {
 
         let mut interface = Interface::new(config, &mut device, Instant::now());
         interface.update_ip_addrs(|addrs| {
-            addrs.push(IpCidr::new(IpAddress::v4(10, 255, 0, 1), 24)).unwrap();
+            addrs
+                .push(IpCidr::new(IpAddress::v4(10, 255, 0, 1), 24))
+                .unwrap();
         });
 
         Ok(Self {
@@ -97,14 +102,14 @@ impl SmolSandbox {
     /// This is where Deep Packet Inspection (DPI) and Forensic Filtering occurs.
     pub fn poll(&mut self) {
         let timestamp = Instant::now();
-        
+
         // Hand-crank the network stack
         // In a real implementation, we would read from the Wintun session here
         // and feed packets into the interface.
-        
+
         // This is where you inspect EVERY byte before it hits the NIC
         // if !self.forensic_policy_check() { drop_packet(); }
-        
+
         self.last_poll = timestamp;
     }
 

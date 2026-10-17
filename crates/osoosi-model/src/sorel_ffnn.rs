@@ -11,21 +11,41 @@ impl SorelFFNN {
         // SOREL-20M FFNN has 5 layers of 512 units
         // Note: The actual layer names in the .pt file might be "layers.0", "layers.2", etc.
         // since Sequential adds them with indices.
-        
+
         let hidden_size = 512;
         let input_size = 2381;
-        
+
         // Layer 0: Linear(2381, 512)
-        layers.push(candle_nn::linear(input_size, hidden_size, vb.pp("layers.0"))?);
+        layers.push(candle_nn::linear(
+            input_size,
+            hidden_size,
+            vb.pp("layers.0"),
+        )?);
         // Layer 1: ReLU (not a parameter layer)
         // Layer 2: Linear(512, 512)
-        layers.push(candle_nn::linear(hidden_size, hidden_size, vb.pp("layers.2"))?);
+        layers.push(candle_nn::linear(
+            hidden_size,
+            hidden_size,
+            vb.pp("layers.2"),
+        )?);
         // Layer 4: Linear(512, 512)
-        layers.push(candle_nn::linear(hidden_size, hidden_size, vb.pp("layers.4"))?);
+        layers.push(candle_nn::linear(
+            hidden_size,
+            hidden_size,
+            vb.pp("layers.4"),
+        )?);
         // Layer 6: Linear(512, 512)
-        layers.push(candle_nn::linear(hidden_size, hidden_size, vb.pp("layers.6"))?);
+        layers.push(candle_nn::linear(
+            hidden_size,
+            hidden_size,
+            vb.pp("layers.6"),
+        )?);
         // Layer 8: Linear(512, 512)
-        layers.push(candle_nn::linear(hidden_size, hidden_size, vb.pp("layers.8"))?);
+        layers.push(candle_nn::linear(
+            hidden_size,
+            hidden_size,
+            vb.pp("layers.8"),
+        )?);
         // Layer 10: Linear(512, 1)
         layers.push(candle_nn::linear(hidden_size, 1, vb.pp("layers.10"))?);
 
@@ -34,7 +54,7 @@ impl SorelFFNN {
 
     pub fn load<P: AsRef<std::path::Path>>(path: P, device: &Device) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        
+
         // Validation: Ensure file exists and is not an empty/malformed error page
         let meta = std::fs::metadata(path)?;
         if meta.len() < 1024 {
@@ -42,8 +62,11 @@ impl SorelFFNN {
         }
 
         // Try Safetensors first (preferred for Rust-native training)
-        if path.extension().and_then(|s| s.to_str()) == Some("safetensors") || 
-           path.metadata()?.len() > 0 && std::fs::read(&path).map(|b| b.len() >= 8 && &b[0..8] != b"PK\x03\x04").unwrap_or(false) 
+        if path.extension().and_then(|s| s.to_str()) == Some("safetensors")
+            || path.metadata()?.len() > 0
+                && std::fs::read(path)
+                    .map(|b| b.len() >= 8 && &b[0..8] != b"PK\x03\x04")
+                    .unwrap_or(false)
         {
             if let Ok(tensors) = candle_core::safetensors::load(path, device) {
                 let vb = VarBuilder::from_tensors(tensors, DType::F32, device);

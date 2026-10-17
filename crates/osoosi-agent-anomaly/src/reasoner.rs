@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use chrono::Utc;
+use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
 use regex::Regex;
+use std::sync::Arc;
 use tracing::debug;
 use uuid::Uuid;
-use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
 
 use crate::screener::ScreenerResult;
 use crate::types::{AlertSeverity, AnomalyFinding, OwaspAgenticRisk, ToolCallTelemetry};
@@ -34,8 +34,10 @@ impl SemanticReasoningEngine {
                 .build()
                 .unwrap_or_default(),
             aws_key_re: Regex::new(r"\bAKIA[0-9A-Z]{16}\b").expect("Valid AWS regex"),
-            jwt_re: Regex::new(r"\beyJ[a-zA-Z0-9_\-]{10,}\.eyJ[a-zA-Z0-9_\-]{10,}\.[a-zA-Z0-9_\-]+\b")
-                .expect("Valid JWT regex"),
+            jwt_re: Regex::new(
+                r"\beyJ[a-zA-Z0-9_\-]{10,}\.eyJ[a-zA-Z0-9_\-]{10,}\.[a-zA-Z0-9_\-]+\b",
+            )
+            .expect("Valid JWT regex"),
             credit_card_re: Regex::new(r"\b(?:\d{4}[ -]?){3}\d{4}\b").expect("Valid CC regex"),
             private_key_re: Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
                 .expect("Valid private key regex"),
@@ -68,7 +70,8 @@ impl SemanticReasoningEngine {
         // Pattern 1: Prompt Injection & Jailbreak in Parameters (ASI01)
         if let Some(finding) = self.detect_prompt_injection(telemetry, &strings) {
             candidate_finding = Some(finding);
-        } else if let Some(finding) = self.detect_rogue_agent_shell_destruction(telemetry, &strings) {
+        } else if let Some(finding) = self.detect_rogue_agent_shell_destruction(telemetry, &strings)
+        {
             // Pattern 2: Rogue Agent Shell Destruction (ASI10)
             candidate_finding = Some(finding);
         } else if let Some(finding) = self.detect_data_exfiltration(telemetry, &strings) {
@@ -179,13 +182,26 @@ impl SemanticReasoningEngine {
         if let Some(mut found) = candidate_finding {
             if let Some((threat_cluster, sim_score, tag)) = threat_similarity {
                 if let Some(obj) = found.evidence.as_object_mut() {
-                    obj.insert("embedding_gemma2_cosine_score".to_string(), serde_json::json!(sim_score));
-                    obj.insert("embedding_gemma2_threat_cluster".to_string(), serde_json::json!(threat_cluster));
-                    obj.insert("embedding_gemma2_threat_tag".to_string(), serde_json::json!(tag));
-                    obj.insert("embedding_gemma2_dimension".to_string(), serde_json::json!(128));
+                    obj.insert(
+                        "embedding_gemma2_cosine_score".to_string(),
+                        serde_json::json!(sim_score),
+                    );
+                    obj.insert(
+                        "embedding_gemma2_threat_cluster".to_string(),
+                        serde_json::json!(threat_cluster),
+                    );
+                    obj.insert(
+                        "embedding_gemma2_threat_tag".to_string(),
+                        serde_json::json!(tag),
+                    );
+                    obj.insert(
+                        "embedding_gemma2_dimension".to_string(),
+                        serde_json::json!(128),
+                    );
                 }
                 if sim_score >= 0.85 {
-                    found.confidence_score = ((found.confidence_score + sim_score) / 2.0).clamp(0.0, 0.99);
+                    found.confidence_score =
+                        ((found.confidence_score + sim_score) / 2.0).clamp(0.0, 0.99);
                 }
             }
             return Some(found);
@@ -354,8 +370,12 @@ impl SemanticReasoningEngine {
                     risk_category: OwaspAgenticRisk::DataExfiltrationASI07,
                     severity: AlertSeverity::High,
                     confidence_score: 0.92,
-                    rationale: "Bearer/JWT authentication token detected embedded in tool call parameters.".to_string(),
-                    recommended_mitigation: "Enforce secret masking on agent tool inputs and revoke compromised tokens.".to_string(),
+                    rationale:
+                        "Bearer/JWT authentication token detected embedded in tool call parameters."
+                            .to_string(),
+                    recommended_mitigation:
+                        "Enforce secret masking on agent tool inputs and revoke compromised tokens."
+                            .to_string(),
                     flagged_at: Utc::now(),
                     evidence: serde_json::json!({
                         "secret_type": "JWT_TOKEN",
@@ -390,8 +410,11 @@ impl SemanticReasoningEngine {
                     risk_category: OwaspAgenticRisk::DataExfiltrationASI07,
                     severity: AlertSeverity::Critical,
                     confidence_score: 0.99,
-                    rationale: "Cryptographic private key header detected in tool arguments.".to_string(),
-                    recommended_mitigation: "Revoke and rotate private key immediately; audit agent data source.".to_string(),
+                    rationale: "Cryptographic private key header detected in tool arguments."
+                        .to_string(),
+                    recommended_mitigation:
+                        "Revoke and rotate private key immediately; audit agent data source."
+                            .to_string(),
                     flagged_at: Utc::now(),
                     evidence: serde_json::json!({
                         "secret_type": "PRIVATE_KEY",
@@ -426,7 +449,12 @@ impl SemanticReasoningEngine {
         if let serde_json::Value::Object(map) = &telemetry.call_parameters {
             for (k, v) in map {
                 let kl = k.to_lowercase();
-                if kl == "limit" || kl == "count" || kl == "page_size" || kl == "pagesize" || kl == "batch_size" {
+                if kl == "limit"
+                    || kl == "count"
+                    || kl == "page_size"
+                    || kl == "pagesize"
+                    || kl == "batch_size"
+                {
                     if let Some(n) = v.as_u64() {
                         limit = n;
                     } else if let Some(s) = v.as_str() {

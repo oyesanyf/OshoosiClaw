@@ -3,6 +3,12 @@
 //! Uses NVD CVE and CISA KEV feeds to identify active threats.
 //! Correlates telemetry (Sysmon) with known vulnerabilities.
 
+#![allow(clippy::type_complexity)]
+
+pub mod agent_egress;
+pub mod agentic_voter;
+pub mod ai_audit_voter;
+pub mod cve_cache;
 pub mod engine;
 pub mod feed;
 pub mod graph;
@@ -12,22 +18,18 @@ pub mod semantic;
 pub mod traffic_adapter;
 pub mod verified;
 pub mod voters;
-pub mod cve_cache;
-pub mod agentic_voter;
-pub mod agent_egress;
-pub mod ai_audit_voter;
 
 pub mod admin;
-pub mod sandbox_surface;
-pub mod sigma;
 pub mod ioc;
 pub mod mitre_kb;
+pub mod sandbox_surface;
+pub mod sigma;
 
 pub use mitre_kb::*;
 
+pub use crate::admin::*;
 pub use agent_egress::*;
 pub use ai_audit_voter::*;
-pub use crate::admin::*;
 pub use engine::*;
 pub use feed::*;
 pub use graph::*;

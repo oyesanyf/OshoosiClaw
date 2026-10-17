@@ -171,7 +171,7 @@ impl FileWatcher {
         let trap_paths = Arc::new(dashmap::DashSet::new());
         let currently_hashing = Arc::new(dashmap::DashSet::new());
         let hashing_set = currently_hashing.clone();
-        
+
         let watcher_tx = event_tx.clone();
         let watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             if let Ok(event) = res {
@@ -196,14 +196,25 @@ impl FileWatcher {
                         if event.kind.is_access() && !is_trap {
                             continue;
                         }
-                        if !path.is_file() || (!is_trap && should_skip_path(&path, &processor_install_dir, &processor_excludes)) {
+                        if !path.is_file()
+                            || (!is_trap
+                                && should_skip_path(
+                                    &path,
+                                    &processor_install_dir,
+                                    &processor_excludes,
+                                ))
+                        {
                             continue;
                         }
 
                         // PERFORMANCE HARDENING: Skip hashing massive files (>200MB) in real-time
                         if let Ok(meta) = path.metadata() {
                             if meta.len() > 200 * 1024 * 1024 {
-                                debug!("Skipping hash for massive file: {} ({} bytes)", path.display(), meta.len());
+                                debug!(
+                                    "Skipping hash for massive file: {} ({} bytes)",
+                                    path.display(),
+                                    meta.len()
+                                );
                                 continue;
                             }
                         }
@@ -230,23 +241,28 @@ impl FileWatcher {
                         let hashing_set_inner = hashing_set.clone();
                         let path_str_inner = path_str.clone();
 
-                        let task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> = Box::pin(async move {
+                        let task: std::pin::Pin<
+                            Box<dyn std::future::Future<Output = ()> + Send + 'static>,
+                        > = Box::pin(async move {
                             let _guard = HashingGuard {
                                 set: hashing_set_inner.clone(),
                                 path: path_str_inner.clone(),
                             };
                             match calculate_blake3_hash(&path_for_hash).await {
                                 Ok(hash) => {
-                                    let _ = tx_clone.send(Ok(FileChangeEvent {
-                                        path: path_str_inner.clone(),
-                                        hash,
-                                        kind,
-                                    })).await;
+                                    let _ = tx_clone
+                                        .send(Ok(FileChangeEvent {
+                                            path: path_str_inner.clone(),
+                                            hash,
+                                            kind,
+                                        }))
+                                        .await;
                                 }
                                 Err(e) => {
                                     let err_str = e.to_string();
                                     if let Some(ref mem) = memory_for_error {
-                                        let _ = mem.add_file_to_skip_list(&path_str_inner, &err_str);
+                                        let _ =
+                                            mem.add_file_to_skip_list(&path_str_inner, &err_str);
                                     }
                                 }
                             }
@@ -274,7 +290,8 @@ impl FileWatcher {
 
     pub fn watch<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
         info!("Starting watch on: {:?}", path.as_ref());
-        self.watcher.watch(path.as_ref(), RecursiveMode::Recursive)?;
+        self.watcher
+            .watch(path.as_ref(), RecursiveMode::Recursive)?;
         Ok(())
     }
 }
@@ -285,7 +302,10 @@ pub async fn build_os_file_hash_baseline(
     exclude_paths: Vec<String>,
     adaptive: Arc<dyn osoosi_types::TelemetryControllerInterface>,
 ) {
-    info!("Starting background hash of all files in watch paths: {}", paths.join(", "));
+    info!(
+        "Starting background hash of all files in watch paths: {}",
+        paths.join(", ")
+    );
     let _ = memory.set_repair_status("baseline_status", "running");
     let _ = memory.set_repair_status("baseline_start", &Utc::now().to_rfc3339());
     let _ = memory.set_repair_status("baseline_count", "0");
@@ -365,18 +385,18 @@ pub async fn build_os_file_hash_baseline(
                 use std::io::Read;
                 loop {
                     let n = file.read(&mut buffer)?;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                     hasher.update(&buffer[..n]);
                 }
                 Ok::<String, anyhow::Error>(hasher.finalize().to_hex().to_string())
-            }).await;
+            })
+            .await;
 
-            match res {
-                Ok(Ok(hash)) => {
-                    let _ = mem.update_file_hash(&path_str, &hash);
-                    count_ptr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-                _ => {}
+            if let Ok(Ok(hash)) = res {
+                let _ = mem.update_file_hash(&path_str, &hash);
+                count_ptr.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         });
     }

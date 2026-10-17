@@ -10,7 +10,7 @@ pub mod threat_correlator;
 pub use atlas_matrix::{AtlasTactic, AtlasTechnique, MitreAtlasMatrix};
 pub use atlas_parser::{AtlasCaseStudy, AtlasMitigation, AtlasParser, ParsedAtlasKnowledgeBase};
 pub use atlas_sync::{
-    AtlasSyncError, AtlasSyncMetadata, AtlasSyncManager, EMBEDDED_GOLDEN_STIX,
+    AtlasSyncError, AtlasSyncManager, AtlasSyncMetadata, EMBEDDED_GOLDEN_STIX,
     PINNED_ATLAS_GOLDEN_SHA256,
 };
 pub use coverage_matrix::{

@@ -68,10 +68,8 @@ pub fn get_os_info() -> (String, String, bool) {
         version.contains("10") || version.contains("11") || version.contains("Server")
     } else if name.to_lowercase().contains("linux") {
         true // Most modern distros are fine
-    } else if name.to_lowercase().contains("darwin") || name.to_lowercase().contains("mac") {
-        true
     } else {
-        false
+        name.to_lowercase().contains("darwin") || name.to_lowercase().contains("mac")
     };
 
     (name, version, supported)
@@ -248,8 +246,11 @@ pub fn is_administrative_lolbin(path: &str) -> bool {
 /// returns false so SFC cannot veto or downgrade the autonomous response.
 pub async fn validate_file_safety_with_veto(path: &str, has_active_threat: bool) -> bool {
     let autonomy = osoosi_types::load_autonomy_config();
-    let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
-    if (is_administrative_lolbin(path) && has_active_threat) || (is_lockdown_mode && has_active_threat) {
+    let is_lockdown_mode =
+        autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+    if (is_administrative_lolbin(path) && has_active_threat)
+        || (is_lockdown_mode && has_active_threat)
+    {
         warn!(
             "SFC DOUBLE-VETO: Binary {} is an administrative LOLBin or Lockdown Mode is active with threat. SFC safety override disallowed.",
             path
@@ -267,8 +268,21 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
         use std::path::Path;
         use std::process::Command;
 
-        if path.contains("..") || path.chars().any(|c| c.is_control() || c == '"' || c == '&' || c == '|' || c == ';' || c == '`' || c == '$') {
-            warn!("SFC Validation: Rejecting suspicious or malformed file path: {}", path);
+        if path.contains("..")
+            || path.chars().any(|c| {
+                c.is_control()
+                    || c == '"'
+                    || c == '&'
+                    || c == '|'
+                    || c == ';'
+                    || c == '`'
+                    || c == '$'
+            })
+        {
+            warn!(
+                "SFC Validation: Rejecting suspicious or malformed file path: {}",
+                path
+            );
             return false;
         }
 
@@ -340,7 +354,10 @@ pub fn detect_gpu() -> (bool, Option<String>) {
             return (true, Some(format!("NVIDIA CUDA ({})", cuda_path.trim())));
         }
     }
-    if std::env::var("OSOOSI_FORCE_GPU").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("OSOOSI_FORCE_GPU")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         return (true, Some("Forced GPU".to_string()));
     }
 
@@ -425,9 +442,15 @@ impl HostResourceProfile {
     }
 
     /// Resolve hardware tier given configured profile override or raw memory numbers.
-    pub fn resolve_tier(profile_str: &str, total_ram_mb: u64, available_ram_mb: u64) -> osoosi_types::config::HardwareTier {
+    pub fn resolve_tier(
+        profile_str: &str,
+        total_ram_mb: u64,
+        available_ram_mb: u64,
+    ) -> osoosi_types::config::HardwareTier {
         match profile_str.trim().to_lowercase().as_str() {
-            "ultralite" | "ultra_lite" | "ultra-lite" => osoosi_types::config::HardwareTier::UltraLite,
+            "ultralite" | "ultra_lite" | "ultra-lite" => {
+                osoosi_types::config::HardwareTier::UltraLite
+            }
             "lite" => osoosi_types::config::HardwareTier::Lite,
             "standard" => osoosi_types::config::HardwareTier::Standard,
             "enterprise" => osoosi_types::config::HardwareTier::Enterprise,
@@ -446,7 +469,10 @@ impl HostResourceProfile {
     }
 
     /// Evaluate operational readiness across all registered models and subsystems.
-    pub fn evaluate_model_readiness(&self, cfg: &osoosi_types::config::ResourcesConfig) -> Vec<ModelResourceVerdict> {
+    pub fn evaluate_model_readiness(
+        &self,
+        cfg: &osoosi_types::config::ResourcesConfig,
+    ) -> Vec<ModelResourceVerdict> {
         vec![
             ModelResourceVerdict {
                 model_name: "Magika (Type Classifier)".to_string(),
@@ -546,7 +572,10 @@ impl HostResourceProfile {
                 },
                 available_ram_mb: self.available_ram_mb,
                 can_load: true,
-                status: format!("Active (Cap: {} records)", self.recommended_nsrl_cache_limit()),
+                status: format!(
+                    "Active (Cap: {} records)",
+                    self.recommended_nsrl_cache_limit()
+                ),
             },
         ]
     }
@@ -612,27 +641,60 @@ mod tests {
     #[test]
     fn test_tier_resolution_auto() {
         // UltraLite: total < 4096 or avail < 1500
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 2048, 1024), HardwareTier::UltraLite);
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 16384, 1000), HardwareTier::UltraLite);
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 2048, 1024),
+            HardwareTier::UltraLite
+        );
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 16384, 1000),
+            HardwareTier::UltraLite
+        );
 
         // Lite: total < 8192 or avail < 3500 (and not UltraLite)
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 6144, 2500), HardwareTier::Lite);
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 16384, 2500), HardwareTier::Lite);
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 6144, 2500),
+            HardwareTier::Lite
+        );
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 16384, 2500),
+            HardwareTier::Lite
+        );
 
         // Standard: total < 16384 or avail < 7000 (and not Lite/UltraLite)
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 12288, 5000), HardwareTier::Standard);
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 32768, 5000), HardwareTier::Standard);
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 12288, 5000),
+            HardwareTier::Standard
+        );
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 32768, 5000),
+            HardwareTier::Standard
+        );
 
         // Enterprise: total >= 16384 and avail >= 7000
-        assert_eq!(HostResourceProfile::resolve_tier("auto", 32768, 16384), HardwareTier::Enterprise);
+        assert_eq!(
+            HostResourceProfile::resolve_tier("auto", 32768, 16384),
+            HardwareTier::Enterprise
+        );
     }
 
     #[test]
     fn test_tier_resolution_overrides() {
-        assert_eq!(HostResourceProfile::resolve_tier("ultralite", 65536, 32768), HardwareTier::UltraLite);
-        assert_eq!(HostResourceProfile::resolve_tier("lite", 65536, 32768), HardwareTier::Lite);
-        assert_eq!(HostResourceProfile::resolve_tier("standard", 1024, 512), HardwareTier::Standard);
-        assert_eq!(HostResourceProfile::resolve_tier("enterprise", 1024, 512), HardwareTier::Enterprise);
+        assert_eq!(
+            HostResourceProfile::resolve_tier("ultralite", 65536, 32768),
+            HardwareTier::UltraLite
+        );
+        assert_eq!(
+            HostResourceProfile::resolve_tier("lite", 65536, 32768),
+            HardwareTier::Lite
+        );
+        assert_eq!(
+            HostResourceProfile::resolve_tier("standard", 1024, 512),
+            HardwareTier::Standard
+        );
+        assert_eq!(
+            HostResourceProfile::resolve_tier("enterprise", 1024, 512),
+            HardwareTier::Enterprise
+        );
     }
 
     #[test]
@@ -660,7 +722,10 @@ mod tests {
 
         let verdicts = profile.evaluate_model_readiness(&cfg);
         assert_eq!(verdicts.len(), 9);
-        let browser_v = verdicts.iter().find(|v| v.model_name.contains("Browser")).unwrap();
+        let browser_v = verdicts
+            .iter()
+            .find(|v| v.model_name.contains("Browser"))
+            .unwrap();
         assert!(!browser_v.can_load);
     }
 
@@ -728,5 +793,3 @@ mod tests {
         assert_eq!(profile.recommended_nsrl_cache_limit(), 2_500_000);
     }
 }
-
-

@@ -106,8 +106,8 @@ pub fn hybrid_key_exchange(
     // Step 3: Combine both shared secrets
     // hybrid_secret = SHA-256(x25519_shared || mlkem_shared || "osoosi-pqc-v1")
     let mut hasher = Sha256::new();
-    hasher.update(&x25519_shared);
-    hasher.update(&mlkem_shared);
+    hasher.update(x25519_shared);
+    hasher.update(mlkem_shared);
     hasher.update(b"osoosi-pqc-v1");
     let combined: [u8; 32] = hasher.finalize().into();
 
@@ -219,7 +219,7 @@ fn mlkem_encapsulate(peer_public: &[u8], our_seed: &[u8; 32]) -> ([u8; 32], Vec<
 
     // Ciphertext (simplified)
     let mut ct_hasher = Sha256::new();
-    ct_hasher.update(&shared);
+    ct_hasher.update(shared);
     ct_hasher.update(b"mlkem-768-ciphertext");
     let ciphertext = ct_hasher.finalize().to_vec();
 

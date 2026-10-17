@@ -296,16 +296,15 @@ impl SafetyFilter {
         target_name: &str,
         candidate_action: EdrAction,
     ) -> EdrAction {
-        if self.is_protected(target_pid, target_name) {
-            if candidate_action == EdrAction::HardMitigation
-                || candidate_action == EdrAction::MicroContainment
-            {
-                warn!(
-                    "Action {:?} masked for critical target {}. Degraded to safe inspection",
-                    candidate_action, target_name
-                );
-                return EdrAction::MemoryIntrospection;
-            }
+        if self.is_protected(target_pid, target_name)
+            && (candidate_action == EdrAction::HardMitigation
+                || candidate_action == EdrAction::MicroContainment)
+        {
+            warn!(
+                "Action {:?} masked for critical target {}. Degraded to safe inspection",
+                candidate_action, target_name
+            );
+            return EdrAction::MemoryIntrospection;
         }
         candidate_action
     }
@@ -717,12 +716,12 @@ impl Default for MultiObjectiveWeights {
 /// Formula: $R_t = R_{\text{security}} - R_{\text{disruption}} - R_{\text{cost}}$
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EdrRewardEngine {
-    pub tp_containment_reward: f32,     // +100.0
-    pub early_elevation_reward: f32,    // +15.0
-    pub fp_disruption_penalty: f32,     // -200.0
-    pub fp_micro_penalty: f32,          // -50.0
-    pub dwell_penalty_per_step: f32,    // -0.5
-    pub telemetry_overhead_penalty: f32,// -0.1
+    pub tp_containment_reward: f32,      // +100.0
+    pub early_elevation_reward: f32,     // +15.0
+    pub fp_disruption_penalty: f32,      // -200.0
+    pub fp_micro_penalty: f32,           // -50.0
+    pub dwell_penalty_per_step: f32,     // -0.5
+    pub telemetry_overhead_penalty: f32, // -0.1
     #[serde(default)]
     pub multi_weights: MultiObjectiveWeights,
 }
@@ -855,7 +854,11 @@ impl EdrRewardEngine {
             0.0
         };
 
-        let s_dwell = if is_malicious && action.is_containment() { 1.0 } else { 0.0 };
+        let s_dwell = if is_malicious && action.is_containment() {
+            1.0
+        } else {
+            0.0
+        };
         let s_cost = match action {
             EdrAction::MemoryIntrospection => 0.2,
             EdrAction::TraceElevation => 0.1,
@@ -911,11 +914,7 @@ impl DenseLayer {
         let mut rng = rand::thread_rng();
         let bound = (6.0 / (in_dim + out_dim) as f32).sqrt(); // Glorot uniform
         let weights = (0..in_dim)
-            .map(|_| {
-                (0..out_dim)
-                    .map(|_| rng.gen_range(-bound..bound))
-                    .collect()
-            })
+            .map(|_| (0..out_dim).map(|_| rng.gen_range(-bound..bound)).collect())
             .collect();
         let biases = vec![0.0; out_dim];
         Self { weights, biases }
@@ -1174,10 +1173,12 @@ impl DeepQEngine {
                 transition.reward
             } else {
                 let next_q = self.forward(&transition.next_state);
-                let max_next_q = next_q
-                    .into_iter()
-                    .fold(f32::NEG_INFINITY, f32::max);
-                let max_q = if max_next_q.is_finite() { max_next_q } else { 0.0 };
+                let max_next_q = next_q.into_iter().fold(f32::NEG_INFINITY, f32::max);
+                let max_q = if max_next_q.is_finite() {
+                    max_next_q
+                } else {
+                    0.0
+                };
                 transition.reward + gamma * max_q
             };
 
@@ -1199,20 +1200,15 @@ impl DeepQEngine {
 }
 
 /// Execution regimes for RL controllers (Pillar 4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum RlExecutionMode {
     /// Policy trains online from scratch.
+    #[default]
     ColdRl,
     /// Policy initialized with expert heuristic priors.
     WarmPriorRl,
     /// Strictly read-only evaluation mode: weights and covariance matrices locked.
     FrozenTest,
-}
-
-impl Default for RlExecutionMode {
-    fn default() -> Self {
-        Self::ColdRl
-    }
 }
 
 fn default_version() -> usize {
@@ -1273,7 +1269,8 @@ impl DoubleDeepQEngine {
                 self.online_net.fc_out.biases[i] = b;
             }
         }
-        self.target_net.load_flat_weights(&self.online_net.get_flat_weights());
+        self.target_net
+            .load_flat_weights(&self.online_net.get_flat_weights());
     }
 
     /// Validates internal neural network dimension consistency against declared state/action dimensions.
@@ -1284,10 +1281,14 @@ impl DoubleDeepQEngine {
         if self.state_dim == 0 || self.action_dim == 0 {
             return Err("state_dim and action_dim must be non-zero".into());
         }
-        if self.online_net.state_dim != self.state_dim || self.online_net.action_dim != self.action_dim {
+        if self.online_net.state_dim != self.state_dim
+            || self.online_net.action_dim != self.action_dim
+        {
             return Err("online_net dimensions mismatch".into());
         }
-        if self.target_net.state_dim != self.state_dim || self.target_net.action_dim != self.action_dim {
+        if self.target_net.state_dim != self.state_dim
+            || self.target_net.action_dim != self.action_dim
+        {
             return Err("target_net dimensions mismatch".into());
         }
         Ok(())
@@ -1306,8 +1307,8 @@ impl DoubleDeepQEngine {
     }
 
     pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> Result<(), std::io::Error> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         std::fs::write(path, json)
     }
 
@@ -1315,7 +1316,8 @@ impl DoubleDeepQEngine {
         let contents = std::fs::read_to_string(path)?;
         let engine: Self = serde_json::from_str(&contents)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        engine.validate()
+        engine
+            .validate()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(engine)
     }
@@ -1327,12 +1329,7 @@ impl DoubleDeepQEngine {
 
     /// Action selection with strict deterministic action masking.
     /// Actions with mask[i] <= 0.0 are masked to f32::NEG_INFINITY.
-    pub fn select_guarded_action(
-        &self,
-        state: &[f32],
-        mask: &[f32; 5],
-        epsilon: f32,
-    ) -> EdrAction {
+    pub fn select_guarded_action(&self, state: &[f32], mask: &[f32; 5], epsilon: f32) -> EdrAction {
         let mut rng = rand::thread_rng();
 
         if rng.gen::<f32>() < epsilon {
@@ -1500,7 +1497,8 @@ impl DoubleDeepQEngine {
             }
 
             // Backpropagate through online network
-            self.online_net.backward_step(&transition.state, &grad_out, lr);
+            self.online_net
+                .backward_step(&transition.state, &grad_out, lr);
         }
 
         let mean_loss = total_loss / (batch.len() as f32);
@@ -1509,17 +1507,16 @@ impl DoubleDeepQEngine {
 }
 
 /// Risk sensitivity profiles for action evaluation (Conditional Value-at-Risk / CVaR).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
 pub enum RiskProfile {
+    #[default]
     RiskNeutral,
-    RiskAverse { alpha: f32 },
-    RiskSeeking { alpha: f32 },
-}
-
-impl Default for RiskProfile {
-    fn default() -> Self {
-        Self::RiskNeutral
-    }
+    RiskAverse {
+        alpha: f32,
+    },
+    RiskSeeking {
+        alpha: f32,
+    },
 }
 
 impl RiskProfile {
@@ -1528,21 +1525,21 @@ impl RiskProfile {
             return 0.0;
         }
         match self {
-            Self::RiskNeutral => {
-                quantiles.iter().sum::<f32>() / (quantiles.len() as f32)
-            }
+            Self::RiskNeutral => quantiles.iter().sum::<f32>() / (quantiles.len() as f32),
             Self::RiskAverse { alpha } => {
                 let mut sorted = quantiles.to_vec();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let alpha_clamped = alpha.clamp(0.0, 1.0);
-                let k = (((alpha_clamped * (sorted.len() as f32)).floor() as usize).max(1)).min(sorted.len());
+                let k = (((alpha_clamped * (sorted.len() as f32)).floor() as usize).max(1))
+                    .min(sorted.len());
                 sorted[..k].iter().sum::<f32>() / (k as f32)
             }
             Self::RiskSeeking { alpha } => {
                 let mut sorted = quantiles.to_vec();
                 sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 let alpha_clamped = alpha.clamp(0.0, 1.0);
-                let k = (((alpha_clamped * (sorted.len() as f32)).floor() as usize).max(1)).min(sorted.len());
+                let k = (((alpha_clamped * (sorted.len() as f32)).floor() as usize).max(1))
+                    .min(sorted.len());
                 let start = sorted.len() - k;
                 sorted[start..].iter().sum::<f32>() / (k as f32)
             }
@@ -1607,12 +1604,7 @@ impl DuelingQuantileNetwork {
         theta
     }
 
-    pub fn backward_quantiles(
-        &mut self,
-        state: &[f32],
-        grad_quantiles: &[Vec<f32>],
-        lr: f32,
-    ) {
+    pub fn backward_quantiles(&mut self, state: &[f32], grad_quantiles: &[Vec<f32>], lr: f32) {
         let h1 = self.fc1.forward(state, true);
         let h2 = self.fc2.forward(&h1, true);
 
@@ -1705,7 +1697,9 @@ impl DuelingQuantileNetwork {
         if self.fc_val.weights.len() != 128 || self.fc_val.biases.len() != self.num_quantiles {
             return Err("fc_val dimension mismatch".into());
         }
-        if self.fc_adv.weights.len() != 128 || self.fc_adv.biases.len() != self.action_dim * self.num_quantiles {
+        if self.fc_adv.weights.len() != 128
+            || self.fc_adv.biases.len() != self.action_dim * self.num_quantiles
+        {
             return Err("fc_adv dimension mismatch".into());
         }
         Ok(())
@@ -1772,7 +1766,8 @@ impl QuantileRegressionDqnEngine {
                 }
             }
         }
-        self.target_net.load_parameters(&self.online_net.flatten_parameters());
+        self.target_net
+            .load_parameters(&self.online_net.flatten_parameters());
     }
 
     pub fn forward_all_quantiles(&self, state: &[f32]) -> Vec<Vec<f32>> {
@@ -1783,7 +1778,11 @@ impl QuantileRegressionDqnEngine {
         self.evaluate_risk_action_values(state, RiskProfile::RiskNeutral)
     }
 
-    pub fn evaluate_risk_action_values(&self, state: &[f32], risk_profile: RiskProfile) -> Vec<f32> {
+    pub fn evaluate_risk_action_values(
+        &self,
+        state: &[f32],
+        risk_profile: RiskProfile,
+    ) -> Vec<f32> {
         let quantiles = self.online_net.forward_quantiles(state);
         quantiles
             .iter()
@@ -1892,7 +1891,11 @@ impl QuantileRegressionDqnEngine {
 
             for i in 0..n_quantiles {
                 let theta_i = current_dist.get(i).copied().unwrap_or(0.0);
-                let tau_i = self.tau.get(i).copied().unwrap_or((i as f32 + 0.5) / (n_quantiles as f32));
+                let tau_i = self
+                    .tau
+                    .get(i)
+                    .copied()
+                    .unwrap_or((i as f32 + 0.5) / (n_quantiles as f32));
 
                 let mut grad_i_sum = 0.0f32;
                 for j in 0..n_quantiles {
@@ -1922,7 +1925,8 @@ impl QuantileRegressionDqnEngine {
 
             total_loss += transition_loss / ((n_quantiles * n_quantiles) as f32);
 
-            self.online_net.backward_quantiles(&transition.state, &grad_theta, lr);
+            self.online_net
+                .backward_quantiles(&transition.state, &grad_theta, lr);
         }
 
         total_loss / (batch.len() as f32)
@@ -1984,8 +1988,8 @@ impl QuantileRegressionDqnEngine {
     }
 
     pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> Result<(), std::io::Error> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         std::fs::write(path, json)
     }
 
@@ -1993,7 +1997,8 @@ impl QuantileRegressionDqnEngine {
         let contents = std::fs::read_to_string(path)?;
         let engine: Self = serde_json::from_str(&contents)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        engine.validate()
+        engine
+            .validate()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(engine)
     }
@@ -2233,7 +2238,10 @@ impl LinUcbBandit {
             }
             for (r, row) in m.iter().enumerate() {
                 if row.len() != self.context_dim {
-                    return Err(format!("a_inv_matrices[{}][{}] col count != context_dim", a, r));
+                    return Err(format!(
+                        "a_inv_matrices[{}][{}] col count != context_dim",
+                        a, r
+                    ));
                 }
             }
         }
@@ -2389,7 +2397,9 @@ impl LinUcbBandit {
         }
         let denom = 1.0 + x_dot_v;
         if !denom.is_finite() || denom <= 1e-12 {
-            return Err("Sherman-Morrison denominator is near-zero, non-finite, or non-positive".into());
+            return Err(
+                "Sherman-Morrison denominator is near-zero, non-finite, or non-positive".into(),
+            );
         }
 
         // 3. Compute update into temporary buffer to ensure transactional safety
@@ -2409,7 +2419,9 @@ impl LinUcbBandit {
         // 4. Verify positive-definiteness on diagonal before mutating in-place
         for i in 0..d {
             if updated[i][i] <= 1e-12 {
-                return Err("Sherman-Morrison update lost positive-definiteness on diagonal".into());
+                return Err(
+                    "Sherman-Morrison update lost positive-definiteness on diagonal".into(),
+                );
             }
         }
 
@@ -2477,16 +2489,8 @@ impl LinUcbBandit {
                 let inv_x = solve_linear_system(&self.a_matrices[a], context)
                     .unwrap_or_else(|| vec![0.0; self.context_dim]);
 
-                let m: f32 = context
-                    .iter()
-                    .zip(theta.iter())
-                    .map(|(&x, &t)| x * t)
-                    .sum();
-                let v: f32 = context
-                    .iter()
-                    .zip(inv_x.iter())
-                    .map(|(&x, &z)| x * z)
-                    .sum();
+                let m: f32 = context.iter().zip(theta.iter()).map(|(&x, &t)| x * t).sum();
+                let v: f32 = context.iter().zip(inv_x.iter()).map(|(&x, &z)| x * z).sum();
                 (m as f64, v as f64)
             };
 
@@ -2525,9 +2529,11 @@ impl LinUcbBandit {
         // Streaming Sherman-Morrison update on A^-1
         if action < self.a_inv_matrices.len() {
             let ctx_f64: Vec<f64> = context.iter().map(|&x| x as f64).collect();
-            let sm_failed = Self::sherman_morrison_rank1_update(&mut self.a_inv_matrices[action], &ctx_f64).is_err();
+            let sm_failed =
+                Self::sherman_morrison_rank1_update(&mut self.a_inv_matrices[action], &ctx_f64)
+                    .is_err();
             // Recover or periodically re-synchronize (every 500 steps) to prevent cumulative floating point drift
-            if sm_failed || (self.step_count % 500 == 0) {
+            if sm_failed || self.step_count.is_multiple_of(500) {
                 let a_f64: Vec<Vec<f64>> = self.a_matrices[action]
                     .iter()
                     .map(|r| r.iter().map(|&v| v as f64).collect())
@@ -2552,8 +2558,8 @@ impl LinUcbBandit {
     }
 
     pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         std::fs::write(path, json)
     }
 
@@ -2561,7 +2567,8 @@ impl LinUcbBandit {
         let contents = std::fs::read_to_string(path)?;
         let bandit: Self = serde_json::from_str(&contents)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        bandit.validate()
+        bandit
+            .validate()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(bandit)
     }
@@ -2759,7 +2766,10 @@ impl SharedBilinearBandit {
     /// Evaluates expected reward prediction for candidate action: $\hat{r}(s, a) = \phi(s, a)^T \hat{\theta}$.
     pub fn predict(&self, action: usize, state: &[f64]) -> f64 {
         let phi = self.feature_map(state, action);
-        phi.iter().zip(self.theta_hat.iter()).map(|(&p, &t)| p * t).sum()
+        phi.iter()
+            .zip(self.theta_hat.iter())
+            .map(|(&p, &t)| p * t)
+            .sum()
     }
 
     /// Selects action maximizing Upper Confidence Bound under shared representation:
@@ -2785,7 +2795,11 @@ impl SharedBilinearBandit {
             let phi = self.feature_map(state, a);
 
             // mean = phi^T theta_hat
-            let mean: f64 = phi.iter().zip(self.theta_hat.iter()).map(|(&p, &t)| p * t).sum();
+            let mean: f64 = phi
+                .iter()
+                .zip(self.theta_hat.iter())
+                .map(|(&p, &t)| p * t)
+                .sum();
 
             // var = phi^T A^-1 phi
             let mut var = 0.0f64;
@@ -2833,7 +2847,7 @@ impl SharedBilinearBandit {
 
         // 2. Sherman-Morrison streaming update on A^-1
         let sm_failed = LinUcbBandit::sherman_morrison_rank1_update(&mut self.a_inv, &phi).is_err();
-        if sm_failed || (self.step_count % 500 == 0) {
+        if sm_failed || self.step_count.is_multiple_of(500) {
             if let Ok(recovered) = LinUcbBandit::stable_cholesky_inverse(&self.a_matrix, 1e-3) {
                 self.a_inv = recovered;
             }
@@ -2862,8 +2876,8 @@ impl SharedBilinearBandit {
     }
 
     pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| std::io::Error::other(e.to_string()))?;
         std::fs::write(path, json)
     }
 
@@ -2871,7 +2885,8 @@ impl SharedBilinearBandit {
         let contents = std::fs::read_to_string(path)?;
         let bandit: Self = serde_json::from_str(&contents)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        bandit.validate()
+        bandit
+            .validate()
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         Ok(bandit)
     }
@@ -2959,9 +2974,7 @@ impl NStepTransitionBuffer {
         let is_done = transition.done;
         self.buffer.push_back(transition);
 
-        if self.buffer.len() >= self.n_steps {
-            Some(self.pop_n_step_transition())
-        } else if is_done && !self.buffer.is_empty() {
+        if self.buffer.len() >= self.n_steps || (is_done && !self.buffer.is_empty()) {
             Some(self.pop_n_step_transition())
         } else {
             None
@@ -3247,7 +3260,9 @@ impl EDRRuntimeController {
             dqn: Arc::new(tokio::sync::RwLock::new(legacy_dqn)),
             double_dqn: Arc::new(tokio::sync::RwLock::new(double_dqn)),
             reward_engine: Arc::new(EdrRewardEngine::new()),
-            replay_buffer: Arc::new(tokio::sync::RwLock::new(PrioritizedReplayBuffer::new(50000))),
+            replay_buffer: Arc::new(tokio::sync::RwLock::new(PrioritizedReplayBuffer::new(
+                50000,
+            ))),
             aggregator: Arc::new(ByzantineRobustAggregator::default()),
             telemetry_rx,
             action_tx,
@@ -3303,7 +3318,9 @@ impl EDRRuntimeController {
 
             // 5. Calculate Reward and Store Transition
             let is_malicious = packet.threat_score > 0.65;
-            let is_critical = self.safety.is_protected(packet.ctx.pid, &packet.ctx.binary_path);
+            let is_critical = self
+                .safety
+                .is_protected(packet.ctx.pid, &packet.ctx.binary_path);
             let reward = if is_critical && candidate_action.is_containment() {
                 -500.0f32
             } else {
@@ -3411,7 +3428,9 @@ impl DigitalTwinSimulator {
                 peer_threat_level: 0.05,
                 quarantine_vote_ratio: 0.0,
             };
-            return self.pipeline.build_state_vector(&lineage, &velocity, &priors, &mesh);
+            return self
+                .pipeline
+                .build_state_vector(&lineage, &velocity, &priors, &mesh);
         }
 
         match stage {
@@ -3449,7 +3468,8 @@ impl DigitalTwinSimulator {
                     peer_threat_level: 0.3,
                     quarantine_vote_ratio: 0.1,
                 };
-                self.pipeline.build_state_vector(&lineage, &velocity, &priors, &mesh)
+                self.pipeline
+                    .build_state_vector(&lineage, &velocity, &priors, &mesh)
             }
             2 => {
                 // Stage 2: Defense Evasion / Masquerading
@@ -3485,7 +3505,8 @@ impl DigitalTwinSimulator {
                     peer_threat_level: 0.5,
                     quarantine_vote_ratio: 0.25,
                 };
-                self.pipeline.build_state_vector(&lineage, &velocity, &priors, &mesh)
+                self.pipeline
+                    .build_state_vector(&lineage, &velocity, &priors, &mesh)
             }
             3 => {
                 // Stage 3: Credential Access / LSASS
@@ -3521,7 +3542,8 @@ impl DigitalTwinSimulator {
                     peer_threat_level: 0.75,
                     quarantine_vote_ratio: 0.5,
                 };
-                self.pipeline.build_state_vector(&lineage, &velocity, &priors, &mesh)
+                self.pipeline
+                    .build_state_vector(&lineage, &velocity, &priors, &mesh)
             }
             4 => {
                 // Stage 4: Lateral Movement
@@ -3557,7 +3579,8 @@ impl DigitalTwinSimulator {
                     peer_threat_level: 0.85,
                     quarantine_vote_ratio: 0.7,
                 };
-                self.pipeline.build_state_vector(&lineage, &velocity, &priors, &mesh)
+                self.pipeline
+                    .build_state_vector(&lineage, &velocity, &priors, &mesh)
             }
             _ => {
                 // Stage 5: Ransomware Encryption / Exfiltration
@@ -3593,7 +3616,8 @@ impl DigitalTwinSimulator {
                     peer_threat_level: 0.95,
                     quarantine_vote_ratio: 0.95,
                 };
-                self.pipeline.build_state_vector(&lineage, &velocity, &priors, &mesh)
+                self.pipeline
+                    .build_state_vector(&lineage, &velocity, &priors, &mesh)
             }
         }
     }
@@ -3664,7 +3688,8 @@ impl DigitalTwinSimulator {
                 let epsilon = (0.2 * (1.0 - (ep as f32 / episodes as f32))).max(0.02);
                 let candidate_action = dqn.select_guarded_action(&s_vec, &mask, epsilon);
                 let guarded_action =
-                    self.safety.filter_action(ctx.pid, &ctx.binary_path, candidate_action);
+                    self.safety
+                        .filter_action(ctx.pid, &ctx.binary_path, candidate_action);
 
                 let reward = if is_protected_target && candidate_action.is_containment() {
                     -500.0f32
@@ -3948,9 +3973,21 @@ impl TemporalMetricsTracker {
         action_selected: usize,
         oracle_action: usize,
     ) {
-        let safe_rl = if rl_reward.is_finite() { rl_reward } else { 0.0 };
-        let safe_heur = if heuristic_reward.is_finite() { heuristic_reward } else { 0.0 };
-        let safe_oracle = if oracle_reward.is_finite() { oracle_reward } else { 0.0 };
+        let safe_rl = if rl_reward.is_finite() {
+            rl_reward
+        } else {
+            0.0
+        };
+        let safe_heur = if heuristic_reward.is_finite() {
+            heuristic_reward
+        } else {
+            0.0
+        };
+        let safe_oracle = if oracle_reward.is_finite() {
+            oracle_reward
+        } else {
+            0.0
+        };
 
         let t = self.step_count;
         self.step_count += 1;
@@ -4046,11 +4083,16 @@ mod tests {
         assert_eq!(filtered_micro, EdrAction::MemoryIntrospection);
 
         // PID 0 (System Idle)
-        let filtered_idle = filter.filter_action(0, "System Idle Process", EdrAction::HardMitigation);
+        let filtered_idle =
+            filter.filter_action(0, "System Idle Process", EdrAction::HardMitigation);
         assert_eq!(filtered_idle, EdrAction::MemoryIntrospection);
 
         // csrss.exe
-        let filtered_csrss = filter.filter_action(640, r"C:\Windows\System32\csrss.exe", EdrAction::HardMitigation);
+        let filtered_csrss = filter.filter_action(
+            640,
+            r"C:\Windows\System32\csrss.exe",
+            EdrAction::HardMitigation,
+        );
         assert_eq!(filtered_csrss, EdrAction::MemoryIntrospection);
 
         // Standard userland process remains unmasked
@@ -4102,7 +4144,8 @@ mod tests {
         assert_eq!(r_fp, -200.0);
 
         // FP micro containment on benign
-        let r_fp_micro = engine.compute_reward(EdrAction::MicroContainment, false, 0.05, 0.05, false);
+        let r_fp_micro =
+            engine.compute_reward(EdrAction::MicroContainment, false, 0.05, 0.05, false);
         assert_eq!(r_fp_micro, -50.0);
     }
 

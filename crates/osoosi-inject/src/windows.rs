@@ -1,27 +1,36 @@
 //! OpenỌ̀ṣọ́ọ̀sì Agentic EDR - Native Process Hooking Engine (Injected DLL)
 //!
 //! Ported from OpenEDR architectural patterns (`edrpm`).
-//! This library is injected into processes via APC to provide inner-process telemetry 
+//! This library is injected into processes via APC to provide inner-process telemetry
 //! and prevention capabilities (e.g., stopping screen scraping, blocking process creation).
 
 #![cfg(target_os = "windows")]
 
-use std::ffi::c_void;
-use windows::core::{s, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HINSTANCE, GENERIC_WRITE};
+use retour::GenericDetour;
 use serde_json::json;
-use windows::Win32::System::Threading::GetCurrentProcessId;
+use std::ffi::c_void;
+use windows::core::w;
+use windows::core::{s, PCWSTR};
+use windows::Win32::Foundation::{BOOL, GENERIC_WRITE, HINSTANCE};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, WriteFile, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_NONE, OPEN_EXISTING,
+};
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryA};
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
-use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, FILE_SHARE_NONE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES};
-use windows::core::w;
-use retour::GenericDetour;
+use windows::Win32::System::Threading::GetCurrentProcessId;
 
 // --- 1. Define the hook signatures (Detours) ---
 
 type FnBitBlt = unsafe extern "system" fn(
-    windows::Win32::Graphics::Gdi::HDC, i32, i32, i32, i32,
-    windows::Win32::Graphics::Gdi::HDC, i32, i32, windows::Win32::Graphics::Gdi::ROP_CODE
+    windows::Win32::Graphics::Gdi::HDC,
+    i32,
+    i32,
+    i32,
+    i32,
+    windows::Win32::Graphics::Gdi::HDC,
+    i32,
+    i32,
+    windows::Win32::Graphics::Gdi::ROP_CODE,
 ) -> BOOL;
 
 type FnCreateProcessW = unsafe extern "system" fn(
@@ -51,15 +60,12 @@ type FnNtProtectVirtualMemory = unsafe extern "system" fn(
     windows::Win32::Foundation::HANDLE,
     *mut *mut c_void,
     *mut usize,
-    u32, // NewProtection
+    u32,      // NewProtection
     *mut u32, // OldProtection
 ) -> windows::Win32::Foundation::NTSTATUS;
 
-type FnOpenProcess = unsafe extern "system" fn(
-    u32,
-    BOOL,
-    u32,
-) -> windows::Win32::Foundation::HANDLE;
+type FnOpenProcess =
+    unsafe extern "system" fn(u32, BOOL, u32) -> windows::Win32::Foundation::HANDLE;
 
 type FnReadProcessMemory = unsafe extern "system" fn(
     windows::Win32::Foundation::HANDLE,
@@ -70,18 +76,23 @@ type FnReadProcessMemory = unsafe extern "system" fn(
 ) -> BOOL;
 
 type FnSend = unsafe extern "system" fn(
-    usize, // SOCKET
+    usize,     // SOCKET
     *const u8, // buf
-    i32, // len
-    i32, // flags
+    i32,       // len
+    i32,       // flags
 ) -> i32;
 
 static HOOK_BITBLT: std::sync::OnceLock<GenericDetour<FnBitBlt>> = std::sync::OnceLock::new();
-static HOOK_CREATEPROCESSW: std::sync::OnceLock<GenericDetour<FnCreateProcessW>> = std::sync::OnceLock::new();
-static HOOK_NTALLOCATEVIRTUALMEMORY: std::sync::OnceLock<GenericDetour<FnNtAllocateVirtualMemory>> = std::sync::OnceLock::new();
-static HOOK_NTPROTECTVIRTUALMEMORY: std::sync::OnceLock<GenericDetour<FnNtProtectVirtualMemory>> = std::sync::OnceLock::new();
-static HOOK_OPENPROCESS: std::sync::OnceLock<GenericDetour<FnOpenProcess>> = std::sync::OnceLock::new();
-static HOOK_READPROCESSMEMORY: std::sync::OnceLock<GenericDetour<FnReadProcessMemory>> = std::sync::OnceLock::new();
+static HOOK_CREATEPROCESSW: std::sync::OnceLock<GenericDetour<FnCreateProcessW>> =
+    std::sync::OnceLock::new();
+static HOOK_NTALLOCATEVIRTUALMEMORY: std::sync::OnceLock<GenericDetour<FnNtAllocateVirtualMemory>> =
+    std::sync::OnceLock::new();
+static HOOK_NTPROTECTVIRTUALMEMORY: std::sync::OnceLock<GenericDetour<FnNtProtectVirtualMemory>> =
+    std::sync::OnceLock::new();
+static HOOK_OPENPROCESS: std::sync::OnceLock<GenericDetour<FnOpenProcess>> =
+    std::sync::OnceLock::new();
+static HOOK_READPROCESSMEMORY: std::sync::OnceLock<GenericDetour<FnReadProcessMemory>> =
+    std::sync::OnceLock::new();
 static HOOK_SEND: std::sync::OnceLock<GenericDetour<FnSend>> = std::sync::OnceLock::new();
 
 thread_local! {
@@ -138,10 +149,18 @@ extern "system" fn hooked_bitblt(
 ) -> BOOL {
     if let Some(hook) = HOOK_BITBLT.get() {
         if IN_HOOK.with(|c| c.get()) {
-            return unsafe { hook.call(hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop) };
+            return unsafe {
+                hook.call(
+                    hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop,
+                )
+            };
         }
         IN_HOOK.with(|c| c.set(true));
-        let res = unsafe { hook.call(hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop) };
+        let res = unsafe {
+            hook.call(
+                hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop,
+            )
+        };
         IN_HOOK.with(|c| c.set(false));
         res
     } else {
@@ -226,10 +245,13 @@ extern "system" fn hooked_nt_allocate_virtual_memory(
 
         IN_HOOK.with(|c| c.set(true));
         if protect.0 == 0x40 {
-            report_telemetry("NtAllocateVirtualMemory", json!({
-                "Protection": "RWX",
-                "AllocationType": format!("{:?}", allocation_type)
-            }));
+            report_telemetry(
+                "NtAllocateVirtualMemory",
+                json!({
+                    "Protection": "RWX",
+                    "AllocationType": format!("{:?}", allocation_type)
+                }),
+            );
         }
         let res = unsafe {
             hook.call(
@@ -271,10 +293,13 @@ extern "system" fn hooked_nt_protect_virtual_memory(
 
         IN_HOOK.with(|c| c.set(true));
         if new_protection == 0x40 {
-            report_telemetry("NtProtectVirtualMemory", json!({
-                "Protection": "RWX",
-                "NewProtection": format!("{:#x}", new_protection)
-            }));
+            report_telemetry(
+                "NtProtectVirtualMemory",
+                json!({
+                    "Protection": "RWX",
+                    "NewProtection": format!("{:#x}", new_protection)
+                }),
+            );
         }
         let res = unsafe {
             hook.call(
@@ -321,7 +346,9 @@ extern "system" fn hooked_read_process_memory(
 ) -> BOOL {
     if let Some(hook) = HOOK_READPROCESSMEMORY.get() {
         if IN_HOOK.with(|c| c.get()) {
-            return unsafe { hook.call(hprocess, base_address, buffer, size, number_of_bytes_read) };
+            return unsafe {
+                hook.call(hprocess, base_address, buffer, size, number_of_bytes_read)
+            };
         }
         IN_HOOK.with(|c| c.set(true));
         let res = unsafe { hook.call(hprocess, base_address, buffer, size, number_of_bytes_read) };
@@ -333,12 +360,7 @@ extern "system" fn hooked_read_process_memory(
 }
 
 /// Intercepted send: Deep Packet Inspection for HTTP/DNS payloads (Layer 7)
-extern "system" fn hooked_send(
-    s: usize,
-    buf: *const u8,
-    len: i32,
-    flags: i32,
-) -> i32 {
+extern "system" fn hooked_send(s: usize, buf: *const u8, len: i32, flags: i32) -> i32 {
     if let Some(hook) = HOOK_SEND.get() {
         if IN_HOOK.with(|c| c.get()) {
             return unsafe { hook.call(s, buf, len, flags) };
@@ -411,9 +433,12 @@ unsafe fn init_hooks() -> Result<(), Box<dyn std::error::Error>> {
         h.enable()?;
     }
 
-    let read_process_memory_addr = get_module_symbol_address(s!("kernel32.dll"), s!("ReadProcessMemory"))?;
-    let read_process_memory_target: FnReadProcessMemory = std::mem::transmute(read_process_memory_addr);
-    let read_process_memory_hook = GenericDetour::new(read_process_memory_target, hooked_read_process_memory)?;
+    let read_process_memory_addr =
+        get_module_symbol_address(s!("kernel32.dll"), s!("ReadProcessMemory"))?;
+    let read_process_memory_target: FnReadProcessMemory =
+        std::mem::transmute(read_process_memory_addr);
+    let read_process_memory_hook =
+        GenericDetour::new(read_process_memory_target, hooked_read_process_memory)?;
     let _ = HOOK_READPROCESSMEMORY.set(read_process_memory_hook);
     if let Some(h) = HOOK_READPROCESSMEMORY.get() {
         h.enable()?;

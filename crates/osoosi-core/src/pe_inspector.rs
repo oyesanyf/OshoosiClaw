@@ -37,10 +37,10 @@ pub fn is_preceded_by_call(bytes: &[u8]) -> bool {
         }
         let mod_val = (modrm >> 6) & 3;
         let rm = modrm & 7;
-        
+
         let mut instr_len = 2; // Opcode + ModRM
         let mut disp_size = 0;
-        
+
         if mod_val != 3 && rm == 4 {
             instr_len += 1; // SIB byte present
             if pos + 2 >= n {
@@ -52,7 +52,7 @@ pub fn is_preceded_by_call(bytes: &[u8]) -> bool {
                 disp_size = 4;
             }
         }
-        
+
         if mod_val == 1 {
             disp_size = 1;
         } else if mod_val == 2 {
@@ -60,7 +60,7 @@ pub fn is_preceded_by_call(bytes: &[u8]) -> bool {
         } else if mod_val == 0 && rm == 5 {
             disp_size = 4;
         }
-        
+
         let expected = instr_len + disp_size;
         if expected == len {
             return true;
@@ -73,21 +73,23 @@ pub fn is_preceded_by_call(bytes: &[u8]) -> bool {
 pub fn inspect_process(pid: u32) -> Result<InspectionFindings> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
         use windows::Win32::Foundation::CloseHandle;
-        
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+        };
+
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid)?;
             let mut findings = inspect_handle(handle)?;
-            
+
             // Check for unhooking byte patches
             if let Ok(patches) = inspect_remote_dll_patches(pid) {
                 findings.byte_patches = patches;
             }
-            
+
             // Check stack frames
             findings.has_spoofed_stack = inspect_stack_spoof(pid).unwrap_or(false);
-            
+
             let _ = CloseHandle(handle);
             Ok(findings)
         }
@@ -102,57 +104,65 @@ pub fn inspect_process(pid: u32) -> Result<InspectionFindings> {
 /// Diff process loaded ntdll.dll / kernel32.dll memory against disk bytes to find unhooking/byte patches.
 #[cfg(target_os = "windows")]
 pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32
-    };
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
-    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     use windows::Win32::Foundation::CloseHandle;
-    
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE,
+        TH32CS_SNAPMODULE32,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+    };
+
     let mut patches = Vec::new();
-    
+
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)?;
         let mut entry = MODULEENTRY32W {
             dwSize: std::mem::size_of::<MODULEENTRY32W>() as u32,
             ..Default::default()
         };
-        
+
         let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid)?;
-        
+
         if Module32FirstW(snapshot, &mut entry).is_ok() {
             loop {
                 let module_name = String::from_utf16_lossy(&entry.szModule)
                     .trim_matches('\0')
                     .to_lowercase();
-                
+
                 if module_name == "ntdll.dll" || module_name == "kernel32.dll" {
                     let dll_path_raw = String::from_utf16_lossy(&entry.szExePath);
                     let dll_path = dll_path_raw.trim_matches('\0');
                     let base_address = entry.modBaseAddr;
                     let _module_size = entry.modBaseSize;
-                    
+
                     if let Ok(disk_bytes) = std::fs::read(dll_path) {
                         if let Ok(pe) = pelite::pe64::PeFile::from_bytes(&disk_bytes) {
-                            if let Some(text_section) = pe.section_headers().iter().find(|s| s.Name == *b".text\0\0\0") {
+                            if let Some(text_section) = pe
+                                .section_headers()
+                                .iter()
+                                .find(|s| s.Name == *b".text\0\0\0")
+                            {
                                 let virtual_offset = text_section.VirtualAddress as usize;
                                 let raw_offset = text_section.PointerToRawData as usize;
                                 let section_size = text_section.VirtualSize as usize;
-                                
+
                                 let mut mem_buf = vec![0u8; section_size];
                                 let target_addr = base_address.add(virtual_offset);
-                                
+
                                 let mut bytes_read = 0;
                                 let res = ReadProcessMemory(
                                     process_handle,
                                     target_addr as _,
                                     mem_buf.as_mut_ptr() as _,
                                     section_size,
-                                    Some(&mut bytes_read)
+                                    Some(&mut bytes_read),
                                 );
-                                
+
                                 if res.is_ok() && bytes_read == section_size {
-                                    let disk_slice = &disk_bytes[raw_offset..(raw_offset + section_size)];
+                                    let disk_slice =
+                                        &disk_bytes[raw_offset..(raw_offset + section_size)];
                                     for offset in 0..section_size {
                                         if mem_buf[offset] != disk_slice[offset] {
                                             patches.push(format!(
@@ -166,7 +176,7 @@ pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
                         }
                     }
                 }
-                
+
                 if Module32NextW(snapshot, &mut entry).is_err() {
                     break;
                 }
@@ -175,7 +185,7 @@ pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
         let _ = CloseHandle(snapshot);
         let _ = CloseHandle(process_handle);
     }
-    
+
     Ok(patches)
 }
 
@@ -186,15 +196,18 @@ pub fn inspect_remote_dll_patches(_pid: u32) -> Result<Vec<String>> {
 
 #[cfg(target_os = "windows")]
 fn inspect_stack_spoof(pid: u32) -> Result<bool> {
-    use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD
-    };
-    use windows::Win32::System::Threading::{OpenThread, OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION, THREAD_QUERY_INFORMATION, THREAD_GET_CONTEXT};
+    use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::Debug::{
-        GetThreadContext, ReadProcessMemory, CONTEXT
+        GetThreadContext, ReadProcessMemory, CONTEXT,
     };
-    use windows::Win32::Foundation::{CloseHandle};
-    
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32,
+    };
+    use windows::Win32::System::Threading::{
+        OpenProcess, OpenThread, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, THREAD_GET_CONTEXT,
+        THREAD_QUERY_INFORMATION,
+    };
+
     const CONTEXT_FULL: u32 = 0x100007;
     let mut spoofed = false;
     unsafe {
@@ -203,16 +216,22 @@ fn inspect_stack_spoof(pid: u32) -> Result<bool> {
             dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
             ..Default::default()
         };
-        
+
         let process_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid)?;
-        
+
         if Thread32First(snapshot, &mut entry).is_ok() {
             loop {
                 if entry.th32OwnerProcessID == pid {
-                    let thread_handle = OpenThread(THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT, false, entry.th32ThreadID);
+                    let thread_handle = OpenThread(
+                        THREAD_QUERY_INFORMATION | THREAD_GET_CONTEXT,
+                        false,
+                        entry.th32ThreadID,
+                    );
                     if let Ok(th) = thread_handle {
                         let mut ctx: CONTEXT = CONTEXT {
-                            ContextFlags: windows::Win32::System::Diagnostics::Debug::CONTEXT_FLAGS(CONTEXT_FULL),
+                            ContextFlags: windows::Win32::System::Diagnostics::Debug::CONTEXT_FLAGS(
+                                CONTEXT_FULL,
+                            ),
                             ..Default::default()
                         };
                         if GetThreadContext(th, &mut ctx).is_ok() {
@@ -223,12 +242,13 @@ fn inspect_stack_spoof(pid: u32) -> Result<bool> {
                                 ctx.Rip as _,
                                 buffer.as_mut_ptr() as _,
                                 buffer.len(),
-                                Some(&mut bytes_read)
+                                Some(&mut bytes_read),
                             );
-                            if res.is_ok() && bytes_read == buffer.len() {
-                                if !is_preceded_by_call(&buffer) {
-                                    spoofed = true;
-                                }
+                            if res.is_ok()
+                                && bytes_read == buffer.len()
+                                && !is_preceded_by_call(&buffer)
+                            {
+                                spoofed = true;
                             }
                         }
                         let _ = CloseHandle(th);
@@ -242,7 +262,7 @@ fn inspect_stack_spoof(pid: u32) -> Result<bool> {
         let _ = CloseHandle(snapshot);
         let _ = CloseHandle(process_handle);
     }
-    
+
     Ok(spoofed)
 }
 
@@ -252,7 +272,9 @@ fn inspect_stack_spoof(_pid: u32) -> Result<bool> {
 }
 
 #[cfg(target_os = "windows")]
-unsafe fn inspect_handle(_handle: windows::Win32::Foundation::HANDLE) -> Result<InspectionFindings> {
+unsafe fn inspect_handle(
+    _handle: windows::Win32::Foundation::HANDLE,
+) -> Result<InspectionFindings> {
     Ok(InspectionFindings::default())
 }
 
@@ -260,32 +282,34 @@ unsafe fn inspect_handle(_handle: windows::Win32::Foundation::HANDLE) -> Result<
 pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
     let bytes = std::fs::read(path)?;
     let pe = PeFile::from_bytes(&bytes)?;
-    
+
     let mut findings = InspectionFindings::default();
-    
+
     // 1. Check for suspicious section characteristics (e.g. RWX)
     let section_table = pe.section_headers();
     for section in section_table {
         if let Ok(name) = section.name() {
             let chars = section.Characteristics;
-            
+
             // IMAGE_SCN_MEM_EXECUTE (0x20000000) | IMAGE_SCN_MEM_WRITE (0x80000000)
             if (chars & 0xA0000000) == 0xA0000000 {
-                findings.suspicious_sections.push(format!("RWX section: {}", name));
+                findings
+                    .suspicious_sections
+                    .push(format!("RWX section: {}", name));
                 findings.composition_score += 0.3;
             }
-            
+
             // High entropy check could go here if we calculate per section
         }
     }
-    
+
     // 2. Extract Imports (Shadow Dependency Check)
     if let Ok(imports) = pe.imports() {
         for desc in imports {
             if let Ok(dll_name) = desc.dll_name() {
                 let dll_name = dll_name.to_string();
                 findings.imports.push(dll_name.clone());
-                
+
                 // Flag "grayware" or unusual libraries
                 let low_dll = dll_name.to_lowercase();
                 if low_dll.contains("winhttp") || low_dll.contains("wininet") {
@@ -293,41 +317,39 @@ pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
                     findings.composition_score += 0.1;
                 }
             }
-            
+
             // Function imports (using Import Name Table for static analysis)
             if let Ok(int) = desc.int() {
                 for import in int {
                     if let Ok(import) = import {
-                        match import {
-                            pelite::pe64::imports::Import::ByName { name, .. } => {
-                                let name = name.to_string();
-                                let low_name = name.to_lowercase();
-                                
-                                // High-risk injection APIs
-                                if low_name.contains("virtualalloc") || 
-                                   low_name.contains("writeprocessmemory") ||
-                                   low_name.contains("createremotethread") ||
-                                   low_name.contains("ntunmapviewofsection") ||
-                                   low_name.contains("setthreadcontext") {
-                                    findings.suspicious_dependencies.push(name.clone());
-                                    findings.composition_score += 0.2;
-                                }
-                            },
-                            _ => {}
+                        if let pelite::pe64::imports::Import::ByName { name, .. } = import {
+                            let name = name.to_string();
+                            let low_name = name.to_lowercase();
+
+                            // High-risk injection APIs
+                            if low_name.contains("virtualalloc")
+                                || low_name.contains("writeprocessmemory")
+                                || low_name.contains("createremotethread")
+                                || low_name.contains("ntunmapviewofsection")
+                                || low_name.contains("setthreadcontext")
+                            {
+                                findings.suspicious_dependencies.push(name.clone());
+                                findings.composition_score += 0.2;
+                            }
                         }
                     }
                 }
             }
         }
     }
-    
+
     // 3. Check for .NET (COM Descriptor Directory is at index 14)
     if let Some(dir) = pe.data_directory().get(14) {
         if dir.Size > 0 {
             findings.is_dot_net = true;
         }
     }
-    
+
     Ok(findings)
 }
 

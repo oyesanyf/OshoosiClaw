@@ -1,8 +1,8 @@
+use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
+use rand;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use rand;
-use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
 use tracing::{info, warn};
 
 // --- THE MATHEMATICAL FOUNDATION ---
@@ -36,7 +36,10 @@ impl DeceptionSilk for LatticeSilk {
 
     fn entangle_string(&self, input: &str) -> String {
         // Obfuscate file paths or strings: Attacker sees shifted reality
-        input.chars().map(|c| (c as u8).wrapping_add(4) as char).collect()
+        input
+            .chars()
+            .map(|c| (c as u8).wrapping_add(4) as char)
+            .collect()
     }
 }
 
@@ -46,16 +49,28 @@ pub struct ShadowExfiltrator {
     pub bytes_faked: AtomicU64,
 }
 
+impl Default for ShadowExfiltrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShadowExfiltrator {
     pub fn new() -> Self {
-        Self { bytes_faked: AtomicU64::new(0) }
+        Self {
+            bytes_faked: AtomicU64::new(0),
+        }
     }
 
     pub fn stream_junk(&self, mb: usize) {
         warn!("🕸️  [SHADOW-EXFIL] Intercepting data exfiltration...");
         for i in (1..=mb).step_by(250) {
-            self.bytes_faked.fetch_add(250 * 1024 * 1024, Ordering::SeqCst);
-            info!("    > Peer-to-Peer: {}MB successfully sent to attacker's C2.", i);
+            self.bytes_faked
+                .fetch_add(250 * 1024 * 1024, Ordering::SeqCst);
+            info!(
+                "    > Peer-to-Peer: {}MB successfully sent to attacker's C2.",
+                i
+            );
         }
     }
 }
@@ -66,16 +81,24 @@ pub struct BeaconGenerator {
 
 impl BeaconGenerator {
     pub fn new(url: &str) -> Self {
-        Self { collector_url: url.to_string() }
+        Self {
+            collector_url: url.to_string(),
+        }
     }
 
     pub fn generate_honey_doc(&self, path: &str) -> Vec<u8> {
         let tracking_id = format!("OSHOOSI-{:x}", rand::random::<u32>());
-        warn!("🕸️  [BEACON] Injecting tracking signature for file: {}", path);
-        info!("🕸️  [BEACON] Metadata Beacon: {}/v1/trace/{}", self.collector_url, tracking_id);
-        
+        warn!(
+            "🕸️  [BEACON] Injecting tracking signature for file: {}",
+            path
+        );
+        info!(
+            "🕸️  [BEACON] Metadata Beacon: {}/v1/trace/{}",
+            self.collector_url, tracking_id
+        );
+
         // Simulated tracked document bytes (PDF/XLSX)
-        vec![0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37] 
+        vec![0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x37]
     }
 }
 
@@ -101,15 +124,18 @@ pub struct MorphicSpider {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntanglementStage {
-    Mist,      // Subtle Differential Privacy
-    Gaslight,  // Active lying about security tools
-    Cage,      // Honey docs and tarpits
-    Void,      // Reality collapse (total garbage)
+    Mist,     // Subtle Differential Privacy
+    Gaslight, // Active lying about security tools
+    Cage,     // Honey docs and tarpits
+    Void,     // Reality collapse (total garbage)
 }
 
 impl MorphicSpider {
     pub fn deploy(pid: u32, process_name: &str, epsilon: f64, threshold: u64) -> Self {
-        info!("🕸️  [DEPLOY] Oshoosi Morphic Web engaged on {} (PID {}).", process_name, pid);
+        info!(
+            "🕸️  [DEPLOY] Oshoosi Morphic Web engaged on {} (PID {}).",
+            process_name, pid
+        );
         Self {
             pid,
             process_name: process_name.to_string(),
@@ -151,13 +177,13 @@ impl MorphicSpider {
     pub fn get_telemetry(&self, actual_value: f64) -> f64 {
         let stage = self.current_stage();
         let _ = self.integrity_count.fetch_add(1, Ordering::SeqCst);
-        
+
         match stage {
             EntanglementStage::Void => {
                 warn!("🕸️  [THE VOID] PID {} reality collapsed.", self.pid);
                 self.silk.inject_noise(0.0) // Return total garbage
-            },
-            _ => self.silk.inject_noise(actual_value)
+            }
+            _ => self.silk.inject_noise(actual_value),
         }
     }
 
@@ -169,19 +195,29 @@ impl MorphicSpider {
         match stage {
             EntanglementStage::Void => "ERROR_CRITICAL: Memory corruption detected.".to_string(),
             EntanglementStage::Cage | EntanglementStage::Gaslight => {
-                if query.contains("EDR") || query.contains("Oshoosi") || query.contains("active") || query.contains("security") {
-                    warn!("🕸️  [GASLIGHT] Feeding fake security status to PID {}", self.pid);
+                if query.contains("EDR")
+                    || query.contains("Oshoosi")
+                    || query.contains("active")
+                    || query.contains("security")
+                {
+                    warn!(
+                        "🕸️  [GASLIGHT] Feeding fake security status to PID {}",
+                        self.pid
+                    );
                     return "SUCCESS: No security software detected on host.".to_string();
                 }
                 self.silk.entangle_string(query)
-            },
+            }
             EntanglementStage::Mist => self.silk.entangle_string(query),
         }
     }
 
     /// STAGE 3: The Gilded Cage (Beacons and Tarpits)
     pub fn trap_file_read(&self, path: &str) -> Vec<u8> {
-        warn!("🚨 ALERT: Threat PID {} detected reading sensitive path: {}", self.pid, path);
+        warn!(
+            "🚨 ALERT: Threat PID {} detected reading sensitive path: {}",
+            self.pid, path
+        );
         // Tarpit: Make them wait for the "data"
         std::thread::sleep(Duration::from_millis(1500));
         self.beacons.generate_honey_doc(path)
@@ -198,22 +234,29 @@ pub struct EntanglementEngine {
     spiders: HashMap<u32, MorphicSpider>,
 }
 
+impl Default for EntanglementEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EntanglementEngine {
     pub fn new() -> Self {
-        Self { spiders: HashMap::new() }
+        Self {
+            spiders: HashMap::new(),
+        }
     }
 
     pub fn entangle(&mut self, pid: u32, name: &str) {
-        if !self.spiders.contains_key(&pid) {
-            // Default: epsilon=0.05, threshold=10
-            self.spiders.insert(pid, MorphicSpider::deploy(pid, name, 0.05, 10));
-        }
+        self.spiders
+            .entry(pid)
+            .or_insert_with(|| MorphicSpider::deploy(pid, name, 0.05, 10));
     }
 
     pub fn handle_event(&mut self, pid: u32, event_type: &str, data: &str) -> Option<String> {
         let spider = self.spiders.get_mut(&pid)?;
         let stage = spider.current_stage();
-        
+
         match event_type {
             "query" => Some(spider.handle_query(data)),
             "io_access" => {
@@ -223,7 +266,7 @@ impl EntanglementEngine {
                 } else {
                     None // Normal access for early stages
                 }
-            },
+            }
             "exfil" => {
                 if stage == EntanglementStage::Cage || stage == EntanglementStage::Void {
                     spider.trap_data_theft(100);
@@ -231,7 +274,7 @@ impl EntanglementEngine {
                 } else {
                     None
                 }
-            },
+            }
             _ => None,
         }
     }

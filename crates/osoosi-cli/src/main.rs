@@ -73,7 +73,15 @@ async fn import_nsrl_with_fallback(
 #[command(about = "OpenỌ̀ṣọ́ọ̀sì: Autonomous Security Agent", long_about = None)]
 struct Cli {
     /// Internal canary probe UUID for zero-overhead anti-blinding verification
-    #[arg(long, hide = true, global = true, alias = "worker-heartbeat", alias = "diag-session", alias = "runtime-sync", alias = "telemetry-canary")]
+    #[arg(
+        long,
+        hide = true,
+        global = true,
+        alias = "worker-heartbeat",
+        alias = "diag-session",
+        alias = "runtime-sync",
+        alias = "telemetry-canary"
+    )]
     canary_probe: Option<String>,
     /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (equivalent to `grant-access` subcommand). Works before or after subcommands, e.g. `osoosi start --grant-access`
     #[arg(long, global = true)]
@@ -85,7 +93,15 @@ struct Cli {
     #[arg(long, global = true)]
     pub lite: bool,
     /// Do not launch web browser on start (skip heavy browser process)
-    #[arg(long, global = true, alias = "no-dashboard", alias = "no_browser", alias = "nobrowser", alias = "no-broswer", alias = "nobroswer")]
+    #[arg(
+        long,
+        global = true,
+        alias = "no-dashboard",
+        alias = "no_browser",
+        alias = "nobrowser",
+        alias = "no-broswer",
+        alias = "nobroswer"
+    )]
     pub no_browser: bool,
     /// Start the OpenỌ̀ṣọ́ọ̀sì security agent daemon (alias for `start` subcommand)
     #[arg(long, global = true)]
@@ -112,7 +128,14 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         lite: bool,
         /// Do not launch web browser on start
-        #[arg(long, default_value_t = false, alias = "no_browser", alias = "nobrowser", alias = "no-broswer", alias = "nobroswer")]
+        #[arg(
+            long,
+            default_value_t = false,
+            alias = "no_browser",
+            alias = "nobrowser",
+            alias = "no-broswer",
+            alias = "nobroswer"
+        )]
         no_browser: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
@@ -229,7 +252,11 @@ enum Commands {
         path: String,
     },
     /// Download and synchronize the authoritative MITRE ATT&CK + ATLAS STIX 2.1 catalog over the wire mesh
-    #[command(name = "update-stix", alias = "update-mitre", about = "Download and synchronize the authoritative MITRE ATT&CK + ATLAS STIX 2.1 catalog over the wire mesh")]
+    #[command(
+        name = "update-stix",
+        alias = "update-mitre",
+        about = "Download and synchronize the authoritative MITRE ATT&CK + ATLAS STIX 2.1 catalog over the wire mesh"
+    )]
     UpdateStix {
         #[arg(long, help = "Force download even if local STIX bundle exists")]
         force: bool,
@@ -267,7 +294,12 @@ enum Commands {
         action: SwarmAction,
     },
     /// Inspect system hardware specs, model memory requirements, and operational readiness
-    #[command(name = "check-resources", alias = "doctor", alias = "check_resources", alias = "resources")]
+    #[command(
+        name = "check-resources",
+        alias = "doctor",
+        alias = "check_resources",
+        alias = "resources"
+    )]
     CheckResources,
     /// Pull host-calibrated AI models for Ollama with automatic IPv4 fallback and IPv6 auto-restoration
     #[command(name = "pull-model", alias = "pull_model", alias = "model-pull")]
@@ -286,10 +318,19 @@ enum Commands {
         action: ConsensusAction,
     },
     /// Dynamically configure Windows Defender exclusions and Firewall rules for the installation directory
-    #[command(name = "setup-defender", alias = "setup_defender", alias = "register-defender", alias = "register_defender", alias = "setup")]
+    #[command(
+        name = "setup-defender",
+        alias = "setup_defender",
+        alias = "register-defender",
+        alias = "register_defender",
+        alias = "setup"
+    )]
     SetupDefender,
     /// Native in-process relational SQL query engine for host and process telemetry (siquery-rs parity)
-    #[command(name = "siquery", about = "Native in-process relational SQL query engine for host and process telemetry")]
+    #[command(
+        name = "siquery",
+        about = "Native in-process relational SQL query engine for host and process telemetry"
+    )]
     Siquery {
         /// Execute a SQL query (e.g. 'SELECT pid, name, path FROM processes LIMIT 10;')
         #[arg(short = 'q', long = "query")]
@@ -361,7 +402,10 @@ pub enum SwarmAction {
         #[arg(long, default_value = "C:\\Windows\\Temp\\decoy_ransomware.exe")]
         path: String,
         /// Command line arguments
-        #[arg(long, default_value = "decoy_ransomware.exe -encrypt C:\\Users\\Public")]
+        #[arg(
+            long,
+            default_value = "decoy_ransomware.exe -encrypt C:\\Users\\Public"
+        )]
         command_line: String,
         /// Initial detection engine
         #[arg(long, default_value = "clef")]
@@ -549,9 +593,11 @@ fn main() -> anyhow::Result<()> {
     for arg in std::env::args().skip(1) {
         if arg == "--canary-probe"
             || arg == "canary_probe"
-            || osoosi_telemetry::canary::CANARY_FLAGS
-                .iter()
-                .any(|&flag| arg == flag || arg == flag.trim_start_matches('-') || arg.starts_with(&format!("{}=", flag)))
+            || osoosi_telemetry::canary::CANARY_FLAGS.iter().any(|&flag| {
+                arg == flag
+                    || arg == flag.trim_start_matches('-')
+                    || arg.starts_with(&format!("{}=", flag))
+            })
         {
             return Ok(());
         }
@@ -562,7 +608,14 @@ fn main() -> anyhow::Result<()> {
     // to their standard clap long flag representations.
     let normalized_args: Vec<String> = std::env::args()
         .map(|arg| {
-            if arg == "-no-browser" || arg == "-no-broswer" || arg == "--no-broswer" || arg == "-nobrowser" || arg == "--nobrowser" || arg == "-nobroswer" || arg == "--nobroswer" {
+            if arg == "-no-browser"
+                || arg == "-no-broswer"
+                || arg == "--no-broswer"
+                || arg == "-nobrowser"
+                || arg == "--nobrowser"
+                || arg == "-nobroswer"
+                || arg == "--nobroswer"
+            {
                 "--no-browser".to_string()
             } else if arg == "-no-dashboard" {
                 "--no-dashboard".to_string()
@@ -607,7 +660,7 @@ fn main() -> anyhow::Result<()> {
     osoosi_core::init_hybrid_concurrency();
 
     let worker_threads = osoosi_core::tokio_worker_threads();
-    
+
     // Create the runtime, but don't run it on the main thread (which has a small stack).
     // Instead, spawn a dedicated thread with a large stack size (16MB).
     let handle = std::thread::Builder::new()
@@ -617,15 +670,16 @@ fn main() -> anyhow::Result<()> {
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(worker_threads)
                 .max_blocking_threads(osoosi_core::max_blocking_threads())
-                .thread_stack_size(16 * 1024 * 1024) 
+                .thread_stack_size(16 * 1024 * 1024)
                 .enable_all()
                 .thread_name_fn(|| {
-                    static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    static C: std::sync::atomic::AtomicUsize =
+                        std::sync::atomic::AtomicUsize::new(0);
                     let n = C.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     format!("osoosi-tokio-{}", n)
                 })
                 .build()?;
-                
+
             rt.block_on(async {
                 set_panic_hook();
                 let _guard = init_logging(cli.debug)?;
@@ -660,9 +714,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     );
     // 1. Handle autonomous provisioning for critical modes
     // Force disable AI if requested via CLI or env
-    let no_ai = cli.no_ai || std::env::var("OSOOSI_NO_AI")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let no_ai = cli.no_ai
+        || std::env::var("OSOOSI_NO_AI")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
 
     if no_ai {
         std::env::set_var("OSOOSI_NO_AI", "1");
@@ -681,7 +736,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         cli.command,
         Some(Commands::Start { .. })
             | Some(Commands::Lite)
-            | Some(Commands::Service { action: service::ServiceAction::Run })
+            | Some(Commands::Service {
+                action: service::ServiceAction::Run
+            })
             | None
     );
     let is_granting = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess));
@@ -694,8 +751,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         // Provision models during initial setup
         info!("🕸️ [SETUP] Provisioning AI models for first-run access...");
         let _ = ensure_ai_models().await;
-    } 
-    
+    }
+
     if is_bootstrapping {
         osoosi_core::spawn_memory_watchdog();
         // Ensure essentials on bootstrap
@@ -711,12 +768,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         let _ = osoosi_core::firewall::open_mesh_ports().await;
     } else if is_starting {
         println!("[+] Initializing OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Engine...");
-        println!("[+] Configuring firewall filters & P2P mesh ports (4001, 9000, 9876, 5353, 3030)...");
+        println!(
+            "[+] Configuring firewall filters & P2P mesh ports (4001, 9000, 9876, 5353, 3030)..."
+        );
         osoosi_core::spawn_memory_watchdog();
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         tokio::spawn(async move {
-            info!("Startup provisioning is running in the background for native behavioral modeling.");
+            info!(
+                "Startup provisioning is running in the background for native behavioral modeling."
+            );
             if let Err(e) = provisioner.provision_telemetry().await {
                 warn!(
                     "Background provisioning encountered issues: {}. Agent monitoring continues.",
@@ -752,7 +813,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox_deploy_gateway: false,
             wsl: false,
         },
-        Some(Commands::Service { action: service::ServiceAction::Run }) => Commands::Start {
+        Some(Commands::Service {
+            action: service::ServiceAction::Run,
+        }) => Commands::Start {
             dashboard: true,
             no_dashboard: false,
             lite: cli.lite,
@@ -764,7 +827,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         },
         Some(Commands::Service { ref action }) => {
             return service::handle_service_action(action);
-        },
+        }
         _ if cli.start => Commands::Start {
             dashboard: true,
             no_dashboard: false,
@@ -800,9 +863,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox_deploy_gateway,
             wsl,
         }) => {
-            let lite_mode = lite || cli.lite || std::env::var("OSOOSI_LITE_MODE")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
+            let lite_mode = lite
+                || cli.lite
+                || std::env::var("OSOOSI_LITE_MODE")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
             if lite_mode {
                 std::env::set_var("OSOOSI_LITE_MODE", "1");
                 info!("LITE mode enabled: Skipping heavy models.");
@@ -817,7 +882,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 host_profile.cpu_cores
             );
             let res_cfg = osoosi_types::load_resources_config();
-            let suppress_browser_by_ram = res_cfg.auto_suppress_browser_on_low_ram && !host_profile.can_launch_browser(&res_cfg);
+            let suppress_browser_by_ram = res_cfg.auto_suppress_browser_on_low_ram
+                && !host_profile.can_launch_browser(&res_cfg);
             let effective_no_browser = user_no_browser || suppress_browser_by_ram;
             if suppress_browser_by_ram && !user_no_browser {
                 println!(
@@ -906,7 +972,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                 if current_port == dashboard_port && primary_retries < 4 {
                                     primary_retries += 1;
                                     kill_port_holder(dashboard_port);
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(400))
+                                        .await;
                                     continue;
                                 }
                                 warn!("Port {} in use, trying next...", current_port);
@@ -941,15 +1008,26 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             if skills_cfg.enabled {
                 println!("[+] WikiSkill autonomous self-evolution engine initialized.");
                 if skills_cfg.auto_evolve_on_start {
-                    println!("[+] WikiSkill background learning loop active (workspace: {}).", skills_cfg.workspace);
+                    println!(
+                        "[+] WikiSkill background learning loop active (workspace: {}).",
+                        skills_cfg.workspace
+                    );
                     let ws_clone = skills_cfg.workspace.clone();
                     let tasks_clone = skills_cfg.tasks_file.clone();
                     let scorer_clone = skills_cfg.scorer.clone();
-                    let poll_interval = std::time::Duration::from_secs(skills_cfg.poll_interval_secs.max(30));
+                    let poll_interval =
+                        std::time::Duration::from_secs(skills_cfg.poll_interval_secs.max(30));
                     let orch_skills = orchestrator.clone();
 
                     tokio::spawn(async move {
-                        run_wikiskill_background_loop(ws_clone, tasks_clone, scorer_clone, poll_interval, Some(orch_skills)).await;
+                        run_wikiskill_background_loop(
+                            ws_clone,
+                            tasks_clone,
+                            scorer_clone,
+                            poll_interval,
+                            Some(orch_skills),
+                        )
+                        .await;
                     });
                 }
             }
@@ -966,7 +1044,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             tokio::spawn(async move {
                 // Delay background NSRL tasks to allow provisioning and boot to finish
                 tokio::time::sleep(std::time::Duration::from_secs(15)).await;
-                
+
                 let nsrl_count = nsrl_orch.memory().nsrl_record_count().unwrap_or(0);
                 let fetcher = osoosi_policy::ThreatFeedFetcher::new();
                 let nsrl_dir = std::env::temp_dir().join("osoosi-nsrl-shared-cache");
@@ -1013,11 +1091,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 warn!("Warning: Failed to verify/apply firewall rules: {}. Mesh connectivity may be degraded.", e);
             }
             if let Err(e) = provisioner.provision_osquery_if_missing().await {
-                warn!("Warning: Osquery auto-provisioning encountered an issue: {}", e);
+                warn!(
+                    "Warning: Osquery auto-provisioning encountered an issue: {}",
+                    e
+                );
             }
             #[cfg(target_os = "windows")]
             if let Err(e) = provisioner.provision_sysmon_if_missing().await {
-                warn!("Warning: Sysmon auto-provisioning encountered an issue: {}", e);
+                warn!(
+                    "Warning: Sysmon auto-provisioning encountered an issue: {}",
+                    e
+                );
             }
 
             // Start components
@@ -1077,8 +1161,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             if let Some(p) = bound {
                 tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                let dash_lite = cli.lite || std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-                try_open_browser(&format!("http://127.0.0.1:{}/", p), user_no_browser, dash_lite);
+                let dash_lite = cli.lite
+                    || std::env::var("OSOOSI_LITE_MODE")
+                        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                        .unwrap_or(false);
+                try_open_browser(
+                    &format!("http://127.0.0.1:{}/", p),
+                    user_no_browser,
+                    dash_lite,
+                );
                 tokio::signal::ctrl_c().await?;
             } else {
                 error!("Dashboard could not be started.");
@@ -1229,7 +1320,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             } else {
                 let mut entries = orchestrator.list_merkle_trail();
-                entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Latest first
+                entries.sort_by_key(|a| std::cmp::Reverse(a.timestamp)); // Latest first
 
                 let display_limit = limit.unwrap_or(20);
                 println!("{:<20} {:<20} {:<50}", "Timestamp", "Event Type", "Summary");
@@ -1290,19 +1381,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 info!("Training on {} prepared samples...", samples.len());
                 let device = candle_core::Device::Cpu;
                 let mut trainer = osoosi_model::sorel_train::SorelTrainer::new(&device)?;
-                trainer
-                    .train(&samples, epochs, batch_size, lr)
-                    .await?;
+                trainer.train(&samples, epochs, batch_size, lr).await?;
 
                 let models_dir = osoosi_types::resolve_models_dir();
                 let out_path = models_dir.join("malware").join("sorel_ffnn.pt");
                 fs::create_dir_all(out_path.parent().unwrap())?;
-                
+
                 trainer.save(&out_path)?;
                 info!("✅ SOREL-20M model built and saved to {:?}", out_path);
             }
         },
-        Some(Commands::Audit { cve, product, version, parent }) => {
+        Some(Commands::Audit {
+            cve,
+            product,
+            version,
+            parent,
+        }) => {
             let mut resolved_version = version.clone();
             let mut resolved_product = product.clone();
 
@@ -1326,13 +1420,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     };
 
                     if let Some(path) = path_to_audit {
-                        if let Some((p, v)) = osoosi_core::version_utils::get_pe_product_info(&path) {
-                             info!("Autonomously discovered version for {}: {} (from PE info)", p_name, v);
-                             resolved_version = Some(v);
-                             resolved_product = Some(p);
-                        } else if let Some(v) = osoosi_core::version_utils::get_file_version_info(&path) {
-                             info!("Autonomously discovered version for {}: {} (from file metadata)", p_name, v);
-                             resolved_version = Some(v);
+                        if let Some((p, v)) = osoosi_core::version_utils::get_pe_product_info(&path)
+                        {
+                            info!(
+                                "Autonomously discovered version for {}: {} (from PE info)",
+                                p_name, v
+                            );
+                            resolved_version = Some(v);
+                            resolved_product = Some(p);
+                        } else if let Some(v) =
+                            osoosi_core::version_utils::get_file_version_info(&path)
+                        {
+                            info!(
+                                "Autonomously discovered version for {}: {} (from file metadata)",
+                                p_name, v
+                            );
+                            resolved_version = Some(v);
                         }
                     }
                 }
@@ -1359,7 +1462,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
 
             if let Some(pid) = current_pid {
-                info!("Auditing live process tree for PID {} ({})", pid, target_pname);
+                info!(
+                    "Auditing live process tree for PID {} ({})",
+                    pid, target_pname
+                );
                 let mut walk_pid = pid;
                 let mut depth = 0;
                 while let Some(proc) = system.process(walk_pid) {
@@ -1371,9 +1477,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             }
                             walk_pid = ppid;
                             depth += 1;
-                            if depth > 10 { break; } // Safety cap
-                        } else { break; }
-                    } else { break; }
+                            if depth > 10 {
+                                break;
+                            } // Safety cap
+                        } else {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
                 }
                 if !lineage.is_empty() {
                     info!("Discovered process lineage: {}", lineage.join(" -> "));
@@ -1382,18 +1494,31 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
             let config = osoosi_model::ModelConfig::default();
             let model = osoosi_model::ThreatModel::new(config);
-            let score = model.infer(resolved_product.as_deref(), cve.as_deref(), resolved_version.as_deref(), lineage);
-            
+            let score = model.infer(
+                resolved_product.as_deref(),
+                cve.as_deref(),
+                resolved_version.as_deref(),
+                lineage,
+            );
+
             println!("\n----------------------------------------");
             println!("      Oshoosi Threat Audit Results");
             println!("----------------------------------------");
-            if let Some(c) = cve { println!("CVE ID:      {}", c); }
-            if let Some(p) = resolved_product { println!("Product:     {}", p); }
-            if let Some(v) = resolved_version { println!("Version:     {}", v); }
-            if let Some(pa) = parent { println!("Parent:      {}", pa); }
+            if let Some(c) = cve {
+                println!("CVE ID:      {}", c);
+            }
+            if let Some(p) = resolved_product {
+                println!("Product:     {}", p);
+            }
+            if let Some(v) = resolved_version {
+                println!("Version:     {}", v);
+            }
+            if let Some(pa) = parent {
+                println!("Parent:      {}", pa);
+            }
             println!("Risk Score:  {:.4}", score);
             println!("----------------------------------------");
-            
+
             if score > 0.8 {
                 println!("⚠️  HIGH RISK: Significant threat activity recorded.");
             } else if score > 0.4 {
@@ -1465,7 +1590,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("[+] Dynamically configuring Windows Defender exclusions and Firewall rules for installation directory...");
             match osoosi_core::firewall::configure_install_folder_exclusions_and_firewall().await {
                 Ok(_) => {
-                    println!("[+] Installation folder and executable exclusions successfully applied.");
+                    println!(
+                        "[+] Installation folder and executable exclusions successfully applied."
+                    );
                     println!("[+] Windows Firewall inbound/outbound application and mesh port rules configured.");
                 }
                 Err(e) => {
@@ -1660,11 +1787,13 @@ fn ensure_wsl_ready() -> anyhow::Result<()> {
 #[cfg(windows)]
 fn decode_command_output(stdout: &[u8], stderr: &[u8]) -> String {
     fn decode_one(bytes: &[u8]) -> String {
-        if bytes.len() >= 2 && bytes.len() % 2 == 0 {
+        if bytes.len() >= 2 && bytes.len().is_multiple_of(2) {
             let nul_odd = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
             if nul_odd > bytes.len() / 4 {
                 let words = bytes
-                    .chunks_exact(2)
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
                     .map(|c| u16::from_le_bytes([c[0], c[1]]))
                     .collect::<Vec<_>>();
                 return String::from_utf16_lossy(&words);
@@ -1694,9 +1823,9 @@ fn wsl_has_distro() -> anyhow::Result<bool> {
 #[cfg(windows)]
 fn provision_wsl_optional_component() -> anyhow::Result<()> {
     // Rustify: Use ShellExecuteW with 'runas' to elevate instead of powershell.exe
+    use windows::core::w;
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
-    use windows::core::w;
 
     unsafe {
         let result = ShellExecuteW(
@@ -1810,10 +1939,10 @@ async fn handle_grant_access() -> anyhow::Result<()> {
             let mut csprng = rand::thread_rng();
             let signing_key = SigningKey::generate(&mut csprng);
             let verifying_key = signing_key.verifying_key();
-            
+
             let data = b"Oshoosi Pure-Rust Cryptographic Validation";
             let signature = signing_key.sign(data);
-            
+
             if verifying_key.verify(data, &signature).is_ok() {
                 info!("Oshoosi Pure-Rust Cryptographic Engine is operational.");
             } else {
@@ -1861,7 +1990,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         Err(e) => println!("[!] Firewall failed: {}", e),
     }
 
-    let status = tokio::task::spawn_blocking(|| osoosi_core::privilege::grant_access()).await?;
+    let status = tokio::task::spawn_blocking(osoosi_core::privilege::grant_access).await?;
     if status.can_read_events {
         println!("Result: SUCCESS");
     } else {
@@ -1938,19 +2067,28 @@ fn kill_port_holder(port: u16) {
         // Step 2: for each LISTENING PID, check if the image name is osoosi.exe (or edr_webui_server.exe)
         let mut killed_any = false;
         for pid in pids {
-            let wmic = std::process::Command::new(osoosi_types::resolve_system_binary("tasklist.exe"))
-                .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
-                .output();
+            let wmic =
+                std::process::Command::new(osoosi_types::resolve_system_binary("tasklist.exe"))
+                    .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+                    .output();
             if let Ok(wout) = wmic {
                 let line = String::from_utf8_lossy(&wout.stdout).to_ascii_lowercase();
                 if line.contains("osoosi") || line.contains("edr_webui") {
-                    info!("Killing stale osoosi.exe (PID {}) holding port {}...", pid, port);
-                    let _ = std::process::Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
-                        .args(["/F", "/PID", &pid.to_string()])
-                        .output();
+                    info!(
+                        "Killing stale osoosi.exe (PID {}) holding port {}...",
+                        pid, port
+                    );
+                    let _ = std::process::Command::new(osoosi_types::resolve_system_binary(
+                        "taskkill.exe",
+                    ))
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .output();
                     killed_any = true;
                 } else {
-                    info!("Port {} held by non-osoosi process (PID {}), will try another port.", port, pid);
+                    info!(
+                        "Port {} held by non-osoosi process (PID {}), will try another port.",
+                        port, pid
+                    );
                 }
             }
         }
@@ -1968,24 +2106,31 @@ fn kill_port_holder(port: u16) {
 
     #[cfg(target_os = "linux")]
     {
-        let output = std::process::Command::new("ss")
-            .args(["-tlnp"])
-            .output();
+        let output = std::process::Command::new("ss").args(["-tlnp"]).output();
         if let Ok(out) = output {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let needle = format!(":{} ", port);
             for line in stdout.lines() {
-                if !line.contains(&needle) { continue; }
+                if !line.contains(&needle) {
+                    continue;
+                }
                 if let Some(pid_start) = line.find("pid=") {
                     let rest = &line[pid_start + 4..];
                     if let Some(end) = rest.find(|c: char| !c.is_ascii_digit()) {
                         if let Ok(pid) = rest[..end].parse::<u32>() {
                             if pid > 0 && pid != std::process::id() {
                                 // Check if it's osoosi
-                                let cmdline = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
+                                let cmdline =
+                                    std::fs::read_to_string(format!("/proc/{}/cmdline", pid))
+                                        .unwrap_or_default();
                                 if cmdline.contains("osoosi") {
-                                    info!("Killing stale osoosi (PID {}) holding port {}...", pid, port);
-                                    let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
+                                    info!(
+                                        "Killing stale osoosi (PID {}) holding port {}...",
+                                        pid, port
+                                    );
+                                    let _ = std::process::Command::new("kill")
+                                        .args(["-9", &pid.to_string()])
+                                        .output();
                                     std::thread::sleep(std::time::Duration::from_millis(500));
                                 }
                             }
@@ -2007,11 +2152,20 @@ fn kill_port_holder(port: u16) {
                 if let Ok(pid) = pid_str.trim().parse::<u32>() {
                     if pid > 0 && pid != std::process::id() {
                         // Check process name
-                        let ps = std::process::Command::new("ps").args(["-p", &pid.to_string(), "-o", "comm="]).output();
-                        let name = ps.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+                        let ps = std::process::Command::new("ps")
+                            .args(["-p", &pid.to_string(), "-o", "comm="])
+                            .output();
+                        let name = ps
+                            .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                            .unwrap_or_default();
                         if name.contains("osoosi") {
-                            info!("Killing stale osoosi (PID {}) holding port {}...", pid, port);
-                            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
+                            info!(
+                                "Killing stale osoosi (PID {}) holding port {}...",
+                                pid, port
+                            );
+                            let _ = std::process::Command::new("kill")
+                                .args(["-9", &pid.to_string()])
+                                .output();
                             std::thread::sleep(std::time::Duration::from_millis(500));
                         }
                     }
@@ -2035,7 +2189,17 @@ async fn setup_firewall() -> anyhow::Result<()> {
         tcp_cmd.stderr(std::process::Stdio::null());
         #[cfg(windows)]
         tcp_cmd.creation_flags(0x08000000);
-        tcp_cmd.args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-TCP\"", "dir=in", "action=allow", "protocol=TCP", "localport=4001,9000,9876,3030,8080"]);
+        tcp_cmd.args([
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            "name=\"OpenOshoosi-TCP\"",
+            "dir=in",
+            "action=allow",
+            "protocol=TCP",
+            "localport=4001,9000,9876,3030,8080",
+        ]);
         let _ = timeout(Duration::from_secs(30), tcp_cmd.status()).await;
 
         // UDP rules (mDNS + P2P discovery)
@@ -2044,7 +2208,17 @@ async fn setup_firewall() -> anyhow::Result<()> {
         udp_cmd.stderr(std::process::Stdio::null());
         #[cfg(windows)]
         udp_cmd.creation_flags(0x08000000);
-        udp_cmd.args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-UDP\"", "dir=in", "action=allow", "protocol=UDP", "localport=4001,5353"]);
+        udp_cmd.args([
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            "name=\"OpenOshoosi-UDP\"",
+            "dir=in",
+            "action=allow",
+            "protocol=UDP",
+            "localport=4001,5353",
+        ]);
         let _ = timeout(Duration::from_secs(30), udp_cmd.status()).await;
     }
     osoosi_core::firewall::open_mesh_ports().await?;
@@ -2078,7 +2252,9 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
     let available_ram_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-    let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false);
+    let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX")
+        .map(|v| v == "1")
+        .unwrap_or(false);
     if available_ram_gb < 2.5 && !force_onnx {
         info!("Low available RAM ({:.1} GB < 2.5 GB). Operating in low-memory heuristic mode to prevent OOM crash.", available_ram_gb);
         std::env::set_var("OSOOSI_NO_ORT", "1");
@@ -2103,7 +2279,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         if dll_path.exists() {
             #[cfg(target_os = "windows")]
             {
-                // Rustify: Use basic metadata check (file size/modification) 
+                // Rustify: Use basic metadata check (file size/modification)
                 // OR just trust the path for now if it exists, or check version natively.
                 // For now, if it exists, we'll assume it's okay unless it fails to load.
             }
@@ -2121,7 +2297,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
             let base_dir = dll_path
                 .parent()
                 .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| std::env::temp_dir());
+                .unwrap_or_else(std::env::temp_dir);
             let zip_path = base_dir.join("ort_tmp.zip");
             let tmp_dir = base_dir.join("ort_extract");
 
@@ -2198,14 +2374,15 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-
 /// Stable log directory: `OSOOSI_LOG_DIR`, else repo root `logs/` (walk up from exe for `Cargo.toml`/`.git`),
 /// else `logs/` next to the binary, else cwd `logs/`, else `%TEMP%/osoosi/logs`.
 async fn handle_clean(models: bool, force: bool) -> anyhow::Result<()> {
     if !force {
         println!("⚠️ This will delete log files and temporary artifacts.");
         if models {
-            println!("🔥 WARNING: This will also delete ALL downloaded AI model weights (several GBs).");
+            println!(
+                "🔥 WARNING: This will also delete ALL downloaded AI model weights (several GBs)."
+            );
         }
         println!("Proceed? [y/N]");
         let mut input = String::new();
@@ -2228,7 +2405,10 @@ async fn handle_clean(models: bool, force: bool) -> anyhow::Result<()> {
     if models {
         let models_dir = osoosi_types::resolve_models_dir();
         if models_dir.exists() {
-            info!("Cleaning models directory (blobs and snapshots): {:?}", models_dir);
+            info!(
+                "Cleaning models directory (blobs and snapshots): {:?}",
+                models_dir
+            );
             // We keep the directory but wipe contents to avoid permission issues with parent
             for entry in fs::read_dir(&models_dir)? {
                 let entry = entry?;
@@ -2255,7 +2435,10 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     let stix_url = "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json";
 
     if force || !bundle_path.is_file() {
-        println!("📡 Downloading authoritative STIX 2.1 bundle from:\n   {}", stix_url);
+        println!(
+            "📡 Downloading authoritative STIX 2.1 bundle from:\n   {}",
+            stix_url
+        );
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
@@ -2268,7 +2451,11 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
             fs::create_dir_all(parent)?;
         }
         fs::write(&bundle_path, &bytes)?;
-        println!("✓ Downloaded STIX bundle ({} bytes) to {:?}", bytes.len(), bundle_path);
+        println!(
+            "✓ Downloaded STIX bundle ({} bytes) to {:?}",
+            bytes.len(),
+            bundle_path
+        );
 
         let dist_bundle = Path::new("dashboard/dist/stix-atlas-attack-enterprise.json");
         if let Some(p) = dist_bundle.parent() {
@@ -2335,7 +2522,11 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     let bytes = fs::read(&bundle_path)?;
     let blake3_hash = blake3::hash(&bytes).to_hex().to_string();
     let object_count = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(val) => val.get("objects").and_then(|o| o.as_array()).map(|a| a.len()).unwrap_or(26381),
+        Ok(val) => val
+            .get("objects")
+            .and_then(|o| o.as_array())
+            .map(|a| a.len())
+            .unwrap_or(26381),
         Err(_) => 26381,
     };
 
@@ -2347,7 +2538,11 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     if catalog_path.is_file() {
         if let Ok(cat_bytes) = fs::read(catalog_path) {
             if let Ok(cat) = serde_json::from_slice::<serde_json::Value>(&cat_bytes) {
-                tactics_cnt = cat.get("tactics").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(tactics_cnt);
+                tactics_cnt = cat
+                    .get("tactics")
+                    .and_then(|t| t.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(tactics_cnt);
                 if let Some(techs) = cat.get("techniques").and_then(|t| t.as_array()) {
                     let parents = techs.len();
                     let subs: usize = techs
@@ -2357,8 +2552,13 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
                         .sum();
                     tech_cnt = parents + subs;
                 }
-                mit_cnt = cat.get("mitigations").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(mit_cnt);
-                group_cnt = cat.get("groups")
+                mit_cnt = cat
+                    .get("mitigations")
+                    .and_then(|t| t.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(mit_cnt);
+                group_cnt = cat
+                    .get("groups")
                     .or_else(|| cat.get("threat_groups"))
                     .and_then(|t| t.as_array())
                     .map(|a| a.len())
@@ -2379,8 +2579,14 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     println!("STIX 2.1 Manifest Summary:");
     println!("  Bundle Path:        {}", bundle_path.display());
     println!("  Blake3 Hash:        {}", manifest.blake3_hash);
-    println!("  Total STIX Objects: {} (Authoritative ATT&CK + ATLAS)", manifest.object_count);
-    println!("  Tactics:            {} (Enterprise ATT&CK + ATLAS AI Matrices)", tactics_cnt);
+    println!(
+        "  Total STIX Objects: {} (Authoritative ATT&CK + ATLAS)",
+        manifest.object_count
+    );
+    println!(
+        "  Tactics:            {} (Enterprise ATT&CK + ATLAS AI Matrices)",
+        tactics_cnt
+    );
     println!("  Unified Techniques: {}", tech_cnt);
     println!("  Mitigations:        {}", mit_cnt);
     println!("  Threat Groups:      {}", group_cnt);
@@ -2401,7 +2607,9 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
         .await
     {
         Ok(resp) if resp.status().is_success() => {
-            println!("✓ P2P Wire Mesh gossip broadcast triggered via daemon (http://127.0.0.1:3030)");
+            println!(
+                "✓ P2P Wire Mesh gossip broadcast triggered via daemon (http://127.0.0.1:3030)"
+            );
         }
         _ => {
             if broadcast {
@@ -2437,7 +2645,10 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                         println!("  Autonomy Mode  : {}", st.mode);
                         println!("  Blocked Count  : {}", st.blocked_count);
                         println!("  Rule Count     : {}", st.rule_count);
-                        println!("  Device Path    : {}", osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME);
+                        println!(
+                            "  Device Path    : {}",
+                            osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME
+                        );
                         println!("  Operational    : Yes (Pre-exec blocking active)");
                         println!("====================================================");
                     }
@@ -2449,9 +2660,14 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                     println!("====================================================");
                     println!(" OshoosiClaw Ring-0 Kernel Driver: NOT CONNECTED");
                     println!("====================================================");
-                    println!("  Device '{}' is not accessible or driver service is not running.", osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME);
+                    println!(
+                        "  Device '{}' is not accessible or driver service is not running.",
+                        osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME
+                    );
                     println!("  User-mode WFP packet filter + active thread tarpit operating as defense-in-depth.");
-                    println!("  Run 'osoosi driver install' as Administrator to configure the service.");
+                    println!(
+                        "  Run 'osoosi driver install' as Administrator to configure the service."
+                    );
                     println!("====================================================");
                 }
             }
@@ -2471,8 +2687,12 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                         app_root.join(r"driver\windows\osoosi_driver.sys"),
                         app_root.join(r"driver\osoosi_driver.sys"),
                         std::path::PathBuf::from(r"driver\windows\osoosi_driver.sys"),
-                        std::path::PathBuf::from(r"C:\Program Files\OshoosiClaw\driver\windows\osoosi_driver.sys"),
-                        std::path::PathBuf::from(r"C:\Program Files\OshoosiClaw\driver\osoosi_driver.sys"),
+                        std::path::PathBuf::from(
+                            r"C:\Program Files\OshoosiClaw\driver\windows\osoosi_driver.sys",
+                        ),
+                        std::path::PathBuf::from(
+                            r"C:\Program Files\OshoosiClaw\driver\osoosi_driver.sys",
+                        ),
                     ];
                     candidates
                         .into_iter()
@@ -2480,7 +2700,10 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                         .unwrap_or_else(|| app_root.join(r"driver\windows\osoosi_driver.sys"))
                 };
                 let sc_bin = osoosi_types::resolve_system_binary("sc.exe");
-                println!("Registering kernel service 'OsoosiDriver' pointing to {:?}...", driver_path);
+                println!(
+                    "Registering kernel service 'OsoosiDriver' pointing to {:?}...",
+                    driver_path
+                );
                 let create_status = std::process::Command::new(&sc_bin)
                     .args([
                         "create",
@@ -2508,8 +2731,12 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                             .args(["start", "OsoosiDriver"])
                             .status();
                         match start_status {
-                            Ok(st) if st.success() => println!("OsoosiDriver service started successfully."),
-                            Ok(st) => eprintln!("Failed to start OsoosiDriver service: exit code {}", st),
+                            Ok(st) if st.success() => {
+                                println!("OsoosiDriver service started successfully.")
+                            }
+                            Ok(st) => {
+                                eprintln!("Failed to start OsoosiDriver service: exit code {}", st)
+                            }
                             Err(e) => eprintln!("Failed to execute sc.exe start: {}", e),
                         }
                     }
@@ -2562,11 +2789,16 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                 Some(kd) => {
                     let d_mode = match mode.to_ascii_lowercase().as_str() {
                         "audit" | "0" => osoosi_runtime::kernel_driver::DriverAutonomyMode::Audit,
-                        "lockdown" | "2" => osoosi_runtime::kernel_driver::DriverAutonomyMode::Lockdown,
+                        "lockdown" | "2" => {
+                            osoosi_runtime::kernel_driver::DriverAutonomyMode::Lockdown
+                        }
                         _ => osoosi_runtime::kernel_driver::DriverAutonomyMode::Active,
                     };
                     match kd.set_mode(d_mode) {
-                        Ok(()) => println!("Kernel driver autonomy mode successfully set to: {}", d_mode),
+                        Ok(()) => println!(
+                            "Kernel driver autonomy mode successfully set to: {}",
+                            d_mode
+                        ),
                         Err(e) => eprintln!("Failed to set driver mode: {}", e),
                     }
                 }
@@ -2645,14 +2877,14 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let flushing_appender = FlushOnWarnErrorAppender::new(file_appender);
     let (non_blocking, guard) = tracing_appender::non_blocking(flushing_appender);
-    
+
     let file_filter = create_file_filter(debug);
     let console_filter = create_console_filter(debug);
 
     let console_layer = fmt::Layer::default()
         .with_writer(std::io::stdout)
         .with_filter(console_filter);
-    
+
     let file_layer = fmt::Layer::default()
         .with_writer(non_blocking)
         .with_ansi(false)
@@ -2673,7 +2905,7 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
             "Debug logging enabled. Console level: DEBUG, File level: DEBUG"
         );
     }
-    
+
     Ok(guard)
 }
 
@@ -2693,7 +2925,11 @@ pub fn create_file_filter(debug: bool) -> EnvFilter {
         .add_directive("cranelift_codegen=warn".parse().expect("static directive"))
         .add_directive("cranelift_wasm=warn".parse().expect("static directive"))
         .add_directive("wasmtime_cranelift=warn".parse().expect("static directive"))
-        .add_directive("wasmtime_internal_cranelift=warn".parse().expect("static directive"))
+        .add_directive(
+            "wasmtime_internal_cranelift=warn"
+                .parse()
+                .expect("static directive"),
+        )
         .add_directive("wasmtime_jit=warn".parse().expect("static directive"))
         .add_directive("wasmtime=warn".parse().expect("static directive"))
         .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
@@ -2701,7 +2937,11 @@ pub fn create_file_filter(debug: bool) -> EnvFilter {
         .add_directive("libp2p_kad=error".parse().expect("static directive"))
         .add_directive("libp2p_gossipsub=error".parse().expect("static directive"))
         .add_directive("regalloc2=warn".parse().expect("static directive"))
-        .add_directive("tower_http::services::fs::serve_dir=off".parse().expect("static directive"))
+        .add_directive(
+            "tower_http::services::fs::serve_dir=off"
+                .parse()
+                .expect("static directive"),
+        )
         .add_directive("tower_http=warn".parse().expect("static directive"))
 }
 
@@ -2724,12 +2964,20 @@ pub fn create_console_filter(debug: bool) -> EnvFilter {
         .add_directive("cranelift_codegen=warn".parse().expect("static directive"))
         .add_directive("cranelift_wasm=warn".parse().expect("static directive"))
         .add_directive("wasmtime_cranelift=warn".parse().expect("static directive"))
-        .add_directive("wasmtime_internal_cranelift=warn".parse().expect("static directive"))
+        .add_directive(
+            "wasmtime_internal_cranelift=warn"
+                .parse()
+                .expect("static directive"),
+        )
         .add_directive("wasmtime_jit=warn".parse().expect("static directive"))
         .add_directive("wasmtime=warn".parse().expect("static directive"))
         .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
         .add_directive("regalloc2=warn".parse().expect("static directive"))
-        .add_directive("tower_http::services::fs::serve_dir=off".parse().expect("static directive"))
+        .add_directive(
+            "tower_http::services::fs::serve_dir=off"
+                .parse()
+                .expect("static directive"),
+        )
         .add_directive("tower_http=warn".parse().expect("static directive"))
 }
 
@@ -2738,11 +2986,11 @@ fn run_yara_sanitizer() {
 
     // 1. Resolve search paths correctly by looking for project root if necessary
     let mut search_paths = Vec::new();
-    
+
     // Add current directory targets
     search_paths.push(PathBuf::from("yara"));
     search_paths.push(PathBuf::from("rules"));
-    
+
     // Add relative path from executable (if we are in target/release)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(mut dir) = exe.parent().map(|p| p.to_path_buf()) {
@@ -2775,7 +3023,7 @@ fn run_yara_sanitizer() {
         if !base_path.exists() {
             continue;
         }
-        
+
         let canonical = match base_path.canonicalize() {
             Ok(p) => p,
             Err(_) => base_path.clone(),
@@ -2790,16 +3038,16 @@ fn run_yara_sanitizer() {
             .into_iter()
             .filter_map(|e| e.ok())
         {
-            if entry.file_type().is_file() && entry.path().extension().map_or(false, |ext| ext == "yar") {
+            if entry.file_type().is_file()
+                && entry.path().extension().is_some_and(|ext| ext == "yar")
+            {
                 let path = entry.path();
                 match std::fs::read_to_string(path) {
                     Ok(content) => {
                         let sanitized = sanitize_yara_content(&content);
-                        if sanitized != content {
-                            if std::fs::write(path, sanitized).is_ok() {
-                                count += 1;
-                                info!("Sanitized (Native): {:?}", path);
-                            }
+                        if sanitized != content && std::fs::write(path, sanitized).is_ok() {
+                            count += 1;
+                            info!("Sanitized (Native): {:?}", path);
                         }
                     }
                     Err(_) => {
@@ -2807,11 +3055,9 @@ fn run_yara_sanitizer() {
                         if let Ok(bytes) = std::fs::read(path) {
                             let content = String::from_utf8_lossy(&bytes).to_string();
                             let sanitized = sanitize_yara_content(&content);
-                            if sanitized != content {
-                                if std::fs::write(path, sanitized).is_ok() {
-                                    count += 1;
-                                    info!("Sanitized (Native Lossy): {:?}", path);
-                                }
+                            if sanitized != content && std::fs::write(path, sanitized).is_ok() {
+                                count += 1;
+                                info!("Sanitized (Native Lossy): {:?}", path);
                             }
                         }
                     }
@@ -2831,41 +3077,46 @@ fn sanitize_yara_content(content: &str) -> String {
     // 1. Fix invalid escapes in strings and regexes
     // Regex for strings: ".*?" (non-greedy)
     let string_regex = regex::Regex::new(r#"(?s)".*?""#).unwrap();
-    result = string_regex.replace_all(&result, |caps: &regex::Captures| {
-        fix_yara_escapes(&caps[0])
-    }).to_string();
+    result = string_regex
+        .replace_all(&result, |caps: &regex::Captures| fix_yara_escapes(&caps[0]))
+        .to_string();
 
     // Regex for regexes: /.*?/
     let regex_decl_regex = regex::Regex::new(r"(?s)/.*?/").unwrap();
-    result = regex_decl_regex.replace_all(&result, |caps: &regex::Captures| {
-        fix_yara_escapes(&caps[0])
-    }).to_string();
+    result = regex_decl_regex
+        .replace_all(&result, |caps: &regex::Captures| fix_yara_escapes(&caps[0]))
+        .to_string();
 
     // 2. Fix unescaped forward slashes in regex: /.../.../ -> /...\/.../
     // Heuristic: looks for /.../ followed by modifiers or whitespace/newline/semicolon
-    let regex_fixer = regex::Regex::new(r"/[^ \n].*?/[ ]*(wide|ascii|nocase|fullword|\n|;)").unwrap();
-    result = regex_fixer.replace_all(&result, |caps: &regex::Captures| {
-        let r = &caps[0];
-        if r.len() < 3 { return r.to_string(); }
-        
-        // Find the second '/' (the end of the regex part)
-        if let Some(end_idx) = r[1..].find('/') {
-            let internal = &r[1..end_idx + 1];
-            let mut fixed_internal = String::with_capacity(internal.len());
-            let chars: Vec<char> = internal.chars().collect();
-            for i in 0..chars.len() {
-                if chars[i] == '/' && (i == 0 || chars[i-1] != '\\') {
-                    fixed_internal.push('\\');
-                    fixed_internal.push('/');
-                } else {
-                    fixed_internal.push(chars[i]);
-                }
+    let regex_fixer =
+        regex::Regex::new(r"/[^ \n].*?/[ ]*(wide|ascii|nocase|fullword|\n|;)").unwrap();
+    result = regex_fixer
+        .replace_all(&result, |caps: &regex::Captures| {
+            let r = &caps[0];
+            if r.len() < 3 {
+                return r.to_string();
             }
-            format!("/{}/{}", fixed_internal, &r[end_idx + 2..])
-        } else {
-            r.to_string()
-        }
-    }).to_string();
+
+            // Find the second '/' (the end of the regex part)
+            if let Some(end_idx) = r[1..].find('/') {
+                let internal = &r[1..end_idx + 1];
+                let mut fixed_internal = String::with_capacity(internal.len());
+                let chars: Vec<char> = internal.chars().collect();
+                for i in 0..chars.len() {
+                    if chars[i] == '/' && (i == 0 || chars[i - 1] != '\\') {
+                        fixed_internal.push('\\');
+                        fixed_internal.push('/');
+                    } else {
+                        fixed_internal.push(chars[i]);
+                    }
+                }
+                format!("/{}/{}", fixed_internal, &r[end_idx + 2..])
+            } else {
+                r.to_string()
+            }
+        })
+        .to_string();
 
     // 3. Fix empty alternatives
     result = result.replace("|/", "/");
@@ -2892,7 +3143,7 @@ fn fix_yara_escapes(s: &str) -> String {
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i+1];
+            let next = chars[i + 1];
             if next == '\\' {
                 // Literal backslash: valid, push both and skip
                 result.push('\\');
@@ -2925,14 +3176,30 @@ fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
         tracing::warn!("Refusing to open browser: non-HTTP/HTTPS URL: {}", url);
         return;
     }
-    if url.chars().any(|c| c == '&' || c == '|' || c == ';' || c == '`' || c == '$' || c == '"' || c == '\'' || c == '\n' || c == '\r') {
-        tracing::warn!("Refusing to open browser: URL contains forbidden shell characters: {}", url);
+    if url.chars().any(|c| {
+        c == '&'
+            || c == '|'
+            || c == ';'
+            || c == '`'
+            || c == '$'
+            || c == '"'
+            || c == '\''
+            || c == '\n'
+            || c == '\r'
+    }) {
+        tracing::warn!(
+            "Refusing to open browser: URL contains forbidden shell characters: {}",
+            url
+        );
         return;
     }
 
     if user_no_browser {
         println!("[+] Browser auto-launch disabled by --no-browser.");
-        info!("Dashboard web server is active at {}. (Browser auto-launch disabled by --no-browser)", url);
+        info!(
+            "Dashboard web server is active at {}. (Browser auto-launch disabled by --no-browser)",
+            url
+        );
         return;
     }
     let mut sys = sysinfo::System::new();
@@ -2955,7 +3222,17 @@ fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
         #[cfg(target_os = "windows")]
         {
             if (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:"))
-                && !url.chars().any(|c| c == '&' || c == '|' || c == ';' || c == '`' || c == '$' || c == '"' || c == '\'' || c == '\n' || c == '\r')
+                && !url.chars().any(|c| {
+                    c == '&'
+                        || c == '|'
+                        || c == ';'
+                        || c == '`'
+                        || c == '$'
+                        || c == '"'
+                        || c == '\''
+                        || c == '\n'
+                        || c == '\r'
+                })
             {
                 let _ = std::process::Command::new(osoosi_types::resolve_system_binary("cmd.exe"))
                     .args(["/c", "start", "", url])
@@ -3003,10 +3280,17 @@ fn set_panic_hook() {
                 now_ts, free_mb, info
             )
         } else {
-            format!("{} ERROR 💥 [FATAL PANIC] Process crashed: {:?}\n", now_ts, info)
+            format!(
+                "{} ERROR 💥 [FATAL PANIC] Process crashed: {:?}\n",
+                now_ts, info
+            )
         };
         for path in [daily_log_path, base_log_path] {
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
                 use std::io::Write;
                 let _ = f.write_all(log_entry.as_bytes());
                 let _ = f.flush();
@@ -3066,7 +3350,9 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 
     let ai_cfg = osoosi_types::load_ai_config();
     if !ai_cfg.enabled {
-        info!("AI subsystem disabled in config ([ai] enabled = false). Skipping all model downloads.");
+        info!(
+            "AI subsystem disabled in config ([ai] enabled = false). Skipping all model downloads."
+        );
         return Ok(());
     }
 
@@ -3084,7 +3370,10 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         .unwrap_or(false)
         || host_profile.tier == osoosi_types::config::HardwareTier::UltraLite;
     if lite_mode {
-        info!("LITE / UltraLite mode active (Tier: {:?}): Skipping all heavy AI model downloads.", host_profile.tier);
+        info!(
+            "LITE / UltraLite mode active (Tier: {:?}): Skipping all heavy AI model downloads.",
+            host_profile.tier
+        );
         return Ok(());
     }
     let mut sys = sysinfo::System::new();
@@ -3187,7 +3476,7 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
         let gemma_repo = api.model(gemma_repo_name.clone());
         for filename in ["config.json", "tokenizer.json"] {
-            if let Ok(_) = gemma_repo.get(filename).await {
+            if gemma_repo.get(filename).await.is_ok() {
                 tracing::debug!("Cached lightweight Gemma component: {}", filename);
             }
         }
@@ -3201,7 +3490,10 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
 
         // Just pull the necessary files into the HuggingFace cache.
         // The runtime logic in `osoosi-core` will dynamically locate the snapshot dir.
-        info!("Ensuring Gemma 4 ONNX shards are cached from {}...", gemma_repo_name);
+        info!(
+            "Ensuring Gemma 4 ONNX shards are cached from {}...",
+            gemma_repo_name
+        );
         for filename in [
             "config.json",
             "onnx/config.json",
@@ -3231,7 +3523,7 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             if !check_oom_guard(&mut sys) {
                 return Ok(());
             }
-            if let Ok(_) = gemma_repo.get(filename).await {
+            if gemma_repo.get(filename).await.is_ok() {
                 tracing::debug!("Cached Gemma component: {}", filename);
             }
         }
@@ -3278,11 +3570,14 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             info!("📥 Attempting MalConv download from primary URL...");
             let executor = DirectExecutor::new();
             if let Err(e) = executor.download(url.trim(), &malconv_dest, false).await {
-                tracing::debug!("Primary MalConv download failed: {}. Trying fallbacks...", e);
+                tracing::debug!(
+                    "Primary MalConv download failed: {}. Trying fallbacks...",
+                    e
+                );
             }
         }
     }
-    
+
     let use_bundled_hf_weights = std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -3306,7 +3601,10 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
                 if !check_oom_guard(&mut sys) {
                     return Ok(());
                 }
-                info!("📥 Verifying MalConv AI component: `{}` / `{}`...", repo_name, file);
+                info!(
+                    "📥 Verifying MalConv AI component: `{}` / `{}`...",
+                    repo_name, file
+                );
                 match repo.get(file).await {
                     Ok(downloaded) => {
                         if let Ok(meta) = std::fs::metadata(&downloaded) {
@@ -3338,18 +3636,26 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     let sorel_st = malware_dir.join("sorel_ffnn.safetensors");
     let mut needs_sorel = !sorel_dest.exists() && !sorel_st.exists();
     if !needs_sorel {
-        let check_path = if sorel_st.exists() { &sorel_st } else { &sorel_dest };
+        let check_path = if sorel_st.exists() {
+            &sorel_st
+        } else {
+            &sorel_dest
+        };
         if let Ok(meta) = std::fs::metadata(check_path) {
             if meta.len() < 1024 {
                 needs_sorel = true;
             } else if check_path == &sorel_dest {
                 let mut f = std::fs::File::open(check_path).ok();
                 let mut magic = [0u8; 4];
-                let is_valid = f.as_mut().and_then(|f| {
-                    use std::io::Read;
-                    f.read_exact(&mut magic).ok()
-                }).is_some() && (&magic == b"PK\x03\x04" || (magic[0] != b'<' && magic[0] != 0));
-                
+                let is_valid = f
+                    .as_mut()
+                    .and_then(|f| {
+                        use std::io::Read;
+                        f.read_exact(&mut magic).ok()
+                    })
+                    .is_some()
+                    && (&magic == b"PK\x03\x04" || (magic[0] != b'<' && magic[0] != 0));
+
                 if !is_valid {
                     warn!("Existing SOREL weights at {:?} appear to be invalid or HTML error pages. Re-provisioning...", check_path);
                     needs_sorel = true;
@@ -3385,23 +3691,29 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
                     match repo.get(file).await {
                         Ok(downloaded) => {
                             if let Ok(meta) = std::fs::metadata(&downloaded) {
-                                if meta.len() < 1024 { continue; }
-                                
+                                if meta.len() < 1024 {
+                                    continue;
+                                }
+
                                 // Accept if it has ZIP magic (standard .pt) OR if it starts with something other than '<' (to avoid HTML 404s)
                                 let f = std::fs::File::open(&downloaded).ok();
                                 let mut magic = [0u8; 4];
                                 if let Some(mut f_inner) = f {
                                     use std::io::Read;
-                                    if f_inner.read_exact(&mut magic).is_ok() {
-                                        if &magic != b"PK\x03\x04" && (magic[0] == b'<' || magic[0] == 0) {
-                                            warn!("Downloaded SOREL file {} appears to be an HTML error page. Skipping.", file);
-                                            continue;
-                                        }
+                                    if f_inner.read_exact(&mut magic).is_ok()
+                                        && &magic != b"PK\x03\x04"
+                                        && (magic[0] == b'<' || magic[0] == 0)
+                                    {
+                                        warn!("Downloaded SOREL file {} appears to be an HTML error page. Skipping.", file);
+                                        continue;
                                     }
                                 }
 
                                 if fs::copy(&downloaded, &sorel_dest).is_ok() {
-                                    info!("✅ SOREL-20M weights saved from {} ({}).", repo_name, file);
+                                    info!(
+                                        "✅ SOREL-20M weights saved from {} ({}).",
+                                        repo_name, file
+                                    );
                                     break 'sorel_hf;
                                 }
                             }
@@ -3422,7 +3734,12 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             }
             info!("Calibrating local SOREL-FFNN safetensors model for PE analysis...");
             let sorel_handle = Arc::new(tokio::sync::RwLock::new(None));
-            if let Err(e) = osoosi_model::malware::MalwareScanner::provision_sorel_by_training(sorel_handle, &sorel_dest).await {
+            if let Err(e) = osoosi_model::malware::MalwareScanner::provision_sorel_by_training(
+                sorel_handle,
+                &sorel_dest,
+            )
+            .await
+            {
                 info!("Local SOREL calibration: {}.", e);
             } else {
                 info!("✅ SOREL model built locally and provisioned.");
@@ -3499,12 +3816,13 @@ async fn ensure_ollama_model() {
     };
 
     info!("Ollama detected. Ensuring a local reasoning model is available...");
-    
+
     let list_fut = tokio::process::Command::new(get_ollama_bin())
         .arg("list")
         .output();
-    
-    let list_stdout = match tokio::time::timeout(std::time::Duration::from_secs(30), list_fut).await {
+
+    let list_stdout = match tokio::time::timeout(std::time::Duration::from_secs(30), list_fut).await
+    {
         Ok(Ok(out)) => String::from_utf8_lossy(&out.stdout).to_string(),
         _ => String::new(),
     };
@@ -3560,7 +3878,7 @@ async fn ensure_ollama_model() {
             let pull_fut = tokio::process::Command::new(get_ollama_bin())
                 .args(["pull", model])
                 .status();
-                
+
             match tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await {
                 Ok(Ok(status)) if status.success() => {
                     info!("Ollama model '{}' provisioned.", model);
@@ -3813,7 +4131,9 @@ fn resolve_wikiskill_paths() -> (Option<PathBuf>, Option<PathBuf>, Option<PathBu
 fn run_wikiskill_cli(args: &[&str]) -> anyhow::Result<std::process::Output> {
     let (python_opt, cli_opt, _root_opt) = resolve_wikiskill_paths();
     let python = python_opt.ok_or_else(|| {
-        anyhow::anyhow!("Python 3.11+ interpreter not found. Please ensure Python is installed and in PATH.")
+        anyhow::anyhow!(
+            "Python 3.11+ interpreter not found. Please ensure Python is installed and in PATH."
+        )
     })?;
     let cli = cli_opt.ok_or_else(|| {
         anyhow::anyhow!("WikiSkill CLI not found at tools/wikiskill/src/wikiskill/cli.py.")
@@ -3846,7 +4166,7 @@ fn atomic_write_state_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
         if path.exists() {
             let _ = std::fs::remove_file(path);
         }
-        if let Err(_) = std::fs::rename(&tmp_path, path) {
+        if std::fs::rename(&tmp_path, path).is_err() {
             let _ = std::fs::write(path, content);
             let _ = std::fs::remove_file(&tmp_path);
         }
@@ -3915,7 +4235,10 @@ Detect rapid multi-file encryption anomalies by evaluating Shannon entropy delta
         let _ = std::fs::write(&pat3, pat3_content);
     }
 
-    info!("[WikiSkill] Native Rust autonomous skill evolution workspace initialized at {}.", resolved_ws_str);
+    info!(
+        "[WikiSkill] Native Rust autonomous skill evolution workspace initialized at {}.",
+        resolved_ws_str
+    );
 }
 
 async fn run_wikiskill_background_loop(
@@ -3928,9 +4251,7 @@ async fn run_wikiskill_background_loop(
     let (python_opt, cli_opt, project_root) = resolve_wikiskill_paths();
 
     // Anchor relative paths against project root if present and not in cwd
-    let ws_path = if Path::new(&workspace).is_absolute() {
-        PathBuf::from(&workspace)
-    } else if Path::new(&workspace).is_dir() {
+    let ws_path = if Path::new(&workspace).is_absolute() || Path::new(&workspace).is_dir() {
         PathBuf::from(&workspace)
     } else if let Some(ref root) = project_root {
         root.join(&workspace)
@@ -3965,7 +4286,8 @@ async fn run_wikiskill_background_loop(
     };
 
     let resolved_ws_str = ws_path.to_string_lossy().to_string();
-    let mut broadcasted_patterns: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut broadcasted_patterns: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
 
     // 1. If workspace doesn't exist or is missing state/index, bootstrap it
     let state_file = ws_path.join(".wikiskill-state.json");
@@ -3975,7 +4297,10 @@ async fn run_wikiskill_background_loop(
     if needs_bootstrap {
         let mut bootstrapped = false;
         if let (Some(python), Some(cli)) = (python_opt.as_ref(), cli_opt.as_ref()) {
-            info!("[WikiSkill] Bootstrapping evolution workspace at {}...", resolved_ws_str);
+            info!(
+                "[WikiSkill] Bootstrapping evolution workspace at {}...",
+                resolved_ws_str
+            );
             let mut cmd = tokio::process::Command::new(python);
             cmd.arg(cli)
                 .arg("start")
@@ -3999,7 +4324,10 @@ async fn run_wikiskill_background_loop(
 
             match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await {
                 Ok(Ok(output)) if output.status.success() => {
-                    info!("[WikiSkill] Successfully initialized evolution workspace at {}.", resolved_ws_str);
+                    info!(
+                        "[WikiSkill] Successfully initialized evolution workspace at {}.",
+                        resolved_ws_str
+                    );
                     let _ = atomic_write_state_file(&state_file, &output.stdout);
                     bootstrapped = true;
                 }
@@ -4022,13 +4350,20 @@ async fn run_wikiskill_background_loop(
 
     // Immediate initial poll to eliminate any startup blackout window
     let (_, initial_score) = poll_wikiskill_status(&resolved_ws_str, &ws_path).await;
-    broadcast_new_wiki_patterns(&ws_path, initial_score, &mut broadcasted_patterns, &orchestrator).await;
+    broadcast_new_wiki_patterns(
+        &ws_path,
+        initial_score,
+        &mut broadcasted_patterns,
+        &orchestrator,
+    )
+    .await;
 
     // 2. Continuous background evaluation loop
     loop {
         tokio::time::sleep(poll_interval).await;
         let (_, score) = poll_wikiskill_status(&resolved_ws_str, &ws_path).await;
-        broadcast_new_wiki_patterns(&ws_path, score, &mut broadcasted_patterns, &orchestrator).await;
+        broadcast_new_wiki_patterns(&ws_path, score, &mut broadcasted_patterns, &orchestrator)
+            .await;
     }
 }
 
@@ -4179,7 +4514,10 @@ async fn broadcast_new_wiki_patterns(
         );
 
         if let Err(e) = orch.broadcast_skill_knowledge(broadcast).await {
-            warn!("[WikiSkill] Failed to broadcast skill pattern {}: {}", title, e);
+            warn!(
+                "[WikiSkill] Failed to broadcast skill pattern {}: {}",
+                title, e
+            );
         } else {
             broadcasted.insert(content_hash);
         }
@@ -4225,7 +4563,10 @@ async fn poll_wikiskill_status(workspace: &str, ws_path: &Path) -> (String, f64)
                 );
             }
             Ok(Ok(output)) => {
-                debug!("[WikiSkill] Status evaluation returned non-zero code: {:?}", output.status.code());
+                debug!(
+                    "[WikiSkill] Status evaluation returned non-zero code: {:?}",
+                    output.status.code()
+                );
             }
             Ok(Err(e)) => {
                 debug!("[WikiSkill] Status evaluation poll error: {}", e);
@@ -4243,7 +4584,9 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
         None | Some(SkillSubcommand::List) => {
             println!("\n================================================================================");
             println!("               OpenỌ̀ṣọ́ọ̀sì Autonomous Agent Skill Framework (WikiSkill)");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
 
             // 1. Discover skills in .agents/skills/
             let skills_dir = Path::new(".agents").join("skills");
@@ -4269,7 +4612,9 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
                                             let fm = &rest[..fm_end];
                                             for line in fm.lines() {
                                                 let trimmed = line.trim();
-                                                if let Some(val) = trimmed.strip_prefix("description:") {
+                                                if let Some(val) =
+                                                    trimmed.strip_prefix("description:")
+                                                {
                                                     desc = val
                                                         .trim()
                                                         .trim_matches('"')
@@ -4310,25 +4655,39 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
                         for entry in entries.flatten() {
                             let path = entry.path();
                             if path.is_dir()
-                                && ((path.join("config.json").is_file() && path.join("events").is_dir())
+                                && ((path.join("config.json").is_file()
+                                    && path.join("events").is_dir())
                                     || path.join(".wikiskill-state.json").is_file())
                             {
                                 found_ws = true;
                                 let mut phase = "unknown".to_string();
                                 let mut score_info = String::new();
-                                if let Ok(out) = run_wikiskill_cli(&["status", &path.to_string_lossy()]) {
+                                if let Ok(out) =
+                                    run_wikiskill_cli(&["status", &path.to_string_lossy()])
+                                {
                                     if out.status.success() {
-                                        if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
-                                            if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
+                                        if let Ok(val) =
+                                            serde_json::from_slice::<serde_json::Value>(&out.stdout)
+                                        {
+                                            if let Some(p) =
+                                                val.get("phase").and_then(|v| v.as_str())
+                                            {
                                                 phase = p.to_string();
                                             }
-                                            if let Some(best) = val.get("best_score").and_then(|v| v.as_f64()) {
+                                            if let Some(best) =
+                                                val.get("best_score").and_then(|v| v.as_f64())
+                                            {
                                                 score_info = format!(", Score: {:.2}", best);
                                             }
                                         }
                                     }
                                 }
-                                println!("  • \x1b[1m{}\x1b[0m (Phase: {}{})", path.display(), phase, score_info);
+                                println!(
+                                    "  • \x1b[1m{}\x1b[0m (Phase: {}{})",
+                                    path.display(),
+                                    phase,
+                                    score_info
+                                );
                             }
                         }
                     }
@@ -4343,7 +4702,9 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
         Some(SkillSubcommand::Doctor) => {
             println!("\n================================================================================");
             println!("                       WikiSkill Runtime Doctor");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             let (python_opt, cli_opt, project_root) = resolve_wikiskill_paths();
             println!(
                 "Python Runtime:       {}",
@@ -4460,9 +4821,15 @@ async fn handle_forensics_command(action: ForensicsAction) -> anyhow::Result<()>
 
     match action {
         ForensicsAction::Status => {
-            println!("================================================================================");
-            println!("           OpenỌ̀ṣọ́ọ̀sì Embedded Velociraptor Forensics Status                     ");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
+            println!(
+                "           OpenỌ̀ṣọ́ọ̀sì Embedded Velociraptor Forensics Status                     "
+            );
+            println!(
+                "================================================================================"
+            );
             println!("Enabled in config:        {}", cfg.enabled);
             println!("Configured Binary Path:   {}", cfg.binary_path);
             let resolved = client.resolve_binary_path();
@@ -4483,12 +4850,20 @@ async fn handle_forensics_command(action: ForensicsAction) -> anyhow::Result<()>
             println!("Max Output Lines:         {}", cfg.max_output_lines);
             println!("Staging Directory:        {}", cfg.staging_dir);
             println!("Auto Investigate Alerts:  {}", cfg.auto_investigate);
-            println!("Min Trigger Confidence:   {:.2}", cfg.min_trigger_confidence);
+            println!(
+                "Min Trigger Confidence:   {:.2}",
+                cfg.min_trigger_confidence
+            );
             println!("Trigger ATT&CK Techniques: {:?}", cfg.trigger_techniques);
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         ForensicsAction::InspectProcess { pid } => {
-            println!("[*] Inspecting Virtual Address Descriptors (VAD) for PID {}...", pid);
+            println!(
+                "[*] Inspecting Virtual Address Descriptors (VAD) for PID {}...",
+                pid
+            );
             let records = client.inspect_process_vad(pid).await?;
             let (corroborated, delta, flagged) =
                 osoosi_forensics::corroborate_process_injection(pid, &records);
@@ -4577,9 +4952,13 @@ async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
 
     match action {
         DecisionAction::Status => {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("       OpenỌ̀ṣọ́ọ̀sì Clef Non-Autoregressive Decision Model Status");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("Enabled:                  {}", cfg.enabled);
             println!("Provider:                 {}", cfg.provider);
             println!("Model:                    {}", cfg.model);
@@ -4597,17 +4976,29 @@ async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
             let metrics = engine.metrics();
             println!("Total Evaluations:        {}", metrics.total_evaluations);
             println!("Local Evaluations:        {}", metrics.local_evaluations);
-            println!("Cloudflare Evaluations:   {}", metrics.cloudflare_evaluations);
+            println!(
+                "Cloudflare Evaluations:   {}",
+                metrics.cloudflare_evaluations
+            );
             println!("Fallback Evaluations:     {}", metrics.fallback_evaluations);
             println!("Average Latency:          {:.3} ms", metrics.avg_latency_ms);
             println!("RLCD Feedback Count:      {}", metrics.rl_feedback_count);
-            println!("Cumulative RLCD Reward:   {:.3}", metrics.cumulative_rl_reward);
-            println!("================================================================================");
+            println!(
+                "Cumulative RLCD Reward:   {:.3}",
+                metrics.cumulative_rl_reward
+            );
+            println!(
+                "================================================================================"
+            );
         }
         DecisionAction::Test => {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("       OpenỌ̀ṣọ́ọ̀sì Clef Decision Model Benchmark Test");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
 
             // 1. Benign Scenario
             println!("\n[1/2] Evaluating Benign Incident Scenario:");
@@ -4616,11 +5007,25 @@ async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
             let benign_decision = engine.evaluate_security_incident(benign_state).await?;
             println!("  Provider:         {}", benign_decision.provider_used);
             println!("  Latency:          {:.2} ms", benign_decision.latency_ms);
-            println!("  Verdict:          {} ({:.2}%)", benign_decision.verdict, benign_decision.verdict_probability * 100.0);
-            println!("  Containment:      {} ({:.2}%)", benign_decision.containment_action, benign_decision.action_probability * 100.0);
+            println!(
+                "  Verdict:          {} ({:.2}%)",
+                benign_decision.verdict,
+                benign_decision.verdict_probability * 100.0
+            );
+            println!(
+                "  Containment:      {} ({:.2}%)",
+                benign_decision.containment_action,
+                benign_decision.action_probability * 100.0
+            );
             println!("  Severity:         {}", benign_decision.threat_severity);
-            println!("  Human Escalation: {}", benign_decision.human_escalation_required);
-            println!("  Deep Reasoning:   {}", benign_decision.deep_reasoning_required);
+            println!(
+                "  Human Escalation: {}",
+                benign_decision.human_escalation_required
+            );
+            println!(
+                "  Deep Reasoning:   {}",
+                benign_decision.deep_reasoning_required
+            );
 
             // 2. Attack Scenario
             println!("\n[2/2] Evaluating Malicious Attack Incident Scenario:");
@@ -4629,14 +5034,30 @@ async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
             let attack_decision = engine.evaluate_security_incident(attack_state).await?;
             println!("  Provider:         {}", attack_decision.provider_used);
             println!("  Latency:          {:.2} ms", attack_decision.latency_ms);
-            println!("  Verdict:          {} ({:.2}%)", attack_decision.verdict, attack_decision.verdict_probability * 100.0);
-            println!("  Containment:      {} ({:.2}%)", attack_decision.containment_action, attack_decision.action_probability * 100.0);
+            println!(
+                "  Verdict:          {} ({:.2}%)",
+                attack_decision.verdict,
+                attack_decision.verdict_probability * 100.0
+            );
+            println!(
+                "  Containment:      {} ({:.2}%)",
+                attack_decision.containment_action,
+                attack_decision.action_probability * 100.0
+            );
             println!("  Severity:         {}", attack_decision.threat_severity);
-            println!("  Human Escalation: {}", attack_decision.human_escalation_required);
-            println!("  Deep Reasoning:   {}", attack_decision.deep_reasoning_required);
+            println!(
+                "  Human Escalation: {}",
+                attack_decision.human_escalation_required
+            );
+            println!(
+                "  Deep Reasoning:   {}",
+                attack_decision.deep_reasoning_required
+            );
 
             println!("\n[+] Clef Decision Model benchmark completed successfully.");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         DecisionAction::Evaluate { state } => {
             let decision = engine.evaluate_security_incident(&state).await?;
@@ -4652,27 +5073,43 @@ async fn handle_consensus_command(action: ConsensusAction) -> anyhow::Result<()>
 
     match action {
         ConsensusAction::Evaluate { file } => {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("       OpenỌ̀ṣọ́ọ̀sì Consensus-Gated Execution Evaluation");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             let p = std::path::Path::new(&file);
             println!("Target Path: {}", p.display());
             let finding = orchestrator.evaluate_program_consensus(p).await?;
             println!("Finding ID:     {}", finding.id);
             println!("Hash (Blake3):  {}", finding.hash_blake3);
-            println!("Process Name:   {}", finding.process_name.as_deref().unwrap_or("—"));
+            println!(
+                "Process Name:   {}",
+                finding.process_name.as_deref().unwrap_or("—")
+            );
             println!("Verdict:        {}", finding.verdict);
             println!("Confidence:     {:.2}%", finding.confidence * 100.0);
             println!("Detectors:      {}", finding.detector_count);
             println!("Action Taken:   {}", finding.action_taken);
             println!("Evidence:       {}", finding.voters_summary);
             println!("Evaluated At:   {}", finding.evaluated_at.to_rfc3339());
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         ConsensusAction::Findings { limit } => {
-            println!("================================================================================");
-            println!("       OpenỌ̀ṣọ́ọ̀sì Consensus Evaluation Ledger (Most Recent {})", limit);
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
+            println!(
+                "       OpenỌ̀ṣọ́ọ̀sì Consensus Evaluation Ledger (Most Recent {})",
+                limit
+            );
+            println!(
+                "================================================================================"
+            );
             let findings = orchestrator.memory().get_consensus_findings(limit)?;
             if findings.is_empty() {
                 println!("No consensus findings recorded yet.");
@@ -4699,27 +5136,58 @@ async fn handle_consensus_command(action: ConsensusAction) -> anyhow::Result<()>
                     }
                 }
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         ConsensusAction::CleanHashes { limit } => {
-            println!("================================================================================");
-            println!("       OpenỌ̀ṣọ́ọ̀sì Active Clean-Ignored Hashes (Most Recent {})", limit);
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
+            println!(
+                "       OpenỌ̀ṣọ́ọ̀sì Active Clean-Ignored Hashes (Most Recent {})",
+                limit
+            );
+            println!(
+                "================================================================================"
+            );
             let list = orchestrator.memory().get_clean_ignored_hashes(limit)?;
             if list.is_empty() {
                 println!("No clean hashes in ignore list.");
             } else {
                 for (idx, item) in list.iter().enumerate() {
-                    let hash = item.get("hash_blake3").and_then(|v| v.as_str()).unwrap_or("—");
-                    let proc = item.get("process_name").and_then(|v| v.as_str()).unwrap_or("—");
+                    let hash = item
+                        .get("hash_blake3")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("—");
+                    let proc = item
+                        .get("process_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("—");
                     let src = item.get("source").and_then(|v| v.as_str()).unwrap_or("—");
-                    let time = item.get("marked_at").and_then(|v| v.as_str()).unwrap_or("—");
-                    println!("[{:02}] Hash: {} | Process: {} | Source: {} | Marked: {}", idx + 1, hash, proc, src, time);
+                    let time = item
+                        .get("marked_at")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("—");
+                    println!(
+                        "[{:02}] Hash: {} | Process: {} | Source: {} | Marked: {}",
+                        idx + 1,
+                        hash,
+                        proc,
+                        src,
+                        time
+                    );
                 }
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
-        ConsensusAction::Ignore { hash, process, path } => {
+        ConsensusAction::Ignore {
+            hash,
+            process,
+            path,
+        } => {
             orchestrator.memory().mark_hash_clean_ignored(
                 &hash,
                 process.as_deref(),
@@ -4731,7 +5199,10 @@ async fn handle_consensus_command(action: ConsensusAction) -> anyhow::Result<()>
         ConsensusAction::Unignore { hash } => {
             let removed = orchestrator.memory().remove_clean_ignored_hash(&hash)?;
             if removed {
-                println!("Successfully removed hash '{}' from clean-ignore list.", hash);
+                println!(
+                    "Successfully removed hash '{}' from clean-ignore list.",
+                    hash
+                );
             } else {
                 println!("Hash '{}' not found in clean-ignore list.", hash);
             }
@@ -4752,21 +5223,35 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
 
     match action {
         YaraAction::Status => {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("          OpenỌ̀ṣọ́ọ̀sì Dynamic YARA-X Rule Engine Status");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
 
             let daemon_url = format!("http://127.0.0.1:{}/api/yara/status", dashboard_port);
-            let live_status: Option<osoosi_core::yara::YaraEngineStatus> = match client.get(&daemon_url).send().await {
-                Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
-                _ => None,
-            };
+            let live_status: Option<osoosi_core::yara::YaraEngineStatus> =
+                match client.get(&daemon_url).send().await {
+                    Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
+                    _ => None,
+                };
 
             let (status, source_label) = if let Some(st) = live_status {
-                (st, format!("Connected to live OpenỌ̀ṣọ́ọ̀sì daemon (port {})", dashboard_port))
+                (
+                    st,
+                    format!(
+                        "Connected to live OpenỌ̀ṣọ́ọ̀sì daemon (port {})",
+                        dashboard_port
+                    ),
+                )
             } else {
                 let ym = osoosi_core::yara::YaraManager::new();
-                (ym.get_status(), "Standalone local engine instance".to_string())
+                (
+                    ym.get_status(),
+                    "Standalone local engine instance".to_string(),
+                )
             };
 
             println!("Engine Mode:              {}", source_label);
@@ -4776,7 +5261,10 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
             println!("Community Feed Rules:     {}", status.feed_rules);
             println!("Total Files Scanned:      {}", status.total_scans);
             println!("Total Malware Detections: {}", status.total_matches);
-            println!("Last Reloaded At:         {}", status.last_reloaded_at.to_rfc3339());
+            println!(
+                "Last Reloaded At:         {}",
+                status.last_reloaded_at.to_rfc3339()
+            );
             println!(
                 "Last Feed Update:         {}",
                 status
@@ -4785,8 +5273,13 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
                     .unwrap_or_else(|| "Never / Offline Built-in".to_string())
             );
             println!("Updating In Progress:     {}", status.is_updating);
-            println!("Rule Search Directories:  {:?}", status.directories_searched);
-            println!("================================================================================");
+            println!(
+                "Rule Search Directories:  {:?}",
+                status.directories_searched
+            );
+            println!(
+                "================================================================================"
+            );
         }
         YaraAction::Reload => {
             println!("[*] Reloading YARA-X rule engine from disk...");
@@ -4796,7 +5289,10 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
                 Ok(resp) if resp.status().is_success() => {
                     let json: serde_json::Value = resp.json().await.unwrap_or_default();
                     let rules = json.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
-                    println!("[+] Successfully reloaded {} rules via live daemon (port {}).", rules, dashboard_port);
+                    println!(
+                        "[+] Successfully reloaded {} rules via live daemon (port {}).",
+                        rules, dashboard_port
+                    );
                     true
                 }
                 _ => false,
@@ -4805,7 +5301,10 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
             if !reloaded_via_daemon {
                 let ym = osoosi_core::yara::YaraManager::new();
                 let count = ym.reload_rules_async().await?;
-                println!("[+] Successfully reloaded {} rules via standalone engine.", count);
+                println!(
+                    "[+] Successfully reloaded {} rules via standalone engine.",
+                    count
+                );
             }
         }
         YaraAction::Update => {
@@ -4816,7 +5315,10 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
                 Ok(resp) if resp.status().is_success() => {
                     let json: serde_json::Value = resp.json().await.unwrap_or_default();
                     let rules = json.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
-                    println!("[+] Successfully updated and compiled {} rules via live daemon.", rules);
+                    println!(
+                        "[+] Successfully updated and compiled {} rules via live daemon.",
+                        rules
+                    );
                     true
                 }
                 _ => false,
@@ -4825,22 +5327,35 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
             if !updated_via_daemon {
                 let ym = osoosi_core::yara::YaraManager::new();
                 let count = ym.update_feeds_and_reload().await?;
-                println!("[+] Successfully updated community feeds. Total active rules: {}", count);
+                println!(
+                    "[+] Successfully updated community feeds. Total active rules: {}",
+                    count
+                );
             }
         }
         YaraAction::Scan { path } => {
             if !path.exists() {
-                eprintln!("[!] Error: Target path '{}' does not exist.", path.display());
+                eprintln!(
+                    "[!] Error: Target path '{}' does not exist.",
+                    path.display()
+                );
                 std::process::exit(1);
             }
 
-            println!("[*] Initializing YARA-X engine for target scan: {}", path.display());
+            println!(
+                "[*] Initializing YARA-X engine for target scan: {}",
+                path.display()
+            );
             let ym = osoosi_core::yara::YaraManager::new();
             let matches = ym.scan_file(&path)?;
 
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("                   OpenỌ̀ṣọ́ọ̀sì YARA-X Scan Verdict");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("Target:               {}", path.display());
             println!("Matching Rules Found: {}", matches.len());
             if matches.is_empty() {
@@ -4851,7 +5366,9 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
                     println!("  [{}] Rule: {}", idx + 1, rule_id);
                 }
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
     }
 
@@ -4866,48 +5383,105 @@ async fn handle_swarm_command(action: SwarmAction) -> anyhow::Result<()> {
 
     match action {
         SwarmAction::Status => {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("       OpenỌ̀ṣọ́ọ̀sì LangGraph Autonomous Defense Swarm Status");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("Enabled:                  {}", cfg.enabled);
             println!("Service URL:              {}", cfg.service_url);
             println!("Auto-Trigger on Threat:   {}", cfg.auto_trigger_on_threat);
-            println!("Min Trigger Confidence:   {:.2}", cfg.min_trigger_confidence);
+            println!(
+                "Min Trigger Confidence:   {:.2}",
+                cfg.min_trigger_confidence
+            );
             println!("Timeout Cutoff:           {} s", cfg.timeout_secs);
-            println!("--------------------------------------------------------------------------------");
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
 
             let health_url = format!("{}/api/swarm/health", cfg.service_url.trim_end_matches('/'));
             match client.get(&health_url).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     let health: serde_json::Value = resp.json().await?;
                     println!("Daemon Health:            ONLINE");
-                    println!("Daemon Status:            {}", health.get("status").and_then(|v| v.as_str()).unwrap_or("ok"));
-                    println!("Version:                  {}", health.get("version").and_then(|v| v.as_str()).unwrap_or("0.1.0"));
-                    println!("Active Incidents:         {}", health.get("active_incidents").and_then(|v| v.as_i64()).unwrap_or(0));
-                    println!("Execution Engine:         {}", health.get("engine").and_then(|v| v.as_str()).unwrap_or("LangGraph"));
+                    println!(
+                        "Daemon Status:            {}",
+                        health
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("ok")
+                    );
+                    println!(
+                        "Version:                  {}",
+                        health
+                            .get("version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("0.1.0")
+                    );
+                    println!(
+                        "Active Incidents:         {}",
+                        health
+                            .get("active_incidents")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0)
+                    );
+                    println!(
+                        "Execution Engine:         {}",
+                        health
+                            .get("engine")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("LangGraph")
+                    );
                 }
                 Ok(resp) => {
-                    println!("Daemon Health:            DEGRADED (HTTP {})", resp.status());
+                    println!(
+                        "Daemon Health:            DEGRADED (HTTP {})",
+                        resp.status()
+                    );
                 }
                 Err(err) => {
                     println!("Daemon Health:            OFFLINE ({})", err);
-                    println!("\nTip: Launch the defense swarm microservice via: defense-swarm serve");
+                    println!(
+                        "\nTip: Launch the defense swarm microservice via: defense-swarm serve"
+                    );
                 }
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
-        SwarmAction::Test { pid, path, command_line, engine, confidence } => {
-            println!("================================================================================");
+        SwarmAction::Test {
+            pid,
+            path,
+            command_line,
+            engine,
+            confidence,
+        } => {
+            println!(
+                "================================================================================"
+            );
             println!("       OpenỌ̀ṣọ́ọ̀sì LangGraph Defense Swarm: Dispatching Synthetic Incident");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("Target PID:     {}", pid);
             println!("Target Path:    {}", path);
             println!("Command Line:   {}", command_line);
             println!("Engine:         {}", engine);
             println!("Confidence:     {:.2}", confidence);
-            println!("--------------------------------------------------------------------------------");
+            println!(
+                "--------------------------------------------------------------------------------"
+            );
 
-            let incident_id = format!("TEST-CLI-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs());
+            let incident_id = format!(
+                "TEST-CLI-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs()
+            );
             let target_proc_name = std::path::Path::new(&path)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -4923,7 +5497,10 @@ async fn handle_swarm_command(action: SwarmAction) -> anyhow::Result<()> {
                 "initial_confidence": confidence,
             });
 
-            let investigate_url = format!("{}/api/swarm/investigate", cfg.service_url.trim_end_matches('/'));
+            let investigate_url = format!(
+                "{}/api/swarm/investigate",
+                cfg.service_url.trim_end_matches('/')
+            );
             match client.post(&investigate_url).json(&payload).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     let result: serde_json::Value = resp.json().await?;
@@ -4935,11 +5512,18 @@ async fn handle_swarm_command(action: SwarmAction) -> anyhow::Result<()> {
                     eprintln!("✗ Swarm service returned HTTP error: {}", err_text);
                 }
                 Err(err) => {
-                    eprintln!("✗ Failed to connect to LangGraph Swarm at {}: {}", investigate_url, err);
-                    eprintln!("Tip: Ensure the service is running via: python -m defense_swarm.cli serve");
+                    eprintln!(
+                        "✗ Failed to connect to LangGraph Swarm at {}: {}",
+                        investigate_url, err
+                    );
+                    eprintln!(
+                        "Tip: Ensure the service is running via: python -m defense_swarm.cli serve"
+                    );
                 }
             }
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
     }
 
@@ -4953,11 +5537,29 @@ fn handle_check_resources_command() {
     println!("================================================================================");
     println!("                     OPENỌ̀ṢỌ́Ọ̀SÌ HARDWARE & RESOURCE DIAGNOSTICS                ");
     println!("================================================================================");
-    println!(" Host Operating System : {} {}", host_profile.os_name, host_profile.os_version);
+    println!(
+        " Host Operating System : {} {}",
+        host_profile.os_name, host_profile.os_version
+    );
     println!(" Logical CPU Cores     : {}", host_profile.cpu_cores);
-    println!(" Total System Memory   : {:.2} GB ({} MB)", host_profile.total_ram_mb as f64 / 1024.0, host_profile.total_ram_mb);
-    println!(" Available Free Memory : {:.2} GB ({} MB)", host_profile.available_ram_mb as f64 / 1024.0, host_profile.available_ram_mb);
-    println!(" GPU Acceleration      : {}", if host_profile.has_gpu { host_profile.gpu_name.as_deref().unwrap_or("Detected") } else { "None (CPU Execution)" });
+    println!(
+        " Total System Memory   : {:.2} GB ({} MB)",
+        host_profile.total_ram_mb as f64 / 1024.0,
+        host_profile.total_ram_mb
+    );
+    println!(
+        " Available Free Memory : {:.2} GB ({} MB)",
+        host_profile.available_ram_mb as f64 / 1024.0,
+        host_profile.available_ram_mb
+    );
+    println!(
+        " GPU Acceleration      : {}",
+        if host_profile.has_gpu {
+            host_profile.gpu_name.as_deref().unwrap_or("Detected")
+        } else {
+            "None (CPU Execution)"
+        }
+    );
     println!(" Configured Profile    : {}", res_cfg.profile);
     println!(" Assigned Hardware Tier: {:?}", host_profile.tier);
     println!("--------------------------------------------------------------------------------");
@@ -4968,9 +5570,12 @@ fn handle_check_resources_command() {
         osoosi_types::config::HardwareTier::Enterprise => "Enterprise (>16 GB RAM): Full reasoning models (FoundationSec-8B) & full NSRL cache.",
     });
     println!("================================================================================");
-    println!(" {:<30} | {:<12} | {:<20} | {:<20}", "COMPONENT / MODEL", "MIN FREE RAM", "STATUS", "RECOMMENDED ACTION");
+    println!(
+        " {:<30} | {:<12} | {:<20} | {:<20}",
+        "COMPONENT / MODEL", "MIN FREE RAM", "STATUS", "RECOMMENDED ACTION"
+    );
     println!("--------------------------------------------------------------------------------");
-    
+
     let verdicts = host_profile.evaluate_model_readiness(&res_cfg);
     for v in &verdicts {
         let rec_action = if v.can_load {
@@ -4982,7 +5587,10 @@ fn handle_check_resources_command() {
         } else {
             "Fallback heuristics active".to_string()
         };
-        println!(" {:<30} | {:>9} MB | {:<20} | {:<20}", v.model_name, v.required_ram_mb, v.status, rec_action);
+        println!(
+            " {:<30} | {:>9} MB | {:<20} | {:<20}",
+            v.model_name, v.required_ram_mb, v.status, rec_action
+        );
     }
     println!("================================================================================");
     println!(" Diagnostic Summary:");
@@ -5023,7 +5631,11 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
         let resources = osoosi_behavioral::hardware_selection::get_system_resources();
         let tier = resources.determine_tier();
         let ai_cfg = osoosi_types::config::load_ai_config();
-        let installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+        let installed_models =
+            osoosi_behavioral::hardware_selection::query_installed_ollama_models(
+                &ai_cfg.reasoning_url,
+            )
+            .await;
 
         let deep_model_name = match tier {
             osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => "qwen2.5:32b",
@@ -5041,7 +5653,9 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
 
         let mut targets = Vec::new();
         for m in &all_calibrated {
-            let already = installed_models.iter().any(|inst| osoosi_behavioral::hardware_selection::model_matches(m, inst));
+            let already = installed_models
+                .iter()
+                .any(|inst| osoosi_behavioral::hardware_selection::model_matches(m, inst));
             if !already {
                 targets.push(m.to_string());
             } else {
@@ -5050,17 +5664,24 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
         }
 
         if targets.is_empty() {
-            println!("\nAll calibrated models for this host are already installed! Nothing to pull.");
+            println!(
+                "\nAll calibrated models for this host are already installed! Nothing to pull."
+            );
             return Ok(());
         }
         targets
     };
 
     println!("\nTarget model(s) to pull: {:?}", target_models);
-    println!("Acquiring network guard (suspending IPv6 if needed to prevent Cloudflare R2 timeouts)...");
+    println!(
+        "Acquiring network guard (suspending IPv6 if needed to prevent Cloudflare R2 timeouts)..."
+    );
     let mut guard = osoosi_dashboard::ipv6_guard::Ipv6SuspensionGuard::acquire().await;
     if guard.has_disabled_adapters() {
-        println!("✓ Temporarily disabled IPv6 on adapter(s): {:?}", guard.disabled_adapters());
+        println!(
+            "✓ Temporarily disabled IPv6 on adapter(s): {:?}",
+            guard.disabled_adapters()
+        );
         println!("  (IPv6 will be automatically re-enabled immediately after pull completes)");
     } else {
         println!("ℹ No active IPv6 adapters needed suspension or elevation required.");
@@ -5070,9 +5691,13 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
     let mut failed = Vec::new();
 
     for m in &target_models {
-        println!("\n--------------------------------------------------------------------------------");
+        println!(
+            "\n--------------------------------------------------------------------------------"
+        );
         println!("▶ Pulling model: {}", m);
-        println!("--------------------------------------------------------------------------------");
+        println!(
+            "--------------------------------------------------------------------------------"
+        );
 
         // Attempt via CLI 'ollama pull' first
         let mut cli_cmd = tokio::process::Command::new(get_ollama_bin());
@@ -5082,11 +5707,17 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
         let success = match cli_res {
             Ok(status) if status.success() => true,
             Ok(status) => {
-                warn!("CLI 'ollama pull {}' exited with non-zero status: {}", m, status);
+                warn!(
+                    "CLI 'ollama pull {}' exited with non-zero status: {}",
+                    m, status
+                );
                 false
             }
             Err(e) => {
-                warn!("Could not spawn 'ollama pull': {}. Falling back to REST API...", e);
+                warn!(
+                    "Could not spawn 'ollama pull': {}. Falling back to REST API...",
+                    e
+                );
                 false
             }
         };
@@ -5161,8 +5792,8 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
     use std::io::Write;
+    use std::sync::{Arc, Mutex};
     use tracing_subscriber::fmt::MakeWriter;
 
     #[derive(Clone)]
@@ -5434,19 +6065,32 @@ mod tests {
     fn test_driver_cli_parsing() {
         let cli_status = Cli::try_parse_from(["osoosi", "driver", "status"]).unwrap();
         match cli_status.command {
-            Some(Commands::Driver { action: DriverAction::Status }) => {}
+            Some(Commands::Driver {
+                action: DriverAction::Status,
+            }) => {}
             _ => panic!("Expected Commands::Driver with Status"),
         }
 
         let cli_install = Cli::try_parse_from(["osoosi", "driver", "install"]).unwrap();
         match cli_install.command {
-            Some(Commands::Driver { action: DriverAction::Install { path: None } }) => {}
+            Some(Commands::Driver {
+                action: DriverAction::Install { path: None },
+            }) => {}
             _ => panic!("Expected Commands::Driver with Install"),
         }
 
-        let cli_install_custom = Cli::try_parse_from(["osoosi", "driver", "install", "--path", "C:\\test\\osoosi_driver.sys"]).unwrap();
+        let cli_install_custom = Cli::try_parse_from([
+            "osoosi",
+            "driver",
+            "install",
+            "--path",
+            "C:\\test\\osoosi_driver.sys",
+        ])
+        .unwrap();
         match cli_install_custom.command {
-            Some(Commands::Driver { action: DriverAction::Install { path: Some(p) } }) => {
+            Some(Commands::Driver {
+                action: DriverAction::Install { path: Some(p) },
+            }) => {
                 assert_eq!(p, "C:\\test\\osoosi_driver.sys");
             }
             _ => panic!("Expected Commands::Driver with Install path"),
@@ -5454,21 +6098,29 @@ mod tests {
 
         let cli_uninstall = Cli::try_parse_from(["osoosi", "driver", "uninstall"]).unwrap();
         match cli_uninstall.command {
-            Some(Commands::Driver { action: DriverAction::Uninstall }) => {}
+            Some(Commands::Driver {
+                action: DriverAction::Uninstall,
+            }) => {}
             _ => panic!("Expected Commands::Driver with Uninstall"),
         }
 
-        let cli_add_rule = Cli::try_parse_from(["osoosi", "driver", "add-rule", "C:\\malware.exe"]).unwrap();
+        let cli_add_rule =
+            Cli::try_parse_from(["osoosi", "driver", "add-rule", "C:\\malware.exe"]).unwrap();
         match cli_add_rule.command {
-            Some(Commands::Driver { action: DriverAction::AddRule { path } }) => {
+            Some(Commands::Driver {
+                action: DriverAction::AddRule { path },
+            }) => {
                 assert_eq!(path, "C:\\malware.exe");
             }
             _ => panic!("Expected Commands::Driver with AddRule"),
         }
 
-        let cli_set_mode = Cli::try_parse_from(["osoosi", "driver", "set-mode", "lockdown"]).unwrap();
+        let cli_set_mode =
+            Cli::try_parse_from(["osoosi", "driver", "set-mode", "lockdown"]).unwrap();
         match cli_set_mode.command {
-            Some(Commands::Driver { action: DriverAction::SetMode { mode } }) => {
+            Some(Commands::Driver {
+                action: DriverAction::SetMode { mode },
+            }) => {
                 assert_eq!(mode, "lockdown");
             }
             _ => panic!("Expected Commands::Driver with SetMode"),
@@ -5476,7 +6128,9 @@ mod tests {
 
         let cli_clear = Cli::try_parse_from(["osoosi", "driver", "clear-rules"]).unwrap();
         match cli_clear.command {
-            Some(Commands::Driver { action: DriverAction::ClearRules }) => {}
+            Some(Commands::Driver {
+                action: DriverAction::ClearRules,
+            }) => {}
             _ => panic!("Expected Commands::Driver with ClearRules"),
         }
     }
@@ -5485,7 +6139,9 @@ mod tests {
     fn test_skill_cli_parsing() {
         let cli_list = Cli::try_parse_from(["osoosi", "skill", "list"]).unwrap();
         match cli_list.command {
-            Some(Commands::Skill { subcommand: Some(SkillSubcommand::List) }) => {}
+            Some(Commands::Skill {
+                subcommand: Some(SkillSubcommand::List),
+            }) => {}
             _ => panic!("Expected Commands::Skill with List"),
         }
 
@@ -5497,19 +6153,25 @@ mod tests {
 
         let cli_doctor = Cli::try_parse_from(["osoosi", "skill", "doctor"]).unwrap();
         match cli_doctor.command {
-            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Doctor) }) => {}
+            Some(Commands::Skill {
+                subcommand: Some(SkillSubcommand::Doctor),
+            }) => {}
             _ => panic!("Expected Commands::Skill with Doctor"),
         }
 
         let cli_cap = Cli::try_parse_from(["osoosi", "skill", "capabilities"]).unwrap();
         match cli_cap.command {
-            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Capabilities) }) => {}
+            Some(Commands::Skill {
+                subcommand: Some(SkillSubcommand::Capabilities),
+            }) => {}
             _ => panic!("Expected Commands::Skill with Capabilities"),
         }
 
         let cli_status = Cli::try_parse_from(["osoosi", "skill", "status", "runs/test"]).unwrap();
         match cli_status.command {
-            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Status { workspace }) }) => {
+            Some(Commands::Skill {
+                subcommand: Some(SkillSubcommand::Status { workspace }),
+            }) => {
                 assert_eq!(workspace, PathBuf::from("runs/test"));
             }
             _ => panic!("Expected Commands::Skill with Status"),
@@ -5517,7 +6179,9 @@ mod tests {
 
         let cli_report = Cli::try_parse_from(["osoosi", "skill", "report", "runs/test"]).unwrap();
         match cli_report.command {
-            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Report { workspace }) }) => {
+            Some(Commands::Skill {
+                subcommand: Some(SkillSubcommand::Report { workspace }),
+            }) => {
                 assert_eq!(workspace, PathBuf::from("runs/test"));
             }
             _ => panic!("Expected Commands::Skill with Report"),
@@ -5526,7 +6190,8 @@ mod tests {
 
     #[test]
     fn test_atomic_write_state_file_and_parsing() {
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_state_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_state_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let state_path = temp_dir.join(".wikiskill-state.json");
 
@@ -5545,8 +6210,14 @@ mod tests {
 
         let read_updated = std::fs::read_to_string(&state_path).unwrap();
         let val_updated: serde_json::Value = serde_json::from_str(&read_updated).unwrap();
-        assert_eq!(val_updated.get("phase").and_then(|v| v.as_str()), Some("active"));
-        assert_eq!(val_updated.get("best_score").and_then(|v| v.as_f64()), Some(0.95));
+        assert_eq!(
+            val_updated.get("phase").and_then(|v| v.as_str()),
+            Some("active")
+        );
+        assert_eq!(
+            val_updated.get("best_score").and_then(|v| v.as_f64()),
+            Some(0.95)
+        );
         assert_eq!(val_updated.get("round").and_then(|v| v.as_u64()), Some(2));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -5554,35 +6225,47 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_new_wiki_patterns_discovery() {
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_wiki_broadcast_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_wiki_broadcast_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         let wiki_dir = temp_dir.join("wiki");
         let patterns_dir = wiki_dir.join("patterns");
         let _ = std::fs::create_dir_all(&patterns_dir);
 
         // 1. Table format (as produced by WikiSkill's python maintainer)
-        let pat1_content = "# EDR-PAT-01: In-Memory Process Injection Analysis\n\nVerify unbacked memory pages.";
-        let pat1_hash = blake3::hash(pat1_content.trim().as_bytes()).to_hex().to_string();
+        let pat1_content =
+            "# EDR-PAT-01: In-Memory Process Injection Analysis\n\nVerify unbacked memory pages.";
+        let pat1_hash = blake3::hash(pat1_content.trim().as_bytes())
+            .to_hex()
+            .to_string();
         std::fs::write(patterns_dir.join("d7002e64340557ef.md"), pat1_content).unwrap();
 
         // 2. Bullet list format
-        let pat2_content = "# EDR-PAT-02: Remote Thread Injection\n\nDetect CreateRemoteThread into svchost.";
-        let pat2_hash = blake3::hash(pat2_content.trim().as_bytes()).to_hex().to_string();
+        let pat2_content =
+            "# EDR-PAT-02: Remote Thread Injection\n\nDetect CreateRemoteThread into svchost.";
+        let pat2_hash = blake3::hash(pat2_content.trim().as_bytes())
+            .to_hex()
+            .to_string();
         std::fs::write(patterns_dir.join("pat02.md"), pat2_content).unwrap();
 
         // 3. Unindexed pattern in patterns/ directory (fallback discovery)
-        let pat3_content = "# EDR-PAT-03: Process Hollowing\n\nDetect unmapped executable sections.";
-        let pat3_hash = blake3::hash(pat3_content.trim().as_bytes()).to_hex().to_string();
+        let pat3_content =
+            "# EDR-PAT-03: Process Hollowing\n\nDetect unmapped executable sections.";
+        let pat3_hash = blake3::hash(pat3_content.trim().as_bytes())
+            .to_hex()
+            .to_string();
         std::fs::write(patterns_dir.join("pat03_unindexed.md"), pat3_content).unwrap();
 
-        let index_content = format!(
-            "# Wiki Index\n\n| Pattern | Summary |\n|---|---|\n| [EDR-PAT-01: In-Memory Process Injection Analysis](patterns/d7002e64340557ef.md) | Verify unbacked memory pages. |\n\n## Other Playbooks\n- [EDR-PAT-02: Remote Thread Injection](patterns/pat02.md)\n"
-        );
+        let index_content = "# Wiki Index\n\n| Pattern | Summary |\n|---|---|\n| [EDR-PAT-01: In-Memory Process Injection Analysis](patterns/d7002e64340557ef.md) | Verify unbacked memory pages. |\n\n## Other Playbooks\n- [EDR-PAT-02: Remote Thread Injection](patterns/pat02.md)\n".to_string();
         std::fs::write(wiki_dir.join("index.md"), index_content).unwrap();
 
         // Test discover_wiki_patterns directly
         let discovered = discover_wiki_patterns(&temp_dir);
-        assert_eq!(discovered.len(), 3, "All 3 patterns (table, list, unindexed fallback) must be discovered");
+        assert_eq!(
+            discovered.len(),
+            3,
+            "All 3 patterns (table, list, unindexed fallback) must be discovered"
+        );
 
         let titles: Vec<_> = discovered.iter().map(|(t, _, _)| t.as_str()).collect();
         assert!(titles.contains(&"EDR-PAT-01: In-Memory Process Injection Analysis"));
@@ -5592,14 +6275,22 @@ mod tests {
         // Test broadcast_new_wiki_patterns populates broadcasted set
         let mut broadcasted = std::collections::HashSet::new();
         broadcast_new_wiki_patterns(&temp_dir, 0.95, &mut broadcasted, &None).await;
-        assert_eq!(broadcasted.len(), 3, "All 3 pattern hashes must be recorded in broadcasted");
+        assert_eq!(
+            broadcasted.len(),
+            3,
+            "All 3 pattern hashes must be recorded in broadcasted"
+        );
         assert!(broadcasted.contains(&pat1_hash));
         assert!(broadcasted.contains(&pat2_hash));
         assert!(broadcasted.contains(&pat3_hash));
 
         // Test deduplication on subsequent run
         broadcast_new_wiki_patterns(&temp_dir, 0.95, &mut broadcasted, &None).await;
-        assert_eq!(broadcasted.len(), 3, "Subsequent run must not duplicate already broadcasted patterns");
+        assert_eq!(
+            broadcasted.len(),
+            3,
+            "Subsequent run must not duplicate already broadcasted patterns"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -5608,21 +6299,30 @@ mod tests {
     fn test_forensics_cli_parsing() {
         let cli_status = Cli::try_parse_from(["osoosi", "forensics", "status"]).unwrap();
         match cli_status.command {
-            Some(Commands::Forensics { action: ForensicsAction::Status }) => {}
+            Some(Commands::Forensics {
+                action: ForensicsAction::Status,
+            }) => {}
             _ => panic!("Expected Commands::Forensics with Status"),
         }
 
-        let cli_vad = Cli::try_parse_from(["osoosi", "forensics", "inspect-process", "1234"]).unwrap();
+        let cli_vad =
+            Cli::try_parse_from(["osoosi", "forensics", "inspect-process", "1234"]).unwrap();
         match cli_vad.command {
-            Some(Commands::Forensics { action: ForensicsAction::InspectProcess { pid } }) => {
+            Some(Commands::Forensics {
+                action: ForensicsAction::InspectProcess { pid },
+            }) => {
                 assert_eq!(pid, 1234);
             }
             _ => panic!("Expected Commands::Forensics with InspectProcess"),
         }
 
-        let cli_mft = Cli::try_parse_from(["osoosi", "forensics", "scan-mft", "C:\\Windows\\System32"]).unwrap();
+        let cli_mft =
+            Cli::try_parse_from(["osoosi", "forensics", "scan-mft", "C:\\Windows\\System32"])
+                .unwrap();
         match cli_mft.command {
-            Some(Commands::Forensics { action: ForensicsAction::ScanMft { path } }) => {
+            Some(Commands::Forensics {
+                action: ForensicsAction::ScanMft { path },
+            }) => {
                 assert_eq!(path, "C:\\Windows\\System32");
             }
             _ => panic!("Expected Commands::Forensics with ScanMft"),
@@ -5630,7 +6330,9 @@ mod tests {
 
         let cli_query = Cli::try_parse_from(["osoosi", "forensics", "query", "SELECT 1"]).unwrap();
         match cli_query.command {
-            Some(Commands::Forensics { action: ForensicsAction::Query { vql } }) => {
+            Some(Commands::Forensics {
+                action: ForensicsAction::Query { vql },
+            }) => {
                 assert_eq!(vql, "SELECT 1");
             }
             _ => panic!("Expected Commands::Forensics with Query"),
@@ -5641,19 +6343,27 @@ mod tests {
     fn test_decision_cli_parsing() {
         let cli_status = Cli::try_parse_from(["osoosi", "decision", "status"]).unwrap();
         match cli_status.command {
-            Some(Commands::Decision { action: DecisionAction::Status }) => {}
+            Some(Commands::Decision {
+                action: DecisionAction::Status,
+            }) => {}
             _ => panic!("Expected Commands::Decision with Status"),
         }
 
         let cli_test = Cli::try_parse_from(["osoosi", "decision", "test"]).unwrap();
         match cli_test.command {
-            Some(Commands::Decision { action: DecisionAction::Test }) => {}
+            Some(Commands::Decision {
+                action: DecisionAction::Test,
+            }) => {}
             _ => panic!("Expected Commands::Decision with Test"),
         }
 
-        let cli_eval = Cli::try_parse_from(["osoosi", "decision", "evaluate", "--state", "svchost.exe"]).unwrap();
+        let cli_eval =
+            Cli::try_parse_from(["osoosi", "decision", "evaluate", "--state", "svchost.exe"])
+                .unwrap();
         match cli_eval.command {
-            Some(Commands::Decision { action: DecisionAction::Evaluate { state } }) => {
+            Some(Commands::Decision {
+                action: DecisionAction::Evaluate { state },
+            }) => {
                 assert_eq!(state, "svchost.exe");
             }
             _ => panic!("Expected Commands::Decision with Evaluate"),
@@ -5664,25 +6374,34 @@ mod tests {
     fn test_yara_cli_parsing() {
         let cli_status = Cli::try_parse_from(["osoosi", "yara", "status"]).unwrap();
         match cli_status.command {
-            Some(Commands::Yara { action: YaraAction::Status }) => {}
+            Some(Commands::Yara {
+                action: YaraAction::Status,
+            }) => {}
             _ => panic!("Expected Commands::Yara with Status"),
         }
 
         let cli_reload = Cli::try_parse_from(["osoosi", "yara", "reload"]).unwrap();
         match cli_reload.command {
-            Some(Commands::Yara { action: YaraAction::Reload }) => {}
+            Some(Commands::Yara {
+                action: YaraAction::Reload,
+            }) => {}
             _ => panic!("Expected Commands::Yara with Reload"),
         }
 
         let cli_update = Cli::try_parse_from(["osoosi", "yara", "update"]).unwrap();
         match cli_update.command {
-            Some(Commands::Yara { action: YaraAction::Update }) => {}
+            Some(Commands::Yara {
+                action: YaraAction::Update,
+            }) => {}
             _ => panic!("Expected Commands::Yara with Update"),
         }
 
-        let cli_scan = Cli::try_parse_from(["osoosi", "yara", "scan", "C:\\test\\malware.exe"]).unwrap();
+        let cli_scan =
+            Cli::try_parse_from(["osoosi", "yara", "scan", "C:\\test\\malware.exe"]).unwrap();
         match cli_scan.command {
-            Some(Commands::Yara { action: YaraAction::Scan { path } }) => {
+            Some(Commands::Yara {
+                action: YaraAction::Scan { path },
+            }) => {
                 assert_eq!(path, std::path::PathBuf::from("C:\\test\\malware.exe"));
             }
             _ => panic!("Expected Commands::Yara with Scan"),
@@ -5696,7 +6415,11 @@ mod tests {
 
         osoosi_core::config_integrity::sign_all_critical_configs();
         let tampered = osoosi_core::config_integrity::verify_all_critical_configs();
-        assert!(tampered.is_empty(), "All critical configs must be valid after re-signing: {:?}", tampered);
+        assert!(
+            tampered.is_empty(),
+            "All critical configs must be valid after re-signing: {:?}",
+            tampered
+        );
     }
 
     #[test]
@@ -5732,15 +6455,22 @@ mod tests {
 
         // Ordinary INFO line should not trigger flush
         appender.write_all(b"INFO: Normal event\n").unwrap();
-        assert!(!flushed.load(Ordering::SeqCst), "INFO must not trigger flush");
+        assert!(
+            !flushed.load(Ordering::SeqCst),
+            "INFO must not trigger flush"
+        );
 
         // ERROR line must trigger flush immediately
-        appender.write_all(b"ERROR: Critical failure occurred\n").unwrap();
+        appender
+            .write_all(b"ERROR: Critical failure occurred\n")
+            .unwrap();
         assert!(flushed.load(Ordering::SeqCst), "ERROR must trigger flush");
 
         // Reset and check WARN
         flushed.store(false, Ordering::SeqCst);
-        appender.write_all(b"WARN: Potential risk detected\n").unwrap();
+        appender
+            .write_all(b"WARN: Potential risk detected\n")
+            .unwrap();
         assert!(flushed.load(Ordering::SeqCst), "WARN must trigger flush");
 
         // Reset and check all emoji markers
@@ -5752,33 +6482,59 @@ mod tests {
         ] {
             flushed.store(false, Ordering::SeqCst);
             appender.write_all(marker.as_bytes()).unwrap();
-            assert!(flushed.load(Ordering::SeqCst), "Marker '{}' must trigger flush", marker);
+            assert!(
+                flushed.load(Ordering::SeqCst),
+                "Marker '{}' must trigger flush",
+                marker
+            );
         }
 
         // Empty buffer should not trigger flush
         flushed.store(false, Ordering::SeqCst);
         appender.write_all(b"").unwrap();
-        assert!(!flushed.load(Ordering::SeqCst), "Empty buffer must not trigger flush");
+        assert!(
+            !flushed.load(Ordering::SeqCst),
+            "Empty buffer must not trigger flush"
+        );
     }
 
     #[test]
     fn test_swarm_cli_parsing() {
         let cli_status = Cli::try_parse_from(["osoosi", "swarm", "status"]).unwrap();
         match cli_status.command {
-            Some(Commands::Swarm { action: SwarmAction::Status }) => {}
+            Some(Commands::Swarm {
+                action: SwarmAction::Status,
+            }) => {}
             _ => panic!("Expected Commands::Swarm with Status"),
         }
 
         let cli_test = Cli::try_parse_from([
-            "osoosi", "swarm", "test",
-            "--pid", "5555",
-            "--path", "C:\\Temp\\decoy.exe",
-            "--command-line", "decoy.exe -test",
-            "--engine", "clef",
-            "--confidence", "0.92"
-        ]).unwrap();
+            "osoosi",
+            "swarm",
+            "test",
+            "--pid",
+            "5555",
+            "--path",
+            "C:\\Temp\\decoy.exe",
+            "--command-line",
+            "decoy.exe -test",
+            "--engine",
+            "clef",
+            "--confidence",
+            "0.92",
+        ])
+        .unwrap();
         match cli_test.command {
-            Some(Commands::Swarm { action: SwarmAction::Test { pid, path, command_line, engine, confidence } }) => {
+            Some(Commands::Swarm {
+                action:
+                    SwarmAction::Test {
+                        pid,
+                        path,
+                        command_line,
+                        engine,
+                        confidence,
+                    },
+            }) => {
                 assert_eq!(pid, 5555);
                 assert_eq!(path, "C:\\Temp\\decoy.exe");
                 assert_eq!(command_line, "decoy.exe -test");
@@ -5832,7 +6588,9 @@ mod tests {
             _ => panic!("Expected Commands::PullModel"),
         }
 
-        let cli_flag = Cli::try_parse_from(["osoosi", "pull-model", "--model", "embeddinggemma:latest"]).unwrap();
+        let cli_flag =
+            Cli::try_parse_from(["osoosi", "pull-model", "--model", "embeddinggemma:latest"])
+                .unwrap();
         match cli_flag.command {
             Some(Commands::PullModel { model, model_flag }) => {
                 assert_eq!(model, None);
@@ -5844,38 +6602,66 @@ mod tests {
 
     #[test]
     fn test_consensus_cli_parsing() {
-        let cli_eval = Cli::try_parse_from(["osoosi", "consensus", "evaluate", "--file", "C:\\bin\\program.exe"]).unwrap();
+        let cli_eval = Cli::try_parse_from([
+            "osoosi",
+            "consensus",
+            "evaluate",
+            "--file",
+            "C:\\bin\\program.exe",
+        ])
+        .unwrap();
         match cli_eval.command {
-            Some(Commands::Consensus { action: ConsensusAction::Evaluate { file } }) => {
+            Some(Commands::Consensus {
+                action: ConsensusAction::Evaluate { file },
+            }) => {
                 assert_eq!(file, "C:\\bin\\program.exe");
             }
             _ => panic!("Expected Commands::Consensus with Evaluate"),
         }
 
-        let cli_findings = Cli::try_parse_from(["osoosi", "consensus", "findings", "--limit", "15"]).unwrap();
+        let cli_findings =
+            Cli::try_parse_from(["osoosi", "consensus", "findings", "--limit", "15"]).unwrap();
         match cli_findings.command {
-            Some(Commands::Consensus { action: ConsensusAction::Findings { limit } }) => {
+            Some(Commands::Consensus {
+                action: ConsensusAction::Findings { limit },
+            }) => {
                 assert_eq!(limit, 15);
             }
             _ => panic!("Expected Commands::Consensus with Findings"),
         }
 
-        let cli_clean = Cli::try_parse_from(["osoosi", "consensus", "clean-hashes", "--limit", "25"]).unwrap();
+        let cli_clean =
+            Cli::try_parse_from(["osoosi", "consensus", "clean-hashes", "--limit", "25"]).unwrap();
         match cli_clean.command {
-            Some(Commands::Consensus { action: ConsensusAction::CleanHashes { limit } }) => {
+            Some(Commands::Consensus {
+                action: ConsensusAction::CleanHashes { limit },
+            }) => {
                 assert_eq!(limit, 25);
             }
             _ => panic!("Expected Commands::Consensus with CleanHashes"),
         }
 
         let cli_ignore = Cli::try_parse_from([
-            "osoosi", "consensus", "ignore",
-            "--hash", "abcd1234ef",
-            "--process", "my_app.exe",
-            "--path", "C:\\Apps\\my_app.exe",
-        ]).unwrap();
+            "osoosi",
+            "consensus",
+            "ignore",
+            "--hash",
+            "abcd1234ef",
+            "--process",
+            "my_app.exe",
+            "--path",
+            "C:\\Apps\\my_app.exe",
+        ])
+        .unwrap();
         match cli_ignore.command {
-            Some(Commands::Consensus { action: ConsensusAction::Ignore { hash, process, path } }) => {
+            Some(Commands::Consensus {
+                action:
+                    ConsensusAction::Ignore {
+                        hash,
+                        process,
+                        path,
+                    },
+            }) => {
                 assert_eq!(hash, "abcd1234ef");
                 assert_eq!(process, Some("my_app.exe".to_string()));
                 assert_eq!(path, Some("C:\\Apps\\my_app.exe".to_string()));
@@ -5883,9 +6669,12 @@ mod tests {
             _ => panic!("Expected Commands::Consensus with Ignore"),
         }
 
-        let cli_unignore = Cli::try_parse_from(["osoosi", "consensus", "unignore", "-H", "abcd1234ef"]).unwrap();
+        let cli_unignore =
+            Cli::try_parse_from(["osoosi", "consensus", "unignore", "-H", "abcd1234ef"]).unwrap();
         match cli_unignore.command {
-            Some(Commands::Consensus { action: ConsensusAction::Unignore { hash } }) => {
+            Some(Commands::Consensus {
+                action: ConsensusAction::Unignore { hash },
+            }) => {
                 assert_eq!(hash, "abcd1234ef");
             }
             _ => panic!("Expected Commands::Consensus with Unignore"),
@@ -5894,7 +6683,13 @@ mod tests {
 
     #[test]
     fn test_setup_defender_cli_parsing() {
-        for alias in ["setup-defender", "setup_defender", "register-defender", "register_defender", "setup"] {
+        for alias in [
+            "setup-defender",
+            "setup_defender",
+            "register-defender",
+            "register_defender",
+            "setup",
+        ] {
             let cli = Cli::try_parse_from(["osoosi", alias]).unwrap();
             match cli.command {
                 Some(Commands::SetupDefender) => {}
@@ -5940,5 +6735,3 @@ mod tests {
         }
     }
 }
-
-

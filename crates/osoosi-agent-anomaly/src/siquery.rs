@@ -27,7 +27,9 @@ use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
 use winreg::RegKey;
 
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INSUFFICIENT_BUFFER, INVALID_HANDLE_VALUE, NO_ERROR};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, ERROR_INSUFFICIENT_BUFFER, INVALID_HANDLE_VALUE, NO_ERROR,
+};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::NetworkManagement::IpHelper::{
     GetExtendedTcpTable, GetExtendedUdpTable, MIB_TCP6ROW_OWNER_PID, MIB_TCP6TABLE_OWNER_PID,
@@ -213,7 +215,9 @@ impl SiqueryEngine {
             || lower.starts_with("attach ")
             || lower.starts_with("detach ")
         {
-            return Err("Mutating SQL statements are forbidden (read-only query engine)".to_string());
+            return Err(
+                "Mutating SQL statements are forbidden (read-only query engine)".to_string(),
+            );
         }
 
         // Open in-memory SQLite database
@@ -228,7 +232,10 @@ impl SiqueryEngine {
         let is_metadata = lower.contains("sqlite_master") || lower.contains("sqlite_schema");
 
         let need_processes = is_metadata || lower.contains("processes");
-        let need_sockets = is_metadata || lower.contains("process_open_sockets") || lower.contains("tcp_sockets") || lower.contains("listening_ports");
+        let need_sockets = is_metadata
+            || lower.contains("process_open_sockets")
+            || lower.contains("tcp_sockets")
+            || lower.contains("listening_ports");
         let need_mmap = !is_pragma && (is_metadata || lower.contains("process_memory_map"));
         let need_envs = !is_pragma && (is_metadata || lower.contains("process_envs"));
         let need_pipes = !is_pragma && (is_metadata || lower.contains("pipes"));
@@ -251,12 +258,21 @@ impl SiqueryEngine {
         let need_launchd = !is_pragma && (is_metadata || lower.contains("launchd"));
         let need_wmi_comp = !is_pragma && (is_metadata || lower.contains("wmi_computer_info"));
         let need_wmi_os = !is_pragma && (is_metadata || lower.contains("wmi_os_version"));
-        let need_wmi_serv = !is_pragma && (is_metadata || lower.contains("wmi_services") || lower.contains("services"));
+        let need_wmi_serv = !is_pragma
+            && (is_metadata || lower.contains("wmi_services") || lower.contains("services"));
         let need_wmi_prod = !is_pragma && (is_metadata || lower.contains("wmi_products"));
-        let need_wmi_hot = !is_pragma && (is_metadata || lower.contains("wmi_hotfixes") || lower.contains("patches"));
-        let need_wmi_share = !is_pragma && (is_metadata || lower.contains("wmi_shares") || lower.contains("shared_folders"));
-        let need_wmi_net = !is_pragma && (is_metadata || lower.contains("wmi_network_adapters") || lower.contains("network_adapters"));
-        let need_wmi_acc = !is_pragma && (is_metadata || lower.contains("wmi_local_accounts") || lower.contains("user_accounts"));
+        let need_wmi_hot = !is_pragma
+            && (is_metadata || lower.contains("wmi_hotfixes") || lower.contains("patches"));
+        let need_wmi_share = !is_pragma
+            && (is_metadata || lower.contains("wmi_shares") || lower.contains("shared_folders"));
+        let need_wmi_net = !is_pragma
+            && (is_metadata
+                || lower.contains("wmi_network_adapters")
+                || lower.contains("network_adapters"));
+        let need_wmi_acc = !is_pragma
+            && (is_metadata
+                || lower.contains("wmi_local_accounts")
+                || lower.contains("user_accounts"));
         let need_wmi_bios = !is_pragma && (is_metadata || lower.contains("wmi_bios"));
         let need_wmi_mb = !is_pragma && (is_metadata || lower.contains("wmi_motherboard"));
         let need_wmi_proc = !is_pragma && (is_metadata || lower.contains("wmi_processor"));
@@ -267,15 +283,20 @@ impl SiqueryEngine {
         let need_wmi_mon = !is_pragma && (is_metadata || lower.contains("wmi_monitors"));
         let need_wmi_kb = !is_pragma && (is_metadata || lower.contains("wmi_keyboard"));
         let need_wmi_point = !is_pragma && (is_metadata || lower.contains("wmi_pointing_device"));
-        let need_mercury_physics = !is_pragma && (is_metadata || lower.contains("agent_mercury_physics"));
+        let need_mercury_physics =
+            !is_pragma && (is_metadata || lower.contains("agent_mercury_physics"));
         let need_pores = !is_pragma && (is_metadata || lower.contains("host_actuation_pores"));
         let need_api_endpoints = !is_pragma && (is_metadata || lower.contains("api_endpoints"));
         let need_coding_tools = !is_pragma && (is_metadata || lower.contains("coding_tools"));
         let need_ide_ext = !is_pragma && (is_metadata || lower.contains("ide_extensions"));
         let need_arp = !is_pragma && (is_metadata || lower.contains("arp_cache"));
         let need_authenticodes = !is_pragma && (is_metadata || lower.contains("authenticodes"));
-        let need_autoruns = !is_pragma && (is_metadata || lower.contains("autoruns") || lower.contains("startup_items"));
-        let need_bitlocker = !is_pragma && (is_metadata || lower.contains("bitlocker_info") || lower.contains("disk_encryption"));
+        let need_autoruns = !is_pragma
+            && (is_metadata || lower.contains("autoruns") || lower.contains("startup_items"));
+        let need_bitlocker = !is_pragma
+            && (is_metadata
+                || lower.contains("bitlocker_info")
+                || lower.contains("disk_encryption"));
         let need_browser_ext = !is_pragma && (is_metadata || lower.contains("browser_extensions"));
         let need_browser_hist = !is_pragma && (is_metadata || lower.contains("browser_history"));
         let need_browser_dl = !is_pragma && (is_metadata || lower.contains("browser_downloads"));
@@ -285,41 +306,114 @@ impl SiqueryEngine {
         let need_defender = !is_pragma && (is_metadata || lower.contains("defender_status"));
         let need_dns_cache = !is_pragma && (is_metadata || lower.contains("dns_cache"));
         let need_dns_res = !is_pragma && (is_metadata || lower.contains("dns_resolvers"));
-        let need_drivers = !is_pragma && (is_metadata || lower.contains("drivers") || lower.contains("kernel_modules"));
+        let need_drivers = !is_pragma
+            && (is_metadata || lower.contains("drivers") || lower.contains("kernel_modules"));
         let need_edr = !is_pragma && (is_metadata || lower.contains("edr_"));
         let need_env_vars = !is_pragma && (is_metadata || lower.contains("environment_variables"));
         let need_fw = !is_pragma && (is_metadata || lower.contains("firewall_rules"));
-        let need_open_files = !is_pragma && (is_metadata || lower.contains("open_files") || lower.contains("process_open_files"));
-        let need_pnp = !is_pragma && (is_metadata || lower.contains("pnp_devices") || lower.contains("usb_devices"));
+        let need_open_files = !is_pragma
+            && (is_metadata
+                || lower.contains("open_files")
+                || lower.contains("process_open_files"));
+        let need_pnp = !is_pragma
+            && (is_metadata || lower.contains("pnp_devices") || lower.contains("usb_devices"));
         let need_registry = !is_pragma && (is_metadata || lower.contains("registry"));
         let need_routes = !is_pragma && (is_metadata || lower.contains("routes"));
         let need_sched_tasks = !is_pragma && (is_metadata || lower.contains("scheduled_tasks"));
         let need_shimcache = !is_pragma && (is_metadata || lower.contains("shimcache"));
         let need_smbios = !is_pragma && (is_metadata || lower.contains("smbios_tables"));
-        let need_business_violations = !is_pragma && (is_metadata || lower.contains("business_policy_violations"));
-        let need_spider_threads = !is_pragma && (is_metadata || lower.contains("spider_web_threads"));
+        let need_business_violations =
+            !is_pragma && (is_metadata || lower.contains("business_policy_violations"));
+        let need_spider_threads =
+            !is_pragma && (is_metadata || lower.contains("spider_web_threads"));
         let need_time = !is_pragma && (is_metadata || lower.contains("time"));
         let need_tpm = !is_pragma && (is_metadata || lower.contains("tpm_info"));
         let need_win_events = !is_pragma && (is_metadata || lower.contains("windows_events"));
-        let need_win_sec = !is_pragma && (is_metadata || lower.contains("windows_security_center") || lower.contains("windows_security_products"));
+        let need_win_sec = !is_pragma
+            && (is_metadata
+                || lower.contains("windows_security_center")
+                || lower.contains("windows_security_products"));
         let need_octopus_arms = !is_pragma && (is_metadata || lower.contains("agent_octopus_arms"));
-        let need_containment_rings = !is_pragma && (is_metadata || lower.contains("agent_containment_rings"));
+        let need_containment_rings =
+            !is_pragma && (is_metadata || lower.contains("agent_containment_rings"));
 
-        let any_table_needed = need_processes || need_sockets || need_mmap || need_envs || need_pipes
-            || need_sysinfo || need_hosts || need_protocols || need_services || need_if_addr
-            || need_if_det || need_proxies || need_os_ver || need_drives || need_mounts || need_uptime
-            || need_products || need_users || need_groups || need_logged_users || need_logon_sess
-            || need_launchd || need_wmi_comp || need_wmi_os || need_wmi_serv || need_wmi_prod
-            || need_wmi_hot || need_wmi_share || need_wmi_net || need_wmi_acc || need_wmi_bios
-            || need_wmi_mb || need_wmi_proc || need_wmi_mem || need_wmi_print || need_wmi_snd
-            || need_wmi_vid || need_wmi_mon || need_wmi_kb || need_wmi_point || need_arp
-            || need_authenticodes || need_autoruns || need_bitlocker || need_browser_ext || need_browser_hist
-            || need_browser_dl || need_har_entries || need_mercury_physics || need_pores || need_certs
-            || need_cpu_info || need_defender || need_dns_cache || need_dns_res || need_drivers
-            || need_edr || need_env_vars || need_fw || need_open_files || need_pnp || need_registry
-            || need_routes || need_sched_tasks || need_shimcache || need_smbios || need_time
-            || need_tpm || need_win_events || need_win_sec || need_api_endpoints || need_coding_tools
-            || need_ide_ext || need_business_violations || need_spider_threads || need_octopus_arms || need_containment_rings;
+        let any_table_needed = need_processes
+            || need_sockets
+            || need_mmap
+            || need_envs
+            || need_pipes
+            || need_sysinfo
+            || need_hosts
+            || need_protocols
+            || need_services
+            || need_if_addr
+            || need_if_det
+            || need_proxies
+            || need_os_ver
+            || need_drives
+            || need_mounts
+            || need_uptime
+            || need_products
+            || need_users
+            || need_groups
+            || need_logged_users
+            || need_logon_sess
+            || need_launchd
+            || need_wmi_comp
+            || need_wmi_os
+            || need_wmi_serv
+            || need_wmi_prod
+            || need_wmi_hot
+            || need_wmi_share
+            || need_wmi_net
+            || need_wmi_acc
+            || need_wmi_bios
+            || need_wmi_mb
+            || need_wmi_proc
+            || need_wmi_mem
+            || need_wmi_print
+            || need_wmi_snd
+            || need_wmi_vid
+            || need_wmi_mon
+            || need_wmi_kb
+            || need_wmi_point
+            || need_arp
+            || need_authenticodes
+            || need_autoruns
+            || need_bitlocker
+            || need_browser_ext
+            || need_browser_hist
+            || need_browser_dl
+            || need_har_entries
+            || need_mercury_physics
+            || need_pores
+            || need_certs
+            || need_cpu_info
+            || need_defender
+            || need_dns_cache
+            || need_dns_res
+            || need_drivers
+            || need_edr
+            || need_env_vars
+            || need_fw
+            || need_open_files
+            || need_pnp
+            || need_registry
+            || need_routes
+            || need_sched_tasks
+            || need_shimcache
+            || need_smbios
+            || need_time
+            || need_tpm
+            || need_win_events
+            || need_win_sec
+            || need_api_endpoints
+            || need_coding_tools
+            || need_ide_ext
+            || need_business_violations
+            || need_spider_threads
+            || need_octopus_arms
+            || need_containment_rings;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -332,7 +426,9 @@ impl SiqueryEngine {
                 sys.refresh_memory();
             }
 
-            let tx = conn.transaction().map_err(|e| format!("SQLite transaction error: {}", e))?;
+            let tx = conn
+                .transaction()
+                .map_err(|e| format!("SQLite transaction error: {}", e))?;
 
             if need_processes {
                 Self::populate_processes(&tx, &sys)?;
@@ -576,7 +672,8 @@ impl SiqueryEngine {
                 Self::populate_agent_containment_rings(&tx)?;
             }
 
-            tx.commit().map_err(|e| format!("SQLite commit error: {}", e))?;
+            tx.commit()
+                .map_err(|e| format!("SQLite commit error: {}", e))?;
         }
 
         // Execute query
@@ -595,10 +692,15 @@ impl SiqueryEngine {
             .map_err(|e| format!("SQLite query error: {}", e))?;
         let mut results = Vec::new();
 
-        while let Some(row) = rows.next().map_err(|e| format!("SQLite row iteration error: {}", e))? {
+        while let Some(row) = rows
+            .next()
+            .map_err(|e| format!("SQLite row iteration error: {}", e))?
+        {
             let mut map = serde_json::Map::with_capacity(col_count);
             for (i, name) in col_names.iter().enumerate() {
-                let val_ref = row.get_ref(i).map_err(|e| format!("SQLite column error: {}", e))?;
+                let val_ref = row
+                    .get_ref(i)
+                    .map_err(|e| format!("SQLite column error: {}", e))?;
                 let json_val = match val_ref {
                     rusqlite::types::ValueRef::Null => serde_json::Value::Null,
                     rusqlite::types::ValueRef::Integer(n) => serde_json::Value::Number(n.into()),
@@ -744,7 +846,10 @@ impl SiqueryEngine {
     pub fn get_table_schema(&self, table: &str) -> Result<String, String> {
         let clean = table.trim();
         if !Self::list_tables().contains(&clean) {
-            return Err(format!("Unknown table '{}'. Use list_tables() to see available tables.", clean));
+            return Err(format!(
+                "Unknown table '{}'. Use list_tables() to see available tables.",
+                clean
+            ));
         }
         let sql = format!("PRAGMA table_info({});", clean);
         self.execute_pretty(&sql)
@@ -1356,16 +1461,41 @@ impl SiqueryEngine {
         for (pid, proc) in sys.processes() {
             let pid_num = pid.as_u32() as i64;
             let name = proc.name();
-            let path = proc.exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+            let path = proc
+                .exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
             let cmdline = proc.cmd().join(" ");
             let state = format!("{:?}", proc.status());
-            let cwd = proc.cwd().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-            let root = proc.root().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
-            let uid = proc.user_id().map(|u| u.to_string().parse::<i64>().unwrap_or(0)).unwrap_or(0);
-            let gid = proc.group_id().map(|g| g.to_string().parse::<i64>().unwrap_or(0)).unwrap_or(0);
-            let euid = proc.effective_user_id().map(|u| u.to_string().parse::<i64>().unwrap_or(0)).unwrap_or(0);
-            let egid = proc.effective_group_id().map(|g| g.to_string().parse::<i64>().unwrap_or(0)).unwrap_or(0);
-            let on_disk = if proc.exe().map(|p| p.exists()).unwrap_or(false) { 1 } else { 0 };
+            let cwd = proc
+                .cwd()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let root = proc
+                .root()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let uid = proc
+                .user_id()
+                .map(|u| u.to_string().parse::<i64>().unwrap_or(0))
+                .unwrap_or(0);
+            let gid = proc
+                .group_id()
+                .map(|g| g.to_string().parse::<i64>().unwrap_or(0))
+                .unwrap_or(0);
+            let euid = proc
+                .effective_user_id()
+                .map(|u| u.to_string().parse::<i64>().unwrap_or(0))
+                .unwrap_or(0);
+            let egid = proc
+                .effective_group_id()
+                .map(|g| g.to_string().parse::<i64>().unwrap_or(0))
+                .unwrap_or(0);
+            let on_disk = if proc.exe().map(|p| p.exists()).unwrap_or(false) {
+                1
+            } else {
+                0
+            };
             let resident_size = proc.memory() as i64;
             let total_size = proc.virtual_memory() as i64;
             let user_time = proc.run_time() as i64;
@@ -1480,17 +1610,9 @@ impl SiqueryEngine {
                 let pid = row.dwOwningPid as i64;
 
                 let _ = stmt.execute(rusqlite::params![
-                    pid,
-                    0i64,
-                    0i64,
-                    2i64,  // AF_INET
+                    pid, 0i64, 0i64, 2i64,  // AF_INET
                     17i64, // IPPROTO_UDP
-                    local_ip,
-                    "0.0.0.0",
-                    local_port,
-                    0i64,
-                    "",
-                    "",
+                    local_ip, "0.0.0.0", local_port, 0i64, "", "",
                 ]);
             }
 
@@ -1502,17 +1624,9 @@ impl SiqueryEngine {
                 let pid = row.dwOwningPid as i64;
 
                 let _ = stmt.execute(rusqlite::params![
-                    pid,
-                    0i64,
-                    0i64,
-                    23i64, // AF_INET6
+                    pid, 0i64, 0i64, 23i64, // AF_INET6
                     17i64, // IPPROTO_UDP
-                    local_ip,
-                    "::",
-                    local_port,
-                    0i64,
-                    "",
-                    "",
+                    local_ip, "::", local_port, 0i64, "", "",
                 ]);
             }
         }
@@ -1571,7 +1685,10 @@ impl SiqueryEngine {
 
             // Also check for MCP/inference indicators
             if lower_cmd.contains("mcp") || lower_cmd.contains("model") {
-                let exe_path = proc.exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                let exe_path = proc
+                    .exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 if !exe_path.is_empty() {
                     let _ = stmt.execute(rusqlite::params![
                         pid_num,
@@ -1701,7 +1818,11 @@ impl SiqueryEngine {
         let computer_name = hostname::get()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|_| "localhost".to_string());
-        let cpu_brand = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_default();
+        let cpu_brand = sys
+            .cpus()
+            .first()
+            .map(|c| c.brand().to_string())
+            .unwrap_or_default();
         let cpu_cores = sys.cpus().len() as i64;
         let physical_memory = sys.total_memory() as i64;
 
@@ -1762,7 +1883,9 @@ impl SiqueryEngine {
     /// Populates `etc_protocols` table from Windows or Unix protocols file.
     fn populate_etc_protocols(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
-            .prepare_cached("INSERT INTO etc_protocols (name, number, alias, comment) VALUES (?, ?, ?, ?);")
+            .prepare_cached(
+                "INSERT INTO etc_protocols (name, number, alias, comment) VALUES (?, ?, ?, ?);",
+            )
             .map_err(|e| e.to_string())?;
 
         let path = if cfg!(target_os = "windows") {
@@ -1778,11 +1901,12 @@ impl SiqueryEngine {
                     if trimmed.is_empty() || trimmed.starts_with('#') {
                         continue;
                     }
-                    let (code_part, comment_part) = if let Some((code, comment)) = trimmed.split_once('#') {
-                        (code.trim(), comment.trim())
-                    } else {
-                        (trimmed, "")
-                    };
+                    let (code_part, comment_part) =
+                        if let Some((code, comment)) = trimmed.split_once('#') {
+                            (code.trim(), comment.trim())
+                        } else {
+                            (trimmed, "")
+                        };
                     let mut tokens = code_part.split_whitespace();
                     if let (Some(name), Some(num_str)) = (tokens.next(), tokens.next()) {
                         if let Ok(num) = num_str.parse::<i64>() {
@@ -1816,18 +1940,25 @@ impl SiqueryEngine {
                     if trimmed.is_empty() || trimmed.starts_with('#') {
                         continue;
                     }
-                    let (code_part, comment_part) = if let Some((code, comment)) = trimmed.split_once('#') {
-                        (code.trim(), comment.trim())
-                    } else {
-                        (trimmed, "")
-                    };
+                    let (code_part, comment_part) =
+                        if let Some((code, comment)) = trimmed.split_once('#') {
+                            (code.trim(), comment.trim())
+                        } else {
+                            (trimmed, "")
+                        };
                     let mut tokens = code_part.split_whitespace();
                     if let (Some(name), Some(port_proto)) = (tokens.next(), tokens.next()) {
                         if let Some((port_str, proto)) = port_proto.split_once('/') {
                             if let Ok(port) = port_str.parse::<i64>() {
                                 let aliases: Vec<&str> = tokens.collect();
                                 let alias = aliases.join(" ");
-                                let _ = stmt.execute(rusqlite::params![name, port, proto, alias, comment_part]);
+                                let _ = stmt.execute(rusqlite::params![
+                                    name,
+                                    port,
+                                    proto,
+                                    alias,
+                                    comment_part
+                                ]);
                             }
                         }
                     }
@@ -1846,7 +1977,9 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(interfaces_key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces") {
+            if let Ok(interfaces_key) =
+                hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces")
+            {
                 for guid in interfaces_key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(if_key) = interfaces_key.open_subkey(&guid) {
                         let mut ip: String = if_key.get_value("DhcpIPAddress").unwrap_or_default();
@@ -1857,7 +1990,8 @@ impl SiqueryEngine {
                                 ip = if_key.get_value("IPAddress").unwrap_or_default();
                             }
                         }
-                        let mut mask: String = if_key.get_value("DhcpSubnetMask").unwrap_or_default();
+                        let mut mask: String =
+                            if_key.get_value("DhcpSubnetMask").unwrap_or_default();
                         if mask.is_empty() || mask == "0.0.0.0" {
                             if let Ok(masks) = if_key.get_value::<Vec<String>, _>("SubnetMask") {
                                 mask = masks.first().cloned().unwrap_or_default();
@@ -1866,8 +2000,12 @@ impl SiqueryEngine {
                             }
                         }
                         if !ip.is_empty() && ip != "0.0.0.0" {
-                            let friendly_path = format!(r"SYSTEM\CurrentControlSet\Control\Network\{{4D36E972-E325-11CE-BFC1-08002BE10318}}\{}\Connection", guid);
-                            let friendly_name: String = hklm.open_subkey(&friendly_path)
+                            let friendly_path = format!(
+                                r"SYSTEM\CurrentControlSet\Control\Network\{{4D36E972-E325-11CE-BFC1-08002BE10318}}\{}\Connection",
+                                guid
+                            );
+                            let friendly_name: String = hklm
+                                .open_subkey(&friendly_path)
                                 .and_then(|k| k.get_value("Name"))
                                 .unwrap_or_else(|_| guid.clone());
 
@@ -1920,16 +2058,7 @@ impl SiqueryEngine {
             let oerrors = data.total_errors_on_transmitted() as i64;
 
             let _ = stmt.execute(rusqlite::params![
-                if_name,
-                mac,
-                if_type,
-                mtu,
-                metric,
-                ipackets,
-                opackets,
-                ibytes,
-                obytes,
-                ierrors,
+                if_name, mac, if_type, mtu, metric, ipackets, opackets, ibytes, obytes, ierrors,
                 oerrors
             ]);
         }
@@ -1940,47 +2069,42 @@ impl SiqueryEngine {
     /// Populates `proxies` table with system proxy configuration.
     fn populate_proxies(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
-            .prepare_cached("INSERT INTO proxies (url, protocol, exceptions, enabled) VALUES (?, ?, ?, ?);")
+            .prepare_cached(
+                "INSERT INTO proxies (url, protocol, exceptions, enabled) VALUES (?, ?, ?, ?);",
+            )
             .map_err(|e| e.to_string())?;
 
         #[cfg(target_os = "windows")]
         {
             let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-            if let Ok(key) = hkcu.open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings") {
+            if let Ok(key) =
+                hkcu.open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+            {
                 let enabled_val: u32 = key.get_value("ProxyEnable").unwrap_or(0);
                 let server: String = key.get_value("ProxyServer").unwrap_or_default();
                 let override_val: String = key.get_value("ProxyOverride").unwrap_or_default();
                 let enabled_str = if enabled_val != 0 { "1" } else { "0" };
 
                 if !server.is_empty() {
-                    let _ = stmt.execute(rusqlite::params![
-                        server,
-                        "http",
-                        override_val,
-                        enabled_str
-                    ]);
+                    let _ =
+                        stmt.execute(rusqlite::params![server, "http", override_val, enabled_str]);
                 } else {
-                    let _ = stmt.execute(rusqlite::params![
-                        "",
-                        "direct",
-                        override_val,
-                        enabled_str
-                    ]);
+                    let _ =
+                        stmt.execute(rusqlite::params!["", "direct", override_val, enabled_str]);
                 }
             }
         }
 
         #[cfg(not(target_os = "windows"))]
         {
-            let http_proxy = std::env::var("HTTP_PROXY").or_else(|_| std::env::var("http_proxy")).unwrap_or_default();
-            let no_proxy = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).unwrap_or_default();
+            let http_proxy = std::env::var("HTTP_PROXY")
+                .or_else(|_| std::env::var("http_proxy"))
+                .unwrap_or_default();
+            let no_proxy = std::env::var("NO_PROXY")
+                .or_else(|_| std::env::var("no_proxy"))
+                .unwrap_or_default();
             let enabled = if !http_proxy.is_empty() { "1" } else { "0" };
-            let _ = stmt.execute(rusqlite::params![
-                http_proxy,
-                "http",
-                no_proxy,
-                enabled
-            ]);
+            let _ = stmt.execute(rusqlite::params![http_proxy, "http", no_proxy, enabled]);
         }
 
         Ok(())
@@ -2024,14 +2148,7 @@ impl SiqueryEngine {
         }
 
         let _ = stmt.execute(rusqlite::params![
-            name,
-            version,
-            major,
-            minor,
-            build,
-            platform,
-            codename,
-            arch
+            name, version, major, minor, build, platform, codename, arch
         ]);
 
         Ok(())
@@ -2073,7 +2190,11 @@ impl SiqueryEngine {
             let block_size: i64 = 4096;
             let total_blocks = (disk.total_space() / 4096) as i64;
             let free_blocks = (disk.available_space() / 4096) as i64;
-            let flags = if disk.is_removable() { "removable" } else { "rw,fixed" };
+            let flags = if disk.is_removable() {
+                "removable"
+            } else {
+                "rw,fixed"
+            };
 
             let _ = stmt.execute(rusqlite::params![
                 dev,
@@ -2105,7 +2226,13 @@ impl SiqueryEngine {
         let minutes = (total_seconds % 3600) / 60;
         let seconds = total_seconds % 60;
 
-        let _ = stmt.execute(rusqlite::params![days, hours, minutes, seconds, total_seconds]);
+        let _ = stmt.execute(rusqlite::params![
+            days,
+            hours,
+            minutes,
+            seconds,
+            total_seconds
+        ]);
         Ok(())
     }
 
@@ -2128,12 +2255,17 @@ impl SiqueryEngine {
                         if let Ok(app_key) = key.open_subkey(&subkey_name) {
                             let name: String = app_key.get_value("DisplayName").unwrap_or_default();
                             if !name.is_empty() {
-                                let version: String = app_key.get_value("DisplayVersion").unwrap_or_default();
-                                let loc: String = app_key.get_value("InstallLocation").unwrap_or_default();
-                                let date: String = app_key.get_value("InstallDate").unwrap_or_default();
-                                let vendor: String = app_key.get_value("Publisher").unwrap_or_default();
+                                let version: String =
+                                    app_key.get_value("DisplayVersion").unwrap_or_default();
+                                let loc: String =
+                                    app_key.get_value("InstallLocation").unwrap_or_default();
+                                let date: String =
+                                    app_key.get_value("InstallDate").unwrap_or_default();
+                                let vendor: String =
+                                    app_key.get_value("Publisher").unwrap_or_default();
 
-                                let _ = stmt.execute(rusqlite::params![name, version, loc, date, vendor]);
+                                let _ = stmt
+                                    .execute(rusqlite::params![name, version, loc, date, vendor]);
                             }
                         }
                     }
@@ -2156,19 +2288,14 @@ impl SiqueryEngine {
             let uid: i64 = uid_str.parse().unwrap_or(1000);
             let gid_str = user.group_id().to_string();
             let gid: i64 = gid_str.parse().unwrap_or(1000);
-            let shell = if cfg!(target_os = "windows") { "powershell.exe" } else { "/bin/bash" };
+            let shell = if cfg!(target_os = "windows") {
+                "powershell.exe"
+            } else {
+                "/bin/bash"
+            };
 
             let _ = stmt.execute(rusqlite::params![
-                uid,
-                gid,
-                uid,
-                gid,
-                username,
-                "",
-                "",
-                shell,
-                uid_str,
-                "local"
+                uid, gid, uid, gid, username, "", "", shell, uid_str, "local"
             ]);
         }
 
@@ -2187,24 +2314,38 @@ impl SiqueryEngine {
                 if seen.insert(grp.name().to_string()) {
                     let gid_str = grp.id().to_string();
                     let gid: i64 = gid_str.parse().unwrap_or(1000);
-                    let _ = stmt.execute(rusqlite::params![
-                        gid,
-                        gid,
-                        grp.name(),
-                        gid_str,
-                        ""
-                    ]);
+                    let _ = stmt.execute(rusqlite::params![gid, gid, grp.name(), gid_str, ""]);
                 }
             }
         }
 
         if seen.is_empty() {
             let default_groups = [
-                (544i64, "Administrators", "S-1-5-32-544", "Administrators have complete and unrestricted access to the computer"),
-                (545i64, "Users", "S-1-5-32-545", "Standard local user accounts"),
+                (
+                    544i64,
+                    "Administrators",
+                    "S-1-5-32-544",
+                    "Administrators have complete and unrestricted access to the computer",
+                ),
+                (
+                    545i64,
+                    "Users",
+                    "S-1-5-32-545",
+                    "Standard local user accounts",
+                ),
                 (546i64, "Guests", "S-1-5-32-546", "Guest local accounts"),
-                (559i64, "Performance Log Users", "S-1-5-32-559", "Performance counter and ETW trace consumers"),
-                (580i64, "Remote Management Users", "S-1-5-32-580", "WMI and WinRM management accounts"),
+                (
+                    559i64,
+                    "Performance Log Users",
+                    "S-1-5-32-559",
+                    "Performance counter and ETW trace consumers",
+                ),
+                (
+                    580i64,
+                    "Remote Management Users",
+                    "S-1-5-32-580",
+                    "WMI and WinRM management accounts",
+                ),
             ];
             for (gid, name, sid, comment) in default_groups {
                 let _ = stmt.execute(rusqlite::params![gid, gid, name, sid, comment]);
@@ -2221,11 +2362,15 @@ impl SiqueryEngine {
             .map_err(|e| e.to_string())?;
 
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "SYSTEM".to_string());
-        let host = hostname::get().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
+        let host = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_default();
         let pid = std::process::id() as i64;
         let time = System::uptime() as i64;
 
-        let _ = stmt.execute(rusqlite::params!["console", user, "console", host, time, pid]);
+        let _ = stmt.execute(rusqlite::params![
+            "console", user, "console", host, time, pid
+        ]);
         Ok(())
     }
 
@@ -2272,8 +2417,11 @@ impl SiqueryEngine {
                     if let Ok(svc) = services_key.open_subkey(&service_name) {
                         let start_type = svc.get_value::<u32, _>("Start").unwrap_or(0);
                         if start_type == 2 {
-                            let image_path = svc.get_value::<String, _>("ImagePath").unwrap_or_default();
-                            let display_name = svc.get_value::<String, _>("DisplayName").unwrap_or_else(|_| service_name.clone());
+                            let image_path =
+                                svc.get_value::<String, _>("ImagePath").unwrap_or_default();
+                            let display_name = svc
+                                .get_value::<String, _>("DisplayName")
+                                .unwrap_or_else(|_| service_name.clone());
                             let _ = stmt.execute(rusqlite::params![
                                 image_path,
                                 service_name,
@@ -2345,16 +2493,12 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(run_key) = hklm.open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run") {
+            if let Ok(run_key) = hklm.open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run")
+            {
                 for (name, val) in run_key.enum_values().filter_map(|r| r.ok()) {
                     let val_str = val.to_string();
-                    let _ = stmt.execute(rusqlite::params![
-                        name,
-                        "Disabled",
-                        "false",
-                        "0",
-                        val_str
-                    ]);
+                    let _ =
+                        stmt.execute(rusqlite::params![name, "Disabled", "false", "0", val_str]);
                     count += 1;
                     if count >= 20 {
                         break;
@@ -2368,7 +2512,8 @@ impl SiqueryEngine {
                         if let Ok(svc) = services_key.open_subkey(&service_name) {
                             if let Ok(delayed) = svc.get_value::<u32, _>("DelayedAutostart") {
                                 if delayed == 1 {
-                                    let image_path = svc.get_value::<String, _>("ImagePath").unwrap_or_default();
+                                    let image_path =
+                                        svc.get_value::<String, _>("ImagePath").unwrap_or_default();
                                     let _ = stmt.execute(rusqlite::params![
                                         service_name,
                                         "DelayedAutostart",
@@ -2406,7 +2551,9 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO wmi_computer_info (computer_name, domain, manufacturer, model, number_of_processors, system_type) VALUES (?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
-        let computer_name = hostname::get().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
+        let computer_name = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_default();
         let domain = std::env::var("USERDOMAIN").unwrap_or_else(|_| "WORKGROUP".to_string());
         let mut manufacturer = "Microsoft Corporation".to_string();
         let mut model = "Standard PC".to_string();
@@ -2427,7 +2574,14 @@ impl SiqueryEngine {
         let num_procs = sys.cpus().len() as i64;
         let system_type = "x64-based PC";
 
-        let _ = stmt.execute(rusqlite::params![computer_name, domain, manufacturer, model, num_procs, system_type]);
+        let _ = stmt.execute(rusqlite::params![
+            computer_name,
+            domain,
+            manufacturer,
+            model,
+            num_procs,
+            system_type
+        ]);
         Ok(())
     }
 
@@ -2438,7 +2592,9 @@ impl SiqueryEngine {
             .map_err(|e| e.to_string())?;
 
         let mut build_number = "26100".to_string();
-        let csname = hostname::get().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
+        let csname = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_default();
         let mut caption = "Microsoft Windows 11".to_string();
         let free_physical_mem = (sys.available_memory() / 1024).to_string();
         let free_virtual_mem = (sys.free_swap() / 1024).to_string();
@@ -2485,10 +2641,27 @@ impl SiqueryEngine {
         }
 
         let _ = stmt.execute(rusqlite::params![
-            build_number, csname, caption, free_physical_mem, free_virtual_mem,
-            platform, version, major, manufacturer, minor, name, sp_major,
-            sp_minor, paging, total_virt, total_vis, win_dir, install_date,
-            last_boot, locale, os_type
+            build_number,
+            csname,
+            caption,
+            free_physical_mem,
+            free_virtual_mem,
+            platform,
+            version,
+            major,
+            manufacturer,
+            minor,
+            name,
+            sp_major,
+            sp_minor,
+            paging,
+            total_virt,
+            total_vis,
+            win_dir,
+            install_date,
+            last_boot,
+            locale,
+            os_type
         ]);
 
         Ok(())
@@ -2506,7 +2679,9 @@ impl SiqueryEngine {
             if let Ok(services_key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services") {
                 for svc_name in services_key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(k) = services_key.open_subkey(&svc_name) {
-                        let disp: String = k.get_value("DisplayName").unwrap_or_else(|_| svc_name.clone());
+                        let disp: String = k
+                            .get_value("DisplayName")
+                            .unwrap_or_else(|_| svc_name.clone());
                         let desc: String = k.get_value("Description").unwrap_or_default();
                         let image: String = k.get_value("ImagePath").unwrap_or_default();
                         let start_type: u32 = k.get_value("Start").unwrap_or(3);
@@ -2516,7 +2691,9 @@ impl SiqueryEngine {
                             4 => "Disabled",
                             _ => "Unknown",
                         };
-                        let obj_name: String = k.get_value("ObjectName").unwrap_or_else(|_| "LocalSystem".to_string());
+                        let obj_name: String = k
+                            .get_value("ObjectName")
+                            .unwrap_or_else(|_| "LocalSystem".to_string());
                         let svc_type: u32 = k.get_value("Type").unwrap_or(16);
                         let type_str = if svc_type & 0x10 != 0 {
                             "Win32OwnProcess"
@@ -2527,9 +2704,8 @@ impl SiqueryEngine {
                         };
 
                         let _ = stmt.execute(rusqlite::params![
-                            "TRUE", "TRUE", disp, desc, disp, "Normal", 0i64,
-                            svc_name, image, 0i64, type_str, "TRUE", start_mode,
-                            obj_name, "Running", "OK"
+                            "TRUE", "TRUE", disp, desc, disp, "Normal", 0i64, svc_name, image,
+                            0i64, type_str, "TRUE", start_mode, obj_name, "Running", "OK"
                         ]);
                     }
                 }
@@ -2558,10 +2734,14 @@ impl SiqueryEngine {
                         if let Ok(app_key) = key.open_subkey(&subkey_name) {
                             let name: String = app_key.get_value("DisplayName").unwrap_or_default();
                             if !name.is_empty() {
-                                let version: String = app_key.get_value("DisplayVersion").unwrap_or_default();
-                                let date: String = app_key.get_value("InstallDate").unwrap_or_default();
-                                let vendor: String = app_key.get_value("Publisher").unwrap_or_default();
-                                let _ = stmt.execute(rusqlite::params![date, name, vendor, version]);
+                                let version: String =
+                                    app_key.get_value("DisplayVersion").unwrap_or_default();
+                                let date: String =
+                                    app_key.get_value("InstallDate").unwrap_or_default();
+                                let vendor: String =
+                                    app_key.get_value("Publisher").unwrap_or_default();
+                                let _ =
+                                    stmt.execute(rusqlite::params![date, name, vendor, version]);
                             }
                         }
                     }
@@ -2578,19 +2758,24 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO wmi_hotfixes (caption, cs_name, description, fix_comments, hotfix_id, installed_by, installed_on, name, service_pack_in_effect, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
-        let csname = hostname::get().map(|h| h.to_string_lossy().to_string()).unwrap_or_default();
+        let csname = hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_default();
         let mut count = 0usize;
         let mut seen = std::collections::HashSet::new();
 
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\Packages") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\Packages",
+            ) {
                 for pkg in key.enum_keys().filter_map(|r| r.ok()) {
                     let upper = pkg.to_ascii_uppercase();
                     if let Some(idx) = upper.find("KB") {
                         let kb_sub = &upper[idx + 2..];
-                        let kb_num: String = kb_sub.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        let kb_num: String =
+                            kb_sub.chars().take_while(|c| c.is_ascii_digit()).collect();
                         if kb_num.len() >= 6 {
                             let hotfix_id = format!("KB{}", kb_num);
                             if seen.insert(hotfix_id.clone()) {
@@ -2616,7 +2801,9 @@ impl SiqueryEngine {
                 }
             }
 
-            if let Ok(key) = hklm.open_subkey(r"SOFTWARE\Microsoft\Windows Defender\Signature Updates") {
+            if let Ok(key) =
+                hklm.open_subkey(r"SOFTWARE\Microsoft\Windows Defender\Signature Updates")
+            {
                 if let Ok(ver) = key.get_value::<String, _>("AVSignatureVersion") {
                     let hotfix_id = "KB2267602".to_string();
                     if seen.insert(hotfix_id.clone()) {
@@ -2641,7 +2828,10 @@ impl SiqueryEngine {
         if count == 0 {
             let baseline_kbs = [
                 ("KB5043080", "Cumulative Update for Windows 11"),
-                ("KB2267602", "Security Intelligence Update for Microsoft Defender Antivirus"),
+                (
+                    "KB2267602",
+                    "Security Intelligence Update for Microsoft Defender Antivirus",
+                ),
             ];
             for (kb, desc) in baseline_kbs {
                 let _ = stmt.execute(rusqlite::params![
@@ -2674,7 +2864,9 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\LanmanServer\Shares") {
+            if let Ok(key) =
+                hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\LanmanServer\Shares")
+            {
                 for (name, _) in key.enum_values().filter_map(|r| r.ok()) {
                     let mut path = String::new();
                     if let Ok(lines) = key.get_value::<Vec<String>, _>(&name) {
@@ -2686,14 +2878,7 @@ impl SiqueryEngine {
                     }
                     seen.insert(name.clone());
                     let _ = stmt.execute(rusqlite::params![
-                        "TRUE",
-                        name,
-                        name,
-                        "16777216",
-                        name,
-                        path,
-                        "OK",
-                        0i64
+                        "TRUE", name, name, "16777216", name, path, "OK", 0i64
                     ]);
                 }
             }
@@ -2760,7 +2945,15 @@ impl SiqueryEngine {
         }
 
         let caption = name.clone();
-        let _ = stmt.execute(rusqlite::params![caption, manufacturer, name, release_date, serial_number, smbios_version, version]);
+        let _ = stmt.execute(rusqlite::params![
+            caption,
+            manufacturer,
+            name,
+            release_date,
+            serial_number,
+            smbios_version,
+            version
+        ]);
         Ok(())
     }
 
@@ -2795,7 +2988,13 @@ impl SiqueryEngine {
         }
 
         let name = "Base Board".to_string();
-        let _ = stmt.execute(rusqlite::params![manufacturer, name, product, serial_number, version]);
+        let _ = stmt.execute(rusqlite::params![
+            manufacturer,
+            name,
+            product,
+            serial_number,
+            version
+        ]);
         Ok(())
     }
 
@@ -2805,9 +3004,21 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO wmi_processor (address_width, Architecture, caption, cores, cpu_status, current_clock_speed, current_voltage, data_width, description, device_id, ext_clock, family, l2_cache_size, l3_cache_size, load_percentage, logical_processors, manufacturer, max_clock_speed, name, number_of_cores, number_of_logical_processors, processor_id, processor_type, revision, role, socket_designation, status, stepping, upgrade_method, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
-        let mut name = sys.cpus().first().map(|c| c.brand().to_string()).unwrap_or_else(|| "CPU".to_string());
-        let mut speed: i64 = sys.cpus().first().map(|c| c.frequency() as i64).unwrap_or(3000);
-        let mut manufacturer = sys.cpus().first().map(|c| c.vendor_id().to_string()).unwrap_or_else(|| "GenuineIntel".to_string());
+        let mut name = sys
+            .cpus()
+            .first()
+            .map(|c| c.brand().to_string())
+            .unwrap_or_else(|| "CPU".to_string());
+        let mut speed: i64 = sys
+            .cpus()
+            .first()
+            .map(|c| c.frequency() as i64)
+            .unwrap_or(3000);
+        let mut manufacturer = sys
+            .cpus()
+            .first()
+            .map(|c| c.vendor_id().to_string())
+            .unwrap_or_else(|| "GenuineIntel".to_string());
         let mut caption = "Intel64 Family 6 Model 158 Stepping 10".to_string();
 
         #[cfg(target_os = "windows")]
@@ -2833,11 +3044,36 @@ impl SiqueryEngine {
         let logical = sys.cpus().len() as i64;
 
         let _ = stmt.execute(rusqlite::params![
-            64i64, "x64", caption, cores, 1i64, speed, 12i64, 64i64,
-            caption, "CPU0", 100i64, 2i64, 1024i64, 8192i64, 5i64,
-            logical, manufacturer, speed, name, cores, logical,
-            "BFEBFBFF000906EA", 3i64, 0i64, "CPU", "Socket 0", "OK",
-            "", 6i64, ""
+            64i64,
+            "x64",
+            caption,
+            cores,
+            1i64,
+            speed,
+            12i64,
+            64i64,
+            caption,
+            "CPU0",
+            100i64,
+            2i64,
+            1024i64,
+            8192i64,
+            5i64,
+            logical,
+            manufacturer,
+            speed,
+            name,
+            cores,
+            logical,
+            "BFEBFBFF000906EA",
+            3i64,
+            0i64,
+            "CPU",
+            "Socket 0",
+            "OK",
+            "",
+            6i64,
+            ""
         ]);
 
         Ok(())
@@ -2853,12 +3089,41 @@ impl SiqueryEngine {
         let capacity = total_bytes.to_string();
 
         let _ = stmt.execute(rusqlite::params![
-            "BANK 0", capacity, "Physical Memory", 3200i64, 1200i64,
-            "Win32_PhysicalMemory", 64i64, "Physical Memory", "DIMM 0",
-            8i64, "FALSE", "", 0i64, 0i64, "Crucial", 1200i64,
-            26i64, 1200i64, "", "Physical Memory", "", "CT16G4SFRA32A.M8FR",
-            1i64, "TRUE", "FALSE", "TRUE", "00000000", "", 26i64, 3200i64,
-            "OK", "Physical Memory 0", 64i64, 128i64, ""
+            "BANK 0",
+            capacity,
+            "Physical Memory",
+            3200i64,
+            1200i64,
+            "Win32_PhysicalMemory",
+            64i64,
+            "Physical Memory",
+            "DIMM 0",
+            8i64,
+            "FALSE",
+            "",
+            0i64,
+            0i64,
+            "Crucial",
+            1200i64,
+            26i64,
+            1200i64,
+            "",
+            "Physical Memory",
+            "",
+            "CT16G4SFRA32A.M8FR",
+            1i64,
+            "TRUE",
+            "FALSE",
+            "TRUE",
+            "00000000",
+            "",
+            26i64,
+            3200i64,
+            "OK",
+            "Physical Memory 0",
+            64i64,
+            128i64,
+            ""
         ]);
 
         Ok(())
@@ -2873,16 +3138,37 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Printers") {
+            if let Ok(key) =
+                hklm.open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Print\Printers")
+            {
                 for printer_name in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(pk) = key.open_subkey(&printer_name) {
                         let driver: String = pk.get_value("Printer Driver").unwrap_or_default();
                         let port: String = pk.get_value("Port").unwrap_or_default();
 
                         let _ = stmt.execute(rusqlite::params![
-                            4i64, printer_name, "FALSE", printer_name, driver, 600i64,
-                            "TRUE", "", printer_name, "FALSE", port, 0i64, 3i64,
-                            "RAW", "winprint", "", "FALSE", "", "TRUE", "OK", 600i64, "FALSE"
+                            4i64,
+                            printer_name,
+                            "FALSE",
+                            printer_name,
+                            driver,
+                            600i64,
+                            "TRUE",
+                            "",
+                            printer_name,
+                            "FALSE",
+                            port,
+                            0i64,
+                            3i64,
+                            "RAW",
+                            "winprint",
+                            "",
+                            "FALSE",
+                            "",
+                            "TRUE",
+                            "OK",
+                            600i64,
+                            "FALSE"
                         ]);
                     }
                 }
@@ -2901,11 +3187,15 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96C-E325-11CE-BFC1-08002BE10318}") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96C-E325-11CE-BFC1-08002BE10318}",
+            ) {
                 for sub in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(dk) = key.open_subkey(&sub) {
                         if let Ok(desc) = dk.get_value::<String, _>("DriverDesc") {
-                            let mfg: String = dk.get_value("ProviderName").unwrap_or_else(|_| "Microsoft".to_string());
+                            let mfg: String = dk
+                                .get_value("ProviderName")
+                                .unwrap_or_else(|_| "Microsoft".to_string());
                             let pnp: String = dk.get_value("MatchingDeviceId").unwrap_or_default();
 
                             let _ = stmt.execute(rusqlite::params![
@@ -2929,21 +3219,46 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\Class\{4D36E968-E325-11CE-BFC1-08002BE10318}") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SYSTEM\CurrentControlSet\Control\Class\{4D36E968-E325-11CE-BFC1-08002BE10318}",
+            ) {
                 for sub in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(dk) = key.open_subkey(&sub) {
                         if let Ok(desc) = dk.get_value::<String, _>("DriverDesc") {
-                            let mfg: String = dk.get_value("ProviderName").unwrap_or_else(|_| "Microsoft".to_string());
+                            let mfg: String = dk
+                                .get_value("ProviderName")
+                                .unwrap_or_else(|_| "Microsoft".to_string());
                             let ver: String = dk.get_value("DriverVersion").unwrap_or_default();
                             let date: String = dk.get_value("DriverDate").unwrap_or_default();
                             let pnp: String = dk.get_value("MatchingDeviceId").unwrap_or_default();
 
                             let _ = stmt.execute(rusqlite::params![
-                                mfg, "Integrated RAMDAC", 1073741824i64, 3i64, desc,
-                                32i64, 1920i64, "4294967296", 60i64, 2i64, 1080i64,
-                                desc, "VideoController1", date, ver, "",
-                                60i64, 60i64, "FALSE", desc, pnp, "OK",
-                                5i64, 2i64, "1920 x 1080 x 4294967296 colors", desc
+                                mfg,
+                                "Integrated RAMDAC",
+                                1073741824i64,
+                                3i64,
+                                desc,
+                                32i64,
+                                1920i64,
+                                "4294967296",
+                                60i64,
+                                2i64,
+                                1080i64,
+                                desc,
+                                "VideoController1",
+                                date,
+                                ver,
+                                "",
+                                60i64,
+                                60i64,
+                                "FALSE",
+                                desc,
+                                pnp,
+                                "OK",
+                                5i64,
+                                2i64,
+                                "1920 x 1080 x 4294967296 colors",
+                                desc
                             ]);
                         }
                     }
@@ -2963,16 +3278,33 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96E-E325-11CE-BFC1-08002BE10318}") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96E-E325-11CE-BFC1-08002BE10318}",
+            ) {
                 for sub in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(dk) = key.open_subkey(&sub) {
                         if let Ok(desc) = dk.get_value::<String, _>("DriverDesc") {
-                            let mfg: String = dk.get_value("ProviderName").unwrap_or_else(|_| "Generic".to_string());
+                            let mfg: String = dk
+                                .get_value("ProviderName")
+                                .unwrap_or_else(|_| "Generic".to_string());
                             let pnp: String = dk.get_value("MatchingDeviceId").unwrap_or_default();
 
                             let _ = stmt.execute(rusqlite::params![
-                                3i64, 0i64, desc, desc, "DesktopMonitor1", 0i64, "FALSE",
-                                mfg, desc, 96i64, 96i64, pnp, 1080i64, 1920i64, "OK"
+                                3i64,
+                                0i64,
+                                desc,
+                                desc,
+                                "DesktopMonitor1",
+                                0i64,
+                                "FALSE",
+                                mfg,
+                                desc,
+                                96i64,
+                                96i64,
+                                pnp,
+                                1080i64,
+                                1920i64,
+                                "OK"
                             ]);
                         }
                     }
@@ -2992,15 +3324,26 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96B-E325-11CE-BFC1-08002BE10318}") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96B-E325-11CE-BFC1-08002BE10318}",
+            ) {
                 for sub in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(dk) = key.open_subkey(&sub) {
                         if let Ok(desc) = dk.get_value::<String, _>("DriverDesc") {
                             let pnp: String = dk.get_value("MatchingDeviceId").unwrap_or_default();
 
                             let _ = stmt.execute(rusqlite::params![
-                                3i64, desc, desc, "Keyboard0", "FALSE", "00000409",
-                                desc, 12i64, 0i64, pnp, "OK"
+                                3i64,
+                                desc,
+                                desc,
+                                "Keyboard0",
+                                "FALSE",
+                                "00000409",
+                                desc,
+                                12i64,
+                                0i64,
+                                pnp,
+                                "OK"
                             ]);
                         }
                     }
@@ -3020,17 +3363,39 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96F-E325-11CE-BFC1-08002BE10318}") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SYSTEM\CurrentControlSet\Control\Class\{4D36E96F-E325-11CE-BFC1-08002BE10318}",
+            ) {
                 for sub in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(dk) = key.open_subkey(&sub) {
                         if let Ok(desc) = dk.get_value::<String, _>("DriverDesc") {
-                            let mfg: String = dk.get_value("ProviderName").unwrap_or_else(|_| "Microsoft".to_string());
+                            let mfg: String = dk
+                                .get_value("ProviderName")
+                                .unwrap_or_else(|_| "Microsoft".to_string());
                             let pnp: String = dk.get_value("MatchingDeviceId").unwrap_or_default();
 
                             let _ = stmt.execute(rusqlite::params![
-                                3i64, desc, desc, "PointingDevice0", 1i64, 0i64, 2i64,
-                                desc, "msmouse.inf", "PS2_Inst", "FALSE", mfg,
-                                desc, 3i64, pnp, 2i64, 0i64, 400i64, 100i64, "OK", 0i64
+                                3i64,
+                                desc,
+                                desc,
+                                "PointingDevice0",
+                                1i64,
+                                0i64,
+                                2i64,
+                                desc,
+                                "msmouse.inf",
+                                "PS2_Inst",
+                                "FALSE",
+                                mfg,
+                                desc,
+                                3i64,
+                                pnp,
+                                2i64,
+                                0i64,
+                                400i64,
+                                100i64,
+                                "OK",
+                                0i64
                             ]);
                         }
                     }
@@ -3050,12 +3415,16 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Control\Class\{4D36E972-E325-11CE-BFC1-08002BE10318}") {
+            if let Ok(key) = hklm.open_subkey(
+                r"SYSTEM\CurrentControlSet\Control\Class\{4D36E972-E325-11CE-BFC1-08002BE10318}",
+            ) {
                 let mut idx = 0i64;
                 for sub in key.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(dk) = key.open_subkey(&sub) {
                         if let Ok(desc) = dk.get_value::<String, _>("DriverDesc") {
-                            let mfg: String = dk.get_value("ProviderName").unwrap_or_else(|_| "Microsoft".to_string());
+                            let mfg: String = dk
+                                .get_value("ProviderName")
+                                .unwrap_or_else(|_| "Microsoft".to_string());
                             let guid: String = dk.get_value("NetCfgInstanceId").unwrap_or_default();
                             let dev_id: String = dk.get_value("ComponentId").unwrap_or_default();
                             let svc: String = dk.get_value("ServiceName").unwrap_or_default();
@@ -3068,14 +3437,39 @@ impl SiqueryEngine {
                                 }
                             }
                             if mac.is_empty() && !networks.is_empty() {
-                                mac = networks.iter().next().map(|(_, d)| d.mac_address().to_string()).unwrap_or_default();
+                                mac = networks
+                                    .iter()
+                                    .next()
+                                    .map(|(_, d)| d.mac_address().to_string())
+                                    .unwrap_or_default();
                             }
 
                             let _ = stmt.execute(rusqlite::params![
-                                "Ethernet 802.3", "FALSE", desc, desc, dev_id, guid,
-                                idx, "TRUE", idx + 1, mac, mfg, 0i64, "1000000000",
-                                desc, "Ethernet", 2i64, "TRUE", "TRUE", dev_id,
-                                "FALSE", desc, svc, "1000000000", "OK", ""
+                                "Ethernet 802.3",
+                                "FALSE",
+                                desc,
+                                desc,
+                                dev_id,
+                                guid,
+                                idx,
+                                "TRUE",
+                                idx + 1,
+                                mac,
+                                mfg,
+                                0i64,
+                                "1000000000",
+                                desc,
+                                "Ethernet",
+                                2i64,
+                                "TRUE",
+                                "TRUE",
+                                dev_id,
+                                "FALSE",
+                                desc,
+                                svc,
+                                "1000000000",
+                                "OK",
+                                ""
                             ]);
                             idx += 1;
                         }
@@ -3089,10 +3483,31 @@ impl SiqueryEngine {
             for (idx, (if_name, net_data)) in networks.iter().enumerate() {
                 let mac = net_data.mac_address().to_string();
                 let _ = stmt.execute(rusqlite::params![
-                    "Ethernet", "FALSE", if_name, if_name, if_name, if_name,
-                    idx as i64, "TRUE", (idx + 1) as i64, mac, "Unknown", 0i64, "1000000000",
-                    if_name, if_name, 2i64, "TRUE", "TRUE", if_name,
-                    "FALSE", if_name, if_name, "1000000000", "OK", ""
+                    "Ethernet",
+                    "FALSE",
+                    if_name,
+                    if_name,
+                    if_name,
+                    if_name,
+                    idx as i64,
+                    "TRUE",
+                    (idx + 1) as i64,
+                    mac,
+                    "Unknown",
+                    0i64,
+                    "1000000000",
+                    if_name,
+                    if_name,
+                    2i64,
+                    "TRUE",
+                    "TRUE",
+                    if_name,
+                    "FALSE",
+                    if_name,
+                    if_name,
+                    "1000000000",
+                    "OK",
+                    ""
                 ]);
             }
         }
@@ -3115,22 +3530,8 @@ impl SiqueryEngine {
             let sid = user.id().to_string();
 
             let _ = stmt.execute(rusqlite::params![
-                512i64,
-                caption,
-                "",
-                "FALSE",
-                domain,
-                name,
-                "",
-                "TRUE",
-                "FALSE",
-                name,
-                "TRUE",
-                "FALSE",
-                "TRUE",
-                sid,
-                1i64,
-                "OK"
+                512i64, caption, "", "FALSE", domain, name, "", "TRUE", "FALSE", name, "TRUE",
+                "FALSE", "TRUE", sid, 1i64, "OK"
             ]);
         }
 
@@ -3140,7 +3541,9 @@ impl SiqueryEngine {
     /// Populates `arp_cache` using Win32 `arp -a`.
     fn populate_arp_cache(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
-            .prepare_cached("INSERT INTO arp_cache (address, mac, interface, permanent) VALUES (?, ?, ?, ?);")
+            .prepare_cached(
+                "INSERT INTO arp_cache (address, mac, interface, permanent) VALUES (?, ?, ?, ?);",
+            )
             .map_err(|e| e.to_string())?;
 
         #[cfg(target_os = "windows")]
@@ -3152,7 +3555,10 @@ impl SiqueryEngine {
                     for line in text.lines() {
                         let trimmed = line.trim();
                         if trimmed.starts_with("Interface:") {
-                            if let Some(ip) = trimmed.strip_prefix("Interface:").and_then(|s| s.split("---").next()) {
+                            if let Some(ip) = trimmed
+                                .strip_prefix("Interface:")
+                                .and_then(|s| s.split("---").next())
+                            {
                                 current_iface = ip.trim().to_string();
                             }
                         } else if !trimmed.is_empty() && !trimmed.starts_with("Internet Address") {
@@ -3161,8 +3567,17 @@ impl SiqueryEngine {
                                 let ip = parts[0];
                                 let mac = parts[1];
                                 let entry_type = parts[2];
-                                let permanent = if entry_type.eq_ignore_ascii_case("static") { "1" } else { "0" };
-                                let _ = stmt.execute(rusqlite::params![ip, mac, current_iface, permanent]);
+                                let permanent = if entry_type.eq_ignore_ascii_case("static") {
+                                    "1"
+                                } else {
+                                    "0"
+                                };
+                                let _ = stmt.execute(rusqlite::params![
+                                    ip,
+                                    mac,
+                                    current_iface,
+                                    permanent
+                                ]);
                             }
                         }
                     }
@@ -3201,10 +3616,26 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let keys = [
-                (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", "Registry: HKCU Run"),
-                (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "Registry: HKCU RunOnce"),
-                (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Run", "Registry: HKLM Run"),
-                (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\RunOnce", "Registry: HKLM RunOnce"),
+                (
+                    HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    "Registry: HKCU Run",
+                ),
+                (
+                    HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion\RunOnce",
+                    "Registry: HKCU RunOnce",
+                ),
+                (
+                    HKEY_LOCAL_MACHINE,
+                    r"Software\Microsoft\Windows\CurrentVersion\Run",
+                    "Registry: HKLM Run",
+                ),
+                (
+                    HKEY_LOCAL_MACHINE,
+                    r"Software\Microsoft\Windows\CurrentVersion\RunOnce",
+                    "Registry: HKLM RunOnce",
+                ),
             ];
 
             for (hkey, subkey_path, source) in keys {
@@ -3212,10 +3643,21 @@ impl SiqueryEngine {
                 if let Ok(key) = root.open_subkey(subkey_path) {
                     for (name, val) in key.enum_values().filter_map(|r| r.ok()) {
                         let cmd = val.to_string();
-                        let parts: Vec<&str> = cmd.trim().split_whitespace().collect();
+                        let parts: Vec<&str> = cmd.split_whitespace().collect();
                         let path = parts.first().map(|p| p.trim_matches('"')).unwrap_or("");
-                        let args = if parts.len() > 1 { parts[1..].join(" ") } else { String::new() };
-                        let _ = stmt.execute(rusqlite::params![name, path, args, source, subkey_path, "Enabled"]);
+                        let args = if parts.len() > 1 {
+                            parts[1..].join(" ")
+                        } else {
+                            String::new()
+                        };
+                        let _ = stmt.execute(rusqlite::params![
+                            name,
+                            path,
+                            args,
+                            source,
+                            subkey_path,
+                            "Enabled"
+                        ]);
                     }
                 }
             }
@@ -3228,7 +3670,14 @@ impl SiqueryEngine {
                         for entry in entries.filter_map(|e| e.ok()) {
                             let fname = entry.file_name().to_string_lossy().to_string();
                             let fpath = entry.path().to_string_lossy().to_string();
-                            let _ = stmt.execute(rusqlite::params![fname, fpath, "", "Startup Folder", "Startup", "Enabled"]);
+                            let _ = stmt.execute(rusqlite::params![
+                                fname,
+                                fpath,
+                                "",
+                                "Startup Folder",
+                                "Startup",
+                                "Enabled"
+                            ]);
                         }
                     }
                 }
@@ -3245,7 +3694,14 @@ impl SiqueryEngine {
 
         #[cfg(target_os = "windows")]
         {
-            let _ = stmt.execute(rusqlite::params!["C:", "{volume-guid-c}", 1i64, 1i64, "XTS-AES-128", 0i64]);
+            let _ = stmt.execute(rusqlite::params![
+                "C:",
+                "{volume-guid-c}",
+                1i64,
+                1i64,
+                "XTS-AES-128",
+                0i64
+            ]);
         }
         Ok(())
     }
@@ -3289,7 +3745,8 @@ impl SiqueryEngine {
                 if p.exists() && p.is_dir() {
                     let key = p.to_string_lossy().to_ascii_lowercase();
                     if seen.insert(key) {
-                        let uname = std::env::var("USERNAME").unwrap_or_else(|_| "Current".to_string());
+                        let uname =
+                            std::env::var("USERNAME").unwrap_or_else(|_| "Current".to_string());
                         out.push((uname, p));
                     }
                 }
@@ -3316,7 +3773,10 @@ impl SiqueryEngine {
             let browser_roots: [(&'static str, std::path::PathBuf); 3] = [
                 ("Chrome", appdata_local.join(r"Google\Chrome\User Data")),
                 ("Edge", appdata_local.join(r"Microsoft\Edge\User Data")),
-                ("Brave", appdata_local.join(r"BraveSoftware\Brave-Browser\User Data")),
+                (
+                    "Brave",
+                    appdata_local.join(r"BraveSoftware\Brave-Browser\User Data"),
+                ),
             ];
 
             for (browser, user_data_dir) in browser_roots {
@@ -3367,26 +3827,54 @@ impl SiqueryEngine {
         let host_lower = host.to_ascii_lowercase();
 
         // 1. SSRF & Cloud Metadata
-        let ssrf_targets = ["169.254.169.254", "metadata.google.internal", "100.100.100.200", "127.0.0.1", "[::1]", "localhost"];
-        if ssrf_targets.iter().any(|t| host_lower == *t || lower.contains(&format!("://{}", t))) || host_lower.starts_with("169.254.") {
+        let ssrf_targets = [
+            "169.254.169.254",
+            "metadata.google.internal",
+            "100.100.100.200",
+            "127.0.0.1",
+            "[::1]",
+            "localhost",
+        ];
+        if ssrf_targets
+            .iter()
+            .any(|t| host_lower == *t || lower.contains(&format!("://{}", t)))
+            || host_lower.starts_with("169.254.")
+        {
             return (0.92, "malicious");
         }
 
         // 2. Exfiltration Sinks
-        let exfil_sinks = ["webhook.site", "requestbin", "oastify.com", "burpcollaborator", "ngrok", "interactsh", "pipedream.net"];
+        let exfil_sinks = [
+            "webhook.site",
+            "requestbin",
+            "oastify.com",
+            "burpcollaborator",
+            "ngrok",
+            "interactsh",
+            "pipedream.net",
+        ];
         if exfil_sinks.iter().any(|sink| host_lower.contains(sink)) {
             return (0.90, "malicious");
         }
 
         // 3. Drive-by Payload Extensions
-        let payload_exts = [".exe", ".msi", ".dll", ".ps1", ".hta", ".vbs", ".bat", ".cmd"];
+        let payload_exts = [
+            ".exe", ".msi", ".dll", ".ps1", ".hta", ".vbs", ".bat", ".cmd",
+        ];
         let url_path = lower.split('?').next().unwrap_or("");
         if payload_exts.iter().any(|ext| url_path.ends_with(ext)) {
             return (0.86, "suspicious");
         }
 
         // 4. Known C2 Framework Tokens
-        let c2_tokens = ["cobaltstrike", "sliver", "metasploit", "beacon", "empire", "dnscat"];
+        let c2_tokens = [
+            "cobaltstrike",
+            "sliver",
+            "metasploit",
+            "beacon",
+            "empire",
+            "dnscat",
+        ];
         if c2_tokens.iter().any(|tok| lower.contains(tok)) {
             return (0.85, "suspicious");
         }
@@ -3409,7 +3897,11 @@ impl SiqueryEngine {
             }
             let len = first.len() as f64;
             let digit_ratio = digits as f64 / len;
-            let vowel_ratio = if alpha > 0 { vowels as f64 / alpha as f64 } else { 0.0 };
+            let vowel_ratio = if alpha > 0 {
+                vowels as f64 / alpha as f64
+            } else {
+                0.0
+            };
             if digit_ratio > 0.30 && vowel_ratio < 0.20 {
                 return (0.85, "suspicious");
             }
@@ -3453,10 +3945,13 @@ impl SiqueryEngine {
                             let mut description = String::new();
 
                             if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content)
+                                {
                                     if let Some(n) = val.get("name").and_then(|v| v.as_str()) {
                                         if n.starts_with("__MSG_") {
-                                            if let Some(sn) = val.get("short_name").and_then(|v| v.as_str()) {
+                                            if let Some(sn) =
+                                                val.get("short_name").and_then(|v| v.as_str())
+                                            {
                                                 if !sn.starts_with("__MSG_") && !sn.is_empty() {
                                                     name = sn.to_string();
                                                 }
@@ -3468,7 +3963,8 @@ impl SiqueryEngine {
                                     if let Some(v) = val.get("version").and_then(|v| v.as_str()) {
                                         version = v.to_string();
                                     }
-                                    if let Some(d) = val.get("description").and_then(|v| v.as_str()) {
+                                    if let Some(d) = val.get("description").and_then(|v| v.as_str())
+                                    {
                                         if !d.starts_with("__MSG_") {
                                             description = d.to_string();
                                         }
@@ -3476,7 +3972,14 @@ impl SiqueryEngine {
                                 }
                             }
                             let path_str = ver.path().to_string_lossy().to_string();
-                            let _ = stmt.execute(rusqlite::params![browser, name, ext_id, version, description, path_str]);
+                            let _ = stmt.execute(rusqlite::params![
+                                browser,
+                                name,
+                                ext_id,
+                                version,
+                                description,
+                                path_str
+                            ]);
                         }
                     }
                 }
@@ -3499,11 +4002,19 @@ impl SiqueryEngine {
             if !history_file.exists() {
                 continue;
             }
-            let temp_name = format!("osoosi_hist_{}_{}_{}.db", browser, profile_name.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_name = format!(
+                "osoosi_hist_{}_{}_{}.db",
+                browser,
+                profile_name.replace(' ', "_"),
+                uuid::Uuid::new_v4()
+            );
             let temp_path = std::env::temp_dir().join(temp_name);
 
             if std::fs::copy(&history_file, &temp_path).is_ok() {
-                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(&temp_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    &temp_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
                     if let Ok(mut src_stmt) = src_conn.prepare("SELECT url, COALESCE(title, ''), visit_count, datetime(last_visit_time / 1000000 - 11644473600, 'unixepoch') FROM urls ORDER BY last_visit_time DESC LIMIT 100;") {
                         if let Ok(rows) = src_stmt.query_map([], |row| {
                             Ok((
@@ -3548,11 +4059,19 @@ impl SiqueryEngine {
             if !history_file.exists() {
                 continue;
             }
-            let temp_name = format!("osoosi_dl_{}_{}_{}.db", browser, profile_name.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_name = format!(
+                "osoosi_dl_{}_{}_{}.db",
+                browser,
+                profile_name.replace(' ', "_"),
+                uuid::Uuid::new_v4()
+            );
             let temp_path = std::env::temp_dir().join(temp_name);
 
             if std::fs::copy(&history_file, &temp_path).is_ok() {
-                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(&temp_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    &temp_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
                     if let Ok(mut src_stmt) = src_conn.prepare("SELECT target_path, tab_url, mime_type, total_bytes, datetime(start_time / 1000000 - 11644473600, 'unixepoch'), danger_type FROM downloads ORDER BY start_time DESC LIMIT 100;") {
                         if let Ok(rows) = src_stmt.query_map([], |row| {
                             Ok((
@@ -3617,7 +4136,10 @@ impl SiqueryEngine {
             if !path.exists() {
                 continue;
             }
-            if let Ok(src_conn) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ) {
                 if let Ok(mut src_stmt) = src_conn.prepare("SELECT source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict FROM har_entries ORDER BY id DESC LIMIT 500;") {
                     if let Ok(rows) = src_stmt.query_map([], |row| {
                         Ok((
@@ -3653,7 +4175,11 @@ impl SiqueryEngine {
         if let Ok(entries) = std::fs::read_dir(".") {
             for entry in entries.filter_map(|e| e.ok()) {
                 let p = entry.path();
-                if p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("har")).unwrap_or(false) {
+                if p.is_file()
+                    && p.extension()
+                        .map(|e| e.eq_ignore_ascii_case("har"))
+                        .unwrap_or(false)
+                {
                     har_files.push(p);
                 }
             }
@@ -3665,7 +4191,11 @@ impl SiqueryEngine {
                     if let Ok(entries) = std::fs::read_dir(&downloads) {
                         for entry in entries.filter_map(|e| e.ok()) {
                             let p = entry.path();
-                            if p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("har")).unwrap_or(false) {
+                            if p.is_file()
+                                && p.extension()
+                                    .map(|e| e.eq_ignore_ascii_case("har"))
+                                    .unwrap_or(false)
+                            {
                                 har_files.push(p);
                                 if har_files.len() >= 5 {
                                     break;
@@ -3682,8 +4212,13 @@ impl SiqueryEngine {
 
         for hpath in har_files {
             if let Ok(raw) = std::fs::read_to_string(&hpath) {
-                let fname = hpath.file_name().and_then(|n| n.to_str()).unwrap_or("archive.har");
-                if let Ok(report) = osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&raw, fname) {
+                let fname = hpath
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("archive.har");
+                if let Ok(report) =
+                    osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&raw, fname)
+                {
                     for entry in report.entries {
                         let _ = insert_stmt.execute(rusqlite::params![
                             fname,
@@ -3811,7 +4346,11 @@ impl SiqueryEngine {
                     v.action_taken,
                     if v.credentials_revoked { 1i64 } else { 0i64 },
                     if v.session_terminated { 1i64 } else { 0i64 },
-                    if v.edr_investigation_triggered { 1i64 } else { 0i64 },
+                    if v.edr_investigation_triggered {
+                        1i64
+                    } else {
+                        0i64
+                    },
                     v.detected_at.to_rfc3339(),
                 ]);
             }
@@ -3970,9 +4509,30 @@ impl SiqueryEngine {
             ),
         ];
 
-        for (ring_id, ring_layer, defense_module, epoch, ghost, ssrf, path_trav, autotomy, mode, status) in rings {
+        for (
+            ring_id,
+            ring_layer,
+            defense_module,
+            epoch,
+            ghost,
+            ssrf,
+            path_trav,
+            autotomy,
+            mode,
+            status,
+        ) in rings
+        {
             let _ = insert_stmt.execute(rusqlite::params![
-                ring_id, ring_layer, defense_module, epoch, ghost, ssrf, path_trav, autotomy, mode, status
+                ring_id,
+                ring_layer,
+                defense_module,
+                epoch,
+                ghost,
+                ssrf,
+                path_trav,
+                autotomy,
+                mode,
+                status
             ]);
         }
 
@@ -4018,8 +4578,16 @@ impl SiqueryEngine {
                 s.exposure_bound.max_allowed_exposure_bytes,
                 s.exposure_bound.accumulated_exposure_bytes,
                 s.exposure_bound.theoretical_max_exposure_bytes,
-                if s.exposure_bound.bound_satisfied { 1i64 } else { 0i64 },
-                if s.edr_investigation_triggered { 1i64 } else { 0i64 },
+                if s.exposure_bound.bound_satisfied {
+                    1i64
+                } else {
+                    0i64
+                },
+                if s.edr_investigation_triggered {
+                    1i64
+                } else {
+                    0i64
+                },
                 s.last_updated.to_rfc3339(),
             ]);
         }
@@ -4097,8 +4665,22 @@ impl SiqueryEngine {
 
         let user_homes = Self::get_user_home_dirs();
         let ai_keywords = [
-            "ai", "agent", "mcp", "chat", "copilot", "gemini", "claude", "llm", "gpt",
-            "assistant", "codeium", "continue", "deepseek", "qwen", "ollama", "supermaven",
+            "ai",
+            "agent",
+            "mcp",
+            "chat",
+            "copilot",
+            "gemini",
+            "claude",
+            "llm",
+            "gpt",
+            "assistant",
+            "codeium",
+            "continue",
+            "deepseek",
+            "qwen",
+            "ollama",
+            "supermaven",
         ];
 
         for (_uname, home) in user_homes {
@@ -4126,19 +4708,35 @@ impl SiqueryEngine {
 
                         if pkg_json.exists() {
                             if let Ok(content) = std::fs::read_to_string(&pkg_json) {
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                                if let Ok(parsed) =
+                                    serde_json::from_str::<serde_json::Value>(&content)
+                                {
                                     if let Some(n) = parsed.get("name").and_then(|v| v.as_str()) {
                                         name = n.to_string();
                                     }
-                                    if let Some(pub_val) = parsed.get("publisher").and_then(|v| v.as_str()) {
+                                    if let Some(pub_val) =
+                                        parsed.get("publisher").and_then(|v| v.as_str())
+                                    {
                                         publisher = pub_val.to_string();
                                     }
-                                    if let Some(ver) = parsed.get("version").and_then(|v| v.as_str()) {
+                                    if let Some(ver) =
+                                        parsed.get("version").and_then(|v| v.as_str())
+                                    {
                                         version = ver.to_string();
                                     }
-                                    let desc = parsed.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                                    let contributes = parsed.get("contributes").map(|v| v.to_string()).unwrap_or_default();
-                                    let lower_check = format!("{} {} {} {}", name, desc, contributes, folder_name).to_ascii_lowercase();
+                                    let desc = parsed
+                                        .get("description")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let contributes = parsed
+                                        .get("contributes")
+                                        .map(|v| v.to_string())
+                                        .unwrap_or_default();
+                                    let lower_check = format!(
+                                        "{} {} {} {}",
+                                        name, desc, contributes, folder_name
+                                    )
+                                    .to_ascii_lowercase();
                                     if ai_keywords.iter().any(|kw| lower_check.contains(kw)) {
                                         ai_capable = 1;
                                     }
@@ -4236,7 +4834,8 @@ impl SiqueryEngine {
         let ollama_online = std::net::TcpStream::connect_timeout(
             &ollama_addr,
             std::time::Duration::from_millis(50),
-        ).is_ok();
+        )
+        .is_ok();
         let _ = insert_stmt.execute(rusqlite::params![
             "Local Model Inference API",
             "Ollama LLM Engine",
@@ -4249,10 +4848,9 @@ impl SiqueryEngine {
 
         // 3. Chrome DevTools Protocol (CDP 127.0.0.1:9222)
         let cdp_addr: std::net::SocketAddr = "127.0.0.1:9222".parse().unwrap();
-        let cdp_online = std::net::TcpStream::connect_timeout(
-            &cdp_addr,
-            std::time::Duration::from_millis(50),
-        ).is_ok();
+        let cdp_online =
+            std::net::TcpStream::connect_timeout(&cdp_addr, std::time::Duration::from_millis(50))
+                .is_ok();
         let _ = insert_stmt.execute(rusqlite::params![
             "Browser Automation CDP",
             "Chrome/Edge Remote Debugger",
@@ -4287,13 +4885,21 @@ impl SiqueryEngine {
             }
 
             // Claude Desktop config
-            let claude_cfg = home.join("AppData").join("Roaming").join("Claude").join("claude_desktop_config.json");
+            let claude_cfg = home
+                .join("AppData")
+                .join("Roaming")
+                .join("Claude")
+                .join("claude_desktop_config.json");
             if claude_cfg.exists() {
                 if let Ok(content) = std::fs::read_to_string(&claude_cfg) {
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
-                        if let Some(servers) = parsed.get("mcpServers").and_then(|v| v.as_object()) {
+                        if let Some(servers) = parsed.get("mcpServers").and_then(|v| v.as_object())
+                        {
                             for (server_name, val) in servers {
-                                let cmd = val.get("command").and_then(|c| c.as_str()).unwrap_or("unknown");
+                                let cmd = val
+                                    .get("command")
+                                    .and_then(|c| c.as_str())
+                                    .unwrap_or("unknown");
                                 let _ = insert_stmt.execute(rusqlite::params![
                                     "MCP Tool Server (Claude)",
                                     server_name,
@@ -4312,17 +4918,55 @@ impl SiqueryEngine {
 
         // 5. Configured Cloud API Providers (Zero-Mock: inspects real environment without leaking secrets)
         let cloud_providers: [(&str, &str, &str, &str); 7] = [
-            ("Cloud Model API", "Google Gemini", "https://generativelanguage.googleapis.com", "GEMINI_API_KEY"),
-            ("Cloud Model API", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY"),
-            ("Cloud Model API", "Anthropic Claude", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY"),
-            ("Cloud Model API", "HuggingFace Hub", "https://huggingface.co/api", "HF_TOKEN"),
-            ("Cloud Model API", "Azure OpenAI", "https://azure.microsoft.com/openai", "AZURE_OPENAI_API_KEY"),
-            ("Cloud Developer API", "GitHub API", "https://api.github.com", "GITHUB_TOKEN"),
-            ("Cloud Model API", "Cohere", "https://api.cohere.ai/v1", "COHERE_API_KEY"),
+            (
+                "Cloud Model API",
+                "Google Gemini",
+                "https://generativelanguage.googleapis.com",
+                "GEMINI_API_KEY",
+            ),
+            (
+                "Cloud Model API",
+                "OpenAI",
+                "https://api.openai.com/v1",
+                "OPENAI_API_KEY",
+            ),
+            (
+                "Cloud Model API",
+                "Anthropic Claude",
+                "https://api.anthropic.com/v1",
+                "ANTHROPIC_API_KEY",
+            ),
+            (
+                "Cloud Model API",
+                "HuggingFace Hub",
+                "https://huggingface.co/api",
+                "HF_TOKEN",
+            ),
+            (
+                "Cloud Model API",
+                "Azure OpenAI",
+                "https://azure.microsoft.com/openai",
+                "AZURE_OPENAI_API_KEY",
+            ),
+            (
+                "Cloud Developer API",
+                "GitHub API",
+                "https://api.github.com",
+                "GITHUB_TOKEN",
+            ),
+            (
+                "Cloud Model API",
+                "Cohere",
+                "https://api.cohere.ai/v1",
+                "COHERE_API_KEY",
+            ),
         ];
 
         for (api_type, provider, endpoint, env_key) in cloud_providers {
-            let auth_configured = if std::env::var(env_key).map(|v| !v.trim().is_empty()).unwrap_or(false) {
+            let auth_configured = if std::env::var(env_key)
+                .map(|v| !v.trim().is_empty())
+                .unwrap_or(false)
+            {
                 1i64
             } else {
                 0i64
@@ -4335,7 +4979,11 @@ impl SiqueryEngine {
                 "https/rest",
                 auth_configured,
                 0.50f64,
-                if auth_configured == 1 { "ready" } else { "unconfigured" },
+                if auth_configured == 1 {
+                    "ready"
+                } else {
+                    "unconfigured"
+                },
             ]);
         }
 
@@ -4393,11 +5041,35 @@ impl SiqueryEngine {
                 for (_uname, home) in &user_homes {
                     let user_candidates = [
                         home.join(".cargo").join("bin").join(exe_name),
-                        home.join("AppData").join("Local").join("Programs").join("Python").join("Python312").join(exe_name),
-                        home.join("AppData").join("Local").join("Programs").join("Python").join("Python311").join(exe_name),
-                        home.join("AppData").join("Local").join("Programs").join("Python").join("Python310").join(exe_name),
-                        home.join("AppData").join("Local").join("Programs").join("Git").join("bin").join(exe_name),
-                        home.join("wix_tools").join("PFiles64").join("WiX Toolset v5.0").join("bin").join(exe_name),
+                        home.join("AppData")
+                            .join("Local")
+                            .join("Programs")
+                            .join("Python")
+                            .join("Python312")
+                            .join(exe_name),
+                        home.join("AppData")
+                            .join("Local")
+                            .join("Programs")
+                            .join("Python")
+                            .join("Python311")
+                            .join(exe_name),
+                        home.join("AppData")
+                            .join("Local")
+                            .join("Programs")
+                            .join("Python")
+                            .join("Python310")
+                            .join(exe_name),
+                        home.join("AppData")
+                            .join("Local")
+                            .join("Programs")
+                            .join("Git")
+                            .join("bin")
+                            .join(exe_name),
+                        home.join("wix_tools")
+                            .join("PFiles64")
+                            .join("WiX Toolset v5.0")
+                            .join("bin")
+                            .join(exe_name),
                     ];
                     for cand in user_candidates {
                         if cand.exists() {
@@ -4447,7 +5119,11 @@ impl SiqueryEngine {
         // 2. Python Site-Packages AI & Automation SDKs
         let mut site_packages_dirs = Vec::new();
         for (_uname, home) in &user_homes {
-            let py_programs = home.join("AppData").join("Local").join("Programs").join("Python");
+            let py_programs = home
+                .join("AppData")
+                .join("Local")
+                .join("Programs")
+                .join("Python");
             if let Ok(entries) = std::fs::read_dir(&py_programs) {
                 for entry in entries.filter_map(|e| e.ok()) {
                     let sp = entry.path().join("Lib").join("site-packages");
@@ -4471,10 +5147,29 @@ impl SiqueryEngine {
         }
 
         let ai_sdk_filter = [
-            "torch", "torchvision", "transformers", "accelerate", "safetensors",
-            "langchain", "langgraph", "openai", "anthropic", "fastapi", "uvicorn",
-            "httpx", "pydantic", "playwright", "selenium", "requests", "litert",
-            "tokenizers", "chromadb", "faiss", "spacy", "onnxruntime", "diffusers",
+            "torch",
+            "torchvision",
+            "transformers",
+            "accelerate",
+            "safetensors",
+            "langchain",
+            "langgraph",
+            "openai",
+            "anthropic",
+            "fastapi",
+            "uvicorn",
+            "httpx",
+            "pydantic",
+            "playwright",
+            "selenium",
+            "requests",
+            "litert",
+            "tokenizers",
+            "chromadb",
+            "faiss",
+            "spacy",
+            "onnxruntime",
+            "diffusers",
         ];
 
         for sp_dir in site_packages_dirs {
@@ -4488,19 +5183,33 @@ impl SiqueryEngine {
                                 let mut pkg_name = String::new();
                                 let mut pkg_version = String::new();
                                 for line in meta_content.lines().take(30) {
-                                    if line.starts_with("Name: ") {
-                                        pkg_name = line["Name: ".len()..].trim().to_string();
-                                    } else if line.starts_with("Version: ") {
-                                        pkg_version = line["Version: ".len()..].trim().to_string();
+                                    if let Some(stripped) = line.strip_prefix("Name: ") {
+                                        pkg_name = stripped.trim().to_string();
+                                    } else if let Some(stripped) = line.strip_prefix("Version: ") {
+                                        pkg_version = stripped.trim().to_string();
                                     }
                                 }
 
                                 let lower_pkg = pkg_name.to_ascii_lowercase();
-                                if ai_sdk_filter.iter().any(|k| lower_pkg == *k || lower_pkg.starts_with(&format!("{}-", k))) {
-                                    let is_web = lower_pkg == "playwright" || lower_pkg == "selenium";
-                                    let is_framework = lower_pkg == "fastapi" || lower_pkg == "uvicorn";
-                                    let category = if is_web { "web_automation" } else if is_framework { "web_framework" } else { "ai_sdk" };
-                                    let can_shell = if is_web || lower_pkg.contains("langchain") { 1i64 } else { 0i64 };
+                                if ai_sdk_filter.iter().any(|k| {
+                                    lower_pkg == *k || lower_pkg.starts_with(&format!("{}-", k))
+                                }) {
+                                    let is_web =
+                                        lower_pkg == "playwright" || lower_pkg == "selenium";
+                                    let is_framework =
+                                        lower_pkg == "fastapi" || lower_pkg == "uvicorn";
+                                    let category = if is_web {
+                                        "web_automation"
+                                    } else if is_framework {
+                                        "web_framework"
+                                    } else {
+                                        "ai_sdk"
+                                    };
+                                    let can_shell = if is_web || lower_pkg.contains("langchain") {
+                                        1i64
+                                    } else {
+                                        0i64
+                                    };
 
                                     let _ = insert_stmt.execute(rusqlite::params![
                                         category,
@@ -4566,7 +5275,15 @@ impl SiqueryEngine {
         let brand = cpus.first().map(|c| c.brand()).unwrap_or("Unknown CPU");
         let freq = cpus.first().map(|c| c.frequency() as i64).unwrap_or(0);
 
-        let _ = stmt.execute(rusqlite::params!["CPU0", brand, "GenuineIntel/AuthenticAMD", cores, logical, freq, freq]);
+        let _ = stmt.execute(rusqlite::params![
+            "CPU0",
+            brand,
+            "GenuineIntel/AuthenticAMD",
+            cores,
+            logical,
+            freq,
+            freq
+        ]);
         Ok(())
     }
 
@@ -4585,14 +5302,28 @@ impl SiqueryEngine {
             let mut av = "1";
             let mut tamper = "1";
 
-            if let Ok(key) = hklm.open_subkey(r"SOFTWARE\Microsoft\Windows Defender\Real-Time Protection") {
-                if key.get_value::<u32, _>("DisableRealtimeMonitoring").unwrap_or(0) != 0 {
+            if let Ok(key) =
+                hklm.open_subkey(r"SOFTWARE\Microsoft\Windows Defender\Real-Time Protection")
+            {
+                if key
+                    .get_value::<u32, _>("DisableRealtimeMonitoring")
+                    .unwrap_or(0)
+                    != 0
+                {
                     realtime = "0";
                 }
-                if key.get_value::<u32, _>("DisableBehaviorMonitoring").unwrap_or(0) != 0 {
+                if key
+                    .get_value::<u32, _>("DisableBehaviorMonitoring")
+                    .unwrap_or(0)
+                    != 0
+                {
                     behavior = "0";
                 }
-                if key.get_value::<u32, _>("DisableIOAVProtection").unwrap_or(0) != 0 {
+                if key
+                    .get_value::<u32, _>("DisableIOAVProtection")
+                    .unwrap_or(0)
+                    != 0
+                {
                     ioav = "0";
                 }
             }
@@ -4607,7 +5338,9 @@ impl SiqueryEngine {
                 }
             }
 
-            let _ = stmt.execute(rusqlite::params![av, realtime, av, behavior, ioav, "1", tamper]);
+            let _ = stmt.execute(rusqlite::params![
+                av, realtime, av, behavior, ioav, "1", tamper
+            ]);
         }
         Ok(())
     }
@@ -4615,12 +5348,17 @@ impl SiqueryEngine {
     /// Populates `dns_cache` table via `ipconfig /displaydns` and hosts resolution.
     fn populate_dns_cache(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
-            .prepare_cached("INSERT INTO dns_cache (name, type, data, ttl, flags) VALUES (?, ?, ?, ?, ?);")
+            .prepare_cached(
+                "INSERT INTO dns_cache (name, type, data, ttl, flags) VALUES (?, ?, ?, ?, ?);",
+            )
             .map_err(|e| e.to_string())?;
 
         #[cfg(target_os = "windows")]
         {
-            if let Ok(output) = std::process::Command::new("ipconfig").arg("/displaydns").output() {
+            if let Ok(output) = std::process::Command::new("ipconfig")
+                .arg("/displaydns")
+                .output()
+            {
                 if output.status.success() {
                     let text = String::from_utf8_lossy(&output.stdout);
                     let mut cur_name = String::new();
@@ -4632,7 +5370,9 @@ impl SiqueryEngine {
                         let tr = line.trim();
                         if tr.starts_with("Record Name") {
                             if !cur_name.is_empty() && !cur_data.is_empty() {
-                                let _ = stmt.execute(rusqlite::params![cur_name, cur_type, cur_data, cur_ttl, 0i64]);
+                                let _ = stmt.execute(rusqlite::params![
+                                    cur_name, cur_type, cur_data, cur_ttl, 0i64
+                                ]);
                                 cur_data.clear();
                             }
                             if let Some(n) = tr.split(':').nth(1) {
@@ -4646,20 +5386,38 @@ impl SiqueryEngine {
                             if let Some(ttl_str) = tr.split(':').nth(1) {
                                 cur_ttl = ttl_str.trim().parse::<i64>().unwrap_or(0);
                             }
-                        } else if tr.starts_with("A (Host) Record") || tr.starts_with("AAAA Record") || tr.starts_with("CNAME Record") || tr.starts_with("PTR Record") {
+                        } else if tr.starts_with("A (Host) Record")
+                            || tr.starts_with("AAAA Record")
+                            || tr.starts_with("CNAME Record")
+                            || tr.starts_with("PTR Record")
+                        {
                             if let Some(d) = tr.split(':').nth(1) {
                                 cur_data = d.trim().to_string();
                             }
                         }
                     }
                     if !cur_name.is_empty() && !cur_data.is_empty() {
-                        let _ = stmt.execute(rusqlite::params![cur_name, cur_type, cur_data, cur_ttl, 0i64]);
+                        let _ = stmt.execute(rusqlite::params![
+                            cur_name, cur_type, cur_data, cur_ttl, 0i64
+                        ]);
                     }
                 }
             }
 
-            let _ = stmt.execute(rusqlite::params!["localhost", "1", "127.0.0.1", 3600i64, 0i64]);
-            let _ = stmt.execute(rusqlite::params!["host.docker.internal", "1", "127.0.0.1", 3600i64, 0i64]);
+            let _ = stmt.execute(rusqlite::params![
+                "localhost",
+                "1",
+                "127.0.0.1",
+                3600i64,
+                0i64
+            ]);
+            let _ = stmt.execute(rusqlite::params![
+                "host.docker.internal",
+                "1",
+                "127.0.0.1",
+                3600i64,
+                0i64
+            ]);
         }
         Ok(())
     }
@@ -4673,12 +5431,19 @@ impl SiqueryEngine {
         #[cfg(target_os = "windows")]
         {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-            if let Ok(interfaces) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces") {
+            if let Ok(interfaces) =
+                hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces")
+            {
                 for guid in interfaces.enum_keys().filter_map(|r| r.ok()) {
                     if let Ok(subkey) = interfaces.open_subkey(&guid) {
-                        let dhcp_ns: String = subkey.get_value("DhcpNameServer").unwrap_or_default();
+                        let dhcp_ns: String =
+                            subkey.get_value("DhcpNameServer").unwrap_or_default();
                         let static_ns: String = subkey.get_value("NameServer").unwrap_or_default();
-                        let ns_str = if !dhcp_ns.is_empty() { dhcp_ns } else { static_ns };
+                        let ns_str = if !dhcp_ns.is_empty() {
+                            dhcp_ns
+                        } else {
+                            static_ns
+                        };
                         for addr in ns_str.split(&[' ', ','][..]) {
                             let clean = addr.trim();
                             if !clean.is_empty() {
@@ -4706,8 +5471,11 @@ impl SiqueryEngine {
                     if let Ok(svc_key) = services.open_subkey(&name) {
                         let svc_type: u32 = svc_key.get_value("Type").unwrap_or(0);
                         if svc_type == 1 || svc_type == 2 {
-                            let display_name: String = svc_key.get_value("DisplayName").unwrap_or_else(|_| name.clone());
-                            let image_path: String = svc_key.get_value("ImagePath").unwrap_or_default();
+                            let display_name: String = svc_key
+                                .get_value("DisplayName")
+                                .unwrap_or_else(|_| name.clone());
+                            let image_path: String =
+                                svc_key.get_value("ImagePath").unwrap_or_default();
                             let start_val: u32 = svc_key.get_value("Start").unwrap_or(3);
                             let start_mode = match start_val {
                                 0 => "Boot",
@@ -4717,8 +5485,22 @@ impl SiqueryEngine {
                                 4 => "Disabled",
                                 _ => "Unknown",
                             };
-                            let signed = if image_path.to_ascii_lowercase().contains(r"windows\system32\drivers") { "1" } else { "0" };
-                            let _ = stmt.execute(rusqlite::params![name, display_name, image_path, "Running", start_mode, signed]);
+                            let signed = if image_path
+                                .to_ascii_lowercase()
+                                .contains(r"windows\system32\drivers")
+                            {
+                                "1"
+                            } else {
+                                "0"
+                            };
+                            let _ = stmt.execute(rusqlite::params![
+                                name,
+                                display_name,
+                                image_path,
+                                "Running",
+                                start_mode,
+                                signed
+                            ]);
                         }
                     }
                 }
@@ -4730,7 +5512,9 @@ impl SiqueryEngine {
     /// Populates `environment_variables` table from runtime process environment.
     fn populate_environment_variables(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
-            .prepare_cached("INSERT INTO environment_variables (name, value, [variable]) VALUES (?, ?, ?);")
+            .prepare_cached(
+                "INSERT INTO environment_variables (name, value, [variable]) VALUES (?, ?, ?);",
+            )
             .map_err(|e| e.to_string())?;
         for (k, v) in std::env::vars() {
             let _ = stmt.execute(rusqlite::params![k, v, k]);
@@ -4817,12 +5601,24 @@ impl SiqueryEngine {
             let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
             if let Ok(usb_key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Enum\USB") {
                 for dev in usb_key.enum_keys().filter_map(|r| r.ok()) {
-                    let _ = stmt.execute(rusqlite::params![format!("USB\\{}", dev), dev, "USB Device", "USB", "OK"]);
+                    let _ = stmt.execute(rusqlite::params![
+                        format!("USB\\{}", dev),
+                        dev,
+                        "USB Device",
+                        "USB",
+                        "OK"
+                    ]);
                 }
             }
             if let Ok(pci_key) = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Enum\PCI") {
                 for dev in pci_key.enum_keys().filter_map(|r| r.ok()) {
-                    let _ = stmt.execute(rusqlite::params![format!("PCI\\{}", dev), dev, "PCI Device", "PCI", "OK"]);
+                    let _ = stmt.execute(rusqlite::params![
+                        format!("PCI\\{}", dev),
+                        dev,
+                        "PCI Device",
+                        "PCI",
+                        "OK"
+                    ]);
                 }
             }
         }
@@ -4876,14 +5672,19 @@ impl SiqueryEngine {
                     let mut in_ipv4_table = false;
                     for line in text.lines() {
                         let trimmed = line.trim();
-                        if trimmed.contains("IPv4 Route Table") || trimmed.contains("Active Routes:") {
+                        if trimmed.contains("IPv4 Route Table")
+                            || trimmed.contains("Active Routes:")
+                        {
                             in_ipv4_table = true;
                             continue;
                         }
                         if in_ipv4_table && trimmed.contains("Persistent Routes:") {
                             break;
                         }
-                        if in_ipv4_table && !trimmed.is_empty() && !trimmed.starts_with("Network Destination") {
+                        if in_ipv4_table
+                            && !trimmed.is_empty()
+                            && !trimmed.starts_with("Network Destination")
+                        {
                             let parts: Vec<&str> = trimmed.split_whitespace().collect();
                             if parts.len() >= 5 {
                                 let dest = parts[0];
@@ -4891,7 +5692,9 @@ impl SiqueryEngine {
                                 let gw = parts[2];
                                 let iface = parts[3];
                                 let metric = parts[4].parse::<i64>().unwrap_or(0);
-                                let _ = stmt.execute(rusqlite::params![dest, mask, gw, "local", iface, metric, "remote"]);
+                                let _ = stmt.execute(rusqlite::params![
+                                    dest, mask, gw, "local", iface, metric, "remote"
+                                ]);
                             }
                         }
                     }
@@ -4934,7 +5737,9 @@ impl SiqueryEngine {
     /// Populates `shimcache` table.
     fn populate_shimcache(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
-            .prepare_cached("INSERT INTO shimcache (path, size, exec_flag, last_modified) VALUES (?, ?, ?, ?);")
+            .prepare_cached(
+                "INSERT INTO shimcache (path, size, exec_flag, last_modified) VALUES (?, ?, ?, ?);",
+            )
             .map_err(|e| e.to_string())?;
 
         #[cfg(target_os = "windows")]
@@ -4955,8 +5760,22 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO smbios_tables (number, type, description, handle, header_size, md5) VALUES (?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
-        let _ = stmt.execute(rusqlite::params![0i64, 0i64, "BIOS Information", 0i64, 24i64, ""]);
-        let _ = stmt.execute(rusqlite::params![1i64, 1i64, "System Information", 1i64, 27i64, ""]);
+        let _ = stmt.execute(rusqlite::params![
+            0i64,
+            0i64,
+            "BIOS Information",
+            0i64,
+            24i64,
+            ""
+        ]);
+        let _ = stmt.execute(rusqlite::params![
+            1i64,
+            1i64,
+            "System Information",
+            1i64,
+            27i64,
+            ""
+        ]);
         Ok(())
     }
 
@@ -5049,7 +5868,10 @@ impl SiqueryEngine {
             if !path.exists() {
                 continue;
             }
-            if let Ok(src_conn) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ) {
                 let _ = src_conn.busy_timeout(std::time::Duration::from_millis(2000));
                 // 1. edr_threats from threats
                 if threats_count < 500 {
@@ -5352,7 +6174,10 @@ impl SiqueryEngine {
                 if !path.exists() {
                     continue;
                 }
-                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
                     let _ = src_conn.busy_timeout(std::time::Duration::from_millis(2000));
                     if let Ok(mut src_stmt) = src_conn.prepare("SELECT id, COALESCE(detected_at, ''), COALESCE(cve_id, 'CONSENSUS'), 5, COALESCE(confidence, 0.9), 'confirmed', COALESCE(process_name, '') || ': ' || COALESCE(reason, '') FROM threats ORDER BY detected_at DESC LIMIT 200;") {
                         if let Ok(mut dst_stmt) = conn.prepare("INSERT INTO edr_consensus_findings (finding_id, timestamp, threat_type, voter_count, confidence, status, details) VALUES (?, ?, ?, ?, ?, ?, ?);") {
@@ -5383,7 +6208,10 @@ impl SiqueryEngine {
                 if !path.exists() {
                     continue;
                 }
-                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
                     let _ = src_conn.busy_timeout(std::time::Duration::from_millis(2000));
                     if let Ok(mut src_stmt) = src_conn.prepare("SELECT peer_id, 'mesh_peer', 1.0, 0.90, 'Mesh Peer Discovery', COALESCE(received_at, '') FROM peer_status LIMIT 100;") {
                         if let Ok(mut dst_stmt) = conn.prepare("INSERT INTO edr_reputation (entity, entity_type, score, confidence, source, updated_at) VALUES (?, ?, ?, ?, ?, ?);") {
@@ -5650,9 +6478,8 @@ fn get_udp_ipv6_table() -> Vec<MIB_UDP6ROW_OWNER_PID> {
 #[cfg(target_os = "windows")]
 fn enumerate_process_modules(pid: u32) -> Vec<(String, String, String, String)> {
     let mut modules = Vec::new();
-    let snapshot = unsafe {
-        CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid)
-    };
+    let snapshot =
+        unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid) };
     if snapshot == INVALID_HANDLE_VALUE {
         return modules;
     }
@@ -5780,10 +6607,17 @@ mod tests {
             .execute_query("PRAGMA table_info(process_memory_map);")
             .expect("PRAGMA table_info failed");
 
-        assert!(!rows.is_empty(), "PRAGMA table_info must return column metadata");
+        assert!(
+            !rows.is_empty(),
+            "PRAGMA table_info must return column metadata"
+        );
         let col_names: Vec<String> = rows
             .iter()
-            .filter_map(|r| r.get("name").and_then(|v| v.as_str()).map(|s| s.to_string()))
+            .filter_map(|r| {
+                r.get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
             .collect();
 
         assert!(col_names.contains(&"pid".to_string()));
@@ -5802,11 +6636,18 @@ mod tests {
         let engine = SiqueryEngine::new();
 
         let sys_rows = engine
-            .execute_query("SELECT computer_name, cpu_logical_cores, physical_memory FROM system_info;")
+            .execute_query(
+                "SELECT computer_name, cpu_logical_cores, physical_memory FROM system_info;",
+            )
             .expect("system_info query failed");
         assert_eq!(sys_rows.len(), 1);
         let info = &sys_rows[0];
-        assert!(info.get("cpu_logical_cores").and_then(|v| v.as_i64()).unwrap_or(0) > 0);
+        assert!(
+            info.get("cpu_logical_cores")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0)
+                > 0
+        );
 
         let host_rows = engine
             .execute_query("SELECT address, hostnames FROM etc_hosts;")
@@ -5831,7 +6672,10 @@ mod tests {
                       FROM processes p JOIN process_open_sockets s ON p.pid = s.pid \
                       WHERE s.remote_port = 443 OR s.remote_port = 11434 OR s.local_address = '127.0.0.1';";
         let rows1 = engine.execute_query(query1).unwrap_or_default();
-        assert!(!rows1.is_empty(), "Live host inspection must find processes with open sockets");
+        assert!(
+            !rows1.is_empty(),
+            "Live host inspection must find processes with open sockets"
+        );
 
         // 2. Check process tree + sockets + child fanout
         let query2 = "SELECT p.pid, p.name, p.cmdline, p.cwd, p.parent, \
@@ -5844,14 +6688,21 @@ mod tests {
                       GROUP BY p.pid \
                       HAVING child_count >= 1;";
         let rows2 = engine.execute_query(query2).unwrap_or_default();
-        assert!(!rows2.is_empty(), "Live host inspection must find process trees with children and sockets");
+        assert!(
+            !rows2.is_empty(),
+            "Live host inspection must find process trees with children and sockets"
+        );
     }
 
     #[test]
     fn test_all_tables_queryable() {
         let engine = SiqueryEngine::new();
         let tables = SiqueryEngine::list_tables();
-        assert_eq!(tables.len(), 100, "Must contain exactly 100 tables and views for comprehensive siquery host discovery");
+        assert_eq!(
+            tables.len(),
+            100,
+            "Must contain exactly 100 tables and views for comprehensive siquery host discovery"
+        );
 
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 1;", table);
@@ -5880,27 +6731,43 @@ mod tests {
         let csv_str = engine
             .execute_csv("SELECT computer_name, cpu_logical_cores FROM system_info;")
             .expect("execute_csv failed");
-        assert!(csv_str.contains('|'), "CSV output must be pipe-delimited matching siquery-rs");
-        assert!(csv_str.contains("computer_name|cpu_logical_cores") || csv_str.contains("cpu_logical_cores|computer_name"));
+        assert!(
+            csv_str.contains('|'),
+            "CSV output must be pipe-delimited matching siquery-rs"
+        );
+        assert!(
+            csv_str.contains("computer_name|cpu_logical_cores")
+                || csv_str.contains("cpu_logical_cores|computer_name")
+        );
 
         // 3. Pretty (ASCII box table)
         let pretty_str = engine
             .execute_pretty("SELECT computer_name, cpu_logical_cores FROM system_info;")
             .expect("execute_pretty failed");
-        assert!(pretty_str.contains('+'), "Pretty output must contain ASCII border +");
-        assert!(pretty_str.contains('|'), "Pretty output must contain ASCII column delimiter |");
+        assert!(
+            pretty_str.contains('+'),
+            "Pretty output must contain ASCII border +"
+        );
+        assert!(
+            pretty_str.contains('|'),
+            "Pretty output must contain ASCII column delimiter |"
+        );
     }
 
     #[test]
     fn test_get_table_schema() {
         let engine = SiqueryEngine::new();
 
-        let schema_processes = engine.get_table_schema("processes").expect("schema for processes failed");
+        let schema_processes = engine
+            .get_table_schema("processes")
+            .expect("schema for processes failed");
         assert!(schema_processes.contains("name"));
         assert!(schema_processes.contains("pid"));
         assert!(schema_processes.contains("cmdline"));
 
-        let schema_wmi = engine.get_table_schema("wmi_network_adapters").expect("schema for wmi_network_adapters failed");
+        let schema_wmi = engine
+            .get_table_schema("wmi_network_adapters")
+            .expect("schema for wmi_network_adapters failed");
         assert!(schema_wmi.contains("adapter_type"));
         assert!(schema_wmi.contains("mac_address"));
 
@@ -5935,17 +6802,22 @@ mod tests {
             let rows = engine
                 .execute_query_rows(&sql)
                 .unwrap_or_else(|e| panic!("Query for {} failed: {}", table, e));
-            assert!(!rows.is_empty(), "Query for {} must return a count row", table);
-            let count = rows[0]
-                .get_i64("cnt")
-                .unwrap_or_else(|| {
-                    rows[0]
-                        .columns
-                        .values()
-                        .next()
-                        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-                        .unwrap_or(0)
-                });
+            assert!(
+                !rows.is_empty(),
+                "Query for {} must return a count row",
+                table
+            );
+            let count = rows[0].get_i64("cnt").unwrap_or_else(|| {
+                rows[0]
+                    .columns
+                    .values()
+                    .next()
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
+                    .unwrap_or(0)
+            });
             assert!(
                 count > 0,
                 "Table '{}' must contain > 0 rows when database exists, found {}",
@@ -5969,77 +6841,121 @@ mod tests {
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 5;", table);
             let rows = engine.execute_query(&sql);
-            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+            assert!(
+                rows.is_ok(),
+                "Query on '{}' must succeed without error",
+                table
+            );
         }
-        let har_rows = engine.execute_query("SELECT * FROM har_entries LIMIT 1;").unwrap();
-        assert!(!har_rows.is_empty(), "har_entries must return at least 1 row");
+        let har_rows = engine
+            .execute_query("SELECT * FROM har_entries LIMIT 1;")
+            .unwrap();
+        assert!(
+            !har_rows.is_empty(),
+            "har_entries must return at least 1 row"
+        );
 
-        let pore_rows = engine.execute_query("SELECT * FROM host_actuation_pores;").unwrap();
-        assert!(pore_rows.len() >= 8, "host_actuation_pores must contain all 8 pore classes");
+        let pore_rows = engine
+            .execute_query("SELECT * FROM host_actuation_pores;")
+            .unwrap();
+        assert!(
+            pore_rows.len() >= 8,
+            "host_actuation_pores must contain all 8 pore classes"
+        );
 
-        let physics_rows = engine.execute_query("SELECT * FROM agent_mercury_physics;").unwrap();
-        assert!(!physics_rows.is_empty(), "agent_mercury_physics must contain at least 1 active lineage row");
+        let physics_rows = engine
+            .execute_query("SELECT * FROM agent_mercury_physics;")
+            .unwrap();
+        assert!(
+            !physics_rows.is_empty(),
+            "agent_mercury_physics must contain at least 1 active lineage row"
+        );
     }
 
     #[test]
     fn test_ide_api_coding_tools_tables_query() {
         let engine = SiqueryEngine::new();
-        let tables = [
-            "ide_extensions",
-            "api_endpoints",
-            "coding_tools",
-        ];
+        let tables = ["ide_extensions", "api_endpoints", "coding_tools"];
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 5;", table);
             let rows = engine.execute_query(&sql);
-            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+            assert!(
+                rows.is_ok(),
+                "Query on '{}' must succeed without error",
+                table
+            );
         }
 
-        let api_rows = engine.execute_query("SELECT * FROM api_endpoints;").unwrap();
-        assert!(!api_rows.is_empty(), "api_endpoints must return at least EDR REST API row");
-        assert!(api_rows.iter().any(|r| r.get("endpoint_or_command").and_then(|v| v.as_str()).map(|s| s.contains("3030")).unwrap_or(false)));
+        let api_rows = engine
+            .execute_query("SELECT * FROM api_endpoints;")
+            .unwrap();
+        assert!(
+            !api_rows.is_empty(),
+            "api_endpoints must return at least EDR REST API row"
+        );
+        assert!(api_rows.iter().any(|r| r
+            .get("endpoint_or_command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("3030"))
+            .unwrap_or(false)));
 
         let coding_rows = engine.execute_query("SELECT * FROM coding_tools;").unwrap();
-        assert!(!coding_rows.is_empty(), "coding_tools must discover at least one compiler or runtime on system");
+        assert!(
+            !coding_rows.is_empty(),
+            "coding_tools must discover at least one compiler or runtime on system"
+        );
 
-        let ide_rows = engine.execute_query("SELECT * FROM ide_extensions;").unwrap();
+        let ide_rows = engine
+            .execute_query("SELECT * FROM ide_extensions;")
+            .unwrap();
         assert!(ide_rows.is_empty() || ide_rows[0].get("ide").is_some());
     }
 
     #[test]
     fn test_spider_web_tables_query() {
         let engine = SiqueryEngine::new();
-        let tables = [
-            "spider_web_threads",
-            "business_policy_violations",
-        ];
+        let tables = ["spider_web_threads", "business_policy_violations"];
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 5;", table);
             let rows = engine.execute_query(&sql);
-            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+            assert!(
+                rows.is_ok(),
+                "Query on '{}' must succeed without error",
+                table
+            );
         }
 
-        let threads_rows = engine.execute_query("SELECT * FROM spider_web_threads;").unwrap();
-        assert!(threads_rows.len() >= 3, "spider_web_threads must contain at least 3 seeded baseline sectors");
+        let threads_rows = engine
+            .execute_query("SELECT * FROM spider_web_threads;")
+            .unwrap();
+        assert!(
+            threads_rows.len() >= 3,
+            "spider_web_threads must contain at least 3 seeded baseline sectors"
+        );
 
-        let violations_rows = engine.execute_query("SELECT * FROM business_policy_violations;").unwrap();
-        assert!(!violations_rows.is_empty(), "business_policy_violations must return at least 1 baseline row");
+        let violations_rows = engine
+            .execute_query("SELECT * FROM business_policy_violations;")
+            .unwrap();
+        assert!(
+            !violations_rows.is_empty(),
+            "business_policy_violations must return at least 1 baseline row"
+        );
     }
 
     #[test]
     fn test_octopus_tables_query() {
         let engine = SiqueryEngine::new();
-        let tables = [
-            "agent_octopus_arms",
-            "agent_containment_rings",
-        ];
+        let tables = ["agent_octopus_arms", "agent_containment_rings"];
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 5;", table);
             let rows = engine.execute_query(&sql);
-            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+            assert!(
+                rows.is_ok(),
+                "Query on '{}' must succeed without error",
+                table
+            );
             let list = rows.unwrap();
             assert!(!list.is_empty(), "Table '{}' must return real rows", table);
         }
     }
 }
-

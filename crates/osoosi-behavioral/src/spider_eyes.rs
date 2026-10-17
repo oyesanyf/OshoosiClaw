@@ -1,12 +1,12 @@
-use sysinfo::{Pid, System};
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter};
 use std::path::Path;
+use sysinfo::{Pid, System};
 use tracing::{debug, error, info};
 
 use crate::llm_engine::Gemma4Analyzer;
-use std::sync::Arc;
-use dashmap::DashMap;
 use blake3::Hasher;
+use dashmap::DashMap;
+use std::sync::Arc;
 
 /// THE BRAIN: Local LLM Mechanistic Analyst
 #[derive(Clone)]
@@ -27,7 +27,7 @@ impl GemmaSupervisor {
         } else {
             input_path
         };
-        
+
         let analyzer = match Gemma4Analyzer::new(model_dir) {
             Ok(a) => Some(Arc::new(a)),
             Err(e) => {
@@ -44,7 +44,7 @@ impl GemmaSupervisor {
                 None
             }
         };
-        
+
         Self { analyzer }
     }
 
@@ -67,7 +67,9 @@ impl GemmaSupervisor {
         let mut findings: Vec<&str> = Vec::new();
 
         // --- Process Injection / Hollowing ---
-        if asm_lower.contains("syscall") && (asm_lower.contains("0x65") || asm_lower.contains("101")) {
+        if asm_lower.contains("syscall")
+            && (asm_lower.contains("0x65") || asm_lower.contains("101"))
+        {
             findings.push("Detected syscall sequence consistent with process hollowing or memory injection (ptrace/process_vm_writev).");
         }
 
@@ -77,17 +79,25 @@ impl GemmaSupervisor {
         }
 
         // --- Shellcode / ROP Patterns ---
-        if asm_lower.contains("jmp esp") || asm_lower.contains("call esp") || asm_lower.contains("jmp rsp") {
+        if asm_lower.contains("jmp esp")
+            || asm_lower.contains("call esp")
+            || asm_lower.contains("jmp rsp")
+        {
             findings.push("Detected stack-pivot gadget (JMP ESP/RSP). Strong indicator of Return-Oriented Programming (ROP) exploit.");
         }
 
         // --- Cryptographic / Ransomware Patterns ---
-        if asm_lower.contains("aesenc") || asm_lower.contains("aesdec") || asm_lower.contains("pxor") {
+        if asm_lower.contains("aesenc")
+            || asm_lower.contains("aesdec")
+            || asm_lower.contains("pxor")
+        {
             findings.push("Detected AES encryption instructions. Could indicate ransomware payload or encrypted C2 communication.");
         }
 
         // --- Anti-Debug / Evasion ---
-        if asm_lower.contains("int 0x2d") || (asm_lower.contains("rdtsc") && asm_lower.contains("sub")) {
+        if asm_lower.contains("int 0x2d")
+            || (asm_lower.contains("rdtsc") && asm_lower.contains("sub"))
+        {
             findings.push("Detected anti-debugging technique (INT 2D / RDTSC timing check). Malware evasion likely.");
         }
         if asm_lower.contains("cpuid") && asm_lower.contains("cmp") {
@@ -95,12 +105,17 @@ impl GemmaSupervisor {
         }
 
         // --- Privilege Escalation ---
-        if asm_lower.contains("mov cr0") || asm_lower.contains("wrmsr") || asm_lower.contains("sidt") {
+        if asm_lower.contains("mov cr0")
+            || asm_lower.contains("wrmsr")
+            || asm_lower.contains("sidt")
+        {
             findings.push("Detected privileged instruction sequence (CR0/MSR/IDT). Kernel-level rootkit or privilege escalation attempt.");
         }
 
         // --- Credential Harvesting ---
-        if asm_lower.contains("lsass") || (asm_lower.contains("samss") && asm_lower.contains("read")) {
+        if asm_lower.contains("lsass")
+            || (asm_lower.contains("samss") && asm_lower.contains("read"))
+        {
             findings.push("Detected reference to LSASS/SAM. Credential harvesting (Mimikatz-style) suspected.");
         }
 
@@ -118,7 +133,11 @@ impl GemmaSupervisor {
         if findings.is_empty() {
             "HEURISTIC ANALYSIS: Code segment appears consistent with normal execution.".to_string()
         } else {
-            format!("HEURISTIC ANALYSIS: {} finding(s) detected.\n{}", findings.len(), findings.join("\n"))
+            format!(
+                "HEURISTIC ANALYSIS: {} finding(s) detected.\n{}",
+                findings.len(),
+                findings.join("\n")
+            )
         }
     }
 }
@@ -140,26 +159,32 @@ impl SpiderEyes {
     /// ASLR-aware binary analysis of a running process (Non-blocking).
     pub async fn watch_process(&self, target_pid: u32) -> anyhow::Result<String> {
         let spider = Arc::new(self.clone());
-        
+
         tokio::task::spawn_blocking(move || {
             // 1. Locate the process
             let mut s = System::new();
             let pid = Pid::from(target_pid as usize);
             s.refresh_process(pid);
-            
-            let process = s.process(pid)
+
+            let process = s
+                .process(pid)
                 .ok_or_else(|| anyhow::anyhow!("Process {} not found", target_pid))?;
-            
+
             info!("🕸️  [OSHOOSI] Spider attached to: {}", process.name());
 
             // 2. ASLR BYPASS: Find the primary executable memory segment
             let process_name = process.name().to_lowercase();
-            let (segment_start, segment_size) = spider.find_executable_segment(target_pid, &process_name)?;
+            let (segment_start, segment_size) =
+                spider.find_executable_segment(target_pid, &process_name)?;
 
-            info!("🕸️  [ASLR] Executable segment found at: 0x{:x}", segment_start);
+            info!(
+                "🕸️  [ASLR] Executable segment found at: 0x{:x}",
+                segment_start
+            );
 
             // 3. CAPTURE: Read from memory (platform-specific)
-            let (buffer, hash) = spider.read_process_memory(target_pid, segment_start, segment_size)?;
+            let (buffer, hash) =
+                spider.read_process_memory(target_pid, segment_start, segment_size)?;
 
             // Check cache first
             if let Some(cached_report) = spider.analysis_cache.get(&hash) {
@@ -168,8 +193,13 @@ impl SpiderEyes {
             }
 
             // 4. DISASSEMBLE: Translate bytes to assembly
-            let bitness = if cfg!(target_pointer_width = "64") { 64 } else { 32 };
-            let mut decoder = Decoder::with_ip(bitness, &buffer, segment_start as u64, DecoderOptions::NONE);
+            let bitness = if cfg!(target_pointer_width = "64") {
+                64
+            } else {
+                32
+            };
+            let mut decoder =
+                Decoder::with_ip(bitness, &buffer, segment_start as u64, DecoderOptions::NONE);
             let mut formatter = IntelFormatter::new();
             let mut asm_output = String::new();
             let mut instruction = Instruction::default();
@@ -183,57 +213,76 @@ impl SpiderEyes {
             }
 
             // 5. LOCAL INFERENCE: LLM Mechanistic Interpretability
-            info!("🕸️  [LOCAL-AI] LLM Cortex analyzing assembly intent for PID {}...", target_pid);
-            
+            info!(
+                "🕸️  [LOCAL-AI] LLM Cortex analyzing assembly intent for PID {}...",
+                target_pid
+            );
+
             // We are in spawn_blocking, but we need to call an async function.
             // Since we're in a tokio runtime, we can get a handle.
             let rt = tokio::runtime::Handle::current();
             let report = rt.block_on(spider.supervisor.analyze_intent(&asm_output));
-            
-            let final_report = format!("PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}", 
-                target_pid, process.name(), segment_start, asm_output, report);
-            
+
+            let final_report = format!(
+                "PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}",
+                target_pid,
+                process.name(),
+                segment_start,
+                asm_output,
+                report
+            );
+
             // Save to cache
             spider.analysis_cache.insert(hash, final_report.clone());
-            
+
             Ok(final_report)
-        }).await?
+        })
+        .await?
     }
 
     /// Cross-platform process memory reader
     #[cfg(target_os = "linux")]
-    fn read_process_memory(&self, pid: u32, start: usize, _size: usize) -> anyhow::Result<(Vec<u8>, String)> {
+    fn read_process_memory(
+        &self,
+        pid: u32,
+        start: usize,
+        _size: usize,
+    ) -> anyhow::Result<(Vec<u8>, String)> {
         use std::io::{Read, Seek, SeekFrom};
         let mut mem_file = std::fs::File::open(format!("/proc/{}/mem", pid))?;
         let mut buf = vec![0u8; 4096]; // Read more bytes for better analysis coverage
         mem_file.seek(SeekFrom::Start(start as u64))?;
         let bytes_read = mem_file.read(&mut buf)?;
         buf.truncate(bytes_read);
-        
+
         let mut hasher = Hasher::new();
         hasher.update(&buf);
         let hash = hasher.finalize().to_string();
-        
+
         Ok((buf, hash))
     }
 
     /// Windows: Uses ReadProcessMemory via the windows crate
     #[cfg(target_os = "windows")]
-    fn read_process_memory(&self, pid: u32, start: usize, size: usize) -> anyhow::Result<(Vec<u8>, String)> {
-        use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
-        use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    fn read_process_memory(
+        &self,
+        pid: u32,
+        start: usize,
+        size: usize,
+    ) -> anyhow::Result<(Vec<u8>, String)> {
         use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+        };
 
         let read_size = size.min(8192); // Increased cap for better analysis
         let mut buffer = vec![0u8; read_size];
 
         unsafe {
-            let proc_handle = OpenProcess(
-                PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
-                false,
-                pid,
-            ).map_err(|e| anyhow::anyhow!("Failed to open process {}: {}", pid, e))?;
-            
+            let proc_handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid)
+                .map_err(|e| anyhow::anyhow!("Failed to open process {}: {}", pid, e))?;
+
             let mut bytes_read = 0usize;
             let result = ReadProcessMemory(
                 proc_handle,
@@ -242,9 +291,9 @@ impl SpiderEyes {
                 read_size,
                 Some(&mut bytes_read),
             );
-            
+
             let _ = CloseHandle(proc_handle);
-            
+
             if result.is_err() {
                 return Err(anyhow::anyhow!("Failed to read memory from PID {}", pid));
             }
@@ -259,22 +308,35 @@ impl SpiderEyes {
     }
 
     /// Helper to find the primary executable segment without proc-maps crate
-    fn find_executable_segment(&self, pid: u32, _process_name: &str) -> anyhow::Result<(usize, usize)> {
+    fn find_executable_segment(
+        &self,
+        pid: u32,
+        _process_name: &str,
+    ) -> anyhow::Result<(usize, usize)> {
         #[cfg(target_os = "windows")]
         {
-            use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
-            use windows::Win32::System::Memory::{VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READ, PAGE_EXECUTE_READWRITE};
             use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Memory::{
+                VirtualQueryEx, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READ,
+                PAGE_EXECUTE_READWRITE,
+            };
+            use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION};
 
             unsafe {
                 let proc_handle = OpenProcess(PROCESS_QUERY_INFORMATION, false, pid)?;
                 let mut address = 0usize;
                 let mut mbi = MEMORY_BASIC_INFORMATION::default();
 
-                while VirtualQueryEx(proc_handle, Some(address as *const _), &mut mbi, std::mem::size_of::<MEMORY_BASIC_INFORMATION>()) != 0 {
+                while VirtualQueryEx(
+                    proc_handle,
+                    Some(address as *const _),
+                    &mut mbi,
+                    std::mem::size_of::<MEMORY_BASIC_INFORMATION>(),
+                ) != 0
+                {
                     let protect = mbi.Protect;
                     let is_exec = protect == PAGE_EXECUTE_READ || protect == PAGE_EXECUTE_READWRITE;
-                    
+
                     if mbi.State == MEM_COMMIT && is_exec {
                         let _ = CloseHandle(proc_handle);
                         return Ok((mbi.BaseAddress as usize, mbi.RegionSize));
@@ -300,6 +362,9 @@ impl SpiderEyes {
             }
         }
 
-        Err(anyhow::anyhow!("Could not find executable segment natively for PID {}", pid))
+        Err(anyhow::anyhow!(
+            "Could not find executable segment natively for PID {}",
+            pid
+        ))
     }
 }

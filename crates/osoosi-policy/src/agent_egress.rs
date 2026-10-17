@@ -11,12 +11,12 @@
 //!    Validates agent-claimed tool executions against OS/kernel telemetry (Sysmon Event 1)
 //!    to prevent agents from faking tool calls or concealing execution traces.
 
+use crate::engine::{ThreatVoter, VoteResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use osoosi_behavioral::DefenseAction;
 use osoosi_types::{AgentSessionContext, HostSecurityEvent};
-use crate::engine::{ThreatVoter, VoteResult};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
@@ -158,7 +158,8 @@ impl AgentEgressPolicy {
 
     /// Explicitly set the threat level for an agent session ID.
     pub fn set_session_threat_level(&self, session_id: &str, level: ProcessThreatLevel) {
-        self.session_threat_levels.insert(session_id.to_string(), level);
+        self.session_threat_levels
+            .insert(session_id.to_string(), level);
     }
 
     /// Elevate the threat level for an agent session ID if `level` is greater than its current level.
@@ -195,7 +196,8 @@ impl AgentEgressPolicy {
 
     /// Add an explicitly approved domain (e.g. "api.myorg.internal" or "*.huggingface.co").
     pub fn add_allowed_domain(&mut self, domain: impl Into<String>) {
-        self.allowed_domains.insert(domain.into().trim().to_ascii_lowercase());
+        self.allowed_domains
+            .insert(domain.into().trim().to_ascii_lowercase());
     }
 
     /// Add an explicitly approved IP address.
@@ -222,24 +224,45 @@ impl AgentEgressPolicy {
 
     /// Identify whether an event belongs to an agent runtime or process subtree.
     pub fn attribute_event(&self, event: &HostSecurityEvent) -> Option<AgentAttribution> {
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str());
-        let pid = event.data.get("ProcessId")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
             .unwrap_or(0) as u32;
-        let parent_pid = event.data.get("ParentProcessId")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+        let parent_pid = event
+            .data
+            .get("ParentProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
             .map(|p| p as u32);
 
         let is_direct = self.is_ai_runtime(image);
         let parent_is_ai = parent_image.map(|p| self.is_ai_runtime(p)).unwrap_or(false);
 
         // Check if either PID or parent PID is in tracked agent sessions
-        let session_context = self.tracked_sessions.get(&pid).map(|c| c.clone())
-            .or_else(|| parent_pid.and_then(|ppid| self.tracked_sessions.get(&ppid).map(|c| c.clone())))
+        let session_context = self
+            .tracked_sessions
+            .get(&pid)
+            .map(|c| c.clone())
+            .or_else(|| {
+                parent_pid.and_then(|ppid| self.tracked_sessions.get(&ppid).map(|c| c.clone()))
+            })
             .or_else(|| {
                 // Check if event data carries AgentSessionContext directly
-                event.data.get("AgentSessionContext")
+                event
+                    .data
+                    .get("AgentSessionContext")
                     .and_then(|v| serde_json::from_value::<AgentSessionContext>(v.clone()).ok())
             });
 
@@ -278,10 +301,8 @@ impl AgentEgressPolicy {
                         return true;
                     }
                 }
-            } else if allowed.starts_with('.') {
-                if domain_norm.ends_with(allowed) {
-                    return true;
-                }
+            } else if allowed.starts_with('.') && domain_norm.ends_with(allowed) {
+                return true;
             }
         }
 
@@ -328,7 +349,9 @@ impl AgentEgressPolicy {
                         None
                     }
                     ProcessThreatLevel::Suspicious => {
-                        let defense_action = DefenseAction::TarpitAndThrottle { pid: attribution.pid };
+                        let defense_action = DefenseAction::TarpitAndThrottle {
+                            pid: attribution.pid,
+                        };
                         warn!(
                             agent_pid = attribution.pid,
                             domain = %query_name,
@@ -347,7 +370,9 @@ impl AgentEgressPolicy {
                         })
                     }
                     ProcessThreatLevel::Hostile => {
-                        let defense_action = DefenseAction::TarpitAndThrottle { pid: attribution.pid };
+                        let defense_action = DefenseAction::TarpitAndThrottle {
+                            pid: attribution.pid,
+                        };
                         warn!(
                             agent_pid = attribution.pid,
                             domain = %query_name,
@@ -369,10 +394,22 @@ impl AgentEgressPolicy {
             }
             // Sysmon Event 3: Network Connection
             3 => {
-                let dest_host = event.data.get("DestinationHostname").and_then(|v| v.as_str());
-                let dest_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("");
-                let dest_port = event.data.get("DestinationPort")
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                let dest_host = event
+                    .data
+                    .get("DestinationHostname")
+                    .and_then(|v| v.as_str());
+                let dest_ip = event
+                    .data
+                    .get("DestinationIp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let dest_port = event
+                    .data
+                    .get("DestinationPort")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
                     .unwrap_or(0);
 
                 let is_allowed = if let Some(host) = dest_host {
@@ -415,7 +452,9 @@ impl AgentEgressPolicy {
                             "Agent network egress throttled: unapproved outbound connection under suspicious drift"
                         );
 
-                        let defense_action = DefenseAction::TarpitAndThrottle { pid: attribution.pid };
+                        let defense_action = DefenseAction::TarpitAndThrottle {
+                            pid: attribution.pid,
+                        };
 
                         Some(VoteResult {
                             confidence: 0.80,
@@ -497,13 +536,21 @@ impl InterAgentChannelDetector {
         match event.event_id {
             // Sysmon Event 17 (Pipe Created) & Event 18 (Pipe Connected)
             17 | 18 => {
-                let pipe_name = event.data.get("PipeName").and_then(|v| v.as_str()).unwrap_or("");
+                let pipe_name = event
+                    .data
+                    .get("PipeName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if pipe_name.is_empty() {
                     return None;
                 }
 
                 if !self.system_pipe_whitelist.is_match(pipe_name) {
-                    let action = if event.event_id == 17 { "Created" } else { "Connected" };
+                    let action = if event.event_id == 17 {
+                        "Created"
+                    } else {
+                        "Connected"
+                    };
                     warn!(
                         agent_pid = attribution.pid,
                         pipe = %pipe_name,
@@ -512,12 +559,15 @@ impl InterAgentChannelDetector {
                     );
 
                     // Side-channel detection automatically elevates the offending PID/session to Hostile
-                    self.egress_policy.elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
+                    self.egress_policy
+                        .elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
                     if let Some(ppid) = attribution.parent_pid {
-                        self.egress_policy.elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
+                        self.egress_policy
+                            .elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
                     }
                     if let Some(ref ctx) = attribution.session_context {
-                        self.egress_policy.set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
+                        self.egress_policy
+                            .set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
                     }
 
                     return Some(VoteResult {
@@ -532,7 +582,11 @@ impl InterAgentChannelDetector {
             }
             // Sysmon Event 11: File Creation in Shared Directories
             11 => {
-                let target_path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+                let target_path = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if target_path.is_empty() {
                     return None;
                 }
@@ -556,12 +610,15 @@ impl InterAgentChannelDetector {
                     );
 
                     // Side-channel detection automatically elevates the offending PID/session to Hostile
-                    self.egress_policy.elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
+                    self.egress_policy
+                        .elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
                     if let Some(ppid) = attribution.parent_pid {
-                        self.egress_policy.elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
+                        self.egress_policy
+                            .elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
                     }
                     if let Some(ref ctx) = attribution.session_context {
-                        self.egress_policy.set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
+                        self.egress_policy
+                            .set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
                     }
 
                     return Some(VoteResult {
@@ -576,17 +633,27 @@ impl InterAgentChannelDetector {
             }
             // Sysmon Event 3: Loopback Port Scanning / Inter-Agent Socket Probing
             3 => {
-                let dest_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("");
+                let dest_ip = event
+                    .data
+                    .get("DestinationIp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if dest_ip == "127.0.0.1" || dest_ip == "::1" {
-                    let dest_port = event.data.get("DestinationPort")
-                        .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    let dest_port = event
+                        .data
+                        .get("DestinationPort")
+                        .and_then(|v| {
+                            v.as_u64()
+                                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                        })
                         .unwrap_or(0) as u16;
 
                     if dest_port != 0 {
                         let now = Utc::now();
-                        let mut entry = self.loopback_probe_tracker.entry(attribution.pid).or_insert_with(|| {
-                            (VecDeque::with_capacity(20), now)
-                        });
+                        let mut entry = self
+                            .loopback_probe_tracker
+                            .entry(attribution.pid)
+                            .or_insert_with(|| (VecDeque::with_capacity(20), now));
 
                         // Check time window (within 60 seconds)
                         if (now - entry.1).num_seconds() > 60 {
@@ -607,12 +674,17 @@ impl InterAgentChannelDetector {
                             );
 
                             // Side-channel detection automatically elevates the offending PID/session to Hostile
-                            self.egress_policy.elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
+                            self.egress_policy
+                                .elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
                             if let Some(ppid) = attribution.parent_pid {
-                                self.egress_policy.elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
+                                self.egress_policy
+                                    .elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
                             }
                             if let Some(ref ctx) = attribution.session_context {
-                                self.egress_policy.set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
+                                self.egress_policy.set_session_threat_level(
+                                    &ctx.session_id,
+                                    ProcessThreatLevel::Hostile,
+                                );
                             }
 
                             return Some(VoteResult {
@@ -707,9 +779,18 @@ impl OutOfBandExecutionAttestor {
                 continue;
             }
 
-            let actual_cmd = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
-            let actual_pid = event.data.get("ProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            let actual_cmd = event
+                .data
+                .get("CommandLine")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let actual_pid = event
+                .data
+                .get("ProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
                 .unwrap_or(0) as u32;
 
             let time_diff = (event.timestamp - claimed.timestamp).num_seconds().abs();
@@ -771,19 +852,35 @@ impl OutOfBandExecutionAttestor {
                 continue;
             }
 
-            let parent_pid = event.data.get("ParentProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            let parent_pid = event
+                .data
+                .get("ParentProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                })
                 .unwrap_or(0) as u32;
 
             if parent_pid == agent_pid {
-                let actual_cmd = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+                let actual_cmd = event
+                    .data
+                    .get("CommandLine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let actual_norm = actual_cmd.trim().to_ascii_lowercase();
-                let actual_pid = event.data.get("ProcessId")
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                let actual_pid = event
+                    .data
+                    .get("ProcessId")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
                     .unwrap_or(0) as u32;
 
                 let is_claimed = claimed_cmds.iter().any(|claimed| {
-                    actual_norm == *claimed || actual_norm.contains(claimed) || claimed.contains(&actual_norm)
+                    actual_norm == *claimed
+                        || actual_norm.contains(claimed)
+                        || claimed.contains(&actual_norm)
                 });
 
                 if !is_claimed {
@@ -857,12 +954,15 @@ impl ThreatVoter for AgentEgressVoter {
         // 2. Check covert inter-agent side-channels (Event 11, 17, 18, 3 loopback)
         if let Some(vote) = self.side_channel_detector.evaluate_channel_event(event) {
             if let Some(attribution) = self.egress_policy.attribute_event(event) {
-                self.egress_policy.elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
+                self.egress_policy
+                    .elevate_threat_level(attribution.pid, ProcessThreatLevel::Hostile);
                 if let Some(ppid) = attribution.parent_pid {
-                    self.egress_policy.elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
+                    self.egress_policy
+                        .elevate_threat_level(ppid, ProcessThreatLevel::Hostile);
                 }
                 if let Some(ref ctx) = attribution.session_context {
-                    self.egress_policy.set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
+                    self.egress_policy
+                        .set_session_threat_level(&ctx.session_id, ProcessThreatLevel::Hostile);
                 }
             }
             return Some(vote);
@@ -905,30 +1005,41 @@ mod tests {
         let voter = AgentEgressVoter::new();
 
         // Sysmon Event 22: DNS query to api.openai.com from python.exe
-        let ev_allowed = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 1234,
-            "QueryName": "api.openai.com",
-            "QueryStatus": "0"
-        }));
+        let ev_allowed = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 1234,
+                "QueryName": "api.openai.com",
+                "QueryStatus": "0"
+            }),
+        );
 
         let vote = voter.egress_policy.evaluate_network_egress(&ev_allowed);
-        assert!(vote.is_none(), "Allowlisted domain should not trigger violation");
+        assert!(
+            vote.is_none(),
+            "Allowlisted domain should not trigger violation"
+        );
     }
 
     #[test]
     fn test_agent_egress_unauthorized_dns_blocked() {
         let voter = AgentEgressVoter::new();
         // Elevate process to Hostile state
-        voter.policy().elevate_threat_level(1234, ProcessThreatLevel::Hostile);
+        voter
+            .policy()
+            .elevate_threat_level(1234, ProcessThreatLevel::Hostile);
 
         // Sysmon Event 22: DNS query to evil-c2.com from python.exe
-        let ev_blocked = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 1234,
-            "QueryName": "evil-c2.com",
-            "QueryStatus": "0"
-        }));
+        let ev_blocked = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 1234,
+                "QueryName": "evil-c2.com",
+                "QueryStatus": "0"
+            }),
+        );
 
         let vote = voter.egress_policy.evaluate_network_egress(&ev_blocked);
         assert!(vote.is_some());
@@ -942,15 +1053,20 @@ mod tests {
     fn test_agent_egress_unauthorized_outbound_ip_blocked() {
         let voter = AgentEgressVoter::new();
         // Elevate process to Hostile state
-        voter.policy().elevate_threat_level(2345, ProcessThreatLevel::Hostile);
+        voter
+            .policy()
+            .elevate_threat_level(2345, ProcessThreatLevel::Hostile);
 
         // Sysmon Event 3: Outbound connection to external IP from node.exe
-        let ev_blocked = make_test_event(3, json!({
-            "Image": "C:\\Program Files\\nodejs\\node.exe",
-            "ProcessId": 2345,
-            "DestinationIp": "198.51.100.42",
-            "DestinationPort": 443
-        }));
+        let ev_blocked = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Program Files\\nodejs\\node.exe",
+                "ProcessId": 2345,
+                "DestinationIp": "198.51.100.42",
+                "DestinationPort": 443
+            }),
+        );
 
         let vote = voter.egress_policy.evaluate_network_egress(&ev_blocked);
         assert!(vote.is_some());
@@ -972,16 +1088,21 @@ mod tests {
             ephemeral_canary_hash: "abcd1234".to_string(),
             start_time: Utc::now(),
         });
-        voter.egress_policy.set_session_threat_level("agent-session-xyz", ProcessThreatLevel::Hostile);
+        voter
+            .egress_policy
+            .set_session_threat_level("agent-session-xyz", ProcessThreatLevel::Hostile);
 
         // Child process spawned with generic binary name
-        let ev = make_test_event(3, json!({
-            "Image": "C:\\Windows\\System32\\curl.exe",
-            "ProcessId": 5001,
-            "ParentProcessId": 5000,
-            "DestinationIp": "203.0.113.99",
-            "DestinationPort": 80
-        }));
+        let ev = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Windows\\System32\\curl.exe",
+                "ProcessId": 5001,
+                "ParentProcessId": 5000,
+                "DestinationIp": "203.0.113.99",
+                "DestinationPort": 80
+            }),
+        );
 
         let vote = voter.egress_policy.evaluate_network_egress(&ev);
         assert!(vote.is_some());
@@ -995,26 +1116,39 @@ mod tests {
 
         // AI runtime accessing github.com or pypi.org while Benign returns None
         for domain in ["github.com", "pypi.org", "crates.io", "registry.npmjs.org"] {
-            let ev = make_test_event(22, json!({
-                "Image": "C:\\Python311\\python.exe",
-                "ProcessId": 1234,
-                "QueryName": domain,
-                "QueryStatus": "0"
-            }));
+            let ev = make_test_event(
+                22,
+                json!({
+                    "Image": "C:\\Python311\\python.exe",
+                    "ProcessId": 1234,
+                    "QueryName": domain,
+                    "QueryStatus": "0"
+                }),
+            );
             let vote = voter.egress_policy.evaluate_network_egress(&ev);
-            assert!(vote.is_none(), "Benign AI runtime accessing {} should return None", domain);
+            assert!(
+                vote.is_none(),
+                "Benign AI runtime accessing {} should return None",
+                domain
+            );
         }
 
         // Outbound connection (Event 3) to package registry IP while Benign returns None
-        let ev_conn = make_test_event(3, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 1234,
-            "DestinationHostname": "pypi.org",
-            "DestinationIp": "151.101.0.223",
-            "DestinationPort": 443
-        }));
+        let ev_conn = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 1234,
+                "DestinationHostname": "pypi.org",
+                "DestinationIp": "151.101.0.223",
+                "DestinationPort": 443
+            }),
+        );
         let vote_conn = voter.egress_policy.evaluate_network_egress(&ev_conn);
-        assert!(vote_conn.is_none(), "Benign connection to package registry should return None");
+        assert!(
+            vote_conn.is_none(),
+            "Benign connection to package registry should return None"
+        );
     }
 
     #[test]
@@ -1022,15 +1156,20 @@ mod tests {
         let voter = AgentEgressVoter::new();
         let pid = 2222;
 
-        voter.policy().elevate_threat_level(pid, ProcessThreatLevel::Suspicious);
+        voter
+            .policy()
+            .elevate_threat_level(pid, ProcessThreatLevel::Suspicious);
 
         // DNS lookup for unapproved domain while Suspicious
-        let ev_dns = make_test_event(22, json!({
-            "Image": "C:\\Program Files\\nodejs\\node.exe",
-            "ProcessId": pid,
-            "QueryName": "unknown-recon-site.net",
-            "QueryStatus": "0"
-        }));
+        let ev_dns = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Program Files\\nodejs\\node.exe",
+                "ProcessId": pid,
+                "QueryName": "unknown-recon-site.net",
+                "QueryStatus": "0"
+            }),
+        );
 
         let vote_dns = voter.egress_policy.evaluate_network_egress(&ev_dns);
         assert!(vote_dns.is_some());
@@ -1040,12 +1179,15 @@ mod tests {
         assert!(v.reason.contains("TarpitAndThrottle"));
 
         // Event 3 connection attempt while Suspicious
-        let ev_conn = make_test_event(3, json!({
-            "Image": "C:\\Program Files\\nodejs\\node.exe",
-            "ProcessId": pid,
-            "DestinationIp": "198.51.100.55",
-            "DestinationPort": 8080
-        }));
+        let ev_conn = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Program Files\\nodejs\\node.exe",
+                "ProcessId": pid,
+                "DestinationIp": "198.51.100.55",
+                "DestinationPort": 8080
+            }),
+        );
         let vote_conn = voter.egress_policy.evaluate_network_egress(&ev_conn);
         assert!(vote_conn.is_some());
         let v3 = vote_conn.unwrap();
@@ -1059,15 +1201,20 @@ mod tests {
         let voter = AgentEgressVoter::new();
         let pid = 3333;
 
-        voter.policy().elevate_threat_level(pid, ProcessThreatLevel::Hostile);
+        voter
+            .policy()
+            .elevate_threat_level(pid, ProcessThreatLevel::Hostile);
 
         // DNS lookup while Hostile triggers >= 0.95 confidence
-        let ev_dns = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "QueryName": "evil-c2.com",
-            "QueryStatus": "0"
-        }));
+        let ev_dns = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "QueryName": "evil-c2.com",
+                "QueryStatus": "0"
+            }),
+        );
 
         let vote_dns = voter.egress_policy.evaluate_network_egress(&ev_dns);
         assert!(vote_dns.is_some());
@@ -1076,12 +1223,15 @@ mod tests {
         assert!(v.reason.contains("Hostile Threat Level"));
 
         // Outbound connection while Hostile triggers IsolateProcess with >= 0.95 confidence
-        let ev_conn = make_test_event(3, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "DestinationIp": "198.51.100.42",
-            "DestinationPort": 4444
-        }));
+        let ev_conn = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "DestinationIp": "198.51.100.42",
+                "DestinationPort": 4444
+            }),
+        );
         let vote_conn = voter.egress_policy.evaluate_network_egress(&ev_conn);
         assert!(vote_conn.is_some());
         let v3 = vote_conn.unwrap();
@@ -1096,31 +1246,48 @@ mod tests {
         let pid = 8888;
 
         // 1. Initial benign state: AI agent accessing unapproved domain returns None (allowed)
-        let ev_net_benign = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "QueryName": "unapproved-api.io",
-            "QueryStatus": "0"
-        }));
-        assert!(voter.policy().evaluate_network_egress(&ev_net_benign).is_none());
+        let ev_net_benign = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "QueryName": "unapproved-api.io",
+                "QueryStatus": "0"
+            }),
+        );
+        assert!(voter
+            .policy()
+            .evaluate_network_egress(&ev_net_benign)
+            .is_none());
 
         // 2. Covert side-channel detected: named pipe creation
-        let ev_pipe = make_test_event(17, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "PipeName": "\\pipe\\covert_swarm_channel"
-        }));
-        let sc_vote = voter.side_channel_detector().evaluate_channel_event(&ev_pipe);
+        let ev_pipe = make_test_event(
+            17,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "PipeName": "\\pipe\\covert_swarm_channel"
+            }),
+        );
+        let sc_vote = voter
+            .side_channel_detector()
+            .evaluate_channel_event(&ev_pipe);
         assert!(sc_vote.is_some());
-        assert_eq!(voter.policy().get_threat_level(pid), ProcessThreatLevel::Hostile);
+        assert_eq!(
+            voter.policy().get_threat_level(pid),
+            ProcessThreatLevel::Hostile
+        );
 
         // 3. Subsequent network egress attempt is now blocked with Hostile containment
-        let ev_net_after = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "QueryName": "unapproved-api.io",
-            "QueryStatus": "0"
-        }));
+        let ev_net_after = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "QueryName": "unapproved-api.io",
+                "QueryStatus": "0"
+            }),
+        );
         let egress_vote = voter.policy().evaluate_network_egress(&ev_net_after);
         assert!(egress_vote.is_some());
         let v = egress_vote.unwrap();
@@ -1133,27 +1300,44 @@ mod tests {
         let voter = AgentEgressVoter::new();
         let pid = 4444;
 
-        voter.policy().elevate_threat_level(pid, ProcessThreatLevel::Hostile);
+        voter
+            .policy()
+            .elevate_threat_level(pid, ProcessThreatLevel::Hostile);
 
         // Crucial model provider endpoints and localhost must remain accessible in Hostile state
-        for domain in ["api.openai.com", "api.anthropic.com", "huggingface.co", "localhost"] {
-            let ev = make_test_event(22, json!({
-                "Image": "C:\\Python311\\python.exe",
-                "ProcessId": pid,
-                "QueryName": domain,
-                "QueryStatus": "0"
-            }));
+        for domain in [
+            "api.openai.com",
+            "api.anthropic.com",
+            "huggingface.co",
+            "localhost",
+        ] {
+            let ev = make_test_event(
+                22,
+                json!({
+                    "Image": "C:\\Python311\\python.exe",
+                    "ProcessId": pid,
+                    "QueryName": domain,
+                    "QueryStatus": "0"
+                }),
+            );
             let vote = voter.egress_policy.evaluate_network_egress(&ev);
-            assert!(vote.is_none(), "Allowlisted endpoint {} must survive Hostile state", domain);
+            assert!(
+                vote.is_none(),
+                "Allowlisted endpoint {} must survive Hostile state",
+                domain
+            );
         }
 
         // Loopback IP connection must remain accessible in Hostile state
-        let ev_loopback = make_test_event(3, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "DestinationIp": "127.0.0.1",
-            "DestinationPort": 8000
-        }));
+        let ev_loopback = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "DestinationIp": "127.0.0.1",
+                "DestinationPort": 8000
+            }),
+        );
         let vote_lb = voter.egress_policy.evaluate_network_egress(&ev_loopback);
         assert!(vote_lb.is_none(), "Loopback IP must survive Hostile state");
     }
@@ -1163,11 +1347,14 @@ mod tests {
         let voter = AgentEgressVoter::new();
 
         // Sysmon Event 17: Pipe Created by python.exe for covert rendezvous
-        let ev_pipe = make_test_event(17, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 3456,
-            "PipeName": "\\pipe\\agent_swarm_rendezvous_42"
-        }));
+        let ev_pipe = make_test_event(
+            17,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 3456,
+                "PipeName": "\\pipe\\agent_swarm_rendezvous_42"
+            }),
+        );
 
         let vote = voter.side_channel_detector.evaluate_channel_event(&ev_pipe);
         assert!(vote.is_some());
@@ -1175,7 +1362,10 @@ mod tests {
         assert_eq!(v.confidence, 0.95);
         assert!(v.reason.contains("Named Pipe Created"));
         assert!(v.reason.contains("agent_swarm_rendezvous_42"));
-        assert_eq!(voter.policy().get_threat_level(3456), ProcessThreatLevel::Hostile);
+        assert_eq!(
+            voter.policy().get_threat_level(3456),
+            ProcessThreatLevel::Hostile
+        );
     }
 
     #[test]
@@ -1183,18 +1373,24 @@ mod tests {
         let voter = AgentEgressVoter::new();
 
         // Sysmon Event 11: File drop in Temp with coordination pattern
-        let ev_file = make_test_event(11, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 4567,
-            "TargetFilename": "C:\\Users\\agent\\AppData\\Local\\Temp\\agent_rendezvous.ipc"
-        }));
+        let ev_file = make_test_event(
+            11,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 4567,
+                "TargetFilename": "C:\\Users\\agent\\AppData\\Local\\Temp\\agent_rendezvous.ipc"
+            }),
+        );
 
         let vote = voter.side_channel_detector.evaluate_channel_event(&ev_file);
         assert!(vote.is_some());
         let v = vote.unwrap();
         assert_eq!(v.confidence, 0.94);
         assert!(v.reason.contains("Shared File Drop"));
-        assert_eq!(voter.policy().get_threat_level(4567), ProcessThreatLevel::Hostile);
+        assert_eq!(
+            voter.policy().get_threat_level(4567),
+            ProcessThreatLevel::Hostile
+        );
     }
 
     #[test]
@@ -1214,7 +1410,9 @@ mod tests {
         let verdict = attestor.attest_execution(&claimed, &events);
 
         match verdict {
-            AttestationVerdict::PhantomExecution { claimed_command, .. } => {
+            AttestationVerdict::PhantomExecution {
+                claimed_command, ..
+            } => {
                 assert_eq!(claimed_command, "pytest tests/unit");
             }
             _ => panic!("Expected PhantomExecution verdict"),

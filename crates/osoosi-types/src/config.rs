@@ -51,8 +51,8 @@ fn default_watch_paths() -> Vec<String> {
 pub fn all_physical_drive_paths() -> Vec<String> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
         use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
 
         let mut drives = Vec::new();
         for letter in b'A'..=b'Z' {
@@ -61,10 +61,11 @@ pub fn all_physical_drive_paths() -> Vec<String> {
             let root_pcwstr = PCWSTR(root_wide.as_ptr());
 
             unsafe {
-                if GetDriveTypeW(root_pcwstr) == 3 { // 3 = DRIVE_FIXED
+                if GetDriveTypeW(root_pcwstr) == 3 {
+                    // 3 = DRIVE_FIXED
                     let mut volume_name = [0u16; 256];
                     let mut filesystem_name = [0u16; 256];
-                    
+
                     let res = GetVolumeInformationW(
                         root_pcwstr,
                         Some(&mut volume_name),
@@ -75,18 +76,27 @@ pub fn all_physical_drive_paths() -> Vec<String> {
                     );
 
                     if res.is_ok() {
-                        let vol_str = String::from_utf16_lossy(&volume_name).trim_matches('\0').to_lowercase();
-                        let fs_str = String::from_utf16_lossy(&filesystem_name).trim_matches('\0').to_lowercase();
+                        let vol_str = String::from_utf16_lossy(&volume_name)
+                            .trim_matches('\0')
+                            .to_lowercase();
+                        let fs_str = String::from_utf16_lossy(&filesystem_name)
+                            .trim_matches('\0')
+                            .to_lowercase();
 
                         // Exclude Google Drive and other known virtual/cloud mappings
-                        if vol_str.contains("google drive") || fs_str.contains("googledrive") 
-                           || vol_str.contains("onedrive") || vol_str.contains("dropbox")
+                        if vol_str.contains("google drive")
+                            || fs_str.contains("googledrive")
+                            || vol_str.contains("onedrive")
+                            || vol_str.contains("dropbox")
                         {
-                            debug!("Excluding cloud/virtual mapping: {} (Volume: {}, FS: {})", root, vol_str, fs_str);
+                            debug!(
+                                "Excluding cloud/virtual mapping: {} (Volume: {}, FS: {})",
+                                root, vol_str, fs_str
+                            );
                             continue;
                         }
                     }
-                    
+
                     drives.push(root);
                 }
             }
@@ -136,8 +146,11 @@ pub fn is_system_path(path: &str) -> bool {
             return true;
         }
         // Direct checks for common roots if env vars missing
-        if p.starts_with("c:\\windows") || p.contains("\\system32\\") || p.contains("\\syswow64\\")
-            || p.contains("\\servicing\\") || p.contains("\\winsxs\\")
+        if p.starts_with("c:\\windows")
+            || p.contains("\\system32\\")
+            || p.contains("\\syswow64\\")
+            || p.contains("\\servicing\\")
+            || p.contains("\\winsxs\\")
         {
             return true;
         }
@@ -347,9 +360,13 @@ impl AutonomyConfig {
     pub fn current_mode(&self) -> AutonomyMode {
         if !self.auto_quarantine_malware && self.action_confidence_threshold >= 0.75 {
             AutonomyMode::Audit
-        } else if self.auto_quarantine_malware && (self.action_confidence_threshold - 0.50).abs() < 0.05 {
+        } else if self.auto_quarantine_malware
+            && (self.action_confidence_threshold - 0.50).abs() < 0.05
+        {
             AutonomyMode::Active
-        } else if self.auto_quarantine_malware && (self.action_confidence_threshold - 0.35).abs() < 0.05 {
+        } else if self.auto_quarantine_malware
+            && (self.action_confidence_threshold - 0.35).abs() < 0.05
+        {
             AutonomyMode::Lockdown
         } else {
             AutonomyMode::Custom
@@ -397,23 +414,38 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
                           set_action_conf: &mut bool,
                           set_auto_replace: &mut bool| {
         if !*set_auto_approve {
-            target_lines.push(format!("auto_approve_reputation_threshold = {:.2}", cfg.auto_approve_reputation_threshold));
+            target_lines.push(format!(
+                "auto_approve_reputation_threshold = {:.2}",
+                cfg.auto_approve_reputation_threshold
+            ));
             *set_auto_approve = true;
         }
         if !*set_auto_quarantine {
-            target_lines.push(format!("auto_quarantine_malware = {}", cfg.auto_quarantine_malware));
+            target_lines.push(format!(
+                "auto_quarantine_malware = {}",
+                cfg.auto_quarantine_malware
+            ));
             *set_auto_quarantine = true;
         }
         if !*set_quarantine_conf {
-            target_lines.push(format!("quarantine_confidence_threshold = {:.2}", cfg.quarantine_confidence_threshold));
+            target_lines.push(format!(
+                "quarantine_confidence_threshold = {:.2}",
+                cfg.quarantine_confidence_threshold
+            ));
             *set_quarantine_conf = true;
         }
         if !*set_action_conf {
-            target_lines.push(format!("action_confidence_threshold = {:.2}", cfg.action_confidence_threshold));
+            target_lines.push(format!(
+                "action_confidence_threshold = {:.2}",
+                cfg.action_confidence_threshold
+            ));
             *set_action_conf = true;
         }
         if !*set_auto_replace {
-            target_lines.push(format!("auto_replace_malware_binaries = {}", cfg.auto_replace_malware_binaries));
+            target_lines.push(format!(
+                "auto_replace_malware_binaries = {}",
+                cfg.auto_replace_malware_binaries
+            ));
             *set_auto_replace = true;
         }
     };
@@ -464,7 +496,10 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
             if !trimmed.starts_with('#') {
                 if let Some((key, val_part)) = trimmed.split_once('=') {
                     let key = key.trim();
-                    let indent = line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
+                    let indent = line
+                        .chars()
+                        .take_while(|c| c.is_whitespace())
+                        .collect::<String>();
                     let inline_comment = if let Some(c_idx) = val_part.find('#') {
                         format!(" {}", val_part[c_idx..].trim_end())
                     } else {
@@ -473,27 +508,42 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
 
                     match key {
                         "auto_quarantine_malware" => {
-                            lines.push(format!("{}auto_quarantine_malware = {}{}", indent, cfg.auto_quarantine_malware, inline_comment));
+                            lines.push(format!(
+                                "{}auto_quarantine_malware = {}{}",
+                                indent, cfg.auto_quarantine_malware, inline_comment
+                            ));
                             set_auto_quarantine = true;
                             continue;
                         }
                         "quarantine_confidence_threshold" => {
-                            lines.push(format!("{}quarantine_confidence_threshold = {:.2}{}", indent, cfg.quarantine_confidence_threshold, inline_comment));
+                            lines.push(format!(
+                                "{}quarantine_confidence_threshold = {:.2}{}",
+                                indent, cfg.quarantine_confidence_threshold, inline_comment
+                            ));
                             set_quarantine_conf = true;
                             continue;
                         }
                         "action_confidence_threshold" => {
-                            lines.push(format!("{}action_confidence_threshold = {:.2}{}", indent, cfg.action_confidence_threshold, inline_comment));
+                            lines.push(format!(
+                                "{}action_confidence_threshold = {:.2}{}",
+                                indent, cfg.action_confidence_threshold, inline_comment
+                            ));
                             set_action_conf = true;
                             continue;
                         }
                         "auto_approve_reputation_threshold" => {
-                            lines.push(format!("{}auto_approve_reputation_threshold = {:.2}{}", indent, cfg.auto_approve_reputation_threshold, inline_comment));
+                            lines.push(format!(
+                                "{}auto_approve_reputation_threshold = {:.2}{}",
+                                indent, cfg.auto_approve_reputation_threshold, inline_comment
+                            ));
                             set_auto_approve = true;
                             continue;
                         }
                         "auto_replace_malware_binaries" => {
-                            lines.push(format!("{}auto_replace_malware_binaries = {}{}", indent, cfg.auto_replace_malware_binaries, inline_comment));
+                            lines.push(format!(
+                                "{}auto_replace_malware_binaries = {}{}",
+                                indent, cfg.auto_replace_malware_binaries, inline_comment
+                            ));
                             set_auto_replace = true;
                             continue;
                         }
@@ -541,7 +591,10 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
 }
 
 /// Save autonomy config to a specific path (modifying in-place or creating).
-pub fn save_autonomy_config_to_path(cfg: &AutonomyConfig, path: &std::path::Path) -> anyhow::Result<()> {
+pub fn save_autonomy_config_to_path(
+    cfg: &AutonomyConfig,
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
     let content = if path.exists() {
         std::fs::read_to_string(path)?
     } else {
@@ -572,7 +625,6 @@ pub fn save_autonomy_config(cfg: &AutonomyConfig) -> anyhow::Result<()> {
     };
     save_autonomy_config_to_path(cfg, &path)
 }
-
 
 /// Partial wire config for loading from file (peer rules only; listen_addr etc. from env/args).
 #[derive(Debug, Deserialize, Default)]
@@ -1041,7 +1093,9 @@ pub fn resolve_stix_bundle_path() -> PathBuf {
     }
 
     if let Some(root) = resolve_project_root() {
-        let candidate = root.join("config").join("stix-atlas-attack-enterprise.json");
+        let candidate = root
+            .join("config")
+            .join("stix-atlas-attack-enterprise.json");
         if candidate.is_file() {
             return candidate;
         }
@@ -1096,7 +1150,10 @@ pub fn persist_environment_paths() {
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
-                let p_str = parent.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+                let p_str = parent
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\")
+                    .to_string();
                 if !p_str.is_empty() && !path_lower.contains(&p_str.to_ascii_lowercase()) {
                     additions.push(p_str);
                 }
@@ -1106,7 +1163,11 @@ pub fn persist_environment_paths() {
             let new_path = if current_path.trim().is_empty() {
                 additions.join(";")
             } else {
-                format!("{};{}", current_path.trim_end_matches(';'), additions.join(";"))
+                format!(
+                    "{};{}",
+                    current_path.trim_end_matches(';'),
+                    additions.join(";")
+                )
             };
             std::env::set_var("PATH", new_path);
         }
@@ -1114,7 +1175,10 @@ pub fn persist_environment_paths() {
 
     let models_dir = resolve_models_dir();
     if std::env::var("OSOOSI_MODELS_DIR").is_err() {
-        std::env::set_var("OSOOSI_MODELS_DIR", models_dir.to_string_lossy().to_string());
+        std::env::set_var(
+            "OSOOSI_MODELS_DIR",
+            models_dir.to_string_lossy().to_string(),
+        );
     }
 
     let bin_dir = resolve_bin_dir();
@@ -1149,7 +1213,10 @@ pub fn persist_environment_paths() {
 
     let catalog_path = resolve_mitre_catalog_path();
     if std::env::var("OSOOSI_MITRE_CATALOG").is_err() {
-        std::env::set_var("OSOOSI_MITRE_CATALOG", catalog_path.to_string_lossy().to_string());
+        std::env::set_var(
+            "OSOOSI_MITRE_CATALOG",
+            catalog_path.to_string_lossy().to_string(),
+        );
     }
 }
 
@@ -1165,7 +1232,8 @@ pub fn resolve_system_binary(prog: &str) -> PathBuf {
         return p.to_path_buf();
     }
 
-    let stem = prog.strip_suffix(".exe")
+    let stem = prog
+        .strip_suffix(".exe")
         .or_else(|| prog.strip_suffix(".EXE"))
         .unwrap_or(prog);
 
@@ -1199,13 +1267,23 @@ pub fn resolve_system_binary(prog: &str) -> PathBuf {
             PathBuf::from(r"C:\Windows\System32").join(&exe_name),
             PathBuf::from(&sys_root).join(&exe_name),
             PathBuf::from(r"C:\Windows").join(&exe_name),
-            PathBuf::from(&sys_root).join("System32").join("Wbem").join(&exe_name),
+            PathBuf::from(&sys_root)
+                .join("System32")
+                .join("Wbem")
+                .join(&exe_name),
             PathBuf::from(r"C:\Windows\System32\Wbem").join(&exe_name),
-            PathBuf::from(&sys_root).join("System32").join("WindowsPowerShell").join("v1.0").join(&exe_name),
+            PathBuf::from(&sys_root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join(&exe_name),
             PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0").join(&exe_name),
             PathBuf::from(&sys_root).join("Sysnative").join(&exe_name),
             PathBuf::from(r"C:\Windows\Sysnative").join(&exe_name),
-            PathBuf::from(&local_app_data).join("Microsoft").join("WindowsApps").join(&exe_name),
+            PathBuf::from(&local_app_data)
+                .join("Microsoft")
+                .join("WindowsApps")
+                .join(&exe_name),
         ];
 
         for candidate in &candidates {
@@ -1253,7 +1331,10 @@ pub fn is_model_provisioning() -> bool {
     if MODEL_PROVISIONING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
         return true;
     }
-    if std::env::var("OSOOSI_MODELS_PROVISIONING").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("OSOOSI_MODELS_PROVISIONING")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         return true;
     }
     let marker = resolve_models_dir().join(".provisioning");
@@ -1286,7 +1367,7 @@ pub fn set_model_provisioning(provisioning: bool) {
 
 /// Verify the integrity of a configuration file against a .lock signature.
 pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     use std::io::Read;
 
     let mut file = std::fs::File::open(path)?;
@@ -1294,14 +1375,18 @@ pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
     let mut buffer = [0; 1024];
     loop {
         let n = file.read(&mut buffer)?;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
         hasher.update(&buffer[..n]);
     }
     let current_hash = format!("{:x}", hasher.finalize());
 
     let sign_path = path.with_extension(format!(
         "{}.sign",
-        path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
+        path.extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default()
     ));
     let xml_lock_path = path.with_extension("xml.lock");
 
@@ -1311,18 +1396,29 @@ pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
         xml_lock_path.clone()
     } else {
         std::fs::write(&xml_lock_path, &current_hash)?;
-        info!("Created cryptographic lock for config at {:?}", xml_lock_path);
+        info!(
+            "Created cryptographic lock for config at {:?}",
+            xml_lock_path
+        );
         return Ok(());
     };
 
     let locked_hash = std::fs::read_to_string(&lock_path)?;
     if current_hash.trim() != locked_hash.trim() {
         // If .sign matches current content, heal outdated xml.lock
-        if sign_path.exists() && std::fs::read_to_string(&sign_path).map(|h| h.trim() == current_hash.trim()).unwrap_or(false) {
+        if sign_path.exists()
+            && std::fs::read_to_string(&sign_path)
+                .map(|h| h.trim() == current_hash.trim())
+                .unwrap_or(false)
+        {
             let _ = std::fs::write(&xml_lock_path, &current_hash);
             return Ok(());
         }
-        return Err(anyhow::anyhow!("Configuration hash mismatch! Expected {}, got {}. Possible tampering detected.", locked_hash, current_hash));
+        return Err(anyhow::anyhow!(
+            "Configuration hash mismatch! Expected {}, got {}. Possible tampering detected.",
+            locked_hash,
+            current_hash
+        ));
     }
 
     Ok(())
@@ -1331,24 +1427,31 @@ pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
 /// Re-sign all configuration locks (xml.lock and .sign sidecars) to match current file contents.
 pub fn sign_all_configs() {
     if let Some(path) = resolve_config_path() {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         use std::io::Read;
 
         if let Ok(mut file) = std::fs::File::open(&path) {
             let mut hasher = Sha256::new();
             let mut buffer = [0; 1024];
             while let Ok(n) = file.read(&mut buffer) {
-                if n == 0 { break; }
+                if n == 0 {
+                    break;
+                }
                 hasher.update(&buffer[..n]);
             }
             let current_hash = format!("{:x}", hasher.finalize());
             let _ = std::fs::write(path.with_extension("xml.lock"), &current_hash);
             let sig_ext = format!(
                 "{}.sign",
-                path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
+                path.extension()
+                    .map(|e| e.to_string_lossy().to_string())
+                    .unwrap_or_default()
             );
             let _ = std::fs::write(path.with_extension(sig_ext), &current_hash);
-            info!("Updated cryptographic locks and signatures for config at {:?}", path);
+            info!(
+                "Updated cryptographic locks and signatures for config at {:?}",
+                path
+            );
         }
     }
 }
@@ -1413,7 +1516,7 @@ pub fn resolve_config_path() -> Option<PathBuf> {
         }
     }
     let cwd = std::env::current_dir().ok()?;
-    
+
     // 1. Try project root discovery (walks up to find osoosi.toml)
     if let Some(root) = resolve_project_root() {
         let path = root.join("osoosi.toml");
@@ -1461,7 +1564,7 @@ pub fn load_watch_paths_from_config() -> Option<Vec<String>> {
     let path = resolve_config_path()?;
     let content = std::fs::read_to_string(&path).ok()?;
     let cfg: FileConfig = toml::from_str(&content).ok()?;
-    
+
     // PRODUCTION READINESS: Verify config integrity
     if let Err(e) = verify_config_integrity(&path) {
         warn!("⚠️ [PRODUCTION-SECURITY] Config integrity check failed: {}. Continuing in untrusted mode.", e);
@@ -1884,7 +1987,11 @@ pub fn load_wire_duckdns_config() -> (Option<String>, bool, u16) {
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
-                return (fc.wire.duckdns_domain, fc.wire.auto_bootstrap_duckdns, fc.wire.duckdns_port);
+                return (
+                    fc.wire.duckdns_domain,
+                    fc.wire.auto_bootstrap_duckdns,
+                    fc.wire.duckdns_port,
+                );
             }
         }
     }
@@ -1959,7 +2066,6 @@ fn default_trusted_stems() -> Vec<String> {
         "googleupdater.exe".to_string(),
     ]
 }
-
 
 fn default_suppression_secs() -> u64 {
     600
@@ -2234,7 +2340,12 @@ fn default_reasoning_url() -> String {
     "http://127.0.0.1:11434/v1/chat/completions".to_string()
 }
 fn default_fallback_models() -> Vec<String> {
-    vec!["gemma3:1b".into(), "gemma3:4b".into(), "qwen2.5:1.5b".into(), "phi3:mini".into()]
+    vec![
+        "gemma3:1b".into(),
+        "gemma3:4b".into(),
+        "qwen2.5:1.5b".into(),
+        "phi3:mini".into(),
+    ]
 }
 fn default_colog_threshold() -> f64 {
     0.85
@@ -2411,13 +2522,25 @@ pub fn load_policy_config() -> PolicyConfig {
         PolicyConfig::default()
     };
     if let Ok(v) = std::env::var("OSOOSI_POLICY_EXCLUDE_PATHS") {
-        cfg.consensus_exclude_paths.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+        cfg.consensus_exclude_paths.extend(
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
     }
     if let Ok(v) = std::env::var("OSOOSI_POLICY_TRUSTED_PATHS") {
-        cfg.consensus_trusted_paths.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+        cfg.consensus_trusted_paths.extend(
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
     }
     if let Ok(v) = std::env::var("OSOOSI_POLICY_NOISY_STEMS") {
-        cfg.consensus_noisy_stems.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+        cfg.consensus_noisy_stems.extend(
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+        );
     }
     cfg
 }
@@ -2488,12 +2611,24 @@ pub struct SkillsConfig {
     pub poll_interval_secs: u64,
 }
 
-fn default_skills_enabled() -> bool { true }
-fn default_skills_auto_evolve() -> bool { true }
-fn default_skills_workspace() -> String { "runs/edr-evolution".to_string() }
-fn default_skills_tasks_file() -> String { "examples/edr-skill-evolution/tasks.json".to_string() }
-fn default_skills_scorer() -> String { "examples/edr-skill-evolution/scorer.py".to_string() }
-fn default_skills_poll_interval() -> u64 { 300 }
+fn default_skills_enabled() -> bool {
+    true
+}
+fn default_skills_auto_evolve() -> bool {
+    true
+}
+fn default_skills_workspace() -> String {
+    "runs/edr-evolution".to_string()
+}
+fn default_skills_tasks_file() -> String {
+    "examples/edr-skill-evolution/tasks.json".to_string()
+}
+fn default_skills_scorer() -> String {
+    "examples/edr-skill-evolution/scorer.py".to_string()
+}
+fn default_skills_poll_interval() -> u64 {
+    300
+}
 
 impl Default for SkillsConfig {
     fn default() -> Self {
@@ -2883,9 +3018,9 @@ pub fn load_swarm_config() -> SwarmConfig {
 /// Hardware performance tiers dynamically resolved from available system resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum HardwareTier {
-    UltraLite,  // < 4 GB total RAM or < 1.5 GB free: Magika, EMBER, Local Brier only; no browser
-    Lite,       // 4-8 GB total RAM or 1.5-4 GB free: SOREL, SecureBERT, Clef Flash; no browser unless forced
-    Standard,   // 8-16 GB total RAM: Strands Decider 2B, LangGraph swarm, browser allowed
+    UltraLite, // < 4 GB total RAM or < 1.5 GB free: Magika, EMBER, Local Brier only; no browser
+    Lite, // 4-8 GB total RAM or 1.5-4 GB free: SOREL, SecureBERT, Clef Flash; no browser unless forced
+    Standard, // 8-16 GB total RAM: Strands Decider 2B, LangGraph swarm, browser allowed
     Enterprise, // > 16 GB total RAM: Full models including FoundationSec-8B and full NSRL
 }
 
@@ -3069,8 +3204,16 @@ pub fn sanitize_untrusted_log_field(input: &str, max_len: usize) -> (String, boo
                 injection_detected = true;
                 let char_idx = lower[..byte_idx].chars().count();
                 let char_len = pat.chars().count();
-                let r_start = current.char_indices().nth(char_idx).map(|(i, _)| i).unwrap_or(current.len());
-                let r_end = current[r_start..].char_indices().nth(char_len).map(|(i, _)| r_start + i).unwrap_or(current.len());
+                let r_start = current
+                    .char_indices()
+                    .nth(char_idx)
+                    .map(|(i, _)| i)
+                    .unwrap_or(current.len());
+                let r_end = current[r_start..]
+                    .char_indices()
+                    .nth(char_len)
+                    .map(|(i, _)| r_start + i)
+                    .unwrap_or(current.len());
 
                 let mut next = String::with_capacity(current.len() + 32);
                 next.push_str(&current[..r_start]);
@@ -3211,7 +3354,9 @@ db_path = "./db.sqlite"
         // Ensure no duplicate [autonomy] was added
         assert_eq!(updated.matches("autonomy").count(), 1);
         // Ensure inline comments on key lines are preserved
-        assert!(updated.contains("auto_quarantine_malware = true # Disable by default for non-intrusive mode"));
+        assert!(updated.contains(
+            "auto_quarantine_malware = true # Disable by default for non-intrusive mode"
+        ));
         assert!(updated.contains("action_confidence_threshold = 0.50 # Action threshold"));
         // Ensure subsequent section is preserved intact
         assert!(updated.contains("[ runtime ] # Secondary section"));
@@ -3239,7 +3384,10 @@ db_path = "./db.sqlite"
         assert!(default_cfg.enabled);
         assert!(default_cfg.auto_evolve_on_start);
         assert_eq!(default_cfg.workspace, "runs/edr-evolution");
-        assert_eq!(default_cfg.tasks_file, "examples/edr-skill-evolution/tasks.json");
+        assert_eq!(
+            default_cfg.tasks_file,
+            "examples/edr-skill-evolution/tasks.json"
+        );
         assert_eq!(default_cfg.scorer, "examples/edr-skill-evolution/scorer.py");
         assert_eq!(default_cfg.poll_interval_secs, 300);
 
@@ -3252,7 +3400,8 @@ tasks_file = "custom/tasks.json"
 scorer = "custom/scorer.py"
 poll_interval_secs = 60
 "#;
-        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [skills]");
+        let fc: FileConfig =
+            toml::from_str(custom_toml).expect("Must parse FileConfig with [skills]");
         assert!(!fc.skills.enabled);
         assert!(!fc.skills.auto_evolve_on_start);
         assert_eq!(fc.skills.workspace, "custom/workspace");
@@ -3265,14 +3414,19 @@ poll_interval_secs = 60
     fn test_forensics_config_defaults_and_parsing() {
         let default_cfg = ForensicsConfig::default();
         assert!(default_cfg.enabled);
-        assert_eq!(default_cfg.binary_path, "tools/velociraptor/velociraptor.exe");
+        assert_eq!(
+            default_cfg.binary_path,
+            "tools/velociraptor/velociraptor.exe"
+        );
         assert_eq!(default_cfg.execution_timeout_secs, 30);
         assert_eq!(default_cfg.max_memory_mb, 512);
         assert_eq!(default_cfg.max_output_lines, 10000);
         assert_eq!(default_cfg.staging_dir, "runs/forensics");
         assert!(default_cfg.auto_investigate);
         assert!((default_cfg.min_trigger_confidence - 0.80).abs() < 1e-4);
-        assert!(default_cfg.trigger_techniques.contains(&"T1055".to_string()));
+        assert!(default_cfg
+            .trigger_techniques
+            .contains(&"T1055".to_string()));
 
         let custom_toml = r#"
 [forensics]
@@ -3286,7 +3440,8 @@ auto_investigate = false
 min_trigger_confidence = 0.95
 trigger_techniques = ["T1055", "T1003"]
 "#;
-        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [forensics]");
+        let fc: FileConfig =
+            toml::from_str(custom_toml).expect("Must parse FileConfig with [forensics]");
         assert!(!fc.forensics.enabled);
         assert_eq!(fc.forensics.binary_path, "C:/tools/velociraptor.exe");
         assert_eq!(fc.forensics.execution_timeout_secs, 60);
@@ -3310,8 +3465,14 @@ trigger_techniques = ["T1055", "T1003"]
         assert!(default_cfg.auto_escalate_to_cortex);
         assert_eq!(default_cfg.model_dir, "models/clef");
         assert_eq!(default_cfg.hybrid_strategy, "cascade");
-        assert_eq!(default_cfg.strands_endpoint.as_deref(), Some("http://127.0.0.1:4003"));
-        assert_eq!(default_cfg.strands_model, "StrandsAgents/strands-decider-2B-hobson-v19");
+        assert_eq!(
+            default_cfg.strands_endpoint.as_deref(),
+            Some("http://127.0.0.1:4003")
+        );
+        assert_eq!(
+            default_cfg.strands_model,
+            "StrandsAgents/strands-decider-2B-hobson-v19"
+        );
         assert_eq!(default_cfg.strands_timeout_ms, 800);
 
         let custom_toml = r#"
@@ -3331,19 +3492,29 @@ strands_endpoint = "http://10.0.0.42:4003"
 strands_model = "custom/strands-slm"
 strands_timeout_ms = 1200
 "#;
-        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [decision_model]");
+        let fc: FileConfig =
+            toml::from_str(custom_toml).expect("Must parse FileConfig with [decision_model]");
         assert!(!fc.decision_model.enabled);
         assert_eq!(fc.decision_model.provider, "hybrid");
         assert_eq!(fc.decision_model.hybrid_strategy, "consensus");
         assert_eq!(fc.decision_model.model, "@cf/cloudflare/clef");
-        assert_eq!(fc.decision_model.cloudflare_account_id.as_deref(), Some("test-account-id"));
-        assert_eq!(fc.decision_model.cloudflare_api_token.as_deref(), Some("test-token"));
+        assert_eq!(
+            fc.decision_model.cloudflare_account_id.as_deref(),
+            Some("test-account-id")
+        );
+        assert_eq!(
+            fc.decision_model.cloudflare_api_token.as_deref(),
+            Some("test-token")
+        );
         assert_eq!(fc.decision_model.timeout_ms, 750);
         assert!(!fc.decision_model.fallback_to_local);
         assert!((fc.decision_model.min_action_confidence - 0.92).abs() < 1e-4);
         assert!(!fc.decision_model.auto_escalate_to_cortex);
         assert_eq!(fc.decision_model.model_dir, "custom/models/clef");
-        assert_eq!(fc.decision_model.strands_endpoint.as_deref(), Some("http://10.0.0.42:4003"));
+        assert_eq!(
+            fc.decision_model.strands_endpoint.as_deref(),
+            Some("http://10.0.0.42:4003")
+        );
         assert_eq!(fc.decision_model.strands_model, "custom/strands-slm");
         assert_eq!(fc.decision_model.strands_timeout_ms, 1200);
     }
@@ -3378,7 +3549,8 @@ duckdns_port = 5001
 cellular_quota_bytes_per_hour = 102400
 is_cellular_hotspot = true
 "#;
-        let wc_custom: WireConfig = toml::from_str(custom_toml).expect("Must parse custom WireConfig");
+        let wc_custom: WireConfig =
+            toml::from_str(custom_toml).expect("Must parse custom WireConfig");
         assert_eq!(wc_custom.duckdns_domain, Some("custom-node".to_string()));
         assert!(!wc_custom.auto_bootstrap_duckdns);
         assert_eq!(wc_custom.duckdns_port, 5001);
@@ -3427,7 +3599,8 @@ auto_trigger_on_threat = false
 min_trigger_confidence = 0.90
 timeout_secs = 60
 "#;
-        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [swarm]");
+        let fc: FileConfig =
+            toml::from_str(custom_toml).expect("Must parse FileConfig with [swarm]");
         assert!(!fc.swarm.enabled);
         assert_eq!(fc.swarm.service_url, "http://10.0.0.50:8000");
         assert!(!fc.swarm.auto_trigger_on_threat);
@@ -3462,7 +3635,8 @@ auto_suppress_browser_on_low_ram = false
 auto_throttle_ai_on_low_ram = false
 nsrl_cache_limit = 50000
 "#;
-        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [resources]");
+        let fc: FileConfig =
+            toml::from_str(custom_toml).expect("Must parse FileConfig with [resources]");
         assert_eq!(fc.resources.profile, "lite");
         assert_eq!(fc.resources.min_free_ram_mb_for_browser, 3000);
         assert_eq!(fc.resources.min_free_ram_mb_for_foundation_sec, 10000);
@@ -3480,22 +3654,51 @@ nsrl_cache_limit = 50000
         #[cfg(target_os = "windows")]
         {
             let cmd_bin = resolve_system_binary("cmd");
-            assert!(cmd_bin.is_file(), "cmd should resolve to an existing file: {:?}", cmd_bin);
-            assert!(cmd_bin.to_string_lossy().to_ascii_lowercase().ends_with("cmd.exe"));
+            assert!(
+                cmd_bin.is_file(),
+                "cmd should resolve to an existing file: {:?}",
+                cmd_bin
+            );
+            assert!(cmd_bin
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with("cmd.exe"));
 
             let sc_bin = resolve_system_binary("sc.exe");
-            assert!(sc_bin.is_file(), "sc.exe should resolve to an existing file: {:?}", sc_bin);
-            assert!(sc_bin.to_string_lossy().to_ascii_lowercase().ends_with("sc.exe"));
+            assert!(
+                sc_bin.is_file(),
+                "sc.exe should resolve to an existing file: {:?}",
+                sc_bin
+            );
+            assert!(sc_bin
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with("sc.exe"));
 
             let ps_bin = resolve_system_binary("powershell.exe");
-            assert!(ps_bin.is_file(), "powershell.exe should resolve to an existing file: {:?}", ps_bin);
-            assert!(ps_bin.to_string_lossy().to_ascii_lowercase().ends_with("powershell.exe"));
+            assert!(
+                ps_bin.is_file(),
+                "powershell.exe should resolve to an existing file: {:?}",
+                ps_bin
+            );
+            assert!(ps_bin
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .ends_with("powershell.exe"));
 
             let netsh_bin = resolve_system_binary("netsh");
-            assert!(netsh_bin.is_file(), "netsh should resolve to an existing file: {:?}", netsh_bin);
+            assert!(
+                netsh_bin.is_file(),
+                "netsh should resolve to an existing file: {:?}",
+                netsh_bin
+            );
 
             let whoami_bin = resolve_system_binary("whoami");
-            assert!(whoami_bin.is_file(), "whoami should resolve to an existing file: {:?}", whoami_bin);
+            assert!(
+                whoami_bin.is_file(),
+                "whoami should resolve to an existing file: {:?}",
+                whoami_bin
+            );
         }
     }
 
@@ -3537,5 +3740,3 @@ nsrl_cache_limit = 50000
         assert!(!ghost_inj);
     }
 }
-
-

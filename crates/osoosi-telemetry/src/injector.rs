@@ -44,7 +44,9 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
     };
 
     if !dll_path.exists() {
-        return Err(InjectionError::InvalidDllPath(dll_path.to_string_lossy().to_string()));
+        return Err(InjectionError::InvalidDllPath(
+            dll_path.to_string_lossy().to_string(),
+        ));
     }
 
     let dll_path_wide: Vec<u16> = dll_path
@@ -58,15 +60,20 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
     unsafe {
         let kernel32_handle = GetModuleHandleA(s!("kernel32.dll"))
             .map_err(|_| InjectionError::LoadLibraryNotFound)?;
-            
+
         let load_library_addr = GetProcAddress(kernel32_handle, s!("LoadLibraryW"))
             .ok_or(InjectionError::LoadLibraryNotFound)?;
 
         let process_handle = OpenProcess(
-            PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+            PROCESS_CREATE_THREAD
+                | PROCESS_QUERY_INFORMATION
+                | PROCESS_VM_OPERATION
+                | PROCESS_VM_WRITE
+                | PROCESS_VM_READ,
             false,
             pid,
-        ).map_err(|_| InjectionError::OpenProcessFailed(pid))?;
+        )
+        .map_err(|_| InjectionError::OpenProcessFailed(pid))?;
 
         let remote_mem = VirtualAllocEx(
             process_handle,
@@ -101,11 +108,15 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
             process_handle,
             None,
             0,
-            Some(std::mem::transmute(load_library_addr)),
+            Some(std::mem::transmute::<
+                unsafe extern "system" fn() -> isize,
+                unsafe extern "system" fn(*mut std::ffi::c_void) -> u32,
+            >(load_library_addr)),
             Some(remote_mem),
             0,
             Some(&mut thread_id),
-        ).map_err(|_| {
+        )
+        .map_err(|_| {
             let _ = VirtualFreeEx(process_handle, remote_mem, 0, MEM_RELEASE);
             let _ = CloseHandle(process_handle);
             InjectionError::CreateRemoteThreadFailed
@@ -122,7 +133,9 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
     if !dll_path.exists() {
-        return Err(InjectionError::InvalidDllPath(dll_path.to_string_lossy().to_string()));
+        return Err(InjectionError::InvalidDllPath(
+            dll_path.to_string_lossy().to_string(),
+        ));
     }
 
     // Dynamic injection into a running process on Linux/macOS requires ptrace or mach_ports.

@@ -50,7 +50,8 @@ impl RelativisticGuard {
         }
 
         // Update the cone for this world-line (lock-free insert)
-        self.event_cones.insert(process_id.to_string(), current_hash);
+        self.event_cones
+            .insert(process_id.to_string(), current_hash);
         0.0
     }
 

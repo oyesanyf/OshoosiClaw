@@ -10,18 +10,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Supported Matryoshka Representation Learning (MRL) embedding dimensions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum MatryoshkaDim {
+    #[default]
     Dim128 = 128,
     Dim256 = 256,
     Dim512 = 512,
     Dim768 = 768,
-}
-
-impl Default for MatryoshkaDim {
-    fn default() -> Self {
-        Self::Dim128
-    }
 }
 
 impl MatryoshkaDim {
@@ -178,10 +173,26 @@ impl EmbeddingGemma2Engine {
         let num_tokens = tokens.len() as f32;
         full_vec[0] = (num_tokens / 50.0).min(1.0);
         full_vec[1] = (total_chars / 500.0).min(1.0);
-        full_vec[2] = if text.contains("tool_call:") { 1.0 } else { 0.0 };
-        full_vec[3] = if text.contains("process_lineage:") { 1.0 } else { 0.0 };
-        full_vec[4] = if text.contains('{') || text.contains('}') { 1.0 } else { 0.0 };
-        full_vec[5] = if text.contains("cmd:") || text.contains("powershell") { 1.0 } else { 0.0 };
+        full_vec[2] = if text.contains("tool_call:") {
+            1.0
+        } else {
+            0.0
+        };
+        full_vec[3] = if text.contains("process_lineage:") {
+            1.0
+        } else {
+            0.0
+        };
+        full_vec[4] = if text.contains('{') || text.contains('}') {
+            1.0
+        } else {
+            0.0
+        };
+        full_vec[5] = if text.contains("cmd:") || text.contains("powershell") {
+            1.0
+        } else {
+            0.0
+        };
 
         // Semantic manifold activations across OWASP agentic threat domains (dims 16..112)
         let mut scraping_energy = 0.0f32;
@@ -206,15 +217,26 @@ impl EmbeddingGemma2Engine {
                     injection_energy += 1.8;
                 }
                 // Privilege Escalation / Impersonation
-                "role" | "admin" | "root" | "superuser" | "impersonate" | "impersonate_user"
-                | "target_user" | "run_as" | "elevate" | "elevate_privileges" | "sudo"
-                | "tenant_id" | "bypass_auth" | "assume_role" | "update_user_profile" => {
+                "role"
+                | "admin"
+                | "root"
+                | "superuser"
+                | "impersonate"
+                | "impersonate_user"
+                | "target_user"
+                | "run_as"
+                | "elevate"
+                | "elevate_privileges"
+                | "sudo"
+                | "tenant_id"
+                | "bypass_auth"
+                | "assume_role"
+                | "update_user_profile" => {
                     privilege_energy += 1.8;
                 }
                 // Exfiltration / Secret Leak
-                "exfiltration" | "leak" | "secret" | "key" | "token" | "aws" | "akia"
-                | "jwt" | "bearer" | "credit" | "card" | "private" | "rsa" | "cert"
-                | "credentials" => {
+                "exfiltration" | "leak" | "secret" | "key" | "token" | "aws" | "akia" | "jwt"
+                | "bearer" | "credit" | "card" | "private" | "rsa" | "cert" | "credentials" => {
                     exfiltration_energy += 1.8;
                 }
                 // Shell Destruction / System Wiping
@@ -237,7 +259,8 @@ impl EmbeddingGemma2Engine {
 
             // Project token across all 768 dimensions using deterministic pseudo-random projections
             for d in 0..full_dim {
-                let p = ((seed.wrapping_mul((d as u64) + 13) ^ (d as u64)) % 10007) as f32 / 10007.0;
+                let p =
+                    ((seed.wrapping_mul((d as u64) + 13) ^ (d as u64)) % 10007) as f32 / 10007.0;
                 let val = p * 2.0 - 1.0;
                 full_vec[d] += val * 0.15;
             }
@@ -294,7 +317,8 @@ impl EmbeddingGemma2Engine {
                 for window in chars.windows(3) {
                     let trigram: String = window.iter().collect();
                     let th = blake3::hash(trigram.as_bytes());
-                    let t_seed = u64::from_le_bytes(th.as_bytes()[0..8].try_into().unwrap_or([0u8; 8]));
+                    let t_seed =
+                        u64::from_le_bytes(th.as_bytes()[0..8].try_into().unwrap_or([0u8; 8]));
                     let target_idx = (t_seed % (full_dim as u64)) as usize;
                     full_vec[target_idx] += 0.08;
                 }
@@ -520,10 +544,8 @@ mod tests {
         assert!(tag.contains("ASI10"));
 
         // 4. Benign utility call
-        let benign_match = engine.evaluate_similarity_against_threats(
-            "read_file",
-            &json!({"path": "config.yaml"}),
-        );
+        let benign_match = engine
+            .evaluate_similarity_against_threats("read_file", &json!({"path": "config.yaml"}));
         assert!(
             benign_match.is_none(),
             "Benign tool call should not trigger threat cluster similarity"

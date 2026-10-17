@@ -1,6 +1,6 @@
 pub mod compressor;
-pub mod statistical_filter;
 pub mod quality_metrics;
+pub mod statistical_filter;
 
 pub use compressor::CompressionResult;
 pub use compressor::Compressor;

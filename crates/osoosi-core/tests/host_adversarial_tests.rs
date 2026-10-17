@@ -1,3 +1,5 @@
+#![allow(clippy::field_reassign_with_default)]
+
 use chrono::Utc;
 use osoosi_core::byzantine::{
     analyze_policy_consensus, mine_vote_work_nonce, vote_work_proof_valid, BftConsensusParams,
@@ -28,7 +30,8 @@ fn test_attack_authenticode_unsigned_temp_file_rejected() {
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join(format!("malware_sample_{}.exe", uuid::Uuid::new_v4()));
     let mut f = std::fs::File::create(&temp_file).unwrap();
-    f.write_all(b"MZ\x90\x00\x03\x00\x00\x00FAKE_PE_HEADER_MALICIOUS_SHELLCODE").unwrap();
+    f.write_all(b"MZ\x90\x00\x03\x00\x00\x00FAKE_PE_HEADER_MALICIOUS_SHELLCODE")
+        .unwrap();
     drop(f);
 
     // Any unverified/unsigned PE binary in non-IDE directories must be rejected
@@ -100,17 +103,24 @@ fn test_attack_quarantine_malware_file_moves_and_isolates() {
 
     // Create a mock malicious dropped artifact
     let mut file = std::fs::File::create(&malware_path).unwrap();
-    file.write_all(b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*").unwrap();
+    file.write_all(b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*")
+        .unwrap();
     drop(file);
 
-    assert!(malware_path.exists(), "Source mock payload must exist initially");
+    assert!(
+        malware_path.exists(),
+        "Source mock payload must exist initially"
+    );
 
     // Perform quarantine
     let quarantine_result = quarantine_file(malware_path.to_str().unwrap());
     assert!(quarantine_result.is_ok(), "quarantine_file should succeed");
 
     let dest_path = quarantine_result.unwrap();
-    assert!(dest_path.exists(), "Quarantined file must exist in quarantine dir");
+    assert!(
+        dest_path.exists(),
+        "Quarantined file must exist in quarantine dir"
+    );
     assert!(
         !malware_path.exists(),
         "Source file must no longer exist at original compromised location"
@@ -129,7 +139,10 @@ fn test_attack_quarantine_malware_file_moves_and_isolates() {
 fn test_attack_quarantine_nonexistent_file_fails_safely() {
     let nonexistent = "/tmp/does_not_exist_at_all_payload_9999.exe";
     let res = quarantine_file(nonexistent);
-    assert!(res.is_err(), "Quarantining nonexistent file must return Err");
+    assert!(
+        res.is_err(),
+        "Quarantining nonexistent file must return Err"
+    );
 }
 
 // =========================================================================
@@ -143,7 +156,12 @@ fn test_attack_byzantine_sybil_proof_of_work_defense() {
     // Honest voter mines valid PoW (4 bits)
     let honest_voter = "node_honest_01";
     let valid_nonce = mine_vote_work_nonce(honest_voter, policy_id, 4).expect("Failed to mine PoW");
-    assert!(vote_work_proof_valid(honest_voter, policy_id, Some(&valid_nonce), 4));
+    assert!(vote_work_proof_valid(
+        honest_voter,
+        policy_id,
+        Some(&valid_nonce),
+        4
+    ));
 
     // Sybil attacker creates votes without PoW or with invalid nonces
     let sybil_voter_1 = "node_sybil_attacker_01";
@@ -187,7 +205,10 @@ fn test_attack_byzantine_sybil_proof_of_work_defense() {
     );
 
     // Both Sybil votes must be filtered out, leaving only the honest voter
-    assert_eq!(outcome.participating_voters, 1, "Only voter with valid PoW should be counted");
+    assert_eq!(
+        outcome.participating_voters, 1,
+        "Only voter with valid PoW should be counted"
+    );
     assert_eq!(outcome.optimal_count, 1);
     assert_eq!(outcome.degraded_count, 0);
     assert_eq!(outcome.critical_count, 0);
@@ -226,11 +247,7 @@ fn test_attack_byzantine_voter_whitelist_blocks_unauthorized_peers() {
     params.pow_vote_leading_zero_bits = 0;
     params.voter_whitelist = Some(whitelist);
 
-    let outcome = analyze_policy_consensus(
-        &messages,
-        |_id| 0.9,
-        &params,
-    );
+    let outcome = analyze_policy_consensus(&messages, |_id| 0.9, &params);
 
     // Rogue voter must be excluded by whitelist filter
     assert_eq!(outcome.participating_voters, 1);
@@ -274,11 +291,7 @@ fn test_attack_byzantine_fault_tolerance_under_malicious_minority() {
     params.pow_vote_leading_zero_bits = 0;
     params.voter_whitelist = None;
 
-    let outcome = analyze_policy_consensus(
-        &messages,
-        |_id| 0.85,
-        &params,
-    );
+    let outcome = analyze_policy_consensus(&messages, |_id| 0.85, &params);
 
     // 2 out of 3 = 66.7% >= 2/3 BFT threshold
     assert_eq!(outcome.participating_voters, 3);
@@ -403,7 +416,11 @@ fn test_attack_poisoned_model_delta_merge_defense() {
     );
 
     // Extreme weight should be clamped to max bound (5.0 / 2.0 = 2.5)
-    let clamped_entry = weights.features.get("cve:cve-2024-1234").copied().unwrap_or(0.0);
+    let clamped_entry = weights
+        .features
+        .get("cve:cve-2024-1234")
+        .copied()
+        .unwrap_or(0.0);
     assert!(
         clamped_entry.is_finite() && clamped_entry <= 5.0,
         "Extreme weight must be clamped and finite, got: {}",
@@ -413,7 +430,7 @@ fn test_attack_poisoned_model_delta_merge_defense() {
     // Threat inference must remain valid and finite
     let score = model.infer(None, Some("cve-2024-1234"), None, vec![]);
     assert!(
-        score.is_finite() && score >= 0.0 && score <= 1.0,
+        score.is_finite() && (0.0..=1.0).contains(&score),
         "Inference score must remain finite and bounded [0.0, 1.0], got: {}",
         score
     );
@@ -482,8 +499,14 @@ fn test_attack_byzantine_stalemate_conflict_detection() {
 
     let outcome = analyze_policy_consensus(&messages, |_id| 0.8, &params);
     assert_eq!(outcome.participating_voters, 6);
-    assert!(!outcome.mesh_validated, "Stalemate must NOT validate mesh policy");
-    assert!(outcome.stalemate_conflict, "50/50 conflict should be detected as stalemate");
+    assert!(
+        !outcome.mesh_validated,
+        "Stalemate must NOT validate mesh policy"
+    );
+    assert!(
+        outcome.stalemate_conflict,
+        "50/50 conflict should be detected as stalemate"
+    );
 }
 
 #[test]
@@ -505,11 +528,7 @@ fn test_attack_quarantine_concurrent_file_isolation() {
     // Concurrently quarantine all 4 samples
     let handles: Vec<_> = files
         .into_iter()
-        .map(|path| {
-            std::thread::spawn(move || {
-                quarantine_file(path.to_str().unwrap())
-            })
-        })
+        .map(|path| std::thread::spawn(move || quarantine_file(path.to_str().unwrap())))
         .collect();
 
     let mut quarantined_paths = Vec::new();
@@ -535,4 +554,3 @@ fn test_attack_quarantine_concurrent_file_isolation() {
     }
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
-

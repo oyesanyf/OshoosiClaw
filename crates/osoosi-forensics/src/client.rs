@@ -3,9 +3,7 @@
 
 use crate::correlator::{corroborate_mft_rootkit_hiding, corroborate_process_injection};
 use crate::mock::MockVelociraptorDriver;
-use crate::models::{
-    ForensicInvestigationReport, MftDiscrepancyArtifact, VadMemoryArtifact,
-};
+use crate::models::{ForensicInvestigationReport, MftDiscrepancyArtifact, VadMemoryArtifact};
 use crate::stream::parse_jsonl_stream;
 use crate::vql::{build_mft_scan_query, build_process_vad_query};
 use chrono::Utc;
@@ -119,7 +117,11 @@ impl VelociraptorClient {
         }
 
         let mut child = cmd.spawn().map_err(|e| {
-            anyhow::anyhow!("Failed to spawn headless Velociraptor child ({}): {}", bin_path.display(), e)
+            anyhow::anyhow!(
+                "Failed to spawn headless Velociraptor child ({}): {}",
+                bin_path.display(),
+                e
+            )
         })?;
 
         // Pipe VQL query into child stdin and close pipe
@@ -165,7 +167,10 @@ impl VelociraptorClient {
     }
 
     /// Inspects the Virtual Address Descriptor (VAD) regions of a target process.
-    pub async fn inspect_process_vad(&self, pid: u32) -> Result<Vec<VadMemoryArtifact>, anyhow::Error> {
+    pub async fn inspect_process_vad(
+        &self,
+        pid: u32,
+    ) -> Result<Vec<VadMemoryArtifact>, anyhow::Error> {
         if !self.is_available() {
             // Hermetic mock fallback when binary is absent
             return Ok(MockVelociraptorDriver::mock_vad_artifacts(pid));
@@ -222,7 +227,11 @@ impl VelociraptorClient {
                     vad_findings = artifacts;
                 }
                 Err(e) => {
-                    tracing::debug!("[FORENSICS] VAD inspection failed for PID {}: {}", target_pid, e);
+                    tracing::debug!(
+                        "[FORENSICS] VAD inspection failed for PID {}: {}",
+                        target_pid,
+                        e
+                    );
                 }
             }
         }
@@ -245,7 +254,11 @@ impl VelociraptorClient {
                     mft_discrepancies = artifacts;
                 }
                 Err(e) => {
-                    tracing::debug!("[FORENSICS] MFT scan failed for path '{}': {}", target_path, e);
+                    tracing::debug!(
+                        "[FORENSICS] MFT scan failed for path '{}': {}",
+                        target_path,
+                        e
+                    );
                 }
             }
         }
@@ -282,7 +295,10 @@ mod tests {
         let config = ForensicsConfig::default();
         let client = VelociraptorClient::new(config);
         // By default on clean repo without binary, is_available is false
-        assert_eq!(client.is_available(), client.resolve_binary_path().is_some());
+        assert_eq!(
+            client.is_available(),
+            client.resolve_binary_path().is_some()
+        );
     }
 
     #[tokio::test]

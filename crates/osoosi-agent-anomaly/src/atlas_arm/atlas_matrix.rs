@@ -39,7 +39,14 @@ pub struct MitreAtlasMatrix {
     techniques: Vec<AtlasTechnique>,
 }
 
+impl Default for MitreAtlasMatrix {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MitreAtlasMatrix {
+    #[allow(clippy::vec_init_then_push)]
     pub fn new() -> Self {
         let mut techniques = Vec::new();
 
@@ -48,8 +55,12 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0051".to_string(),
             name: "LLM Prompt Injection".to_string(),
             tactic: AtlasTactic::InitialAccess,
-            description: "Direct or indirect prompt injection embedded in documents or user inputs".to_string(),
-            relevant_mitigations: vec!["AML.M1001: Strict Schema Enclave".to_string(), "AML.M1002: Lexical AST Extraction".to_string()],
+            description: "Direct or indirect prompt injection embedded in documents or user inputs"
+                .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1001: Strict Schema Enclave".to_string(),
+                "AML.M1002: Lexical AST Extraction".to_string(),
+            ],
         });
 
         // 2. Jailbreak
@@ -57,7 +68,8 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0054".to_string(),
             name: "LLM Jailbreak".to_string(),
             tactic: AtlasTactic::Execution,
-            description: "Adversarial prompts designed to bypass model alignment or safety filters".to_string(),
+            description: "Adversarial prompts designed to bypass model alignment or safety filters"
+                .to_string(),
             relevant_mitigations: vec!["AML.M1003: Deterministic Policy Guard".to_string()],
         });
 
@@ -66,8 +78,14 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0000".to_string(),
             name: "Escape to Host Operating System".to_string(),
             tactic: AtlasTactic::Execution,
-            description: "Attempting to break out of agent execution boundary into host Windows processes".to_string(),
-            relevant_mitigations: vec!["AML.M1004: Windows Job Objects".to_string(), "AML.M1005: AppContainer LPAC".to_string(), "AML.M1006: Wasmtime Fuel Sandbox".to_string()],
+            description:
+                "Attempting to break out of agent execution boundary into host Windows processes"
+                    .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1004: Windows Job Objects".to_string(),
+                "AML.M1005: AppContainer LPAC".to_string(),
+                "AML.M1006: Wasmtime Fuel Sandbox".to_string(),
+            ],
         });
 
         // 4. Tool Poisoning
@@ -75,8 +93,13 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0001".to_string(),
             name: "Tool Poisoning / Malicious Capability Invocation".to_string(),
             tactic: AtlasTactic::Execution,
-            description: "Manipulating agent function calling or parameters to invoke unauthorized tools".to_string(),
-            relevant_mitigations: vec!["AML.M1007: HMAC Capability Tokens".to_string(), "AML.M1008: External Authorization Engine".to_string()],
+            description:
+                "Manipulating agent function calling or parameters to invoke unauthorized tools"
+                    .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1007: HMAC Capability Tokens".to_string(),
+                "AML.M1008: External Authorization Engine".to_string(),
+            ],
         });
 
         // 5. Insecure Output Handling
@@ -93,8 +116,13 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0003".to_string(),
             name: "Agent Impersonation & Identity Spoofing".to_string(),
             tactic: AtlasTactic::DefenseEvasion,
-            description: "Forging agent identity, sequence numbers, or headers to masquerade as another arm".to_string(),
-            relevant_mitigations: vec!["AML.M1010: Cryptographic Identity Guard".to_string(), "AML.M1011: Monotonic Sequence Checks".to_string()],
+            description:
+                "Forging agent identity, sequence numbers, or headers to masquerade as another arm"
+                    .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1010: Cryptographic Identity Guard".to_string(),
+                "AML.M1011: Monotonic Sequence Checks".to_string(),
+            ],
         });
 
         // 7. Obtain Capabilities
@@ -102,8 +130,12 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0016".to_string(),
             name: "Obtain Capabilities / Privilege Laundering".to_string(),
             tactic: AtlasTactic::PrivilegeEscalation,
-            description: "Subverting inter-agent delegation to gain unassigned permissions".to_string(),
-            relevant_mitigations: vec!["AML.M1012: Delegation Scope Guard".to_string(), "AML.M1013: Capability Intersection Rule".to_string()],
+            description: "Subverting inter-agent delegation to gain unassigned permissions"
+                .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1012: Delegation Scope Guard".to_string(),
+                "AML.M1013: Capability Intersection Rule".to_string(),
+            ],
         });
 
         // 8. Lateral Movement
@@ -111,8 +143,12 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0034".to_string(),
             name: "Lateral Movement in Agent Swarm".to_string(),
             tactic: AtlasTactic::LateralMovement,
-            description: "Pivoting across agent communication channels to compromise peer agents".to_string(),
-            relevant_mitigations: vec!["AML.M1014: Channel Isolation".to_string(), "AML.M1015: Quorum Consensus".to_string()],
+            description: "Pivoting across agent communication channels to compromise peer agents"
+                .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1014: Channel Isolation".to_string(),
+                "AML.M1015: Quorum Consensus".to_string(),
+            ],
         });
 
         // 9. Command and Control
@@ -120,7 +156,8 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0031".to_string(),
             name: "Command and Control / Egress Tunneling".to_string(),
             tactic: AtlasTactic::CommandAndControl,
-            description: "Communicating with external attacker servers or C2 infrastructure".to_string(),
+            description: "Communicating with external attacker servers or C2 infrastructure"
+                .to_string(),
             relevant_mitigations: vec!["AML.M1016: Network Guard Google-Only Egress".to_string()],
         });
 
@@ -129,8 +166,12 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0024".to_string(),
             name: "Exfiltration via ML Inference / Web API".to_string(),
             tactic: AtlasTactic::Exfiltration,
-            description: "Smuggling private corporate data out via HTTP requests or side channels".to_string(),
-            relevant_mitigations: vec!["AML.M1017: Strict SSRF Blocking".to_string(), "AML.M1018: Url Parser Host Match".to_string()],
+            description: "Smuggling private corporate data out via HTTP requests or side channels"
+                .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1017: Strict SSRF Blocking".to_string(),
+                "AML.M1018: Url Parser Host Match".to_string(),
+            ],
         });
 
         // 11. Resource Hijacking / DoS
@@ -138,8 +179,12 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0042".to_string(),
             name: "Resource Hijacking / Unbounded Computation".to_string(),
             tactic: AtlasTactic::Impact,
-            description: "Exhausting host CPU, memory, or LLM token budgets to cause disruption".to_string(),
-            relevant_mitigations: vec!["AML.M1019: Sentinel Guard Step Budgets".to_string(), "AML.M1020: 64MB Job Object Clamp".to_string()],
+            description: "Exhausting host CPU, memory, or LLM token budgets to cause disruption"
+                .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1019: Sentinel Guard Step Budgets".to_string(),
+                "AML.M1020: 64MB Job Object Clamp".to_string(),
+            ],
         });
 
         // 12. Craft Adversarial Data
@@ -147,8 +192,12 @@ impl MitreAtlasMatrix {
             technique_id: "AML.T0043".to_string(),
             name: "Craft Adversarial Data".to_string(),
             tactic: AtlasTactic::MLAttackStaging,
-            description: "Manipulating dataset inputs or Merkle proofs to inject subtle errors".to_string(),
-            relevant_mitigations: vec!["AML.M1021: Merkle Audit Hash Chain".to_string(), "AML.M1022: Integrity Guard Checkpoints".to_string()],
+            description: "Manipulating dataset inputs or Merkle proofs to inject subtle errors"
+                .to_string(),
+            relevant_mitigations: vec![
+                "AML.M1021: Merkle Audit Hash Chain".to_string(),
+                "AML.M1022: Integrity Guard Checkpoints".to_string(),
+            ],
         });
 
         Self {

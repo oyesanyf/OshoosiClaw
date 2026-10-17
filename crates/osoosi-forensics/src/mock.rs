@@ -93,7 +93,10 @@ impl MockVelociraptorDriver {
     }
 
     /// Builds a full mock forensic report.
-    pub fn mock_investigation_report(pid: Option<u32>, path: Option<String>) -> ForensicInvestigationReport {
+    pub fn mock_investigation_report(
+        pid: Option<u32>,
+        path: Option<String>,
+    ) -> ForensicInvestigationReport {
         let p = pid.unwrap_or(1234);
         let vad = Self::mock_vad_artifacts(p);
         let mft = Self::mock_mft_artifacts();
@@ -108,7 +111,9 @@ impl MockVelociraptorDriver {
             mft_discrepancies: mft,
             corroborated: true,
             confidence_delta: 0.20,
-            summary: "Hermetic mock forensic sweep corroborated unbacked executable memory segment.".to_string(),
+            summary:
+                "Hermetic mock forensic sweep corroborated unbacked executable memory segment."
+                    .to_string(),
             timestamp: Utc::now(),
         }
     }

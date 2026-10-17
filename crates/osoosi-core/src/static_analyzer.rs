@@ -3,14 +3,14 @@
 //! Integrates multiple tools (CAPA, FLOSS) and LLM-based reasoning to identify
 //! suspicious behaviors and hidden artifacts in binary files.
 
-use osoosi_types::{ThreatSignature, ResponseAction, ActionState, Priority, ResourceCategory};
+use osoosi_types::{ActionState, Priority, ResourceCategory, ResponseAction, ThreatSignature};
 use regex::Regex;
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
-use sha2::{Sha256, Digest};
 
 pub struct StaticAnalyzer {
     /// Executor for running tools (Direct or OpenShell)
@@ -114,7 +114,9 @@ impl StaticAnalyzer {
         let path_buf = file_path.to_path_buf();
         let hash = tokio::task::spawn_blocking(move || {
             Self::calculate_sha256_sync(&path_buf).unwrap_or_else(|_| "unknown".to_string())
-        }).await.unwrap_or_else(|_| "unknown".to_string());
+        })
+        .await
+        .unwrap_or_else(|_| "unknown".to_string());
 
         if hash != "unknown" {
             if let Some(cached) = self.analysis_cache.get(&hash) {
@@ -129,7 +131,7 @@ impl StaticAnalyzer {
 
         // 1. Run Native Yara-X (Zero-Process replacement for external scanners)
         let yara_res = self.run_yara_x(file_path).await?;
-        
+
         // 2. Run Composition Analysis (Nabla-style Heuristic Scoring)
         let composition = self.run_composition_analysis(file_path).await?;
 
@@ -138,10 +140,12 @@ impl StaticAnalyzer {
 
         // Combine findings into a ThreatSignature
         if let Some(yara_sig) = yara_res {
-             let mut signature = ThreatSignature {
+            let mut signature = ThreatSignature {
                 id: format!("STATIC-{}", hash.chars().take(8).collect::<String>()),
                 hash_blake3: Some(hash.clone()),
-                process_name: file_path.file_name().map(|n| n.to_string_lossy().to_string()),
+                process_name: file_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string()),
                 confidence: 0.8,
                 reason: Some(format!("YARA-X Match: {}", yara_sig)),
                 detector_count: 1,
@@ -154,14 +158,24 @@ impl StaticAnalyzer {
 
             if let Some(comp) = composition {
                 if comp.composition_score > 0.0 {
-                    signature.confidence = (signature.confidence + (comp.composition_score * 0.2)).min(1.0);
-                    signature.reason = Some(format!("{} | NablaScore: {:.2} | SuspiciousDeps: {:?}", signature.reason.unwrap(), comp.composition_score, comp.suspicious_dependencies));
+                    signature.confidence =
+                        (signature.confidence + (comp.composition_score * 0.2)).min(1.0);
+                    signature.reason = Some(format!(
+                        "{} | NablaScore: {:.2} | SuspiciousDeps: {:?}",
+                        signature.reason.as_deref().unwrap_or("Detection"),
+                        comp.composition_score,
+                        comp.suspicious_dependencies
+                    ));
                 }
             }
 
             if !artifacts.is_empty() {
                 signature.confidence = (signature.confidence + 0.1).min(1.0);
-                signature.reason = Some(format!("{} | Artifacts: {:?}", signature.reason.unwrap(), artifacts));
+                signature.reason = Some(format!(
+                    "{} | Artifacts: {:?}",
+                    signature.reason.as_deref().unwrap_or("Detection"),
+                    artifacts
+                ));
             }
 
             self.analysis_cache.insert(hash, Some(signature.clone()));
@@ -174,7 +188,7 @@ impl StaticAnalyzer {
                     id: format!("COMP-{}", hash.chars().take(8).collect::<String>()),
                     hash_blake3: Some(hash.clone()),
                     process_name: file_path.file_name().map(|n| n.to_string_lossy().to_string()),
-                    confidence: comp.composition_score.min(1.0) as f32,
+                    confidence: comp.composition_score.min(1.0),
                     reason: Some(format!("Composition Analysis (Nabla): Suspicious binary structure detected. Score: {:.2} | Dependencies: {:?}", comp.composition_score, comp.suspicious_dependencies)),
                     detector_count: 1,
                     detected_at: chrono::Utc::now(),
@@ -213,7 +227,9 @@ impl StaticAnalyzer {
         let mut buffer = [0u8; 65536];
         loop {
             let n = file.read(&mut buffer)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             hasher.update(&buffer[..n]);
         }
         Ok(format!("{:x}", hasher.finalize()))
@@ -226,14 +242,22 @@ impl StaticAnalyzer {
             None => return Ok(None),
         };
 
-        let yara_res = self.adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-            let mut scanner = yara_x::Scanner::new(&yara_engine);
-            if let Ok(results) = scanner.scan(&bytes) {
-                results.matching_rules().next().map(|r| r.identifier().to_string())
-            } else {
-                None
-            }
-        }).await.ok().flatten();
+        let yara_res = self
+            .adaptive
+            .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                let mut scanner = yara_x::Scanner::new(&yara_engine);
+                if let Ok(results) = scanner.scan(&bytes) {
+                    results
+                        .matching_rules()
+                        .next()
+                        .map(|r| r.identifier().to_string())
+                } else {
+                    None
+                }
+            })
+            .await
+            .ok()
+            .flatten();
 
         // Passive static scans must NEVER automatically report online samples to MalConv.
         // Doing so poisons model weights on benign files or false positives.
@@ -243,9 +267,13 @@ impl StaticAnalyzer {
 
     pub fn calculate_entropy(&self, path: &Path) -> anyhow::Result<f32> {
         let bytes = std::fs::read(path)?;
-        if bytes.is_empty() { return Ok(0.0); }
+        if bytes.is_empty() {
+            return Ok(0.0);
+        }
         let mut counts = [0usize; 256];
-        for &b in &bytes { counts[b as usize] += 1; }
+        for &b in &bytes {
+            counts[b as usize] += 1;
+        }
         let mut entropy = 0.0f32;
         let len = bytes.len() as f32;
         for count in counts {
@@ -259,64 +287,76 @@ impl StaticAnalyzer {
 
     async fn run_native_strings(&self, file_path: &Path) -> anyhow::Result<Vec<String>> {
         let bytes = std::fs::read(file_path)?;
-        
-        self.adaptive.run_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-            let mut artifacts = Vec::new();
-            // Simple native string extraction (basic replacement for MalChela/FLOSS)
-            let min_len = 4;
-            let mut current_string = Vec::new();
-            let mut strings = Vec::new();
 
-            for &b in &bytes {
-                if b.is_ascii_graphic() || b == b' ' {
-                    current_string.push(b);
-                } else {
-                    if current_string.len() >= min_len {
-                        if let Ok(s) = String::from_utf8(current_string.clone()) {
-                            strings.push(s);
+        self.adaptive
+            .run_adaptive(ResourceCategory::IO, Priority::Normal, async move {
+                let mut artifacts = Vec::new();
+                // Simple native string extraction (basic replacement for MalChela/FLOSS)
+                let min_len = 4;
+                let mut current_string = Vec::new();
+                let mut strings = Vec::new();
+
+                for &b in &bytes {
+                    if b.is_ascii_graphic() || b == b' ' {
+                        current_string.push(b);
+                    } else {
+                        if current_string.len() >= min_len {
+                            if let Ok(s) = String::from_utf8(current_string.clone()) {
+                                strings.push(s);
+                            }
                         }
+                        current_string.clear();
                     }
-                    current_string.clear();
                 }
-            }
 
-            let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap();
-            let domain_regex = Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
+                let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap();
+                let domain_regex =
+                    Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
 
-            let known_good_domains: &[&str] = &[
-                "ocsp.", "crl.", "microsoft.com", "github.com", "digicert.com", "sectigo.com"
-            ];
+                let known_good_domains: &[&str] = &[
+                    "ocsp.",
+                    "crl.",
+                    "microsoft.com",
+                    "github.com",
+                    "digicert.com",
+                    "sectigo.com",
+                ];
 
-            for s in strings {
-                if ip_regex.is_match(&s) {
-                    artifacts.push(format!("IP: {}", s));
-                } else if domain_regex.is_match(&s) {
-                    let is_known_good = known_good_domains.iter().any(|&good| s.to_lowercase().contains(good));
-                    if !is_known_good {
-                        artifacts.push(format!("Domain: {}", s));
-                    }
-                } else if s.to_lowercase().contains("powershell") || s.contains("http") {
-                    if s.len() < 100 {
+                for s in strings {
+                    if ip_regex.is_match(&s) {
+                        artifacts.push(format!("IP: {}", s));
+                    } else if domain_regex.is_match(&s) {
+                        let is_known_good = known_good_domains
+                            .iter()
+                            .any(|&good| s.to_lowercase().contains(good));
+                        if !is_known_good {
+                            artifacts.push(format!("Domain: {}", s));
+                        }
+                    } else if (s.to_lowercase().contains("powershell") || s.contains("http"))
+                        && s.len() < 100
+                    {
                         artifacts.push(format!("String: {}", s));
                     }
                 }
-            }
 
-            Ok(artifacts)
-        }).await?
+                Ok(artifacts)
+            })
+            .await?
     }
 
-    async fn run_composition_analysis(&self, file_path: &Path) -> anyhow::Result<Option<crate::pe_inspector::InspectionFindings>> {
+    async fn run_composition_analysis(
+        &self,
+        file_path: &Path,
+    ) -> anyhow::Result<Option<crate::pe_inspector::InspectionFindings>> {
         #[cfg(target_os = "windows")]
         {
             let path = file_path.to_path_buf();
-            let result = self.adaptive.run_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-                if let Ok(findings) = crate::pe_inspector::inspect_file(&path) {
-                    Some(findings)
-                } else {
-                    None
-                }
-            }).await;
+            let result = self
+                .adaptive
+                .run_adaptive(ResourceCategory::IO, Priority::Normal, async move {
+                    crate::pe_inspector::inspect_file(&path).ok()
+                })
+                .await;
             match result {
                 Ok(opt) => Ok(opt),
                 Err(_) => Ok(None),
@@ -356,26 +396,42 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("test_sa_hot_{}", unique_suffix));
         std::fs::create_dir_all(&temp_dir).unwrap();
         let target_file = temp_dir.join("malicious_target.bin");
-        std::fs::write(&target_file, format!("Payload prefix {} suffix", sig).as_bytes()).unwrap();
+        std::fs::write(
+            &target_file,
+            format!("Payload prefix {} suffix", sig).as_bytes(),
+        )
+        .unwrap();
 
         // 1. Before dynamic rule addition, run_yara_x must return None
         let yara_before = analyzer.run_yara_x(&target_file).await.unwrap();
-        assert!(yara_before.is_none(), "Must not match before rule is dynamically added");
+        assert!(
+            yara_before.is_none(),
+            "Must not match before rule is dynamically added"
+        );
 
         // 2. Hot-swap new rule on the fly
-        let rule_src = format!(r#"
+        let rule_src = format!(
+            r#"
             rule {} {{
                 strings:
                     $sig = "{}"
                 condition:
                     $sig
             }}
-        "#, rule_name, sig);
-        yara_mgr.hot_load_rule(&rule_src, &rule_name).expect("hot load ok");
+        "#,
+            rule_name, sig
+        );
+        yara_mgr
+            .hot_load_rule(&rule_src, &rule_name)
+            .expect("hot load ok");
 
         // 3. Immediately after hot-swap, StaticAnalyzer MUST see the new rule without restart!
         let yara_after = analyzer.run_yara_x(&target_file).await.unwrap();
-        assert_eq!(yara_after, Some(rule_name.clone()), "Must detect new rule immediately after hot-swap");
+        assert_eq!(
+            yara_after,
+            Some(rule_name.clone()),
+            "Must detect new rule immediately after hot-swap"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));

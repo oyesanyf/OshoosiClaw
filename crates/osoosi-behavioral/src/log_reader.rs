@@ -81,7 +81,8 @@ pub struct BehavioralLogReader {
     #[cfg(target_os = "windows")]
     channels: Vec<String>,
     #[cfg(target_os = "windows")]
-    last_poll_times: std::sync::Arc<std::sync::Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
+    last_poll_times:
+        std::sync::Arc<std::sync::Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     #[cfg(target_os = "linux")]
     paths: Vec<String>,
     #[cfg(target_os = "linux")]
@@ -112,7 +113,7 @@ impl BehavioralLogReader {
                             .to_string(),
                     ]
                 });
-            Self { 
+            Self {
                 channels,
                 last_poll_times: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             }
@@ -132,9 +133,7 @@ impl BehavioralLogReader {
                         "/var/log/apache2/access.log".to_string(),
                     ]
                 });
-            Self {
-                paths,
-            }
+            Self { paths }
         }
 
         #[cfg(target_os = "macos")]
@@ -188,7 +187,7 @@ impl BehavioralLogReader {
             }
         }
 
-        out.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        out.sort_by_key(|a| a.timestamp);
         Ok(out)
     }
 }
@@ -206,15 +205,17 @@ impl BehavioralLogReader {
     fn query_windows_channel(&self, channel: &str) -> Result<Vec<LogEvent>> {
         use windows::core::HSTRING;
         use windows::Win32::System::EventLog::{
-            EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml,
-            EvtQueryChannelPath, EvtQueryForwardDirection, EVT_HANDLE
+            EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtQueryForwardDirection, EvtRender,
+            EvtRenderEventXml, EVT_HANDLE,
         };
 
+        let mut query = "*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]".to_string();
 
-        let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]");
-        
         {
-            let last_times = self.last_poll_times.lock().unwrap_or_else(|e| e.into_inner());
+            let last_times = self
+                .last_poll_times
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(t) = last_times.get(channel) {
                 let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                 query = format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str);
@@ -251,18 +252,28 @@ impl BehavioralLogReader {
                     let mut buffer_used = 0;
                     let mut property_count = 0;
 
-                    let _ = EvtRender(None, evt, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
+                    let _ = EvtRender(
+                        None,
+                        evt,
+                        EvtRenderEventXml.0,
+                        0,
+                        None,
+                        &mut buffer_used,
+                        &mut property_count,
+                    );
 
                     let mut buffer: Vec<u16> = vec![0; (buffer_used / 2) as usize];
                     if EvtRender(
-                        None, 
-                        evt, 
-                        EvtRenderEventXml.0 as u32, 
-                        buffer.len() as u32 * 2, 
-                        Some(buffer.as_mut_ptr() as *mut std::ffi::c_void), 
-                        &mut buffer_used, 
-                        &mut property_count
-                    ).is_ok() {
+                        None,
+                        evt,
+                        EvtRenderEventXml.0,
+                        buffer.len() as u32 * 2,
+                        Some(buffer.as_mut_ptr() as *mut std::ffi::c_void),
+                        &mut buffer_used,
+                        &mut property_count,
+                    )
+                    .is_ok()
+                    {
                         let xml = String::from_utf16_lossy(&buffer);
                         let clean_xml = xml.trim_end_matches('\0');
                         if let Some(parsed) = parse_single_windows_event(clean_xml, channel) {
@@ -278,7 +289,10 @@ impl BehavioralLogReader {
 
         // Update watermark per-channel
         {
-            let mut last_times = self.last_poll_times.lock().unwrap_or_else(|e| e.into_inner());
+            let mut last_times = self
+                .last_poll_times
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if let Some(latest) = out.iter().map(|e| e.timestamp).max() {
                 last_times.insert(channel.to_string(), latest);
             } else if !last_times.contains_key(channel) {
@@ -327,7 +341,9 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
     if let Some(msg) = extract_xml_tag(xml, "Message") {
         data.insert("Message".to_string(), serde_json::json!(msg));
     }
-    if let Some(provider) = extract_xml_attr(xml, "Provider", "Name").or_else(|| extract_xml_tag(xml, "Provider")) {
+    if let Some(provider) =
+        extract_xml_attr(xml, "Provider", "Name").or_else(|| extract_xml_tag(xml, "Provider"))
+    {
         data.insert("Provider".to_string(), serde_json::json!(provider));
     }
     data.insert("Channel".to_string(), serde_json::json!(channel));
@@ -338,14 +354,22 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
 
     // Normalize numeric and hex string fields (ProcessId, Ports, etc.) into integer numbers
     let numeric_keys = [
-        "ProcessId", "SourceProcessId", "TargetProcessId", "ParentProcessId",
-        "NewProcessId", "DestinationPort", "SourcePort",
+        "ProcessId",
+        "SourceProcessId",
+        "TargetProcessId",
+        "ParentProcessId",
+        "NewProcessId",
+        "DestinationPort",
+        "SourcePort",
     ];
     for key in numeric_keys {
         if let Some(val) = data.get(key) {
             if let Some(s) = val.as_str() {
                 let trimmed = s.trim();
-                let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                let parsed = if let Some(hex) = trimmed
+                    .strip_prefix("0x")
+                    .or_else(|| trimmed.strip_prefix("0X"))
+                {
                     u64::from_str_radix(hex, 16).ok()
                 } else {
                     trimmed.parse::<u64>().ok()
@@ -393,8 +417,12 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
         }
     }
 
-    let source = if channel.contains("Sysmon") 
-        || data.get("Provider").and_then(|v| v.as_str()).map(|p| p.contains("Sysmon")).unwrap_or(false) 
+    let source = if channel.contains("Sysmon")
+        || data
+            .get("Provider")
+            .and_then(|v| v.as_str())
+            .map(|p| p.contains("Sysmon"))
+            .unwrap_or(false)
     {
         "Microsoft-Windows-Sysmon".to_string()
     } else {
@@ -419,7 +447,13 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
         let after_tag_name = abs_start + pattern.len();
         if after_tag_name < xml.len() {
             let next_char = xml.as_bytes()[after_tag_name];
-            if next_char == b'>' || next_char == b' ' || next_char == b'/' || next_char == b'\t' || next_char == b'\n' || next_char == b'\r' {
+            if next_char == b'>'
+                || next_char == b' '
+                || next_char == b'/'
+                || next_char == b'\t'
+                || next_char == b'\n'
+                || next_char == b'\r'
+            {
                 if let Some(close_bracket) = xml[abs_start..].find('>') {
                     let tag_header = &xml[abs_start..abs_start + close_bracket + 1];
                     if tag_header.ends_with("/>") {
@@ -429,7 +463,11 @@ fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
                     let content_start = abs_start + close_bracket + 1;
                     let close_tag = format!("</{}>", tag);
                     if let Some(end_idx) = xml[content_start..].find(&close_tag) {
-                        return Some(xml[content_start..content_start + end_idx].trim().to_string());
+                        return Some(
+                            xml[content_start..content_start + end_idx]
+                                .trim()
+                                .to_string(),
+                        );
                     }
                 }
             }
@@ -610,9 +648,18 @@ mod tests {
     #[test]
     fn test_log_event_from_host_security_event_sysmon() {
         let mut data = serde_json::Map::new();
-        data.insert("Image".to_string(), serde_json::json!(r"C:\Windows\System32\cmd.exe"));
-        data.insert("Provider".to_string(), serde_json::json!("Microsoft-Windows-Sysmon"));
-        data.insert("Channel".to_string(), serde_json::json!("Microsoft-Windows-Sysmon/Operational"));
+        data.insert(
+            "Image".to_string(),
+            serde_json::json!(r"C:\Windows\System32\cmd.exe"),
+        );
+        data.insert(
+            "Provider".to_string(),
+            serde_json::json!("Microsoft-Windows-Sysmon"),
+        );
+        data.insert(
+            "Channel".to_string(),
+            serde_json::json!("Microsoft-Windows-Sysmon/Operational"),
+        );
 
         let hse = osoosi_types::HostSecurityEvent {
             source: osoosi_types::HostEventSource::WindowsEventLog,
@@ -626,13 +673,19 @@ mod tests {
         let log_event: LogEvent = (&hse).into();
         assert_eq!(log_event.source, "Microsoft-Windows-Sysmon");
         assert_eq!(log_event.event_id, 1);
-        assert_eq!(log_event.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Windows\System32\cmd.exe"));
+        assert_eq!(
+            log_event.data.get("Image").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\System32\cmd.exe")
+        );
     }
 
     #[test]
     fn test_log_event_from_host_security_event_security() {
         let mut data = serde_json::Map::new();
-        data.insert("NewProcessName".to_string(), serde_json::json!(r"C:\Windows\System32\whoami.exe"));
+        data.insert(
+            "NewProcessName".to_string(),
+            serde_json::json!(r"C:\Windows\System32\whoami.exe"),
+        );
         data.insert("Channel".to_string(), serde_json::json!("Security"));
 
         let hse = osoosi_types::HostSecurityEvent {
@@ -666,11 +719,18 @@ mod tests {
   </EventData>
 </Event>"#;
 
-        let ev = parse_single_windows_event(xml, "Microsoft-Windows-Sysmon/Operational").expect("Should parse");
+        let ev = parse_single_windows_event(xml, "Microsoft-Windows-Sysmon/Operational")
+            .expect("Should parse");
         assert_eq!(ev.source, "Microsoft-Windows-Sysmon");
         assert_eq!(ev.event_id, 3);
-        assert_eq!(ev.data.get("DestinationIp").and_then(|v| v.as_str()), Some("198.51.100.23"));
-        assert_eq!(ev.data.get("DestinationPort").and_then(|v| v.as_u64()), Some(4444));
+        assert_eq!(
+            ev.data.get("DestinationIp").and_then(|v| v.as_str()),
+            Some("198.51.100.23")
+        );
+        assert_eq!(
+            ev.data.get("DestinationPort").and_then(|v| v.as_u64()),
+            Some(4444)
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -694,10 +754,19 @@ mod tests {
         let ev = parse_single_windows_event(xml, "Security").expect("Should parse");
         assert_eq!(ev.source, "windows:Security");
         assert_eq!(ev.event_id, 4688);
-        assert_eq!(ev.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Windows\System32\cmd.exe"));
-        assert_eq!(ev.data.get("ParentImage").and_then(|v| v.as_str()), Some(r"C:\Windows\explorer.exe"));
+        assert_eq!(
+            ev.data.get("Image").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\System32\cmd.exe")
+        );
+        assert_eq!(
+            ev.data.get("ParentImage").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\explorer.exe")
+        );
         assert_eq!(ev.data.get("ProcessId").and_then(|v| v.as_u64()), Some(500));
-        assert_eq!(ev.data.get("User").and_then(|v| v.as_str()), Some("Analyst"));
+        assert_eq!(
+            ev.data.get("User").and_then(|v| v.as_str()),
+            Some("Analyst")
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -705,6 +774,9 @@ mod tests {
     fn test_extract_xml_tag_with_self_closing_tag_prefix() {
         let xml = r#"<Event><System><Correlation/><Channel/><EventID>3</EventID><Channel>Microsoft-Windows-Sysmon/Operational</Channel></System></Event>"#;
         assert_eq!(extract_xml_tag(xml, "EventID"), Some("3".to_string()));
-        assert_eq!(extract_xml_tag(xml, "Channel"), Some("Microsoft-Windows-Sysmon/Operational".to_string()));
+        assert_eq!(
+            extract_xml_tag(xml, "Channel"),
+            Some("Microsoft-Windows-Sysmon/Operational".to_string())
+        );
     }
 }

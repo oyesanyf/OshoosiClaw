@@ -47,9 +47,12 @@ fn strip_deepseek_thinking(raw: &str) -> String {
             let after = trimmed[idx..].trim();
             // Skip if it's still thinking content
             let lower = after.to_lowercase();
-            if !lower.starts_with("okay") && !lower.starts_with("i need")
-                && !lower.starts_with("let me") && !lower.starts_with("so ")
-                && !lower.starts_with("first") && !lower.starts_with("the user")
+            if !lower.starts_with("okay")
+                && !lower.starts_with("i need")
+                && !lower.starts_with("let me")
+                && !lower.starts_with("so ")
+                && !lower.starts_with("first")
+                && !lower.starts_with("the user")
             {
                 return after.to_string();
             }
@@ -206,7 +209,7 @@ impl SmolLMAnalyzer {
 
         let score_str = result_text
             .trim()
-            .trim_matches(|c: char| !c.is_digit(10) && c != '.');
+            .trim_matches(|c: char| !c.is_ascii_digit() && c != '.');
         let score: f32 = score_str.parse().unwrap_or(0.0);
 
         Ok(score)
@@ -215,9 +218,7 @@ impl SmolLMAnalyzer {
     pub async fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         let analyzer = Arc::new(self.clone());
         let p = prompt.to_string();
-        tokio::task::spawn_blocking(move || {
-            analyzer.generate_text_sync(&p, max_tokens)
-        }).await?
+        tokio::task::spawn_blocking(move || analyzer.generate_text_sync(&p, max_tokens)).await?
     }
 
     pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
@@ -261,7 +262,10 @@ impl SmolLMAnalyzer {
     }
 
     /// Fast reasoning for telemetry intent analysis.
-    pub async fn analyze_intent_fast(&self, _event_json: &str) -> Result<crate::reasoning::AIIntentInsight> {
+    pub async fn analyze_intent_fast(
+        &self,
+        _event_json: &str,
+    ) -> Result<crate::reasoning::AIIntentInsight> {
         // In a real implementation, this would run a specialized prompt
         // For now, we simulate the LLM inference for the build pass
         Ok(crate::reasoning::AIIntentInsight {
@@ -300,18 +304,30 @@ pub enum Gemma4Analyzer {
 impl Clone for Gemma4Analyzer {
     fn clone(&self) -> Self {
         match self {
-            Self::Onnx { session, tokenizer, device } => Self::Onnx {
+            Self::Onnx {
+                session,
+                tokenizer,
+                device,
+            } => Self::Onnx {
                 session: session.clone(),
                 tokenizer: tokenizer.clone(),
                 device: device.clone(),
             },
             Self::Candle(judge) => Self::Candle(judge.clone()),
-            Self::NativeGGUF { model, tokenizer, device } => Self::NativeGGUF {
+            Self::NativeGGUF {
+                model,
+                tokenizer,
+                device,
+            } => Self::NativeGGUF {
                 model: model.clone(),
                 tokenizer: tokenizer.clone(),
                 device: device.clone(),
             },
-            Self::Ollama { client, model, endpoint } => Self::Ollama {
+            Self::Ollama {
+                client,
+                model,
+                endpoint,
+            } => Self::Ollama {
                 client: client.clone(),
                 model: model.clone(),
                 endpoint: endpoint.clone(),
@@ -322,26 +338,35 @@ impl Clone for Gemma4Analyzer {
 
 impl Gemma4Analyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!(
-            "Initializing LLM Cortex from {:?}...",
-            model_dir
-        );
+        info!("Initializing LLM Cortex from {:?}...", model_dir);
         // We only consider the local directory 'resolved' if the main model AND shards are present.
         // Gemma-4 typically uses 'model.onnx' or 'decoder_model_merged.onnx' as a manifest.
-        let has_model = model_dir.join("model.onnx").exists() || model_dir.join("decoder_model_merged.onnx").exists();
+        let has_model = model_dir.join("model.onnx").exists()
+            || model_dir.join("decoder_model_merged.onnx").exists();
         let has_shards = model_dir.join("decoder_model_merged.onnx_data_1").exists();
-        
-        let resolved_dir = if model_dir.exists() && has_model && (has_shards || !model_dir.join("decoder_model_merged.onnx_data").exists()) {
+
+        let resolved_dir = if model_dir.exists()
+            && has_model
+            && (has_shards || !model_dir.join("decoder_model_merged.onnx_data").exists())
+        {
             model_dir.to_path_buf()
         } else {
             // HF Snapshot Discovery for Gemma-4
             let parent = model_dir.parent().unwrap_or(model_dir);
-            let hf_dir = parent.join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
+            let hf_dir = parent
+                .join("models--onnx-community--gemma-4-E4B-it-ONNX")
+                .join("snapshots");
             if let Ok(entries) = std::fs::read_dir(&hf_dir) {
                 let mut snapshots: Vec<_> = entries.flatten().collect();
                 snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
                 if let Some(latest) = snapshots.last() {
-                    let path = latest.path(); let onnx_sub = path.join("onnx"); if onnx_sub.exists() { onnx_sub } else { path }
+                    let path = latest.path();
+                    let onnx_sub = path.join("onnx");
+                    if onnx_sub.exists() {
+                        onnx_sub
+                    } else {
+                        path
+                    }
                 } else {
                     model_dir.to_path_buf()
                 }
@@ -352,8 +377,12 @@ impl Gemma4Analyzer {
 
         let model_path = resolved_dir.join("model.onnx");
         let decoder_path = resolved_dir.join("decoder_model_merged.onnx");
-        let onnx_src = if decoder_path.exists() { decoder_path } else { model_path };
-        
+        let onnx_src = if decoder_path.exists() {
+            decoder_path
+        } else {
+            model_path
+        };
+
         let tokenizer_src = if model_dir.join("tokenizer.json").exists() {
             model_dir.join("tokenizer.json")
         } else {
@@ -361,22 +390,27 @@ impl Gemma4Analyzer {
         };
 
         // Deploy Shards and Data Files (Ensures ONNX External Data references are maintained)
-        let _ = std::fs::create_dir_all(&model_dir);
+        let _ = std::fs::create_dir_all(model_dir);
         let mut shards_deployed = 0;
-        
+
         for i in 1..20 {
             let shard_name = format!("decoder_model_merged.onnx_data_{}", i);
             let src = resolved_dir.join(&shard_name);
             let dst = model_dir.join(&shard_name);
             if src.exists() && !dst.exists() {
-                if let Ok(_) = std::fs::copy(&src, &dst) { shards_deployed += 1; }
+                if std::fs::copy(&src, &dst).is_ok() {
+                    shards_deployed += 1;
+                }
             } else if dst.exists() {
                 shards_deployed += 1;
             }
         }
-        
+
         if shards_deployed > 0 {
-            info!("Deployed {} ONNX shards to {:?}", shards_deployed, model_dir);
+            info!(
+                "Deployed {} ONNX shards to {:?}",
+                shards_deployed, model_dir
+            );
         }
 
         let main_data_src = resolved_dir.join("decoder_model_merged.onnx_data");
@@ -420,8 +454,11 @@ impl Gemma4Analyzer {
         };
 
         let tokenizer_exists = tokenizer_src.exists();
-        let onnx_viable = target_onnx.exists() 
-            && std::fs::metadata(&target_onnx).map(|m| m.len()).unwrap_or(0) > 100_000
+        let onnx_viable = target_onnx.exists()
+            && std::fs::metadata(&target_onnx)
+                .map(|m| m.len())
+                .unwrap_or(0)
+                > 100_000
             && weights_ready
             && tokenizer_exists;
 
@@ -432,7 +469,10 @@ impl Gemma4Analyzer {
                         "Gemma 4 ONNX shards are still provisioning/downloading in background. Engaging reasoning fallback."
                     );
                 } else {
-                    info!("Gemma 4 ONNX external weights not yet available in {:?}.", model_dir);
+                    info!(
+                        "Gemma 4 ONNX external weights not yet available in {:?}.",
+                        model_dir
+                    );
                 }
             } else if !tokenizer_exists {
                 info!("Gemma 4 tokenizer.json not found in {:?}.", model_dir);
@@ -446,7 +486,7 @@ impl Gemma4Analyzer {
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
                     .with_intra_threads(1)?
                     .commit_from_file(&target_onnx)?;
-                
+
                 Ok(Self::Onnx {
                     session: Arc::new(std::sync::Mutex::new(session)),
                     tokenizer,
@@ -456,7 +496,10 @@ impl Gemma4Analyzer {
                 Ok(s) => return Ok(s),
                 Err(e) => {
                     if osoosi_types::is_model_provisioning() {
-                        info!("Gemma ONNX load pending: {}. Waiting for provisioning to complete.", e);
+                        info!(
+                            "Gemma ONNX load pending: {}. Waiting for provisioning to complete.",
+                            e
+                        );
                     } else {
                         warn!("Gemma ONNX init failed: {}. Falling back.", e);
                     }
@@ -526,7 +569,8 @@ impl Gemma4Analyzer {
 
         // Priority 4: Ollama API (The "add back Ollama" request)
         let res = crate::hardware_selection::get_system_resources();
-        let installed = crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+        let installed =
+            crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
         let opt = crate::hardware_selection::select_optimal_models(
             &res,
             &installed,
@@ -538,13 +582,15 @@ impl Gemma4Analyzer {
         } else {
             ai_cfg.reasoning_model.clone()
         };
-        info!("Engaging Ollama reasoning fallback at {} with hardware-selected fast model {}...", ai_cfg.reasoning_url, selected_fast_model);
+        info!(
+            "Engaging Ollama reasoning fallback at {} with hardware-selected fast model {}...",
+            ai_cfg.reasoning_url, selected_fast_model
+        );
         Ok(Self::Ollama {
             client: reqwest::Client::new(),
             model: selected_fast_model,
             endpoint: ai_cfg.reasoning_url,
         })
-
     }
 
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
@@ -559,8 +605,12 @@ impl Gemma4Analyzer {
             let compressor = compression_prompt::Compressor::new(config);
             match compressor.compress(graph_summary, tokenizer) {
                 Ok(res) => {
-                    info!("Prompt compressed: {} -> {} tokens ({:.1}% savings)", 
-                        res.original_tokens, res.compressed_tokens, (1.0 - res.compression_ratio) * 100.0);
+                    info!(
+                        "Prompt compressed: {} -> {} tokens ({:.1}% savings)",
+                        res.original_tokens,
+                        res.compressed_tokens,
+                        (1.0 - res.compression_ratio) * 100.0
+                    );
                     res.compressed_text
                 }
                 Err(e) => {
@@ -583,9 +633,7 @@ impl Gemma4Analyzer {
             _ => {
                 let analyzer = Arc::new(self.clone());
                 let p = prompt.clone();
-                tokio::task::spawn_blocking(move || {
-                    analyzer.judge_artifact_sync(&p)
-                }).await??
+                tokio::task::spawn_blocking(move || analyzer.judge_artifact_sync(&p)).await??
             }
         };
 
@@ -604,7 +652,10 @@ impl Gemma4Analyzer {
                 ..Default::default()
             };
             let compressor = compression_prompt::Compressor::new(config);
-            compressor.compress(query, tokenizer).map(|res| res.compressed_text).unwrap_or_else(|_| query.to_string())
+            compressor
+                .compress(query, tokenizer)
+                .map(|res| res.compressed_text)
+                .unwrap_or_else(|_| query.to_string())
         } else {
             query.to_string()
         };
@@ -614,9 +665,7 @@ impl Gemma4Analyzer {
             _ => {
                 let analyzer = Arc::new(self.clone());
                 let q = compressed_query;
-                tokio::task::spawn_blocking(move || {
-                    analyzer.judge_artifact_sync(&q)
-                }).await?
+                tokio::task::spawn_blocking(move || analyzer.judge_artifact_sync(&q)).await?
             }
         }
     }
@@ -629,7 +678,9 @@ impl Gemma4Analyzer {
                 self.generate_text_sync(&prompt, 128)
             }
             Self::Candle(judge) => judge.judge_artifact(query),
-            Self::Ollama { model, endpoint, .. } => {
+            Self::Ollama {
+                model, endpoint, ..
+            } => {
                 let ai = osoosi_types::config::load_ai_config();
                 let payload = serde_json::json!({
                     "model": model,
@@ -656,7 +707,12 @@ impl Gemma4Analyzer {
     }
 
     async fn judge_artifact_ollama(&self, query: &str) -> Result<String> {
-        if let Self::Ollama { client, model, endpoint } = self {
+        if let Self::Ollama {
+            client,
+            model,
+            endpoint,
+        } = self
+        {
             let payload = serde_json::json!({
                 "model": model,
                 "prompt": query,
@@ -664,8 +720,9 @@ impl Gemma4Analyzer {
             });
             let ai = osoosi_types::config::load_ai_config();
             let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
-            
-            let res = client.post(endpoint)
+
+            let res = client
+                .post(endpoint)
                 .json(&payload)
                 .timeout(timeout)
                 .send()
@@ -680,35 +737,46 @@ impl Gemma4Analyzer {
     pub async fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         let analyzer = Arc::new(self.clone());
         let p = prompt.to_string();
-        tokio::task::spawn_blocking(move || {
-            analyzer.generate_text_sync(&p, max_tokens)
-        }).await?
+        tokio::task::spawn_blocking(move || analyzer.generate_text_sync(&p, max_tokens)).await?
     }
 
     pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         match self {
-            Self::Onnx { session, tokenizer, .. } => {
-                let mut tokens_vec = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?.get_ids().to_vec();
+            Self::Onnx {
+                session, tokenizer, ..
+            } => {
+                let mut tokens_vec = tokenizer
+                    .encode(prompt, true)
+                    .map_err(anyhow::Error::msg)?
+                    .get_ids()
+                    .to_vec();
                 let mut result_text = String::new();
 
                 for _ in 0..max_tokens {
                     let mut session_guard = session.lock().unwrap_or_else(|e| e.into_inner());
-                    let input_val = ort::value::Value::from_array(([1, tokens_vec.len()], tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>()))?;
+                    let input_val = ort::value::Value::from_array((
+                        [1, tokens_vec.len()],
+                        tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>(),
+                    ))?;
                     let outputs = session_guard.run(ort::inputs![input_val])?;
                     let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
                     let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
                     let view = ndarray::ArrayView::from_shape(dims, data)?;
-                    
+
                     let last_token_logits = view.slice(ndarray::s![0, -1, ..]);
                     let next_token = last_token_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
 
                     tokens_vec.push(next_token);
-                    let decoded = tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+                    let decoded = tokenizer
+                        .decode(&[next_token], true)
+                        .map_err(anyhow::Error::msg)?;
                     if decoded.is_empty() || next_token == 0 {
                         break;
                     }
@@ -717,7 +785,11 @@ impl Gemma4Analyzer {
                 Ok(result_text)
             }
             Self::Candle(judge) => judge.judge_artifact(prompt),
-            Self::NativeGGUF { model, tokenizer, device } => {
+            Self::NativeGGUF {
+                model,
+                tokenizer,
+                device,
+            } => {
                 let ai = osoosi_types::config::load_ai_config();
                 let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
                 let start = std::time::Instant::now();
@@ -731,9 +803,14 @@ impl Gemma4Analyzer {
                 // Process the prompt (prefill) with a hard 15s timeout
                 let prefill_start = std::time::Instant::now();
                 let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
-                let logits = model_guard.forward(&input, 0).map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
+                let logits = model_guard
+                    .forward(&input, 0)
+                    .map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
                 if prefill_start.elapsed() > std::time::Duration::from_secs(15) {
-                    warn!("GGUF prefill took {:?} Ã¢â‚¬â€ model may be too large for this CPU", prefill_start.elapsed());
+                    warn!(
+                        "GGUF prefill took {:?} Ã¢â‚¬â€ model may be too large for this CPU",
+                        prefill_start.elapsed()
+                    );
                 }
                 let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
                 let next_token = logits
@@ -758,21 +835,27 @@ impl Gemma4Analyzer {
                     if last == eos_token || last == 0 {
                         break;
                     }
-                    let decoded = tokenizer.decode(&[last], true).map_err(anyhow::Error::msg)?;
+                    let decoded = tokenizer
+                        .decode(&[last], true)
+                        .map_err(anyhow::Error::msg)?;
                     if decoded.is_empty() {
                         break;
                     }
                     result_text.push_str(&decoded);
 
                     let input = Tensor::new(&[last], device)?.unsqueeze(0)?;
-                    let logits = model_guard.forward(&input, all_tokens.len() - 1).map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let logits = model_guard
+                        .forward(&input, all_tokens.len() - 1)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
                     let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
                     let next = logits
                         .to_vec1::<f32>()
                         .map_err(|e| anyhow::anyhow!("{}", e))?
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
                     all_tokens.push(next);
@@ -824,7 +907,8 @@ fn load_deepseek_tokenizer() -> Result<Tokenizer> {
 
     if tokenizer_path.exists() {
         info!("Loading DeepSeek tokenizer from {:?}", tokenizer_path);
-        return Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("Tokenizer load: {}", e));
+        return Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| anyhow::anyhow!("Tokenizer load: {}", e));
     }
 
     // Try to download via curl/Invoke-WebRequest (sync, no reqwest::blocking needed)
@@ -840,12 +924,14 @@ fn load_deepseek_tokenizer() -> Result<Tokenizer> {
 
     if download_ok && tokenizer_path.exists() {
         info!("DeepSeek tokenizer saved to {:?}", tokenizer_path);
-        return Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("Tokenizer load: {}", e));
+        return Tokenizer::from_file(&tokenizer_path)
+            .map_err(|e| anyhow::anyhow!("Tokenizer load: {}", e));
     }
 
     Err(anyhow::anyhow!(
         "Could not load DeepSeek tokenizer. Download manually:\n  curl -sL -o {:?} {}",
-        tokenizer_path, url
+        tokenizer_path,
+        url
     ))
 }
 
@@ -853,14 +939,14 @@ fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    
+
     let content = std::fs::read_to_string(path)?;
     if !content.contains("\"merges\"") {
         return Ok(());
     }
 
     let mut json: serde_json::Value = serde_json::from_str(&content)?;
-    
+
     if let Some(model) = json.get_mut("model") {
         if let Some(merges) = model.get_mut("merges") {
             if let Some(merges_arr) = merges.as_array_mut() {
@@ -871,7 +957,7 @@ fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
                         break;
                     }
                 }
-                
+
                 if needs_conversion {
                     info!("Sanitizing tokenizer.json merges format...");
                     let mut new_merges = Vec::new();
@@ -879,7 +965,8 @@ fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
                         if let Some(pair) = item.as_array() {
                             if pair.len() == 2 {
                                 if let (Some(a), Some(b)) = (pair[0].as_str(), pair[1].as_str()) {
-                                    new_merges.push(serde_json::Value::String(format!("{} {}", a, b)));
+                                    new_merges
+                                        .push(serde_json::Value::String(format!("{} {}", a, b)));
                                 }
                             }
                         } else if let Some(s) = item.as_str() {
@@ -887,7 +974,7 @@ fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
                         }
                     }
                     *merges = serde_json::Value::Array(new_merges);
-                    
+
                     let sanitized = serde_json::to_string_pretty(&json)?;
                     std::fs::write(path, sanitized)?;
                     info!("Sanitized tokenizer.json successfully.");
@@ -895,7 +982,7 @@ fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -922,12 +1009,20 @@ impl SecureBertAnalyzer {
         } else {
             // HF Snapshot Discovery for SecureBERT
             let parent = model_dir.parent().unwrap_or(model_dir);
-            let hf_dir = parent.join("models--MarsSecurity--securebert-onnx").join("snapshots");
+            let hf_dir = parent
+                .join("models--MarsSecurity--securebert-onnx")
+                .join("snapshots");
             if let Ok(entries) = std::fs::read_dir(&hf_dir) {
                 let mut snapshots: Vec<_> = entries.flatten().collect();
                 snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
                 if let Some(latest) = snapshots.last() {
-                    let path = latest.path(); let onnx_sub = path.join("onnx"); if onnx_sub.exists() { onnx_sub } else { path }
+                    let path = latest.path();
+                    let onnx_sub = path.join("onnx");
+                    if onnx_sub.exists() {
+                        onnx_sub
+                    } else {
+                        path
+                    }
                 } else {
                     model_dir.to_path_buf()
                 }
@@ -939,17 +1034,22 @@ impl SecureBertAnalyzer {
         let onnx_src = resolved_dir.join("model.onnx");
         let tokenizer_src = resolved_dir.join("tokenizer.json");
         let _config_src = resolved_dir.join("config.json");
-        
+
         // Co-locate if necessary
         let target_onnx = model_dir.join("model.onnx");
         let target_tokenizer = model_dir.join("tokenizer.json");
         let _target_config = model_dir.join("config.json");
-        
-        for f in ["model.onnx", "tokenizer.json", "config.json", "model.safetensors"] {
+
+        for f in [
+            "model.onnx",
+            "tokenizer.json",
+            "config.json",
+            "model.safetensors",
+        ] {
             let src = resolved_dir.join(f);
             let dst = model_dir.join(f);
             if src.exists() && !dst.exists() {
-                let _ = std::fs::create_dir_all(&model_dir);
+                let _ = std::fs::create_dir_all(model_dir);
                 let tmp = model_dir.join(format!("{}.tmp", f));
                 if std::fs::copy(&src, &tmp).is_ok() {
                     let _ = std::fs::rename(&tmp, &dst);
@@ -957,7 +1057,11 @@ impl SecureBertAnalyzer {
             }
         }
 
-        let final_tokenizer_path = if target_tokenizer.exists() { target_tokenizer } else { tokenizer_src };
+        let final_tokenizer_path = if target_tokenizer.exists() {
+            target_tokenizer
+        } else {
+            tokenizer_src
+        };
         if !final_tokenizer_path.exists() {
             anyhow::bail!("SecureBERT tokenizer.json not found.");
         }
@@ -965,14 +1069,24 @@ impl SecureBertAnalyzer {
         let tokenizer = Tokenizer::from_file(&final_tokenizer_path).map_err(anyhow::Error::msg)?;
 
         // Try ONNX first
-        let final_onnx_path = if target_onnx.exists() { target_onnx } else { onnx_src };
+        let final_onnx_path = if target_onnx.exists() {
+            target_onnx
+        } else {
+            onnx_src
+        };
         if final_onnx_path.exists() {
-            let sz = std::fs::metadata(&final_onnx_path).map(|m| m.len()).unwrap_or(0);
+            let sz = std::fs::metadata(&final_onnx_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
             if sz > 10_000_000 {
                 let mut sys = sysinfo::System::new();
                 sys.refresh_memory();
                 let avail_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-                if avail_gb < 3.5 && !std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false) {
+                if avail_gb < 3.5
+                    && !std::env::var("OSOOSI_FORCE_GEMMA_ONNX")
+                        .map(|v| v == "1")
+                        .unwrap_or(false)
+                {
                     anyhow::bail!("Available RAM ({:.1} GB) below 3.5 GB threshold. Skipping SecureBERT ONNX session to prevent memory exhaustion.", avail_gb);
                 }
 
@@ -1001,10 +1115,13 @@ impl SecureBertAnalyzer {
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
                     .with_intra_threads(1)?
                     .commit_from_file(&final_onnx_path);
-                
+
                 match session {
                     Ok(session) => {
-                        info!("SecureBERT ONNX loaded successfully ({} MB)", sz / 1_000_000);
+                        info!(
+                            "SecureBERT ONNX loaded successfully ({} MB)",
+                            sz / 1_000_000
+                        );
                         return Ok(Self::Onnx {
                             session: Mutex::new(session),
                             tokenizer,
@@ -1012,10 +1129,16 @@ impl SecureBertAnalyzer {
                     }
                     Err(e) => {
                         let err_str = e.to_string();
-                        if err_str.contains("13") || err_str.contains("AccessDenied") || err_str.to_lowercase().contains("sharing violation") {
+                        if err_str.contains("13")
+                            || err_str.contains("AccessDenied")
+                            || err_str.to_lowercase().contains("sharing violation")
+                        {
                             warn!("SecureBERT ONNX file lock / permission error 13: {}. Falling back gracefully.", err_str);
                         } else {
-                            error!("SecureBERT ONNX init failed: {}. Path: {:?}", err_str, final_onnx_path);
+                            error!(
+                                "SecureBERT ONNX init failed: {}. Path: {:?}",
+                                err_str, final_onnx_path
+                            );
                             warn!("SecureBERT ONNX init failed: {}. Trying Candle.", err_str);
                         }
                     }
@@ -1038,7 +1161,11 @@ impl SecureBertAnalyzer {
             };
             let model = BertModel::load(vb, &config)?;
             info!("SecureBERT Candle loaded successfully.");
-            return Ok(Self::Candle { model, tokenizer, device });
+            return Ok(Self::Candle {
+                model,
+                tokenizer,
+                device,
+            });
         }
 
         anyhow::bail!(
@@ -1056,8 +1183,13 @@ impl SecureBertAnalyzer {
                     .encode(format!("{} [SEP] {}", query, context), true)
                     .map_err(anyhow::Error::msg)?;
                 let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
-                let attention: Vec<i64> = encoding.get_attention_mask().iter().map(|&x| x as i64).collect();
-                let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&x| x as i64).collect();
+                let attention: Vec<i64> = encoding
+                    .get_attention_mask()
+                    .iter()
+                    .map(|&x| x as i64)
+                    .collect();
+                let type_ids: Vec<i64> =
+                    encoding.get_type_ids().iter().map(|&x| x as i64).collect();
                 let len = ids.len();
 
                 let input_ids = ort::value::Value::from_array(([1, len], ids))?;
@@ -1065,13 +1197,18 @@ impl SecureBertAnalyzer {
                 let token_type_ids = ort::value::Value::from_array(([1, len], type_ids))?;
 
                 let mut session_guard = session.lock().unwrap_or_else(|e| e.into_inner());
-                let outputs = session_guard.run(ort::inputs![input_ids, attention_mask, token_type_ids])?;
+                let outputs =
+                    session_guard.run(ort::inputs![input_ids, attention_mask, token_type_ids])?;
                 let (_, data) = outputs[0].try_extract_tensor::<f32>()?;
                 let score = data[0];
                 let probability = 1.0 / (1.0 + (-score).exp());
                 Ok(probability)
             }
-            Self::Candle { model, tokenizer, device } => {
+            Self::Candle {
+                model,
+                tokenizer,
+                device,
+            } => {
                 let encoding = tokenizer
                     .encode(format!("{} [SEP] {}", query, context), true)
                     .map_err(anyhow::Error::msg)?;
@@ -1108,7 +1245,10 @@ impl Clone for SecurityJudge {
 
 impl SecurityJudge {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing Security Judge (Candle) from {:?}...", model_dir);
+        info!(
+            "Initializing Security Judge (Candle) from {:?}...",
+            model_dir
+        );
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
         let onnx_dir = if model_dir.join("onnx").is_dir() {
@@ -1140,7 +1280,7 @@ impl SecurityJudge {
         let config_raw: Config = serde_json::from_reader(std::fs::File::open(&config_path)?)?;
         let config: LlamaConfig = config_raw.into();
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
-        
+
         let vb = unsafe {
             candle_nn::VarBuilder::from_mmaped_safetensors(
                 &[&weights_path],
@@ -1163,10 +1303,14 @@ impl SecurityJudge {
     pub fn judge_artifact(&self, query: &str) -> Result<String> {
         let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict: {} <|end|>\n<|assistant|>\n", query);
 
-        let tokens = self.tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+        let tokens = self
+            .tokenizer
+            .encode(prompt, true)
+            .map_err(anyhow::Error::msg)?;
         let mut tokens_vec = tokens.get_ids().to_vec();
 
-        let mut logits_processor = candle_transformers::generation::LogitsProcessor::new(1337, Some(0.0), None);
+        let mut logits_processor =
+            candle_transformers::generation::LogitsProcessor::new(1337, Some(0.0), None);
         let mut result_text = String::new();
 
         for i in 0..256 {
@@ -1182,7 +1326,10 @@ impl SecurityJudge {
             let next_token = logits_processor.sample(&logits)?;
             tokens_vec.push(next_token);
 
-            let decoded = self.tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+            let decoded = self
+                .tokenizer
+                .decode(&[next_token], true)
+                .map_err(anyhow::Error::msg)?;
             if decoded.is_empty() || next_token == 0 {
                 break;
             }
@@ -1216,18 +1363,30 @@ pub enum FoundationSecAnalyzer {
 impl Clone for FoundationSecAnalyzer {
     fn clone(&self) -> Self {
         match self {
-            Self::Onnx { session, tokenizer, device } => Self::Onnx {
+            Self::Onnx {
+                session,
+                tokenizer,
+                device,
+            } => Self::Onnx {
                 session: session.clone(),
                 tokenizer: tokenizer.clone(),
                 device: device.clone(),
             },
             Self::Candle(judge) => Self::Candle(judge.clone()),
-            Self::NativeGGUF { model, tokenizer, device } => Self::NativeGGUF {
+            Self::NativeGGUF {
+                model,
+                tokenizer,
+                device,
+            } => Self::NativeGGUF {
                 model: model.clone(),
                 tokenizer: tokenizer.clone(),
                 device: device.clone(),
             },
-            Self::Ollama { client, model, endpoint } => Self::Ollama {
+            Self::Ollama {
+                client,
+                model,
+                endpoint,
+            } => Self::Ollama {
                 client: client.clone(),
                 model: model.clone(),
                 endpoint: endpoint.clone(),
@@ -1246,16 +1405,21 @@ impl FoundationSecAnalyzer {
         if !ai_cfg.enabled {
             anyhow::bail!("AI features are disabled in config.");
         }
-        
-        info!("Initializing Cisco Foundation-Sec-8B from {:?}...", model_dir);
-        
+
+        info!(
+            "Initializing Cisco Foundation-Sec-8B from {:?}...",
+            model_dir
+        );
+
         // Priority 1: Ollama API if enabled and URL is configured
         if ai_cfg.foundation_sec_enabled {
             let model_name = if let Some(m) = model_override {
                 m.to_string()
             } else {
                 let res = crate::hardware_selection::get_system_resources();
-                let installed = crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+                let installed = crate::hardware_selection::query_installed_ollama_models_sync(
+                    &ai_cfg.reasoning_url,
+                );
                 let opt = crate::hardware_selection::select_optimal_models(
                     &res,
                     &installed,
@@ -1269,34 +1433,41 @@ impl FoundationSecAnalyzer {
                 }
             };
 
-            info!("Trying Foundation-Sec Ollama API at {} with model {}...", ai_cfg.reasoning_url, model_name);
+            info!(
+                "Trying Foundation-Sec Ollama API at {} with model {}...",
+                ai_cfg.reasoning_url, model_name
+            );
             return Ok(Self::Ollama {
                 client: reqwest::Client::new(),
                 model: model_name,
                 endpoint: ai_cfg.reasoning_url.clone(),
             });
         }
-        
+
         // Priority 2: GGUF / ONNX / Candle local fallback
         let resolved_dir = model_dir.to_path_buf();
         let model_path = resolved_dir.join("model.onnx");
         let decoder_path = resolved_dir.join("decoder_model_merged.onnx");
-        let onnx_src = if decoder_path.exists() { decoder_path } else { model_path };
+        let onnx_src = if decoder_path.exists() {
+            decoder_path
+        } else {
+            model_path
+        };
         let tokenizer_src = resolved_dir.join("tokenizer.json");
-        
+
         if onnx_src.exists() && tokenizer_src.exists() {
             let tokenizer = Tokenizer::from_file(&tokenizer_src).map_err(anyhow::Error::msg)?;
             let session = Session::builder()?
                 .with_optimization_level(GraphOptimizationLevel::Level3)?
                 .commit_from_file(&onnx_src)?;
-            
+
             return Ok(Self::Onnx {
                 session: Arc::new(Mutex::new(session)),
                 tokenizer,
                 device: Device::Cpu,
             });
         }
-        
+
         // GGUF check
         let gguf_name = "foundation-sec-8b.gguf";
         if let Some(gguf_path) = resolve_gguf_path(gguf_name) {
@@ -1313,7 +1484,7 @@ impl FoundationSecAnalyzer {
                 }
             }
         }
-        
+
         // Candle fallback
         match SecurityJudge::new(model_dir) {
             Ok(judge) => Ok(Self::Candle(judge)),
@@ -1328,7 +1499,7 @@ impl FoundationSecAnalyzer {
             }
         }
     }
-    
+
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
         let compressed_summary = if let Some(tokenizer) = self.get_tokenizer() {
             let config = compression_prompt::CompressorConfig {
@@ -1358,9 +1529,7 @@ impl FoundationSecAnalyzer {
             _ => {
                 let analyzer = Arc::new(self.clone());
                 let p = prompt.clone();
-                tokio::task::spawn_blocking(move || {
-                    analyzer.judge_artifact_sync(&p)
-                }).await??
+                tokio::task::spawn_blocking(move || analyzer.judge_artifact_sync(&p)).await??
             }
         };
 
@@ -1377,7 +1546,10 @@ impl FoundationSecAnalyzer {
                 ..Default::default()
             };
             let compressor = compression_prompt::Compressor::new(config);
-            compressor.compress(query, tokenizer).map(|res| res.compressed_text).unwrap_or_else(|_| query.to_string())
+            compressor
+                .compress(query, tokenizer)
+                .map(|res| res.compressed_text)
+                .unwrap_or_else(|_| query.to_string())
         } else {
             query.to_string()
         };
@@ -1387,9 +1559,7 @@ impl FoundationSecAnalyzer {
             _ => {
                 let analyzer = Arc::new(self.clone());
                 let q = compressed_query;
-                tokio::task::spawn_blocking(move || {
-                    analyzer.judge_artifact_sync(&q)
-                }).await?
+                tokio::task::spawn_blocking(move || analyzer.judge_artifact_sync(&q)).await?
             }
         }
     }
@@ -1404,7 +1574,9 @@ impl FoundationSecAnalyzer {
                 self.generate_text_sync(&prompt, 128)
             }
             Self::Candle(judge) => judge.judge_artifact(query),
-            Self::Ollama { model, endpoint, .. } => {
+            Self::Ollama {
+                model, endpoint, ..
+            } => {
                 let ai = osoosi_types::config::load_ai_config();
                 let payload = serde_json::json!({
                     "model": model,
@@ -1431,7 +1603,12 @@ impl FoundationSecAnalyzer {
     }
 
     async fn judge_artifact_ollama(&self, query: &str) -> Result<String> {
-        if let Self::Ollama { client, model, endpoint } = self {
+        if let Self::Ollama {
+            client,
+            model,
+            endpoint,
+        } = self
+        {
             let payload = serde_json::json!({
                 "model": model,
                 "prompt": query,
@@ -1439,8 +1616,9 @@ impl FoundationSecAnalyzer {
             });
             let ai = osoosi_types::config::load_ai_config();
             let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
-            
-            let res = client.post(endpoint)
+
+            let res = client
+                .post(endpoint)
                 .json(&payload)
                 .timeout(timeout)
                 .send()
@@ -1454,28 +1632,41 @@ impl FoundationSecAnalyzer {
 
     pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         match self {
-            Self::Onnx { session, tokenizer, .. } => {
-                let mut tokens_vec = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?.get_ids().to_vec();
+            Self::Onnx {
+                session, tokenizer, ..
+            } => {
+                let mut tokens_vec = tokenizer
+                    .encode(prompt, true)
+                    .map_err(anyhow::Error::msg)?
+                    .get_ids()
+                    .to_vec();
                 let mut result_text = String::new();
 
                 for _ in 0..max_tokens {
                     let mut session_guard = session.lock().unwrap_or_else(|e| e.into_inner());
-                    let input_val = ort::value::Value::from_array(([1, tokens_vec.len()], tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>()))?;
+                    let input_val = ort::value::Value::from_array((
+                        [1, tokens_vec.len()],
+                        tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>(),
+                    ))?;
                     let outputs = session_guard.run(ort::inputs![input_val])?;
                     let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
                     let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
                     let view = ndarray::ArrayView::from_shape(dims, data)?;
-                    
+
                     let last_token_logits = view.slice(ndarray::s![0, -1, ..]);
                     let next_token = last_token_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
 
                     tokens_vec.push(next_token);
-                    let decoded = tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+                    let decoded = tokenizer
+                        .decode(&[next_token], true)
+                        .map_err(anyhow::Error::msg)?;
                     if decoded.is_empty() || next_token == 0 {
                         break;
                     }
@@ -1484,7 +1675,11 @@ impl FoundationSecAnalyzer {
                 Ok(result_text)
             }
             Self::Candle(judge) => judge.judge_artifact(prompt),
-            Self::NativeGGUF { model, tokenizer, device } => {
+            Self::NativeGGUF {
+                model,
+                tokenizer,
+                device,
+            } => {
                 let ai = osoosi_types::config::load_ai_config();
                 let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
                 let start = std::time::Instant::now();
@@ -1496,7 +1691,9 @@ impl FoundationSecAnalyzer {
                 let mut result_text = String::new();
 
                 let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
-                let logits = model_guard.forward(&input, 0).map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
+                let logits = model_guard
+                    .forward(&input, 0)
+                    .map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
                 let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
                 let next_token = logits
                     .to_vec1::<f32>()
@@ -1518,21 +1715,27 @@ impl FoundationSecAnalyzer {
                     if last == eos_token || last == 0 {
                         break;
                     }
-                    let decoded = tokenizer.decode(&[last], true).map_err(anyhow::Error::msg)?;
+                    let decoded = tokenizer
+                        .decode(&[last], true)
+                        .map_err(anyhow::Error::msg)?;
                     if decoded.is_empty() {
                         break;
                     }
                     result_text.push_str(&decoded);
 
                     let input = Tensor::new(&[last], device)?.unsqueeze(0)?;
-                    let logits = model_guard.forward(&input, all_tokens.len() - 1).map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let logits = model_guard
+                        .forward(&input, all_tokens.len() - 1)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
                     let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
                     let next = logits
                         .to_vec1::<f32>()
                         .map_err(|e| anyhow::anyhow!("{}", e))?
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                        .max_by(|(_, a), (_, b)| {
+                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
                     all_tokens.push(next);

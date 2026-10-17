@@ -124,7 +124,7 @@ pub fn is_agent_binary(process_name: &str) -> bool {
         .and_then(|f| f.to_str())
         .unwrap_or(&lower);
 
-    AGENT_BINARIES.iter().any(|&agent| basename == agent)
+    AGENT_BINARIES.contains(&basename)
 }
 
 /// Verify that a scan result correctly excludes agent binaries.

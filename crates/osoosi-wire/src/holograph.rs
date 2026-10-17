@@ -74,7 +74,10 @@ impl HolographEngine {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        guard.values().flat_map(|shards| shards.iter().cloned()).collect()
+        guard
+            .values()
+            .flat_map(|shards| shards.iter().cloned())
+            .collect()
     }
 
     /// Return count of all active shards managed locally.

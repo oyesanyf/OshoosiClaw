@@ -254,7 +254,9 @@ fn detect_tpm_internal() -> TpmStatus {
     {
         // Windows: check via WMI (Native)
         if let Ok(com_lib) = COMLibrary::new() {
-            if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib) {
+            if let Ok(wmi_con) =
+                WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib)
+            {
                 let query = "SELECT SpecVersion, ManufacturerIdTxt FROM Win32_Tpm";
                 let results: Vec<Win32Tpm> = wmi_con.raw_query(query).unwrap_or_default();
                 if let Some(res) = results.first() {
@@ -386,7 +388,7 @@ pub fn tpm_attest_audit_entry(event_type: &str, data_hash: &str) -> Option<Strin
 
     #[cfg(target_os = "windows")]
     {
-        // Rustify: powershell.exe dependency removed. 
+        // Rustify: powershell.exe dependency removed.
         // Direct WMI method calls for TPM.Attest require advanced COM bindings.
         // Falling back to software attestation for now to maintain agent integrity without shell spawns.
     }
@@ -584,7 +586,8 @@ fn detect_dpu_internal() -> DpuStatus {
         if let Ok(com_lib) = COMLibrary::new() {
             let query = "SELECT InterfaceDescription FROM MSFT_NetAdapter WHERE InterfaceDescription LIKE '%Mellanox%' OR InterfaceDescription LIKE '%BlueField%'";
             // MSFT_NetAdapter is in Root/StandardCimv2
-            if let Ok(wmi_con) = WMIConnection::with_namespace_path("Root\\StandardCimv2", com_lib) {
+            if let Ok(wmi_con) = WMIConnection::with_namespace_path("Root\\StandardCimv2", com_lib)
+            {
                 let results: Vec<MsftNetAdapter> = wmi_con.raw_query(query).unwrap_or_default();
                 for res in results {
                     if let Some(desc) = &res.interface_description {
@@ -736,7 +739,11 @@ pub fn assess_security() -> HardenedSecurityStatus {
             ),
         )
     } else if tpm.available {
-        let dev_suffix = tpm.device_id.as_deref().map(|d| format!(" ({})", d)).unwrap_or_default();
+        let dev_suffix = tpm
+            .device_id
+            .as_deref()
+            .map(|d| format!(" ({})", d))
+            .unwrap_or_default();
         (
             "open".to_string(),
             20u8,
@@ -752,7 +759,8 @@ pub fn assess_security() -> HardenedSecurityStatus {
             "mitigated".to_string(),
             20u8,
             "Software Cryptographic Anchor (+20%)".to_string(),
-            "Software-backed cryptographic audit attestation active (Software Mitigated).".to_string(),
+            "Software-backed cryptographic audit attestation active (Software Mitigated)."
+                .to_string(),
         )
     } else {
         (
@@ -953,19 +961,31 @@ mod tests {
         // Remediate TPM
         let tpm_res = auto_remediate_security_gap("tpm");
         assert!(TPM_REMEDIATED.load(Ordering::SeqCst));
-        let tpm_item = tpm_res.structured_recommendations.iter().find(|i| i.id == "tpm").unwrap();
+        let tpm_item = tpm_res
+            .structured_recommendations
+            .iter()
+            .find(|i| i.id == "tpm")
+            .unwrap();
         assert_eq!(tpm_item.status, "remediated");
 
         // Remediate TEE / Memory
         let tee_res = auto_remediate_security_gap("tee");
         assert!(MEMORY_SHIELD_REMEDIATED.load(Ordering::SeqCst));
-        let tee_item = tee_res.structured_recommendations.iter().find(|i| i.id == "tee").unwrap();
+        let tee_item = tee_res
+            .structured_recommendations
+            .iter()
+            .find(|i| i.id == "tee")
+            .unwrap();
         assert!(tee_item.status == "remediated" || tee_item.status == "mitigated");
 
         // Remediate DPU / Egress
         let dpu_res = auto_remediate_security_gap("dpu");
         assert!(SOFTWARE_EGRESS_REMEDIATED.load(Ordering::SeqCst));
-        let dpu_item = dpu_res.structured_recommendations.iter().find(|i| i.id == "dpu").unwrap();
+        let dpu_item = dpu_res
+            .structured_recommendations
+            .iter()
+            .find(|i| i.id == "dpu")
+            .unwrap();
         assert!(dpu_item.status == "remediated" || dpu_item.status == "mitigated");
 
         // Calibrated score: 100% when all layers remediated

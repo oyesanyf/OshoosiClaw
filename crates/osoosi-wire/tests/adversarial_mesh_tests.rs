@@ -4,9 +4,8 @@ use libp2p::PeerId;
 use osoosi_memory::MemoryStore;
 use osoosi_trust::TrustManager;
 use osoosi_types::{
-    AttestationChallenge, AttestationError, GoldenBaseline,
-    PeerAnnounce, PeerRulesConfig, PendingJoinRequest, PolicyConsensusMessage,
-    ThreatSignature,
+    AttestationChallenge, AttestationError, GoldenBaseline, PeerAnnounce, PeerRulesConfig,
+    PendingJoinRequest, PolicyConsensusMessage, ThreatSignature,
 };
 use osoosi_wire::{JoinGate, MeshAttestationMessage, MeshCommand, TarpitSignal};
 use std::sync::Arc;
@@ -23,7 +22,12 @@ impl osoosi_types::SecuredExecutor for DummyExecutor {
         })
     }
 
-    async fn download(&self, _url: &str, _dest: &std::path::Path, _resume: bool) -> anyhow::Result<()> {
+    async fn download(
+        &self,
+        _url: &str,
+        _dest: &std::path::Path,
+        _resume: bool,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -40,8 +44,8 @@ fn setup_test_gate(
     let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
     let (tx, rx) = tokio::sync::mpsc::channel(64);
     let tm = Arc::new(TrustManager::new(Arc::new(DummyExecutor)).unwrap());
-    let gate = JoinGate::new(memory.clone(), tx, 0.8, rules, master_pk)
-        .with_trust_manager(tm.clone());
+    let gate =
+        JoinGate::new(memory.clone(), tx, 0.8, rules, master_pk).with_trust_manager(tm.clone());
     (gate, rx, memory, tm)
 }
 
@@ -85,7 +89,10 @@ fn test_attack_peer_announce_replay_nonce_triggers_quarantine() {
     );
 
     let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
-    assert_eq!(rep.score, 0.0, "Quarantined peer reputation must drop to 0.0");
+    assert_eq!(
+        rep.score, 0.0,
+        "Quarantined peer reputation must drop to 0.0"
+    );
 
     let mut saw_quarantine_cmd = false;
     let mut saw_tripwire_cmd = false;
@@ -96,8 +103,14 @@ fn test_attack_peer_announce_replay_nonce_triggers_quarantine() {
             _ => (),
         }
     }
-    assert!(saw_quarantine_cmd, "MeshCommand::QuarantinePeer must be dispatched");
-    assert!(saw_tripwire_cmd, "MeshCommand::BroadcastTripwire must be dispatched");
+    assert!(
+        saw_quarantine_cmd,
+        "MeshCommand::QuarantinePeer must be dispatched"
+    );
+    assert!(
+        saw_tripwire_cmd,
+        "MeshCommand::BroadcastTripwire must be dispatched"
+    );
 }
 
 #[test]
@@ -122,7 +135,9 @@ fn test_attack_peer_announce_replay_nonce_from_different_node_id() {
     };
 
     // Victim announces
-    assert!(gate.on_peer_announce_received(&announce_victim, &PeerRulesConfig::default()).is_ok());
+    assert!(gate
+        .on_peer_announce_received(&announce_victim, &PeerRulesConfig::default())
+        .is_ok());
 
     // Rogue attacker node steals the attestation packet and re-announces under its own ID
     let announce_attacker = PeerAnnounce {
@@ -136,7 +151,9 @@ fn test_attack_peer_announce_replay_nonce_from_different_node_id() {
         attestation: Some(attestation),
     };
 
-    assert!(gate.on_peer_announce_received(&announce_attacker, &PeerRulesConfig::default()).is_ok());
+    assert!(gate
+        .on_peer_announce_received(&announce_attacker, &PeerRulesConfig::default())
+        .is_ok());
 
     // Attacker node must be quarantined for replaying seen nonce
     assert!(
@@ -167,7 +184,9 @@ fn test_attack_peer_announce_expired_timestamp_triggers_quarantine() {
         attestation: Some(attestation),
     };
 
-    assert!(gate.on_peer_announce_received(&announce, &PeerRulesConfig::default()).is_ok());
+    assert!(gate
+        .on_peer_announce_received(&announce, &PeerRulesConfig::default())
+        .is_ok());
 
     assert!(
         gate.is_quarantined(&peer_id).unwrap(),
@@ -199,7 +218,9 @@ fn test_attack_peer_announce_future_timestamp_triggers_quarantine() {
         attestation: Some(attestation),
     };
 
-    assert!(gate.on_peer_announce_received(&announce, &PeerRulesConfig::default()).is_ok());
+    assert!(gate
+        .on_peer_announce_received(&announce, &PeerRulesConfig::default())
+        .is_ok());
 
     assert!(
         gate.is_quarantined(&peer_id).unwrap(),
@@ -274,7 +295,8 @@ fn test_attack_discovery_beacon_flooding_sybil_defense() {
 
     // Attacker fires 30 rapid mDNS discovery beacons
     for _ in 0..30 {
-        let _ = gate.on_peer_discovered(attacker_pid, Some("/ip4/192.168.1.50/tcp/4001".to_string()));
+        let _ =
+            gate.on_peer_discovered(attacker_pid, Some("/ip4/192.168.1.50/tcp/4001".to_string()));
     }
 
     // Only 1 entry should exist in pending joins
@@ -297,7 +319,8 @@ async fn test_attack_quarantined_peer_cannot_bypass_via_mdns_or_allow() {
     let rogue_id_str = rogue_pid.to_string();
 
     // Peer gets quarantined
-    gate.quarantine_peer(&rogue_id_str, "Adversarial behavior detected").unwrap();
+    gate.quarantine_peer(&rogue_id_str, "Adversarial behavior detected")
+        .unwrap();
     assert!(gate.is_quarantined(&rogue_id_str).unwrap());
 
     // 1. Attacker attempts to rejoin via mDNS discovery beacon
@@ -310,10 +333,7 @@ async fn test_attack_quarantined_peer_cannot_bypass_via_mdns_or_allow() {
 
     // 2. Attacker attempts direct allow() invocation
     let allow_res = gate.allow(&rogue_id_str).await;
-    assert!(
-        allow_res.is_err(),
-        "allow() must reject quarantined peers"
-    );
+    assert!(allow_res.is_err(), "allow() must reject quarantined peers");
     assert!(
         allow_res.unwrap_err().to_string().contains("quarantined"),
         "Error message must state peer is quarantined"
@@ -392,10 +412,8 @@ fn test_attack_master_node_membership_proof_forgery() {
     let master_sk = SigningKey::generate(&mut csprng);
     let master_pk_hex = hex::encode(master_sk.verifying_key().to_bytes());
 
-    let (gate, _rx, memory, _tm) = setup_test_gate(
-        PeerRulesConfig::default(),
-        Some(master_pk_hex.clone()),
-    );
+    let (gate, _rx, memory, _tm) =
+        setup_test_gate(PeerRulesConfig::default(), Some(master_pk_hex.clone()));
 
     let honest_pid = PeerId::random().to_string();
     let forger_pid = PeerId::random().to_string();
@@ -410,7 +428,11 @@ fn test_attack_master_node_membership_proof_forgery() {
         discovered_at: Utc::now(),
     };
     memory.add_pending_join(&req).unwrap();
-    assert!(memory.get_pending_joins().unwrap().iter().any(|p| p.peer_id == forger_pid));
+    assert!(memory
+        .get_pending_joins()
+        .unwrap()
+        .iter()
+        .any(|p| p.peer_id == forger_pid));
 
     // 1. Forger presents invalid signature
     let announce_forged = PeerAnnounce {
@@ -425,7 +447,11 @@ fn test_attack_master_node_membership_proof_forgery() {
     };
     let _ = gate.on_peer_announce_received(&announce_forged, gate.peer_rules());
     assert!(
-        !memory.get_pending_joins().unwrap().iter().any(|p| p.peer_id == forger_pid),
+        !memory
+            .get_pending_joins()
+            .unwrap()
+            .iter()
+            .any(|p| p.peer_id == forger_pid),
         "Peer with forged membership proof must be removed from pending joins"
     );
 
@@ -443,7 +469,11 @@ fn test_attack_master_node_membership_proof_forgery() {
     };
     let _ = gate.on_peer_announce_received(&announce_none, gate.peer_rules());
     assert!(
-        !memory.get_pending_joins().unwrap().iter().any(|p| p.peer_id == forger_pid),
+        !memory
+            .get_pending_joins()
+            .unwrap()
+            .iter()
+            .any(|p| p.peer_id == forger_pid),
         "Peer without membership proof must be removed from pending joins"
     );
 
@@ -462,7 +492,10 @@ fn test_attack_master_node_membership_proof_forgery() {
     let res = gate.on_peer_announce_received(&announce_honest, gate.peer_rules());
     assert!(res.is_ok());
     let status = memory.get_peer_status(&honest_pid).unwrap();
-    assert!(status.is_some(), "Honest peer with valid membership proof must be accepted");
+    assert!(
+        status.is_some(),
+        "Honest peer with valid membership proof must be accepted"
+    );
 }
 
 #[test]
@@ -481,14 +514,16 @@ fn test_attack_behavioral_score_penalization_auto_quarantine() {
     memory.upsert_reputation(&rep).unwrap();
 
     // Action 1: Suspicious port scan / beacon spam (penalize 0.3)
-    gate.penalize_peer(&peer_id, "Port scan detected", 0.3).unwrap();
+    gate.penalize_peer(&peer_id, "Port scan detected", 0.3)
+        .unwrap();
     let rep1 = memory.get_reputation(&peer_id).unwrap().unwrap();
     assert!((rep1.score - 0.5).abs() < 1e-4);
     assert!(!gate.is_quarantined(&peer_id).unwrap());
 
     // Action 2: Sybil flooding / malformed packet (penalize 0.35)
     // 0.5 - 0.35 = 0.15 <= 0.20 (QUARANTINE_THRESHOLD)
-    gate.penalize_peer(&peer_id, "Malformed consensus vote flood", 0.35).unwrap();
+    gate.penalize_peer(&peer_id, "Malformed consensus vote flood", 0.35)
+        .unwrap();
 
     // Must be automatically quarantined!
     assert!(
@@ -517,7 +552,8 @@ fn test_attack_false_positive_remediation_lifecycle() {
     let peer_id = PeerId::random().to_string();
 
     // Peer gets quarantined
-    gate.quarantine_peer(&peer_id, "Suspicious activity flagged").unwrap();
+    gate.quarantine_peer(&peer_id, "Suspicious activity flagged")
+        .unwrap();
     assert!(gate.is_quarantined(&peer_id).unwrap());
 
     // Drain quarantine command
@@ -529,7 +565,10 @@ fn test_attack_false_positive_remediation_lifecycle() {
     // Peer must be released from quarantine
     assert!(!gate.is_quarantined(&peer_id).unwrap());
     let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
-    assert!(rep.score >= 0.35, "False positive peer must have score restored");
+    assert!(
+        rep.score >= 0.35,
+        "False positive peer must have score restored"
+    );
     assert_eq!(rep.alerts_verified, 1);
 
     let mut saw_release = false;
@@ -577,7 +616,10 @@ fn test_attack_poisoned_threat_signature_tampered_payload() {
 #[test]
 fn test_attack_poisoned_threat_signature_unsigned_rejected() {
     let sig = ThreatSignature::new("node_attacker".to_string());
-    assert!(!sig.verify(), "Unsigned threat signature must fail verify()");
+    assert!(
+        !sig.verify(),
+        "Unsigned threat signature must fail verify()"
+    );
 }
 
 #[test]
@@ -590,18 +632,26 @@ fn test_threat_signature_signed_and_verified_across_mesh() {
     sig.mitre_tactic = Some("Discovery".to_string());
     sig.confidence = 0.92;
     sig.recommended_action = osoosi_types::ResponseAction::Isolate;
-    sig.hash_blake3 = Some("d9b897931b6df3de856d6d135414f3b8b60381615cb38d61245b0a36bc4c0ce3".to_string());
+    sig.hash_blake3 =
+        Some("d9b897931b6df3de856d6d135414f3b8b60381615cb38d61245b0a36bc4c0ce3".to_string());
 
     // 1. Initially unsigned must fail verification
-    assert!(!sig.verify(), "Unsigned threat signature must fail verify()");
+    assert!(
+        !sig.verify(),
+        "Unsigned threat signature must fail verify()"
+    );
 
     // 2. Cryptographically sign with TrustManager
-    tm.sign_threat(&mut sig).expect("Cryptographic signing must succeed");
+    tm.sign_threat(&mut sig)
+        .expect("Cryptographic signing must succeed");
     assert!(sig.signature.is_some(), "Signature bytes must be present");
     assert!(sig.public_key.is_some(), "Public key bytes must be present");
 
     // 3. Receiving peer validates threat signature
-    assert!(sig.verify(), "Cryptographically signed threat signature must pass verify()");
+    assert!(
+        sig.verify(),
+        "Cryptographically signed threat signature must pass verify()"
+    );
 
     // 4. Ensure GossipFeedItem can be constructed and preserves fields
     let feed_item = osoosi_types::GossipFeedItem::from_threat(&sig, "MESH_THREAT_RECEIVED");
@@ -618,7 +668,10 @@ fn test_attack_malformed_gossip_packets_deserialization_safety() {
     // 1. Truncated / corrupt JSON on threat signature topic
     let corrupt_bytes = b"{\"id\":\"partial_json_without_closing_bracket";
     let res1 = serde_json::from_slice::<ThreatSignature>(corrupt_bytes);
-    assert!(res1.is_err(), "Corrupt JSON must fail deserialization cleanly");
+    assert!(
+        res1.is_err(),
+        "Corrupt JSON must fail deserialization cleanly"
+    );
 
     // 2. Type mismatch payload on consensus topic
     let bad_type_bytes = b"{\"Vote\":{\"policy_id\":12345,\"voter_id\":true}}";
@@ -650,7 +703,10 @@ fn test_attack_golden_baseline_binary_hash_tampering_triggers_immediate_quaranti
     let response = peer_tm.respond_to_attestation(challenge).unwrap();
 
     let res = gate.handle_attestation_response(&peer_id, &response);
-    assert!(res.is_err(), "Attestation must fail on binary hash mismatch");
+    assert!(
+        res.is_err(),
+        "Attestation must fail on binary hash mismatch"
+    );
 
     assert!(gate.is_quarantined(&peer_id).unwrap());
     let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
@@ -708,7 +764,10 @@ fn test_attack_concurrent_multi_threaded_announce_replay_racing() {
 
     for h in handles {
         let res = h.join().unwrap();
-        assert!(res.is_ok(), "Concurrent announce processing should not panic");
+        assert!(
+            res.is_ok(),
+            "Concurrent announce processing should not panic"
+        );
     }
 
     // Because identical nonce was concurrently repeated 16 times, the peer MUST be quarantined!
@@ -717,7 +776,10 @@ fn test_attack_concurrent_multi_threaded_announce_replay_racing() {
         "Concurrent replay flood must result in peer quarantine"
     );
     let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
-    assert_eq!(rep.score, 0.0, "Score must drop to 0.0 upon replay quarantine");
+    assert_eq!(
+        rep.score, 0.0,
+        "Score must drop to 0.0 upon replay quarantine"
+    );
 
     let mut saw_quarantine = false;
     while let Ok(cmd) = rx.try_recv() {
@@ -734,7 +796,8 @@ fn test_attack_quarantined_peer_cannot_reannounce() {
     let peer_id = PeerId::random().to_string();
 
     // Quarantine the peer
-    gate.quarantine_peer(&peer_id, "Prior malicious activity").unwrap();
+    gate.quarantine_peer(&peer_id, "Prior malicious activity")
+        .unwrap();
     assert!(gate.is_quarantined(&peer_id).unwrap());
 
     // Peer attempts to re-announce with fresh attestation
@@ -805,7 +868,8 @@ fn test_attack_quarantined_peer_auto_approve_backlog_skipped() {
     memory.add_pending_join(&req).unwrap();
 
     // Quarantine peer
-    gate.quarantine_peer(&peer_id, "Tripwire alert triggered").unwrap();
+    gate.quarantine_peer(&peer_id, "Tripwire alert triggered")
+        .unwrap();
     assert!(gate.is_quarantined(&peer_id).unwrap());
 
     // Drain quarantine commands
@@ -822,7 +886,10 @@ fn test_attack_quarantined_peer_auto_approve_backlog_skipped() {
             saw_approval = true;
         }
     }
-    assert!(!saw_approval, "Quarantined peer must never be auto-approved");
+    assert!(
+        !saw_approval,
+        "Quarantined peer must never be auto-approved"
+    );
 }
 
 #[test]
@@ -846,7 +913,10 @@ fn test_attack_clock_skew_announce_boundary() {
     };
     let res1 = gate.on_peer_announce_received(&ann_valid, &PeerRulesConfig::default());
     assert!(res1.is_ok());
-    assert!(!gate.is_quarantined(&peer_1).unwrap(), "Age 295s within 300s TTL must not quarantine");
+    assert!(
+        !gate.is_quarantined(&peer_1).unwrap(),
+        "Age 295s within 300s TTL must not quarantine"
+    );
 
     // 2. Announce timestamp age = 305s (exceeds 300s TTL) -> Quarantined
     let peer_2 = PeerId::random().to_string();
@@ -864,7 +934,10 @@ fn test_attack_clock_skew_announce_boundary() {
     };
     let res2 = gate.on_peer_announce_received(&ann_expired, &PeerRulesConfig::default());
     assert!(res2.is_ok());
-    assert!(gate.is_quarantined(&peer_2).unwrap(), "Age 305s past 300s TTL must trigger quarantine");
+    assert!(
+        gate.is_quarantined(&peer_2).unwrap(),
+        "Age 305s past 300s TTL must trigger quarantine"
+    );
 }
 
 #[test]
@@ -885,8 +958,14 @@ fn test_attack_gossipsub_message_deduplication_hash_id() {
     let id2 = compute_id(&msg2_data);
     let id3 = compute_id(&msg3_data);
 
-    assert_eq!(id1, id2, "Identical gossip payloads must produce identical message IDs for deduplication");
-    assert_ne!(id1, id3, "Different gossip payloads must produce distinct message IDs");
+    assert_eq!(
+        id1, id2,
+        "Identical gossip payloads must produce identical message IDs for deduplication"
+    );
+    assert_ne!(
+        id1, id3,
+        "Different gossip payloads must produce distinct message IDs"
+    );
 }
 
 #[test]
@@ -903,30 +982,42 @@ fn test_audit_proof_deduplication_and_suppression() {
 
     // 2. Redundant broadcast with same Merkle root must be skipped
     let skip_2 = last_audit_proof.as_ref() == Some(&proof_alpha);
-    assert!(skip_2, "Consecutive identical audit proof broadcast must be skipped to avoid gossip spam");
+    assert!(
+        skip_2,
+        "Consecutive identical audit proof broadcast must be skipped to avoid gossip spam"
+    );
 
     // 3. New Merkle root after new audit leaf must not be skipped
     let skip_3 = last_audit_proof.as_ref() == Some(&proof_beta);
-    assert!(!skip_3, "Updated audit proof with new Merkle root must proceed to gossip publish");
+    assert!(
+        !skip_3,
+        "Updated audit proof with new Merkle root must proceed to gossip publish"
+    );
     last_audit_proof = Some(proof_beta.clone());
 
     // 4. Repeated broadcast with new Merkle root must be skipped
     let skip_4 = last_audit_proof.as_ref() == Some(&proof_beta);
-    assert!(skip_4, "Consecutive broadcast of updated Merkle root must be skipped");
+    assert!(
+        skip_4,
+        "Consecutive broadcast of updated Merkle root must be skipped"
+    );
 }
 
 #[tokio::test]
 async fn test_mesh_node_initializes_empty_audit_proof() {
     let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
     let node = osoosi_wire::MeshNode::new(memory).await.unwrap();
-    assert_eq!(node.last_audit_proof, None, "MeshNode must initialize last_audit_proof to None");
+    assert_eq!(
+        node.last_audit_proof, None,
+        "MeshNode must initialize last_audit_proof to None"
+    );
 }
 
 #[test]
 fn test_gossipsub_duplicate_rejection_behavior() {
-    use std::time::Duration;
     use libp2p::gossipsub;
     use libp2p::identity::Keypair;
+    use std::time::Duration;
 
     let key = Keypair::generate_ed25519();
     let message_id_fn = |message: &gossipsub::Message| {
@@ -942,10 +1033,8 @@ fn test_gossipsub_duplicate_rejection_behavior() {
         .build()
         .unwrap();
 
-    let mut gs: gossipsub::Behaviour = gossipsub::Behaviour::new(
-        gossipsub::MessageAuthenticity::Signed(key),
-        config,
-    ).unwrap();
+    let mut gs: gossipsub::Behaviour =
+        gossipsub::Behaviour::new(gossipsub::MessageAuthenticity::Signed(key), config).unwrap();
 
     let topic = gossipsub::IdentTopic::new("test-gossip-duplicate");
     gs.subscribe(&topic).unwrap();
@@ -955,7 +1044,10 @@ fn test_gossipsub_duplicate_rejection_behavior() {
     // First publish without peers will return NoPeersSubscribedToTopic (since no peers connected)
     let res1 = gs.publish(topic.clone(), payload.clone());
     // In strict mode without peers, first publish returns NoPeersSubscribedToTopic
-    assert!(matches!(res1, Err(gossipsub::PublishError::NoPeersSubscribedToTopic)));
+    assert!(matches!(
+        res1,
+        Err(gossipsub::PublishError::NoPeersSubscribedToTopic)
+    ));
 
     // When a duplicate message is known in the duplicate cache (or published again)
     // duplicate detection is guaranteed by the message ID function
@@ -967,7 +1059,8 @@ fn test_gossipsub_duplicate_rejection_behavior() {
     };
     let id1 = (message_id_fn)(&msg);
     let id2 = (message_id_fn)(&msg);
-    assert_eq!(id1, id2, "Message IDs must be deterministic for identical payloads");
+    assert_eq!(
+        id1, id2,
+        "Message IDs must be deterministic for identical payloads"
+    );
 }
-
-

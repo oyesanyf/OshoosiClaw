@@ -6,8 +6,8 @@ use crate::feed::OtxIndicators;
 use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::semantic::SemanticEngine;
 use dashmap::DashMap;
-use osoosi_types::{HostSecurityEvent, ThreatSignature};
 use osoosi_memory::MemoryStore;
+use osoosi_types::{HostSecurityEvent, ThreatSignature};
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -29,8 +29,12 @@ pub trait ThreatVoter: Send + Sync {
     fn name(&self) -> String;
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult>;
     /// Returns true if this voter is resource-intensive (AI/Decompile).
-    fn is_heavy(&self) -> bool { false }
-    fn stats(&self) -> serde_json::Value { serde_json::json!({}) }
+    fn is_heavy(&self) -> bool {
+        false
+    }
+    fn stats(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -63,7 +67,10 @@ fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
     if let Some(p) = event_image_path(event) {
         if let Some(name) = std::path::Path::new(p).file_name().and_then(|n| n.to_str()) {
             let trimmed = name.trim();
-            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unknown") && !trimmed.eq_ignore_ascii_case("unknown process") {
+            if !trimmed.is_empty()
+                && !trimmed.eq_ignore_ascii_case("unknown")
+                && !trimmed.eq_ignore_ascii_case("unknown process")
+            {
                 return Some(trimmed.to_string());
             }
         }
@@ -74,10 +81,10 @@ fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
         if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
             let trimmed = cmd.trim();
             if !trimmed.is_empty() {
-                let first_tok = if trimmed.starts_with('"') {
-                    trimmed[1..].split('"').next().unwrap_or(trimmed)
-                } else if trimmed.starts_with('\'') {
-                    trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                let first_tok = if let Some(stripped) = trimmed.strip_prefix('"') {
+                    stripped.split('"').next().unwrap_or(trimmed)
+                } else if let Some(stripped) = trimmed.strip_prefix('\'') {
+                    stripped.split('\'').next().unwrap_or(trimmed)
                 } else {
                     trimmed.split_whitespace().next().unwrap_or(trimmed)
                 };
@@ -86,7 +93,10 @@ fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
                     .and_then(|n| n.to_str())
                     .unwrap_or(first_tok)
                     .trim();
-                if !fname.is_empty() && !fname.eq_ignore_ascii_case("unknown") && !fname.eq_ignore_ascii_case("unknown process") {
+                if !fname.is_empty()
+                    && !fname.eq_ignore_ascii_case("unknown")
+                    && !fname.eq_ignore_ascii_case("unknown process")
+                {
                     return Some(fname.to_string());
                 }
             }
@@ -94,11 +104,24 @@ fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
     }
 
     // Fallback 2: TargetFilename / TargetObject / DestinationIp
-    for field in &["TargetFilename", "TargetFilename_name", "TargetObject", "DestinationIp", "DestinationHostname", "QueryName"] {
+    for field in &[
+        "TargetFilename",
+        "TargetFilename_name",
+        "TargetObject",
+        "DestinationIp",
+        "DestinationHostname",
+        "QueryName",
+    ] {
         if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
             let trimmed = val.trim();
-            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unknown") && !trimmed.eq_ignore_ascii_case("unknown process") {
-                if let Some(fname) = std::path::Path::new(trimmed).file_name().and_then(|n| n.to_str()) {
+            if !trimmed.is_empty()
+                && !trimmed.eq_ignore_ascii_case("unknown")
+                && !trimmed.eq_ignore_ascii_case("unknown process")
+            {
+                if let Some(fname) = std::path::Path::new(trimmed)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                {
                     if !fname.trim().is_empty() {
                         return Some(fname.trim().to_string());
                     }
@@ -155,18 +178,30 @@ fn event_stem(event: &HostSecurityEvent) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_trusted_operational_tool(event: &HostSecurityEvent, config: &osoosi_types::PolicyConfig) -> bool {
-    let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+fn is_trusted_operational_tool(
+    event: &HostSecurityEvent,
+    config: &osoosi_types::PolicyConfig,
+) -> bool {
+    let image_path = event
+        .data
+        .get("Image")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if image_path.is_empty() {
         return false;
     }
     let path_lc = image_path.to_lowercase();
-    
+
     // 1. Check dynamic whitelists from config
-    let is_trusted_path = config.trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
+    let is_trusted_path = config
+        .trusted_paths
+        .iter()
+        .any(|p| path_lc.contains(&p.to_lowercase()));
     let is_trusted_stem = config.trusted_stems.iter().any(|s| {
         let s_lc = s.to_lowercase();
-        path_lc.ends_with(&s_lc) || path_lc.contains(&format!("\\{}\\", s_lc)) || path_lc.ends_with(&format!("\\{}", s_lc))
+        path_lc.ends_with(&s_lc)
+            || path_lc.contains(&format!("\\{}\\", s_lc))
+            || path_lc.ends_with(&format!("\\{}", s_lc))
     });
 
     if is_trusted_path || is_trusted_stem {
@@ -178,16 +213,18 @@ fn is_trusted_operational_tool(event: &HostSecurityEvent, config: &osoosi_types:
         }
 
         // 3. Fallback to Sysmon's own signature check
-        let sig_status = event.data.get("SignatureStatus")
+        let sig_status = event
+            .data
+            .get("SignatureStatus")
             .or_else(|| event.data.get("Signature Status"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_lowercase();
-        
+
         if sig_status == "valid" || sig_status.contains("trusted") {
             return true;
         }
-        
+
         // 4. Last resort: If it's in a critical System32 path, we trust it to avoid OS breakage
         if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") {
             return true;
@@ -218,7 +255,9 @@ fn is_ide_or_developer_path(path: &str) -> bool {
 fn is_event_dev_or_signed(event: &HostSecurityEvent) -> bool {
     for key in ["Image", "TargetImage", "TargetFilename"] {
         if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
-            if is_ide_or_developer_path(p) || osoosi_types::is_trusted_signed_binary(std::path::Path::new(p)) {
+            if is_ide_or_developer_path(p)
+                || osoosi_types::is_trusted_signed_binary(std::path::Path::new(p))
+            {
                 return true;
             }
         }
@@ -250,9 +289,10 @@ fn classify_vote(
         "NVD-CVE-Lookup" => (EvidenceClass::ThreatIntel, 1.0, true), // High reliability, triggers strong action
         "BehavioralYara" => (EvidenceClass::Behavior, 0.88, true),
         "CredentialGuard-Memory" | "ProcessInjection-Memory" => (EvidenceClass::Memory, 0.96, true),
-        "YaraX-Signatures" | "YaraX-Memory" | "HollowsHunter-Memory" | "MemoryInspection-Native" => {
-            (EvidenceClass::Memory, 1.0, true)
-        }
+        "YaraX-Signatures"
+        | "YaraX-Memory"
+        | "HollowsHunter-Memory"
+        | "MemoryInspection-Native" => (EvidenceClass::Memory, 1.0, true),
         "SemanticIntent" | "LLM-Reasoning" | "BehavioralAI-Cortex" => {
             if is_dev_or_signed {
                 (EvidenceClass::Behavior, 0.35, false)
@@ -306,7 +346,11 @@ fn classify_vote(
     }
 }
 
-fn orchestrate_evidence(votes: &[EvidenceVote], event: &HostSecurityEvent, config: &osoosi_types::PolicyConfig) -> EvidenceDecision {
+fn orchestrate_evidence(
+    votes: &[EvidenceVote],
+    event: &HostSecurityEvent,
+    config: &osoosi_types::PolicyConfig,
+) -> EvidenceDecision {
     use osoosi_types::ResponseAction;
 
     let mut classes = std::collections::HashSet::new();
@@ -357,7 +401,11 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &HostSecurityEvent, confi
     if has_static && !has_behavior && !has_memory && !has_live_network && independent < 3 {
         confidence = confidence.min(0.68);
     }
-    if (trusted_operational_tool || is_dev_or_signed_target) && !has_live_network && !has_behavior && !has_memory {
+    if (trusted_operational_tool || is_dev_or_signed_target)
+        && !has_live_network
+        && !has_behavior
+        && !has_memory
+    {
         confidence = confidence.min(0.18);
     } else if (trusted_operational_tool || is_dev_or_signed_target) && !strong_action {
         confidence = confidence.min(0.40);
@@ -365,7 +413,9 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &HostSecurityEvent, confi
 
     // NVD-Negative Suppression: if the CVE lookup explicitly found NO CVEs, and we only have static/intel evidence,
     // lower the score to ensure we wait for behavioral evidence.
-    let nvd_negative = votes.iter().any(|v| v.result.reason.contains("No matching CVEs found") && v.result.weight < 0.0);
+    let nvd_negative = votes
+        .iter()
+        .any(|v| v.result.reason.contains("No matching CVEs found") && v.result.weight < 0.0);
     if nvd_negative && !has_behavior && !has_memory && !has_live_network {
         confidence = confidence.min(0.35);
     }
@@ -428,7 +478,9 @@ pub struct PolicyEngine {
     /// Shared threat feed fetcher
     pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
     /// Optional callback to broadcast discoveries to the mesh
-    pub intel_broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
+    pub intel_broadcaster: Arc<
+        tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>,
+    >,
     /// Local SQLite cache for NVD CVEs
     pub cve_cache: Option<Arc<tokio::sync::Mutex<crate::cve_cache::CveCache>>>,
     /// Optional resource controller to skip heavy tasks during load
@@ -458,7 +510,9 @@ impl PolicyEngine {
             intel_broadcaster: Arc::new(tokio::sync::RwLock::new(None)),
             cve_cache: {
                 let local_path = std::path::Path::new("database").join("nvd_cache.db");
-                let db_path = if local_path.parent().map(|p| p.exists()).unwrap_or(false) || std::fs::create_dir_all("database").is_ok() {
+                let db_path = if local_path.parent().map(|p| p.exists()).unwrap_or(false)
+                    || std::fs::create_dir_all("database").is_ok()
+                {
                     local_path
                 } else {
                     std::path::PathBuf::from("C:\\ProgramData\\OshoosiClaw\\nvd_cache.db")
@@ -469,7 +523,10 @@ impl PolicyEngine {
                 match crate::cve_cache::CveCache::new(&db_path) {
                     Ok(cache) => Some(Arc::new(tokio::sync::Mutex::new(cache))),
                     Err(e) => {
-                        warn!("Failed to initialize NVD SQLite cache at {:?}: {}", db_path, e);
+                        warn!(
+                            "Failed to initialize NVD SQLite cache at {:?}: {}",
+                            db_path, e
+                        );
                         None
                     }
                 }
@@ -482,7 +539,10 @@ impl PolicyEngine {
         Self::new(memory, config)
     }
 
-    pub async fn set_intel_broadcaster(&self, broadcaster: Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>) {
+    pub async fn set_intel_broadcaster(
+        &self,
+        broadcaster: Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>,
+    ) {
         let mut guard = self.intel_broadcaster.write().await;
         *guard = Some(broadcaster);
     }
@@ -514,9 +574,15 @@ impl PolicyEngine {
                         Ok(kevs) => {
                             let cache_guard = cache_ref.lock().await;
                             if let Err(e) = cache_guard.bulk_import(&kevs) {
-                                warn!("[PolicyEngine] Failed to import NVD CVEs into local cache: {}", e);
+                                warn!(
+                                    "[PolicyEngine] Failed to import NVD CVEs into local cache: {}",
+                                    e
+                                );
                             } else {
-                                info!("[PolicyEngine] NVD Local Cache updated with {} new records.", kevs.len());
+                                info!(
+                                    "[PolicyEngine] NVD Local Cache updated with {} new records.",
+                                    kevs.len()
+                                );
                             }
                         }
                         Err(e) => {
@@ -529,8 +595,6 @@ impl PolicyEngine {
             }
         });
     }
-
-
 
     pub fn otx_indicators_ref(&self) -> &Arc<RwLock<OtxIndicators>> {
         &self.otx_indicators
@@ -562,8 +626,6 @@ impl PolicyEngine {
         let otx = self.otx_indicators.read().ok()?;
         crate::otx_connection::otx_match_destination_ip(&otx, &self.memory, ip)
     }
-
-
 
     /// Register a temporary learned defense (Zero-Day defense from mesh gossip).
     pub fn register_temporary_rule(&self, cve_id: &str, rule: &str, _severity: f32) {
@@ -634,7 +696,12 @@ impl PolicyEngine {
     }
 
     /// Calibrate specific voter weights based on consensus feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]) and persist to SQLite.
-    pub fn update_specific_voter_weights(&self, voter_names: &[String], is_true_positive: bool, delta: f32) {
+    pub fn update_specific_voter_weights(
+        &self,
+        voter_names: &[String],
+        is_true_positive: bool,
+        delta: f32,
+    ) {
         for name in voter_names {
             let current = self
                 .voter_weight_multipliers
@@ -656,19 +723,28 @@ impl PolicyEngine {
 
         let image_path = event_image_path(event).unwrap_or("unknown");
         let hash = preferred_hash_from_event(event).unwrap_or_else(|| "no-hash".to_string());
-        let cmdline = event.data.get("CommandLine")
+        let cmdline = event
+            .data
+            .get("CommandLine")
             .or_else(|| event.data.get("command_line"))
             .or_else(|| event.data.get("cmdline"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let target_file = event.data.get("TargetFilename")
+        let target_file = event
+            .data
+            .get("TargetFilename")
             .or_else(|| event.data.get("TargetFile"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
         // 0. Global Exclusions: Skip all voting if path is in consensus_exclude_paths
         let path_lc = image_path.to_lowercase();
-        if self.config.consensus_exclude_paths.iter().any(|ex| path_lc.contains(&ex.to_lowercase())) {
+        if self
+            .config
+            .consensus_exclude_paths
+            .iter()
+            .any(|ex| path_lc.contains(&ex.to_lowercase()))
+        {
             debug!(
                 target: CONSENSUS_LOG_TARGET,
                 path = %image_path,
@@ -679,7 +755,10 @@ impl PolicyEngine {
 
         // Fast clean-ignored hash bypass: If hash is in the clean ignore list, skip round
         // Invariant: Do NOT skip scan_event via is_hash_clean_ignored for behavioral/command/process/injection/registry events
-        let is_behavioral_or_runtime_event = matches!(event.event_id, 1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688);
+        let is_behavioral_or_runtime_event = matches!(
+            event.event_id,
+            1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688
+        );
         if !is_behavioral_or_runtime_event {
             if let Some(h) = preferred_hash_from_event(event) {
                 if self.memory.is_hash_clean_ignored(&h) {
@@ -698,8 +777,11 @@ impl PolicyEngine {
         // we bypass the consensus engine entirely to save CPU and stop log spam.
         if let Some(h) = preferred_hash_from_event(event) {
             let proc_name = process_name_from_event(event);
-            let is_fp = self.memory.is_false_positive_pattern(proc_name.as_deref(), Some(&h)).unwrap_or(false);
-            
+            let is_fp = self
+                .memory
+                .is_false_positive_pattern(proc_name.as_deref(), Some(&h))
+                .unwrap_or(false);
+
             if is_fp {
                 debug!(
                     target: CONSENSUS_LOG_TARGET,
@@ -714,10 +796,21 @@ impl PolicyEngine {
 
         // 0.1 Trusted Paths & Noisy Stems: Reduce sensitivity for known noise
         let stem = event_stem(event);
-        let is_noisy = self.config.consensus_noisy_stems.iter().any(|s| s.eq_ignore_ascii_case(&stem))
-            || self.config.consensus_trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
+        let is_noisy = self
+            .config
+            .consensus_noisy_stems
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(&stem))
+            || self
+                .config
+                .consensus_trusted_paths
+                .iter()
+                .any(|p| path_lc.contains(&p.to_lowercase()));
 
-        let cache_key = format!("{:?}:{:?}:{}:{}:{}", event.event_id, image_path, hash, cmdline, target_file);
+        let cache_key = format!(
+            "{:?}:{:?}:{}:{}:{}",
+            event.event_id, image_path, hash, cmdline, target_file
+        );
 
         // Deduplication: Avoid re-running consensus for the same event in a short window (30s)
         if let Some(cached) = self.consensus_cache.get(&cache_key) {
@@ -776,8 +869,10 @@ impl PolicyEngine {
             let raw_results = futures::future::join_all(timeout_futs).await;
             drop(voters_guard); // Release read lock immediately
 
-            names.into_iter().zip(raw_results.into_iter()).map(|(name, res)| {
-                match res {
+            names
+                .into_iter()
+                .zip(raw_results)
+                .map(|(name, res)| match res {
                     Ok(vote_opt) => (name, vote_opt),
                     Err(_elapsed) => {
                         debug!(
@@ -788,8 +883,8 @@ impl PolicyEngine {
                         );
                         (name, None)
                     }
-                }
-            }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
         };
 
         for (vname, res_opt) in results {
@@ -816,7 +911,7 @@ impl PolicyEngine {
                         "[CONSENSUS] veto — detection blocked"
                     );
                     signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
-                    // We don't break immediately here because we already ran them all, 
+                    // We don't break immediately here because we already ran them all,
                     // but we mark as vetoed.
                 }
 
@@ -856,7 +951,10 @@ impl PolicyEngine {
 
         // Active behavioral threats (Sigma, memory, live network) override NSRL static known-good
         let has_behavioral_or_active_threat = evidence_votes.iter().any(|v| {
-            matches!(v.class, EvidenceClass::Behavior | EvidenceClass::Memory | EvidenceClass::LiveNetwork)
+            matches!(
+                v.class,
+                EvidenceClass::Behavior | EvidenceClass::Memory | EvidenceClass::LiveNetwork
+            )
         });
 
         if vetoed || (nsrl_vetoed && !has_behavioral_or_active_threat) {
@@ -905,7 +1003,12 @@ impl PolicyEngine {
             );
             if let Some(hash) = preferred_hash_from_event(event) {
                 let proc_name = process_name_from_event(event);
-                let _ = self.memory.mark_hash_clean_ignored(&hash, proc_name.as_deref(), Some(image_path), "consensus_clean");
+                let _ = self.memory.mark_hash_clean_ignored(
+                    &hash,
+                    proc_name.as_deref(),
+                    Some(image_path),
+                    "consensus_clean",
+                );
                 let finding = osoosi_types::ConsensusFinding {
                     id: format!("CONS-BENIGN-{}", &hash[..hash.len().min(12)]),
                     hash_blake3: hash.clone(),
@@ -926,7 +1029,9 @@ impl PolicyEngine {
         signature.detector_count = vote_count;
         signature.process_name = process_name_from_event(event);
         signature.hash_blake3 = preferred_hash_from_event(event);
-        signature.parent_process = event.data.get("ParentImage")
+        signature.parent_process = event
+            .data
+            .get("ParentImage")
             .and_then(|v| v.as_str())
             .and_then(|p| std::path::Path::new(p).file_name())
             .and_then(|n| n.to_str())
@@ -939,11 +1044,12 @@ impl PolicyEngine {
 
         let decision = orchestrate_evidence(&evidence_votes, event, &self.config);
         signature.confidence = decision.confidence;
-        
+
         // Apply suppression for noisy/trusted paths by capping confidence
         if is_noisy {
             signature.confidence = signature.confidence.min(0.15);
-            signature.add_reason("Suppressed: Matches consensus_noisy_stems or consensus_trusted_paths".to_string());
+            signature
+                .add_reason("Suppressed: Matches consensus_noisy_stems or consensus_trusted_paths");
         }
 
         signature.recommended_action = decision.action;
@@ -1001,13 +1107,18 @@ impl PolicyEngine {
         let reason_str = signature.reason.as_deref().unwrap_or("");
         if let Some((tac, tech, name)) = crate::mitre_kb::extract_mitre_from_text(reason_str) {
             let cur_tech = signature.mitre_technique.as_deref().unwrap_or("");
-            if cur_tech.is_empty() || cur_tech == "T1006" || (cur_tech == "T1059" && !tech.starts_with("T1059")) {
+            if cur_tech.is_empty()
+                || cur_tech == "T1006"
+                || (cur_tech == "T1059" && !tech.starts_with("T1059"))
+            {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
             }
         } else if signature.mitre_technique.is_none() {
-            if let Some((tac, tech, name)) = crate::mitre_kb::infer_mitre_from_event(event.event_id, image_path, cmdline) {
+            if let Some((tac, tech, name)) =
+                crate::mitre_kb::infer_mitre_from_event(event.event_id, image_path, cmdline)
+            {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
@@ -1047,14 +1158,14 @@ impl PolicyEngine {
                         }
                     }
                     "Tarpit" => {
-                        if signature.recommended_action == ResponseAction::Alert && signature.confidence >= 0.40 {
+                        if signature.recommended_action == ResponseAction::Alert
+                            && signature.confidence >= 0.40
+                        {
                             signature.recommended_action = ResponseAction::Tarpit;
                         }
                     }
-                    "MemoryScan" => {
-                        if signature.recommended_action == ResponseAction::Alert {
-                            signature.recommended_action = ResponseAction::MemoryScan;
-                        }
+                    "MemoryScan" if signature.recommended_action == ResponseAction::Alert => {
+                        signature.recommended_action = ResponseAction::MemoryScan;
                     }
                     _ => {}
                 }
@@ -1062,7 +1173,8 @@ impl PolicyEngine {
         }
 
         let autonomy = osoosi_types::load_autonomy_config();
-        let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+        let is_lockdown_mode =
+            autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
         if is_lockdown_mode && signature.confidence >= autonomy.action_confidence_threshold {
             signature.recommended_action = ResponseAction::Isolate;
             signature.require_approval = false;
@@ -1106,7 +1218,10 @@ impl PolicyEngine {
         // Record malicious consensus finding in ledger
         let finding = osoosi_types::ConsensusFinding {
             id: signature.id.clone(),
-            hash_blake3: signature.hash_blake3.clone().unwrap_or_else(|| hash.clone()),
+            hash_blake3: signature
+                .hash_blake3
+                .clone()
+                .unwrap_or_else(|| hash.clone()),
             process_name: signature.process_name.clone(),
             file_path: Some(image_path.to_string()),
             verdict: "malicious".to_string(),
@@ -1118,7 +1233,8 @@ impl PolicyEngine {
         };
         let _ = self.memory.record_consensus_finding(&finding);
 
-        self.consensus_cache.insert(cache_key, (signature.clone(), std::time::Instant::now()));
+        self.consensus_cache
+            .insert(cache_key, (signature.clone(), std::time::Instant::now()));
         Some(signature)
     }
 }
@@ -1158,7 +1274,7 @@ mod tests {
         let semantic_voter = Box::new(SemanticVoter {
             engine: crate::semantic::SemanticEngine::new(),
         });
-        
+
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             engine.add_voter(semantic_voter).await;
@@ -1231,10 +1347,12 @@ mod tests {
 
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            engine.add_voter(Box::new(OtxVoter {
-                indicators: engine.otx_indicators_ref().clone(),
-                memory: memory.clone(),
-            })).await;
+            engine
+                .add_voter(Box::new(OtxVoter {
+                    indicators: engine.otx_indicators_ref().clone(),
+                    memory: memory.clone(),
+                }))
+                .await;
 
             let event = HostSecurityEvent {
                 source: osoosi_types::HostEventSource::WindowsEventLog,
@@ -1343,11 +1461,18 @@ mod tests {
         let engine = PolicyEngine::new(memory, config);
 
         // Register AiSecurityAuditVoter and AgenticPolicyVoter
-        engine.add_voter(Box::new(crate::ai_audit_voter::AiSecurityAuditVoter::new())).await;
-        engine.add_voter(Box::new(crate::agentic_voter::AgenticPolicyVoter::new())).await;
+        engine
+            .add_voter(Box::new(crate::ai_audit_voter::AiSecurityAuditVoter::new()))
+            .await;
+        engine
+            .add_voter(Box::new(crate::agentic_voter::AgenticPolicyVoter::new()))
+            .await;
 
         // 1. Tool-argument injection: AML.T0043 (Execution, Tarpit)
-        let mut event_tool_inject = make_event("C:\\Python311\\python.exe", "python.exe -c \"import os; os.system('whoami && calc.exe')\"");
+        let mut event_tool_inject = make_event(
+            "C:\\Python311\\python.exe",
+            "python.exe -c \"import os; os.system('whoami && calc.exe')\"",
+        );
         event_tool_inject.data = json!({
             "Image": "C:\\Python311\\python.exe",
             "CommandLine": "python.exe -c \"import os; os.system('whoami && calc.exe')\"",
@@ -1356,15 +1481,25 @@ mod tests {
         });
 
         let sig_opt = engine.scan_event(&event_tool_inject).await;
-        assert!(sig_opt.is_some(), "Expected threat signature for tool argument injection");
+        assert!(
+            sig_opt.is_some(),
+            "Expected threat signature for tool argument injection"
+        );
         let sig = sig_opt.unwrap();
         assert_eq!(sig.mitre_technique.as_deref(), Some("AML.T0043"));
         assert_eq!(sig.mitre_tactic.as_deref(), Some("Execution"));
-        assert!(sig.mitre_technique_name.as_deref().unwrap().contains("Adversarial Prompt Injection"));
+        assert!(sig
+            .mitre_technique_name
+            .as_deref()
+            .unwrap()
+            .contains("Adversarial Prompt Injection"));
         assert_eq!(sig.recommended_action, ResponseAction::Tarpit);
 
         // 2. Canary credential breach: AML.T0054 (Exfiltration, Alert)
-        let mut event_canary = make_event("C:\\Python311\\python.exe", "python.exe script.py --key AWS_SECRET_ACCESS_KEY_CANARY");
+        let mut event_canary = make_event(
+            "C:\\Python311\\python.exe",
+            "python.exe script.py --key AWS_SECRET_ACCESS_KEY_CANARY",
+        );
         event_canary.data = json!({
             "Image": "C:\\Python311\\python.exe",
             "CommandLine": "python.exe script.py --key AWS_SECRET_ACCESS_KEY_CANARY",
@@ -1373,7 +1508,10 @@ mod tests {
         });
 
         let sig_opt2 = engine.scan_event(&event_canary).await;
-        assert!(sig_opt2.is_some(), "Expected threat signature for canary breach");
+        assert!(
+            sig_opt2.is_some(),
+            "Expected threat signature for canary breach"
+        );
         let sig2 = sig_opt2.unwrap();
         assert_eq!(sig2.mitre_technique.as_deref(), Some("AML.T0054"));
         assert_eq!(sig2.mitre_tactic.as_deref(), Some("Exfiltration"));
@@ -1394,7 +1532,10 @@ mod tests {
         };
 
         let sig_opt3 = engine.scan_event(&event_memory_tamper).await;
-        assert!(sig_opt3.is_some(), "Expected threat signature for agent memory tampering");
+        assert!(
+            sig_opt3.is_some(),
+            "Expected threat signature for agent memory tampering"
+        );
         let sig3 = sig_opt3.unwrap();
         assert_eq!(sig3.mitre_technique.as_deref(), Some("AML.T0048"));
         assert_eq!(sig3.mitre_tactic.as_deref(), Some("Persistence"));
@@ -1427,26 +1568,47 @@ mod tests {
         let event = make_event("C:\\Windows\\System32\\cmd.exe", "cmd.exe /c dir");
 
         tokio::time::pause();
-        let scan_fut = tokio::spawn(async move {
-            engine.scan_event(&event).await
-        });
+        let scan_fut = tokio::spawn(async move { engine.scan_event(&event).await });
         tokio::time::advance(std::time::Duration::from_secs(31)).await;
         let res = scan_fut.await.unwrap();
-        assert!(res.is_none(), "Timed out voter should be treated as abstain");
+        assert!(
+            res.is_none(),
+            "Timed out voter should be treated as abstain"
+        );
     }
 
     #[tokio::test]
     async fn test_credential_guard_voter_and_persistent_weights() {
         let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
-        memory.save_voter_weight("CredentialGuard-Memory", 1.25).unwrap();
+        memory
+            .save_voter_weight("CredentialGuard-Memory", 1.25)
+            .unwrap();
 
         let config = osoosi_types::PolicyConfig::default();
         let engine = PolicyEngine::new(memory.clone(), config);
-        assert!((engine.voter_weight_multipliers.get("CredentialGuard-Memory").unwrap().value() - 1.25).abs() < 1e-4);
+        assert!(
+            (engine
+                .voter_weight_multipliers
+                .get("CredentialGuard-Memory")
+                .unwrap()
+                .value()
+                - 1.25)
+                .abs()
+                < 1e-4
+        );
 
         // Update specific weight
         engine.update_specific_voter_weights(&["CredentialGuard-Memory".to_string()], true, 0.05);
-        assert!((engine.voter_weight_multipliers.get("CredentialGuard-Memory").unwrap().value() - 1.30).abs() < 1e-4);
+        assert!(
+            (engine
+                .voter_weight_multipliers
+                .get("CredentialGuard-Memory")
+                .unwrap()
+                .value()
+                - 1.30)
+                .abs()
+                < 1e-4
+        );
 
         // Verify persisted to SQLite
         let reloaded = memory.load_voter_weights().unwrap();
@@ -1473,4 +1635,3 @@ mod tests {
         assert!(res.reason.contains("comsvcs.dll"));
     }
 }
-

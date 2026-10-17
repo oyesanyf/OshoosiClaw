@@ -105,8 +105,8 @@ pub fn run_backup_on_start(config: &BackupConfig, memory: Option<Arc<osoosi_memo
 
 #[cfg(target_os = "windows")]
 fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
-    use windows::Win32::System::Restore::*;
     use windows::Win32::Foundation::BOOL;
+    use windows::Win32::System::Restore::*;
 
     let desc = format!("Osoosi pre-start {}", {
         let now = std::time::SystemTime::now();
@@ -121,7 +121,17 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
     let reg_path = "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore";
     let reg_bin = osoosi_types::resolve_system_binary("reg.exe");
     let _ = Command::new(&reg_bin)
-        .args(["add", reg_path, "/v", "SystemRestorePointCreationFrequency", "/t", "REG_DWORD", "/d", "0", "/f"])
+        .args([
+            "add",
+            reg_path,
+            "/v",
+            "SystemRestorePointCreationFrequency",
+            "/t",
+            "REG_DWORD",
+            "/d",
+            "0",
+            "/f",
+        ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
@@ -147,7 +157,13 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
 
     // Clean up registry key
     let _ = Command::new(&reg_bin)
-        .args(["delete", reg_path, "/v", "SystemRestorePointCreationFrequency", "/f"])
+        .args([
+            "delete",
+            reg_path,
+            "/v",
+            "SystemRestorePointCreationFrequency",
+            "/f",
+        ])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
@@ -425,7 +441,10 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
 
 /// Trigger manual restore point bypassing interval throttle.
 /// Attempts native OS restore point first; falls back to cryptographic state snapshot in `backups/restore_point_<ts>.json`.
-pub fn trigger_manual_restore_point(config: &BackupConfig, memory: Option<Arc<osoosi_memory::MemoryStore>>) {
+pub fn trigger_manual_restore_point(
+    config: &BackupConfig,
+    memory: Option<Arc<osoosi_memory::MemoryStore>>,
+) {
     if let Some(ref m) = memory {
         let _ = m.set_backup_status("enabled", "true");
         let _ = m.set_backup_status("backup_type", "restore_point");
@@ -436,7 +455,10 @@ pub fn trigger_manual_restore_point(config: &BackupConfig, memory: Option<Arc<os
     let mem = memory.clone();
     std::thread::spawn(move || {
         let result = run_restore_point(&cfg).or_else(|e| {
-            warn!("Native OS restore point failed ({}); creating fallback state snapshot...", e);
+            warn!(
+                "Native OS restore point failed ({}); creating fallback state snapshot...",
+                e
+            );
             create_fallback_snapshot(&cfg)
         });
 
@@ -470,7 +492,10 @@ fn create_fallback_snapshot(_config: &BackupConfig) -> anyhow::Result<String> {
     let db_path = std::path::Path::new("database/osoosi.db");
     let db_size_bytes = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
 
-    let node_name = hostname::get().unwrap_or_default().to_string_lossy().to_string();
+    let node_name = hostname::get()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let snapshot_data = serde_json::json!({
         "timestamp": ts.to_rfc3339(),
         "node": node_name,
@@ -486,6 +511,8 @@ fn create_fallback_snapshot(_config: &BackupConfig) -> anyhow::Result<String> {
     let content = serde_json::to_string_pretty(&snapshot_data)?;
     std::fs::write(&snapshot_file, content)?;
 
-    Ok(format!("State restore point snapshot saved to {}", snapshot_file.display()))
+    Ok(format!(
+        "State restore point snapshot saved to {}",
+        snapshot_file.display()
+    ))
 }
-

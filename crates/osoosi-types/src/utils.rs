@@ -1,10 +1,10 @@
+#[cfg(windows)]
+use pelite::pe32::Pe as _;
+#[cfg(windows)]
+use pelite::pe64::Pe as _;
 use std::fs::File;
 use std::io::{self};
 use std::path::Path;
-#[cfg(windows)]
-use pelite::pe64::Pe as _;
-#[cfg(windows)]
-use pelite::pe32::Pe as _;
 use x509_parser::prelude::FromDer;
 
 const MAX_ZIP_ENTRIES: usize = 50_000;
@@ -74,7 +74,9 @@ pub fn is_elevated() -> bool {
     #[cfg(target_os = "windows")]
     {
         use windows::Win32::Foundation::{CloseHandle, HANDLE};
-        use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+        use windows::Win32::Security::{
+            GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+        };
         use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
         unsafe {
@@ -169,7 +171,7 @@ pub fn is_trusted_vendor(name: &str) -> bool {
 #[cfg(target_os = "windows")]
 pub fn get_pe_metadata(path: &Path) -> Option<BinaryMetadata> {
     let map = std::fs::read(path).ok()?;
-    
+
     let mut product_name = "Unknown".to_string();
     let mut version = "0.0.0".to_string();
 
@@ -212,12 +214,18 @@ pub fn get_pe_metadata(path: &Path) -> Option<BinaryMetadata> {
     // Native Signature Verification (Win32 WinVerifyTrust)
     let path_str = path.to_string_lossy();
     let is_signed = verify_file_signature(&path_str);
-    
+
     // Advanced Pure Rust Cryptographic Verification (Goblin + X509 + ring) with fallback to raw certificate extraction
-    let publisher = verify_and_extract_publisher_native(&path_str).ok()
+    let publisher = verify_and_extract_publisher_native(&path_str)
+        .ok()
         .or_else(|| extract_publisher_from_pe(&path_str));
 
-    Some(BinaryMetadata { product_name, version, is_signed, publisher })
+    Some(BinaryMetadata {
+        product_name,
+        version,
+        is_signed,
+        publisher,
+    })
 }
 
 /// Mathematically verifies the certificate chain and returns the validated Publisher.
@@ -227,7 +235,8 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
     use x509_parser::prelude::*;
 
     // 1. Extract all DER-encoded certificates from the PE binary
-    let cert_ders = extract_all_certificates(file_path).ok_or_else(|| anyhow::anyhow!("No certificates found in binary"))?;
+    let cert_ders = extract_all_certificates(file_path)
+        .ok_or_else(|| anyhow::anyhow!("No certificates found in binary"))?;
 
     let mut cert_store: HashMap<String, X509Certificate> = HashMap::new();
 
@@ -240,7 +249,8 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
 
     // 3. Find the Leaf Certificate (The actual publisher)
     // The leaf is usually the one whose subject is NOT an issuer for any other cert in this payload
-    let mut current_cert = cert_store.values()
+    let mut current_cert = cert_store
+        .values()
         .find(|c| c.subject() != c.issuer())
         .ok_or_else(|| anyhow::anyhow!("No leaf certificate found in payload"))?;
 
@@ -249,7 +259,7 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
     // 4. Climb and Mathematically Verify the Chain
     loop {
         let issuer_name = current_cert.issuer().to_string();
-        
+
         // Base Case: We reached the top of the chain (Self-Signed Root CA)
         if current_cert.subject() == current_cert.issuer() {
             // Verify the Root CA against the OS Trust Store matching Subject AND Public Key
@@ -258,13 +268,17 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
         }
 
         // Find the parent certificate that issued the current one
-        let issuer_cert = cert_store.get(&issuer_name)
+        let issuer_cert = cert_store
+            .get(&issuer_name)
             .ok_or_else(|| anyhow::anyhow!("Broken Chain: Missing intermediate certificate."))?;
 
-        // THE MATH: Execute RSA/ECDSA verification via ring (enabled by x509-parser/verify feature). 
+        // THE MATH: Execute RSA/ECDSA verification via ring (enabled by x509-parser/verify feature).
         // This proves the current cert was genuinely signed by the issuer's private key.
-        current_cert.verify_signature(Some(&issuer_cert.public_key()))
-            .map_err(|_| anyhow::anyhow!("CRYPTOGRAPHIC VERIFICATION FAILED! FORGED CERTIFICATE DETECTED."))?;
+        current_cert
+            .verify_signature(Some(issuer_cert.public_key()))
+            .map_err(|_| {
+                anyhow::anyhow!("CRYPTOGRAPHIC VERIFICATION FAILED! FORGED CERTIFICATE DETECTED.")
+            })?;
 
         // Step up the ladder
         current_cert = issuer_cert;
@@ -275,14 +289,17 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
 
 /// Verifies that the extracted Root CA actually exists in the host's Trust Store,
 /// comparing both Subject and Public Key to prevent spoofed self-signed CAs.
-fn verify_root_against_os_store(root_cert: &x509_parser::prelude::X509Certificate) -> anyhow::Result<()> {
-    use x509_parser::prelude::*;
+fn verify_root_against_os_store(
+    root_cert: &x509_parser::prelude::X509Certificate,
+) -> anyhow::Result<()> {
     use rustls_native_certs::load_native_certs;
+    use x509_parser::prelude::*;
 
     // Loads the actual trusted roots from the host operating system
-    let os_roots = load_native_certs().map_err(|e| anyhow::anyhow!("Could not load OS native certs: {}", e))?;
+    let os_roots = load_native_certs()
+        .map_err(|e| anyhow::anyhow!("Could not load OS native certs: {}", e))?;
     let target_pk = root_cert.public_key().raw;
-    
+
     for root in os_roots {
         if let Ok((_, cert)) = X509Certificate::from_der(root.as_ref()) {
             if cert.subject() == root_cert.subject() && cert.public_key().raw == target_pk {
@@ -290,8 +307,10 @@ fn verify_root_against_os_store(root_cert: &x509_parser::prelude::X509Certificat
             }
         }
     }
-    
-    Err(anyhow::anyhow!("ROOT CA NOT TRUSTED BY OPERATING SYSTEM. LIKELY MALWARE CA."))
+
+    Err(anyhow::anyhow!(
+        "ROOT CA NOT TRUSTED BY OPERATING SYSTEM. LIKELY MALWARE CA."
+    ))
 }
 
 /// Extracts all raw DER certificates from the Authenticode block of a PE binary.
@@ -305,20 +324,24 @@ pub fn extract_all_certificates(file_path: &str) -> Option<Vec<Vec<u8>>> {
     let security_dir = optional_header.data_directories.data_directories[4]
         .as_ref()
         .map(|(_, dir)| dir)?;
-    
+
     let sig_offset = security_dir.virtual_address as usize;
     let sig_size = security_dir.size as usize;
-    
+
     if sig_offset == 0 || sig_offset + sig_size > buffer.len() || sig_size <= 8 {
         return None;
     }
 
-    let pkcs7_data = &buffer[sig_offset + 8 .. sig_offset + sig_size];
+    let pkcs7_data = &buffer[sig_offset + 8..sig_offset + sig_size];
 
     let mut certs = Vec::new();
     let mut offset = 0;
     while offset + 4 < pkcs7_data.len() {
-        if pkcs7_data[offset] == 0x30 && (pkcs7_data[offset + 1] == 0x82 || pkcs7_data[offset + 1] == 0x83 || pkcs7_data[offset + 1] == 0x81) {
+        if pkcs7_data[offset] == 0x30
+            && (pkcs7_data[offset + 1] == 0x82
+                || pkcs7_data[offset + 1] == 0x83
+                || pkcs7_data[offset + 1] == 0x81)
+        {
             if let Ok((remaining, _cert)) = X509Certificate::from_der(&pkcs7_data[offset..]) {
                 let cert_len = pkcs7_data.len() - offset - remaining.len();
                 if cert_len > 0 {
@@ -331,7 +354,11 @@ pub fn extract_all_certificates(file_path: &str) -> Option<Vec<Vec<u8>>> {
         offset += 1;
     }
 
-    if certs.is_empty() { None } else { Some(certs) }
+    if certs.is_empty() {
+        None
+    } else {
+        Some(certs)
+    }
 }
 
 /// Extracts publisher / subject name directly from PE Authenticode certificates without OS store requirement.
@@ -356,12 +383,12 @@ pub fn extract_publisher_from_pe(file_path: &str) -> Option<String> {
 /// Detailed status of an Authenticode signature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AuthenticodeStatus {
-    ValidTrusted,       // 0 / ERROR_SUCCESS: Cryptographically valid and trusted by OS root store
-    UntrustedRoot,      // 0x800B0109 / CERT_E_UNTRUSTEDROOT: Valid signature, untrusted root CA
-    TamperedBadDigest,  // 0x80096010 / TRUST_E_BAD_DIGEST: Hash mismatch, file has been tampered with
-    NotSigned,          // 0x800B0100 / TRUST_E_NOSIGNATURE: No signature present
-    ExplicitDistrust,   // 0x800B0111 / TRUST_E_EXPLICIT_DISTRUST
-    Revoked,            // 0x800B010C / CERT_E_REVOKED or 0x80092013 / CRYPT_E_REVOKED
+    ValidTrusted,  // 0 / ERROR_SUCCESS: Cryptographically valid and trusted by OS root store
+    UntrustedRoot, // 0x800B0109 / CERT_E_UNTRUSTEDROOT: Valid signature, untrusted root CA
+    TamperedBadDigest, // 0x80096010 / TRUST_E_BAD_DIGEST: Hash mismatch, file has been tampered with
+    NotSigned,         // 0x800B0100 / TRUST_E_NOSIGNATURE: No signature present
+    ExplicitDistrust,  // 0x800B0111 / TRUST_E_EXPLICIT_DISTRUST
+    Revoked,           // 0x800B010C / CERT_E_REVOKED or 0x80092013 / CRYPT_E_REVOKED
     OtherError(i32),
 }
 
@@ -389,22 +416,23 @@ pub fn extract_certificate_thumbprints(file_path: &str) -> Vec<String> {
 /// Checks whether any extracted certificate thumbprint matches explicitly pinned thumbprints
 /// (from OSOOSI_PINNED_CERT_THUMBPRINTS env var or pinned store).
 pub fn is_pinned_thumbprint_allowed(thumbprints: &[String]) -> bool {
-    let configured_pins: std::collections::HashSet<String> = std::env::var("OSOOSI_PINNED_CERT_THUMBPRINTS")
-        .ok()
-        .map(|s| {
-            s.split(',')
-                .map(|t| t.trim().to_lowercase().replace(':', "").replace(' ', ""))
-                .filter(|t| !t.is_empty())
-                .collect()
-        })
-        .unwrap_or_default();
+    let configured_pins: std::collections::HashSet<String> =
+        std::env::var("OSOOSI_PINNED_CERT_THUMBPRINTS")
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_lowercase().replace([':', ' '], ""))
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
 
     if configured_pins.is_empty() {
         return false;
     }
 
     for tp in thumbprints {
-        let normalized = tp.to_lowercase().replace(':', "").replace(' ', "");
+        let normalized = tp.to_lowercase().replace([':', ' '], "");
         if configured_pins.contains(&normalized) {
             return true;
         }
@@ -502,10 +530,10 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
                     err => AuthenticodeStatus::OtherError(err),
                 }
             }
-            -2146762487 => AuthenticodeStatus::UntrustedRoot,     // 0x800B0109
+            -2146762487 => AuthenticodeStatus::UntrustedRoot, // 0x800B0109
             -2146869232 => AuthenticodeStatus::TamperedBadDigest, // 0x80096010
-            -2146762496 => AuthenticodeStatus::NotSigned,         // 0x800B0100
-            -2146762479 => AuthenticodeStatus::ExplicitDistrust,  // 0x800B0111
+            -2146762496 => AuthenticodeStatus::NotSigned,     // 0x800B0100
+            -2146762479 => AuthenticodeStatus::ExplicitDistrust, // 0x800B0111
             err => AuthenticodeStatus::OtherError(err),
         }
     }
@@ -544,13 +572,9 @@ pub fn extract_signer_subject(path: &Path) -> Option<String> {
         }
 
         let mut signer_info_size: u32 = 0;
-        if CryptMsgGetParam(
-            msg,
-            CMSG_SIGNER_INFO_PARAM,
-            0,
-            None,
-            &mut signer_info_size,
-        ).is_err() || signer_info_size == 0 {
+        if CryptMsgGetParam(msg, CMSG_SIGNER_INFO_PARAM, 0, None, &mut signer_info_size).is_err()
+            || signer_info_size == 0
+        {
             let _ = CryptMsgClose(Some(msg));
             let _ = CertCloseStore(store, 0);
             return None;
@@ -563,7 +587,9 @@ pub fn extract_signer_subject(path: &Path) -> Option<String> {
             0,
             Some(signer_info_bytes.as_mut_ptr() as *mut c_void),
             &mut signer_info_size,
-        ).is_err() {
+        )
+        .is_err()
+        {
             let _ = CryptMsgClose(Some(msg));
             let _ = CertCloseStore(store, 0);
             return None;
@@ -584,13 +610,8 @@ pub fn extract_signer_subject(path: &Path) -> Option<String> {
             return None;
         }
 
-        let name_len = CertGetNameStringW(
-            cert_context,
-            CERT_NAME_SIMPLE_DISPLAY_TYPE,
-            0,
-            None,
-            None,
-        );
+        let name_len =
+            CertGetNameStringW(cert_context, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, None, None);
 
         let mut name_buffer = vec![0u16; name_len as usize];
         CertGetNameStringW(
@@ -689,7 +710,10 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
 /// Verify a file signature using the native Windows WinVerifyTrust API.
 #[cfg(target_os = "windows")]
 pub fn verify_file_signature(path: &str) -> bool {
-    matches!(check_authenticode_status(path), AuthenticodeStatus::ValidTrusted)
+    matches!(
+        check_authenticode_status(path),
+        AuthenticodeStatus::ValidTrusted
+    )
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -734,13 +758,18 @@ mod tests {
 
     #[test]
     fn test_is_trusted_signed_binary_nonexistent() {
-        assert!(!is_trusted_signed_binary(Path::new(r"C:\nonexistent\fake.dll")));
+        assert!(!is_trusted_signed_binary(Path::new(
+            r"C:\nonexistent\fake.dll"
+        )));
     }
 
     #[test]
     fn test_is_pinned_thumbprint_allowed() {
         let test_tp = "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890";
-        std::env::set_var("OSOOSI_PINNED_CERT_THUMBPRINTS", format!("deadbeef,{},cafebabe", test_tp));
+        std::env::set_var(
+            "OSOOSI_PINNED_CERT_THUMBPRINTS",
+            format!("deadbeef,{},cafebabe", test_tp),
+        );
 
         assert!(is_pinned_thumbprint_allowed(&[test_tp.to_string()]));
         assert!(is_pinned_thumbprint_allowed(&[test_tp.to_uppercase()]));
@@ -750,7 +779,9 @@ mod tests {
         // Test colon-separated formatting
         let colon_tp = "a1:b2:c3:d4:e5:f6:78:90:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90";
         assert!(is_pinned_thumbprint_allowed(&[colon_tp.to_string()]));
-        assert!(!is_pinned_thumbprint_allowed(&["11223344556677889900aabbccddeeff".to_string()]));
+        assert!(!is_pinned_thumbprint_allowed(&[
+            "11223344556677889900aabbccddeeff".to_string()
+        ]));
         assert!(!is_pinned_thumbprint_allowed(&[]));
 
         std::env::remove_var("OSOOSI_PINNED_CERT_THUMBPRINTS");

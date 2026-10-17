@@ -67,7 +67,9 @@ impl AtlasParser {
             AtlasMitigation {
                 mitigation_id: "AML.M1005".to_string(),
                 name: "AppContainer LPAC Moniker Isolation".to_string(),
-                description: "Strict package SID ACLs blocking filesystem and non-Google network egress".to_string(),
+                description:
+                    "Strict package SID ACLs blocking filesystem and non-Google network egress"
+                        .to_string(),
             },
         );
         mitigations.insert(
@@ -75,7 +77,8 @@ impl AtlasParser {
             AtlasMitigation {
                 mitigation_id: "AML.M1006".to_string(),
                 name: "Wasmtime Hardware Fuel Metering".to_string(),
-                description: "Precise instruction count tracking and wall-clock supervisor timeout".to_string(),
+                description: "Precise instruction count tracking and wall-clock supervisor timeout"
+                    .to_string(),
             },
         );
         mitigations.insert(
@@ -130,9 +133,12 @@ impl AtlasParser {
 
     /// Parses a standard STIX 2.1 JSON bundle (from https://github.com/mitre-atlas/atlas-data)
     /// into a complete, queryable MITRE ATLAS Knowledge Base.
-    pub fn parse_stix_bundle(json_str: &str) -> Result<ParsedAtlasKnowledgeBase, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn parse_stix_bundle(
+        json_str: &str,
+    ) -> Result<ParsedAtlasKnowledgeBase, Box<dyn std::error::Error + Send + Sync>> {
         let v: serde_json::Value = serde_json::from_str(json_str)?;
-        let objects = v.get("objects")
+        let objects = v
+            .get("objects")
             .and_then(|o| o.as_array())
             .ok_or("Invalid STIX bundle: missing 'objects' array")?;
 
@@ -146,17 +152,30 @@ impl AtlasParser {
         // 1. Pass 1: Parse tactics, techniques, mitigations, and campaigns
         for obj in objects {
             let obj_type = obj.get("type").and_then(|t| t.as_str()).unwrap_or_default();
-            let stix_id = obj.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string();
+            let stix_id = obj
+                .get("id")
+                .and_then(|i| i.as_str())
+                .unwrap_or_default()
+                .to_string();
 
             match obj_type {
                 "attack-pattern" => {
-                    let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown Technique").to_string();
-                    let description = obj.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string();
-                    
+                    let name = obj
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("Unknown Technique")
+                        .to_string();
+                    let description = obj
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
                     let mut ext_id = String::new();
                     if let Some(refs) = obj.get("external_references").and_then(|r| r.as_array()) {
                         for r in refs {
-                            if r.get("source_name").and_then(|s| s.as_str()) == Some("mitre-atlas") {
+                            if r.get("source_name").and_then(|s| s.as_str()) == Some("mitre-atlas")
+                            {
                                 if let Some(e) = r.get("external_id").and_then(|e| e.as_str()) {
                                     ext_id = e.to_string();
                                     break;
@@ -172,8 +191,11 @@ impl AtlasParser {
                     let mut tactic = AtlasTactic::Execution;
                     if let Some(phases) = obj.get("kill_chain_phases").and_then(|p| p.as_array()) {
                         for p in phases {
-                            if p.get("kill_chain_name").and_then(|k| k.as_str()) == Some("mitre-atlas") {
-                                if let Some(phase) = p.get("phase_name").and_then(|pn| pn.as_str()) {
+                            if p.get("kill_chain_name").and_then(|k| k.as_str())
+                                == Some("mitre-atlas")
+                            {
+                                if let Some(phase) = p.get("phase_name").and_then(|pn| pn.as_str())
+                                {
                                     tactic = Self::phase_to_tactic(phase);
                                     break;
                                 }
@@ -181,24 +203,39 @@ impl AtlasParser {
                         }
                     }
 
-                    tactic_mapping.entry(tactic.clone()).or_default().push(ext_id.clone());
+                    tactic_mapping
+                        .entry(tactic.clone())
+                        .or_default()
+                        .push(ext_id.clone());
                     stix_to_tech_id.insert(stix_id, ext_id.clone());
 
-                    techniques_map.insert(ext_id.clone(), AtlasTechnique {
-                        technique_id: ext_id,
-                        name,
-                        tactic,
-                        description,
-                        relevant_mitigations: Vec::new(),
-                    });
+                    techniques_map.insert(
+                        ext_id.clone(),
+                        AtlasTechnique {
+                            technique_id: ext_id,
+                            name,
+                            tactic,
+                            description,
+                            relevant_mitigations: Vec::new(),
+                        },
+                    );
                 }
                 "course-of-action" => {
-                    let name = obj.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown Mitigation").to_string();
-                    let description = obj.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string();
+                    let name = obj
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("Unknown Mitigation")
+                        .to_string();
+                    let description = obj
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let mut ext_id = String::new();
                     if let Some(refs) = obj.get("external_references").and_then(|r| r.as_array()) {
                         for r in refs {
-                            if r.get("source_name").and_then(|s| s.as_str()) == Some("mitre-atlas") {
+                            if r.get("source_name").and_then(|s| s.as_str()) == Some("mitre-atlas")
+                            {
                                 if let Some(e) = r.get("external_id").and_then(|e| e.as_str()) {
                                     ext_id = e.to_string();
                                     break;
@@ -210,19 +247,31 @@ impl AtlasParser {
                         ext_id = stix_id.clone();
                     }
                     stix_to_mit_id.insert(stix_id, ext_id.clone());
-                    mitigations.insert(ext_id.clone(), AtlasMitigation {
-                        mitigation_id: ext_id,
-                        name,
-                        description,
-                    });
+                    mitigations.insert(
+                        ext_id.clone(),
+                        AtlasMitigation {
+                            mitigation_id: ext_id,
+                            name,
+                            description,
+                        },
+                    );
                 }
                 "campaign" => {
-                    let title = obj.get("name").and_then(|n| n.as_str()).unwrap_or("Unknown Case Study").to_string();
-                    let summary = obj.get("description").and_then(|d| d.as_str()).unwrap_or("").to_string();
+                    let title = obj
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("Unknown Case Study")
+                        .to_string();
+                    let summary = obj
+                        .get("description")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let mut ext_id = String::new();
                     if let Some(refs) = obj.get("external_references").and_then(|r| r.as_array()) {
                         for r in refs {
-                            if r.get("source_name").and_then(|s| s.as_str()) == Some("mitre-atlas") {
+                            if r.get("source_name").and_then(|s| s.as_str()) == Some("mitre-atlas")
+                            {
                                 if let Some(e) = r.get("external_id").and_then(|e| e.as_str()) {
                                     ext_id = e.to_string();
                                     break;
@@ -233,13 +282,16 @@ impl AtlasParser {
                     if ext_id.is_empty() {
                         ext_id = stix_id.clone();
                     }
-                    case_studies.insert(ext_id.clone(), AtlasCaseStudy {
-                        case_study_id: ext_id,
-                        title,
-                        summary,
-                        target_system_type: "Machine Learning System".to_string(),
-                        leveraged_techniques: Vec::new(),
-                    });
+                    case_studies.insert(
+                        ext_id.clone(),
+                        AtlasCaseStudy {
+                            case_study_id: ext_id,
+                            title,
+                            summary,
+                            target_system_type: "Machine Learning System".to_string(),
+                            leveraged_techniques: Vec::new(),
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -248,12 +300,24 @@ impl AtlasParser {
         // 2. Pass 2: Connect relationships (mitigations -> techniques, campaigns -> techniques)
         for obj in objects {
             if obj.get("type").and_then(|t| t.as_str()) == Some("relationship") {
-                let rel_type = obj.get("relationship_type").and_then(|r| r.as_str()).unwrap_or_default();
-                let source_ref = obj.get("source_ref").and_then(|s| s.as_str()).unwrap_or_default();
-                let target_ref = obj.get("target_ref").and_then(|t| t.as_str()).unwrap_or_default();
+                let rel_type = obj
+                    .get("relationship_type")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or_default();
+                let source_ref = obj
+                    .get("source_ref")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or_default();
+                let target_ref = obj
+                    .get("target_ref")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or_default();
 
                 if rel_type == "mitigates" {
-                    if let (Some(mit_id), Some(tech_id)) = (stix_to_mit_id.get(source_ref), stix_to_tech_id.get(target_ref)) {
+                    if let (Some(mit_id), Some(tech_id)) = (
+                        stix_to_mit_id.get(source_ref),
+                        stix_to_tech_id.get(target_ref),
+                    ) {
                         if let Some(tech) = techniques_map.get_mut(tech_id) {
                             let mit_label = match mitigations.get(mit_id) {
                                 Some(m) => format!("{}: {}", mit_id, m.name),

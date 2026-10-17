@@ -61,9 +61,15 @@ impl SilkRegime {
     pub fn label(&self) -> &'static str {
         match self {
             Self::Regime1LinearElastic => "Regime I: Linear Elastic Monitoring",
-            Self::Regime2EntropicUnfolding => "Regime II: Entropic Unfolding (Viscous Rate Throttling)",
-            Self::Regime3StrainStiffening => "Regime III: Strain-Stiffening (Out-of-Model Hard Block)",
-            Self::Regime4SacrificialFracture => "Regime IV: Sacrificial Thread Fracture (Session Severed)",
+            Self::Regime2EntropicUnfolding => {
+                "Regime II: Entropic Unfolding (Viscous Rate Throttling)"
+            }
+            Self::Regime3StrainStiffening => {
+                "Regime III: Strain-Stiffening (Out-of-Model Hard Block)"
+            }
+            Self::Regime4SacrificialFracture => {
+                "Regime IV: Sacrificial Thread Fracture (Session Severed)"
+            }
         }
     }
 
@@ -111,9 +117,9 @@ pub struct ExposureBoundTracker {
 impl Default for ExposureBoundTracker {
     fn default() -> Self {
         let base_rate = 1_048_576.0; // 1 MB/s
-        let max_budget = 65_536.0;   // 64 KB
-        let t_detect = 0.015;        // 15 ms
-        let t_contain = 0.010;       // 10 ms
+        let max_budget = 65_536.0; // 64 KB
+        let t_detect = 0.015; // 15 ms
+        let t_contain = 0.010; // 10 ms
         let theoretical = base_rate * (t_detect + t_contain);
         Self {
             max_allowed_exposure_bytes: max_budget,
@@ -143,7 +149,8 @@ impl ExposureBoundTracker {
     /// current thread strain epsilon and hard block flags.
     pub fn recompute(&mut self, strain_epsilon: f64, hard_blocked: bool) {
         let total_latency = (self.detection_time_sec + self.containment_time_sec).max(0.001);
-        let remaining_budget = (self.max_allowed_exposure_bytes - self.accumulated_exposure_bytes).max(0.0);
+        let remaining_budget =
+            (self.max_allowed_exposure_bytes - self.accumulated_exposure_bytes).max(0.0);
         let budget_rate = remaining_budget / total_latency;
 
         if hard_blocked || strain_epsilon >= 0.20 {
@@ -369,12 +376,17 @@ impl OrbWebContainmentEngine {
         let params_lower = params_str.to_ascii_lowercase();
 
         // 1. Retrieve or initialize the session's thread sector
-        let mut sector = self.sectors.entry(session_id.to_string()).or_insert_with(|| {
-            SpiderThreadSector {
+        let mut sector = self
+            .sectors
+            .entry(session_id.to_string())
+            .or_insert_with(|| SpiderThreadSector {
                 sector_id: format!("sector-dyn-{}", &session_id[..session_id.len().min(8)]),
                 session_id: session_id.to_string(),
                 agent_id: agent_id.to_string(),
-                scoped_identity_token: format!("did:osoosi:ephem:token-{}", uuid::Uuid::new_v4().simple()),
+                scoped_identity_token: format!(
+                    "did:osoosi:ephem:token-{}",
+                    uuid::Uuid::new_v4().simple()
+                ),
                 credential_revoked: false,
                 session_terminated: false,
                 content_trust: "TrustedWorkspace".to_string(),
@@ -388,8 +400,7 @@ impl OrbWebContainmentEngine {
                 exposure_bound: ExposureBoundTracker::new(65_536.0, 1_048_576.0),
                 edr_investigation_triggered: false,
                 last_updated: Utc::now(),
-            }
-        });
+            });
 
         // If session was already fractured / terminated, fail closed immediately
         if sector.session_terminated || sector.credential_revoked {
@@ -425,8 +436,12 @@ impl OrbWebContainmentEngine {
             || tool_lower.contains("write_remote");
 
         let is_external_destination = is_send_or_export_tool
-            || (tool_lower.contains("curl") && (params_lower.contains("-x post") || params_lower.contains("--data") || params_lower.contains("-d ")))
-            || (tool_lower.contains("net") && (params_lower.contains("post") || params_lower.contains("upload")));
+            || (tool_lower.contains("curl")
+                && (params_lower.contains("-x post")
+                    || params_lower.contains("--data")
+                    || params_lower.contains("-d ")))
+            || (tool_lower.contains("net")
+                && (params_lower.contains("post") || params_lower.contains("upload")));
 
         let is_untrusted_ingestion = !is_external_destination
             && (tool_lower.contains("read_email")
@@ -469,7 +484,8 @@ impl OrbWebContainmentEngine {
             sector.untrusted_source_detail = Some(params_str.to_string());
             // Ingestion loads the radial capture spiral into Regime II (Entropic Unfolding)
             sector.strain_epsilon = sector.strain_epsilon.max(0.08);
-            let (reg, sigma, mod_gpa, coup) = Self::compute_constitutive_silk_state(sector.strain_epsilon);
+            let (reg, sigma, mod_gpa, coup) =
+                Self::compute_constitutive_silk_state(sector.strain_epsilon);
             sector.current_regime = reg;
             sector.stress_sigma_mpa = sigma;
             sector.tangent_modulus_gpa = mod_gpa;
@@ -505,15 +521,19 @@ impl OrbWebContainmentEngine {
 
         // 4. Process Phase 2: Out-of-Model Business Authorization Gate (Untrusted -> Restricted -> External Sink)
         let is_tainted_by_untrusted = sector.content_trust == "UntrustedExternal";
-        let has_accessed_restricted = !sector.accessed_restricted_assets.is_empty() || is_restricted_asset;
+        let has_accessed_restricted =
+            !sector.accessed_restricted_assets.is_empty() || is_restricted_asset;
         let exceeds_budget = (sector.exposure_bound.accumulated_exposure_bytes + requested_bytes)
             > sector.exposure_bound.max_allowed_exposure_bytes;
 
-        if (is_tainted_by_untrusted && has_accessed_restricted && is_external_destination) || exceeds_budget {
+        if (is_tainted_by_untrusted && has_accessed_restricted && is_external_destination)
+            || exceeds_budget
+        {
             // OUT-OF-MODEL BUSINESS GATE TRIGGERED:
             // Immediate transition: Regime III Strain-Stiffening -> Regime IV Sacrificial Fracture
             sector.strain_epsilon = 0.42; // Above fracture limit epsilon_f = 0.35
-            let (reg, sigma, mod_gpa, coup) = Self::compute_constitutive_silk_state(sector.strain_epsilon);
+            let (reg, sigma, mod_gpa, coup) =
+                Self::compute_constitutive_silk_state(sector.strain_epsilon);
             sector.current_regime = reg;
             sector.stress_sigma_mpa = sigma;
             sector.tangent_modulus_gpa = mod_gpa;
@@ -530,8 +550,15 @@ impl OrbWebContainmentEngine {
                 id: format!("viol-{}", uuid::Uuid::new_v4().simple()),
                 session_id: session_id.to_string(),
                 agent_id: agent_id.to_string(),
-                untrusted_source: sector.untrusted_source_detail.clone().unwrap_or_else(|| "UntrustedExternalEmail".to_string()),
-                restricted_asset: sector.accessed_restricted_assets.last().cloned().unwrap_or_else(|| "InternalDocument".to_string()),
+                untrusted_source: sector
+                    .untrusted_source_detail
+                    .clone()
+                    .unwrap_or_else(|| "UntrustedExternalEmail".to_string()),
+                restricted_asset: sector
+                    .accessed_restricted_assets
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| "InternalDocument".to_string()),
                 target_destination: params_str.to_string(),
                 action_taken: "SACRIFICIAL_THREAD_FRACTURE_BLOCKED_ZERO_BYTES".to_string(),
                 credentials_revoked: true,
@@ -574,11 +601,14 @@ impl OrbWebContainmentEngine {
 
         // 5. Process Phase 3: Restricted Internal Document Access
         if is_restricted_asset {
-            sector.accessed_restricted_assets.push(params_str.to_string());
+            sector
+                .accessed_restricted_assets
+                .push(params_str.to_string());
             if sector.content_trust == "UntrustedExternal" {
                 // Tainted session accessing sensitive internal documents: strain escalates to 0.16
                 sector.strain_epsilon = sector.strain_epsilon.max(0.16);
-                let (reg, sigma, mod_gpa, coup) = Self::compute_constitutive_silk_state(sector.strain_epsilon);
+                let (reg, sigma, mod_gpa, coup) =
+                    Self::compute_constitutive_silk_state(sector.strain_epsilon);
                 sector.current_regime = reg;
                 sector.stress_sigma_mpa = sigma;
                 sector.tangent_modulus_gpa = mod_gpa;
@@ -635,7 +665,9 @@ impl OrbWebContainmentEngine {
             accumulated_exposure_bytes: sector.exposure_bound.accumulated_exposure_bytes,
             max_allowed_exposure_bytes: sector.exposure_bound.max_allowed_exposure_bytes,
             business_violation: None,
-            rationale: "Authorized operation inside linear elastic threshold. 100% full transfer rate.".to_string(),
+            rationale:
+                "Authorized operation inside linear elastic threshold. 100% full transfer rate."
+                    .to_string(),
         }
     }
 
@@ -746,7 +778,10 @@ impl OrbWebContainmentEngine {
             .unwrap_or_default();
 
         let active_threads = threads.len();
-        let severed_threads = threads.iter().filter(|t| t["session_terminated"] == true).count();
+        let severed_threads = threads
+            .iter()
+            .filter(|t| t["session_terminated"] == true)
+            .count();
 
         serde_json::json!({
             "status": "active",
@@ -794,28 +829,32 @@ mod tests {
     #[test]
     fn test_spider_four_regime_constitutive_stress_strain() {
         // Regime I: epsilon = 0.01 < 0.02
-        let (reg1, sigma1, mod1, coup1) = OrbWebContainmentEngine::compute_constitutive_silk_state(0.01);
+        let (reg1, sigma1, mod1, coup1) =
+            OrbWebContainmentEngine::compute_constitutive_silk_state(0.01);
         assert_eq!(reg1, SilkRegime::Regime1LinearElastic);
         assert_eq!(mod1, 10.0);
         assert!((sigma1 - 100.0).abs() < 1e-4);
         assert!(coup1 <= 0.05);
 
         // Regime II: epsilon = 0.10 in [0.02, 0.20)
-        let (reg2, sigma2, mod2, coup2) = OrbWebContainmentEngine::compute_constitutive_silk_state(0.10);
+        let (reg2, sigma2, mod2, coup2) =
+            OrbWebContainmentEngine::compute_constitutive_silk_state(0.10);
         assert_eq!(reg2, SilkRegime::Regime2EntropicUnfolding);
         assert_eq!(mod2, 1.5);
         assert!(sigma2 > 200.0);
         assert!(coup2 <= 0.025);
 
         // Regime III: epsilon = 0.25 in [0.20, 0.35)
-        let (reg3, sigma3, mod3, coup3) = OrbWebContainmentEngine::compute_constitutive_silk_state(0.25);
+        let (reg3, sigma3, mod3, coup3) =
+            OrbWebContainmentEngine::compute_constitutive_silk_state(0.25);
         assert_eq!(reg3, SilkRegime::Regime3StrainStiffening);
         assert_eq!(mod3, 80.0);
         assert!(sigma3 > 470.0);
         assert!(coup3 <= 0.012);
 
         // Regime IV: epsilon = 0.40 >= 0.35
-        let (reg4, sigma4, mod4, coup4) = OrbWebContainmentEngine::compute_constitutive_silk_state(0.40);
+        let (reg4, sigma4, mod4, coup4) =
+            OrbWebContainmentEngine::compute_constitutive_silk_state(0.40);
         assert_eq!(reg4, SilkRegime::Regime4SacrificialFracture);
         assert_eq!(mod4, 0.0);
         assert_eq!(sigma4, 0.0);
@@ -885,11 +924,14 @@ mod tests {
         let actual_accum = exp["actual_accumulated_bytes"].as_f64().unwrap();
         let rate = exp["enforced_transfer_rate_bps"].as_f64().unwrap();
 
-        assert!(actual_accum <= max_budget, "Accumulated bytes must never exceed max budget");
+        assert!(
+            actual_accum <= max_budget,
+            "Accumulated bytes must never exceed max budget"
+        );
         assert_eq!(rate, 0.0, "Enforced rate must be 0 after fracture");
         assert_eq!(exp["bytes_exfiltrated"].as_f64().unwrap(), 0.0);
-        assert_eq!(exp["scoped_credentials_revoked"].as_bool().unwrap(), true);
-        assert_eq!(exp["session_terminated"].as_bool().unwrap(), true);
+        assert!(exp["scoped_credentials_revoked"].as_bool().unwrap());
+        assert!(exp["session_terminated"].as_bool().unwrap());
     }
 
     #[test]
@@ -899,9 +941,22 @@ mod tests {
         let agent = "rogue-agent";
 
         // Taint and exfiltrate
-        let _ = engine.evaluate_tool_activity(sid, agent, "fetch_untrusted_mail", "invoice.eml", 100.0);
-        let _ = engine.evaluate_tool_activity(sid, agent, "read_internal_secret", "confidential.docx", 500.0);
-        let v = engine.evaluate_tool_activity(sid, agent, "upload_exfil", "https://exfil.io/drop", 500.0);
+        let _ =
+            engine.evaluate_tool_activity(sid, agent, "fetch_untrusted_mail", "invoice.eml", 100.0);
+        let _ = engine.evaluate_tool_activity(
+            sid,
+            agent,
+            "read_internal_secret",
+            "confidential.docx",
+            500.0,
+        );
+        let v = engine.evaluate_tool_activity(
+            sid,
+            agent,
+            "upload_exfil",
+            "https://exfil.io/drop",
+            500.0,
+        );
         assert!(!v.allowed);
 
         // Check coupling

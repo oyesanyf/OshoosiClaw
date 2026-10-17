@@ -12,6 +12,12 @@ pub struct MemoryScanner {
     magika: Option<Arc<Mutex<MagikaSession>>>,
 }
 
+impl Default for MemoryScanner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MemoryScanner {
     pub fn new() -> Self {
         let magika = {
@@ -85,12 +91,16 @@ impl MemoryScanner {
                 if res == 0 {
                     break;
                 }
-                
+
                 let is_commited = mem_info.State == MEM_COMMIT
                     && (mem_info.Protect & PAGE_NOACCESS) == 0
                     && (mem_info.Protect & PAGE_GUARD) == 0;
-                    
-                (is_commited, mem_info.BaseAddress as usize, mem_info.RegionSize as usize)
+
+                (
+                    is_commited,
+                    mem_info.BaseAddress as usize,
+                    mem_info.RegionSize as usize,
+                )
             };
 
             if is_commited {
@@ -107,10 +117,7 @@ impl MemoryScanner {
                 }
                 if bytes_read > 0 {
                     if let Some(detection) = self.scan_buffer(&buffer[..bytes_read]).await {
-                        results.push(format!(
-                            "Detection at {:#x}: {}",
-                            base_address, detection
-                        ));
+                        results.push(format!("Detection at {:#x}: {}", base_address, detection));
                     }
                 }
             }
@@ -154,7 +161,9 @@ impl MemoryScanner {
 
         let mut process_handle = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid) };
         if process_handle.is_null() {
-            process_handle = unsafe { OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, 0, pid) };
+            process_handle = unsafe {
+                OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, 0, pid)
+            };
         }
         if process_handle.is_null() {
             return Ok(Vec::new());
@@ -170,14 +179,18 @@ impl MemoryScanner {
         ) -> i32;
 
         let nt_query_thread: Option<NtQueryInformationThreadFn> = unsafe {
-            let ntdll = winapi::um::libloaderapi::GetModuleHandleA(b"ntdll.dll\0".as_ptr() as *const _);
+            let ntdll =
+                winapi::um::libloaderapi::GetModuleHandleA(c"ntdll.dll".as_ptr() as *const _);
             if !ntdll.is_null() {
                 let proc = winapi::um::libloaderapi::GetProcAddress(
                     ntdll,
-                    b"NtQueryInformationThread\0".as_ptr() as *const _,
+                    c"NtQueryInformationThread".as_ptr() as *const _,
                 );
                 if !proc.is_null() {
-                    Some(std::mem::transmute(proc))
+                    Some(std::mem::transmute::<
+                        winapi::shared::minwindef::FARPROC,
+                        NtQueryInformationThreadFn,
+                    >(proc))
                 } else {
                     None
                 }
@@ -200,13 +213,23 @@ impl MemoryScanner {
                 if entry.th32OwnerProcessID == pid {
                     let thread_id = entry.th32ThreadID;
                     let mut thread_handle = unsafe {
-                        OpenThread(THREAD_QUERY_INFORMATION | 0x0008 /* THREAD_GET_CONTEXT */, 0, thread_id)
+                        OpenThread(
+                            THREAD_QUERY_INFORMATION | 0x0008, /* THREAD_GET_CONTEXT */
+                            0,
+                            thread_id,
+                        )
                     };
                     if thread_handle.is_null() {
-                        thread_handle = unsafe { OpenThread(THREAD_QUERY_INFORMATION, 0, thread_id) };
+                        thread_handle =
+                            unsafe { OpenThread(THREAD_QUERY_INFORMATION, 0, thread_id) };
                     }
                     if thread_handle.is_null() {
-                        thread_handle = unsafe { OpenThread(0x0800 /* THREAD_QUERY_LIMITED_INFORMATION */, 0, thread_id) };
+                        thread_handle = unsafe {
+                            OpenThread(
+                                0x0800, /* THREAD_QUERY_LIMITED_INFORMATION */
+                                0, thread_id,
+                            )
+                        };
                     }
 
                     if !thread_handle.is_null() {
@@ -266,7 +289,8 @@ impl MemoryScanner {
                                     process_handle,
                                     addr as *const _,
                                     &mut mem_info,
-                                    std::mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
+                                    std::mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(
+                                    ),
                                 )
                             };
 
@@ -287,11 +311,20 @@ impl MemoryScanner {
                                         _ => "MEM_UNKNOWN",
                                     };
                                     let reason = if is_unbacked && is_rwx {
-                                        format!("Unbacked memory with RWX protection ({})", addr_source)
+                                        format!(
+                                            "Unbacked memory with RWX protection ({})",
+                                            addr_source
+                                        )
                                     } else if is_unbacked {
-                                        format!("Executable code in non-image memory ({})", addr_source)
+                                        format!(
+                                            "Executable code in non-image memory ({})",
+                                            addr_source
+                                        )
                                     } else {
-                                        format!("RWX memory protection on thread execution region ({})", addr_source)
+                                        format!(
+                                            "RWX memory protection on thread execution region ({})",
+                                            addr_source
+                                        )
                                     };
 
                                     findings.push(UnbackedExecutionFinding {
@@ -328,7 +361,10 @@ impl MemoryScanner {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn scan_unbacked_threads(&self, _pid: u32) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
+    pub fn scan_unbacked_threads(
+        &self,
+        _pid: u32,
+    ) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
         Ok(Vec::new())
     }
 }
@@ -354,7 +390,10 @@ mod tests {
         let scanner = MemoryScanner::new();
         let my_pid = std::process::id();
         let result = scanner.scan_unbacked_threads(my_pid);
-        assert!(result.is_ok(), "Scanning self PID must succeed without error");
+        assert!(
+            result.is_ok(),
+            "Scanning self PID must succeed without error"
+        );
     }
 
     #[test]
@@ -381,7 +420,10 @@ mod tests {
             let thread = CreateThread(
                 std::ptr::null_mut(),
                 0,
-                Some(std::mem::transmute(mem)),
+                Some(std::mem::transmute::<
+                    *mut winapi::ctypes::c_void,
+                    unsafe extern "system" fn(*mut winapi::ctypes::c_void) -> u32,
+                >(mem)),
                 std::ptr::null_mut(),
                 0x00000004, // CREATE_SUSPENDED
                 std::ptr::null_mut(),
@@ -390,7 +432,9 @@ mod tests {
 
             let my_pid = std::process::id();
             let scanner = MemoryScanner::new();
-            let findings = scanner.scan_unbacked_threads(my_pid).expect("scan_unbacked_threads should succeed");
+            let findings = scanner
+                .scan_unbacked_threads(my_pid)
+                .expect("scan_unbacked_threads should succeed");
 
             let detected = findings.iter().any(|f| f.address == (mem as usize));
 

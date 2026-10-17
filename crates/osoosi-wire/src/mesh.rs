@@ -39,9 +39,12 @@ pub async fn detect_public_ip() -> String {
 
     let fetched = if let Ok(client) = client {
         match client.get("https://api.ipify.org").send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.text().await.ok().map(|t| t.trim().to_string()).filter(|s| s.parse::<std::net::IpAddr>().is_ok())
-            }
+            Ok(resp) if resp.status().is_success() => resp
+                .text()
+                .await
+                .ok()
+                .map(|t| t.trim().to_string())
+                .filter(|s| s.parse::<std::net::IpAddr>().is_ok()),
             _ => None,
         }
     } else {
@@ -134,19 +137,15 @@ impl MeshNode {
                     gossipsub_config,
                 )?;
 
-                let mut mdns_config = mdns::Config::default();
-                mdns_config.query_interval = Duration::from_secs(10); // More aggressive discovery on same subnet
+                let mdns_config = mdns::Config {
+                    query_interval: Duration::from_secs(10), // More aggressive discovery on same subnet
+                    ..Default::default()
+                };
 
-                let mdns = mdns::tokio::Behaviour::new(
-                    mdns_config,
-                    key.public().to_peer_id(),
-                )?;
+                let mdns = mdns::tokio::Behaviour::new(mdns_config, key.public().to_peer_id())?;
 
-                let identify_config = identify::Config::new(
-                    "/osoosi/1.0.0".into(),
-                    key.public(),
-                )
-                .with_agent_version("osoosi/0.1.1".into());
+                let identify_config = identify::Config::new("/osoosi/1.0.0".into(), key.public())
+                    .with_agent_version("osoosi/0.1.1".into());
 
                 let identify = identify::Behaviour::new(identify_config);
 
@@ -155,13 +154,11 @@ impl MeshNode {
                     kad::store::MemoryStore::new(key.public().to_peer_id()),
                 );
 
-                let autonat = autonat::Behaviour::new(
-                    key.public().to_peer_id(),
-                    autonat::Config::default(),
-                );
+                let autonat =
+                    autonat::Behaviour::new(key.public().to_peer_id(), autonat::Config::default());
 
                 let upnp = upnp::tokio::Behaviour::default();
-                
+
                 let dcutr = libp2p::dcutr::Behaviour::new(key.public().to_peer_id());
 
                 // Initialize Relay Server (allows this node to help others behind NAT)
@@ -184,8 +181,8 @@ impl MeshNode {
             })?
             .with_swarm_config(|c| {
                 c.with_idle_connection_timeout(Duration::from_secs(300))
-                 .with_dial_concurrency_factor(std::num::NonZeroU8::new(1).unwrap()) // Slow down dials
-                 .with_max_negotiating_inbound_streams(16)
+                    .with_dial_concurrency_factor(std::num::NonZeroU8::new(1).unwrap()) // Slow down dials
+                    .with_max_negotiating_inbound_streams(16)
             })
             .build();
 
@@ -202,15 +199,14 @@ impl MeshNode {
         let confidential_topic =
             gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
         let model_delta_topic = gossipsub::IdentTopic::new(format!("osoosi-model-deltas-{}", zone));
-        let tripwire_topic = gossipsub::IdentTopic::new(format!("osoosi-deception-tripwire-{}", zone));
+        let tripwire_topic =
+            gossipsub::IdentTopic::new(format!("osoosi-deception-tripwire-{}", zone));
         let attestation_topic =
             gossipsub::IdentTopic::new(format!("{}-{}", super::ATTESTATION_TOPIC, zone));
         let heartbeat_topic =
             gossipsub::IdentTopic::new(format!("{}-{}", super::HEARTBEAT_TOPIC, zone));
-        let stix_update_topic =
-            gossipsub::IdentTopic::new(super::STIX_UPDATE_TOPIC);
-        let skills_topic =
-            gossipsub::IdentTopic::new(super::SKILLS_TOPIC);
+        let stix_update_topic = gossipsub::IdentTopic::new(super::STIX_UPDATE_TOPIC);
+        let skills_topic = gossipsub::IdentTopic::new(super::SKILLS_TOPIC);
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm
@@ -243,10 +239,7 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&model_delta_topic)?;
-        swarm
-            .behaviour_mut()
-            .gossipsub
-            .subscribe(&tripwire_topic)?;
+        swarm.behaviour_mut().gossipsub.subscribe(&tripwire_topic)?;
         swarm
             .behaviour_mut()
             .gossipsub
@@ -259,10 +252,7 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&stix_update_topic)?;
-        swarm
-            .behaviour_mut()
-            .gossipsub
-            .subscribe(&skills_topic)?;
+        swarm.behaviour_mut().gossipsub.subscribe(&skills_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -270,7 +260,7 @@ impl MeshNode {
             if let Ok(maddr) = addr.parse::<Multiaddr>() {
                 let mut current_addr = maddr.clone();
                 let mut success = false;
-                
+
                 // Try up to 5 ports starting from the configured one
                 for i in 0..5 {
                     if i > 0 {
@@ -294,7 +284,10 @@ impl MeshNode {
                         }
                         Err(e) => {
                             let es = e.to_string();
-                            if es.contains("10048") || es.contains("WSAEADDRINUSE") || es.contains("already in use") {
+                            if es.contains("10048")
+                                || es.contains("WSAEADDRINUSE")
+                                || es.contains("already in use")
+                            {
                                 warn!("Oshoosi Mesh: Port {} in use, trying next...", current_addr);
                             } else {
                                 warn!("Oshoosi Mesh: Failed to listen on {}: {}", current_addr, e);
@@ -328,14 +321,19 @@ impl MeshNode {
                     let resolved_ip_opt = match tokio::time::timeout(
                         std::time::Duration::from_millis(1500),
                         tokio::net::lookup_host(format!("{}:{}", host, port)),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(Ok(mut addrs)) => addrs.next().map(|sa| sa.ip().to_string()),
                         Ok(Err(e)) => {
                             debug!("[MESH BOOTSTRAP] DNS resolution lookup for {}: {}", host, e);
                             None
                         }
                         Err(_) => {
-                            debug!("[MESH BOOTSTRAP] DNS resolution lookup timed out for {}", host);
+                            debug!(
+                                "[MESH BOOTSTRAP] DNS resolution lookup timed out for {}",
+                                host
+                            );
                             None
                         }
                     };
@@ -396,7 +394,11 @@ impl MeshNode {
             .kademlia
             .set_mode(Some(kad::Mode::Server));
         // Start bootstrapping the DHT if we have peers
-        let has_peers = swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0);
+        let has_peers = swarm
+            .behaviour_mut()
+            .kademlia
+            .kbuckets()
+            .any(|b| b.num_entries() > 0);
         if has_peers {
             let _ = swarm.behaviour_mut().kademlia.bootstrap();
         }
@@ -432,14 +434,34 @@ impl MeshNode {
     /// This is the "Subnet-Aware" discovery layer that complements mDNS.
     pub async fn bootstrap_local_neighbors(&mut self) {
         let mesh_config = osoosi_types::load_mesh_listen_config();
-        
+
         // Port Synchronization: Dynamically query self.swarm.listeners() to determine active port
-        let listen_port = self.swarm.listeners()
-            .find_map(|maddr| maddr.iter().find_map(|p| if let Protocol::Tcp(port) = p { Some(port) } else { None }))
+        let listen_port = self
+            .swarm
+            .listeners()
+            .find_map(|maddr| {
+                maddr.iter().find_map(|p| {
+                    if let Protocol::Tcp(port) = p {
+                        Some(port)
+                    } else {
+                        None
+                    }
+                })
+            })
             .unwrap_or_else(|| {
-                mesh_config.listen_addrs.first()
+                mesh_config
+                    .listen_addrs
+                    .first()
                     .and_then(|addr| addr.parse::<Multiaddr>().ok())
-                    .and_then(|maddr| maddr.iter().find_map(|p| if let Protocol::Tcp(port) = p { Some(port) } else { None }))
+                    .and_then(|maddr| {
+                        maddr.iter().find_map(|p| {
+                            if let Protocol::Tcp(port) = p {
+                                Some(port)
+                            } else {
+                                None
+                            }
+                        })
+                    })
                     .unwrap_or(4001)
             });
 
@@ -464,16 +486,24 @@ impl MeshNode {
             }
         }
 
-        info!("[Mesh] Performing Aggressive Local Subnet Discovery via ARP cache (Port {})...", listen_port);
+        info!(
+            "[Mesh] Performing Aggressive Local Subnet Discovery via ARP cache (Port {})...",
+            listen_port
+        );
         let scraper = osoosi_telemetry::discovery::RouteScraper::new();
         let neighbors = scraper.scrape_arp();
-        
+
         let local_peer_id = *self.swarm.local_peer_id();
         let mut dialed = 0;
 
         for host in neighbors {
             // Basic noise filtering: skip common multicast/broadcast patterns
-            if host.ip.starts_with("224.") || host.ip.starts_with("239.") || host.ip.ends_with(".255") || host.ip.ends_with(".0") || host.ip == "255.255.255.255" {
+            if host.ip.starts_with("224.")
+                || host.ip.starts_with("239.")
+                || host.ip.ends_with(".255")
+                || host.ip.ends_with(".0")
+                || host.ip == "255.255.255.255"
+            {
                 continue;
             }
 
@@ -500,23 +530,31 @@ impl MeshNode {
             let maddr_str = format!("/ip4/{}/tcp/{}", host.ip, listen_port);
             if let Ok(maddr) = maddr_str.parse::<Multiaddr>() {
                 if let Some(Protocol::P2p(peer_id)) = maddr.iter().last() {
-                    if peer_id == local_peer_id { continue; }
+                    if peer_id == local_peer_id {
+                        continue;
+                    }
                 }
 
-                debug!("[Mesh] Subnet Discovery: Dialing potential sibling at {}", maddr);
+                debug!(
+                    "[Mesh] Subnet Discovery: Dialing potential sibling at {}",
+                    maddr
+                );
                 let _ = self.swarm.dial(maddr);
                 dialed += 1;
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                
+
                 if dialed >= 32 {
                     debug!("[Mesh] Subnet Discovery: Capping at 32 dials to prevent socket exhaustion.");
                     break;
                 }
             }
         }
-        
+
         if dialed > 0 {
-            info!("[Mesh] Subnet Discovery: Attempted connection to {} potential local siblings.", dialed);
+            info!(
+                "[Mesh] Subnet Discovery: Attempted connection to {} potential local siblings.",
+                dialed
+            );
         }
     }
 
@@ -532,7 +570,10 @@ impl MeshNode {
                 {
                     match e {
                         libp2p::gossipsub::PublishError::Duplicate => {
-                            tracing::trace!("[mesh] duplicate gossip message suppressed on {}", topic);
+                            tracing::trace!(
+                                "[mesh] duplicate gossip message suppressed on {}",
+                                topic
+                            );
                         }
                         other => {
                             tracing::debug!("[mesh] gossip publish non-fatal: {}", other);
@@ -908,7 +949,7 @@ impl MeshNode {
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                         if peer_id == *self.swarm.local_peer_id() { continue; }
-                        
+
                         // THE IDENTIFY FINGERPRINT: Filter for Oshoosi protocol agents
                         let is_osoosi = info.agent_version.to_lowercase().contains("osoosi")
                             || info.protocol_version.to_lowercase().contains("osoosi")
@@ -974,7 +1015,7 @@ impl MeshNode {
                                 bootstrap_interval = tokio::time::interval(Duration::from_secs(300 + dial_backoff_secs));
                                 arp_discovery_interval = tokio::time::interval(Duration::from_secs(600 + dial_backoff_secs));
                                 // Reset the intervals
-                                let _ = bootstrap_interval.tick().await; 
+                                let _ = bootstrap_interval.tick().await;
                                 let _ = arp_discovery_interval.tick().await;
                             } else {
                                 debug!("Transient socket collision (WSAEADDRINUSE) to {:?}, count={}", peer_id, consecutive_exhaustion_count);
@@ -1000,30 +1041,31 @@ impl MeshNode {
                                 warn!("Outgoing connection error to {:?}: {}", peer_id, error);
                             }
                         }
-                        
+
                         // Autonomous Repair: Remove dead/unreachable peers from DHT to stop retry loops
                         if let Some(pid) = peer_id {
                             let _ = self.swarm.behaviour_mut().kademlia.remove_peer(&pid);
                             debug!("Removed unreachable peer {} from Kademlia routing table.", pid);
                         }
                     }
-                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, .. })) => {
-                        if let kad::QueryResult::GetClosestPeers(Ok(kad::GetClosestPeersOk { peers, .. })) = result {
-                            let mut dial_count = 0;
-                            for peer_info in peers {
-                                if peer_info.peer_id != *self.swarm.local_peer_id() {
-                                    let _ = join_gate.on_peer_discovered(peer_info.peer_id, None);
-                                    
-                                    // SHODAN SCAN: Dial newly discovered peers to fingerprint them
-                                    // Limit to 5 dials per crawl cycle to prevent ISP throttling
-                                    // And use the global dial_semaphore for adaptive backpressure
-                                    if dial_count < 5 {
-                                        let sem = self.dial_semaphore.clone();
-                                        let permit = sem.try_acquire();
-                                        if permit.is_ok() {
-                                            let _ = self.swarm.dial(peer_info.peer_id);
-                                            dial_count += 1;
-                                        }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed {
+                        result: kad::QueryResult::GetClosestPeers(Ok(kad::GetClosestPeersOk { peers, .. })),
+                        ..
+                    })) => {
+                        let mut dial_count = 0;
+                        for peer_info in peers {
+                            if peer_info.peer_id != *self.swarm.local_peer_id() {
+                                let _ = join_gate.on_peer_discovered(peer_info.peer_id, None);
+
+                                // SHODAN SCAN: Dial newly discovered peers to fingerprint them
+                                // Limit to 5 dials per crawl cycle to prevent ISP throttling
+                                // And use the global dial_semaphore for adaptive backpressure
+                                if dial_count < 5 {
+                                    let sem = self.dial_semaphore.clone();
+                                    let permit = sem.try_acquire();
+                                    if permit.is_ok() {
+                                        let _ = self.swarm.dial(peer_info.peer_id);
+                                        dial_count += 1;
                                     }
                                 }
                             }
@@ -1091,7 +1133,10 @@ mod tests {
         let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("in-memory db"));
         let node = MeshNode::new(memory).await.expect("initialize MeshNode");
 
-        assert_eq!(node.stix_update_topic.hash().as_str(), "osoosi-stix-sync-v1");
+        assert_eq!(
+            node.stix_update_topic.hash().as_str(),
+            "osoosi-stix-sync-v1"
+        );
         assert!(node.last_stix_manifest.is_none());
     }
 
@@ -1109,7 +1154,8 @@ mod tests {
             signature: Some("sig-xyz".to_string()),
         };
 
-        let json_str = serde_json::to_string(&broadcast).expect("serialize SkillKnowledgeBroadcast");
+        let json_str =
+            serde_json::to_string(&broadcast).expect("serialize SkillKnowledgeBroadcast");
         assert!(json_str.contains("node-test-peer-42"));
         assert!(json_str.contains("wikiskill"));
         assert!(json_str.contains("a1b2c3d4e5f6"));

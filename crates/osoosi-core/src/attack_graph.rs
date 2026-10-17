@@ -49,18 +49,12 @@ pub fn build_attack_graph(
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .unwrap_or("System");
-        let cve_id = threat
-            .get("cve_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let cve_id = threat.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
         let confidence = threat
             .get("confidence")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.9);
-        let reason = threat
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let reason = threat.get("reason").and_then(|v| v.as_str()).unwrap_or("");
         let source_node = threat
             .get("source_node")
             .and_then(|v| v.as_str())
@@ -90,10 +84,7 @@ pub fn build_attack_graph(
             proc_name.to_string(),
             (proc_name.to_string(), "process".to_string()),
         );
-        node_labels.insert(
-            threat_node.clone(),
-            (threat_label, "threat".to_string()),
-        );
+        node_labels.insert(threat_node.clone(), (threat_label, "threat".to_string()));
 
         edges.push(json!({
             "from": source_node,
@@ -316,15 +307,29 @@ pub fn build_attack_graph(
                 }
             }
             "TELEMETRY_SUMMARY" => {
-                let computer = entry.data.get("computer").and_then(|v| v.as_str()).unwrap_or("host");
-                let count_val = entry.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                
+                let computer = entry
+                    .data
+                    .get("computer")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("host");
+                let count_val = entry
+                    .data
+                    .get("count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+
                 let summary_id = format!("summary:{}", entry.timestamp.timestamp_millis());
                 nodes.insert(summary_id.clone());
                 nodes.insert(computer.to_string());
-                node_labels.insert(summary_id.clone(), (format!("{} events", count_val), "host".to_string()));
-                node_labels.insert(computer.to_string(), (computer.to_string(), "host".to_string()));
-                
+                node_labels.insert(
+                    summary_id.clone(),
+                    (format!("{} events", count_val), "host".to_string()),
+                );
+                node_labels.insert(
+                    computer.to_string(),
+                    (computer.to_string(), "host".to_string()),
+                );
+
                 edges.push(json!({
                     "from": computer,
                     "to": summary_id,
@@ -334,7 +339,11 @@ pub fn build_attack_graph(
                 count += 1;
             }
             "ACTIVITY_BOOT" => {
-                let msg = entry.data.get("message").and_then(|v| v.as_str()).unwrap_or("Boot");
+                let msg = entry
+                    .data
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Boot");
                 let boot_id = format!("boot:{}", entry.timestamp.timestamp_millis());
                 nodes.insert(boot_id.clone());
                 node_labels.insert(boot_id.clone(), (msg.to_string(), "response".to_string()));
@@ -394,20 +403,31 @@ mod tests {
         })];
 
         let graph = build_attack_graph(&audit, &relationships, &threats, 10);
-        let nodes = graph.get("nodes").and_then(|v| v.as_array()).expect("nodes array");
-        let edges = graph.get("edges").and_then(|v| v.as_array()).expect("edges array");
+        let nodes = graph
+            .get("nodes")
+            .and_then(|v| v.as_array())
+            .expect("nodes array");
+        let edges = graph
+            .get("edges")
+            .and_then(|v| v.as_array())
+            .expect("edges array");
 
-        let node_ids: Vec<&str> = nodes.iter().filter_map(|n| n.get("id").and_then(|v| v.as_str())).collect();
+        let node_ids: Vec<&str> = nodes
+            .iter()
+            .filter_map(|n| n.get("id").and_then(|v| v.as_str()))
+            .collect();
         assert!(node_ids.contains(&"Node-Alpha"));
         assert!(node_ids.contains(&"mimikatz.exe"));
         assert!(node_ids.contains(&"threat:threat-101"));
         assert!(node_ids.contains(&"file:mimikatz.exe"));
 
         assert_eq!(edges.len(), 3);
-        let labels: Vec<&str> = edges.iter().filter_map(|e| e.get("label").and_then(|v| v.as_str())).collect();
+        let labels: Vec<&str> = edges
+            .iter()
+            .filter_map(|e| e.get("label").and_then(|v| v.as_str()))
+            .collect();
         assert!(labels.contains(&"spawned"));
         assert!(labels.contains(&"detected"));
         assert!(labels.contains(&"targeted"));
     }
 }
-

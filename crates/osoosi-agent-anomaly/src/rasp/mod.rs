@@ -76,14 +76,13 @@ impl AgentRaspEngine {
 impl Default for AgentRaspEngine {
     fn default() -> Self {
         Self::new(
-            Arc::new(AdaptiveRlDefenseEngine::default()),
-            Arc::new(OtelSessionTelemetry::default()),
+            Arc::new(AdaptiveRlDefenseEngine),
+            Arc::new(OtelSessionTelemetry),
         )
     }
 }
 
 impl AgentRaspEngine {
-
     pub fn policy_engine(&self) -> Arc<RaspPolicyEngine> {
         Arc::clone(&self.policy_engine)
     }
@@ -142,9 +141,12 @@ impl AgentRaspEngine {
         cedar_gateway: Option<&CedarAuthorizationGateway>,
     ) -> (RaspDecision, Option<RaspThreatCategory>, serde_json::Value) {
         let start = Instant::now();
-        let (decision, threat, modified_params) = self
-            .actuator_interceptor
-            .intercept_tool_call(tool_name, params, subject, cedar_gateway);
+        let (decision, threat, modified_params) = self.actuator_interceptor.intercept_tool_call(
+            tool_name,
+            params,
+            subject,
+            cedar_gateway,
+        );
         let latency_micros = start.elapsed().as_micros() as u64;
 
         let event = RaspInterceptionEvent {
@@ -157,7 +159,11 @@ impl AgentRaspEngine {
             subject: subject.clone(),
             threat_category: threat,
             decision: decision.clone(),
-            raw_input_summary: format!("{}({})", tool_name, params.to_string().chars().take(96).collect::<String>()),
+            raw_input_summary: format!(
+                "{}({})",
+                tool_name,
+                params.to_string().chars().take(96).collect::<String>()
+            ),
             sanitized_output_summary: Some(modified_params.to_string().chars().take(96).collect()),
             latency_micros,
             trace_id: generate_trace_id(),
@@ -213,9 +219,9 @@ impl AgentRaspEngine {
         subject: &AgentSecuritySubject,
     ) -> (RaspDecision, Option<RaspThreatCategory>, String) {
         let start = Instant::now();
-        let (decision, threat, sanitized) =
-            self.memory_interceptor
-                .intercept_memory_write(key, content, subject);
+        let (decision, threat, sanitized) = self
+            .memory_interceptor
+            .intercept_memory_write(key, content, subject);
         let latency_micros = start.elapsed().as_micros() as u64;
 
         let event = RaspInterceptionEvent {
@@ -287,9 +293,9 @@ impl AgentRaspEngine {
         subject: &AgentSecuritySubject,
     ) -> (RaspDecision, Option<RaspThreatCategory>) {
         let start = Instant::now();
-        let (decision, threat) =
-            self.substrate_interceptor
-                .intercept_process_spawn(executable, args, subject);
+        let (decision, threat) = self
+            .substrate_interceptor
+            .intercept_process_spawn(executable, args, subject);
         let latency_micros = start.elapsed().as_micros() as u64;
 
         let event = RaspInterceptionEvent {

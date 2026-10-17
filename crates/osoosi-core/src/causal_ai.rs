@@ -23,6 +23,12 @@ pub struct CausalEngine {
     lineage_cache: Arc<RwLock<HashMap<u32, Vec<u32>>>>,
 }
 
+impl Default for CausalEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CausalEngine {
     pub fn new() -> Self {
         Self {
@@ -35,7 +41,8 @@ impl CausalEngine {
         let mut processes = self.processes.write().unwrap_or_else(|e| e.into_inner());
 
         match event.event_id {
-            1 => { // ProcessCreate
+            1 => {
+                // ProcessCreate
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -72,7 +79,8 @@ impl CausalEngine {
                     },
                 );
             }
-            2 => { // FileCreateTimeChange
+            2 => {
+                // FileCreateTimeChange
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -84,7 +92,8 @@ impl CausalEngine {
                     node.score += 0.4;
                 }
             }
-            3 => { // NetworkConnect
+            3 => {
+                // NetworkConnect
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -103,7 +112,8 @@ impl CausalEngine {
                 }
             }
             4 => {} // SysmonServiceState: Audit only
-            5 => { // ProcessTerminate
+            5 => {
+                // ProcessTerminate
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -111,7 +121,8 @@ impl CausalEngine {
                     .unwrap_or(0) as u32;
                 processes.remove(&pid);
             }
-            6 => { // DriverLoad
+            6 => {
+                // DriverLoad
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -129,7 +140,8 @@ impl CausalEngine {
                     node.score += 0.8;
                 }
             }
-            7 => { // ImageLoad
+            7 => {
+                // ImageLoad
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -139,7 +151,8 @@ impl CausalEngine {
                     node.score += 0.02; // Small increment for DLL loads
                 }
             }
-            8 => { // CreateRemoteThread
+            8 => {
+                // CreateRemoteThread
                 let pid = event
                     .data
                     .get("SourceProcessId")
@@ -151,7 +164,8 @@ impl CausalEngine {
                     node.score += 1.5;
                 }
             }
-            9 => { // RawAccessRead
+            9 => {
+                // RawAccessRead
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -163,7 +177,8 @@ impl CausalEngine {
                     node.score += 1.2;
                 }
             }
-            10 => { // ProcessAccess
+            10 => {
+                // ProcessAccess
                 let pid = event
                     .data
                     .get("SourceProcessId")
@@ -173,7 +188,8 @@ impl CausalEngine {
                     node.score += 0.3;
                 }
             }
-            11 => { // FileCreate
+            11 => {
+                // FileCreate
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -191,7 +207,8 @@ impl CausalEngine {
                     node.score += 0.05;
                 }
             }
-            12 | 13 | 14 => { // Registry Events
+            12..=14 => {
+                // Registry Events
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -209,7 +226,8 @@ impl CausalEngine {
                     node.score += 0.2;
                 }
             }
-            15 => { // FileCreateStreamHash
+            15 => {
+                // FileCreateStreamHash
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -221,7 +239,8 @@ impl CausalEngine {
                     node.score += 0.4;
                 }
             }
-            16 => { // SysmonConfigChange
+            16 => {
+                // SysmonConfigChange
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -233,7 +252,8 @@ impl CausalEngine {
                     node.score += 1.0;
                 }
             }
-            17 | 18 => { // Pipe Events
+            17 | 18 => {
+                // Pipe Events
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -243,7 +263,8 @@ impl CausalEngine {
                     node.score += 0.15;
                 }
             }
-            19 | 20 | 21 => { // WMI Events
+            19..=21 => {
+                // WMI Events
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -254,7 +275,8 @@ impl CausalEngine {
                     node.score += 0.7;
                 }
             }
-            22 => { // DnsQuery
+            22 => {
+                // DnsQuery
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -272,7 +294,8 @@ impl CausalEngine {
                     node.score += 0.1;
                 }
             }
-            23 => { // FileDeleteArchived
+            23 => {
+                // FileDeleteArchived
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -282,7 +305,8 @@ impl CausalEngine {
                     node.score += 0.2;
                 }
             }
-            24 => { // ClipboardChange
+            24 => {
+                // ClipboardChange
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -293,7 +317,8 @@ impl CausalEngine {
                     node.score += 0.5;
                 }
             }
-            25 => { // ProcessTampering
+            25 => {
+                // ProcessTampering
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -306,7 +331,8 @@ impl CausalEngine {
                 }
             }
             26 => {} // FileDeleteLogged
-            27 | 28 => { // FileBlock executable/shredding
+            27 | 28 => {
+                // FileBlock executable/shredding
                 let pid = event
                     .data
                     .get("ProcessId")
@@ -316,7 +342,8 @@ impl CausalEngine {
                     node.score += 0.1;
                 }
             }
-            29 => { // FileExecutableDetected
+            29 => {
+                // FileExecutableDetected
                 let pid = event
                     .data
                     .get("ProcessId")

@@ -7,12 +7,18 @@ pub struct YaraAnalyzer {
     rules: Option<Rules>,
 }
 
+impl Default for YaraAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl YaraAnalyzer {
     pub fn new() -> Self {
         let rules_dir = std::env::var("OSOOSI_YARA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("yara"));
-        
+
         let mut compiler = Compiler::new();
         let mut loaded = 0;
 
@@ -24,7 +30,7 @@ impl YaraAnalyzer {
                 .filter(|e| {
                     e.path()
                         .extension()
-                        .map_or(false, |ext| ext == "yar" || ext == "yara")
+                        .is_some_and(|ext| ext == "yar" || ext == "yara")
                 })
             {
                 if let Ok(content) = std::fs::read_to_string(entry.path()) {

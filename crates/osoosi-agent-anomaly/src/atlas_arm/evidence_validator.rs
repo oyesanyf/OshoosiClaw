@@ -75,14 +75,19 @@ impl EvidenceValidator {
         technique_id: &str,
         receipt: &SignedExecutionReceipt,
     ) -> Result<EvidenceValidationVerdict, String> {
-        receipt.verify().map_err(|e| format!("Receipt verification failed: {}", e))?;
+        receipt
+            .verify()
+            .map_err(|e| format!("Receipt verification failed: {}", e))?;
 
         Ok(EvidenceValidationVerdict {
             technique_id: technique_id.to_string(),
             is_empirically_verified: true,
             evidence_type: "Ed25519 Signed Execution Receipt".to_string(),
             cryptographic_fingerprint: hex::encode(&receipt.signature),
-            notes: format!("Verified sequence {} from agent {}", receipt.sequence_number, receipt.agent_id),
+            notes: format!(
+                "Verified sequence {} from agent {}",
+                receipt.sequence_number, receipt.agent_id
+            ),
         })
     }
 
@@ -101,7 +106,10 @@ impl EvidenceValidator {
             is_empirically_verified: true,
             evidence_type: "Cryptographic Merkle Inclusion Proof".to_string(),
             cryptographic_fingerprint: hex::encode(proof.leaf_hash),
-            notes: format!("Verified inclusion across {} audit path siblings", proof.audit_path.len()),
+            notes: format!(
+                "Verified inclusion across {} audit path siblings",
+                proof.audit_path.len()
+            ),
         })
     }
 
@@ -119,7 +127,10 @@ impl EvidenceValidator {
             is_empirically_verified: true,
             evidence_type: "SHA-256 Append-Only Audit Log Hash Chain".to_string(),
             cryptographic_fingerprint: format!("records:{}", audit_log.total_records()),
-            notes: format!("Verified complete chain of {} audit records", audit_log.total_records()),
+            notes: format!(
+                "Verified complete chain of {} audit records",
+                audit_log.total_records()
+            ),
         })
     }
 }

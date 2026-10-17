@@ -113,7 +113,9 @@ const WINDOWS_LOG_CHANNELS: &[&str] = &[
 #[cfg(target_os = "windows")]
 fn is_elevated_windows() -> bool {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+    use windows::Win32::Security::{
+        GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
+    };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
@@ -172,7 +174,10 @@ fn can_read_channel(channel: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn get_current_user_sid() -> Option<String> {
-    let output = Command::new(osoosi_types::resolve_system_binary("whoami")).args(["/user"]).output().ok()?;
+    let output = Command::new(osoosi_types::resolve_system_binary("whoami"))
+        .args(["/user"])
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     for line in text.lines() {
         let trimmed = line.trim();
@@ -271,7 +276,11 @@ fn windows_grant(status: &mut PrivilegeStatus) {
     let sysmon_check = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
         .args(["query", "Sysmon64"])
         .output()
-        .or_else(|_| Command::new(osoosi_types::resolve_system_binary("sc.exe")).args(["query", "Sysmon"]).output());
+        .or_else(|_| {
+            Command::new(osoosi_types::resolve_system_binary("sc.exe"))
+                .args(["query", "Sysmon"])
+                .output()
+        });
 
     match sysmon_check {
         Ok(o) if o.status.success() => {
@@ -352,8 +361,8 @@ fn windows_grant(status: &mut PrivilegeStatus) {
 
 #[cfg(target_os = "windows")]
 fn add_to_group(status: &mut PrivilegeStatus, user: &str, group: &str) {
-    use windows::Win32::NetworkManagement::NetManagement::*;
     use windows::core::PCWSTR;
+    use windows::Win32::NetworkManagement::NetManagement::*;
 
     let mut user_w: Vec<u16> = user.encode_utf16().chain(std::iter::once(0)).collect();
     let group_w: Vec<u16> = group.encode_utf16().chain(std::iter::once(0)).collect();
@@ -393,7 +402,9 @@ fn add_to_group(status: &mut PrivilegeStatus, user: &str, group: &str) {
 #[cfg(target_os = "windows")]
 fn grant_channel_read(status: &mut PrivilegeStatus, channel: &str, sid: Option<&str>) {
     // Check if channel exists
-    let gl_output = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe")).args(["gl", channel]).output();
+    let gl_output = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"))
+        .args(["gl", channel])
+        .output();
     let gl = match gl_output {
         Ok(o) if o.status.success() => o,
         _ => {
@@ -828,7 +839,7 @@ pub fn bootstrap_security_rules() {
 
             if let Ok(cwd) = std::env::current_dir() {
                 paths.push(cwd.to_string_lossy().to_string());
-                
+
                 let target_dir = cwd.join("target");
                 if target_dir.exists() {
                     paths.push(target_dir.to_string_lossy().to_string());
@@ -1038,16 +1049,17 @@ fn apply_defender_exclusions(paths: &[String], extensions: &[String], processes:
     // Rustify: Use WMI directly to apply Defender preferences instead of powershell.exe
     match (|| -> Result<(), Box<dyn std::error::Error>> {
         let com_lib = COMLibrary::new()?;
-        let wmi_con = WMIConnection::with_namespace_path("ROOT\\Microsoft\\Windows\\Defender", com_lib)?;
+        let wmi_con =
+            WMIConnection::with_namespace_path("ROOT\\Microsoft\\Windows\\Defender", com_lib)?;
 
         // Note: exec_method on WMI classes usually requires a specific instance path or static call.
         // For MSFT_MpPreference, we can use the singleton instance.
         let _instances: Vec<wmi::Variant> = wmi_con.raw_query("SELECT * FROM MSFT_MpPreference")?;
-        
+
         // Since wmi crate's exec_method is complex, we'll use a single fallback powershell
         // but consolidated into ONE call for the entire agent session, reducing signal noise by 99%.
         // Long-term: define the WMI method call via COM directly.
-        
+
         for path in paths {
             let _ = osoosi_types::add_defender_exclusion(path);
         }
@@ -1055,7 +1067,10 @@ fn apply_defender_exclusions(paths: &[String], extensions: &[String], processes:
         // Long-term: use native MpPreferenceSet API once mapped.
         Ok(())
     })() {
-        Ok(_) => info!("Applied {} Defender exclusions via consolidated management.", paths.len() + extensions.len() + processes.len()),
+        Ok(_) => info!(
+            "Applied {} Defender exclusions via consolidated management.",
+            paths.len() + extensions.len() + processes.len()
+        ),
         Err(_) => {
             // Fallback to individual calls if consolidated failed (unlikely)
         }

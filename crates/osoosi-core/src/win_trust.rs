@@ -65,7 +65,10 @@ pub fn get_cached_authenticode_status(path: &str) -> AuthenticodeStatus {
 
 /// Verify a file signature using native Windows WinVerifyTrust with in-memory caching.
 pub fn verify_file_signature(path: &str) -> bool {
-    matches!(get_cached_authenticode_status(path), AuthenticodeStatus::ValidTrusted)
+    matches!(
+        get_cached_authenticode_status(path),
+        AuthenticodeStatus::ValidTrusted
+    )
 }
 
 /// Check if a binary has a valid digital signature or belongs to a known trusted vendor,
@@ -159,7 +162,10 @@ mod tests {
 
         // Normalization check: forward slash should hit same cache entry
         let test_path_forward = "C:/fake/vendor_module.dll";
-        assert_eq!(get_cached_authenticode_status(test_path_forward), AuthenticodeStatus::ValidTrusted);
+        assert_eq!(
+            get_cached_authenticode_status(test_path_forward),
+            AuthenticodeStatus::ValidTrusted
+        );
 
         invalidate_cache_entry(test_path);
         assert_eq!(cache_len(), 0);
@@ -169,7 +175,10 @@ mod tests {
     fn test_transient_error_not_cached() {
         clear_authenticode_cache();
         let transient_status = AuthenticodeStatus::OtherError(-2147024864);
-        assert!(!matches!(transient_status, AuthenticodeStatus::ValidTrusted));
+        assert!(!matches!(
+            transient_status,
+            AuthenticodeStatus::ValidTrusted
+        ));
     }
 
     #[test]

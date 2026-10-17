@@ -10,6 +10,12 @@ pub struct DirectExecutor {
     client: reqwest::Client,
 }
 
+impl Default for DirectExecutor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DirectExecutor {
     pub fn new() -> Self {
         Self {
@@ -43,7 +49,8 @@ impl SecuredExecutor for DirectExecutor {
             tokio_cmd.creation_flags(0x08000000);
         }
         // system-wide safety timeout for all orchestrated commands to prevent agent hangs
-        let res = tokio::time::timeout(std::time::Duration::from_secs(600), tokio_cmd.output()).await;
+        let res =
+            tokio::time::timeout(std::time::Duration::from_secs(600), tokio_cmd.output()).await;
         match res {
             Ok(output) => Ok(output?),
             Err(_) => Err(anyhow::anyhow!("Command timed out after 10 minutes")),
@@ -234,7 +241,9 @@ impl SecuredExecutor for OpenShellExecutor {
         let res = tokio::time::timeout(std::time::Duration::from_secs(600), wrapped.output()).await;
         match res {
             Ok(output) => Ok(output?),
-            Err(_) => Err(anyhow::anyhow!("Sandboxed command timed out after 10 minutes")),
+            Err(_) => Err(anyhow::anyhow!(
+                "Sandboxed command timed out after 10 minutes"
+            )),
         }
     }
 
@@ -326,7 +335,10 @@ impl SecuredExecutor for HardenedSmolExecutor {
 
     async fn download(&self, url: &str, dest: &Path, resume: bool) -> anyhow::Result<()> {
         use tracing::warn;
-        warn!("High-Risk Download: Userspace stack active. Monitoring traffic for {}", url);
+        warn!(
+            "High-Risk Download: Userspace stack active. Monitoring traffic for {}",
+            url
+        );
         let direct = DirectExecutor::new();
         direct.download(url, dest, resume).await
     }

@@ -45,7 +45,7 @@ static SIMULATED_PCR_16: LazyLock<RwLock<[u8; 32]>> = LazyLock::new(|| {
 fn extend_simulated_pcr_16(hash_bytes: &[u8]) {
     if let Ok(mut guard) = SIMULATED_PCR_16.write() {
         let mut hasher = Sha256::new();
-        hasher.update(&*guard);
+        hasher.update(*guard);
         hasher.update(hash_bytes);
         let updated: [u8; 32] = hasher.finalize().into();
         *guard = updated;
@@ -146,12 +146,21 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
         // Rustify: Use WMI to read TPM info instead of powershell.exe
         use wmi::{COMLibrary, WMIConnection};
         if let Ok(com_lib) = COMLibrary::new() {
-            if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib) {
-                let query = "SELECT SpecVersion, ManufacturerId, AdditionalCertificates FROM Win32_Tpm";
+            if let Ok(wmi_con) =
+                WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib)
+            {
+                let query =
+                    "SELECT SpecVersion, ManufacturerId, AdditionalCertificates FROM Win32_Tpm";
                 let results: Vec<serde_json::Value> = wmi_con.raw_query(query).unwrap_or_default();
                 if let Some(res) = results.first() {
-                    let spec = res.get("SpecVersion").and_then(|v| v.as_str()).unwrap_or("2.0");
-                    let mfg = res.get("ManufacturerId").and_then(|v| v.as_i64()).unwrap_or(0);
+                    let spec = res
+                        .get("SpecVersion")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("2.0");
+                    let mfg = res
+                        .get("ManufacturerId")
+                        .and_then(|v| v.as_i64())
+                        .unwrap_or(0);
                     let mut hasher = Sha256::new();
                     hasher.update(b"TPM2_PCR_HARDWARE_WIN:");
                     hasher.update(pcr_index.to_le_bytes());
@@ -201,7 +210,9 @@ pub fn get_pcr_value(pcr_index: u32) -> (String, bool) {
 }
 
 /// Compute canonical composite PCR digest: Sha256(sum_i (idx_i || PCR_i)).
-pub fn compute_pcr_composite_digest(pcr_values: &std::collections::BTreeMap<u32, String>) -> String {
+pub fn compute_pcr_composite_digest(
+    pcr_values: &std::collections::BTreeMap<u32, String>,
+) -> String {
     let mut hasher = Sha256::new();
     for (idx, val_hex) in pcr_values {
         hasher.update(idx.to_be_bytes());
@@ -299,16 +310,19 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
     #[cfg(target_os = "windows")]
     {
         // Rustify: Use native Event Log API for TPM attestation logging
-        use windows::Win32::System::EventLog::*;
         use windows::core::PCWSTR;
+        use windows::Win32::System::EventLog::*;
 
         unsafe {
-            let handle = RegisterEventSourceW(None, PCWSTR::from_raw(windows::core::w!("OsoosiTPM").as_ptr()));
+            let handle = RegisterEventSourceW(
+                None,
+                PCWSTR::from_raw(windows::core::w!("OsoosiTPM").as_ptr()),
+            );
             if let Ok(h) = handle {
                 let msg = format!("Audit PCR extend: {}", hash_hex);
                 let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
                 let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
-                
+
                 // windows-rs 0.58 ReportEventW: (handle, type, category, eventid, sid, dwdatasize, strings, rawdata)
                 let _ = ReportEventW(
                     h,
@@ -321,7 +335,7 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
                     None,
                 );
                 let _ = DeregisterEventSource(h);
-                
+
                 return Some(AttestationResult {
                     hardware_backed: true,
                     pcr_index: Some(AUDIT_PCR_INDEX),

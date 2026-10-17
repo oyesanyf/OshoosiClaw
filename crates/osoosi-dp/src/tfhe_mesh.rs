@@ -2,20 +2,29 @@
 //!
 //! Enables privacy-preserving arithmetic (Addition/Multiplication) on encrypted threat telemetry.
 
-use tfhe::prelude::*;
-use tfhe::{generate_keys, ConfigBuilder, ClientKey, ServerKey, FheUint16};
 use serde::{Deserialize, Serialize};
+use tfhe::prelude::*;
+use tfhe::{generate_keys, ClientKey, ConfigBuilder, FheUint16, ServerKey};
 
 pub struct OshoosiFhe {
     pub client_key: ClientKey,
     pub server_key: ServerKey,
 }
 
+impl Default for OshoosiFhe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OshoosiFhe {
     pub fn new() -> Self {
         let config = ConfigBuilder::default_with_big_encryption().build();
         let (client_key, server_key) = generate_keys(config);
-        Self { client_key, server_key }
+        Self {
+            client_key,
+            server_key,
+        }
     }
 
     /// Encrypt a confidence score (0-100 normalized to 16-bit int)
@@ -41,7 +50,7 @@ pub fn aggregate_scores(scores: &[FheUint16], server_key: &ServerKey) -> FheUint
     tfhe::set_server_key(server_key.clone());
     let mut sum = scores[0].clone();
     for next in &scores[1..] {
-        sum = sum + next;
+        sum += next;
     }
     sum
 }

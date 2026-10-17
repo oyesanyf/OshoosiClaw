@@ -2,12 +2,12 @@
 
 use chrono::{DateTime, Utc};
 use osoosi_types::{
-    ActionState, ConsensusFinding, Kev, MalwareSample, PeerAnnounce, PeerStatus, PendingJoinRequest, QuarantinedPeer,
-    ReputationScore, ResponseAction, ThreatSignature,
+    ActionState, ConsensusFinding, Kev, MalwareSample, PeerAnnounce, PeerStatus,
+    PendingJoinRequest, QuarantinedPeer, ReputationScore, ResponseAction, ThreatSignature,
 };
+use parking_lot::Mutex;
 use rusqlite::{params, Connection};
 use std::path::Path;
-use parking_lot::Mutex;
 use tracing::{debug, info};
 
 pub mod encryption;
@@ -50,7 +50,8 @@ impl MemoryStore {
         }
 
         // Enable WAL mode for concurrent readers + single writer (no blocking reads)
-        let _ = conn.execute_batch("
+        let _ = conn.execute_batch(
+            "
             PRAGMA journal_mode = WAL;
             PRAGMA wal_autocheckpoint = 1000;
             PRAGMA synchronous = NORMAL;
@@ -59,7 +60,8 @@ impl MemoryStore {
             PRAGMA cache_size = -8000;
             PRAGMA busy_timeout = 5000;
             PRAGMA wal_checkpoint(TRUNCATE);
-        ");
+        ",
+        );
 
         let lock = Mutex::new(conn);
 
@@ -83,11 +85,9 @@ impl MemoryStore {
         let mut stmt = conn.prepare("SELECT hash_blake3 FROM known_clean_hashes")?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         let mut cache = self.clean_hashes_cache.write();
-        for hash_res in rows {
-            if let Ok(hash) = hash_res {
-                if !hash.is_empty() {
-                    cache.insert(hash);
-                }
+        for hash in rows.flatten() {
+            if !hash.is_empty() {
+                cache.insert(hash);
             }
         }
         Ok(())
@@ -257,8 +257,14 @@ impl MemoryStore {
             ("vsda.node", ""),
             ("vulkan-1.dll", ""),
             ("win32-app-container-tokens.node", ""),
-            ("win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node", ""),
-            ("win32-app-container-tokens.win32-arm64-msvc-4ZJZ3U55.node", ""),
+            (
+                "win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node",
+                "",
+            ),
+            (
+                "win32-app-container-tokens.win32-arm64-msvc-4ZJZ3U55.node",
+                "",
+            ),
         ];
         for (proc_name, hash) in known_fps {
             let _ = conn.execute(
@@ -408,7 +414,10 @@ impl MemoryStore {
 
         if !table_info.contains(&"version_start_including".to_string()) {
             info!("Migrating 'kev' table: adding 'version_start_including' column...");
-            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_start_including TEXT", []);
+            let _ = conn.execute(
+                "ALTER TABLE kev ADD COLUMN version_start_including TEXT",
+                [],
+            );
         }
         if !table_info.contains(&"version_end_excluding".to_string()) {
             info!("Migrating 'kev' table: adding 'version_end_excluding' column...");
@@ -480,10 +489,30 @@ impl MemoryStore {
             [],
         );
         let lolbins_patterns = [
-            "%powershell%", "%pwsh%", "%cmd.exe%", "%rundll32%", "%regsvr32%", "%mshta%", "%wmic%",
-            "%certutil%", "%bitsadmin%", "%reg.exe%", "%vssadmin%", "%wbadmin%", "%bcdedit%",
-            "%ntdsutil%", "%cscript%", "%wscript%", "%msiexec%", "%python%", "%node.exe%",
-            "%svchost%", "%explorer.exe%", "%dllhost%", "%taskhostw%", "%conhost%"
+            "%powershell%",
+            "%pwsh%",
+            "%cmd.exe%",
+            "%rundll32%",
+            "%regsvr32%",
+            "%mshta%",
+            "%wmic%",
+            "%certutil%",
+            "%bitsadmin%",
+            "%reg.exe%",
+            "%vssadmin%",
+            "%wbadmin%",
+            "%bcdedit%",
+            "%ntdsutil%",
+            "%cscript%",
+            "%wscript%",
+            "%msiexec%",
+            "%python%",
+            "%node.exe%",
+            "%svchost%",
+            "%explorer.exe%",
+            "%dllhost%",
+            "%taskhostw%",
+            "%conhost%",
         ];
         for pat in &lolbins_patterns {
             let _ = conn.execute(
@@ -497,18 +526,47 @@ impl MemoryStore {
 
     /// Prune old data and vacuum the database to reclaim space.
     pub fn vacuum_and_prune(&self, days_retention: u32) -> anyhow::Result<()> {
-        info!("Pruning database records older than {} days...", days_retention);
+        info!(
+            "Pruning database records older than {} days...",
+            days_retention
+        );
         let conn = self.conn.lock();
         let cutoff = (Utc::now() - chrono::Duration::days(days_retention as i64)).to_rfc3339();
         let skip_cutoff = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
 
-        let deleted_threats = conn.execute("DELETE FROM threats WHERE detected_at < ?", [&cutoff]).unwrap_or(0);
-        let deleted_integrity = conn.execute("DELETE FROM file_integrity WHERE last_seen < ?", [&cutoff]).unwrap_or(0);
-        let deleted_skips = conn.execute("DELETE FROM file_skip_list WHERE added_at < ?", [&skip_cutoff]).unwrap_or(0);
-        let deleted_consensus = conn.execute("DELETE FROM consensus_findings WHERE evaluated_at < ?", [&cutoff]).unwrap_or(0);
-        let deleted_cve = conn.execute("DELETE FROM cve_cache WHERE cached_at < ?", [&cutoff]).unwrap_or(0);
-        let deleted_training = conn.execute("DELETE FROM training_samples WHERE is_processed = 1 AND created_at < ?", [&cutoff]).unwrap_or(0);
-        let deleted_joins = conn.execute("DELETE FROM pending_joins WHERE discovered_at < ?", [&cutoff]).unwrap_or(0);
+        let deleted_threats = conn
+            .execute("DELETE FROM threats WHERE detected_at < ?", [&cutoff])
+            .unwrap_or(0);
+        let deleted_integrity = conn
+            .execute("DELETE FROM file_integrity WHERE last_seen < ?", [&cutoff])
+            .unwrap_or(0);
+        let deleted_skips = conn
+            .execute(
+                "DELETE FROM file_skip_list WHERE added_at < ?",
+                [&skip_cutoff],
+            )
+            .unwrap_or(0);
+        let deleted_consensus = conn
+            .execute(
+                "DELETE FROM consensus_findings WHERE evaluated_at < ?",
+                [&cutoff],
+            )
+            .unwrap_or(0);
+        let deleted_cve = conn
+            .execute("DELETE FROM cve_cache WHERE cached_at < ?", [&cutoff])
+            .unwrap_or(0);
+        let deleted_training = conn
+            .execute(
+                "DELETE FROM training_samples WHERE is_processed = 1 AND created_at < ?",
+                [&cutoff],
+            )
+            .unwrap_or(0);
+        let deleted_joins = conn
+            .execute(
+                "DELETE FROM pending_joins WHERE discovered_at < ?",
+                [&cutoff],
+            )
+            .unwrap_or(0);
 
         info!(
             "Pruned DB: {} threats, {} integrity, {} skips, {} consensus, {} CVE cache, {} training samples, {} pending joins.",
@@ -516,12 +574,14 @@ impl MemoryStore {
         );
 
         // Truncate WAL, rebuild database, optimize query planner, and shrink in-memory SQLite pages
-        let _ = conn.execute_batch("
+        let _ = conn.execute_batch(
+            "
             PRAGMA wal_checkpoint(TRUNCATE);
             VACUUM;
             PRAGMA optimize;
             PRAGMA shrink_memory;
-        ");
+        ",
+        );
         drop(conn);
 
         // Cap in-memory caches to prevent unbounded growth
@@ -548,7 +608,9 @@ impl MemoryStore {
             return Ok(false);
         }
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ?1 OR sha256 = ?1 OR md5 = ?1 LIMIT 1")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT 1 FROM nsrl WHERE sha1 = ?1 OR sha256 = ?1 OR md5 = ?1 LIMIT 1",
+        )?;
         let exists = stmt.exists([&key])?;
         Ok(exists)
     }
@@ -595,16 +657,20 @@ impl MemoryStore {
 
         let tx = conn.transaction()?;
         tx.execute("ATTACH DATABASE ? AS nist", [p])?;
-        let file_tbl: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='FILE'",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
-        let metadata_tbl: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='METADATA'",
-            [],
-            |r| r.get(0),
-        ).unwrap_or(0);
+        let file_tbl: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='FILE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let metadata_tbl: i64 = tx
+            .query_row(
+                "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='METADATA'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
         if file_tbl > 0 {
             // Map NIST `FILE` columns -> our schema; hashes in RDS are typically hex strings.
@@ -809,9 +875,14 @@ impl MemoryStore {
     }
 
     /// Retrieve cached CVEs for a specific product and version.
-    pub fn get_cached_cves(&self, product: &str, version: &str) -> anyhow::Result<Vec<(String, String)>> {
+    pub fn get_cached_cves(
+        &self,
+        product: &str,
+        version: &str,
+    ) -> anyhow::Result<Vec<(String, String)>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare("SELECT cve_id, summary FROM cve_cache WHERE product = ?1 AND version = ?2")?;
+        let mut stmt = conn
+            .prepare("SELECT cve_id, summary FROM cve_cache WHERE product = ?1 AND version = ?2")?;
         let rows = stmt.query_map(params![product, version], |row| {
             Ok((row.get(0)?, row.get(1)?))
         })?;
@@ -824,7 +895,13 @@ impl MemoryStore {
     }
 
     /// Cache CVE results from NVD lookup.
-    pub fn insert_cve_cache(&self, product: &str, version: &str, cve_id: &str, summary: &str) -> anyhow::Result<()> {
+    pub fn insert_cve_cache(
+        &self,
+        product: &str,
+        version: &str,
+        cve_id: &str,
+        summary: &str,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO cve_cache (product, version, cve_id, summary, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -867,7 +944,9 @@ impl MemoryStore {
         }
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM repair_status WHERE key = ?1")?;
-        let res = stmt.query_row(params![key], |row| row.get::<_, String>(0)).ok();
+        let res = stmt
+            .query_row(params![key], |row| row.get::<_, String>(0))
+            .ok();
         if let Some(ref val) = res {
             let mut cache = self.status_cache.write();
             cache.insert(cache_key, val.clone());
@@ -899,7 +978,9 @@ impl MemoryStore {
         }
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM backup_status WHERE key = ?1")?;
-        let res = stmt.query_row(params![key], |row| row.get::<_, String>(0)).ok();
+        let res = stmt
+            .query_row(params![key], |row| row.get::<_, String>(0))
+            .ok();
         if let Some(ref val) = res {
             let mut cache = self.status_cache.write();
             cache.insert(cache_key, val.clone());
@@ -907,6 +988,7 @@ impl MemoryStore {
         Ok(res)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn save_zone_posture(
         &self,
         zone_id: &str,
@@ -948,17 +1030,19 @@ impl MemoryStore {
         let mut stmt = conn.prepare(
             "SELECT security_score, tpm_remediated, memory_shield_remediated, egress_remediated, hardware_attestation, recommendations_json, updated_at FROM zone_posture WHERE zone_id = ?1"
         )?;
-        let res = stmt.query_row(params![zone_id], |row| {
-            Ok(serde_json::json!({
-                "security_score": row.get::<_, i64>(0)?,
-                "tpm_remediated": row.get::<_, i64>(1)? == 1,
-                "memory_shield_remediated": row.get::<_, i64>(2)? == 1,
-                "egress_remediated": row.get::<_, i64>(3)? == 1,
-                "hardware_attestation": row.get::<_, String>(4)?,
-                "recommendations_json": row.get::<_, String>(5)?,
-                "updated_at": row.get::<_, String>(6)?,
-            }))
-        }).ok();
+        let res = stmt
+            .query_row(params![zone_id], |row| {
+                Ok(serde_json::json!({
+                    "security_score": row.get::<_, i64>(0)?,
+                    "tpm_remediated": row.get::<_, i64>(1)? == 1,
+                    "memory_shield_remediated": row.get::<_, i64>(2)? == 1,
+                    "egress_remediated": row.get::<_, i64>(3)? == 1,
+                    "hardware_attestation": row.get::<_, String>(4)?,
+                    "recommendations_json": row.get::<_, String>(5)?,
+                    "updated_at": row.get::<_, String>(6)?,
+                }))
+            })
+            .ok();
         Ok(res)
     }
 
@@ -986,7 +1070,9 @@ impl MemoryStore {
         }
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM model_training_status WHERE key = ?1")?;
-        let res = stmt.query_row(params![key], |row| row.get::<_, String>(0)).ok();
+        let res = stmt
+            .query_row(params![key], |row| row.get::<_, String>(0))
+            .ok();
         if let Some(ref val) = res {
             let mut cache = self.status_cache.write();
             cache.insert(cache_key, val.clone());
@@ -1233,7 +1319,7 @@ impl MemoryStore {
         ));
         sig.recommended_action = ResponseAction::Isolate;
         sig.detector_count = 1;
-        
+
         self.log_threat(&sig)
     }
 
@@ -1410,6 +1496,7 @@ impl MemoryStore {
     /// Mark a threat as false positive (federated learning: pattern shared).
     /// Mark a threat as a false positive and return the (process_name, hash_blake3) for
     /// the orchestrator to whitelist in the NSRL session cache and suppress future alerts.
+    #[allow(clippy::type_complexity)]
     pub fn mark_threat_false_positive(
         &self,
         threat_id: &str,
@@ -1471,6 +1558,7 @@ impl MemoryStore {
 
     /// Mark a threat as a confirmed true positive.
     /// Returns (process_name, hash_blake3) so the orchestrator can engage tarpits.
+    #[allow(clippy::type_complexity)]
     pub fn mark_threat_true_positive(
         &self,
         threat_id: &str,
@@ -1604,7 +1692,10 @@ impl MemoryStore {
         if without_semi.contains(';') {
             anyhow::bail!("Multi-statement queries are forbidden in query_json");
         }
-        let dangerous = ["ATTACH", "DETACH", "PRAGMA", "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "REPLACE", "VACUUM"];
+        let dangerous = [
+            "ATTACH", "DETACH", "PRAGMA", "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE",
+            "REPLACE", "VACUUM",
+        ];
         for kw in &dangerous {
             for word in q_upper.split(|c: char| !c.is_alphanumeric() && c != '_') {
                 if word == *kw {
@@ -1650,10 +1741,8 @@ impl MemoryStore {
         let hashes = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
         let mut bloom = self.bloom_filter.lock();
-        for hash in hashes {
-            if let Ok(h) = hash {
-                bloom.set(&h);
-            }
+        for h in hashes.flatten() {
+            bloom.set(&h);
         }
         Ok(())
     }
@@ -1844,15 +1933,36 @@ impl MemoryStore {
         }
 
         let lolbins = [
-            "powershell", "pwsh", "cmd", "rundll32", "regsvr32", "mshta", "wmic", "certutil",
-            "bitsadmin", "reg", "vssadmin", "wbadmin", "bcdedit", "ntdsutil", "cscript", "wscript",
-            "msiexec", "python", "node", "svchost", "explorer", "dllhost", "taskhostw", "conhost"
+            "powershell",
+            "pwsh",
+            "cmd",
+            "rundll32",
+            "regsvr32",
+            "mshta",
+            "wmic",
+            "certutil",
+            "bitsadmin",
+            "reg",
+            "vssadmin",
+            "wbadmin",
+            "bcdedit",
+            "ntdsutil",
+            "cscript",
+            "wscript",
+            "msiexec",
+            "python",
+            "node",
+            "svchost",
+            "explorer",
+            "dllhost",
+            "taskhostw",
+            "conhost",
         ];
         let p_name = process_name.unwrap_or("").to_ascii_lowercase();
         let f_path = file_path.unwrap_or("").to_ascii_lowercase();
-        let is_dual_use = lolbins.iter().any(|lb| {
-            p_name.contains(lb) || f_path.contains(lb)
-        });
+        let is_dual_use = lolbins
+            .iter()
+            .any(|lb| p_name.contains(lb) || f_path.contains(lb));
         if is_dual_use {
             debug!("MemoryStore: Refusing to cache dual-use system binary/LOLBin {} ({}) as clean ignored", p_name, clean_hash);
             return Ok(());
@@ -1867,7 +1977,8 @@ impl MemoryStore {
         )?;
         self.clean_hashes_cache.write().insert(clean_hash.clone());
 
-        let _ = self.record_ai_override_locked(&conn, &clean_hash, 0, "Consensus marked clean", source);
+        let _ =
+            self.record_ai_override_locked(&conn, &clean_hash, 0, "Consensus marked clean", source);
 
         let proc = process_name.unwrap_or("");
         let _ = conn.execute(
@@ -1943,9 +2054,8 @@ impl MemoryStore {
     /// Load all persisted voter weight multipliers from SQLite.
     pub fn load_voter_weights(&self) -> anyhow::Result<std::collections::HashMap<String, f32>> {
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare_cached(
-            "SELECT voter_name, weight_multiplier FROM voter_weights"
-        )?;
+        let mut stmt =
+            conn.prepare_cached("SELECT voter_name, weight_multiplier FROM voter_weights")?;
         let rows = stmt.query_map([], |row| {
             let name: String = row.get(0)?;
             let weight: f64 = row.get(1)?;
@@ -1969,10 +2079,12 @@ mod tests {
         let mem = MemoryStore::new(":memory:").unwrap();
 
         // Legitimate VS Code installation paths match
-        assert!(mem.is_false_positive_pattern(
-            Some(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"),
-            None
-        ).unwrap());
+        assert!(mem
+            .is_false_positive_pattern(
+                Some(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"),
+                None
+            )
+            .unwrap());
 
         assert!(mem.is_false_positive_pattern(
             Some(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"),
@@ -1985,20 +2097,17 @@ mod tests {
         ).unwrap());
 
         // Negative cases - identical file names in untrusted directories do NOT match
-        assert!(!mem.is_false_positive_pattern(
-            Some(r"C:\Windows\Temp\vulkan-1.dll"),
-            None
-        ).unwrap());
+        assert!(!mem
+            .is_false_positive_pattern(Some(r"C:\Windows\Temp\vulkan-1.dll"), None)
+            .unwrap());
 
-        assert!(!mem.is_false_positive_pattern(
-            Some(r"C:\Users\victim\Downloads\msalruntime.dll"),
-            None
-        ).unwrap());
+        assert!(!mem
+            .is_false_positive_pattern(Some(r"C:\Users\victim\Downloads\msalruntime.dll"), None)
+            .unwrap());
 
-        assert!(!mem.is_false_positive_pattern(
-            Some(r"C:\Users\victim\Downloads\vsda.node"),
-            None
-        ).unwrap());
+        assert!(!mem
+            .is_false_positive_pattern(Some(r"C:\Users\victim\Downloads\vsda.node"), None)
+            .unwrap());
 
         // Empty inputs
         assert!(!mem.is_false_positive_pattern(None, None).unwrap());
@@ -2046,8 +2155,14 @@ mod tests {
         assert_eq!(threats_updated.len(), 1);
         let conf_preserved = threats_updated[0]["confidence"].as_f64().unwrap();
         assert!((conf_preserved - 0.95).abs() < 1e-4);
-        assert_eq!(threats_updated[0]["hash_blake3"].as_str().unwrap(), "blake3_hash_test_123");
-        assert_eq!(threats_updated[0]["cve_id"].as_str().unwrap(), "CVE-2026-9999");
+        assert_eq!(
+            threats_updated[0]["hash_blake3"].as_str().unwrap(),
+            "blake3_hash_test_123"
+        );
+        assert_eq!(
+            threats_updated[0]["cve_id"].as_str().unwrap(),
+            "CVE-2026-9999"
+        );
     }
 
     #[test]
@@ -2117,12 +2232,14 @@ mod tests {
         assert!(!mem.is_hash_clean_ignored(hash));
 
         // Mark clean
-        assert!(mem.mark_hash_clean_ignored(
-            hash,
-            Some("clean_app.exe"),
-            Some("C:\\Tools\\clean_app.exe"),
-            "consensus_clean",
-        ).is_ok());
+        assert!(mem
+            .mark_hash_clean_ignored(
+                hash,
+                Some("clean_app.exe"),
+                Some("C:\\Tools\\clean_app.exe"),
+                "consensus_clean",
+            )
+            .is_ok());
 
         // Fast lookup
         assert!(mem.is_hash_clean_ignored(hash));
@@ -2132,13 +2249,18 @@ mod tests {
         let ai_override = mem.get_ai_override(hash).unwrap();
         assert_eq!(ai_override, Some(false)); // 0 = false = clean
 
-        assert!(mem.is_false_positive_pattern(Some("clean_app.exe"), Some(hash)).unwrap());
+        assert!(mem
+            .is_false_positive_pattern(Some("clean_app.exe"), Some(hash))
+            .unwrap());
 
         // Query clean hashes list
         let clean_list = mem.get_clean_ignored_hashes(10).unwrap();
         assert_eq!(clean_list.len(), 1);
         assert_eq!(clean_list[0]["hash_blake3"].as_str().unwrap(), hash);
-        assert_eq!(clean_list[0]["process_name"].as_str().unwrap(), "clean_app.exe");
+        assert_eq!(
+            clean_list[0]["process_name"].as_str().unwrap(),
+            "clean_app.exe"
+        );
 
         // Remove
         let removed = mem.remove_clean_ignored_hash(hash).unwrap();
@@ -2156,7 +2278,8 @@ mod tests {
         assert!(initial.is_empty());
 
         mem.save_voter_weight("Sigma-Engine", 1.25).unwrap();
-        mem.save_voter_weight("CredentialGuard-Memory", 1.50).unwrap();
+        mem.save_voter_weight("CredentialGuard-Memory", 1.50)
+            .unwrap();
 
         let loaded = mem.load_voter_weights().unwrap();
         assert_eq!(loaded.len(), 2);
@@ -2212,19 +2335,35 @@ mod tests {
         // 3. Verify old records pruned and recent records retained
         {
             let conn = mem.conn.lock();
-            let remaining_threats: i64 = conn.query_row("SELECT count(*) FROM threats", [], |r| r.get(0)).unwrap();
+            let remaining_threats: i64 = conn
+                .query_row("SELECT count(*) FROM threats", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(remaining_threats, 1, "Recent threat should remain");
 
-            let remaining_consensus: i64 = conn.query_row("SELECT count(*) FROM consensus_findings", [], |r| r.get(0)).unwrap();
-            assert_eq!(remaining_consensus, 0, "Old consensus finding should be pruned");
+            let remaining_consensus: i64 = conn
+                .query_row("SELECT count(*) FROM consensus_findings", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                remaining_consensus, 0,
+                "Old consensus finding should be pruned"
+            );
 
-            let remaining_cve: i64 = conn.query_row("SELECT count(*) FROM cve_cache", [], |r| r.get(0)).unwrap();
+            let remaining_cve: i64 = conn
+                .query_row("SELECT count(*) FROM cve_cache", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(remaining_cve, 0, "Old cve cache entry should be pruned");
 
-            let remaining_samples: i64 = conn.query_row("SELECT count(*) FROM training_samples", [], |r| r.get(0)).unwrap();
-            assert_eq!(remaining_samples, 0, "Old processed training sample should be pruned");
+            let remaining_samples: i64 = conn
+                .query_row("SELECT count(*) FROM training_samples", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(
+                remaining_samples, 0,
+                "Old processed training sample should be pruned"
+            );
 
-            let remaining_joins: i64 = conn.query_row("SELECT count(*) FROM pending_joins", [], |r| r.get(0)).unwrap();
+            let remaining_joins: i64 = conn
+                .query_row("SELECT count(*) FROM pending_joins", [], |r| r.get(0))
+                .unwrap();
             assert_eq!(remaining_joins, 0, "Old pending join should be pruned");
         }
     }

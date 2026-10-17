@@ -15,7 +15,10 @@ pub enum StreamError {
 
 /// Parses an asynchronous line-buffered stream of JSONL records into strongly typed Rust structs.
 /// Enforces a hard `max_lines` boundary to prevent out-of-memory denial-of-service conditions.
-pub async fn parse_jsonl_stream<R: tokio::io::AsyncBufRead + Unpin, T: for<'de> serde::Deserialize<'de>>(
+pub async fn parse_jsonl_stream<
+    R: tokio::io::AsyncBufRead + Unpin,
+    T: for<'de> serde::Deserialize<'de>,
+>(
     mut reader: R,
     max_lines: usize,
 ) -> Result<Vec<T>, StreamError> {

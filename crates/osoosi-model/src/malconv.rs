@@ -62,7 +62,7 @@ impl Module for MalConv {
         let feat = self.conv_feat.forward(xs)?;
         let gate = self.conv_gate.forward(xs)?;
         let gated = (feat * ops::sigmoid(&gate)?)?;
-        
+
         // 2. ReLU Activation (as per notebook)
         let b = gated.relu()?;
 
@@ -81,12 +81,12 @@ impl Module for MalConv {
 /// Each bit (from MSB to LSB) is mapped to 1/16 if 1, and -1/16 if 0.
 fn embed_byte(byte: u8) -> [f32; 8] {
     let mut vec = [0.0; 8];
-    for i in 0..8 {
+    for (i, val) in vec.iter_mut().enumerate() {
         // Check bits from MSB (leftmost) to LSB (rightmost)
         if (byte >> (7 - i)) & 1 == 1 {
-            vec[i] = 1.0 / 16.0;
+            *val = 1.0 / 16.0;
         } else {
-            vec[i] = -1.0 / 16.0;
+            *val = -1.0 / 16.0;
         }
     }
     vec
@@ -107,7 +107,7 @@ pub fn preprocess_binary<P: AsRef<Path>>(
     let _ = file.read(&mut buffer)?;
 
     let mut embedded_data = vec![0.0f32; 8 * max_len];
-    
+
     // We want shape (8, max_len) for Candle's Conv1d (channels_first)
     for (i, &byte) in buffer.iter().enumerate() {
         let embedding = embed_byte(byte);
@@ -124,14 +124,14 @@ pub fn preprocess_binary<P: AsRef<Path>>(
 pub fn preprocess_bytes(bytes: &[u8], max_len: usize, device: &Device) -> AnyhowResult<Tensor> {
     let mut embedded_data = vec![0.0f32; 8 * max_len];
     let len = bytes.len().min(max_len);
-    
+
     for i in 0..len {
         let embedding = embed_byte(bytes[i]);
         for bit_idx in 0..8 {
             embedded_data[bit_idx * max_len + i] = embedding[bit_idx];
         }
     }
-    
+
     // Fill remaining with 0 or use the embedding of 0?
     // The notebook uses np.zeros for the whole X, then fills what it reads.
     // If it's a 0 byte, embed_byte(0) would give [-1/16, ..., -1/16].
@@ -142,4 +142,3 @@ pub fn preprocess_bytes(bytes: &[u8], max_len: usize, device: &Device) -> Anyhow
     let tensor = Tensor::from_vec(embedded_data, (1, 8, max_len), device)?;
     Ok(tensor)
 }
-

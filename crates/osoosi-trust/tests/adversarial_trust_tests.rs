@@ -1,7 +1,5 @@
 use osoosi_trust::TrustManager;
-use osoosi_types::{
-    AttestationChallenge, AttestationError, GoldenBaseline, SecuredExecutor,
-};
+use osoosi_types::{AttestationChallenge, AttestationError, GoldenBaseline, SecuredExecutor};
 use std::sync::Arc;
 
 struct DummyExecutor;
@@ -16,7 +14,12 @@ impl SecuredExecutor for DummyExecutor {
         })
     }
 
-    async fn download(&self, _url: &str, _dest: &std::path::Path, _resume: bool) -> anyhow::Result<()> {
+    async fn download(
+        &self,
+        _url: &str,
+        _dest: &std::path::Path,
+        _resume: bool,
+    ) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -41,7 +44,9 @@ fn test_attack_replay_stale_attestation_response() {
     assert_ne!(challenge_a.nonce, challenge_b.nonce);
 
     // Responder legitimately responds to Challenge A
-    let response_a = responder.respond_to_attestation(challenge_a.clone()).unwrap();
+    let response_a = responder
+        .respond_to_attestation(challenge_a.clone())
+        .unwrap();
 
     // Attacker replays response A against Challenge B
     let result = challenger.verify_attestation_with_policy(&challenge_b, &response_a, None);
@@ -120,13 +125,17 @@ fn test_attack_tampered_pcr_quote_composite_digest() {
 
     // Attacker modifies the quote's composite pcr_digest string
     if let Some(ref mut quote) = response.tpm_quote {
-        quote.pcr_digest = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string();
+        quote.pcr_digest =
+            "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string();
     }
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::QuoteDigestMismatch { .. }) => (),
-        other => panic!("Expected QuoteDigestMismatch for tampered pcr_digest, got: {:?}", other),
+        other => panic!(
+            "Expected QuoteDigestMismatch for tampered pcr_digest, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -138,13 +147,17 @@ fn test_attack_tampered_pcr_quote_quoted_digest() {
 
     // Attacker modifies quoted_digest (binding challenge nonce and PCRs)
     if let Some(ref mut quote) = response.tpm_quote {
-        quote.quoted_digest = "baadf00dbaadf00dbaadf00dbaadf00dbaadf00dbaadf00dbaadf00dbaadf00d".to_string();
+        quote.quoted_digest =
+            "baadf00dbaadf00dbaadf00dbaadf00dbaadf00dbaadf00dbaadf00dbaadf00d".to_string();
     }
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::QuoteDigestMismatch { .. }) => (),
-        other => panic!("Expected QuoteDigestMismatch for forged quoted_digest, got: {:?}", other),
+        other => panic!(
+            "Expected QuoteDigestMismatch for forged quoted_digest, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -163,7 +176,10 @@ fn test_attack_tampered_pcr_0_firmware_register() {
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::QuoteDigestMismatch { .. }) => (),
-        other => panic!("Expected QuoteDigestMismatch for tampered PCR 0, got: {:?}", other),
+        other => panic!(
+            "Expected QuoteDigestMismatch for tampered PCR 0, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -182,7 +198,10 @@ fn test_attack_tampered_pcr_7_secure_boot_register() {
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::QuoteDigestMismatch { .. }) => (),
-        other => panic!("Expected QuoteDigestMismatch for tampered PCR 7, got: {:?}", other),
+        other => panic!(
+            "Expected QuoteDigestMismatch for tampered PCR 7, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -217,7 +236,10 @@ fn test_attack_stripped_tpm_quote_when_pcrs_requested() {
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::MissingPcr(_)) => (),
-        other => panic!("Expected MissingPcr error when quote is stripped, got: {:?}", other),
+        other => panic!(
+            "Expected MissingPcr error when quote is stripped, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -254,7 +276,9 @@ fn test_attack_forged_signature_signed_by_different_attacker_key() {
     let attacker_tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
 
     // Attacker signs using their own key but keeps victim's responder_did
-    let forged_response = attacker_tm.respond_to_attestation(challenge.clone()).unwrap();
+    let forged_response = attacker_tm
+        .respond_to_attestation(challenge.clone())
+        .unwrap();
     response.signature = forged_response.signature;
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
@@ -272,14 +296,18 @@ fn test_attack_spoofed_did_identity_mismatch() {
     let mut response = responder.respond_to_attestation(challenge.clone()).unwrap();
 
     // Attacker attempts to spoof a different node's 64-hex DID ID while keeping their own public key
-    response.responder_did.id = "did:osoosi:0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    response.responder_did.id =
+        "did:osoosi:0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::InvalidPublicKey(msg)) => {
             assert!(msg.contains("DID identifier does not match public key"));
         }
-        other => panic!("Expected InvalidPublicKey for spoofed DID ID, got: {:?}", other),
+        other => panic!(
+            "Expected InvalidPublicKey for spoofed DID ID, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -290,13 +318,17 @@ fn test_attack_spoofed_did_malformed_hex_public_key() {
     let mut response = responder.respond_to_attestation(challenge.clone()).unwrap();
 
     // Attacker injects non-hex characters in public_key
-    response.responder_did.public_key = "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ".to_string();
+    response.responder_did.public_key =
+        "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ".to_string();
     response.responder_did.id = format!("did:osoosi:{}", response.responder_did.public_key);
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
     match result {
         Err(AttestationError::InvalidPublicKey(_)) => (),
-        other => panic!("Expected InvalidPublicKey for malformed hex, got: {:?}", other),
+        other => panic!(
+            "Expected InvalidPublicKey for malformed hex, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -314,7 +346,10 @@ fn test_attack_spoofed_did_truncated_public_key() {
         Err(AttestationError::InvalidPublicKey(msg)) => {
             assert!(msg.contains("32 bytes"));
         }
-        other => panic!("Expected InvalidPublicKey for truncated key, got: {:?}", other),
+        other => panic!(
+            "Expected InvalidPublicKey for truncated key, got: {:?}",
+            other
+        ),
     }
 }
 
@@ -422,7 +457,11 @@ fn test_attack_golden_baseline_comprehensive_enforcement_success() {
         .with_max_nonce_age(300);
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, Some(&baseline));
-    assert!(result.is_ok(), "Attestation must pass when all golden baseline requirements are satisfied: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Attestation must pass when all golden baseline requirements are satisfied: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -435,7 +474,10 @@ fn test_attack_challenge_with_null_zero_nonce() {
     assert_eq!(response.challenge_nonce, [0u8; 32]);
 
     let result = challenger.verify_attestation_with_policy(&challenge, &response, None);
-    assert!(result.is_ok(), "Null nonce attestation should verify correctly without panics");
+    assert!(
+        result.is_ok(),
+        "Null nonce attestation should verify correctly without panics"
+    );
 }
 
 #[test]
@@ -445,19 +487,25 @@ fn test_attack_golden_baseline_strict_whitelist_rejects_unlisted_binary() {
     let response = responder.respond_to_attestation(challenge.clone()).unwrap();
 
     // Baseline with non-matching binary whitelist enforces default-deny against unlisted binaries
-    let baseline = GoldenBaseline::new().allow_binary_hash("0000000000000000000000000000000000000000000000000000000000000000");
+    let baseline = GoldenBaseline::new()
+        .allow_binary_hash("0000000000000000000000000000000000000000000000000000000000000000");
     let result = challenger.verify_attestation_with_policy(&challenge, &response, Some(&baseline));
     match result {
         Err(AttestationError::BinaryHashMismatch { .. }) => (),
-        other => panic!("Expected BinaryHashMismatch when whitelist does not match responder hash, got: {:?}", other),
+        other => panic!(
+            "Expected BinaryHashMismatch when whitelist does not match responder hash, got: {:?}",
+            other
+        ),
     }
 }
 
 #[test]
 fn test_attack_golden_baseline_multi_binary_whitelist_matching_and_rejection() {
     let (challenger, mut responder) = create_test_managers();
-    let allowed_bin_1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
-    let allowed_bin_2 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+    let allowed_bin_1 =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
+    let allowed_bin_2 =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
     let rogue_bin = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string();
 
     let baseline = GoldenBaseline::new()
@@ -469,14 +517,24 @@ fn test_attack_golden_baseline_multi_binary_whitelist_matching_and_rejection() {
     let challenge = AttestationChallenge::new(challenger.did().clone(), vec![0, 7, 16]);
     let response = responder.respond_to_attestation(challenge.clone()).unwrap();
     let result = challenger.verify_attestation_with_policy(&challenge, &response, Some(&baseline));
-    assert!(result.is_ok(), "Matching second binary hash in whitelist must pass: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "Matching second binary hash in whitelist must pass: {:?}",
+        result
+    );
 
     // 2. Responder with rogue binary should fail
     responder.set_local_binary_hash(rogue_bin.clone());
     let challenge2 = AttestationChallenge::new(challenger.did().clone(), vec![0, 7, 16]);
-    let response2 = responder.respond_to_attestation(challenge2.clone()).unwrap();
-    let result2 = challenger.verify_attestation_with_policy(&challenge2, &response2, Some(&baseline));
-    assert_eq!(result2, Err(AttestationError::BinaryHashMismatch { actual: rogue_bin }));
+    let response2 = responder
+        .respond_to_attestation(challenge2.clone())
+        .unwrap();
+    let result2 =
+        challenger.verify_attestation_with_policy(&challenge2, &response2, Some(&baseline));
+    assert_eq!(
+        result2,
+        Err(AttestationError::BinaryHashMismatch { actual: rogue_bin })
+    );
 }
 
 #[test]
@@ -485,8 +543,11 @@ fn test_attack_attestation_mismatched_challenger_did_handling() {
     let third_party_challenger = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
 
     // Challenge issued by third party
-    let challenge_foreign = AttestationChallenge::new(third_party_challenger.did().clone(), vec![0, 7, 16]);
-    let response = responder.respond_to_attestation(challenge_foreign.clone()).unwrap();
+    let challenge_foreign =
+        AttestationChallenge::new(third_party_challenger.did().clone(), vec![0, 7, 16]);
+    let response = responder
+        .respond_to_attestation(challenge_foreign.clone())
+        .unwrap();
 
     // Local challenger tries to verify against its own challenge
     let challenge_local = AttestationChallenge::new(challenger.did().clone(), vec![0, 7, 16]);
@@ -505,16 +566,29 @@ fn test_attack_clock_skew_boundary_295s_accept_305s_reject() {
     // 1. 295s age: within 300s TTL -> PASS
     let mut challenge_valid = AttestationChallenge::new(challenger.did().clone(), vec![0, 7, 16]);
     challenge_valid.timestamp = chrono::Utc::now() - chrono::Duration::seconds(295);
-    let resp_valid = responder.respond_to_attestation(challenge_valid.clone()).unwrap();
+    let resp_valid = responder
+        .respond_to_attestation(challenge_valid.clone())
+        .unwrap();
     let baseline = GoldenBaseline::new().with_max_nonce_age(300);
-    let res1 = challenger.verify_attestation_with_policy(&challenge_valid, &resp_valid, Some(&baseline));
-    assert!(res1.is_ok(), "Attestation at 295s (< 300s TTL) must succeed: {:?}", res1);
+    let res1 =
+        challenger.verify_attestation_with_policy(&challenge_valid, &resp_valid, Some(&baseline));
+    assert!(
+        res1.is_ok(),
+        "Attestation at 295s (< 300s TTL) must succeed: {:?}",
+        res1
+    );
 
     // 2. 305s age: past 300s TTL -> REJECT
     let mut challenge_expired = AttestationChallenge::new(challenger.did().clone(), vec![0, 7, 16]);
     challenge_expired.timestamp = chrono::Utc::now() - chrono::Duration::seconds(305);
-    let resp_expired = responder.respond_to_attestation(challenge_expired.clone()).unwrap();
-    let res2 = challenger.verify_attestation_with_policy(&challenge_expired, &resp_expired, Some(&baseline));
+    let resp_expired = responder
+        .respond_to_attestation(challenge_expired.clone())
+        .unwrap();
+    let res2 = challenger.verify_attestation_with_policy(
+        &challenge_expired,
+        &resp_expired,
+        Some(&baseline),
+    );
     assert_eq!(
         res2,
         Err(AttestationError::NonceReplayDetected),
@@ -542,4 +616,3 @@ fn test_attack_golden_baseline_missing_pcr_in_response() {
         other => panic!("Expected MissingPcr(16), got: {:?}", other),
     }
 }
-

@@ -348,16 +348,27 @@ pub fn analyze(event: &HostSecurityEvent) -> Option<TrafficThreat> {
         }
         77 => {
             // Browser HAR Network Event or L7 Web Inspection
-            let har_json = if let Some(content) = event.data.get("HarContent").and_then(|v| v.as_str()) {
-                Some(content.to_string())
-            } else if let Some(target) = event.data.get("TargetFilename").or_else(|| event.data.get("FilePath")).or_else(|| event.data.get("TargetFile")).and_then(|v| v.as_str()) {
-                std::fs::read_to_string(target).ok()
-            } else {
-                None
-            };
+            let har_json =
+                if let Some(content) = event.data.get("HarContent").and_then(|v| v.as_str()) {
+                    Some(content.to_string())
+                } else if let Some(target) = event
+                    .data
+                    .get("TargetFilename")
+                    .or_else(|| event.data.get("FilePath"))
+                    .or_else(|| event.data.get("TargetFile"))
+                    .and_then(|v| v.as_str())
+                {
+                    std::fs::read_to_string(target).ok()
+                } else {
+                    None
+                };
 
             if let Some(raw) = har_json {
-                let label = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("HAR-Inspection");
+                let label = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("HAR-Inspection");
                 if let Ok(report) = parse_and_inspect_har_json(&raw, label) {
                     if report.highest_threat_score >= 0.50 {
                         let confidence = report.highest_threat_score.min(0.98);
@@ -366,7 +377,11 @@ pub fn analyze(event: &HostSecurityEvent) -> Option<TrafficThreat> {
                         } else {
                             ResponseAction::Alert
                         };
-                        let tag = report.detected_vectors.first().cloned().unwrap_or_else(|| "HAR:L7_ANOMALY".to_string());
+                        let tag = report
+                            .detected_vectors
+                            .first()
+                            .cloned()
+                            .unwrap_or_else(|| "HAR:L7_ANOMALY".to_string());
                         let reason = format!(
                             "HAR L7 inspection: {} malicious entries detected ({}) - highest score {:.2}",
                             report.malicious_entries,
@@ -469,7 +484,11 @@ fn synthetic_event_from_packet_text(traffic_data: &str) -> HostSecurityEvent {
     }
     map.insert("QueryResults".to_string(), json!(traffic_data));
 
-    let event_id = if map.get("QueryName").is_some() { 22 } else { 3 };
+    let event_id = if map.get("QueryName").is_some() {
+        22
+    } else {
+        3
+    };
     HostSecurityEvent {
         source: HostEventSource::WindowsEventLog,
         event_id,
@@ -541,9 +560,12 @@ fn extract_domain_candidate(input: &str) -> Option<String> {
 /// 3. `HAR:SSRF_METADATA` (ASI02): Cloud instance metadata (169.254.169.254) or loopback SSRF.
 /// 4. `HAR:DRIVE_BY_PAYLOAD` (T1189): Executable downloads (.exe, .dll, PE base64, encoded PowerShell).
 /// 5. `HAR:C2_BEACON` (T1071.001): High-entropy DGA domains or known C2 framework tokens.
-pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<HarInspectionReport, String> {
-    let parsed: serde_json::Value = serde_json::from_str(raw_json)
-        .map_err(|e| format!("Failed to parse HAR JSON: {}", e))?;
+pub fn parse_and_inspect_har_json(
+    raw_json: &str,
+    source_label: &str,
+) -> Result<HarInspectionReport, String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(raw_json).map_err(|e| format!("Failed to parse HAR JSON: {}", e))?;
 
     let entries_val = parsed
         .get("log")
@@ -563,10 +585,7 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        let duration_ms = entry
-            .get("time")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
+        let duration_ms = entry.get("time").and_then(|v| v.as_f64()).unwrap_or(0.0);
         let server_ip = entry
             .get("serverIPAddress")
             .and_then(|v| v.as_str())
@@ -696,13 +715,20 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
         ];
         let has_prompt_injection = prompt_injection_tokens.iter().any(|token| {
             resp_lower.contains(token) || post_lower.contains(token) || url_lower.contains(token)
-        }) || resp_text.chars().any(|c| ('\u{E0000}'..='\u{E007F}').contains(&c))
-           || req_post_data.chars().any(|c| ('\u{E0000}'..='\u{E007F}').contains(&c));
+        }) || resp_text
+            .chars()
+            .any(|c| ('\u{E0000}'..='\u{E007F}').contains(&c))
+            || req_post_data
+                .chars()
+                .any(|c| ('\u{E0000}'..='\u{E007F}').contains(&c));
 
         if has_prompt_injection {
             entry_threat_score = entry_threat_score.max(0.88);
             entry_tags.push("HAR:PROMPT_INJECTION".to_string());
-            entry_reasons.push("Prompt injection or Unicode tag smuggling payload detected in HTTP stream (ASI01)".to_string());
+            entry_reasons.push(
+                "Prompt injection or Unicode tag smuggling payload detected in HTTP stream (ASI01)"
+                    .to_string(),
+            );
             all_vectors.insert("HAR:PROMPT_INJECTION".to_string());
         }
 
@@ -741,7 +767,10 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
         if has_sensitive_cred && (is_exfil_dest || (is_cleartext && is_raw_ip)) {
             entry_threat_score = entry_threat_score.max(0.90);
             entry_tags.push("HAR:CREDENTIAL_EXFIL".to_string());
-            entry_reasons.push(format!("Credential exfiltration over unencrypted channel or known exfil sink ({}) (ASI06)", host));
+            entry_reasons.push(format!(
+                "Credential exfiltration over unencrypted channel or known exfil sink ({}) (ASI06)",
+                host
+            ));
             all_vectors.insert("HAR:CREDENTIAL_EXFIL".to_string());
         }
 
@@ -759,13 +788,18 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
         ];
         let server_ip_str = server_ip.as_deref().unwrap_or("");
         let is_ssrf = ssrf_targets.iter().any(|tgt| {
-            host_lower == *tgt || url_lower.contains(&format!("://{}", tgt)) || server_ip_str == *tgt
+            host_lower == *tgt
+                || url_lower.contains(&format!("://{}", tgt))
+                || server_ip_str == *tgt
         }) || host_lower.starts_with("169.254.");
 
         if is_ssrf {
             entry_threat_score = entry_threat_score.max(0.92);
             entry_tags.push("HAR:SSRF_METADATA".to_string());
-            entry_reasons.push(format!("SSRF attempt targeting cloud instance metadata or loopback host ({}) (ASI02)", host));
+            entry_reasons.push(format!(
+                "SSRF attempt targeting cloud instance metadata or loopback host ({}) (ASI02)",
+                host
+            ));
             all_vectors.insert("HAR:SSRF_METADATA".to_string());
         }
 
@@ -778,7 +812,7 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
             "application/vnd.microsoft.portable-executable",
         ];
         let payload_extensions = [
-            ".exe", ".dll", ".msi", ".ps1", ".hta", ".vbs", ".bat", ".cmd"
+            ".exe", ".dll", ".msi", ".ps1", ".hta", ".vbs", ".bat", ".cmd",
         ];
         let url_path = url_lower.split('?').next().unwrap_or("");
         let has_pe_magic = resp_text.contains("TVqQAAMAAAAEAAAA") || resp_text.contains("TVoA");
@@ -791,10 +825,13 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
             || has_pe_magic
             || has_ps_exec;
 
-        if is_drive_by && (status >= 200 && status < 400) {
+        if is_drive_by && (200..400).contains(&status) {
             entry_threat_score = entry_threat_score.max(0.86);
             entry_tags.push("HAR:DRIVE_BY_PAYLOAD".to_string());
-            entry_reasons.push(format!("Drive-by executable download or dropper payload observed in response ({}) (T1189)", mime_type));
+            entry_reasons.push(format!(
+                "Drive-by executable download or dropper payload observed in response ({}) (T1189)",
+                mime_type
+            ));
             all_vectors.insert("HAR:DRIVE_BY_PAYLOAD".to_string());
         }
 
@@ -812,14 +849,17 @@ pub fn parse_and_inspect_har_json(raw_json: &str, source_label: &str) -> Result<
             "havoc",
             "brute_ratel",
         ];
-        let has_c2_token = c2_tokens.iter().any(|tok| {
-            url_lower.contains(tok) || headers_lower.contains(tok)
-        });
+        let has_c2_token = c2_tokens
+            .iter()
+            .any(|tok| url_lower.contains(tok) || headers_lower.contains(tok));
 
         if dga_score > 0.0 || has_c2_token {
             entry_threat_score = entry_threat_score.max(0.85);
             entry_tags.push("HAR:C2_BEACON".to_string());
-            entry_reasons.push(format!("Command and control beaconing indicators or DGA host structure ({}) (T1071.001)", host));
+            entry_reasons.push(format!(
+                "Command and control beaconing indicators or DGA host structure ({}) (T1071.001)",
+                host
+            ));
             all_vectors.insert("HAR:C2_BEACON".to_string());
         }
 
@@ -935,7 +975,9 @@ mod tests {
         let report = parse_and_inspect_har_json(&raw.to_string(), "test-prompt-inj").unwrap();
         assert_eq!(report.malicious_entries, 1);
         assert_eq!(report.primary_verdict, "MALICIOUS");
-        assert!(report.detected_vectors.contains(&"HAR:PROMPT_INJECTION".to_string()));
+        assert!(report
+            .detected_vectors
+            .contains(&"HAR:PROMPT_INJECTION".to_string()));
     }
 
     #[test]
@@ -965,7 +1007,9 @@ mod tests {
         let report = parse_and_inspect_har_json(&raw.to_string(), "test-cred-exfil").unwrap();
         assert_eq!(report.malicious_entries, 1);
         assert_eq!(report.primary_verdict, "MALICIOUS");
-        assert!(report.detected_vectors.contains(&"HAR:CREDENTIAL_EXFIL".to_string()));
+        assert!(report
+            .detected_vectors
+            .contains(&"HAR:CREDENTIAL_EXFIL".to_string()));
     }
 
     #[test]
@@ -991,7 +1035,9 @@ mod tests {
 
         let report = parse_and_inspect_har_json(&raw.to_string(), "test-ssrf").unwrap();
         assert_eq!(report.malicious_entries, 1);
-        assert!(report.detected_vectors.contains(&"HAR:SSRF_METADATA".to_string()));
+        assert!(report
+            .detected_vectors
+            .contains(&"HAR:SSRF_METADATA".to_string()));
     }
 
     #[test]
@@ -1020,6 +1066,8 @@ mod tests {
 
         let report = parse_and_inspect_har_json(&raw.to_string(), "test-drive-by").unwrap();
         assert_eq!(report.malicious_entries, 1);
-        assert!(report.detected_vectors.contains(&"HAR:DRIVE_BY_PAYLOAD".to_string()));
+        assert!(report
+            .detected_vectors
+            .contains(&"HAR:DRIVE_BY_PAYLOAD".to_string()));
     }
 }

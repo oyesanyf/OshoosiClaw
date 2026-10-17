@@ -1,4 +1,3 @@
-
 //! with atomic rollbacks, health verification, and mesh-based learning.
 
 pub mod discovery;
@@ -63,11 +62,14 @@ impl Drop for TemporaryAdminGuard {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
         {
-            use windows::Win32::NetworkManagement::NetManagement::*;
             use windows::core::PCWSTR;
+            use windows::Win32::NetworkManagement::NetManagement::*;
 
             let mut user_w: Vec<u16> = self.user.encode_utf16().chain(std::iter::once(0)).collect();
-            let group_w: Vec<u16> = "Administrators".encode_utf16().chain(std::iter::once(0)).collect();
+            let group_w: Vec<u16> = "Administrators"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
             let member = LOCALGROUP_MEMBERS_INFO_3 {
                 lgrmi3_domainandname: windows::core::PWSTR(user_w.as_mut_ptr()),
@@ -82,9 +84,15 @@ impl Drop for TemporaryAdminGuard {
                     1,
                 );
                 if result == 0 {
-                    info!("Revoked temporary admin for user {} via native API.", self.user);
+                    info!(
+                        "Revoked temporary admin for user {} via native API.",
+                        self.user
+                    );
                 } else {
-                    warn!("Failed to revoke temporary admin for user {} (error {})", self.user, result);
+                    warn!(
+                        "Failed to revoke temporary admin for user {} (error {})",
+                        self.user, result
+                    );
                 }
             }
         }
@@ -389,11 +397,11 @@ impl PatchEngine {
         #[cfg(target_os = "windows")]
         {
             info!("Creating Windows restore point via native SRSetRestorePointW API...");
-            let desc_str = format!("Osoosi-{}", &snap_id);
+            let desc_str = format!("Osoosi-{}", snap_id);
 
             tokio::task::spawn_blocking(move || {
-                use windows::Win32::System::Restore::*;
                 use windows::Win32::Foundation::BOOL;
+                use windows::Win32::System::Restore::*;
 
                 // Bypass 24-hour frequency limit via registry
                 #[cfg(target_os = "windows")]
@@ -442,10 +450,7 @@ impl PatchEngine {
 
                 if result.as_bool() {
                     let seq = status.llSequenceNumber;
-                    info!(
-                        "Native restore point created. Sequence: {}",
-                        seq
-                    );
+                    info!("Native restore point created. Sequence: {}", seq);
                 } else {
                     let code = status.nStatus;
                     warn!(
@@ -580,7 +585,9 @@ impl PatchEngine {
         {
             if !self.is_admin() {
                 warn!("Patch application requires Administrator privileges. Skipping Windows Update install for {}.", patch.component);
-                return Err(anyhow!("Administrator privileges required for Windows Update installation"));
+                return Err(anyhow!(
+                    "Administrator privileges required for Windows Update installation"
+                ));
             }
 
             let kb = patch.version.trim().to_uppercase();
@@ -591,30 +598,34 @@ impl PatchEngine {
 
             unsafe {
                 let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-                let session: IUpdateSession = match CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER) {
-                    Ok(s) => s,
-                    Err(e) => return Err(anyhow!("Failed to create UpdateSession: {}", e)),
-                };
+                let session: IUpdateSession =
+                    match CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER) {
+                        Ok(s) => s,
+                        Err(e) => return Err(anyhow!("Failed to create UpdateSession: {}", e)),
+                    };
 
                 let searcher = session.CreateUpdateSearcher()?;
-                let result = match searcher.Search(&windows::core::BSTR::from("IsInstalled=0 and IsHidden=0")) {
+                let result = match searcher
+                    .Search(&windows::core::BSTR::from("IsInstalled=0 and IsHidden=0"))
+                {
                     Ok(r) => r,
                     Err(e) => return Err(anyhow!("Windows Update search failed: {}", e)),
                 };
-                
+
                 let updates = result.Updates()?;
                 let count = updates.Count()?;
-                let collection: IUpdateCollection = CoCreateInstance(&UpdateCollection, None, CLSCTX_INPROC_SERVER)?;
-                
+                let collection: IUpdateCollection =
+                    CoCreateInstance(&UpdateCollection, None, CLSCTX_INPROC_SERVER)?;
+
                 for i in 0..count {
                     // IUpdateCollection::get_Item takes i32
-                    if let Ok(update) = updates.get_Item(i as i32) {
+                    if let Ok(update) = updates.get_Item(i) {
                         let mut is_match = false;
                         if kb.starts_with("KB") {
                             if let Ok(kb_ids) = update.KBArticleIDs() {
                                 let kb_count = kb_ids.Count().unwrap_or(0);
                                 for j in 0..kb_count {
-                                    if let Ok(id) = kb_ids.get_Item(j as i32) {
+                                    if let Ok(id) = kb_ids.get_Item(j) {
                                         if format!("KB{}", id) == kb {
                                             is_match = true;
                                             break;
@@ -623,7 +634,7 @@ impl PatchEngine {
                                 }
                             }
                         }
-                        
+
                         if !is_match {
                             if let Ok(title) = update.Title() {
                                 if title.to_string().to_lowercase().contains(&title_match) {
@@ -631,37 +642,57 @@ impl PatchEngine {
                                 }
                             }
                         }
-                        
+
                         if is_match {
                             let _ = collection.Add(&update);
                         }
                     }
                 }
-                
+
                 if collection.Count().unwrap_or(0) == 0 {
-                    return Err(anyhow!("No matching Windows update found for {}/{}", kb, title_match));
+                    return Err(anyhow!(
+                        "No matching Windows update found for {}/{}",
+                        kb,
+                        title_match
+                    ));
                 }
-                
+
                 let installer = session.CreateUpdateInstaller()?;
                 installer.SetUpdates(&collection)?;
-                
+
                 info!("Starting native Windows Update installation for {}...", kb);
                 let res = match installer.Install() {
                     Ok(r) => r,
-                    Err(e) => return Err(anyhow!("Windows Update installation triggered error: {}", e)),
+                    Err(e) => {
+                        return Err(anyhow!(
+                            "Windows Update installation triggered error: {}",
+                            e
+                        ))
+                    }
                 };
-                
+
                 let reboot_req = res.RebootRequired();
-                if reboot_req.unwrap_or(windows::Win32::Foundation::VARIANT_BOOL(0)).0 != 0 {
+                if reboot_req
+                    .unwrap_or(windows::Win32::Foundation::VARIANT_BOOL(0))
+                    .0
+                    != 0
+                {
                     info!("Windows update installed successfully but requires a system REBOOT to complete.");
                 }
-                
+
                 use windows::Win32::System::UpdateAgent::OperationResultCode;
                 let result_code = res.ResultCode().unwrap_or(OperationResultCode(4)); // 4 = orcFailed
                 if result_code.0 == 4 && (kb == "KB2267602" || kb == "KB5042320") {
-                    info!("Non-critical notice for Defender/System update {}; continuing.", kb);
-                } else if result_code.0 != 2 && result_code.0 != 3 { // 2=Success, 3=SuccessWithErrors
-                    return Err(anyhow!("Windows Update install failed with ResultCode: {}", result_code.0));
+                    info!(
+                        "Non-critical notice for Defender/System update {}; continuing.",
+                        kb
+                    );
+                } else if result_code.0 != 2 && result_code.0 != 3 {
+                    // 2=Success, 3=SuccessWithErrors
+                    return Err(anyhow!(
+                        "Windows Update install failed with ResultCode: {}",
+                        result_code.0
+                    ));
                 }
             }
         }
@@ -788,16 +819,20 @@ impl PatchEngine {
         #[cfg(not(target_os = "windows"))]
         let check_cmd = "ss -tulpn";
 
-        let cmd_prog = if cfg!(target_os = "windows") { "cmd.exe" } else { "sh" };
-        let net_ok = Command::new(osoosi_types::resolve_system_binary(cmd_prog))
-        .args(if cfg!(target_os = "windows") {
-            vec!["/C", check_cmd]
+        let cmd_prog = if cfg!(target_os = "windows") {
+            "cmd.exe"
         } else {
-            vec!["-c", check_cmd]
-        })
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+            "sh"
+        };
+        let net_ok = Command::new(osoosi_types::resolve_system_binary(cmd_prog))
+            .args(if cfg!(target_os = "windows") {
+                vec!["/C", check_cmd]
+            } else {
+                vec!["-c", check_cmd]
+            })
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
         metrics.push(HealthMetric {
             component: "Network Stack".to_string(),
             score: if net_ok { 0.99 } else { 0.3 },
@@ -852,8 +887,11 @@ impl PatchEngine {
                     Ok(con) => con,
                     Err(_) => return false,
                 };
-                
-                let query = format!("SELECT HotFixID FROM Win32_QuickFixEngineering WHERE HotFixID = '{}'", kb);
+
+                let query = format!(
+                    "SELECT HotFixID FROM Win32_QuickFixEngineering WHERE HotFixID = '{}'",
+                    kb
+                );
                 let results: Vec<serde_json::Value> = wmi_con.raw_query(&query).unwrap_or_default();
                 return !results.is_empty();
             }
@@ -886,26 +924,32 @@ impl PatchEngine {
             if check_pkg("pacman", &["-Q", &patch.component]).await {
                 return true;
             }
-            
+
             // Zypper needs special handling for output
             let zypper_fut = async {
                 let s = Command::new("which").arg("zypper").status().await;
                 if s.map(|s| s.success()).unwrap_or(false) {
-                    let out = Command::new("zypper").args(["se", "-i", &patch.component]).output().await;
+                    let out = Command::new("zypper")
+                        .args(["se", "-i", &patch.component])
+                        .output()
+                        .await;
                     if let Ok(o) = out {
-                        return o.status.success() && !String::from_utf8_lossy(&o.stdout).contains("No packages found");
+                        return o.status.success()
+                            && !String::from_utf8_lossy(&o.stdout).contains("No packages found");
                     }
                 }
                 false
             };
             if let Ok(res) = timeout(Duration::from_secs(15), zypper_fut).await {
-                if res { return true; }
+                if res {
+                    return true;
+                }
             }
 
             if check_pkg("apk", &["info", "-e", &patch.component]).await {
                 return true;
             }
-            
+
             false
         }
         #[cfg(target_os = "macos")]
@@ -940,7 +984,7 @@ impl PatchEngine {
                 if kb.starts_with("KB") {
                     let kb_num = kb.trim_start_matches("KB");
                     info!("Attempting wusa rollback for {}...", kb);
-                    
+
                     let wusa_fut = Command::new(osoosi_types::resolve_system_binary("wusa.exe"))
                         .args([
                             "/uninstall",
@@ -949,9 +993,9 @@ impl PatchEngine {
                             "/norestart",
                         ])
                         .status();
-                    
+
                     let wusa_res = timeout(Duration::from_secs(300), wusa_fut).await;
-                    
+
                     let mut success = false;
                     let mut code = -1;
                     if let Ok(Ok(status)) = wusa_res {
@@ -960,7 +1004,10 @@ impl PatchEngine {
                         }
                         code = status.code().unwrap_or(-1);
                     } else if wusa_res.is_err() {
-                        warn!("wusa.exe rollback timed out for {}. Proceeding to DISM fallback.", kb);
+                        warn!(
+                            "wusa.exe rollback timed out for {}. Proceeding to DISM fallback.",
+                            kb
+                        );
                         code = 258; // WAIT_TIMEOUT
                     }
 
@@ -968,7 +1015,7 @@ impl PatchEngine {
                         if code == 87 || code == -2147024809 || code == 258 {
                             // Invalid parameter or timeout
                             warn!("wusa.exe rollback failed or timed out (code {}). Attempting DISM fallback for {}...", code, kb);
-                            
+
                             let dism_args = [
                                 "/Online", 
                                 "/Remove-Package", 
@@ -976,23 +1023,37 @@ impl PatchEngine {
                                 "/NoRestart", 
                                 "/Quiet"
                             ];
-                            
-                            let dism_fut = Command::new(osoosi_types::resolve_system_binary("dism.exe")).args(dism_args).status();
-                            let dism_status = match timeout(Duration::from_secs(600), dism_fut).await {
-                                Ok(res) => res?,
-                                Err(_) => {
-                                    return Err(anyhow!("DISM rollback timed out for {} after 10 minutes", kb));
-                                }
-                            };
+
+                            let dism_fut =
+                                Command::new(osoosi_types::resolve_system_binary("dism.exe"))
+                                    .args(dism_args)
+                                    .status();
+                            let dism_status =
+                                match timeout(Duration::from_secs(600), dism_fut).await {
+                                    Ok(res) => res?,
+                                    Err(_) => {
+                                        return Err(anyhow!(
+                                            "DISM rollback timed out for {} after 10 minutes",
+                                            kb
+                                        ));
+                                    }
+                                };
 
                             if !dism_status.success() {
                                 // Try generic package name if specific one fails
-                                let dism_fallback_fut = Command::new(osoosi_types::resolve_system_binary("dism.exe"))
-                                    .args(["/Online", "/Remove-Package", &format!("/PackageName:{}", kb), "/NoRestart", "/Quiet"])
-                                    .status();
+                                let dism_fallback_fut =
+                                    Command::new(osoosi_types::resolve_system_binary("dism.exe"))
+                                        .args([
+                                            "/Online",
+                                            "/Remove-Package",
+                                            &format!("/PackageName:{}", kb),
+                                            "/NoRestart",
+                                            "/Quiet",
+                                        ])
+                                        .status();
                                 let _ = timeout(Duration::from_secs(300), dism_fallback_fut).await;
                             }
-                            
+
                             if !dism_status.success() {
                                 return Err(anyhow!(
                                     "Windows rollback failed for {} (both wusa and DISM failed)",
@@ -1030,8 +1091,10 @@ impl PatchEngine {
                             .args(["install", "-y", &format!("{}={}", pkg, ver)])
                             .status();
                         match timeout(Duration::from_secs(300), apt_fut).await {
-                            Ok(Ok(s)) if s.success() => {},
-                            _ => return Err(anyhow!("APT rollback failed or timed out for {}", pkg)),
+                            Ok(Ok(s)) if s.success() => {}
+                            _ => {
+                                return Err(anyhow!("APT rollback failed or timed out for {}", pkg))
+                            }
                         }
                     } else {
                         warn!("APT rollback version unknown for {}", pkg);
@@ -1042,16 +1105,27 @@ impl PatchEngine {
                     let (pkg, _ver) = data
                         .split_once('=')
                         .unwrap_or((tx.patch.component.as_str(), ""));
-                    
+
                     let dnf_fut = async {
-                        if Command::new("dnf").args(["downgrade", "-y", pkg]).status().await.map(|s| s.success()).unwrap_or(false) {
+                        if Command::new("dnf")
+                            .args(["downgrade", "-y", pkg])
+                            .status()
+                            .await
+                            .map(|s| s.success())
+                            .unwrap_or(false)
+                        {
                             return true;
                         }
-                        Command::new("yum").args(["downgrade", "-y", pkg]).status().await.map(|s| s.success()).unwrap_or(false)
+                        Command::new("yum")
+                            .args(["downgrade", "-y", pkg])
+                            .status()
+                            .await
+                            .map(|s| s.success())
+                            .unwrap_or(false)
                     };
-                    
+
                     match timeout(Duration::from_secs(300), dnf_fut).await {
-                        Ok(true) => {},
+                        Ok(true) => {}
                         _ => return Err(anyhow!("RPM rollback failed or timed out for {}", pkg)),
                     }
                 } else if snap_id.starts_with("pacman:") {
@@ -1068,8 +1142,13 @@ impl PatchEngine {
                             ])
                             .status();
                         match timeout(Duration::from_secs(300), pac_fut).await {
-                            Ok(Ok(s)) if s.success() => {},
-                            _ => return Err(anyhow!("Pacman rollback failed or timed out for {}", pkg)),
+                            Ok(Ok(s)) if s.success() => {}
+                            _ => {
+                                return Err(anyhow!(
+                                    "Pacman rollback failed or timed out for {}",
+                                    pkg
+                                ))
+                            }
                         }
                     } else {
                         return Err(anyhow!(
@@ -1087,8 +1166,13 @@ impl PatchEngine {
                             .args(["install", "-y", "--oldpackage", &format!("{}={}", pkg, ver)])
                             .status();
                         match timeout(Duration::from_secs(300), zyp_fut).await {
-                            Ok(Ok(s)) if s.success() => {},
-                            _ => return Err(anyhow!("Zypper rollback failed or timed out for {}", pkg)),
+                            Ok(Ok(s)) if s.success() => {}
+                            _ => {
+                                return Err(anyhow!(
+                                    "Zypper rollback failed or timed out for {}",
+                                    pkg
+                                ))
+                            }
                         }
                     } else {
                         return Err(anyhow!(
@@ -1106,8 +1190,10 @@ impl PatchEngine {
                             .args(["add", "--no-cache", &format!("{}={}", pkg, ver)])
                             .status();
                         match timeout(Duration::from_secs(120), apk_fut).await {
-                            Ok(Ok(s)) if s.success() => {},
-                            _ => return Err(anyhow!("Apk rollback failed or timed out for {}", pkg)),
+                            Ok(Ok(s)) if s.success() => {}
+                            _ => {
+                                return Err(anyhow!("Apk rollback failed or timed out for {}", pkg))
+                            }
                         }
                     } else {
                         return Err(anyhow!(
@@ -1157,11 +1243,14 @@ impl PatchEngine {
 
         #[cfg(target_os = "windows")]
         {
-            use windows::Win32::NetworkManagement::NetManagement::*;
             use windows::core::PCWSTR;
+            use windows::Win32::NetworkManagement::NetManagement::*;
 
             let mut user_w: Vec<u16> = user.encode_utf16().chain(std::iter::once(0)).collect();
-            let group_w: Vec<u16> = "Administrators".encode_utf16().chain(std::iter::once(0)).collect();
+            let group_w: Vec<u16> = "Administrators"
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
 
             let member = LOCALGROUP_MEMBERS_INFO_3 {
                 lgrmi3_domainandname: windows::core::PWSTR(user_w.as_mut_ptr()),
@@ -1182,7 +1271,10 @@ impl PatchEngine {
                     // Already a member
                     Ok(None)
                 } else {
-                    warn!("Failed to grant temporary admin for user {} (error {})", user, result);
+                    warn!(
+                        "Failed to grant temporary admin for user {} (error {})",
+                        user, result
+                    );
                     Ok(None)
                 }
             }

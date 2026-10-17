@@ -145,15 +145,24 @@ impl TpmEkCertificate {
             TpmOemVendor::Intel
         } else if issuer_lc.contains("amd") || subject_lc.contains("amd") {
             TpmOemVendor::Amd
-        } else if issuer_lc.contains("infineon") || issuer_lc.contains("optiga") || subject_lc.contains("infineon") {
+        } else if issuer_lc.contains("infineon")
+            || issuer_lc.contains("optiga")
+            || subject_lc.contains("infineon")
+        {
             TpmOemVendor::Infineon
-        } else if issuer_lc.contains("stmicro") || issuer_lc.contains("stm32") || subject_lc.contains("stmicro") {
+        } else if issuer_lc.contains("stmicro")
+            || issuer_lc.contains("stm32")
+            || subject_lc.contains("stmicro")
+        {
             TpmOemVendor::StMicro
         } else if issuer_lc.contains("nuvoton") || subject_lc.contains("nuvoton") {
             TpmOemVendor::Nuvoton
         } else if issuer_lc.contains("nationz") || subject_lc.contains("nationz") {
             TpmOemVendor::Nationz
-        } else if issuer_lc.contains("microchip") || issuer_lc.contains("atmel") || subject_lc.contains("microchip") {
+        } else if issuer_lc.contains("microchip")
+            || issuer_lc.contains("atmel")
+            || subject_lc.contains("microchip")
+        {
             TpmOemVendor::Microchip
         } else {
             TpmOemVendor::Unknown
@@ -296,12 +305,14 @@ impl GoldenBaseline {
     }
 
     pub fn pin_ek_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
-        self.pinned_ek_fingerprints.push(fingerprint.into().to_lowercase());
+        self.pinned_ek_fingerprints
+            .push(fingerprint.into().to_lowercase());
         self
     }
 
     pub fn allow_root_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
-        self.allowed_tpm_root_fingerprints.push(fingerprint.into().to_lowercase());
+        self.allowed_tpm_root_fingerprints
+            .push(fingerprint.into().to_lowercase());
         self
     }
 }
@@ -355,8 +366,9 @@ pub fn verify_tpm_ek_certificate(
     use x509_parser::prelude::*;
 
     // 1. Parse raw X.509 DER certificate
-    let (_, cert) = X509Certificate::from_der(&ek_cert.raw_der)
-        .map_err(|e| AttestationError::EkValidationFailed(format!("Invalid X.509 certificate: {}", e)))?;
+    let (_, cert) = X509Certificate::from_der(&ek_cert.raw_der).map_err(|e| {
+        AttestationError::EkValidationFailed(format!("Invalid X.509 certificate: {}", e))
+    })?;
 
     let subject = cert.subject().to_string();
     let issuer = cert.issuer().to_string();
@@ -365,18 +377,35 @@ pub fn verify_tpm_ek_certificate(
 
     // 2. Cryptographic signature and silicon root verification
     if let Some(ref issuer_bytes) = ek_cert.issuer_der {
-        let (_, issuer_cert) = X509Certificate::from_der(issuer_bytes)
-            .map_err(|e| AttestationError::EkValidationFailed(format!("Invalid issuing CA certificate: {}", e)))?;
-        cert.verify_signature(Some(&issuer_cert.public_key()))
-            .map_err(|e| AttestationError::EkValidationFailed(format!("EK signature verification against issuer CA failed: {}", e)))?;
+        let (_, issuer_cert) = X509Certificate::from_der(issuer_bytes).map_err(|e| {
+            AttestationError::EkValidationFailed(format!("Invalid issuing CA certificate: {}", e))
+        })?;
+        cert.verify_signature(Some(issuer_cert.public_key()))
+            .map_err(|e| {
+                AttestationError::EkValidationFailed(format!(
+                    "EK signature verification against issuer CA failed: {}",
+                    e
+                ))
+            })?;
         if issuer_cert.subject() == issuer_cert.issuer() {
-            issuer_cert.verify_signature(Some(&issuer_cert.public_key()))
-                .map_err(|e| AttestationError::EkValidationFailed(format!("OEM Root CA self-signature verification failed: {}", e)))?;
+            issuer_cert
+                .verify_signature(Some(issuer_cert.public_key()))
+                .map_err(|e| {
+                    AttestationError::EkValidationFailed(format!(
+                        "OEM Root CA self-signature verification failed: {}",
+                        e
+                    ))
+                })?;
         }
     } else if cert.subject() == cert.issuer() {
         // Self-signed certificate (e.g. standalone test or single-tier mock)
-        cert.verify_signature(Some(&cert.public_key()))
-            .map_err(|e| AttestationError::EkValidationFailed(format!("Self-signed EK certificate signature verification failed: {}", e)))?;
+        cert.verify_signature(Some(cert.public_key()))
+            .map_err(|e| {
+                AttestationError::EkValidationFailed(format!(
+                    "Self-signed EK certificate signature verification failed: {}",
+                    e
+                ))
+            })?;
     }
 
     // 3. Detect and verify OEM Root CA authenticity
@@ -387,29 +416,43 @@ pub fn verify_tpm_ek_certificate(
         TpmOemVendor::Intel
     } else if issuer_lc.contains("amd") || subject_lc.contains("amd") {
         TpmOemVendor::Amd
-    } else if issuer_lc.contains("infineon") || issuer_lc.contains("optiga") || subject_lc.contains("infineon") {
+    } else if issuer_lc.contains("infineon")
+        || issuer_lc.contains("optiga")
+        || subject_lc.contains("infineon")
+    {
         TpmOemVendor::Infineon
-    } else if issuer_lc.contains("stmicro") || issuer_lc.contains("stm32") || subject_lc.contains("stmicro") {
+    } else if issuer_lc.contains("stmicro")
+        || issuer_lc.contains("stm32")
+        || subject_lc.contains("stmicro")
+    {
         TpmOemVendor::StMicro
     } else if issuer_lc.contains("nuvoton") || subject_lc.contains("nuvoton") {
         TpmOemVendor::Nuvoton
     } else if issuer_lc.contains("nationz") || subject_lc.contains("nationz") {
         TpmOemVendor::Nationz
-    } else if issuer_lc.contains("microchip") || issuer_lc.contains("atmel") || subject_lc.contains("microchip") {
+    } else if issuer_lc.contains("microchip")
+        || issuer_lc.contains("atmel")
+        || subject_lc.contains("microchip")
+    {
         TpmOemVendor::Microchip
     } else {
         TpmOemVendor::Unknown
     };
 
     // Reject unknown vendor unless explicitly pinned by fingerprint
-    let is_pinned = policy.map(|p| {
-        p.pinned_ek_fingerprints.iter().any(|f| f.to_lowercase() == calculated_fingerprint)
-    }).unwrap_or(false);
+    let is_pinned = policy
+        .map(|p| {
+            p.pinned_ek_fingerprints
+                .iter()
+                .any(|f| f.to_lowercase() == calculated_fingerprint)
+        })
+        .unwrap_or(false);
 
     if recognized_vendor == TpmOemVendor::Unknown && !is_pinned {
-        return Err(AttestationError::EkValidationFailed(
-            format!("Unrecognized TPM silicon manufacturer: issuer '{}', subject '{}'", issuer, subject)
-        ));
+        return Err(AttestationError::EkValidationFailed(format!(
+            "Unrecognized TPM silicon manufacturer: issuer '{}', subject '{}'",
+            issuer, subject
+        )));
     }
 
     let effective_vendor = if recognized_vendor != TpmOemVendor::Unknown {
@@ -421,17 +464,25 @@ pub fn verify_tpm_ek_certificate(
     // 4. Golden Baseline policy enforcement
     if let Some(pol) = policy {
         // Enforce allowed vendors if restricted
-        if !pol.allowed_tpm_vendors.is_empty() && !pol.allowed_tpm_vendors.contains(&effective_vendor) {
-            return Err(AttestationError::DisallowedTpmVendor(effective_vendor.to_string()));
+        if !pol.allowed_tpm_vendors.is_empty()
+            && !pol.allowed_tpm_vendors.contains(&effective_vendor)
+        {
+            return Err(AttestationError::DisallowedTpmVendor(
+                effective_vendor.to_string(),
+            ));
         }
 
         // Enforce pinned leaf fingerprints if restricted
         if !pol.pinned_ek_fingerprints.is_empty()
-            && !pol.pinned_ek_fingerprints.iter().any(|f| f.to_lowercase() == calculated_fingerprint)
+            && !pol
+                .pinned_ek_fingerprints
+                .iter()
+                .any(|f| f.to_lowercase() == calculated_fingerprint)
         {
-            return Err(AttestationError::EkValidationFailed(
-                format!("EK certificate fingerprint {} is not in pinned allowed list", calculated_fingerprint)
-            ));
+            return Err(AttestationError::EkValidationFailed(format!(
+                "EK certificate fingerprint {} is not in pinned allowed list",
+                calculated_fingerprint
+            )));
         }
 
         // Enforce pinned OEM Root CA fingerprints if configured
@@ -441,10 +492,15 @@ pub fn verify_tpm_ek_certificate(
             } else {
                 calculated_fingerprint.clone()
             };
-            if !pol.allowed_tpm_root_fingerprints.iter().any(|f| f.to_lowercase() == root_fp) {
-                return Err(AttestationError::EkValidationFailed(
-                    format!("OEM Root CA fingerprint {} is not in allowed root list", root_fp)
-                ));
+            if !pol
+                .allowed_tpm_root_fingerprints
+                .iter()
+                .any(|f| f.to_lowercase() == root_fp)
+            {
+                return Err(AttestationError::EkValidationFailed(format!(
+                    "OEM Root CA fingerprint {} is not in allowed root list",
+                    root_fp
+                )));
             }
         }
     }

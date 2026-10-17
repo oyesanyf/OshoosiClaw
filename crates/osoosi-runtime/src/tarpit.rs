@@ -14,13 +14,18 @@ use tracing::{info, trace, warn};
 static GLOBAL_TRAPS: OnceLock<Arc<dashmap::DashMap<u32, Arc<AtomicBool>>>> = OnceLock::new();
 
 fn get_global_traps() -> Arc<dashmap::DashMap<u32, Arc<AtomicBool>>> {
-    GLOBAL_TRAPS.get_or_init(|| Arc::new(dashmap::DashMap::new())).clone()
+    GLOBAL_TRAPS
+        .get_or_init(|| Arc::new(dashmap::DashMap::new()))
+        .clone()
 }
 
-static INACCESSIBLE_PIDS: OnceLock<Arc<dashmap::DashMap<u32, tokio::time::Instant>>> = OnceLock::new();
+static INACCESSIBLE_PIDS: OnceLock<Arc<dashmap::DashMap<u32, tokio::time::Instant>>> =
+    OnceLock::new();
 
 pub fn get_inaccessible_pids() -> Arc<dashmap::DashMap<u32, tokio::time::Instant>> {
-    INACCESSIBLE_PIDS.get_or_init(|| Arc::new(dashmap::DashMap::new())).clone()
+    INACCESSIBLE_PIDS
+        .get_or_init(|| Arc::new(dashmap::DashMap::new()))
+        .clone()
 }
 
 pub fn is_pid_inaccessible_cooldown(pid: u32) -> bool {
@@ -73,7 +78,10 @@ pub fn get_process_name(pid: u32) -> String {
             let _ = unsafe { CloseHandle(handle) };
             if success.is_ok() && size > 0 {
                 let full_path = String::from_utf16_lossy(&buf[..size as usize]);
-                if let Some(filename) = std::path::Path::new(&full_path).file_name().and_then(|n| n.to_str()) {
+                if let Some(filename) = std::path::Path::new(&full_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                {
                     return filename.to_string();
                 }
             }
@@ -230,7 +238,10 @@ impl ActiveProcessTarpit {
         // Prevent duplicate concurrent trapping loops on the same PID
         if let Some(existing) = self.active_traps.get(&pid) {
             if existing.load(Ordering::Relaxed) {
-                info!("ActiveProcessTarpit: PID {} ({}) is already actively trapped", pid, proc_name);
+                info!(
+                    "ActiveProcessTarpit: PID {} ({}) is already actively trapped",
+                    pid, proc_name
+                );
                 return;
             }
         }
@@ -244,8 +255,8 @@ impl ActiveProcessTarpit {
         let handles: Vec<SendHandle> = unsafe {
             use windows::Win32::Foundation::CloseHandle;
             use windows::Win32::System::Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
-                TH32CS_SNAPTHREAD,
+                CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
+                THREADENTRY32,
             };
             use windows::Win32::System::Threading::{
                 OpenThread, THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME,
@@ -319,7 +330,10 @@ impl ActiveProcessTarpit {
                 // Sleep for interval (chunked so release_pid can cancel promptly)
                 let sleep_chunk = Duration::from_millis(25);
                 let mut slept = Duration::ZERO;
-                while slept < interval && run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
+                while slept < interval
+                    && run_flag.load(Ordering::Relaxed)
+                    && start.elapsed() < max_duration
+                {
                     let step = sleep_chunk.min(interval - slept);
                     tokio::time::sleep(step).await;
                     slept += step;
@@ -396,13 +410,19 @@ impl ActiveProcessTarpit {
         let proc_name_clone = proc_name.clone();
 
         tokio::spawn(async move {
-            info!("ActiveProcessTarpit (non-Windows fallback): Trapping PID {} ({})", pid, proc_name_clone);
+            info!(
+                "ActiveProcessTarpit (non-Windows fallback): Trapping PID {} ({})",
+                pid, proc_name_clone
+            );
             let start = tokio::time::Instant::now();
             while run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
                 tokio::time::sleep(interval.min(Duration::from_millis(50))).await;
             }
             traps.remove(&pid);
-            info!("ActiveProcessTarpit (non-Windows fallback): Released PID {} ({})", pid, proc_name_clone);
+            info!(
+                "ActiveProcessTarpit (non-Windows fallback): Released PID {} ({})",
+                pid, proc_name_clone
+            );
         });
     }
 }
@@ -522,8 +542,7 @@ impl TarpitManager {
 
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
-            OpenProcess, SetPriorityClass,
-            IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
+            OpenProcess, SetPriorityClass, IDLE_PRIORITY_CLASS, NORMAL_PRIORITY_CLASS,
             PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA,
         };
 
@@ -543,18 +562,34 @@ impl TarpitManager {
 
                 unsafe {
                     if let Err(e) = SetPriorityClass(h, priority) {
-                        warn!("Tarpit: SetPriorityClass({}) failed for PID {} ({}): {}", action, pid, proc_name, e);
+                        warn!(
+                            "Tarpit: SetPriorityClass({}) failed for PID {} ({}): {}",
+                            action, pid, proc_name, e
+                        );
                     } else {
-                        info!("Tarpit: PID {} ({}) priority set to {}", pid, proc_name, action);
+                        info!(
+                            "Tarpit: PID {} ({}) priority set to {}",
+                            pid, proc_name, action
+                        );
                         success = true;
                     }
 
                     // Shrink working set to force paging (aggressive throttle)
                     if throttle && success {
-                        use windows::Win32::System::Memory::{SetProcessWorkingSetSizeEx, QUOTA_LIMITS_HARDWS_MIN_DISABLE};
+                        use windows::Win32::System::Memory::{
+                            SetProcessWorkingSetSizeEx, QUOTA_LIMITS_HARDWS_MIN_DISABLE,
+                        };
                         // SIZE_T(-1) tells Windows to trim the working set
-                        let _ = SetProcessWorkingSetSizeEx(h, usize::MAX, usize::MAX, QUOTA_LIMITS_HARDWS_MIN_DISABLE);
-                        info!("Tarpit: PID {} ({}) working set trimmed (memory pressure applied)", pid, proc_name);
+                        let _ = SetProcessWorkingSetSizeEx(
+                            h,
+                            usize::MAX,
+                            usize::MAX,
+                            QUOTA_LIMITS_HARDWS_MIN_DISABLE,
+                        );
+                        info!(
+                            "Tarpit: PID {} ({}) working set trimmed (memory pressure applied)",
+                            pid, proc_name
+                        );
                     }
 
                     let _ = CloseHandle(h);
@@ -588,16 +623,27 @@ impl TarpitManager {
 
         match timeout(Duration::from_secs(10), renice_fut).await {
             Ok(Ok(s)) if s.success() => {
-                info!("Tarpit: PID {} ({}) renice set to {}", pid, proc_name, nice_val);
+                info!(
+                    "Tarpit: PID {} ({}) renice set to {}",
+                    pid, proc_name, nice_val
+                );
             }
             Ok(Ok(s)) => {
-                warn!("Tarpit: renice for PID {} ({}) exited with {:?}", pid, proc_name, s.code());
+                warn!(
+                    "Tarpit: renice for PID {} ({}) exited with {:?}",
+                    pid,
+                    proc_name,
+                    s.code()
+                );
             }
             _ => {
-                warn!("Tarpit: Failed to renice PID {} ({}) (timed out or failed)", pid, proc_name);
+                warn!(
+                    "Tarpit: Failed to renice PID {} ({}) (timed out or failed)",
+                    pid, proc_name
+                );
             }
         }
-        
+
         // Also apply ionice if available (best-effort)
         if throttle {
             let io_fut = Command::new("ionice")
@@ -637,23 +683,28 @@ impl TarpitManager {
                 // Instead of letting Windows choose (None), we pick a random high-address base to frustrate scanners.
                 let random_base: usize = {
                     let mut rng = rand::thread_rng();
-                    rng.gen_range(0x00000100_00000000..0x00007FFF_00000000) & !0xFFFF // Page aligned
+                    rng.gen_range(0x00000100_00000000..0x00007FFF_00000000) & !0xFFFF
+                    // Page aligned
                 };
-                
+
                 let ptr_addr = unsafe {
                     let ptr = VirtualAlloc(
                         Some(random_base as *const std::ffi::c_void),
                         region_size,
-                        windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(MEM_COMMIT.0 | MEM_RESERVE.0),
+                        windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(
+                            MEM_COMMIT.0 | MEM_RESERVE.0,
+                        ),
                         windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(PAGE_READWRITE.0),
                     );
-                    
+
                     if ptr.is_null() {
                         // Fallback to auto-allocation if the random address is occupied
                         VirtualAlloc(
                             None,
                             region_size,
-                            windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(MEM_COMMIT.0 | MEM_RESERVE.0),
+                            windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(
+                                MEM_COMMIT.0 | MEM_RESERVE.0,
+                            ),
                             windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(PAGE_READWRITE.0),
                         ) as usize
                     } else {
@@ -679,8 +730,8 @@ impl TarpitManager {
                     slice[0] = 0x4D;
                     slice[1] = 0x5A;
                     // NOP Sled (0x90) for the rest
-                    for i in 2..region_size {
-                        slice[i] = 0x90;
+                    if region_size > 2 {
+                        slice[2..region_size].fill(0x90);
                     }
                 }
 
@@ -695,7 +746,11 @@ impl TarpitManager {
 
                 // Vanish: Free the memory completely
                 unsafe {
-                    let _ = VirtualFree(ptr_addr as *mut std::ffi::c_void, 0, windows::Win32::System::Memory::VIRTUAL_FREE_TYPE(MEM_RELEASE.0));
+                    let _ = VirtualFree(
+                        ptr_addr as *mut std::ffi::c_void,
+                        0,
+                        windows::Win32::System::Memory::VIRTUAL_FREE_TYPE(MEM_RELEASE.0),
+                    );
                 }
 
                 // Deregister the region
@@ -731,7 +786,12 @@ mod tests {
         {
             // Spawn a dummy background process to trap
             let mut child = std::process::Command::new("powershell.exe")
-                .args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"])
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Start-Sleep -Seconds 30",
+                ])
                 .spawn()
                 .expect("Failed to spawn dummy child process for test");
 
@@ -756,12 +816,17 @@ mod tests {
 
             // Kill child
             let _ = child.kill();
+            let _ = child.wait();
         }
 
         #[cfg(not(target_os = "windows"))]
         {
             let dummy_pid = 99999;
-            tarpit.trap_pid(dummy_pid, Duration::from_millis(50), Duration::from_millis(500));
+            tarpit.trap_pid(
+                dummy_pid,
+                Duration::from_millis(50),
+                Duration::from_millis(500),
+            );
             assert!(tarpit.is_trapped(dummy_pid));
             tarpit.release_pid(dummy_pid);
             assert!(!tarpit.is_trapped(dummy_pid));
@@ -771,11 +836,17 @@ mod tests {
     #[tokio::test]
     async fn test_safeguards_and_inaccessible_cooldown() {
         assert!(is_protected_system_or_security_process(4, "System"));
-        assert!(is_protected_system_or_security_process(1234, "sysmon64.exe"));
+        assert!(is_protected_system_or_security_process(
+            1234,
+            "sysmon64.exe"
+        ));
         assert!(is_protected_system_or_security_process(1235, "Sysmon.exe"));
         assert!(is_protected_system_or_security_process(1236, "msmpeng.exe"));
         assert!(is_protected_system_or_security_process(1237, "osoosi.exe"));
-        assert!(is_protected_system_or_security_process(std::process::id(), "anything.exe"));
+        assert!(is_protected_system_or_security_process(
+            std::process::id(),
+            "anything.exe"
+        ));
         assert!(!is_protected_system_or_security_process(9999, "curl.exe"));
 
         let tarpit = ActiveProcessTarpit::new();
@@ -786,4 +857,3 @@ mod tests {
         assert!(is_pid_inaccessible_cooldown(98765));
     }
 }
-

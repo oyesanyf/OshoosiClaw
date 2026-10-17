@@ -105,7 +105,7 @@ pub struct SandboxResult {
 const MAX_WASM_BUFFER_SIZE: usize = 16 * 1024 * 1024;
 
 /// Safely read a slice from WASM linear memory with checked arithmetic and size upper bounds.
-fn read_wasm_slice<'a>(data: &'a [u8], ptr: u32, len: u32) -> Option<&'a [u8]> {
+fn read_wasm_slice(data: &[u8], ptr: u32, len: u32) -> Option<&[u8]> {
     let start = ptr as usize;
     let length = len as usize;
     if length > MAX_WASM_BUFFER_SIZE {
@@ -178,7 +178,11 @@ impl SandboxExecutor {
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
                     let bytes = read_wasm_slice(data, ptr, len)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_scan_file"))?
+                        .ok_or_else(|| {
+                            wasmtime::Error::msg(
+                                "Out of bounds or oversized memory access in host_scan_file",
+                            )
+                        })?
                         .to_vec();
                     let fuel = caller.get_fuel().unwrap_or(0);
 
@@ -225,8 +229,11 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let slice = read_wasm_slice(data, ptr, len)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_fetch_url"))?;
+                    let slice = read_wasm_slice(data, ptr, len).ok_or_else(|| {
+                        wasmtime::Error::msg(
+                            "Out of bounds or oversized memory access in host_fetch_url",
+                        )
+                    })?;
                     let url = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in URL"))?
                         .to_string();
@@ -284,8 +291,11 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let slice = read_wasm_slice(data, ptr, len)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_exec_command"))?;
+                    let slice = read_wasm_slice(data, ptr, len).ok_or_else(|| {
+                        wasmtime::Error::msg(
+                            "Out of bounds or oversized memory access in host_exec_command",
+                        )
+                    })?;
                     let cmd = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in command"))?
                         .to_string();
@@ -346,8 +356,11 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let slice = read_wasm_slice(data, ptr, len)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_read_db"))?;
+                    let slice = read_wasm_slice(data, ptr, len).ok_or_else(|| {
+                        wasmtime::Error::msg(
+                            "Out of bounds or oversized memory access in host_read_db",
+                        )
+                    })?;
                     let query = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in query"))?
                         .to_string();
@@ -460,8 +473,11 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let slice = read_wasm_slice(data, ptr, len)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_write_audit"))?;
+                    let slice = read_wasm_slice(data, ptr, len).ok_or_else(|| {
+                        wasmtime::Error::msg(
+                            "Out of bounds or oversized memory access in host_write_audit",
+                        )
+                    })?;
                     let entry_str = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in audit entry"))?
                         .to_string();

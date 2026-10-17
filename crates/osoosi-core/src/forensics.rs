@@ -1,7 +1,7 @@
 use osoosi_audit::{AuditEntry, AuditTrail};
 use osoosi_behavioral::SmolLMAnalyzer;
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
 use tracing::{debug, error, warn};
 
 pub struct ForensicStoryteller {
@@ -37,11 +37,17 @@ impl ForensicStoryteller {
             && model_dir.join("tokenizer.json").exists();
 
         if !has_smollm
-            && !std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false)
+            && !std::env::var("OSOOSI_ENABLE_SMOLLM")
+                .map(|v| v == "1")
+                .unwrap_or(false)
             && judge.is_none()
             && foundation_sec_judge.is_none()
         {
-            return Self { analyzer: None, judge: None, foundation_sec_judge: None };
+            return Self {
+                analyzer: None,
+                judge: None,
+                foundation_sec_judge: None,
+            };
         }
 
         let analyzer = if has_smollm {
@@ -59,11 +65,23 @@ impl ForensicStoryteller {
             None
         };
 
-        Self { analyzer, judge, foundation_sec_judge }
+        Self {
+            analyzer,
+            judge,
+            foundation_sec_judge,
+        }
     }
 
     fn extract_process_name(entry: &AuditEntry) -> String {
-        let keys = ["process_name", "process_path", "Image", "SourceImage", "ParentImage", "path", "basename"];
+        let keys = [
+            "process_name",
+            "process_path",
+            "Image",
+            "SourceImage",
+            "ParentImage",
+            "path",
+            "basename",
+        ];
         for key in keys {
             if let Some(val) = entry.data.get(key).and_then(|v| v.as_str()) {
                 let path = Path::new(val);
@@ -82,7 +100,7 @@ impl ForensicStoryteller {
         for t in threats {
             let proc = Self::extract_process_name(t);
             let key = format!("{}:{}", proc, t.event_type);
-            
+
             let entry = groups.entry(key).or_insert(StoryGroup {
                 first_seen: t.timestamp,
                 last_seen: t.timestamp,
@@ -101,7 +119,7 @@ impl ForensicStoryteller {
         }
 
         let mut result: Vec<StoryGroup> = groups.into_values().collect();
-        result.sort_by(|a, b| a.first_seen.cmp(&b.first_seen));
+        result.sort_by_key(|a| a.first_seen);
         result
     }
 
@@ -161,7 +179,10 @@ impl ForensicStoryteller {
             match judge.judge_artifact(&prompt).await {
                 Ok(story) => return story,
                 Err(e) => {
-                    warn!("FoundationSec Storyteller inference failed: {}. Trying fallback.", e);
+                    warn!(
+                        "FoundationSec Storyteller inference failed: {}. Trying fallback.",
+                        e
+                    );
                 }
             }
         }
@@ -175,7 +196,10 @@ impl ForensicStoryteller {
             match judge.generate_text(&prompt, 400).await {
                 Ok(story) => return story,
                 Err(e) => {
-                    warn!("Gemma4 Storyteller inference failed: {}. Trying SmolLM fallback.", e);
+                    warn!(
+                        "Gemma4 Storyteller inference failed: {}. Trying SmolLM fallback.",
+                        e
+                    );
                 }
             }
         }

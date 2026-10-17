@@ -20,7 +20,9 @@ pub fn init_hybrid_concurrency() {
         .start_handler(|_i| {
             #[cfg(target_os = "windows")]
             {
-                use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+                use windows::Win32::System::Threading::{
+                    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+                };
                 unsafe {
                     // PERFORMANCE HARDENING: Background forensic/AI threads must yield to user applications
                     let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
@@ -92,7 +94,7 @@ pub fn spawn_rayon(f: impl FnOnce() + Send + 'static) {
     rayon::spawn(f);
 }
 
-/// **Smart Concurrency:** Spawns a task that only begins execution after acquiring a permit 
+/// **Smart Concurrency:** Spawns a task that only begins execution after acquiring a permit
 /// from the provided semaphore. This provides adaptive backpressure.
 pub fn spawn_smart<F, T>(semaphore: std::sync::Arc<tokio::sync::Semaphore>, task: F)
 where
@@ -105,13 +107,19 @@ where
     });
 }
 
-/// **Smart Concurrency (with result):** Executes a task after acquiring a permit 
+/// **Smart Concurrency (with result):** Executes a task after acquiring a permit
 /// from the provided semaphore and returns the result.
-pub async fn run_smart<F, T>(semaphore: std::sync::Arc<tokio::sync::Semaphore>, task: F) -> anyhow::Result<T>
+pub async fn run_smart<F, T>(
+    semaphore: std::sync::Arc<tokio::sync::Semaphore>,
+    task: F,
+) -> anyhow::Result<T>
 where
     F: std::future::Future<Output = T> + Send + 'static,
     T: Send + 'static,
 {
-    let _permit = semaphore.acquire_owned().await.map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
+    let _permit = semaphore
+        .acquire_owned()
+        .await
+        .map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
     Ok(task.await)
 }

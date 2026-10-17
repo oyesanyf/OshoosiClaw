@@ -9,7 +9,8 @@ use tracing::{error, info, warn};
 
 pub const SERVICE_NAME: &str = "OsoosiEDR";
 pub const SERVICE_DISPLAY_NAME: &str = "OpenOsoosi Autonomous EDR Service";
-pub const SERVICE_DESCRIPTION: &str = "OpenỌ̀ṣọ́ọ̀sì Autonomous Endpoint Detection and Response Engine";
+pub const SERVICE_DESCRIPTION: &str =
+    "OpenỌ̀ṣọ́ọ̀sì Autonomous Endpoint Detection and Response Engine";
 
 static SERVICE_STOP_NOTIFY: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
 static SERVICE_STOP_FLAG: AtomicBool = AtomicBool::new(false);
@@ -85,7 +86,9 @@ pub fn resolve_app_root_from_exe(exe: &std::path::Path) -> std::path::PathBuf {
             break;
         }
     }
-    exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| exe.to_path_buf())
+    exe.parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| exe.to_path_buf())
 }
 
 /// Ensure that the process working directory is set to the project root or installation root.
@@ -96,7 +99,11 @@ pub fn ensure_service_working_directory() {
     if let Ok(exe) = std::env::current_exe() {
         let root = resolve_app_root_from_exe(&exe);
         if let Err(e) = std::env::set_current_dir(&root) {
-            warn!("Failed to set working directory to {}: {}", root.display(), e);
+            warn!(
+                "Failed to set working directory to {}: {}",
+                root.display(),
+                e
+            );
         } else {
             info!("Service working directory set to: {}", root.display());
         }
@@ -133,13 +140,16 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
             ])
             .status()?;
         if status.success() {
-            println!("[+] Service action '{}' completed successfully.", action_arg);
+            println!(
+                "[+] Service action '{}' completed successfully.",
+                action_arg
+            );
             if action_arg != "delete" {
                 if let Ok(state) = query_service_state() {
                     println!("{}", state);
                 }
             }
-            return Ok(true);
+            Ok(true)
         } else {
             anyhow::bail!(
                 "Elevated 'osoosi service {}' failed or UAC prompt was declined (exit code: {:?}).",
@@ -215,7 +225,10 @@ pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
     {
         if out.status.success() {
             if let Ok(pid) = String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
-                info!("Detached background daemon spawned via WMI with PID: {}", pid);
+                info!(
+                    "Detached background daemon spawned via WMI with PID: {}",
+                    pid
+                );
                 return Ok(pid);
             }
         }
@@ -241,7 +254,7 @@ pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
 pub fn install_service() -> anyhow::Result<()> {
     match ensure_elevated_for_service_action("install") {
         Ok(true) => return Ok(()),
-        Ok(false) => {},
+        Ok(false) => {}
         Err(e) => {
             warn!("UAC elevation failed or was declined: {}. Falling back to detached background daemon...", e);
             if !is_dashboard_port_listening(3030) {
@@ -251,7 +264,9 @@ pub fn install_service() -> anyhow::Result<()> {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
                 return Ok(());
             } else {
-                anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
+                anyhow::bail!(
+                    "Detached background daemon started but port 3030 did not become ready."
+                );
             }
         }
     }
@@ -275,7 +290,10 @@ pub fn install_service() -> anyhow::Result<()> {
         let err = String::from_utf8_lossy(&output.stderr);
         let out = String::from_utf8_lossy(&output.stdout);
         if out.contains("1073") || out.contains("already exists") || err.contains("1073") {
-            info!("Service '{}' already exists. Updating service configuration...", SERVICE_NAME);
+            info!(
+                "Service '{}' already exists. Updating service configuration...",
+                SERVICE_NAME
+            );
             let cfg_out = run_sc_cmd(&[
                 "config",
                 SERVICE_NAME,
@@ -329,7 +347,7 @@ pub fn install_service() -> anyhow::Result<()> {
 pub fn start_service() -> anyhow::Result<()> {
     match ensure_elevated_for_service_action("start") {
         Ok(true) => return Ok(()),
-        Ok(false) => {},
+        Ok(false) => {}
         Err(e) => {
             warn!("UAC elevation failed or was declined: {}. Falling back to detached background daemon...", e);
             if !is_dashboard_port_listening(3030) {
@@ -339,7 +357,9 @@ pub fn start_service() -> anyhow::Result<()> {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
                 return Ok(());
             } else {
-                anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
+                anyhow::bail!(
+                    "Detached background daemon started but port 3030 did not become ready."
+                );
             }
         }
     }
@@ -350,7 +370,10 @@ pub fn start_service() -> anyhow::Result<()> {
         let err = String::from_utf8_lossy(&output.stderr);
         if out.contains("already running") || out.contains("1056") {
             println!("Service '{}' is already running.", SERVICE_NAME);
-        } else if out.contains("Access is denied") || err.contains("Access is denied") || out.contains("FAILED 5") {
+        } else if out.contains("Access is denied")
+            || err.contains("Access is denied")
+            || out.contains("FAILED 5")
+        {
             warn!("SCM start access denied. Falling back to detached background daemon...");
             if !is_dashboard_port_listening(3030) {
                 let _ = spawn_detached_background_daemon()?;
@@ -381,7 +404,10 @@ pub fn start_service() -> anyhow::Result<()> {
     }
 
     if !is_running {
-        println!("Service start signal sent. Current status:\n{}", query_service_state().unwrap_or_default());
+        println!(
+            "Service start signal sent. Current status:\n{}",
+            query_service_state().unwrap_or_default()
+        );
     }
 
     // Wait up to 30s for WebUI port 3030 to be ready
@@ -419,14 +445,19 @@ pub fn stop_service() -> anyhow::Result<()> {
     let start_time = std::time::Instant::now();
     while start_time.elapsed() < Duration::from_secs(8) {
         if let Ok(status) = query_service_state() {
-            if status.contains("STOPPED") && (status.contains("PID                : 0") || !status.contains("PID")) {
+            if status.contains("STOPPED")
+                && (status.contains("PID                : 0") || !status.contains("PID"))
+            {
                 println!("Service '{}' is now STOPPED.", SERVICE_NAME);
                 return Ok(());
             }
         }
         std::thread::sleep(Duration::from_millis(300));
     }
-    println!("Service stop signal sent. Current status:\n{}", query_service_state().unwrap_or_default());
+    println!(
+        "Service stop signal sent. Current status:\n{}",
+        query_service_state().unwrap_or_default()
+    );
     Ok(())
 }
 
@@ -445,7 +476,10 @@ pub fn delete_service() -> anyhow::Result<()> {
         let out = String::from_utf8_lossy(&output.stdout);
         let err = String::from_utf8_lossy(&output.stderr);
         if out.contains("1060") || out.contains("does not exist") || err.contains("1060") {
-            println!("[+] Service '{}' is not installed (already removed).", SERVICE_NAME);
+            println!(
+                "[+] Service '{}' is not installed (already removed).",
+                SERVICE_NAME
+            );
             return Ok(());
         }
     }
@@ -462,7 +496,10 @@ pub fn delete_service() -> anyhow::Result<()> {
         let out = String::from_utf8_lossy(&output.stdout);
         let err = String::from_utf8_lossy(&output.stderr);
         if out.contains("1060") || out.contains("does not exist") || err.contains("1060") {
-            println!("[+] Service '{}' is not installed (already removed).", SERVICE_NAME);
+            println!(
+                "[+] Service '{}' is not installed (already removed).",
+                SERVICE_NAME
+            );
             return Ok(());
         }
         anyhow::bail!("Failed to delete service: {} {}", out, err);
@@ -503,8 +540,11 @@ pub fn handle_service_action(action: &ServiceAction) -> anyhow::Result<()> {
 #[cfg(windows)]
 mod win_scm {
     use super::*;
+    use std::sync::atomic::AtomicIsize;
     use windows::core::{w, PWSTR};
-    use windows::Win32::Foundation::{ERROR_FAILED_SERVICE_CONTROLLER_CONNECT, NO_ERROR, WIN32_ERROR};
+    use windows::Win32::Foundation::{
+        ERROR_FAILED_SERVICE_CONTROLLER_CONNECT, NO_ERROR, WIN32_ERROR,
+    };
     use windows::Win32::System::Services::{
         RegisterServiceCtrlHandlerExW, SetServiceStatus, StartServiceCtrlDispatcherW,
         SERVICE_ACCEPT_SHUTDOWN, SERVICE_ACCEPT_STOP, SERVICE_CONTROL_INTERROGATE,
@@ -512,7 +552,6 @@ mod win_scm {
         SERVICE_STATUS, SERVICE_STATUS_HANDLE, SERVICE_STOPPED, SERVICE_STOP_PENDING,
         SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS,
     };
-    use std::sync::atomic::AtomicIsize;
 
     static GLOBAL_SERVICE_HANDLE_RAW: AtomicIsize = AtomicIsize::new(0);
 
@@ -629,7 +668,9 @@ mod win_scm {
 
         // Wait up to 8 seconds for daemon async cleanup and socket shutdown to complete
         let shutdown_start = std::time::Instant::now();
-        while !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst) && shutdown_start.elapsed() < Duration::from_secs(8) {
+        while !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst)
+            && shutdown_start.elapsed() < Duration::from_secs(8)
+        {
             std::thread::sleep(Duration::from_millis(100));
         }
 
@@ -675,7 +716,9 @@ mod win_scm {
             Ok(err) => {
                 let win_err = WIN32_ERROR(err.code().0 as u32);
                 if win_err == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT {
-                    info!("Running in console mode (ERROR_FAILED_SERVICE_CONTROLLER_CONNECT / 1063).");
+                    info!(
+                        "Running in console mode (ERROR_FAILED_SERVICE_CONTROLLER_CONNECT / 1063)."
+                    );
                     return Ok(false);
                 }
                 warn!("StartServiceCtrlDispatcherW returned error: {}", err);
@@ -708,9 +751,14 @@ mod tests {
 
     #[test]
     fn test_resolve_app_root_from_exe_finds_project_root() {
-        let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from(r"target\debug\osoosi.exe"));
+        let current_exe = std::env::current_exe()
+            .unwrap_or_else(|_| std::path::PathBuf::from(r"target\debug\osoosi.exe"));
         let root = resolve_app_root_from_exe(&current_exe);
-        assert!(root.exists(), "Resolved root directory must exist: {:?}", root);
+        assert!(
+            root.exists(),
+            "Resolved root directory must exist: {:?}",
+            root
+        );
     }
 
     #[test]
@@ -722,7 +770,10 @@ mod tests {
         std::fs::write(&nested_bin, b"dummy").unwrap();
 
         let resolved = resolve_app_root_from_exe(&nested_bin);
-        assert_eq!(resolved, temp, "Should resolve to root directory containing 'config'");
+        assert_eq!(
+            resolved, temp,
+            "Should resolve to root directory containing 'config'"
+        );
 
         let _ = std::fs::remove_dir_all(&temp);
     }

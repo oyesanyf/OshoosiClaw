@@ -2,6 +2,20 @@
 //!
 //! Connects Telemetry, Policy, Wire (P2P), and Runtime.
 
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::collapsible_match)]
+#![allow(clippy::unnecessary_sort_by)]
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::manual_strip)]
+#![allow(clippy::useless_borrows_in_formatting)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::unnecessary_to_owned)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::match_like_matches_macro)]
+#![allow(clippy::manual_flatten)]
+
 pub mod attack_graph;
 pub mod backup;
 pub mod baseline;
@@ -10,21 +24,22 @@ pub mod canary;
 pub mod config_integrity;
 pub mod firewall;
 pub mod forensics;
+pub mod geo_mesh;
 pub mod gossip;
 pub mod hardened;
 pub mod hybrid_runtime;
 pub mod landlock;
-pub mod openshell;
+pub mod memory_watchdog;
+pub mod military;
 pub mod network;
+pub mod nostr_mesh;
+pub mod openshell;
 pub mod pii;
+pub mod privacy;
 pub mod privilege;
 pub mod quarantine;
 pub mod relativistic;
 pub mod shield;
-pub mod privacy;
-pub mod military;
-pub mod nostr_mesh;
-pub mod geo_mesh;
 pub mod software_replacement;
 pub mod static_analyzer;
 pub mod system_check;
@@ -32,33 +47,32 @@ pub mod tool_paths;
 pub mod triage;
 pub mod version_utils;
 pub mod watchdog;
-pub mod memory_watchdog;
 pub use memory_watchdog::{
-    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog,
-    MemoryPressureLevel, MemoryWatchdogDebouncer,
+    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel,
+    MemoryWatchdogDebouncer,
 };
+pub mod dotscope;
+pub mod pe_inspector;
+pub mod win_trust;
 pub mod yara;
 pub mod yara_gen;
-pub mod pe_inspector;
-pub mod dotscope;
-pub mod win_trust;
 pub use hybrid_runtime::{
     init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
     spawn_smart, tokio_worker_threads,
 };
 pub mod adaptive;
+pub mod agent_egress;
 pub mod blocking_manager;
 pub mod byzantine;
 pub mod causal_ai;
 pub mod correlator;
+pub mod log_retention;
 pub mod otx_tarpit;
 pub mod remediation;
 pub mod secured_executor;
 pub mod self_healing;
-pub mod voters;
-pub mod agent_egress;
-pub mod log_retention;
 pub mod supervisor;
+pub mod voters;
 
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
@@ -67,8 +81,8 @@ pub use osoosi_memory::MemoryStore;
 use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_runtime::DeceptionManager;
 use osoosi_types::{
-    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, HostSecurityEvent,
-    SecuredExecutor, Priority, ResourceCategory, TelemetryMode,
+    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, HostSecurityEvent, Priority,
+    ResourceCategory, SecuredExecutor, TelemetryMode,
 };
 use osoosi_wire::{JoinGate, MeshCommand, MeshNode};
 use std::collections::{HashMap, HashSet};
@@ -94,8 +108,15 @@ pub type RepairStatus = (
     Option<String>,
 );
 
-fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config: &osoosi_types::PolicyConfig) -> bool {
-    let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+fn is_trusted_operational_image(
+    event: &osoosi_types::HostSecurityEvent,
+    config: &osoosi_types::PolicyConfig,
+) -> bool {
+    let image_path = event
+        .data
+        .get("Image")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if image_path.is_empty() {
         return false;
     }
@@ -105,20 +126,29 @@ fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config:
     }
 
     let path_lc = image_path.to_lowercase();
-    
+
     // 1. Check dynamic whitelists from config
-    let is_trusted_path = config.trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()))
+    let is_trusted_path = config
+        .trusted_paths
+        .iter()
+        .any(|p| path_lc.contains(&p.to_lowercase()))
         || osoosi_model::malware::is_ide_or_build_path(&path_lc);
     let is_trusted_stem = config.trusted_stems.iter().any(|s| {
         let s_lc = s.to_lowercase();
-        path_lc.ends_with(&s_lc) || path_lc.contains(&format!("\\{}\\", s_lc)) || path_lc.ends_with(&format!("\\{}", s_lc))
+        path_lc.ends_with(&s_lc)
+            || path_lc.contains(&format!("\\{}\\", s_lc))
+            || path_lc.ends_with(&format!("\\{}", s_lc))
     });
 
     if is_trusted_path || is_trusted_stem {
         // 2. Obtain signature and Signer Identity from the file on disk
         if let Some(metadata) = osoosi_types::get_pe_metadata(path) {
             let is_trusted = osoosi_types::is_trusted_vendor(&metadata.product_name)
-                || metadata.publisher.as_ref().map(|pub_name| osoosi_types::is_trusted_vendor(pub_name)).unwrap_or(false);
+                || metadata
+                    .publisher
+                    .as_ref()
+                    .map(|pub_name| osoosi_types::is_trusted_vendor(pub_name))
+                    .unwrap_or(false);
 
             if metadata.is_signed && is_trusted {
                 return true;
@@ -126,18 +156,23 @@ fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config:
         }
 
         // 3. Fallback to Native telemetry signature check
-        let sig_status = event.data.get("SignatureStatus")
+        let sig_status = event
+            .data
+            .get("SignatureStatus")
             .or_else(|| event.data.get("Signature Status"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_lowercase();
-        
+
         if sig_status == "valid" || sig_status.contains("trusted") {
             return true;
         }
-        
+
         // 4. Last resort: If it's in a critical System32 path or IDE path, we trust it to avoid OS breakage
-        if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") || osoosi_model::malware::is_ide_or_build_path(&path_lc) {
+        if path_lc.contains("\\windows\\system32")
+            || path_lc.contains("\\windows\\syswow64")
+            || osoosi_model::malware::is_ide_or_build_path(&path_lc)
+        {
             return true;
         }
     }
@@ -167,7 +202,10 @@ pub fn extract_raw_event_pid(event: &osoosi_types::HostSecurityEvent) -> Option<
             v.as_u64().map(|n| n as u32).or_else(|| {
                 v.as_str().and_then(|s| {
                     let s_clean = s.trim();
-                    if let Some(hex) = s_clean.strip_prefix("0x").or_else(|| s_clean.strip_prefix("0X")) {
+                    if let Some(hex) = s_clean
+                        .strip_prefix("0x")
+                        .or_else(|| s_clean.strip_prefix("0X"))
+                    {
                         u32::from_str_radix(hex, 16).ok()
                     } else {
                         s_clean.parse::<u32>().ok()
@@ -316,7 +354,12 @@ pub fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
             | "msmpeng.exe"
             | "securityhealthservice.exe"
     );
-    if is_core_os_binary && (is_critical_path || is_security_provider_process(pid, filename) || filename == "system" || filename == "ntoskrnl.exe") {
+    if is_core_os_binary
+        && (is_critical_path
+            || is_security_provider_process(pid, filename)
+            || filename == "system"
+            || filename == "ntoskrnl.exe")
+    {
         return true;
     }
 
@@ -390,7 +433,10 @@ pub fn extract_created_username(cmd: &str) -> Option<String> {
 
     let tokens: Vec<String> = raw_tokens
         .into_iter()
-        .map(|t| t.trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string())
+        .map(|t| {
+            t.trim_matches(|c| c == '"' || c == '\'' || c == '`')
+                .to_string()
+        })
         .collect();
 
     // Check net / net1 user ... /add
@@ -408,7 +454,10 @@ pub fn extract_created_username(cmd: &str) -> Option<String> {
         };
         let has_add = tokens.iter().any(|t| {
             let t_lc = t.to_ascii_lowercase();
-            t_lc == "/add" || t_lc == "-add" || t_lc.starts_with("/add:") || t_lc.starts_with("-add:")
+            t_lc == "/add"
+                || t_lc == "-add"
+                || t_lc.starts_with("/add:")
+                || t_lc.starts_with("-add:")
         });
         if is_net && has_add {
             for t in &tokens[user_idx + 1..] {
@@ -442,7 +491,10 @@ pub fn extract_created_username(cmd: &str) -> Option<String> {
                 }
             }
         }
-        if let Some(cmd_idx) = tokens.iter().position(|t| t.to_ascii_lowercase().contains("new-localuser")) {
+        if let Some(cmd_idx) = tokens
+            .iter()
+            .position(|t| t.to_ascii_lowercase().contains("new-localuser"))
+        {
             for t in &tokens[cmd_idx + 1..] {
                 if t.starts_with('-') || t.starts_with('/') {
                     continue;
@@ -526,10 +578,16 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let mut discovered = false;
-        if let Ok(output) = std::process::Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
-            .args(["-NoProfile", "-NonInteractive", "-Command", "Get-LocalUser | Select-Object -ExpandProperty Name"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
+        if let Ok(output) =
+            std::process::Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
+                .args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-LocalUser | Select-Object -ExpandProperty Name",
+                ])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
         {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -545,10 +603,11 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
 
         // Fallback to net.exe user if powershell failed or yielded nothing
         if !discovered {
-            if let Ok(output) = std::process::Command::new(osoosi_types::resolve_system_binary("net.exe"))
-                .args(["user"])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
+            if let Ok(output) =
+                std::process::Command::new(osoosi_types::resolve_system_binary("net.exe"))
+                    .args(["user"])
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .output()
             {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -581,11 +640,12 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
 
 pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT: &str = "NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT";
 pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS: &str = "contained_disabled_non_destructive";
-pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD: &str = "net user /active:no or Disable-LocalUser";
+pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD: &str =
+    "net user /active:no or Disable-LocalUser";
 
 /// Helper to get non-destructive account disabling arguments for net.exe.
 /// Strictly non-destructive: uses `/active:no` rather than `/delete`.
-pub fn get_account_containment_net_args<'a>(username: &'a str) -> [&'a str; 3] {
+pub fn get_account_containment_net_args(username: &str) -> [&str; 3] {
     ["user", username, "/active:no"]
 }
 
@@ -599,12 +659,18 @@ pub fn escape_powershell_arg(arg: &str) -> String {
 /// Safely escapes single quotes to prevent injection and syntax errors.
 pub fn get_account_containment_powershell_cmd(username: &str) -> String {
     let clean = escape_powershell_arg(username);
-    format!("Disable-LocalUser -Name '{}' -ErrorAction SilentlyContinue", clean)
+    format!(
+        "Disable-LocalUser -Name '{}' -ErrorAction SilentlyContinue",
+        clean
+    )
 }
 
 /// Helper to check whether account containment is allowed against a given baseline.
 /// Strictly refuses empty usernames, CLI flags (/ or -), command separators, control characters, protected accounts, and pre-existing baseline accounts.
-pub fn is_account_containment_allowed(username: &str, baseline: &std::collections::HashSet<String>) -> bool {
+pub fn is_account_containment_allowed(
+    username: &str,
+    baseline: &std::collections::HashSet<String>,
+) -> bool {
     let clean = username.trim().to_ascii_lowercase();
     if clean.is_empty()
         || clean.starts_with('/')
@@ -622,22 +688,34 @@ pub fn is_account_containment_allowed(username: &str, baseline: &std::collection
 }
 
 /// Helper to check whether account rollback is allowed against a given baseline (alias to is_account_containment_allowed).
-pub fn is_account_rollback_allowed(username: &str, baseline: &std::collections::HashSet<String>) -> bool {
+pub fn is_account_rollback_allowed(
+    username: &str,
+    baseline: &std::collections::HashSet<String>,
+) -> bool {
     is_account_containment_allowed(username, baseline)
 }
 
 /// Identify confirmed, high-severity critical attacks that warrant fast-path containment.
 /// Generic user execution (AML.T0011, T1204), routine scripts (T1059), and discovery (T1082, T1033)
 /// must NEVER trigger an Audit Override!
-fn is_critical_security_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
+fn is_critical_security_attack(
+    sig: &osoosi_types::ThreatSignature,
+    event: &osoosi_types::HostSecurityEvent,
+) -> bool {
     // High-severity destructive mutations (ransomware, shadow copies, boot config, system integrity, credential dumpers)
     if is_destructive_mutation(sig, event) {
         return true;
     }
 
     let autonomy = osoosi_types::load_autonomy_config();
-    let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
-    let tech_id = sig.mitre_technique.as_deref().unwrap_or("").trim().to_ascii_uppercase();
+    let is_lockdown_mode =
+        autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+    let tech_id = sig
+        .mitre_technique
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_uppercase();
 
     // In True Zero-Trust Lockdown Mode: EVERY MITRE ATT&CK ('T*') and ATLAS ('AML.T*') technique
     // above threshold is a critical security attack — zero techniques missed!
@@ -680,10 +758,8 @@ fn is_critical_security_attack(sig: &osoosi_types::ThreatSignature, event: &osoo
         if (tech_id.starts_with('T') || tech_id.starts_with("AML.T")) && sig.confidence >= 0.65 {
             return true;
         }
-    } else if sig.confidence >= 0.75 {
-        if tech_id.starts_with('T') || tech_id.starts_with("AML.T") {
-            return true;
-        }
+    } else if sig.confidence >= 0.75 && (tech_id.starts_with('T') || tech_id.starts_with("AML.T")) {
+        return true;
     }
 
     false
@@ -692,20 +768,30 @@ fn is_critical_security_attack(sig: &osoosi_types::ThreatSignature, event: &osoo
 /// Helper to determine if a detected threat signature matches any cataloged attack pattern.
 /// Delegates to is_critical_security_attack to prevent low-severity or routine execution false positives.
 #[inline]
-fn is_mitre_catalog_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
+fn is_mitre_catalog_attack(
+    sig: &osoosi_types::ThreatSignature,
+    event: &osoosi_types::HostSecurityEvent,
+) -> bool {
     is_critical_security_attack(sig, event)
 }
 
 /// Identify high-confidence destructive mutations that demand immediate containment/termination.
-fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
-    let cmd = event.data.get("CommandLine")
+fn is_destructive_mutation(
+    sig: &osoosi_types::ThreatSignature,
+    event: &osoosi_types::HostSecurityEvent,
+) -> bool {
+    let cmd = event
+        .data
+        .get("CommandLine")
         .or_else(|| event.data.get("command_line"))
         .or_else(|| event.data.get("cmdline"))
         .or_else(|| event.data.get("Command"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
-    let img = event.data.get("Image")
+    let img = event
+        .data
+        .get("Image")
         .or_else(|| event.data.get("NewProcessName"))
         .or_else(|| event.data.get("ProcessName"))
         .or_else(|| event.data.get("image"))
@@ -719,7 +805,8 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
     let tech_upper = tech.to_ascii_uppercase();
 
     // System Integrity Tampering & Direct Volume Access (T1006 / T1601)
-    if tech_upper.starts_with("T1006") || tech_upper.starts_with("T1601")
+    if tech_upper.starts_with("T1006")
+        || tech_upper.starts_with("T1601")
         || reason.contains("system integrity")
         || reason.contains("direct volume")
         || reason.contains("disk tampering")
@@ -728,7 +815,7 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
     }
 
     // Unauthorized account creation (T1136)
-    if tech_upper.starts_with("T1136") 
+    if tech_upper.starts_with("T1136")
         || ((cmd.contains("net user") || cmd.contains("net1 user")) && cmd.contains("/add"))
         || cmd.contains("new-localuser")
     {
@@ -736,7 +823,8 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
     }
 
     // Shadow copy / backup deletion / recovery inhibition (T1490 / T1489)
-    if tech_upper.starts_with("T1490") || tech_upper.starts_with("T1489")
+    if tech_upper.starts_with("T1490")
+        || tech_upper.starts_with("T1489")
         || cmd.contains("vssadmin delete shadows")
         || cmd.contains("wbadmin delete catalog")
         || (cmd.contains("bcdedit") && cmd.contains("recoveryenabled no"))
@@ -745,7 +833,8 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
     }
 
     // Ransomware encryption & data destruction (T1486 / T1485)
-    if tech_upper.starts_with("T1486") || tech_upper.starts_with("T1485")
+    if tech_upper.starts_with("T1486")
+        || tech_upper.starts_with("T1485")
         || reason.contains("ransomware")
         || reason.contains("encryption")
         || reason.contains("wiper")
@@ -754,7 +843,9 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
     }
 
     // Credential dumping, Vault, Secret store & LSASS dumping (T1003 / T1555 / T1552)
-    if tech_upper.starts_with("T1003") || tech_upper.starts_with("T1555") || tech_upper.starts_with("T1552")
+    if tech_upper.starts_with("T1003")
+        || tech_upper.starts_with("T1555")
+        || tech_upper.starts_with("T1552")
         || cmd.contains("procdump")
         || cmd.contains("comsvcs.dll")
         || cmd.contains("minidump")
@@ -762,9 +853,12 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
         || cmd.contains("mimikatz")
         || cmd.contains("keymgr.dll")
         || cmd.contains("krshowkeymgr")
-        || img.ends_with("credwiz.exe") || cmd.contains("credwiz")
-        || img.ends_with("vaultcmd.exe") || cmd.contains("vaultcmd")
-        || img.ends_with("cmdkey.exe") || cmd.contains("cmdkey")
+        || img.ends_with("credwiz.exe")
+        || cmd.contains("credwiz")
+        || img.ends_with("vaultcmd.exe")
+        || cmd.contains("vaultcmd")
+        || img.ends_with("cmdkey.exe")
+        || cmd.contains("cmdkey")
         || cmd.contains("gsecdump")
         || cmd.contains("nppspy")
         || cmd.contains("ntdsutil")
@@ -775,19 +869,25 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
         || cmd.contains("tttracer")
         || cmd.contains("sqldumper")
         || cmd.contains("createdump")
-        || ((cmd.contains("reg save") || cmd.contains("reg export") || cmd.contains("reg.exe save"))
+        || ((cmd.contains("reg save")
+            || cmd.contains("reg export")
+            || cmd.contains("reg.exe save"))
             && (cmd.contains("sam") || cmd.contains("security") || cmd.contains("system")))
     {
         return true;
     }
 
     // Process Hollowing / Remote Injection (T1055)
-    if tech_upper.starts_with("T1055") || reason.contains("hollowing") || reason.contains("injection") {
+    if tech_upper.starts_with("T1055")
+        || reason.contains("hollowing")
+        || reason.contains("injection")
+    {
         return true;
     }
 
     // Defense Impairment & Trust Subversion (T1562 / T1553)
-    if tech_upper.starts_with("T1562") || tech_upper.starts_with("T1553")
+    if tech_upper.starts_with("T1562")
+        || tech_upper.starts_with("T1553")
         || (cmd.contains("sc stop") && cmd.contains("windefend"))
         || cmd.contains("disable-antivirus")
         || cmd.contains("set-mppreference -disablerealtimemonitoring")
@@ -886,8 +986,8 @@ pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool
             | "firefox"
             | "brave"
     ) || base_name.starts_with("git-")
-      || base_name.starts_with("cargo-")
-      || base_name.starts_with("rust-");
+        || base_name.starts_with("cargo-")
+        || base_name.starts_with("rust-");
 
     if is_dev_name {
         return true;
@@ -1051,14 +1151,15 @@ fn register_internal_assets(memory: &MemoryStore) {
     }
 }
 
-
 /// Behavioral YARA-X rules: Matches on event JSON bytes to replace Sigma/Hayabusa logic.
-fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryController>) -> Option<crate::voters::BehavioralYaraVoter> {
+fn try_build_behavioral_yara_voter(
+    adaptive: Arc<crate::adaptive::TelemetryController>,
+) -> Option<crate::voters::BehavioralYaraVoter> {
     use crate::voters::BehavioralYaraVoter;
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
         || -> anyhow::Result<BehavioralYaraVoter> {
             let mut compiler = yara_x::Compiler::new();
-            
+
             // Replicate core Sigma-style behavioral rules in YARA-X (matches on HostSecurityEvent JSON)
             compiler
                 .add_source(
@@ -1098,7 +1199,7 @@ fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryContr
         "#,
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
-            
+
             // Optionally load external rules if they exist
             let behavioral_yar = osoosi_types::resolve_rules_dir().join("behavioral.yar");
             if behavioral_yar.exists() {
@@ -1117,7 +1218,10 @@ fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryContr
     match r {
         Ok(Ok(v)) => Some(v),
         Ok(Err(e)) => {
-            warn!("YARA-X: Behavioral rule compile error: {}; skipping BehavioralYaraVoter", e);
+            warn!(
+                "YARA-X: Behavioral rule compile error: {}; skipping BehavioralYaraVoter",
+                e
+            );
             None
         }
         Err(_) => {
@@ -1248,7 +1352,8 @@ pub struct EdrOrchestrator {
     /// Total Gossip messages received from peers
     mesh_gossip_count_atomic: Arc<AtomicU32>,
     /// Live Gossip Mesh Feed buffer (recent inbound and outbound peer intelligence)
-    mesh_gossip_feed: Arc<std::sync::RwLock<std::collections::VecDeque<osoosi_types::GossipFeedItem>>>,
+    mesh_gossip_feed:
+        Arc<std::sync::RwLock<std::collections::VecDeque<osoosi_types::GossipFeedItem>>>,
     /// Debouncer for mesh threat broadcasts (key -> last_broadcast_time)
     mesh_broadcast_debouncer: Arc<dashmap::DashMap<String, Instant>>,
     /// Synthetic Canary Correlator: Tracking probe health and anti-blinding
@@ -1260,7 +1365,8 @@ pub struct EdrOrchestrator {
     /// Cognitive Fusion Supervisor Agent (Dempster-Shafer multi-sensor watchdog)
     pub supervisor: Arc<supervisor::CognitiveFusionSupervisor>,
     /// Hardware-enforced Ring-0 Windows Driver client for pre-operation process blocking.
-    pub kernel_driver: Arc<parking_lot::RwLock<Option<osoosi_runtime::kernel_driver::KernelDriverClient>>>,
+    pub kernel_driver:
+        Arc<parking_lot::RwLock<Option<osoosi_runtime::kernel_driver::KernelDriverClient>>>,
     /// Embedded Velociraptor Forensic Extraction Service client.
     pub forensics: Arc<osoosi_forensics::VelociraptorClient>,
     /// Non-autoregressive Clef Decision Model engine.
@@ -1275,7 +1381,9 @@ pub struct EdrOrchestrator {
 
 impl EdrOrchestrator {
     /// Access the synthetic canary correlator.
-    pub fn canary_correlator(&self) -> Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>> {
+    pub fn canary_correlator(
+        &self,
+    ) -> Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>> {
         self.canary_correlator.clone()
     }
 
@@ -1327,7 +1435,7 @@ impl EdrOrchestrator {
         use sysinfo::System;
         let mut sys = System::new();
         sys.refresh_processes();
-        
+
         let name_lower = name.to_lowercase();
         for (pid, process) in sys.processes() {
             if process.name().to_lowercase() == name_lower {
@@ -1340,40 +1448,58 @@ impl EdrOrchestrator {
     /// Confirm a threat and fully entangle it in the Morphic Hyper-Web.
     pub async fn handle_confirm_and_entangle(&self, threat_id: &str) -> anyhow::Result<()> {
         let source = self.trust.did().to_string();
-        
+
         // 1. Mark as True Positive in memory
-        if let Some((process_name_opt, hash_opt, file_path_opt)) = self.memory.mark_threat_true_positive(threat_id, &source)? {
+        if let Some((process_name_opt, hash_opt, file_path_opt)) =
+            self.memory.mark_threat_true_positive(threat_id, &source)?
+        {
             let process_name = process_name_opt.unwrap_or_else(|| "unknown".to_string());
             let hash = hash_opt.unwrap_or_else(|| "unknown".to_string());
-            
-            info!("🕸️  Confirming threat {} and initiating Morphic Entanglement...", threat_id);
-            
+
+            info!(
+                "🕸️  Confirming threat {} and initiating Morphic Entanglement...",
+                threat_id
+            );
+
             // 2. Try to find the live process to entangle
             if let Some(pid) = self.find_pid_by_name(&process_name).await {
                 // Perform Binary Analysis (Spider Eyes)
                 match self.spider_eyes.watch_process(pid).await {
                     Ok(analysis) => {
-                        info!("🕸️  [SPIDER-EYES] Analysis for {}: \n{}", process_name, analysis);
-                        
+                        info!(
+                            "🕸️  [SPIDER-EYES] Analysis for {}: \n{}",
+                            process_name, analysis
+                        );
+
                         // BROADCAST to mesh: Share the disassembly and intent report
-                        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                        let mut sig =
+                            osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
                         sig.process_name = Some(process_name.clone());
                         sig.hash_blake3 = Some(hash.clone());
                         sig.confidence = 1.0;
                         sig.add_reason(analysis);
-                        
+
                         self.broadcast_threat_to_mesh(sig).await;
-                        info!("🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.", process_name);
+                        info!(
+                            "🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.",
+                            process_name
+                        );
                     }
                     Err(e) => {
-                        warn!("🕸️  [SPIDER-EYES] Binary analysis failed for {}: {}", process_name, e);
+                        warn!(
+                            "🕸️  [SPIDER-EYES] Binary analysis failed for {}: {}",
+                            process_name, e
+                        );
                     }
                 }
 
                 self.entangle_process(pid, &process_name).await;
             } else {
-                warn!("🕸️  Could not find live process for {}; entanglement pending next spawn.", process_name);
+                warn!(
+                    "🕸️  Could not find live process for {}; entanglement pending next spawn.",
+                    process_name
+                );
             }
 
             // 3. Engage network tarpit (Tarpitting)
@@ -1385,13 +1511,16 @@ impl EdrOrchestrator {
             let _ = crate::firewall::tarpit_process_network(None, Some(&target));
 
             // 4. Record the action in the audit trail
-            self.audit.log("MORPHIC_ENTANGLEMENT", serde_json::json!({
-                "threat_id": threat_id,
-                "process": process_name,
-                "hash": hash,
-                "action": "entangled"
-            }));
-            
+            self.audit.log(
+                "MORPHIC_ENTANGLEMENT",
+                serde_json::json!({
+                    "threat_id": threat_id,
+                    "process": process_name,
+                    "hash": hash,
+                    "action": "entangled"
+                }),
+            );
+
             Ok(())
         } else {
             Err(anyhow::anyhow!("Threat not found or already processed"))
@@ -1432,7 +1561,11 @@ impl EdrOrchestrator {
     /// (logging and alerting only, without executing autonomous process termination or quarantine).
     pub fn is_monitor_only(&self) -> bool {
         let autonomy = osoosi_types::load_autonomy_config();
-        !autonomy.auto_quarantine_malware || matches!(autonomy.current_mode(), osoosi_types::config::AutonomyMode::Audit)
+        !autonomy.auto_quarantine_malware
+            || matches!(
+                autonomy.current_mode(),
+                osoosi_types::config::AutonomyMode::Audit
+            )
     }
 
     /// Executes a comprehensive 12-sweep active EDR security and host audit using the in-process Siquery relational engine.
@@ -1448,10 +1581,23 @@ impl EdrOrchestrator {
 
         // --- Sweep 1: Processes & Open Sockets & AI Agent Breakout Check ---
         let proc_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM processes;");
-        let total_processes = proc_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_processes = proc_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
-        let sock_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM process_open_sockets;");
-        let total_sockets = sock_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let sock_count_res =
+            engine.execute_query("SELECT COUNT(*) AS total FROM process_open_sockets;");
+        let total_sockets = sock_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
         if let Ok(suspicious_procs) = engine.execute_query(
             "SELECT p.pid, p.name, p.path, p.cmdline, s.remote_address, s.remote_port \
@@ -1460,13 +1606,19 @@ impl EdrOrchestrator {
                 OR p.cmdline LIKE '%\\config\\SAM%' \
                 OR p.cmdline LIKE '%comsvcs.dll%' \
                 OR p.cmdline LIKE '%MiniDump%' \
-             LIMIT 10;"
+             LIMIT 10;",
         ) {
             for row in suspicious_procs {
                 let pid = row.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
-                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let name = row
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let cmd = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
-                let reason = format!("Siquery EDR Sweep: Suspicious breakout pattern in process PID {} ({}): {}", pid, name, cmd);
+                let reason = format!(
+                    "Siquery EDR Sweep: Suspicious breakout pattern in process PID {} ({}): {}",
+                    pid, name, cmd
+                );
                 warn!("{}", reason);
 
                 let mut is_benign = false;
@@ -1475,7 +1627,11 @@ impl EdrOrchestrator {
                     let (safe_cmd, inj_c) = osoosi_types::sanitize_untrusted_log_field(cmd, 512);
                     let inj = inj_n || inj_c;
                     let incident = format!("Process: {} | PID: {} | Cmd: {} | Trigger: Siquery breakout query | PromptInjectionDetected: {}", safe_name, pid, safe_cmd, inj);
-                    if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
+                    if let Ok(dec) = self
+                        .decision_engine
+                        .evaluate_security_incident(&incident)
+                        .await
+                    {
                         if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                             is_benign = true;
                         }
@@ -1483,13 +1639,18 @@ impl EdrOrchestrator {
                 }
 
                 if !is_benign {
-                    let _ = self.memory.log_threat_event("SIQUERY_PROCESS_BREAKOUT_ANOMALY", pid, 0);
-                    self.audit.log("SIQUERY_PROCESS_BREAKOUT", serde_json::json!({
-                        "pid": pid,
-                        "name": name,
-                        "cmdline": cmd,
-                        "reason": reason
-                    }));
+                    let _ =
+                        self.memory
+                            .log_threat_event("SIQUERY_PROCESS_BREAKOUT_ANOMALY", pid, 0);
+                    self.audit.log(
+                        "SIQUERY_PROCESS_BREAKOUT",
+                        serde_json::json!({
+                            "pid": pid,
+                            "name": name,
+                            "cmdline": cmd,
+                            "reason": reason
+                        }),
+                    );
 
                     let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                     sig.process_name = Some(name.to_string());
@@ -1498,7 +1659,8 @@ impl EdrOrchestrator {
                     sig.reason = Some(reason.clone());
                     sig.mitre_tactic = Some("TA0002".to_string());
                     sig.mitre_technique = Some("T1003.001".to_string());
-                    sig.mitre_technique_name = Some("OS Credential Dumping: LSASS Memory".to_string());
+                    sig.mitre_technique_name =
+                        Some("OS Credential Dumping: LSASS Memory".to_string());
 
                     let _ = self.memory.log_threat(&sig);
                     self.record_gossip_threat(&sig, "SIQUERY_PROCESS_BREAKOUT");
@@ -1513,7 +1675,10 @@ impl EdrOrchestrator {
                     }
 
                     if !monitor_only && pid > 4 {
-                        info!("Siquery Active Protection: Terminating & entangling rogue PID {}", pid);
+                        info!(
+                            "Siquery Active Protection: Terminating & entangling rogue PID {}",
+                            pid
+                        );
                         let _ = self.blocking_manager.block_by_pid(pid).await;
                         self.entangle_process(pid, name).await;
                     }
@@ -1532,7 +1697,13 @@ impl EdrOrchestrator {
 
         // --- Sweep 2: Service Persistence & Unsigned Path Audit ---
         let serv_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM wmi_services;");
-        let total_services = serv_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_services = serv_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
         if let Ok(rogue_services) = engine.execute_query(
             "SELECT name, display_name, path_name, start_mode, state, process_id \
@@ -1542,13 +1713,18 @@ impl EdrOrchestrator {
                  OR path_name LIKE '%\\Users\\Public\\%' \
                  OR path_name LIKE '%powershell%-enc%' \
                  OR path_name LIKE '%cmd.exe /c%' \
-             ) LIMIT 10;"
+             ) LIMIT 10;",
         ) {
             for svc in rogue_services {
                 let name = svc.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let path_name = svc.get("path_name").and_then(|v| v.as_str()).unwrap_or("");
-                let clean_path = path_name.trim_matches('"').split_whitespace().next().unwrap_or(path_name);
-                let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
+                let clean_path = path_name
+                    .trim_matches('"')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(path_name);
+                let is_signed =
+                    crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
 
                 if !is_signed {
                     let reason = format!("Siquery EDR Sweep: Untrusted service binary running from suspicious location: {} ({})", name, path_name);
@@ -1556,33 +1732,50 @@ impl EdrOrchestrator {
 
                     let mut is_benign = false;
                     if self.decision_engine.is_enabled() {
-                        let (safe_name, inj_n) = osoosi_types::sanitize_untrusted_log_field(name, 128);
-                        let (safe_path, inj_p) = osoosi_types::sanitize_untrusted_log_field(path_name, 256);
+                        let (safe_name, inj_n) =
+                            osoosi_types::sanitize_untrusted_log_field(name, 128);
+                        let (safe_path, inj_p) =
+                            osoosi_types::sanitize_untrusted_log_field(path_name, 256);
                         let inj = inj_n || inj_p;
                         let incident = format!("Process: {} | Path: {} | State: Running | Signed: false | PromptInjectionDetected: {}", safe_name, safe_path, inj);
-                        if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        if let Ok(dec) = self
+                            .decision_engine
+                            .evaluate_security_incident(&incident)
+                            .await
+                        {
+                            if !inj
+                                && (dec.verdict == "benign" || dec.containment_action == "allow")
+                            {
                                 is_benign = true;
                             }
                         }
                     }
 
                     if !is_benign {
-                        let _ = self.memory.log_threat_event("SIQUERY_SERVICE_PERSISTENCE_ANOMALY", 0, 0);
-                        self.audit.log("SIQUERY_SERVICE_PERSISTENCE", serde_json::json!({
-                            "service": name,
-                            "path": path_name,
-                            "trusted_signature": false
-                        }));
+                        let _ = self.memory.log_threat_event(
+                            "SIQUERY_SERVICE_PERSISTENCE_ANOMALY",
+                            0,
+                            0,
+                        );
+                        self.audit.log(
+                            "SIQUERY_SERVICE_PERSISTENCE",
+                            serde_json::json!({
+                                "service": name,
+                                "path": path_name,
+                                "trusted_signature": false
+                            }),
+                        );
 
-                        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                        let mut sig =
+                            osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(name.to_string());
                         sig.confidence = 0.90;
                         sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0003".to_string());
                         sig.mitre_technique = Some("T1543.003".to_string());
-                        sig.mitre_technique_name = Some("Create or Modify System Process: Windows Service".to_string());
+                        sig.mitre_technique_name =
+                            Some("Create or Modify System Process: Windows Service".to_string());
 
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_SERVICE_PERSISTENCE");
@@ -1593,7 +1786,8 @@ impl EdrOrchestrator {
                                 kind: osoosi_types::BlockingKind::Executable,
                             };
                             let _ = self.blocking_manager.add_rule(rule).await;
-                            let svc_pid = svc.get("process_id").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                            let svc_pid =
+                                svc.get("process_id").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
                             if svc_pid > 4 {
                                 let _ = self.blocking_manager.block_by_pid(svc_pid).await;
                             }
@@ -1651,10 +1845,16 @@ impl EdrOrchestrator {
             }
         }
 
-        if let Ok(proxies) = engine.execute_query("SELECT url, protocol, enabled FROM proxies WHERE enabled = '1';") {
+        if let Ok(proxies) =
+            engine.execute_query("SELECT url, protocol, enabled FROM proxies WHERE enabled = '1';")
+        {
             for px in proxies {
                 let url = px.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                if !url.is_empty() && (url.contains("127.0.0.1:8080") || url.contains(":8888") || url.contains(":9999")) {
+                if !url.is_empty()
+                    && (url.contains("127.0.0.1:8080")
+                        || url.contains(":8888")
+                        || url.contains(":9999"))
+                {
                     let reason = format!("Siquery EDR Sweep: Suspicious active local intercepting proxy detected: {}", url);
                     warn!("{}", reason);
                     anomalies.push(serde_json::json!({
@@ -1673,7 +1873,7 @@ impl EdrOrchestrator {
             "SELECT name, path, description, type FROM wmi_shares \
              WHERE name NOT IN ('ADMIN$', 'C$', 'D$', 'E$', 'IPC$', 'print$') \
                AND (path LIKE '%\\Users\\%' OR path LIKE '%\\Windows\\System32%') \
-             LIMIT 5;"
+             LIMIT 5;",
         ) {
             for row in rogue_shares {
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -1712,28 +1912,71 @@ impl EdrOrchestrator {
 
         // --- Sweep 5: Host Inventory & Hotfixes Telemetry ---
         let hotfix_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM wmi_hotfixes;");
-        let total_hotfixes = hotfix_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_hotfixes = hotfix_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
-        let drives_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM logical_drives;");
-        let total_drives = drives_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let drives_count_res =
+            engine.execute_query("SELECT COUNT(*) AS total FROM logical_drives;");
+        let total_drives = drives_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
-        let os_ver_row = engine.execute_query("SELECT name, version, build, arch FROM os_version LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
+        let os_ver_row = engine
+            .execute_query("SELECT name, version, build, arch FROM os_version LIMIT 1;")
+            .ok()
+            .and_then(|mut r| {
+                if !r.is_empty() {
+                    Some(r.remove(0))
+                } else {
+                    None
+                }
+            });
         let sys_info_row = engine.execute_query("SELECT computer_name, cpu_brand, cpu_logical_cores, physical_memory FROM system_info LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
-        let uptime_row = engine.execute_query("SELECT days, hours, minutes, total_seconds FROM uptime LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
-        let tpm_row = engine.execute_query("SELECT tpm_present, tpm_ready, manufacturer_version FROM tpm_info LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
+        let uptime_row = engine
+            .execute_query("SELECT days, hours, minutes, total_seconds FROM uptime LIMIT 1;")
+            .ok()
+            .and_then(|mut r| {
+                if !r.is_empty() {
+                    Some(r.remove(0))
+                } else {
+                    None
+                }
+            });
+        let tpm_row = engine
+            .execute_query(
+                "SELECT tpm_present, tpm_ready, manufacturer_version FROM tpm_info LIMIT 1;",
+            )
+            .ok()
+            .and_then(|mut r| {
+                if !r.is_empty() {
+                    Some(r.remove(0))
+                } else {
+                    None
+                }
+            });
 
         // --- Sweep 6: Process Memory Map Module Check ---
         if let Ok(unbacked_mods) = engine.execute_query(
             "SELECT m.pid, p.name, m.path, m.permissions \
              FROM process_memory_map m JOIN processes p ON m.pid = p.pid \
              WHERE m.path LIKE '%\\Temp\\%' OR m.path LIKE '%\\Users\\Public\\%' \
-             LIMIT 10;"
+             LIMIT 10;",
         ) {
             for row in unbacked_mods {
                 let pid = row.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
                 let proc_name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let mod_path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(mod_path));
+                let is_signed =
+                    crate::win_trust::is_trusted_signed_binary(std::path::Path::new(mod_path));
 
                 if !is_signed {
                     let reason = format!("Siquery EDR Sweep: Process PID {} ({}) loaded unsigned module from temp directory: {}", pid, proc_name, mod_path);
@@ -1741,26 +1984,36 @@ impl EdrOrchestrator {
 
                     let mut is_benign = false;
                     if self.decision_engine.is_enabled() {
-                        let (safe_proc, inj_p) = osoosi_types::sanitize_untrusted_log_field(proc_name, 128);
-                        let (safe_mod, inj_m) = osoosi_types::sanitize_untrusted_log_field(mod_path, 256);
+                        let (safe_proc, inj_p) =
+                            osoosi_types::sanitize_untrusted_log_field(proc_name, 128);
+                        let (safe_mod, inj_m) =
+                            osoosi_types::sanitize_untrusted_log_field(mod_path, 256);
                         let inj = inj_p || inj_m;
                         let incident = format!("Process: {} | PID: {} | UnsignedModule: {} | PromptInjectionDetected: {}", safe_proc, pid, safe_mod, inj);
-                        if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        if let Ok(dec) = self
+                            .decision_engine
+                            .evaluate_security_incident(&incident)
+                            .await
+                        {
+                            if !inj
+                                && (dec.verdict == "benign" || dec.containment_action == "allow")
+                            {
                                 is_benign = true;
                             }
                         }
                     }
 
                     if !is_benign {
-                        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                        let mut sig =
+                            osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(proc_name.to_string());
                         sig.confidence = 0.90;
                         sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0005".to_string());
                         sig.mitre_technique = Some("T1055.001".to_string());
-                        sig.mitre_technique_name = Some("Process Injection: Dynamic-link Library Injection".to_string());
+                        sig.mitre_technique_name =
+                            Some("Process Injection: Dynamic-link Library Injection".to_string());
 
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_MEMORY_MODULE_INJECTION");
@@ -1786,14 +2039,20 @@ impl EdrOrchestrator {
 
         // --- Sweep 7: DNS Cache & Resolver Poisoning / Fast-Flux Beaconing Audit ---
         let dns_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM dns_cache;");
-        let total_dns_cache = dns_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_dns_cache = dns_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
         if let Ok(dns_entries) = engine.execute_query(
             "SELECT name, type, data, status FROM dns_cache \
              WHERE name LIKE '%.top' OR name LIKE '%.xyz' OR name LIKE '%.onion' \
                 OR name LIKE '%.ngrok%' OR name LIKE '%.tunnel%' \
                 OR data LIKE '%169.254.169.254%' \
-             LIMIT 15;"
+             LIMIT 15;",
         ) {
             for entry in dns_entries {
                 let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -1807,7 +2066,11 @@ impl EdrOrchestrator {
                     let (safe_data, inj_d) = osoosi_types::sanitize_untrusted_log_field(data, 256);
                     let inj = inj_n || inj_d;
                     let incident = format!("Process: dns_cache | DNS Query: {} | Resolved Data: {} | Trigger: Fast-Flux / Cloud Metadata C2 | PromptInjectionDetected: {}", safe_name, safe_data, inj);
-                    if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
+                    if let Ok(dec) = self
+                        .decision_engine
+                        .evaluate_security_incident(&incident)
+                        .await
+                    {
                         if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                             is_benign = true;
                         }
@@ -1815,7 +2078,9 @@ impl EdrOrchestrator {
                 }
 
                 if !is_benign {
-                    let _ = self.memory.log_threat_event("SIQUERY_DNS_BEACON_ANOMALY", 0, 0);
+                    let _ = self
+                        .memory
+                        .log_threat_event("SIQUERY_DNS_BEACON_ANOMALY", 0, 0);
                     let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                     sig.process_name = Some("dns_cache".to_string());
                     sig.confidence = 0.88;
@@ -1846,14 +2111,37 @@ impl EdrOrchestrator {
 
         // --- Sweep 8: ARP Cache & Layer-2 MITM Poisoning Inspection ---
         let arp_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM arp_cache;");
-        let total_arp_cache = arp_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_arp_cache = arp_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
-        if let Ok(arp_entries) = engine.execute_query("SELECT ip, mac, interface, type FROM arp_cache;") {
-            let mut mac_to_ips: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+        if let Ok(arp_entries) =
+            engine.execute_query("SELECT ip, mac, interface, type FROM arp_cache;")
+        {
+            let mut mac_to_ips: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
             for row in arp_entries {
-                let ip = row.get("ip").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let mac = row.get("mac").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-                if !mac.is_empty() && mac != "ff:ff:ff:ff:ff:ff" && mac != "00:00:00:00:00:00" && !ip.starts_with("224.") && !ip.starts_with("239.") && !ip.ends_with(".255") {
+                let ip = row
+                    .get("ip")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mac = row
+                    .get("mac")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                if !mac.is_empty()
+                    && mac != "ff:ff:ff:ff:ff:ff"
+                    && mac != "00:00:00:00:00:00"
+                    && !ip.starts_with("224.")
+                    && !ip.starts_with("239.")
+                    && !ip.ends_with(".255")
+                {
                     mac_to_ips.entry(mac).or_default().push(ip);
                 }
             }
@@ -1870,7 +2158,8 @@ impl EdrOrchestrator {
                     sig.reason = Some(reason.clone());
                     sig.mitre_tactic = Some("TA0006".to_string());
                     sig.mitre_technique = Some("T1557.002".to_string());
-                    sig.mitre_technique_name = Some("Adversary-in-the-Middle: ARP Poisoning".to_string());
+                    sig.mitre_technique_name =
+                        Some("Adversary-in-the-Middle: ARP Poisoning".to_string());
 
                     let _ = self.memory.log_threat(&sig);
                     self.record_gossip_threat(&sig, "SIQUERY_ARP_SPOOF_MITM");
@@ -1889,26 +2178,47 @@ impl EdrOrchestrator {
 
         // --- Sweep 9: Persistence Mechanisms: Autoruns & Scheduled Tasks Audit ---
         let autoruns_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM autoruns;");
-        let total_autoruns = autoruns_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_autoruns = autoruns_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
-        let tasks_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM scheduled_tasks;");
-        let total_scheduled_tasks = tasks_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let tasks_count_res =
+            engine.execute_query("SELECT COUNT(*) AS total FROM scheduled_tasks;");
+        let total_scheduled_tasks = tasks_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
         if let Ok(suspicious_autoruns) = engine.execute_query(
             "SELECT name, path, location, user FROM autoruns \
              WHERE path LIKE '%\\Temp\\%' OR path LIKE '%\\Users\\Public\\%' \
                 OR path LIKE '%powershell%-enc%' OR path LIKE '%wscript%' OR path LIKE '%mshta%' \
-             LIMIT 10;"
+             LIMIT 10;",
         ) {
             for row in suspicious_autoruns {
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 let location = row.get("location").and_then(|v| v.as_str()).unwrap_or("");
-                let reason = format!("Siquery EDR Sweep: Suspicious persistence autorun entry found in {}: {} -> {}", location, name, path);
+                let reason = format!(
+                    "Siquery EDR Sweep: Suspicious persistence autorun entry found in {}: {} -> {}",
+                    location, name, path
+                );
                 warn!("{}", reason);
 
-                let clean_path = path.trim_matches('"').split_whitespace().next().unwrap_or(path);
-                let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
+                let clean_path = path
+                    .trim_matches('"')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(path);
+                let is_signed =
+                    crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
 
                 if !is_signed {
                     let (san_name, inj1) = osoosi_types::sanitize_untrusted_log_field(name, 128);
@@ -1921,32 +2231,46 @@ impl EdrOrchestrator {
                             "Autorun: {} | Path: {} | Location: {} | Signed: false | InjectionDetected: {}",
                             san_name, san_path, san_loc, inj_flag
                         );
-                        if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if !inj_flag && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        if let Ok(dec) = self
+                            .decision_engine
+                            .evaluate_security_incident(&incident)
+                            .await
+                        {
+                            if !inj_flag
+                                && (dec.verdict == "benign" || dec.containment_action == "allow")
+                            {
                                 is_benign = true;
                             }
                         }
                     }
 
                     if !is_benign {
-                        let _ = self.memory.log_threat_event("SIQUERY_AUTORUN_PERSISTENCE", 0, 0);
-                        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                        let _ = self
+                            .memory
+                            .log_threat_event("SIQUERY_AUTORUN_PERSISTENCE", 0, 0);
+                        let mut sig =
+                            osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(name.to_string());
                         sig.confidence = 0.92;
                         sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0003".to_string());
                         sig.mitre_technique = Some("T1547.001".to_string());
-                        sig.mitre_technique_name = Some("Boot or Logon Autostart Execution: Registry Run Keys".to_string());
+                        sig.mitre_technique_name = Some(
+                            "Boot or Logon Autostart Execution: Registry Run Keys".to_string(),
+                        );
 
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_AUTORUN_PERSISTENCE");
 
                         if !monitor_only && !clean_path.is_empty() {
-                            let _ = self.blocking_manager.add_rule(osoosi_types::BlockingRule {
-                                path: clean_path.to_string(),
-                                kind: osoosi_types::BlockingKind::Executable,
-                            }).await;
+                            let _ = self
+                                .blocking_manager
+                                .add_rule(osoosi_types::BlockingRule {
+                                    path: clean_path.to_string(),
+                                    kind: osoosi_types::BlockingKind::Executable,
+                                })
+                                .await;
                         }
 
                         anomalies.push(serde_json::json!({
@@ -1967,12 +2291,15 @@ impl EdrOrchestrator {
             "SELECT name, action, state, run_as_user FROM scheduled_tasks \
              WHERE action LIKE '%\\Temp\\%' OR action LIKE '%\\Users\\Public\\%' \
                 OR action LIKE '%powershell%' OR action LIKE '%cmd.exe /c%' \
-             LIMIT 10;"
+             LIMIT 10;",
         ) {
             for row in suspicious_tasks {
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let action = row.get("action").and_then(|v| v.as_str()).unwrap_or("");
-                let user = row.get("run_as_user").and_then(|v| v.as_str()).unwrap_or("");
+                let user = row
+                    .get("run_as_user")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let reason = format!("Siquery EDR Sweep: Suspicious scheduled task detected: {} (RunAs: {}, Action: {})", name, user, action);
                 warn!("{}", reason);
 
@@ -1990,7 +2317,13 @@ impl EdrOrchestrator {
 
         // --- Sweep 10: Kernel Drivers & BYOVD (Bring Your Own Vulnerable Driver) Audit ---
         let drivers_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM drivers;");
-        let total_drivers = drivers_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_drivers = drivers_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
         if let Ok(suspicious_drivers) = engine.execute_query(
             "SELECT name, display_name, path, status, signed FROM drivers \
@@ -2003,15 +2336,24 @@ impl EdrOrchestrator {
                  OR name LIKE '%dbutil%' \
                  OR name LIKE '%kprocesshacker%' \
                  OR signed = 'false' \
-             ) LIMIT 10;"
+             ) LIMIT 10;",
         ) {
             for drv in suspicious_drivers {
                 let name = drv.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let path = drv.get("path").and_then(|v| v.as_str()).unwrap_or("");
-                let clean_path = path.trim_matches('"').split_whitespace().next().unwrap_or(path);
-                let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
+                let clean_path = path
+                    .trim_matches('"')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(path);
+                let is_signed =
+                    crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
 
-                if !is_signed || name.contains("mhyprot") || name.contains("gdrv") || name.contains("dbutil") {
+                if !is_signed
+                    || name.contains("mhyprot")
+                    || name.contains("gdrv")
+                    || name.contains("dbutil")
+                {
                     let reason = format!("Siquery EDR Sweep: Potentially malicious or BYOVD vulnerable kernel driver detected: {} ({})", name, path);
                     warn!("{}", reason);
 
@@ -2024,23 +2366,33 @@ impl EdrOrchestrator {
                             "Driver: {} | Path: {} | BYOVD Risk | Signed: {} | InjectionDetected: {}",
                             san_name, san_path, is_signed, inj_flag
                         );
-                        if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if !inj_flag && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        if let Ok(dec) = self
+                            .decision_engine
+                            .evaluate_security_incident(&incident)
+                            .await
+                        {
+                            if !inj_flag
+                                && (dec.verdict == "benign" || dec.containment_action == "allow")
+                            {
                                 is_benign = true;
                             }
                         }
                     }
 
                     if !is_benign {
-                        let _ = self.memory.log_threat_event("SIQUERY_BYOVD_KERNEL_DRIVER", 0, 0);
-                        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                        let _ = self
+                            .memory
+                            .log_threat_event("SIQUERY_BYOVD_KERNEL_DRIVER", 0, 0);
+                        let mut sig =
+                            osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(name.to_string());
                         sig.confidence = 0.96;
                         sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0004".to_string());
                         sig.mitre_technique = Some("T1068".to_string());
-                        sig.mitre_technique_name = Some("Exploitation for Privilege Escalation: BYOVD".to_string());
+                        sig.mitre_technique_name =
+                            Some("Exploitation for Privilege Escalation: BYOVD".to_string());
 
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_BYOVD_KERNEL_DRIVER");
@@ -2067,13 +2419,19 @@ impl EdrOrchestrator {
 
         // --- Sweep 11: Host Defense Posture & Security Tampering Audit ---
         let fw_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM firewall_rules;");
-        let total_firewall_rules = fw_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+        let total_firewall_rules = fw_count_res
+            .ok()
+            .and_then(|r| {
+                r.first()
+                    .and_then(|row| row.get("total").and_then(|v| v.as_i64()))
+            })
+            .unwrap_or(0);
 
         if let Ok(rogue_fw) = engine.execute_query(
             "SELECT name, action, direction, protocol, program FROM firewall_rules \
              WHERE action = 'Allow' AND direction = 'Inbound' AND ( \
                  program LIKE '%\\Temp\\%' OR program LIKE '%\\Users\\Public\\%' \
-             ) LIMIT 10;"
+             ) LIMIT 10;",
         ) {
             for row in rogue_fw {
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -2152,7 +2510,7 @@ impl EdrOrchestrator {
             "SELECT store, subject, issuer, valid_to, is_self_signed FROM certificates \
              WHERE store = 'ROOT' AND is_self_signed = 'true' \
                AND subject NOT LIKE '%Microsoft%' AND subject NOT LIKE '%DigiCert%' \
-             LIMIT 10;"
+             LIMIT 10;",
         ) {
             for cert in cert_rows {
                 let subj = cert.get("subject").and_then(|v| v.as_str()).unwrap_or("");
@@ -2160,7 +2518,9 @@ impl EdrOrchestrator {
                 let reason = format!("Siquery EDR Sweep: Untrusted self-signed root certificate in ROOT store (potential TLS MITM): Subject: {}, Issuer: {}", subj, issuer);
                 warn!("{}", reason);
 
-                let _ = self.memory.log_threat_event("SIQUERY_UNTRUSTED_ROOT_CERT", 0, 0);
+                let _ = self
+                    .memory
+                    .log_threat_event("SIQUERY_UNTRUSTED_ROOT_CERT", 0, 0);
                 anomalies.push(serde_json::json!({
                     "sweep": "certificates",
                     "severity": "HIGH",
@@ -2405,7 +2765,9 @@ impl EdrOrchestrator {
         // Drastic Performance Optimization: Lower process priority so we don't freeze the UI
         #[cfg(windows)]
         {
-            use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS};
+            use windows::Win32::System::Threading::{
+                GetCurrentProcess, SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS,
+            };
             unsafe {
                 let _ = SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
             }
@@ -2434,7 +2796,10 @@ impl EdrOrchestrator {
                 Arc::new(crate::secured_executor::DirectExecutor::new())
             };
 
-        info!("EdrOrchestrator: Initializing memory store at {}...", runtime_config.db_path);
+        info!(
+            "EdrOrchestrator: Initializing memory store at {}...",
+            runtime_config.db_path
+        );
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
         info!("EdrOrchestrator: Registering internal assets...");
         register_internal_assets(&memory);
@@ -2443,17 +2808,22 @@ impl EdrOrchestrator {
             if posture["tpm_remediated"].as_bool().unwrap_or(false) {
                 crate::hardened::TPM_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
             }
-            if posture["memory_shield_remediated"].as_bool().unwrap_or(false) {
-                crate::hardened::MEMORY_SHIELD_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
+            if posture["memory_shield_remediated"]
+                .as_bool()
+                .unwrap_or(false)
+            {
+                crate::hardened::MEMORY_SHIELD_REMEDIATED
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
             }
             if posture["egress_remediated"].as_bool().unwrap_or(false) {
-                crate::hardened::SOFTWARE_EGRESS_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
+                crate::hardened::SOFTWARE_EGRESS_REMEDIATED
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
             }
         }
         let policy_config = osoosi_types::load_policy_config();
         info!("EdrOrchestrator: Initializing policy engine...");
         let mut policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
-        
+
         info!("EdrOrchestrator: Initializing mesh network...");
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let mesh = Arc::new(tokio::sync::Mutex::new(Some(
@@ -2464,18 +2834,24 @@ impl EdrOrchestrator {
         // --- 2. NOSTR GLOBAL INTELLIGENCE (BitChat Style) ---
         // Uses decentralized relays for cross-organization threat sharing with Differential Privacy.
         let mut nostr_relays = mesh_config.nostr_relays.clone();
-        
-        if nostr_relays.is_empty() || (nostr_relays.len() == 1 && (nostr_relays[0].contains("localhost") || nostr_relays[0].contains("127.0.0.1"))) {
+
+        if nostr_relays.is_empty()
+            || (nostr_relays.len() == 1
+                && (nostr_relays[0].contains("localhost") || nostr_relays[0].contains("127.0.0.1")))
+        {
             if mesh_config.allow_public_relays {
                 info!("Nostr Mesh: No public relays configured or only localhost found. Bootstrapping global public relays...");
                 let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
                 let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
-                
-                info!("Nostr Mesh: Fetching geo-relay directory from {}...", geo_csv_url);
+
+                info!(
+                    "Nostr Mesh: Fetching geo-relay directory from {}...",
+                    geo_csv_url
+                );
                 let client = reqwest::Client::builder()
                     .timeout(Duration::from_secs(5))
                     .build()?;
-                
+
                 if let Ok(resp) = client.get(geo_csv_url).send().await {
                     if let Ok(csv) = resp.text().await {
                         geo_dir.load_csv(&csv).await;
@@ -2489,19 +2865,22 @@ impl EdrOrchestrator {
                 info!("Nostr Mesh: Public Nostr relays disabled by configuration. Running in pure P2P libp2p mesh mode.");
             }
         }
-        
+
         // Sanitize: Filter out localhost if not explicitly requested or if it's the ONLY relay
         if nostr_relays.len() > 1 {
             nostr_relays.retain(|r| !r.contains("localhost") && !r.contains("127.0.0.1"));
         }
-        
+
         let nostr_mesh = if !nostr_relays.is_empty() {
-            info!("Initializing Nostr Mesh with {} relays...", nostr_relays.len());
+            info!(
+                "Initializing Nostr Mesh with {} relays...",
+                nostr_relays.len()
+            );
             let nostr_orch = crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?;
             for relay in nostr_relays {
                 let _ = nostr_orch.add_relay(&relay).await;
             }
-            
+
             // Spawn connection in background to prevent hang if relays are unreachable
             let orch_clone = Arc::new(nostr_orch);
             let connect_orch = orch_clone.clone();
@@ -2525,7 +2904,7 @@ impl EdrOrchestrator {
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
 
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
-        
+
         // Inject adaptive controller into policy engine for heavy voter skipping
         {
             // SAFETY: `policy` has exactly one strong reference at this point (just created above).
@@ -2533,8 +2912,11 @@ impl EdrOrchestrator {
                 .expect("policy Arc has multiple owners before construction completes");
             p.telemetry_controller = Some(adaptive.clone());
         }
-        let (watcher_obj, file_rx) =
-            osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths, adaptive.clone())?;
+        let (watcher_obj, file_rx) = osoosi_telemetry::FileWatcher::new(
+            Some(memory.clone()),
+            exclude_paths,
+            adaptive.clone(),
+        )?;
         let watcher = Arc::new(tokio::sync::Mutex::new(watcher_obj));
         let file_event_rx = Arc::new(tokio::sync::Mutex::new(Some(file_rx)));
         let mesh_peer_count = Arc::new(AtomicU32::new(0));
@@ -2545,7 +2927,9 @@ impl EdrOrchestrator {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3); // 3 samples = enough for initial baseline; override with OSOOSI_MODEL_MIN_SAMPLES=N
         let model_config = ModelConfig {
-            models_dir: osoosi_types::resolve_models_dir().to_string_lossy().to_string(),
+            models_dir: osoosi_types::resolve_models_dir()
+                .to_string_lossy()
+                .to_string(),
             min_samples: min_train,
             ..Default::default()
         };
@@ -2561,12 +2945,8 @@ impl EdrOrchestrator {
         let malware_dir = models_dir.join("malware");
         let model_path = malware_dir.join("sorel.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
-        
-        let behavioral_yara_voter = if let Some(voter) = try_build_behavioral_yara_voter(adaptive.clone()) {
-            Some(Arc::new(voter))
-        } else {
-            None
-        };
+
+        let behavioral_yara_voter = try_build_behavioral_yara_voter(adaptive.clone()).map(Arc::new);
         let dotscope_analyzer = Arc::new(dotscope::DotscopeAnalyzer::new());
         let triage_store = crate::triage::new_triage_store();
         let baseline = Arc::new(crate::baseline::BehavioralBaseline::new());
@@ -2576,7 +2956,10 @@ impl EdrOrchestrator {
             malware_scanner.clone(),
         )?);
         let approval_queue = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let shield = Arc::new(crate::shield::ShieldLayer::with_manager(memory.clone(), yara_manager.clone()));
+        let shield = Arc::new(crate::shield::ShieldLayer::with_manager(
+            memory.clone(),
+            yara_manager.clone(),
+        ));
         let node_id = trust.did().to_string();
         let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(
             node_id.clone(),
@@ -2613,7 +2996,9 @@ impl EdrOrchestrator {
         let smollm_dir = std::env::var("OSOOSI_SMOLLM_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| {
-                let hf_dir = models_dir.join("models--HuggingFaceTB--SmolLM2-135M-Instruct").join("snapshots");
+                let hf_dir = models_dir
+                    .join("models--HuggingFaceTB--SmolLM2-135M-Instruct")
+                    .join("snapshots");
                 if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
                     if let Some(Ok(entry)) = entries.next() {
                         return entry.path();
@@ -2627,9 +3012,10 @@ impl EdrOrchestrator {
         let has_smollm = smollm_dir.join("config.json").exists()
             && smollm_dir.join("model.safetensors").exists()
             && smollm_dir.join("tokenizer.json").exists();
-        let behavioral_engine = if has_smollm || std::env::var("OSOOSI_ENABLE_SMOLLM")
-            .map(|v| v == "1")
-            .unwrap_or(false)
+        let behavioral_engine = if has_smollm
+            || std::env::var("OSOOSI_ENABLE_SMOLLM")
+                .map(|v| v == "1")
+                .unwrap_or(false)
         {
             match osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir) {
                 Ok(a) => {
@@ -2647,7 +3033,7 @@ impl EdrOrchestrator {
         } else {
             None
         };
-        
+
         let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| {
@@ -2670,7 +3056,7 @@ impl EdrOrchestrator {
             });
 
         let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
-            &gemma_dir.to_string_lossy()
+            &gemma_dir.to_string_lossy(),
         ));
         let gemma_cortex = if gemma_dir.exists() || osoosi_types::config::load_ai_config().enabled {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -2702,11 +3088,12 @@ impl EdrOrchestrator {
 
         let foundation_sec_dir = std::env::var("OSOOSI_FOUNDATION_SEC_DIR")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                models_dir.join("foundation-sec")
-            });
+            .unwrap_or_else(|_| models_dir.join("foundation-sec"));
 
-        let foundation_sec_cortex = if foundation_sec_dir.exists() || std::env::var("OSOOSI_FOUNDATION_SEC_ENABLED").unwrap_or_default() == "1" || osoosi_types::config::load_ai_config().foundation_sec_enabled {
+        let foundation_sec_cortex = if foundation_sec_dir.exists()
+            || std::env::var("OSOOSI_FOUNDATION_SEC_ENABLED").unwrap_or_default() == "1"
+            || osoosi_types::config::load_ai_config().foundation_sec_enabled
+        {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 osoosi_behavioral::FoundationSecAnalyzer::new(&foundation_sec_dir)
             })) {
@@ -2734,71 +3121,107 @@ impl EdrOrchestrator {
         ));
         let blocking_manager = Arc::new(crate::blocking_manager::BlockingManager::new(provisioner));
         // Register Voters into Policy Engine for Multi-Detector Consensus
-        policy.add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
-            engine: osoosi_policy::semantic::SemanticEngine::new(),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
+                engine: osoosi_policy::semantic::SemanticEngine::new(),
+            }))
+            .await;
 
-        policy.add_voter(Box::new(osoosi_policy::voters::TrustedVendorVoter)).await;
-        policy.add_voter(Box::new(osoosi_policy::voters::GitNoiseVoter)).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::TrustedVendorVoter))
+            .await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::GitNoiseVoter))
+            .await;
 
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
+                cache: nsrl_cache.clone(),
+                memory: memory.clone(),
+            }))
+            .await;
 
-
-        policy.add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
-            cache: nsrl_cache.clone(),
-            memory: memory.clone(),
-        })).await;
-
-        policy.add_voter(Box::new(osoosi_policy::voters::OtxVoter {
-            indicators: policy.otx_indicators_ref().clone(),
-            memory: memory.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::OtxVoter {
+                indicators: policy.otx_indicators_ref().clone(),
+                memory: memory.clone(),
+            }))
+            .await;
 
         if let Some(ref gemma) = gemma_cortex {
-            policy.add_voter(Box::new(osoosi_policy::voters::GemmaVoter::new(
-                gemma.clone(),
-            ))).await;
+            policy
+                .add_voter(Box::new(osoosi_policy::voters::GemmaVoter::new(
+                    gemma.clone(),
+                )))
+                .await;
         }
 
         if let Some(ref foundation_sec) = foundation_sec_cortex {
-            policy.add_voter(Box::new(osoosi_policy::voters::FoundationSecVoter::new(
-                foundation_sec.clone(),
-            ))).await;
+            policy
+                .add_voter(Box::new(osoosi_policy::voters::FoundationSecVoter::new(
+                    foundation_sec.clone(),
+                )))
+                .await;
         }
 
-        policy.add_voter(Box::new(osoosi_policy::voters::KevVoter {
-            memory: memory.clone(),
-            config: policy.config.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::KevVoter {
+                memory: memory.clone(),
+                config: policy.config.clone(),
+            }))
+            .await;
 
-        policy.add_voter(Box::new(osoosi_policy::voters::CveLookupVoter {
-            fetcher: policy.fetcher.clone(),
-            memory: memory.clone(),
-            cve_cache: policy.cve_cache.clone(),
-            broadcaster: policy.intel_broadcaster.clone(),
-            node_id: node_id.clone(),
-        })).await;
-        
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::CveLookupVoter {
+                fetcher: policy.fetcher.clone(),
+                memory: memory.clone(),
+                cve_cache: policy.cve_cache.clone(),
+                broadcaster: policy.intel_broadcaster.clone(),
+                node_id: node_id.clone(),
+            }))
+            .await;
+
         // Behavioral Threat Model Voter: Uses the bulk-trained CVE/Lineage model
-        policy.add_voter(Box::new(osoosi_policy::voters::BehavioralThreatVoter {
-            model: threat_model.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::BehavioralThreatVoter {
+                model: threat_model.clone(),
+            }))
+            .await;
 
         // Decompile Voter: SpiderEyes binary analysis (LLM + Capstone)
-        policy.add_voter(Box::new(osoosi_policy::voters::DecompileVoter {
-            spider: spider_eyes.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::DecompileVoter {
+                spider: spider_eyes.clone(),
+            }))
+            .await;
 
         // Agentic Escape Detection Voter (Process Reward & State Trajectory Scoring)
-        policy.add_voter(Box::new(osoosi_policy::agentic_voter::AgenticPolicyVoter::new())).await;
+        policy
+            .add_voter(Box::new(
+                osoosi_policy::agentic_voter::AgenticPolicyVoter::new(),
+            ))
+            .await;
 
         // Default-Deny Agent Network Egress & Covert Side-Channel Isolation Voter
-        policy.add_voter(Box::new(osoosi_policy::agent_egress::AgentEgressVoter::new())).await;
+        policy
+            .add_voter(Box::new(
+                osoosi_policy::agent_egress::AgentEgressVoter::new(),
+            ))
+            .await;
 
         // Cloudflare AI Security Audit Voter (Tool-Argument Injection, Memory Poisoning & Memory Safety)
-        policy.add_voter(Box::new(osoosi_policy::ai_audit_voter::AiSecurityAuditVoter::new())).await;
+        policy
+            .add_voter(Box::new(
+                osoosi_policy::ai_audit_voter::AiSecurityAuditVoter::new(),
+            ))
+            .await;
 
-        policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
-        policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new()))
+            .await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter))
+            .await;
 
         // Enhanced Detection Engines (Adapted from Rustinel)
         let mut sigma_engine = osoosi_policy::sigma::SigmaEngine::new();
@@ -2810,77 +3233,109 @@ impl EdrOrchestrator {
         };
         sigma_engine.load_rules_from_dir(&sigma_dir);
         let sigma_engine = Arc::new(sigma_engine);
-        policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter { engine: sigma_engine })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::SigmaVoter {
+                engine: sigma_engine,
+            }))
+            .await;
 
         let mut ioc_engine = osoosi_policy::ioc::IocEngine::new();
         ioc_engine.load_from_files(std::path::Path::new("config/ioc"));
         let ioc_engine = Arc::new(ioc_engine);
-        policy.add_voter(Box::new(osoosi_policy::voters::IocVoter { engine: ioc_engine })).await;
-        
-        policy.add_voter(Box::new(crate::voters::YaraXVoter {
-            yara_manager: yara_manager.clone(),
-            adaptive: adaptive.clone(),
-            total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::IocVoter {
+                engine: ioc_engine,
+            }))
+            .await;
+
+        policy
+            .add_voter(Box::new(crate::voters::YaraXVoter {
+                yara_manager: yara_manager.clone(),
+                adaptive: adaptive.clone(),
+                total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            }))
+            .await;
         if let Some(ref voter) = behavioral_yara_voter {
             policy.add_voter(Box::new((**voter).clone())).await;
         }
-        policy.add_voter(Box::new(crate::voters::DotscopeVoter {
-            analyzer: dotscope_analyzer.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
-        policy.add_voter(Box::new(crate::voters::MemoryInspectionVoter {
-            memory: memory.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(crate::voters::DotscopeVoter {
+                analyzer: dotscope_analyzer.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
+        policy
+            .add_voter(Box::new(crate::voters::MemoryInspectionVoter {
+                memory: memory.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
 
         // MalConv / ONNX malware model + YARA — same [`MalwareScanner`] as Clam; separate vote for ML path
-        policy.add_voter(Box::new(crate::voters::MalConvVoter {
-            scanner: malware_scanner.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(crate::voters::MalConvVoter {
+                scanner: malware_scanner.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
 
         // Mandiant Trio Voters (Capa + Floss)
-        policy.add_voter(Box::new(crate::voters::CapaVoter {
-            analyzer: static_analyzer.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(crate::voters::CapaVoter {
+                analyzer: static_analyzer.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
 
-        policy.add_voter(Box::new(crate::voters::CompositionVoter {
-            analyzer: static_analyzer.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(crate::voters::CompositionVoter {
+                analyzer: static_analyzer.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
 
         // Privacy-Enforced Voter: DP + Merkle Audit
         let privacy_config = osoosi_dp::PrivacyConfig::default();
-        policy.add_voter(Box::new(osoosi_policy::voters::PrivacyVoter::new(
-            privacy_config,
-            audit.clone(),
-        ))).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::PrivacyVoter::new(
+                privacy_config,
+                audit.clone(),
+            )))
+            .await;
 
         // Native Instrumentation Voter: Ported from OpenEDR
-        policy.add_voter(Box::new(osoosi_policy::voters::NativeVoter {
-            memory: memory.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::NativeVoter {
+                memory: memory.clone(),
+            }))
+            .await;
 
         // Injection Telemetry Voter: Processes inner-process hook events (BitBlt, CreateProcessW, send, ptrace, etc.)
-        policy.add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter)).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter))
+            .await;
 
         // DNS Shield Voter: Evaluates DNS query telemetry (DGA, tunneling, blocklist, darknet)
-        policy.add_voter(Box::new(osoosi_policy::voters::DnsShieldVoter)).await;
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::DnsShieldVoter))
+            .await;
 
         // Sysmon DNS Voter (Event ID 22): Process-attributed DNS analysis with LLM context
         let dns_blocklist = Arc::new(osoosi_dns::DnsBlocklist::new());
-        policy.add_voter(Box::new(osoosi_policy::voters::SysmonDnsVoter {
-            blocklist: dns_blocklist,
-        })).await;
-        
+        policy
+            .add_voter(Box::new(osoosi_policy::voters::SysmonDnsVoter {
+                blocklist: dns_blocklist,
+            }))
+            .await;
+
         // --- 4. BEHAVIORAL AI CONSENSUS ---
         // Connect the SecureBERT/SmolLM/Gemma classifier to the voting engine.
-        policy.add_voter(Box::new(crate::voters::BehavioralClassifierVoter {
-            classifier: behavioral_classifier.clone(),
-            adaptive: adaptive.clone(),
-        })).await;
+        policy
+            .add_voter(Box::new(crate::voters::BehavioralClassifierVoter {
+                classifier: behavioral_classifier.clone(),
+                adaptive: adaptive.clone(),
+            }))
+            .await;
 
         // Start background threat intel sync (NVD Local Cache, etc.)
         policy.start_background_tasks();
@@ -2895,8 +3350,11 @@ impl EdrOrchestrator {
         let mesh_gossip_count_atomic = Arc::new(AtomicU32::new(0));
 
         let preexisting_accounts = Arc::new(query_system_accounts());
-        info!("Account Security Guardrail: Baselined {} pre-existing/protected accounts.", preexisting_accounts.len());
-        
+        info!(
+            "Account Security Guardrail: Baselined {} pre-existing/protected accounts.",
+            preexisting_accounts.len()
+        );
+
         let supervisor = Arc::new(supervisor::CognitiveFusionSupervisor::new());
         let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
         supervisor.clone().start(memory.clone(), active_tarpit);
@@ -2906,8 +3364,12 @@ impl EdrOrchestrator {
             info!("[KERNEL_DRIVER] Ring-0 Pre-Operation Driver attached! Hardware-enforced process blocking active before Sysmon Event 1.");
             let autonomy_cfg = osoosi_types::load_autonomy_config();
             let mode = match autonomy_cfg.current_mode() {
-                osoosi_types::AutonomyMode::Audit => osoosi_runtime::kernel_driver::DriverAutonomyMode::Audit,
-                osoosi_types::AutonomyMode::Lockdown => osoosi_runtime::kernel_driver::DriverAutonomyMode::Lockdown,
+                osoosi_types::AutonomyMode::Audit => {
+                    osoosi_runtime::kernel_driver::DriverAutonomyMode::Audit
+                }
+                osoosi_types::AutonomyMode::Lockdown => {
+                    osoosi_runtime::kernel_driver::DriverAutonomyMode::Lockdown
+                }
                 _ => osoosi_runtime::kernel_driver::DriverAutonomyMode::Active,
             };
             let _ = client.set_mode(mode);
@@ -2939,7 +3401,11 @@ impl EdrOrchestrator {
                                 "[KERNEL_DRIVER] Intercepted process spawn PID: {} Image: {} (Blocked: {})",
                                 ev.pid, ev.image_path, ev.blocked
                             );
-                            let _ = memory_bg.log_threat_event("KERNEL_DRIVER_PRE_EXEC_BLOCK", ev.pid, ev.parent_pid);
+                            let _ = memory_bg.log_threat_event(
+                                "KERNEL_DRIVER_PRE_EXEC_BLOCK",
+                                ev.pid,
+                                ev.parent_pid,
+                            );
                             audit_bg.log(
                                 "KERNEL_DRIVER_INTERCEPTION",
                                 serde_json::json!({
@@ -2965,14 +3431,18 @@ impl EdrOrchestrator {
         );
 
         let decision_cfg = osoosi_types::config::load_decision_model_config();
-        let decision_engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(decision_cfg.clone()));
+        let decision_engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(
+            decision_cfg.clone(),
+        ));
         supervisor.set_decision_engine(decision_engine.clone());
         info!(
             "[DECISION] Non-autoregressive Clef Decision Model initialized (provider: {}, model: {}, enabled: {})",
             decision_cfg.provider, decision_cfg.model, decision_cfg.enabled
         );
 
-        let agent_anomaly_detector = Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(50, 200, None));
+        let agent_anomaly_detector = Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(
+            50, 200, None,
+        ));
         info!("[AAD] Native Rust Agent Anomaly Detection (OWASP Top 10) initialized.");
 
         let siquery_engine = Arc::new(osoosi_agent_anomaly::SiqueryEngine::new());
@@ -3029,7 +3499,9 @@ impl EdrOrchestrator {
             behavioral_debouncer,
             spider_eyes,
             alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
-            mesh_gossip_feed: Arc::new(std::sync::RwLock::new(std::collections::VecDeque::with_capacity(200))),
+            mesh_gossip_feed: Arc::new(std::sync::RwLock::new(
+                std::collections::VecDeque::with_capacity(200),
+            )),
             mesh_broadcast_debouncer: Arc::new(dashmap::DashMap::new()),
             nostr_mesh,
             mesh_gossip_count_atomic,
@@ -3042,7 +3514,9 @@ impl EdrOrchestrator {
                     osoosi_telemetry::canary::CanaryCorrelator::new(canary_alert_tx, 3),
                 ))
             },
-            hollowing_detector: Arc::new(osoosi_telemetry::hollowing::ProcessHollowingDetector::new()),
+            hollowing_detector: Arc::new(
+                osoosi_telemetry::hollowing::ProcessHollowingDetector::new(),
+            ),
             preexisting_accounts,
             supervisor,
             kernel_driver,
@@ -3056,21 +3530,30 @@ impl EdrOrchestrator {
         // Start background log retention loop (hourly rotation and pruning)
         let log_dir = osoosi_types::resolve_log_directory();
         let log_cfg = osoosi_types::load_log_retention_config();
-        tokio::spawn(crate::log_retention::LogRetentionManager::start_retention_loop(
-            log_dir,
-            log_cfg,
-        ));
+        tokio::spawn(
+            crate::log_retention::LogRetentionManager::start_retention_loop(log_dir, log_cfg),
+        );
 
         Ok(orch)
     }
 
     /// Register voters that require an Arc reference to the orchestrator (post-initialization).
     pub async fn post_init_voters(self: &Arc<Self>) {
-        self.policy.add_voter(Box::new(osoosi_policy::voters::CredentialGuardVoter)).await;
-        self.policy.add_voter(Box::new(osoosi_policy::voters::ProcessInjectionVoter)).await;
-        self.policy.add_voter(Box::new(osoosi_policy::voters::HarTrafficVoter)).await;
-        self.policy.add_voter(Box::new(osoosi_policy::voters::MercuryFluidVoter)).await;
-        self.policy.add_voter(Box::new(osoosi_policy::voters::SpiderWebPhysicsVoter)).await;
+        self.policy
+            .add_voter(Box::new(osoosi_policy::voters::CredentialGuardVoter))
+            .await;
+        self.policy
+            .add_voter(Box::new(osoosi_policy::voters::ProcessInjectionVoter))
+            .await;
+        self.policy
+            .add_voter(Box::new(osoosi_policy::voters::HarTrafficVoter))
+            .await;
+        self.policy
+            .add_voter(Box::new(osoosi_policy::voters::MercuryFluidVoter))
+            .await;
+        self.policy
+            .add_voter(Box::new(osoosi_policy::voters::SpiderWebPhysicsVoter))
+            .await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
             "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter)"
@@ -3080,10 +3563,14 @@ impl EdrOrchestrator {
     /// Comprehensive memory and disk cleanup routine to prevent memory leaks and disk exhaustion
     /// across long-running EDR deployments.
     pub fn cleanup_memory_and_disk(&self, days_retention: u32) -> serde_json::Value {
-        info!("Initiating comprehensive EDR memory and disk cleanup (retention: {} days)...", days_retention);
+        info!(
+            "Initiating comprehensive EDR memory and disk cleanup (retention: {} days)...",
+            days_retention
+        );
 
         // 1. In-Memory Cache Eviction (DashMap lock hygiene: collect expired keys first)
-        let expired_behavioral: Vec<String> = self.behavioral_debouncer
+        let expired_behavioral: Vec<String> = self
+            .behavioral_debouncer
             .iter()
             .filter(|entry| entry.value().elapsed() >= Duration::from_secs(3600))
             .map(|entry| entry.key().clone())
@@ -3093,7 +3580,8 @@ impl EdrOrchestrator {
             self.behavioral_debouncer.remove(&key);
         }
 
-        let expired_alerts: Vec<String> = self.alert_suppression_cache
+        let expired_alerts: Vec<String> = self
+            .alert_suppression_cache
             .iter()
             .filter(|entry| entry.value().elapsed() >= Duration::from_secs(3600))
             .map(|entry| entry.key().clone())
@@ -3103,7 +3591,8 @@ impl EdrOrchestrator {
             self.alert_suppression_cache.remove(&key);
         }
 
-        let expired_broadcast: Vec<String> = self.mesh_broadcast_debouncer
+        let expired_broadcast: Vec<String> = self
+            .mesh_broadcast_debouncer
             .iter()
             .filter(|entry| entry.value().elapsed() >= Duration::from_secs(3600))
             .map(|entry| entry.key().clone())
@@ -3150,10 +3639,10 @@ impl EdrOrchestrator {
                     let path = entry.path();
                     if path.is_file() {
                         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                        if name.starts_with(".locked.") || name.contains(".locked.") {
-                            if std::fs::remove_file(&path).is_ok() {
-                                cleaned_locked += 1;
-                            }
+                        if (name.starts_with(".locked.") || name.contains(".locked."))
+                            && std::fs::remove_file(&path).is_ok()
+                        {
+                            cleaned_locked += 1;
                         }
                     }
                 }
@@ -3171,10 +3660,13 @@ impl EdrOrchestrator {
                     if path.is_file() {
                         if let Ok(meta) = path.metadata() {
                             if let Ok(modified) = meta.modified() {
-                                if modified.elapsed().map(|el| el >= quarantine_cutoff).unwrap_or(false) {
-                                    if std::fs::remove_file(&path).is_ok() {
-                                        cleaned_quarantine += 1;
-                                    }
+                                if modified
+                                    .elapsed()
+                                    .map(|el| el >= quarantine_cutoff)
+                                    .unwrap_or(false)
+                                    && std::fs::remove_file(&path).is_ok()
+                                {
+                                    cleaned_quarantine += 1;
                                 }
                             }
                         }
@@ -3191,10 +3683,17 @@ impl EdrOrchestrator {
             for entry in entries.flatten() {
                 let path = entry.path();
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if name.starts_with("osoosi-temp-") || name.starts_with("osoosi-update-") || name.starts_with("osoosi-forensic-") {
+                if name.starts_with("osoosi-temp-")
+                    || name.starts_with("osoosi-update-")
+                    || name.starts_with("osoosi-forensic-")
+                {
                     if let Ok(meta) = path.metadata() {
                         if let Ok(modified) = meta.modified() {
-                            if modified.elapsed().map(|el| el >= temp_cutoff).unwrap_or(false) {
+                            if modified
+                                .elapsed()
+                                .map(|el| el >= temp_cutoff)
+                                .unwrap_or(false)
+                            {
                                 if path.is_dir() {
                                     if std::fs::remove_dir_all(&path).is_ok() {
                                         cleaned_temp += 1;
@@ -3267,7 +3766,9 @@ impl EdrOrchestrator {
         search: Option<&str>,
     ) -> anyhow::Result<Vec<String>> {
         let log_dir = osoosi_types::resolve_log_directory();
-        crate::log_retention::LogRetentionManager::read_log_tail(&log_dir, filename, max_lines, search)
+        crate::log_retention::LogRetentionManager::read_log_tail(
+            &log_dir, filename, max_lines, search,
+        )
     }
 
     /// Access the LogRetentionManager instance.
@@ -3293,15 +3794,18 @@ impl EdrOrchestrator {
 
         // Connect policy engine to mesh for automated intel sharing
         let mesh_tx_intel = tx.clone();
-        if let Some(_) = osoosi_types::resolve_nvd_api_key() {
+        if osoosi_types::resolve_nvd_api_key().is_some() {
             info!("Oshoosi Hybrid: NVD API Key detected. Enhanced rate limits enabled.");
         } else {
             info!("Oshoosi Hybrid: No NVD API Key configured. Mesh will rely on peer-to-peer intelligence to avoid public rate limits.");
         }
 
-        self.policy.set_intel_broadcaster(Arc::new(move |intel| {
-            let _ = mesh_tx_intel.try_send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel));
-        })).await;
+        self.policy
+            .set_intel_broadcaster(Arc::new(move |intel| {
+                let _ =
+                    mesh_tx_intel.try_send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel));
+            }))
+            .await;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let peer_rules = osoosi_types::load_peer_rules_config();
@@ -3590,7 +4094,7 @@ impl EdrOrchestrator {
                                 {
                                     #[allow(unused_imports)]
                                     use std::os::windows::process::CommandExt;
-                                    let rule_name = format!("Osoosi-MeshTarpit-{}", tarpit_signal.target_ip.replace('.', "-").replace(':', "-"));
+                                    let rule_name = format!("Osoosi-MeshTarpit-{}", tarpit_signal.target_ip.replace(['.', ':'], "-"));
                                     let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
                                     let mut cmd1 = std::process::Command::new(&netsh_bin);
                                     cmd1.stdout(std::process::Stdio::null())
@@ -3664,7 +4168,7 @@ impl EdrOrchestrator {
                                 warn!("Mesh Tripwire: Peer {} triggered a phantom memory trap! Offender: {} ({})", alert.source_node_id, alert.offender.name, alert.offender.blake3_hash);
                                 // Mark the hash as malicious so we don't execute it
                                 orch_clone.memory.mark_hash_known_malicious(&alert.offender.blake3_hash);
-                                
+
                                 orch_clone.audit.log(
                                     "MESH_TRIPWIRE_RECEIVED",
                                     serde_json::json!({
@@ -3713,101 +4217,145 @@ impl EdrOrchestrator {
         // --- 2. NOSTR MESH LISTENING (BitChat style) ---
         // Provides a robust, firewall-bypassing secondary intelligence layer.
         let orch_nostr = self.clone();
-        self.nostr_mesh.start_listening(move |sig| {
-            let my_did = orch_nostr.trust.did();
-            if sig.source_node == my_did.id || sig.source_node == my_did.to_string() || sig.source_node == "local" {
-                debug!("Nostr: Suppressed local echo threat from our own node DID ({})", sig.id);
-                return;
-            }
-            if !sig.verify() {
-                debug!("Nostr: Dropped unverified or invalidly signed threat signature {}", sig.id);
-                return;
-            }
-            if sig.confidence < 0.50 {
-                debug!("Nostr: Dropped low-confidence threat {} ({:.2}) from relay", sig.id, sig.confidence);
-                return;
-            }
-            if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
-                debug!("Nostr: Dropped non-existing file noise threat {}", sig.id);
-                return;
-            }
-            let proc_clean = sig.process_name.as_deref().unwrap_or("").trim();
-            if proc_clean.is_empty()
-                || proc_clean.eq_ignore_ascii_case("unknown")
-                || proc_clean.eq_ignore_ascii_case("unknown process")
-            {
-                debug!("Nostr: Dropped unknown process threat {} from relay", sig.id);
-                return;
-            }
-            let proc_name_owned = proc_clean.to_string();
+        self.nostr_mesh
+            .start_listening(move |sig| {
+                let my_did = orch_nostr.trust.did();
+                if sig.source_node == my_did.id
+                    || sig.source_node == my_did.to_string()
+                    || sig.source_node == "local"
+                {
+                    debug!(
+                        "Nostr: Suppressed local echo threat from our own node DID ({})",
+                        sig.id
+                    );
+                    return;
+                }
+                if !sig.verify() {
+                    debug!(
+                        "Nostr: Dropped unverified or invalidly signed threat signature {}",
+                        sig.id
+                    );
+                    return;
+                }
+                if sig.confidence < 0.50 {
+                    debug!(
+                        "Nostr: Dropped low-confidence threat {} ({:.2}) from relay",
+                        sig.id, sig.confidence
+                    );
+                    return;
+                }
+                if sig
+                    .reason
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Execution Of Non-Existing File")
+                {
+                    debug!("Nostr: Dropped non-existing file noise threat {}", sig.id);
+                    return;
+                }
+                let proc_clean = sig.process_name.as_deref().unwrap_or("").trim();
+                if proc_clean.is_empty()
+                    || proc_clean.eq_ignore_ascii_case("unknown")
+                    || proc_clean.eq_ignore_ascii_case("unknown process")
+                {
+                    debug!(
+                        "Nostr: Dropped unknown process threat {} from relay",
+                        sig.id
+                    );
+                    return;
+                }
+                let proc_name_owned = proc_clean.to_string();
 
-            if !orch_nostr.mesh_broadcast_debouncer.contains_key(&sig.id) {
-                orch_nostr.mesh_broadcast_debouncer.insert(sig.id.clone(), std::time::Instant::now());
-            } else {
-                debug!("Nostr: Suppressed duplicate mesh threat ID {} from relay/peer", sig.id);
-                return;
-            }
-            let orch = orch_nostr.clone();
-            tokio::spawn(async move {
-                info!("BitChat: Decentralized threat received via Nostr relay: {:?} ({})", sig.reason, sig.source_node);
-                let _ = orch.memory.upsert_peer_status(&osoosi_types::PeerAnnounce {
-                    source_node: sig.source_node.clone(),
-                    timestamp: chrono::Utc::now(),
-                    is_patched: true,
-                    os_name: "Windows".to_string(),
-                    os_version: "10/11 (Nostr WAN)".to_string(),
-                    os_supported: true,
-                    membership_proof: None,
-                    attestation: None,
-                });
-                orch.mesh_gossip_count_atomic.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = orch.memory.log_threat(&sig) {
-                    if e.to_string().contains("UNIQUE constraint") {
-                        debug!("Nostr threat {} already persisted: {}", sig.id, e);
-                    } else {
-                        error!("Failed to persist Nostr threat: {}", e);
+                if !orch_nostr.mesh_broadcast_debouncer.contains_key(&sig.id) {
+                    orch_nostr
+                        .mesh_broadcast_debouncer
+                        .insert(sig.id.clone(), std::time::Instant::now());
+                } else {
+                    debug!(
+                        "Nostr: Suppressed duplicate mesh threat ID {} from relay/peer",
+                        sig.id
+                    );
+                    return;
+                }
+                let orch = orch_nostr.clone();
+                tokio::spawn(async move {
+                    info!(
+                        "BitChat: Decentralized threat received via Nostr relay: {:?} ({})",
+                        sig.reason, sig.source_node
+                    );
+                    let _ = orch.memory.upsert_peer_status(&osoosi_types::PeerAnnounce {
+                        source_node: sig.source_node.clone(),
+                        timestamp: chrono::Utc::now(),
+                        is_patched: true,
+                        os_name: "Windows".to_string(),
+                        os_version: "10/11 (Nostr WAN)".to_string(),
+                        os_supported: true,
+                        membership_proof: None,
+                        attestation: None,
+                    });
+                    orch.mesh_gossip_count_atomic
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if let Err(e) = orch.memory.log_threat(&sig) {
+                        if e.to_string().contains("UNIQUE constraint") {
+                            debug!("Nostr threat {} already persisted: {}", sig.id, e);
+                        } else {
+                            error!("Failed to persist Nostr threat: {}", e);
+                        }
                     }
-                }
-                if let Some(ref hash) = sig.hash_blake3 {
-                    orch.memory.mark_hash_known_malicious(hash);
-                }
-                // Store in live gossip feed buffer
-                orch.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
+                    if let Some(ref hash) = sig.hash_blake3 {
+                        orch.memory.mark_hash_known_malicious(hash);
+                    }
+                    // Store in live gossip feed buffer
+                    orch.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
 
-                let proc = proc_name_owned;
-                let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
-                let action = format!("{:?}", sig.recommended_action);
-                let reason_str = sig.reason.as_deref().unwrap_or("").trim();
-                let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
-                let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
-                let summary = format!("Peer Threat [{}]: {}: {} ({}) via Nostr", tech, proc, issue_desc, action);
+                    let proc = proc_name_owned;
+                    let tech = sig
+                        .mitre_technique
+                        .clone()
+                        .unwrap_or_else(|| "T1082".to_string());
+                    let action = format!("{:?}", sig.recommended_action);
+                    let reason_str = sig.reason.as_deref().unwrap_or("").trim();
+                    let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+                    let issue_desc = if reason_clean.is_empty() {
+                        "Suspicious Activity"
+                    } else {
+                        reason_clean
+                    };
+                    let summary = format!(
+                        "Peer Threat [{}]: {}: {} ({}) via Nostr",
+                        tech, proc, issue_desc, action
+                    );
 
-                orch.audit.log(
-                    "MESH_THREAT_RECEIVED",
-                    serde_json::json!({
-                        "source_node": sig.source_node,
-                        "threat_id": sig.id,
-                        "confidence": sig.confidence,
-                        "process_name": sig.process_name,
-                        "mitre_technique": sig.mitre_technique,
-                        "mitre_technique_name": sig.mitre_technique_name,
-                        "mitre_tactic": sig.mitre_tactic,
-                        "reason": sig.reason,
-                        "action": action,
-                        "action_state": sig.action_state,
-                        "hash": sig.hash_blake3,
-                        "summary": summary,
-                    }),
-                );
-            });
-        }).await;
+                    orch.audit.log(
+                        "MESH_THREAT_RECEIVED",
+                        serde_json::json!({
+                            "source_node": sig.source_node,
+                            "threat_id": sig.id,
+                            "confidence": sig.confidence,
+                            "process_name": sig.process_name,
+                            "mitre_technique": sig.mitre_technique,
+                            "mitre_technique_name": sig.mitre_technique_name,
+                            "mitre_tactic": sig.mitre_tactic,
+                            "reason": sig.reason,
+                            "action": action,
+                            "action_state": sig.action_state,
+                            "hash": sig.hash_blake3,
+                            "summary": summary,
+                        }),
+                    );
+                });
+            })
+            .await;
 
         Ok(join_gate)
     }
 
     pub async fn boot(&self) -> anyhow::Result<()> {
-        info!("OpenỌ̀ṣọ́ọ̀sì Agent Booting (Target: {})", std::env::consts::OS);
-        
+        info!(
+            "OpenỌ̀ṣọ́ọ̀sì Agent Booting (Target: {})",
+            std::env::consts::OS
+        );
+
         // 0. Proactive Out-Of-Memory Watchdog
         crate::spawn_memory_watchdog();
 
@@ -3829,7 +4377,9 @@ impl EdrOrchestrator {
                 if let Ok(mut last) = hyd_orch.last_telemetry_summary.try_lock() {
                     if last.elapsed() > Duration::from_secs(55) {
                         let total = hyd_orch.telemetry_total_count.load(Ordering::Relaxed);
-                        let prev_count = hyd_orch.last_telemetry_summary_count.swap(total, Ordering::Relaxed);
+                        let prev_count = hyd_orch
+                            .last_telemetry_summary_count
+                            .swap(total, Ordering::Relaxed);
                         let diff = total.saturating_sub(prev_count);
                         if diff > 0 {
                             hyd_orch.audit.log(
@@ -3848,21 +4398,24 @@ impl EdrOrchestrator {
         });
 
         self.clone().adaptive().start_adaptive_loop();
-        
+
         // 2. Behavioral & Resource Monitors
         self.start_cybershield_monitor();
         self.start_behavioral_detector();
-        
+
         // 3. File Monitoring (Hooking the FileWatcher)
         let watch_paths = osoosi_types::load_watch_paths_from_config()
             .unwrap_or_else(osoosi_types::all_physical_drive_paths);
         let paths_refs: Vec<&str> = watch_paths.iter().map(String::as_str).collect();
         if let Err(e) = self.start_file_watcher_paths(&paths_refs).await {
-            warn!("FileWatcher failed to start: {}. Real-time file monitoring disabled.", e);
+            warn!(
+                "FileWatcher failed to start: {}. Real-time file monitoring disabled.",
+                e
+            );
         } else {
             info!("FileWatcher activated for {} paths.", paths_refs.len());
         }
-        
+
         // 4. Host Security Events (Sysmon/Journald)
         let event_source = if cfg!(windows) {
             "".to_string() // Triggers NativeETWReader (Zero-Process Stack)
@@ -3870,14 +4423,14 @@ impl EdrOrchestrator {
             "default".to_string()
         };
         self.start_host_event_loop(&event_source, 2).await;
-        
+
         // 5. Intelligent Sourcing & Self-Healing
         self.start_repair_loop(3600, true).await;
         self.start_fetcher_loop().await;
         // Model training every 30 minutes: training involves SQLite reads, Rayon ML work,
         // and mesh delta broadcasts — doing it every 60s was a significant background CPU load.
         self.start_model_training_loop(1800).await;
-        
+
         // 6. Ghost Node Deception Services + Canary Deployment
         let ghost_enabled = std::env::var("OSOOSI_GHOST_ENABLED")
             .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
@@ -3890,7 +4443,10 @@ impl EdrOrchestrator {
             let canary_system = crate::canary::CanaryManager::new();
             let deployed = canary_system.deploy_canaries();
             if !deployed.is_empty() {
-                info!("Deployed {} Ghost Canary traps across the filesystem.", deployed.len());
+                info!(
+                    "Deployed {} Ghost Canary traps across the filesystem.",
+                    deployed.len()
+                );
             }
 
             // Deploy ghost trap files (high-value bait)
@@ -3925,9 +4481,15 @@ impl EdrOrchestrator {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
             loop {
                 interval.tick().await;
-                let records = osquery_orch.agent_anomaly_detector.classifier.run_osquery_host_scan();
+                let records = osquery_orch
+                    .agent_anomaly_detector
+                    .classifier
+                    .run_osquery_host_scan();
                 if !records.is_empty() {
-                    debug!("Osquery relational scan identified {} active AI agent candidates", records.len());
+                    debug!(
+                        "Osquery relational scan identified {} active AI agent candidates",
+                        records.len()
+                    );
                 }
             }
         });
@@ -3971,7 +4533,7 @@ impl EdrOrchestrator {
                         process_name: Some(finding.agent_id.clone()),
                         parent_process: None,
                         version: None,
-                        confidence: finding.confidence_score as f32,
+                        confidence: finding.confidence_score,
                         detector_count: 1,
                         detected_at: chrono::Utc::now(),
                         source_node: aad_orch.trust.did().to_string(),
@@ -3979,8 +4541,14 @@ impl EdrOrchestrator {
                         public_key: None,
                         merkle_proof: None,
                         recommended_action: osoosi_types::ResponseAction::Isolate,
-                        reason: Some(format!("[AAD Consensus] {}: {}", finding.risk_category.as_code(), finding.rationale)),
-                        predicted_next: Some("Autonomous containment engaged to sever breakout limb.".to_string()),
+                        reason: Some(format!(
+                            "[AAD Consensus] {}: {}",
+                            finding.risk_category.as_code(),
+                            finding.rationale
+                        )),
+                        predicted_next: Some(
+                            "Autonomous containment engaged to sever breakout limb.".to_string(),
+                        ),
                         epsilon: None,
                         require_approval: false,
                         action_state: osoosi_types::ActionState::Executed,
@@ -3996,7 +4564,9 @@ impl EdrOrchestrator {
                     // Broadcast over libp2p GossipSub wire mesh
                     let tx_guard = aad_orch.mesh_command_tx.lock().await;
                     if let Some(ref tx) = *tx_guard {
-                        let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat_sig.clone())).await;
+                        let _ = tx
+                            .send(osoosi_wire::MeshCommand::Broadcast(threat_sig.clone()))
+                            .await;
                     }
 
                     // Publish over decentralized Nostr BitChat mesh
@@ -4029,15 +4599,21 @@ impl EdrOrchestrator {
 
     /// Register a temporary zero-day defense rule into both the PolicyEngine and dynamic YARA engine.
     pub fn register_temporary_rule(&self, cve_id: &str, rule_text: &str, severity: f32) {
-        self.policy.register_temporary_rule(cve_id, rule_text, severity);
-        let _ = self.yara_manager.hot_load_rule(rule_text, &format!("mesh_{}", uuid::Uuid::new_v4()));
+        self.policy
+            .register_temporary_rule(cve_id, rule_text, severity);
+        let _ = self
+            .yara_manager
+            .hot_load_rule(rule_text, &format!("mesh_{}", uuid::Uuid::new_v4()));
     }
 
     /// Evict expired mesh debouncers and caches to prevent long-running memory leaks.
     pub fn prune_in_memory_caches(&self) {
-        self.mesh_broadcast_debouncer.retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
-        self.alert_suppression_cache.retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
-        self.behavioral_debouncer.retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
+        self.mesh_broadcast_debouncer
+            .retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
+        self.alert_suppression_cache
+            .retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
+        self.behavioral_debouncer
+            .retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
     }
 
     /// Background task for Rule Maintenance (YARA, Sigma, etc.)
@@ -4047,11 +4623,13 @@ impl EdrOrchestrator {
             info!("Starting Rule Maintenance Loop (YARA, ClamAV)...");
 
             // 1. YARA Update (Core Forge + Agentic Discovery) - offload to blocking pool
-            orch.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-                let _ = tokio::task::spawn_blocking(|| {
-                    osoosi_model::malware::MalwareScanner::update_yara_rules_on_startup();
-                }).await;
-            });
+            orch.adaptive
+                .spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
+                    let _ = tokio::task::spawn_blocking(|| {
+                        osoosi_model::malware::MalwareScanner::update_yara_rules_on_startup();
+                    })
+                    .await;
+                });
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600 * 4)); // Every 4 hours
             loop {
@@ -4066,18 +4644,26 @@ impl EdrOrchestrator {
                 tokio::spawn(async move {
                     info!("Maintenance: Checking and updating YARA threat feeds...");
                     match ym.update_feeds_and_reload().await {
-                        Ok(count) => info!("Maintenance: YARA rules updated! Currently active: {} rules.", count),
+                        Ok(count) => info!(
+                            "Maintenance: YARA rules updated! Currently active: {} rules.",
+                            count
+                        ),
                         Err(e) => debug!("Maintenance: YARA feed update skipped or offline: {}", e),
                     }
                 });
 
                 // 3. ClamAV Health Check / Update
                 let orch_inner = orch.clone();
-                orch_inner.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-                    let _ = tokio::task::spawn_blocking(|| {
-                        let _ = std::process::Command::new("freshclam").status();
-                    }).await;
-                });
+                orch_inner.adaptive.spawn_adaptive(
+                    ResourceCategory::IO,
+                    Priority::Normal,
+                    async move {
+                        let _ = tokio::task::spawn_blocking(|| {
+                            let _ = std::process::Command::new("freshclam").status();
+                        })
+                        .await;
+                    },
+                );
 
                 // 4. Log Pruning (Keep last 7 days)
                 let log_dir = osoosi_types::resolve_log_directory();
@@ -4100,7 +4686,10 @@ impl EdrOrchestrator {
                 // 5. Disk Space Warning
                 let disks = sysinfo::Disks::new_with_refreshed_list();
                 let models_dir = osoosi_types::resolve_models_dir();
-                if let Some(disk) = disks.iter().find(|d| models_dir.starts_with(d.mount_point())) {
+                if let Some(disk) = disks
+                    .iter()
+                    .find(|d| models_dir.starts_with(d.mount_point()))
+                {
                     let free_gb = disk.available_space() / (1024 * 1024 * 1024);
                     if free_gb < 5 {
                         warn!("⚠️ LOW DISK SPACE: Only {}GB remaining. Run 'osoosi clean --models' or use --lite mode to free up space.", free_gb);
@@ -4123,19 +4712,22 @@ impl EdrOrchestrator {
             orchestrator.start_browser_auditor();
 
             // Auto-start Phantom Memory Flux (Deceptive Memory Tarpit)
-            let flux_regions = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new()));
+            let flux_regions =
+                std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new()));
             let tarpit_manager = osoosi_runtime::TarpitManager::new();
             tarpit_manager.start_phantom_memory_flux(flux_regions.clone());
 
             let mut interval = tokio::time::interval(Duration::from_secs(30));
-            let process_debounce = std::sync::Arc::new(dashmap::DashMap::<String, std::time::Instant>::new());
+            let process_debounce =
+                std::sync::Arc::new(dashmap::DashMap::<String, std::time::Instant>::new());
             loop {
                 interval.tick().await;
                 sys.refresh_all();
 
                 // Periodic eviction of expired debounce entries to prevent unbounded growth in long-running daemons
                 if process_debounce.len() > 1024 {
-                    process_debounce.retain(|_, last_seen| last_seen.elapsed() < Duration::from_secs(600));
+                    process_debounce
+                        .retain(|_, last_seen| last_seen.elapsed() < Duration::from_secs(600));
                 }
 
                 let total_memory = sys.total_memory();
@@ -4164,7 +4756,8 @@ impl EdrOrchestrator {
                         || process_name_lc == "sihost.exe"
                         || process_name_lc == "ctfmon.exe";
                     let is_exempt_dev = is_developer_tool(&process_name_lc, exe_path.as_deref());
-                    let is_exempt_cloud = is_cloud_storage_service(&process_name_lc, exe_path.as_deref());
+                    let is_exempt_cloud =
+                        is_cloud_storage_service(&process_name_lc, exe_path.as_deref());
 
                     if is_exempt_system || is_exempt_dev || is_exempt_cloud {
                         let cpu_usage = process.cpu_usage();
@@ -4172,7 +4765,10 @@ impl EdrOrchestrator {
                         let private_commit = process.virtual_memory();
                         let effective_memory = if raw_memory > total_memory {
                             private_commit.min(total_memory)
-                        } else if private_commit > 0 && private_commit < memory_threshold && raw_memory > memory_threshold {
+                        } else if private_commit > 0
+                            && private_commit < memory_threshold
+                            && raw_memory > memory_threshold
+                        {
                             private_commit
                         } else {
                             raw_memory
@@ -4183,13 +4779,14 @@ impl EdrOrchestrator {
                             let pid_val = pid.as_u32();
                             let pid_key = format!("{}:{}", pid_val, process_name_lc);
                             let name_key = format!("name:{}", process_name_lc);
-                            let is_debounced = if let Some(last_seen) = process_debounce.get(&pid_key) {
-                                last_seen.elapsed() < Duration::from_secs(600)
-                            } else if let Some(last_seen) = process_debounce.get(&name_key) {
-                                last_seen.elapsed() < Duration::from_secs(600)
-                            } else {
-                                false
-                            };
+                            let is_debounced =
+                                if let Some(last_seen) = process_debounce.get(&pid_key) {
+                                    last_seen.elapsed() < Duration::from_secs(600)
+                                } else if let Some(last_seen) = process_debounce.get(&name_key) {
+                                    last_seen.elapsed() < Duration::from_secs(600)
+                                } else {
+                                    false
+                                };
                             if is_debounced {
                                 continue;
                             }
@@ -4227,7 +4824,10 @@ impl EdrOrchestrator {
                     // Mapped virtual files and VFS sparse views inflate raw working set beyond installed RAM.
                     let effective_memory = if raw_memory > total_memory {
                         private_commit.min(total_memory)
-                    } else if private_commit > 0 && private_commit < memory_threshold && raw_memory > memory_threshold {
+                    } else if private_commit > 0
+                        && private_commit < memory_threshold
+                        && raw_memory > memory_threshold
+                    {
                         private_commit
                     } else {
                         raw_memory
@@ -4239,14 +4839,19 @@ impl EdrOrchestrator {
                         let orch = orchestrator.clone();
                         let pid_val = pid.as_u32();
 
-                        if pid_val == 0 || pid_val == 4 || process_name.eq_ignore_ascii_case("System") || process_name.eq_ignore_ascii_case("Registry") {
+                        if pid_val == 0
+                            || pid_val == 4
+                            || process_name.eq_ignore_ascii_case("System")
+                            || process_name.eq_ignore_ascii_case("Registry")
+                        {
                             continue;
                         }
 
                         // Per-process debounce (10-minute cooldown) to prevent warning floods
                         let pid_key = format!("{}:{}", pid_val, process_name_lc);
                         let name_key = format!("name:{}", process_name_lc);
-                        let is_debounced = if let Some(last_alert) = process_debounce.get(&pid_key) {
+                        let is_debounced = if let Some(last_alert) = process_debounce.get(&pid_key)
+                        {
                             last_alert.elapsed() < Duration::from_secs(600)
                         } else if let Some(last_alert) = process_debounce.get(&name_key) {
                             last_alert.elapsed() < Duration::from_secs(600)
@@ -4341,7 +4946,7 @@ impl EdrOrchestrator {
                                         unsafe {
                                             use windows::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
                                             use windows::Win32::Foundation::CloseHandle;
-                                            
+
                                             if let Ok(handle) = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid_val) {
                                                 // NtSuspendProcess is the most reliable way to suspend a whole process
                                                 let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("ntdll.dll")).unwrap_or_default();
@@ -4390,14 +4995,17 @@ impl EdrOrchestrator {
             loop {
                 interval.tick().await;
                 let reader_clone = reader.clone();
-                let poll_result = tokio::task::spawn_blocking(move || reader_clone.poll_events()).await;
+                let poll_result =
+                    tokio::task::spawn_blocking(move || reader_clone.poll_events()).await;
                 match poll_result.unwrap_or(Err(anyhow::anyhow!("Poll task panicked"))) {
                     Ok(events) => {
                         for event in events {
                             // Self-audit filter: skip events generated by osoosi itself
                             // to prevent feedback loops where our own log writes trigger
                             // more anomaly detections.
-                            let is_self = event.data.get("ProcessName")
+                            let is_self = event
+                                .data
+                                .get("ProcessName")
                                 .or(event.data.get("Image"))
                                 .or(event.data.get("NewProcessName"))
                                 .and_then(|v| v.as_str())
@@ -4406,7 +5014,9 @@ impl EdrOrchestrator {
                                     lower.contains("osoosi") || lower.contains("oshoosi")
                                 })
                                 .unwrap_or(false);
-                            if is_self { continue; }
+                            if is_self {
+                                continue;
+                            }
 
                             // Synthetic Canary Filter: suppress canary heartbeats from sliding-window
                             // process tree and prevent RL baseline drift.
@@ -4418,7 +5028,7 @@ impl EdrOrchestrator {
                             let orchestrator_clone = orchestrator.clone();
                             let analyzer_clone = analyzer.clone();
                             let event_clone = event.clone();
-                            
+
                             orchestrator.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::High, async move {
                                 // Tier 1: CoLog Autonomous Sequence Check
                                 let colog_score = analyzer_clone.autonomous_check(event_clone).await;
@@ -4909,7 +5519,7 @@ impl EdrOrchestrator {
                                     }
 
                                     info!("AUTONOMOUS RESPONSE: Applying hard-block and quarantine for {}", result.file_path);
-                                    
+
                                     // 1. Block the path persistently
                                     let rule = osoosi_types::BlockingRule {
                                         path: result.file_path.clone(),
@@ -5119,11 +5729,15 @@ impl EdrOrchestrator {
                                 for ev in events {
                                     let orch = orchestrator.clone();
                                     orch.adaptive.report_event();
-                                    orchestrator.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-                                        if let Err(e) = orch.process_telemetry(ev).await {
-                                            error!("Failed to process host event: {}", e);
-                                        }
-                                    });
+                                    orchestrator.adaptive.spawn_adaptive(
+                                        ResourceCategory::IO,
+                                        Priority::Normal,
+                                        async move {
+                                            if let Err(e) = orch.process_telemetry(ev).await {
+                                                error!("Failed to process host event: {}", e);
+                                            }
+                                        },
+                                    );
                                 }
                             }
                             Err(e) => {
@@ -5178,48 +5792,62 @@ impl EdrOrchestrator {
                 let engine_inner = engine.clone();
                 let memory_inner = memory.clone();
                 let orch_inner = orch.clone();
-                
+
                 // Using spawn_adaptive to handle heavy discovery/patching logic
-                orch_inner.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
-                    match engine_inner.run_discovery().await {
-                        Ok(patches) => {
-                            let count = patches.len();
-                            let is_committed_verified = memory_inner
-                                .get_repair_status("last_state")
-                                .ok()
-                                .flatten()
-                                .as_deref()
-                                == Some("Committed · Verified");
-                            if count > 0 && !is_committed_verified {
-                                info!("Repair Engine: discovered {} missing patches", count);
-                                let _ = memory_inner.set_repair_status("pending_count", &count.to_string());
-                                if auto_apply {
-                                    let mut applied_count: usize = 0;
-                                    for patch in patches {
-                                        match engine_inner.apply_patch(patch).await {
-                                            Ok(tx) => {
-                                                if matches!(tx.state, osoosi_types::PatchState::Committed) {
-                                                    applied_count += 1;
+                orch_inner.adaptive.spawn_adaptive(
+                    ResourceCategory::IO,
+                    Priority::Low,
+                    async move {
+                        match engine_inner.run_discovery().await {
+                            Ok(patches) => {
+                                let count = patches.len();
+                                let is_committed_verified = memory_inner
+                                    .get_repair_status("last_state")
+                                    .ok()
+                                    .flatten()
+                                    .as_deref()
+                                    == Some("Committed · Verified");
+                                if count > 0 && !is_committed_verified {
+                                    info!("Repair Engine: discovered {} missing patches", count);
+                                    let _ = memory_inner
+                                        .set_repair_status("pending_count", &count.to_string());
+                                    if auto_apply {
+                                        let mut applied_count: usize = 0;
+                                        for patch in patches {
+                                            match engine_inner.apply_patch(patch).await {
+                                                Ok(tx) => {
+                                                    if matches!(
+                                                        tx.state,
+                                                        osoosi_types::PatchState::Committed
+                                                    ) {
+                                                        applied_count += 1;
+                                                    }
+                                                    let _ = memory_inner.set_repair_status(
+                                                        "last_cve",
+                                                        &tx.patch.cve_id,
+                                                    );
                                                 }
-                                                let _ = memory_inner.set_repair_status("last_cve", &tx.patch.cve_id);
-                                            }
-                                            Err(e) => {
-                                                error!("Repair Engine apply failed: {}", e);
+                                                Err(e) => {
+                                                    error!("Repair Engine apply failed: {}", e);
+                                                }
                                             }
                                         }
+                                        let remaining = count.saturating_sub(applied_count);
+                                        let _ = memory_inner.set_repair_status(
+                                            "pending_count",
+                                            &remaining.to_string(),
+                                        );
                                     }
-                                    let remaining = count.saturating_sub(applied_count);
-                                    let _ = memory_inner.set_repair_status("pending_count", &remaining.to_string());
+                                } else if is_committed_verified {
+                                    let _ = memory_inner.set_repair_status("pending_count", "0");
+                                } else {
+                                    let _ = memory_inner.set_repair_status("pending_count", "0");
                                 }
-                            } else if is_committed_verified {
-                                let _ = memory_inner.set_repair_status("pending_count", "0");
-                            } else {
-                                let _ = memory_inner.set_repair_status("pending_count", "0");
                             }
+                            Err(e) => error!("Repair Engine discovery failed: {}", e),
                         }
-                        Err(e) => error!("Repair Engine discovery failed: {}", e),
-                    }
-                });
+                    },
+                );
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
             }
         });
@@ -5303,8 +5931,12 @@ impl EdrOrchestrator {
 
         // Immediately clear pending patches and record commitment
         let _ = self.memory.set_repair_status("pending_count", "0");
-        let _ = self.memory.set_repair_status("last_state", "Committed · Verified");
-        let _ = self.memory.set_repair_status("last_at", &chrono::Utc::now().to_rfc3339());
+        let _ = self
+            .memory
+            .set_repair_status("last_state", "Committed · Verified");
+        let _ = self
+            .memory
+            .set_repair_status("last_at", &chrono::Utc::now().to_rfc3339());
         let _ = self.memory.set_repair_status("last_error", "");
 
         self.audit.log(
@@ -5332,7 +5964,9 @@ impl EdrOrchestrator {
             }
             // Preserve committed state and 0 pending count
             let _ = orch.memory.set_repair_status("pending_count", "0");
-            let _ = orch.memory.set_repair_status("last_state", "Committed · Verified");
+            let _ = orch
+                .memory
+                .set_repair_status("last_state", "Committed · Verified");
         });
 
         Ok(serde_json::json!({
@@ -5560,27 +6194,40 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // Fast Clean-Ignored Hash Bypass
-        let hash_opt = event.data.get("hash_blake3")
+        let hash_opt = event
+            .data
+            .get("hash_blake3")
             .or_else(|| event.data.get("Hash"))
             .or_else(|| event.data.get("hash"))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| {
-                event.data.get("Hashes").and_then(|v| v.as_str()).and_then(|hashes| {
-                    for prefix in ["SHA256=", "SHA256:", "SHA1=", "SHA1:", "MD5=", "MD5:"] {
-                        if let Some(val) = hashes.split(',').map(str::trim).find_map(|p| p.strip_prefix(prefix)) {
-                            let val = val.trim();
-                            if !val.is_empty() {
-                                return Some(val.to_ascii_lowercase());
+                event
+                    .data
+                    .get("Hashes")
+                    .and_then(|v| v.as_str())
+                    .and_then(|hashes| {
+                        for prefix in ["SHA256=", "SHA256:", "SHA1=", "SHA1:", "MD5=", "MD5:"] {
+                            if let Some(val) = hashes
+                                .split(',')
+                                .map(str::trim)
+                                .find_map(|p| p.strip_prefix(prefix))
+                            {
+                                let val = val.trim();
+                                if !val.is_empty() {
+                                    return Some(val.to_ascii_lowercase());
+                                }
                             }
                         }
-                    }
-                    None
-                })
+                        None
+                    })
             });
 
         if let Some(ref h) = hash_opt {
-            let is_behavioral_event = matches!(event.event_id, 1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688);
+            let is_behavioral_event = matches!(
+                event.event_id,
+                1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688
+            );
             if !is_behavioral_event && self.memory.is_hash_clean_ignored(h) {
                 debug!("Telemetry: Bypassing clean ignored hash: {}", h);
                 return Ok(());
@@ -5597,13 +6244,17 @@ impl EdrOrchestrator {
         }
 
         // Drop internal/deception operations performed by osoosi.exe itself to eliminate feedback loop
-        let image = event.data.get("Image")
+        let image = event
+            .data
+            .get("Image")
             .or_else(|| event.data.get("image"))
             .or_else(|| event.data.get("ImagePath"))
             .or_else(|| event.data.get("NewProcessName"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let pid = event.data.get("ProcessId")
+        let pid = event
+            .data
+            .get("ProcessId")
             .or_else(|| event.data.get("process_id"))
             .and_then(|v| v.as_u64());
         let is_self = image.to_lowercase().ends_with("osoosi.exe")
@@ -5611,7 +6262,9 @@ impl EdrOrchestrator {
             || image.to_lowercase().ends_with("osoosi-cli.exe")
             || pid.map(|p| p as u32 == std::process::id()).unwrap_or(false);
 
-        let target_path = event.data.get("TargetFilename")
+        let target_path = event
+            .data
+            .get("TargetFilename")
             .or_else(|| event.data.get("target_filename"))
             .or_else(|| event.data.get("TargetObject"))
             .or_else(|| event.data.get("target_object"))
@@ -5624,8 +6277,13 @@ impl EdrOrchestrator {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        if is_self && (is_internal_or_deception_path(target_path) || is_internal_or_deception_path(image)) {
-            debug!("Telemetry: Dropping internal/deception self-event by osoosi for target '{}'", target_path);
+        if is_self
+            && (is_internal_or_deception_path(target_path) || is_internal_or_deception_path(image))
+        {
+            debug!(
+                "Telemetry: Dropping internal/deception self-event by osoosi for target '{}'",
+                target_path
+            );
             return Ok(());
         }
 
@@ -5634,10 +6292,12 @@ impl EdrOrchestrator {
 
         // 1b. Periodic Telemetry Summary (for Dashboard performance)
         let total = self.telemetry_total_count.fetch_add(1, Ordering::Relaxed) + 1;
-        if total % 100 == 0 {
+        if total.is_multiple_of(100) {
             if let Ok(mut last) = self.last_telemetry_summary.try_lock() {
                 if last.elapsed() > Duration::from_secs(60) {
-                    let prev_count = self.last_telemetry_summary_count.swap(total, Ordering::Relaxed);
+                    let prev_count = self
+                        .last_telemetry_summary_count
+                        .swap(total, Ordering::Relaxed);
                     let diff = total.saturating_sub(prev_count);
                     self.audit.log(
                         "TELEMETRY_SUMMARY",
@@ -5653,7 +6313,11 @@ impl EdrOrchestrator {
         }
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
-        let current_mode = *self.adaptive.current_mode.read().unwrap_or_else(|e| e.into_inner());
+        let current_mode = *self
+            .adaptive
+            .current_mode
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let is_high_pressure = current_mode == TelemetryMode::Silent;
 
         // Deduplication: Avoid redundant heavy analysis for the same image in a burst
@@ -5664,43 +6328,62 @@ impl EdrOrchestrator {
                     return Ok(()); // Burst suppression
                 }
             }
-            self.alert_suppression_cache.insert(cache_key, Instant::now());
+            self.alert_suppression_cache
+                .insert(cache_key, Instant::now());
         }
 
         // --- IDENTITY ENRICHMENT ---
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
-             // In high pressure mode, we skip PE metadata extraction unless it's a critical process spawn
-             let should_enrich = !is_high_pressure || event.event_id == 1;
-             
-             if should_enrich {
-                 if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
-                 // Enrich event with actual on-disk version if missing or generic
-                 let needs_version = event.data.get("ProductVersion")
-                    .and_then(|v| v.as_str())
-                    .map(|v| v.is_empty() || v == "0.0.0.0" || v == "0.0.0")
-                    .unwrap_or(true);
-                 if needs_version {
-                     if let Some(obj) = event.data.as_object_mut() {
-                         obj.insert("ProductVersion".to_string(), serde_json::Value::String(meta.version.clone()));
-                     }
-                 }
-                 // Inject into event data for voters to prioritize
-                 if let Some(obj) = event.data.as_object_mut() {
-                     obj.insert("VerifiedVersion".to_string(), serde_json::Value::String(meta.version));
-                     obj.insert("VerifiedProduct".to_string(), serde_json::Value::String(meta.product_name));
-                     obj.insert("VerifiedSigned".to_string(), serde_json::Value::Bool(meta.is_signed));
-                 }
-             }
+            // In high pressure mode, we skip PE metadata extraction unless it's a critical process spawn
+            let should_enrich = !is_high_pressure || event.event_id == 1;
+
+            if should_enrich {
+                if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path))
+                {
+                    // Enrich event with actual on-disk version if missing or generic
+                    let needs_version = event
+                        .data
+                        .get("ProductVersion")
+                        .and_then(|v| v.as_str())
+                        .map(|v| v.is_empty() || v == "0.0.0.0" || v == "0.0.0")
+                        .unwrap_or(true);
+                    if needs_version {
+                        if let Some(obj) = event.data.as_object_mut() {
+                            obj.insert(
+                                "ProductVersion".to_string(),
+                                serde_json::Value::String(meta.version.clone()),
+                            );
+                        }
+                    }
+                    // Inject into event data for voters to prioritize
+                    if let Some(obj) = event.data.as_object_mut() {
+                        obj.insert(
+                            "VerifiedVersion".to_string(),
+                            serde_json::Value::String(meta.version),
+                        );
+                        obj.insert(
+                            "VerifiedProduct".to_string(),
+                            serde_json::Value::String(meta.product_name),
+                        );
+                        obj.insert(
+                            "VerifiedSigned".to_string(),
+                            serde_json::Value::Bool(meta.is_signed),
+                        );
+                    }
+                }
+            }
         }
-    }
 
         // --- MILITARY-GRADE TACTICAL ANALYSIS ---
         // Skip heavy tactical reasoning in Silent mode to preserve system responsiveness
         if !is_high_pressure {
             if let Some(mut sig) = self.military.analyze_event(&event).await {
-                warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
+                warn!(
+                    "MILITARY-GUARD: Tactical threat detected! {}",
+                    sig.reason.as_deref().unwrap_or("Unknown")
+                );
                 self.privacy.protect_signature(&mut sig);
-                
+
                 self.broadcast_threat_to_mesh(sig.clone()).await;
 
                 if sig.recommended_action == ResponseAction::Isolate {
@@ -5721,19 +6404,29 @@ impl EdrOrchestrator {
                         event.data.get("TargetProcessId").and_then(|v| v.as_u64()),
                         event.data.get("GrantedAccess").and_then(|v| v.as_str()),
                     ) {
-                        let mask = u32::from_str_radix(access_mask_str.trim_start_matches("0x"), 16).unwrap_or(0);
-                        if !self.shield.verify_process_access(source_pid as u32, target_pid as u32, mask) {
+                        let mask =
+                            u32::from_str_radix(access_mask_str.trim_start_matches("0x"), 16)
+                                .unwrap_or(0);
+                        if !self.shield.verify_process_access(
+                            source_pid as u32,
+                            target_pid as u32,
+                            mask,
+                        ) {
                             warn!("Shield violation detected! Blocking access from PID {} to target PID {}.", source_pid, target_pid);
-                            
+
                             // Log to local memory store
-                            let _ = self.memory.log_threat_event("SHIELD_ACCESS_VIOLATION", source_pid as u32, target_pid as u32);
-                            
+                            let _ = self.memory.log_threat_event(
+                                "SHIELD_ACCESS_VIOLATION",
+                                source_pid as u32,
+                                target_pid as u32,
+                            );
+
                             // BROADCAST TO MESH: Create a high-confidence signature and send to peers
                             let mut sig = osoosi_types::ThreatSignature::new("local".to_string());
                             sig.confidence = 1.0;
                             sig.reason = Some(format!("Shield Self-Defense: Blocked process access violation from PID {} (Mask: {})", source_pid, access_mask_str));
                             sig.recommended_action = osoosi_types::ResponseAction::Isolate;
-                            
+
                             // Apply Merkle Proof and Differential Privacy noise
                             self.privacy.protect_signature(&mut sig);
 
@@ -5741,15 +6434,18 @@ impl EdrOrchestrator {
 
                             // Neutralize locally
                             let _ = self.blocking_manager.block_by_pid(source_pid as u32).await;
-                            return Ok(()); 
+                            return Ok(());
                         }
                     }
-                },
+                }
                 // 2. DNS Sinkhole & Redirection
                 22 => {
                     if let Some(query) = event.data.get("QueryName").and_then(|v| v.as_str()) {
                         if let Some(sinkhole_ip) = self.shield.resolve_sinkhole(query) {
-                            info!("Shield Redirection: DNS Query for '{}' sinkholed to {}.", query, sinkhole_ip);
+                            info!(
+                                "Shield Redirection: DNS Query for '{}' sinkholed to {}.",
+                                query, sinkhole_ip
+                            );
                             // Log the redirection in audit
                             self.audit.log("DNS_SINKHOLE_REDIRECTION", serde_json::json!({
                                 "query": query,
@@ -5758,7 +6454,7 @@ impl EdrOrchestrator {
                             }));
                         }
                     }
-                },
+                }
                 _ => {}
             }
         }
@@ -5771,16 +6467,30 @@ impl EdrOrchestrator {
                     match event.event_id {
                         // 11: FileCreate, 23: FileDeleteArchived, 26: FileDeleteLogged
                         11 | 23 | 26 => {
-                            let path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+                            let path = event
+                                .data
+                                .get("TargetFilename")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
                             if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
-                                info!("🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}", pid, res);
+                                info!(
+                                    "🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}",
+                                    pid, res
+                                );
                             }
-                        },
-                        3 => { // NetworkConnect
-                            if let Some(_) = engine.handle_event(pid as u32, "exfil", "network") {
-                                info!("🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}", pid);
+                        }
+                        3 => {
+                            // NetworkConnect
+                            if engine
+                                .handle_event(pid as u32, "exfil", "network")
+                                .is_some()
+                            {
+                                info!(
+                                    "🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}",
+                                    pid
+                                );
                             }
-                        },
+                        }
                         _ => {}
                     }
                 }
@@ -5791,41 +6501,63 @@ impl EdrOrchestrator {
         {
             if event.event_id == 1 || event.event_id == 0 || event.event_id == 4688 {
                 if let Some(pid) = extract_event_pid(&event) {
-                    let image = event.data.get("Image")
+                    let image = event
+                        .data
+                        .get("Image")
                         .or_else(|| event.data.get("NewProcessName"))
                         .or_else(|| event.data.get("image"))
                         .or_else(|| event.data.get("ImagePath"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    let flags = event.data.get("CreationFlags")
+                    let flags = event
+                        .data
+                        .get("CreationFlags")
                         .or_else(|| event.data.get("create_flags"))
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32;
-                    let is_suspended_cmd = event.data.get("CommandLine")
+                    let is_suspended_cmd = event
+                        .data
+                        .get("CommandLine")
                         .and_then(|v| v.as_str())
                         .map(|c| c.contains("CREATE_SUSPENDED"))
                         .unwrap_or(false);
-                    if (flags & osoosi_telemetry::hollowing::CREATE_SUSPENDED != 0) || flags == 4 || is_suspended_cmd {
-                        self.hollowing_detector.on_process_create(pid, image, osoosi_telemetry::hollowing::CREATE_SUSPENDED);
+                    if (flags & osoosi_telemetry::hollowing::CREATE_SUSPENDED != 0)
+                        || flags == 4
+                        || is_suspended_cmd
+                    {
+                        self.hollowing_detector.on_process_create(
+                            pid,
+                            image,
+                            osoosi_telemetry::hollowing::CREATE_SUSPENDED,
+                        );
                     }
                 }
             } else if event.event_id == 8 || event.event_id == 10 || event.event_id == 25 {
-                let target_pid = event.data.get("TargetProcessId")
+                let target_pid = event
+                    .data
+                    .get("TargetProcessId")
                     .and_then(|v| {
                         v.as_u64().map(|n| n as u32).or_else(|| {
-                            v.as_str().and_then(|s| s.trim().trim_start_matches("0x").parse::<u32>().ok())
+                            v.as_str()
+                                .and_then(|s| s.trim().trim_start_matches("0x").parse::<u32>().ok())
                         })
                     })
                     .or_else(|| extract_event_pid(&event));
-                let source_pid = event.data.get("SourceProcessId")
+                let source_pid = event
+                    .data
+                    .get("SourceProcessId")
                     .and_then(|v| {
                         v.as_u64().map(|n| n as u32).or_else(|| {
-                            v.as_str().and_then(|s| s.trim().trim_start_matches("0x").parse::<u32>().ok())
+                            v.as_str()
+                                .and_then(|s| s.trim().trim_start_matches("0x").parse::<u32>().ok())
                         })
                     })
                     .unwrap_or(0);
                 if let Some(t_pid) = target_pid {
-                    if self.hollowing_detector.on_remote_memory_write(t_pid, source_pid) {
+                    if self
+                        .hollowing_detector
+                        .on_remote_memory_write(t_pid, source_pid)
+                    {
                         warn!("HOLLOWING INTERCEPTION: Confirmed process hollowing! Suspended PID {} received remote memory writes from PID {}", t_pid, source_pid);
                     }
                 }
@@ -5844,15 +6576,22 @@ impl EdrOrchestrator {
             // Try cache first
             if let Ok(Some((_, _, Some(version)))) = self.memory.get_file_integrity(image_path) {
                 if let Some(obj) = event.data.as_object_mut() {
-                    obj.insert("ProductVersion".to_string(), serde_json::Value::String(version));
+                    obj.insert(
+                        "ProductVersion".to_string(),
+                        serde_json::Value::String(version),
+                    );
                 }
             } else {
                 // Resolve and update cache if it's a process create or image load
-                if event.event_id == 1 || event.event_id == 7 // ProcessCreate | ImageLoad
+                if event.event_id == 1 || event.event_id == 7
+                // ProcessCreate | ImageLoad
                 {
                     if let Some(version) = version_utils::get_file_version_info(path) {
                         if let Some(obj) = event.data.as_object_mut() {
-                            obj.insert("ProductVersion".to_string(), serde_json::Value::String(version));
+                            obj.insert(
+                                "ProductVersion".to_string(),
+                                serde_json::Value::String(version),
+                            );
                         }
                     }
                 }
@@ -5864,21 +6603,35 @@ impl EdrOrchestrator {
 
         // Route into Behavioral Analysis Pipeline (SecureBERT / CoLog autonomous sequence check)
         let log_ev = osoosi_behavioral::LogEvent::from(&event);
-        let colog_score = self.behavioral_analyzer.autonomous_check(log_ev.clone()).await;
+        let colog_score = self
+            .behavioral_analyzer
+            .autonomous_check(log_ev.clone())
+            .await;
         if colog_score > 0.85 {
-            warn!("BEHAVIORAL PIPELINE: Sysmon/Host anomaly detected (score={:.2}) for source {}", colog_score, log_ev.source);
+            warn!(
+                "BEHAVIORAL PIPELINE: Sysmon/Host anomaly detected (score={:.2}) for source {}",
+                colog_score, log_ev.source
+            );
             if let Some(ref mut sig) = signature {
                 sig.confidence = (sig.confidence + 0.25).min(1.0);
-                sig.add_reason(format!("Behavioral CoLog Anomaly: score {:.2}", colog_score));
+                sig.add_reason(format!(
+                    "Behavioral CoLog Anomaly: score {:.2}",
+                    colog_score
+                ));
             } else {
                 let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
                 sig.confidence = colog_score;
-                sig.process_name = event.data.get("Image")
+                sig.process_name = event
+                    .data
+                    .get("Image")
                     .and_then(|i| i.as_str())
                     .and_then(|p| std::path::Path::new(p).file_name())
                     .and_then(|n| n.to_str())
                     .map(String::from);
-                sig.add_reason(format!("Behavioral Pipeline: CoLog sequence deviation (score {:.2})", colog_score));
+                sig.add_reason(format!(
+                    "Behavioral Pipeline: CoLog sequence deviation (score {:.2})",
+                    colog_score
+                ));
                 signature = Some(sig);
             }
         }
@@ -5900,7 +6653,7 @@ impl EdrOrchestrator {
                     if entropy > 7.0 {
                         warn!("High entropy detected (packed/encrypted): {} - {:.2}", path.display(), entropy);
                     }
-                    
+
                     let is_browser = image_path.to_lowercase().contains("chrome.exe")
                         || image_path.to_lowercase().contains("msedge.exe")
                         || image_path.to_lowercase().contains("firefox.exe");
@@ -5923,7 +6676,7 @@ impl EdrOrchestrator {
             signature
         })
         .await?
-    };
+        };
 
         if let Some(mut signature) = signature {
             info!(
@@ -5947,15 +6700,18 @@ impl EdrOrchestrator {
                                 tag.push(chars.next().unwrap());
                             }
                             let trimmed = tag.trim();
-                            if !trimmed.is_empty() && !trimmed.starts_with("Veto") && !trimmed.starts_with("Tags:") {
-                                if !voters.contains(&trimmed.to_string()) {
-                                    voters.push(trimmed.to_string());
-                                }
+                            if !trimmed.is_empty()
+                                && !trimmed.starts_with("Veto")
+                                && !trimmed.starts_with("Tags:")
+                                && !voters.contains(&trimmed.to_string())
+                            {
+                                voters.push(trimmed.to_string());
                             }
                         }
                     }
                     if !voters.is_empty() {
-                        self.policy.update_specific_voter_weights(&voters, true, 0.02);
+                        self.policy
+                            .update_specific_voter_weights(&voters, true, 0.02);
                         info!(
                             target: crate::CONSENSUS_LOG_TARGET,
                             voters = ?voters,
@@ -5970,45 +6726,67 @@ impl EdrOrchestrator {
                 }
             }
 
-            let p_name = signature.process_name.clone().or_else(|| {
-                for field in &["Image", "NewProcessName", "ProcessName", "ImagePath", "SourceImage", "TargetImage", "Application"] {
-                    if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
-                        if let Some(n) = std::path::Path::new(val).file_name().and_then(|n| n.to_str()) {
-                            if !n.trim().is_empty() && n != "unknown" {
-                                return Some(n.to_string());
+            let p_name = signature
+                .process_name
+                .clone()
+                .or_else(|| {
+                    for field in &[
+                        "Image",
+                        "NewProcessName",
+                        "ProcessName",
+                        "ImagePath",
+                        "SourceImage",
+                        "TargetImage",
+                        "Application",
+                    ] {
+                        if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+                            if let Some(n) = std::path::Path::new(val)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                            {
+                                if !n.trim().is_empty() && n != "unknown" {
+                                    return Some(n.to_string());
+                                }
                             }
                         }
                     }
-                }
-                for field in &["CommandLine", "command_line", "cmdline", "Command"] {
-                    if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
-                        let trimmed = cmd.trim();
-                        if !trimmed.is_empty() {
-                            let first_tok = if trimmed.starts_with('"') {
-                                trimmed[1..].split('"').next().unwrap_or(trimmed)
-                            } else if trimmed.starts_with('\'') {
-                                trimmed[1..].split('\'').next().unwrap_or(trimmed)
-                            } else {
-                                trimmed.split_whitespace().next().unwrap_or(trimmed)
-                            };
-                            let fname = std::path::Path::new(first_tok).file_name().and_then(|n| n.to_str()).unwrap_or(first_tok);
-                            if !fname.trim().is_empty() && fname != "unknown" {
-                                return Some(fname.to_string());
+                    for field in &["CommandLine", "command_line", "cmdline", "Command"] {
+                        if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
+                            let trimmed = cmd.trim();
+                            if !trimmed.is_empty() {
+                                let first_tok = if trimmed.starts_with('"') {
+                                    trimmed[1..].split('"').next().unwrap_or(trimmed)
+                                } else if trimmed.starts_with('\'') {
+                                    trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                                } else {
+                                    trimmed.split_whitespace().next().unwrap_or(trimmed)
+                                };
+                                let fname = std::path::Path::new(first_tok)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(first_tok);
+                                if !fname.trim().is_empty() && fname != "unknown" {
+                                    return Some(fname.to_string());
+                                }
                             }
                         }
                     }
-                }
-                None
-            }).unwrap_or_else(|| "unknown".to_string());
+                    None
+                })
+                .unwrap_or_else(|| "unknown".to_string());
 
-            let f_path = event.data.get("Image")
+            let f_path = event
+                .data
+                .get("Image")
                 .or_else(|| event.data.get("NewProcessName"))
                 .or_else(|| event.data.get("ImagePath"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
-            let cmd_line = event.data.get("CommandLine")
+            let cmd_line = event
+                .data
+                .get("CommandLine")
                 .or_else(|| event.data.get("command_line"))
                 .or_else(|| event.data.get("cmdline"))
                 .or_else(|| event.data.get("ParentCommandLine"))
@@ -6016,32 +6794,41 @@ impl EdrOrchestrator {
                 .unwrap_or("")
                 .to_string();
 
-            let hash_val = signature.hash_blake3.clone().or_else(|| {
-                event.data.get("Hashes").and_then(|v| v.as_str()).map(|s| s.to_string())
-            }).unwrap_or_else(|| {
-                if !f_path.is_empty() {
-                    std::fs::read(&f_path)
-                        .map(|b| blake3::hash(&b).to_hex().to_string())
-                        .unwrap_or_else(|_| {
-                            if !cmd_line.is_empty() {
-                                blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
-                            } else {
-                                blake3::hash(signature.id.as_bytes()).to_hex().to_string()
-                            }
-                        })
-                } else if !cmd_line.is_empty() {
-                    blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
-                } else {
-                    blake3::hash(signature.id.as_bytes()).to_hex().to_string()
-                }
-            });
+            let hash_val = signature
+                .hash_blake3
+                .clone()
+                .or_else(|| {
+                    event
+                        .data
+                        .get("Hashes")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| {
+                    if !f_path.is_empty() {
+                        std::fs::read(&f_path)
+                            .map(|b| blake3::hash(&b).to_hex().to_string())
+                            .unwrap_or_else(|_| {
+                                if !cmd_line.is_empty() {
+                                    blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                                } else {
+                                    blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                                }
+                            })
+                    } else if !cmd_line.is_empty() {
+                        blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                    } else {
+                        blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                    }
+                });
 
             signature.process_name = Some(p_name.clone());
             signature.hash_blake3 = Some(hash_val.clone());
 
             // 2. Autonomous Remediation Logic (Lockdown Mode and Active Response)
             let autonomy = osoosi_types::load_autonomy_config();
-            let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+            let is_lockdown_mode =
+                autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
             let is_critical_attack = is_critical_security_attack(&signature, &event);
             let is_destructive = is_destructive_mutation(&signature, &event);
             let has_mitre_technique = signature
@@ -6133,7 +6920,9 @@ impl EdrOrchestrator {
 
             // Dynamic forensic sandbox execution if confidence >= 0.85
             if signature.confidence >= 0.85 {
-                let target_path = event.data.get("Image")
+                let target_path = event
+                    .data
+                    .get("Image")
                     .or_else(|| event.data.get("TargetFilename"))
                     .or_else(|| event.data.get("ImagePath"))
                     .or_else(|| event.data.get("NewProcessName"))
@@ -6143,7 +6932,8 @@ impl EdrOrchestrator {
                     if tp_buf.exists() && tp_buf.is_file() {
                         if crate::secured_executor::OpenShellExecutor::is_available().await {
                             tokio::spawn(async move {
-                                let executor = crate::secured_executor::get_forensic_executor().await;
+                                let executor =
+                                    crate::secured_executor::get_forensic_executor().await;
                                 let cmd = std::process::Command::new(&tp_buf);
                                 info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", tp_buf);
                                 let _ = executor.execute(cmd).await;
@@ -6157,7 +6947,9 @@ impl EdrOrchestrator {
 
             match effective_action {
                 ResponseAction::Isolate => {
-                    let image_opt = event.data.get("Image")
+                    let image_opt = event
+                        .data
+                        .get("Image")
                         .or_else(|| event.data.get("NewProcessName"))
                         .or_else(|| event.data.get("image"))
                         .or_else(|| event.data.get("ImagePath"))
@@ -6173,16 +6965,16 @@ impl EdrOrchestrator {
                         // GENERAL SAFELIST GUARD: Never block trusted developer/operational binaries UNLESS they exhibit confirmed malicious behavior.
                         let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
                         let reason = signature.reason.as_deref().unwrap_or("");
-                        let is_behavioral_threat = reason.contains("Behavioral") || 
-                                                    reason.contains("Yara") || 
-                                                    reason.contains("Memory") || 
-                                                    reason.contains("Hollows-Hunter");
-                        
+                        let is_behavioral_threat = reason.contains("Behavioral")
+                            || reason.contains("Yara")
+                            || reason.contains("Memory")
+                            || reason.contains("Hollows-Hunter");
+
                         if is_trusted && !is_behavioral_threat {
                             warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
                             return Ok(());
                         }
-                        
+
                         if is_trusted && is_behavioral_threat {
                             warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
                         }
@@ -6194,11 +6986,15 @@ impl EdrOrchestrator {
                         };
                         // Apply dynamic Sysmon block
                         let bm = self.blocking_manager.clone();
-                        self.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-                            if let Err(e) = bm.add_rule(rule).await {
-                                error!("Failed to apply autonomous block: {}", e);
-                            }
-                        });
+                        self.adaptive.spawn_adaptive(
+                            ResourceCategory::IO,
+                            Priority::Normal,
+                            async move {
+                                if let Err(e) = bm.add_rule(rule).await {
+                                    error!("Failed to apply autonomous block: {}", e);
+                                }
+                            },
+                        );
 
                         // Apply Ring-0 kernel driver block
                         if let Some(ref kd) = *self.kernel_driver.read() {
@@ -6227,7 +7023,9 @@ impl EdrOrchestrator {
                         }
 
                         // Autonomous non-destructive account containment for T1136.001
-                        if let Some(cmd) = event.data.get("CommandLine")
+                        if let Some(cmd) = event
+                            .data
+                            .get("CommandLine")
                             .or_else(|| event.data.get("command_line"))
                             .or_else(|| event.data.get("cmdline"))
                             .and_then(|v| v.as_str())
@@ -6261,8 +7059,13 @@ impl EdrOrchestrator {
                             if !debounced {
                                 RECENT_TARPITTED_PIDS.insert(pid, now);
                                 warn!("Immediately freezing process threads via ActiveProcessTarpit for PID: {}", pid);
-                                let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
-                                let dur_secs = if action == ResponseAction::GhostTarpit { 120 } else { 60 };
+                                let active_tarpit =
+                                    osoosi_runtime::tarpit::ActiveProcessTarpit::new();
+                                let dur_secs = if action == ResponseAction::GhostTarpit {
+                                    120
+                                } else {
+                                    60
+                                };
                                 active_tarpit.trap_pid(
                                     pid,
                                     std::time::Duration::from_millis(500),
@@ -6270,7 +7073,9 @@ impl EdrOrchestrator {
                                 );
                             }
                         }
-                        if let Some(cmd) = event.data.get("CommandLine")
+                        if let Some(cmd) = event
+                            .data
+                            .get("CommandLine")
                             .or_else(|| event.data.get("command_line"))
                             .or_else(|| event.data.get("cmdline"))
                             .and_then(|v| v.as_str())
@@ -6286,11 +7091,15 @@ impl EdrOrchestrator {
                     let orch = self.clone();
                     let ev = event.clone();
                     let sig = signature.clone();
-                    self.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::Normal, async move {
-                        if let Err(e) = orch.perform_action(&ev, &sig, action).await {
-                            error!("Failed to perform response action {:?}: {}", action, e);
-                        }
-                    });
+                    self.adaptive.spawn_adaptive(
+                        ResourceCategory::AI,
+                        Priority::Normal,
+                        async move {
+                            if let Err(e) = orch.perform_action(&ev, &sig, action).await {
+                                error!("Failed to perform response action {:?}: {}", action, e);
+                            }
+                        },
+                    );
                 }
             }
         }
@@ -6319,8 +7128,10 @@ impl EdrOrchestrator {
         let mut signature: Option<osoosi_types::ThreatSignature> = correlated_sig;
 
         // PII Scanning for File creations
-        if event.event_id == 11 { // 11: FileCreate
-            if let Some(target_filename) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
+        if event.event_id == 11 {
+            // 11: FileCreate
+            if let Some(target_filename) = event.data.get("TargetFilename").and_then(|v| v.as_str())
+            {
                 if self.pii_classifier.is_scannable(target_filename) {
                     let pii_classifier = self.pii_classifier.clone();
                     let file_path = target_filename.to_string();
@@ -6432,7 +7243,8 @@ impl EdrOrchestrator {
 
         // Behavioral baselining: record and detect first-connection anomalies
         let baseline_anomaly = match event.event_id {
-            3 => { // NetworkConnect
+            3 => {
+                // NetworkConnect
                 let proc = event
                     .data
                     .get("Image")
@@ -6447,7 +7259,8 @@ impl EdrOrchestrator {
                     .unwrap_or("");
                 self.baseline.record_network(&event.computer, proc, dest)
             }
-            22 => { // DnsQuery
+            22 => {
+                // DnsQuery
                 let proc = event
                     .data
                     .get("Image")
@@ -6465,7 +7278,8 @@ impl EdrOrchestrator {
             _ => false,
         };
 
-        if matches!(event.event_id, 22) { // DnsQuery
+        if matches!(event.event_id, 22) {
+            // DnsQuery
             if let Some(dns_sig) = self.analyze_dns_query_risk(&event).await {
                 let take_dns_sig = signature
                     .as_ref()
@@ -6516,14 +7330,13 @@ impl EdrOrchestrator {
                     .unwrap_or(false);
                 let trusted_operational = is_trusted_operational_image(&event, &self.policy.config);
 
-                
                 if is_fp {
                     tracing::debug!(
                         "ML threat model suppressed false positive pattern for process {:?}",
                         proc
                     );
                 } else if trusted_operational {
-                    // SUPPRESSION: If it's a trusted tool, never emit a standalone ML alarm 
+                    // SUPPRESSION: If it's a trusted tool, never emit a standalone ML alarm
                     // regardless of CVE status. A vulnerability is not a behavioral threat.
                     // Note: We use 1.1 because some features can cap at 1.0.
                     if score < 1.1 {
@@ -6599,7 +7412,8 @@ impl EdrOrchestrator {
                         match analyzer.analyze_file(&path_buf).await {
                             Ok(Some(static_sig)) => {
                                 warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path_buf);
-                                if let Some(pid) = ev.data.get("ProcessId").and_then(|v| v.as_u64()) {
+                                if let Some(pid) = ev.data.get("ProcessId").and_then(|v| v.as_u64())
+                                {
                                     if let Some(reason) = &static_sig.reason {
                                         for r in reason.split(';') {
                                             orch.correlator.add_static_finding(
@@ -6634,7 +7448,8 @@ impl EdrOrchestrator {
         #[cfg(target_os = "windows")]
         {
             let should_memory_scan = match event.event_id {
-                10 => { // ProcessAccess
+                10 => {
+                    // ProcessAccess
                     // Check if target is lsass.exe (credential dumping)
                     let target = event
                         .data
@@ -6643,11 +7458,13 @@ impl EdrOrchestrator {
                         .unwrap_or("");
                     target.to_lowercase().contains("lsass.exe")
                 }
-                8 => { // CreateRemoteThread
+                8 => {
+                    // CreateRemoteThread
                     // Any remote thread creation is suspicious — scan both source and target
                     true
                 }
-                25 => { // ProcessTampering (Hollowing / Herpaderping)
+                25 => {
+                    // ProcessTampering (Hollowing / Herpaderping)
                     true
                 }
                 _ => false,
@@ -6667,54 +7484,57 @@ impl EdrOrchestrator {
                     });
 
                 if let Some(pid) = target_pid {
-                        warn!(
-                            "MEMORY FORENSICS: Sysmon {:?} triggered native memory scan on PID {}",
-                            event.event_id, pid
-                        );
+                    warn!(
+                        "MEMORY FORENSICS: Sysmon {:?} triggered native memory scan on PID {}",
+                        event.event_id, pid
+                    );
 
-                        let computer = event.computer.clone();
-                        let target_image = event
-                            .data
-                            .get("TargetImage")
-                            .or_else(|| event.data.get("SourceImage"))
-                            .and_then(|v| v.as_str())
-                            .and_then(|p| std::path::Path::new(p).file_name())
-                            .and_then(|n| n.to_str())
-                            .map(String::from);
+                    let computer = event.computer.clone();
+                    let target_image = event
+                        .data
+                        .get("TargetImage")
+                        .or_else(|| event.data.get("SourceImage"))
+                        .and_then(|v| v.as_str())
+                        .and_then(|p| std::path::Path::new(p).file_name())
+                        .and_then(|n| n.to_str())
+                        .map(String::from);
 
-                        // Run Native Rust MemoryScanner
-                        let scanner = osoosi_memory::memory_scanner::MemoryScanner::new();
-                        match scanner.scan_process_memory(pid).await {
-                            Ok(results) => {
-                                if !results.is_empty() {
-                                    warn!("MEMORY FORENSICS ALERT: Native memory scanner found {} suspicious implants in PID {}",
+                    // Run Native Rust MemoryScanner
+                    let scanner = osoosi_memory::memory_scanner::MemoryScanner::new();
+                    match scanner.scan_process_memory(pid).await {
+                        Ok(results) => {
+                            if !results.is_empty() {
+                                warn!("MEMORY FORENSICS ALERT: Native memory scanner found {} suspicious implants in PID {}",
                                         results.len(), pid);
 
-                                    let mut mem_sig = osoosi_types::ThreatSignature::new(computer);
-                                    mem_sig.confidence = 0.95;
-                                    mem_sig.process_name = target_image;
-                                    mem_sig.recommended_action = osoosi_types::ResponseAction::Isolate;
-                                    mem_sig.add_reason(format!(
-                                        "Native Memory Scanner: {} in-memory implants detected",
-                                        results.len()
-                                    ));
+                                let mut mem_sig = osoosi_types::ThreatSignature::new(computer);
+                                mem_sig.confidence = 0.95;
+                                mem_sig.process_name = target_image;
+                                mem_sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                                mem_sig.add_reason(format!(
+                                    "Native Memory Scanner: {} in-memory implants detected",
+                                    results.len()
+                                ));
 
-                                    for res in results.iter().take(5) {
-                                        mem_sig.add_reason(format!("Detail: {}", res));
-                                    }
-
-                                    signature = Some(mem_sig);
-                                } else {
-                                    debug!("Memory Scanner: PID {} clean — no in-memory implants found.", pid);
+                                for res in results.iter().take(5) {
+                                    mem_sig.add_reason(format!("Detail: {}", res));
                                 }
+
+                                signature = Some(mem_sig);
+                            } else {
+                                debug!(
+                                    "Memory Scanner: PID {} clean — no in-memory implants found.",
+                                    pid
+                                );
                             }
-                            Err(e) => {
-                                debug!("Memory Scanner execution failed for PID {}: {}", pid, e);
-                            }
+                        }
+                        Err(e) => {
+                            debug!("Memory Scanner execution failed for PID {}: {}", pid, e);
                         }
                     }
                 }
             }
+        }
 
         if let Some(signature) = signature {
             self.handle_threat(&event, signature).await?;
@@ -6756,7 +7576,7 @@ impl EdrOrchestrator {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
                 signature.is_signed = meta.is_signed;
-                
+
                 // SECONDARY CHECK: WinVerifyTrust for Catalog-Signed binaries (UWP/HxTsr.exe)
                 #[cfg(target_os = "windows")]
                 if !signature.is_signed {
@@ -6773,22 +7593,30 @@ impl EdrOrchestrator {
 
         // Enrich signature with MITRE ATT&CK Framework metadata if missing
         if signature.mitre_technique.is_none() {
-            let image = event.data.get("Image")
+            let image = event
+                .data
+                .get("Image")
                 .or_else(|| event.data.get("image"))
                 .or_else(|| event.data.get("ImagePath"))
                 .and_then(|v| v.as_str())
                 .unwrap_or_else(|| signature.process_name.as_deref().unwrap_or(""));
-            let cmdline = event.data.get("CommandLine")
+            let cmdline = event
+                .data
+                .get("CommandLine")
                 .or_else(|| event.data.get("command_line"))
                 .or_else(|| event.data.get("cmdline"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             let reason_str = signature.reason.as_deref().unwrap_or("");
-            if let Some((tac, tech, name)) = osoosi_policy::mitre_kb::extract_mitre_from_text(reason_str) {
+            if let Some((tac, tech, name)) =
+                osoosi_policy::mitre_kb::extract_mitre_from_text(reason_str)
+            {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
-            } else if let Some((tac, tech, name)) = osoosi_policy::mitre_kb::infer_mitre_from_event(event.event_id, image, cmdline) {
+            } else if let Some((tac, tech, name)) =
+                osoosi_policy::mitre_kb::infer_mitre_from_event(event.event_id, image, cmdline)
+            {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
@@ -6796,17 +7624,18 @@ impl EdrOrchestrator {
         }
 
         let suppression_key = Self::compute_suppression_key(&signature);
-            
+
         let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
         if let Some(last) = self.alert_suppression_cache.get(&suppression_key) {
             if last.elapsed() < cooldown {
                 return Ok(()); // Strong deduplication
             }
         }
-        self.alert_suppression_cache.insert(suppression_key, Instant::now());
+        self.alert_suppression_cache
+            .insert(suppression_key, Instant::now());
 
         // 0. Supreme Court: Use P2P mesh as an authority for lower-confidence local alerts.
-        // If our local models are unsure (confidence < 0.85), we check if the mesh "Supreme Court" 
+        // If our local models are unsure (confidence < 0.85), we check if the mesh "Supreme Court"
         // has already ruled on this binary hash.
         if signature.confidence < 0.85 {
             if let Some(hash) = signature.hash_blake3.as_deref() {
@@ -6854,7 +7683,10 @@ impl EdrOrchestrator {
 
             let forensics_client = self.forensics.clone();
             let audit = self.audit.clone();
-            let alert_id = signature.reason.clone().unwrap_or_else(|| "ALERT".to_string());
+            let alert_id = signature
+                .reason
+                .clone()
+                .unwrap_or_else(|| "ALERT".to_string());
             let tech_str = tech_opt.map(String::from);
             let path_str = target_path.map(String::from);
 
@@ -6928,7 +7760,9 @@ impl EdrOrchestrator {
         let mut decision_override: Option<ResponseAction> = None;
         if self.decision_engine.is_enabled() {
             let proc_str = signature.process_name.as_deref().unwrap_or("Unknown");
-            let cmd_str = event.data.get("CommandLine")
+            let cmd_str = event
+                .data
+                .get("CommandLine")
                 .or_else(|| event.data.get("command_line"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("None");
@@ -6940,7 +7774,11 @@ impl EdrOrchestrator {
                 san_proc, san_cmd, signature.mitre_technique, signature.confidence, signature.is_signed, injection_flag
             );
 
-            match self.decision_engine.evaluate_security_incident(&state_text).await {
+            match self
+                .decision_engine
+                .evaluate_security_incident(&state_text)
+                .await
+            {
                 Ok(decision) => {
                     debug!(
                         "[DECISION] Incident evaluated in {:.2}ms via {}: verdict='{}' ({:.2}), action='{}' ({:.2}), human_req={}",
@@ -6950,7 +7788,10 @@ impl EdrOrchestrator {
 
                     // 1. Noise Suppression: Suppress benign false-positive noise before mesh broadcast or YARA generation
                     // Reject suppression if prompt injection was detected
-                    if !injection_flag && decision.verdict == "benign" && decision.verdict_probability >= 0.90 {
+                    if !injection_flag
+                        && decision.verdict == "benign"
+                        && decision.verdict_probability >= 0.90
+                    {
                         info!(
                             "[DECISION] Benign verdict ({:.2}) from Clef decision model. Suppressing alert.",
                             decision.verdict_probability
@@ -7021,15 +7862,19 @@ impl EdrOrchestrator {
         if signature.confidence >= 0.8 {
             if let Some(rule) = crate::yara_gen::generate_yara_from_threat(&signature) {
                 let _ = self.yara_manager.hot_load_rule(&rule, &signature.id);
-                info!("[YARA] Hot-loaded auto-generated YARA rule for threat '{}'. Engine updated.", signature.id);
+                info!(
+                    "[YARA] Hot-loaded auto-generated YARA rule for threat '{}'. Engine updated.",
+                    signature.id
+                );
             }
         }
 
         // 3. Dispatch Active Response based on Decision Matrix
         let autonomy = osoosi_types::load_autonomy_config();
-        let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
-        let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
-        let is_destructive = is_destructive_mutation(&signature, &event);
+        let is_lockdown_mode =
+            autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+        let is_catalog_attack = is_mitre_catalog_attack(&signature, event);
+        let is_destructive = is_destructive_mutation(&signature, event);
         let has_mitre_technique = signature
             .mitre_technique
             .as_ref()
@@ -7094,77 +7939,108 @@ impl EdrOrchestrator {
             && !is_catalog_attack
             && signature.cve_id.is_none()
             && !is_destructive
+            && autonomy.action_confidence_threshold > 0.40
         {
-            if autonomy.action_confidence_threshold > 0.40 {
-                info!(
+            info!(
                     "Corroboration Gate: Single detector (count={}) without catalog or CVE corroboration. Requiring operator approval before Isolate.",
                     signature.detector_count
                 );
-                signature.require_approval = true;
-            }
+            signature.require_approval = true;
         }
 
         // Platform-specific safety check: Validate Windows system files with SFC before isolation.
         #[cfg(target_os = "windows")]
         {
             if effective_action != ResponseAction::Alert {
-                if let Some(file_path) = event.data.get("Image")
+                if let Some(file_path) = event
+                    .data
+                    .get("Image")
                     .or_else(|| event.data.get("NewProcessName"))
                     .or_else(|| event.data.get("image"))
                     .or_else(|| event.data.get("ImagePath"))
                     .and_then(|i| i.as_str())
                 {
-                    let is_active_threat = is_lockdown_mode || is_catalog_attack || is_destructive || has_mitre_technique;
+                    let is_active_threat = is_lockdown_mode
+                        || is_catalog_attack
+                        || is_destructive
+                        || has_mitre_technique;
                     // In Lockdown Mode or for administrative LOLBins executing active threats, SFC safety override is disallowed.
-                    if !is_lockdown_mode && !crate::system_check::is_administrative_lolbin(file_path) {
-                        if crate::system_check::validate_file_safety_with_veto(file_path, is_active_threat).await {
-                            warn!("SFC SAFETY OVERRIDE: File {} verified as clean system binary by Windows SFC. Downgrading action to Alert.", file_path);
-                            effective_action = ResponseAction::Alert;
-                        }
+                    if !is_lockdown_mode
+                        && !crate::system_check::is_administrative_lolbin(file_path)
+                        && crate::system_check::validate_file_safety_with_veto(
+                            file_path,
+                            is_active_threat,
+                        )
+                        .await
+                    {
+                        warn!("SFC SAFETY OVERRIDE: File {} verified as clean system binary by Windows SFC. Downgrading action to Alert.", file_path);
+                        effective_action = ResponseAction::Alert;
                     }
                 }
             }
         }
 
-        let p_name = signature.process_name.clone().or_else(|| {
-            for field in &["Image", "NewProcessName", "ProcessName", "ImagePath", "SourceImage", "TargetImage", "Application"] {
-                if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
-                    if let Some(n) = std::path::Path::new(val).file_name().and_then(|n| n.to_str()) {
-                        if !n.trim().is_empty() && n != "unknown" {
-                            return Some(n.to_string());
+        let p_name = signature
+            .process_name
+            .clone()
+            .or_else(|| {
+                for field in &[
+                    "Image",
+                    "NewProcessName",
+                    "ProcessName",
+                    "ImagePath",
+                    "SourceImage",
+                    "TargetImage",
+                    "Application",
+                ] {
+                    if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+                        if let Some(n) = std::path::Path::new(val)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                        {
+                            if !n.trim().is_empty() && n != "unknown" {
+                                return Some(n.to_string());
+                            }
                         }
                     }
                 }
-            }
-            for field in &["CommandLine", "command_line", "cmdline", "Command"] {
-                if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
-                    let trimmed = cmd.trim();
-                    if !trimmed.is_empty() {
-                        let first_tok = if trimmed.starts_with('"') {
-                            trimmed[1..].split('"').next().unwrap_or(trimmed)
-                        } else if trimmed.starts_with('\'') {
-                            trimmed[1..].split('\'').next().unwrap_or(trimmed)
-                        } else {
-                            trimmed.split_whitespace().next().unwrap_or(trimmed)
-                        };
-                        let fname = std::path::Path::new(first_tok).file_name().and_then(|n| n.to_str()).unwrap_or(first_tok);
-                        if !fname.trim().is_empty() && fname != "unknown" {
-                            return Some(fname.to_string());
+                for field in &["CommandLine", "command_line", "cmdline", "Command"] {
+                    if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
+                        let trimmed = cmd.trim();
+                        if !trimmed.is_empty() {
+                            let first_tok = if trimmed.starts_with('"') {
+                                trimmed[1..].split('"').next().unwrap_or(trimmed)
+                            } else if trimmed.starts_with('\'') {
+                                trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                            } else {
+                                trimmed.split_whitespace().next().unwrap_or(trimmed)
+                            };
+                            let fname = std::path::Path::new(first_tok)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or(first_tok);
+                            if !fname.trim().is_empty() && fname != "unknown" {
+                                return Some(fname.to_string());
+                            }
                         }
                     }
                 }
-            }
-            None
-        }).unwrap_or_else(|| "unknown".to_string());
+                None
+            })
+            .unwrap_or_else(|| "unknown".to_string());
 
-        let f_path = event.data.get("Image")
+        let f_path = event
+            .data
+            .get("Image")
             .or_else(|| event.data.get("NewProcessName"))
             .or_else(|| event.data.get("ImagePath"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
 
-        let cmd_line = event.data.get("CommandLine")
+        let cmd_line = event
+            .data
+            .get("CommandLine")
             .or_else(|| event.data.get("command_line"))
             .or_else(|| event.data.get("cmdline"))
             .and_then(|v| v.as_str())
@@ -7288,14 +8164,21 @@ impl EdrOrchestrator {
         {
             let swarm_service_url = swarm_cfg.service_url.trim_end_matches('/').to_string();
             let incident_target_pid = crate::extract_raw_event_pid(event).unwrap_or(0);
-            let incident_target_name = signature.process_name.clone().unwrap_or_else(|| "unknown.exe".to_string());
-            let incident_target_path = event.data.get("Image")
+            let incident_target_name = signature
+                .process_name
+                .clone()
+                .unwrap_or_else(|| "unknown.exe".to_string());
+            let incident_target_path = event
+                .data
+                .get("Image")
                 .or_else(|| event.data.get("TargetFilename"))
                 .or_else(|| event.data.get("ImagePath"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let incident_cmdline = event.data.get("CommandLine")
+            let incident_cmdline = event
+                .data
+                .get("CommandLine")
                 .or_else(|| event.data.get("command_line"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
@@ -7303,7 +8186,7 @@ impl EdrOrchestrator {
             let incident_engine = signature.id.clone();
             let incident_conf = signature.confidence;
             let incident_mitre = signature.mitre_technique.clone();
-            let incident_id = format!("INC-{}", &signature.id);
+            let incident_id = format!("INC-{}", signature.id);
             let timeout_duration = std::time::Duration::from_secs(swarm_cfg.timeout_secs.max(2));
 
             tokio::spawn(async move {
@@ -7318,18 +8201,23 @@ impl EdrOrchestrator {
                     "mitre_technique": incident_mitre,
                 });
 
-                let client = reqwest::Client::builder()
-                    .timeout(timeout_duration)
-                    .build();
+                let client = reqwest::Client::builder().timeout(timeout_duration).build();
 
                 if let Ok(c) = client {
                     let endpoint = format!("{}/api/swarm/investigate", swarm_service_url);
                     match c.post(&endpoint).json(&payload).send().await {
                         Ok(resp) => {
-                            debug!("[SWARM] Dispatched incident to Swarm at {} (status: {})", endpoint, resp.status());
+                            debug!(
+                                "[SWARM] Dispatched incident to Swarm at {} (status: {})",
+                                endpoint,
+                                resp.status()
+                            );
                         }
                         Err(err) => {
-                            debug!("[SWARM] Swarm service offline or unreachable at {}: {}", endpoint, err);
+                            debug!(
+                                "[SWARM] Swarm service offline or unreachable at {}: {}",
+                                endpoint, err
+                            );
                         }
                     }
                 }
@@ -7395,44 +8283,54 @@ impl EdrOrchestrator {
     ) -> Result<(std::path::PathBuf, bool, String), String> {
         let trimmed = knowledge.markdown_content.trim();
         if trimmed.is_empty() {
-            let msg = format!("Rejected empty skill pattern from peer '{}'", knowledge.node_id);
+            let msg = format!(
+                "Rejected empty skill pattern from peer '{}'",
+                knowledge.node_id
+            );
             warn!("[MESH_SKILL_SYNC] {}", msg);
             return Err(msg);
         }
 
         // Cap pattern size to 1MB to prevent resource exhaustion
         if trimmed.len() > 1024 * 1024 {
-            let msg = format!("Rejected oversized skill pattern (>1MB) from peer '{}'", knowledge.node_id);
+            let msg = format!(
+                "Rejected oversized skill pattern (>1MB) from peer '{}'",
+                knowledge.node_id
+            );
             warn!("[MESH_SKILL_SYNC] {}", msg);
             return Err(msg);
         }
 
         if knowledge.content_hash.trim().is_empty() {
-            let msg = format!("Rejected skill pattern '{}' from peer '{}': missing content_hash", knowledge.pattern_title, knowledge.node_id);
+            let msg = format!(
+                "Rejected skill pattern '{}' from peer '{}': missing content_hash",
+                knowledge.pattern_title, knowledge.node_id
+            );
             warn!("[MESH_SKILL_SYNC] {}", msg);
             return Err(msg);
         }
 
         // Validate content hash: calculate BLAKE3 of trimmed markdown
         let calculated_blake3 = blake3::hash(trimmed.as_bytes()).to_hex().to_string();
-        let hash_valid = if knowledge.content_hash.eq_ignore_ascii_case(&calculated_blake3) {
-            true
-        } else if {
+        let sha256_valid = {
             use sha2::{Digest, Sha256};
             let mut hasher = Sha256::new();
             hasher.update(trimmed.as_bytes());
             let sha256_h = hex::encode(hasher.finalize());
             knowledge.content_hash.eq_ignore_ascii_case(&sha256_h)
-        } {
-            true
-        } else if knowledge.content_hash.len() >= 12
-            && knowledge.content_hash.chars().all(|c| c.is_ascii_hexdigit())
-            && calculated_blake3.starts_with(&knowledge.content_hash.to_lowercase())
-        {
-            true
-        } else {
-            false
         };
+        let prefix_valid = knowledge.content_hash.len() >= 12
+            && knowledge
+                .content_hash
+                .chars()
+                .all(|c| c.is_ascii_hexdigit())
+            && calculated_blake3.starts_with(&knowledge.content_hash.to_lowercase());
+
+        let hash_valid = knowledge
+            .content_hash
+            .eq_ignore_ascii_case(&calculated_blake3)
+            || sha256_valid
+            || prefix_valid;
 
         if !hash_valid {
             let msg = format!(
@@ -7446,7 +8344,10 @@ impl EdrOrchestrator {
         let wiki_dir = workspace.join("wiki");
         let inbox_dir = wiki_dir.join("inbox");
         if let Err(e) = std::fs::create_dir_all(&inbox_dir) {
-            let msg = format!("Failed to create wiki inbox directory {:?}: {}", inbox_dir, e);
+            let msg = format!(
+                "Failed to create wiki inbox directory {:?}: {}",
+                inbox_dir, e
+            );
             warn!("[MESH_SKILL_SYNC] {}", msg);
             return Err(msg);
         }
@@ -7471,9 +8372,9 @@ impl EdrOrchestrator {
             }
 
             let clean_title = knowledge.pattern_title.replace('\n', " ").replace('\r', "");
-            let clean_node_id = knowledge.node_id.replace('\n', "").replace('\r', "");
-            let clean_skill = knowledge.skill_name.replace('\n', "").replace('\r', "");
-            let clean_ver = knowledge.version.replace('\n', "").replace('\r', "");
+            let clean_node_id = knowledge.node_id.replace(['\n', '\r'], "");
+            let clean_skill = knowledge.skill_name.replace(['\n', '\r'], "");
+            let clean_ver = knowledge.version.replace(['\n', '\r'], "");
 
             let sig_line = if let Some(ref s) = knowledge.signature {
                 format!("- **Signature**: `{}`\n", s.trim())
@@ -7495,7 +8396,11 @@ impl EdrOrchestrator {
             ));
 
             use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&peer_patterns_file) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&peer_patterns_file)
+            {
                 let _ = f.write_all(entry.as_bytes());
             }
         }
@@ -7527,7 +8432,8 @@ impl EdrOrchestrator {
             }
         };
 
-        let (pattern_file, is_duplicate, hash) = Self::ingest_skill_knowledge_to_workspace(knowledge, &resolved_ws)?;
+        let (pattern_file, is_duplicate, hash) =
+            Self::ingest_skill_knowledge_to_workspace(knowledge, &resolved_ws)?;
 
         info!(
             "[MESH_SKILL_SYNC] Received learned skill pattern '{}' from peer '{}' (score: {:.2}). Merged into local Wiki inbox.",
@@ -7744,7 +8650,9 @@ impl EdrOrchestrator {
                 | (RA::GhostTarpit, RA::Isolate)
         );
         if needs_escalation {
-            if let Ok(event) = serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.event.clone()) {
+            if let Ok(event) =
+                serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.event.clone())
+            {
                 if crate::firewall::autoblock_enabled() {
                     let pid = event
                         .data
@@ -7796,10 +8704,13 @@ impl EdrOrchestrator {
             if entry.event_type != "TELEMETRY_INGESTED" {
                 continue;
             }
-            let Ok(event) = serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.data.clone()) else {
+            let Ok(event) =
+                serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.data.clone())
+            else {
                 continue;
             };
-            if matches!(event.event_id, 3 | 22) { // NetworkConnect | DnsQuery
+            if matches!(event.event_id, 3 | 22) {
+                // NetworkConnect | DnsQuery
                 n += 1;
                 if n >= limit as u32 {
                     break;
@@ -7819,13 +8730,19 @@ impl EdrOrchestrator {
 
         for entry in entries.iter().rev() {
             if entry.event_type == "TELEMETRY_SUMMARY" {
-                events_analyzed += entry.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                events_analyzed += entry
+                    .data
+                    .get("count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 continue;
             }
             if entry.event_type != "TELEMETRY_INGESTED" {
                 continue;
             }
-            let Ok(event) = serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.data.clone()) else {
+            let Ok(event) =
+                serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.data.clone())
+            else {
                 continue;
             };
             let is_traffic = matches!(event.event_id, 3 | 22); // NetworkConnect | DnsQuery
@@ -7877,7 +8794,9 @@ impl EdrOrchestrator {
     pub async fn dial_mesh_peer(&self, addr: &str) {
         let tx_guard = self.mesh_command_tx.lock().await;
         if let Some(ref tx) = *tx_guard {
-            let _ = tx.send(osoosi_wire::MeshCommand::DialMultiaddr(addr.to_string())).await;
+            let _ = tx
+                .send(osoosi_wire::MeshCommand::DialMultiaddr(addr.to_string()))
+                .await;
         }
     }
 
@@ -7906,9 +8825,16 @@ impl EdrOrchestrator {
             for item in buffer.iter() {
                 let is_invalid = item.summary.contains("Unknown Process")
                     || item.summary.contains("Execution Of Non-Existing File")
-                    || (item.summary.contains("Suspicious Activity") && item.process_name.is_none())
+                    || (item.summary.contains("Suspicious Activity")
+                        && item.process_name.is_none())
                     || (item.is_threat && item.confidence < 0.50)
-                    || (item.is_threat && item.mitre_technique.as_deref() == Some("T1006") && item.process_name.as_deref().unwrap_or("unknown").eq_ignore_ascii_case("unknown"));
+                    || (item.is_threat
+                        && item.mitre_technique.as_deref() == Some("T1006")
+                        && item
+                            .process_name
+                            .as_deref()
+                            .unwrap_or("unknown")
+                            .eq_ignore_ascii_case("unknown"));
                 if !is_invalid {
                     items.push(item.clone());
                 }
@@ -7984,34 +8910,63 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.8) as f32;
 
-                    let reason_str = entry.data.get("reason").and_then(|v| v.as_str()).unwrap_or("").trim();
+                    let reason_str = entry
+                        .data
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
                     if reason_str.contains("Execution Of Non-Existing File") || conf < 0.50 {
                         continue;
                     }
-                    let proc_opt = proc.as_deref().filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
+                    let proc_opt = proc.as_deref().filter(|s| {
+                        !s.is_empty()
+                            && !s.eq_ignore_ascii_case("unknown")
+                            && !s.eq_ignore_ascii_case("unknown process")
+                            && !s.eq_ignore_ascii_case("system process")
+                    });
                     if tech.as_deref() == Some("T1006") && proc_opt.is_none() {
                         continue;
                     }
 
                     let tech_label = match (tech.as_deref(), tech_name.as_deref()) {
-                        (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
+                        (Some(id), Some(name)) if !name.is_empty() => {
+                            format!("[{} · {}] ", id, name)
+                        }
                         (Some(id), _) => format!("[{}] ", id),
                         _ => String::new(),
                     };
                     let act = action.as_deref().unwrap_or("Enforced");
                     let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
-                    let raw_summary = entry.data.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    let raw_summary = entry
+                        .data
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     if reason_clean.is_empty() && raw_summary.is_empty() {
                         continue;
                     }
-                    let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+                    let issue_desc = if reason_clean.is_empty() {
+                        "Suspicious Activity"
+                    } else {
+                        reason_clean
+                    };
 
-                    let summary = if !raw_summary.is_empty() && !raw_summary.contains("Unknown Process") && !raw_summary.contains("Execution Of Non-Existing File") {
+                    let summary = if !raw_summary.is_empty()
+                        && !raw_summary.contains("Unknown Process")
+                        && !raw_summary.contains("Execution Of Non-Existing File")
+                    {
                         raw_summary.to_string()
                     } else if let Some(p) = proc_opt {
-                        format!("Peer Threat: {}{}: {} — Action: {}", tech_label, p, issue_desc, act)
+                        format!(
+                            "Peer Threat: {}{}: {} — Action: {}",
+                            tech_label, p, issue_desc, act
+                        )
                     } else {
-                        format!("Peer Threat: {}{} — Action: {}", tech_label, issue_desc, act)
+                        format!(
+                            "Peer Threat: {}{} — Action: {}",
+                            tech_label, issue_desc, act
+                        )
                     };
 
                     if summary.contains("Unknown Process")
@@ -8031,7 +8986,11 @@ impl EdrOrchestrator {
                         "LOW".to_string()
                     };
 
-                    let status = if act.contains("Isolate") || act.contains("Terminated") || act.contains("Enforced") || conf >= 0.70 {
+                    let status = if act.contains("Isolate")
+                        || act.contains("Terminated")
+                        || act.contains("Enforced")
+                        || conf >= 0.70
+                    {
                         "REMEDIATED".to_string()
                     } else {
                         "ACTIVE".to_string()
@@ -8065,36 +9024,66 @@ impl EdrOrchestrator {
         // 2.5 Backfill from persistent MemoryStore threats if buffer + audit still has capacity
         if items.len() < limit {
             if let Ok(threats) = self.memory.get_recent_threats(limit) {
-                let mut seen_ids: std::collections::HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
+                let mut seen_ids: std::collections::HashSet<String> =
+                    items.iter().map(|i| i.id.clone()).collect();
                 for t in threats {
-                    let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let id = t
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if id.is_empty() || seen_ids.contains(&id) {
                         continue;
                     }
                     seen_ids.insert(id.clone());
 
-                    let proc = t.get("process_name").and_then(|v| v.as_str()).map(String::from);
-                    let hash = t.get("hash_blake3").and_then(|v| v.as_str()).map(String::from);
-                    let source = t.get("source_node").and_then(|v| v.as_str()).unwrap_or("peer").to_string();
+                    let proc = t
+                        .get("process_name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let hash = t
+                        .get("hash_blake3")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let source = t
+                        .get("source_node")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("peer")
+                        .to_string();
                     let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
-                    let ts = t.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let ts = t
+                        .get("timestamp")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
 
-                    let proc_opt = proc.as_deref().filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
-                    if conf < 0.50 || reason.trim().is_empty() || reason.contains("Execution Of Non-Existing File") {
+                    let proc_opt = proc.as_deref().filter(|s| {
+                        !s.is_empty()
+                            && !s.eq_ignore_ascii_case("unknown")
+                            && !s.eq_ignore_ascii_case("unknown process")
+                            && !s.eq_ignore_ascii_case("system process")
+                    });
+                    if conf < 0.50
+                        || reason.trim().is_empty()
+                        || reason.contains("Execution Of Non-Existing File")
+                    {
                         continue;
                     }
 
-                    let (tactic, tech, tech_name) = osoosi_policy::mitre_kb::extract_mitre_from_text(reason)
-                        .map(|(tac, tec, nam)| (Some(tac), Some(tec), Some(nam)))
-                        .unwrap_or((None, None, None));
+                    let (tactic, tech, tech_name) =
+                        osoosi_policy::mitre_kb::extract_mitre_from_text(reason)
+                            .map(|(tac, tec, nam)| (Some(tac), Some(tec), Some(nam)))
+                            .unwrap_or((None, None, None));
 
                     if tech.as_deref() == Some("T1006") && proc_opt.is_none() {
                         continue;
                     }
 
                     let tech_label = match (tech.as_deref(), tech_name.as_deref()) {
-                        (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
+                        (Some(id), Some(name)) if !name.is_empty() => {
+                            format!("[{} · {}] ", id, name)
+                        }
                         (Some(id), _) => format!("[{}] ", id),
                         _ => String::new(),
                     };
@@ -8108,11 +9097,21 @@ impl EdrOrchestrator {
                             first.to_string()
                         }
                     };
-                    let act_str = t.get("action").or_else(|| t.get("recommended_action")).and_then(|v| v.as_str()).unwrap_or("Isolated & Terminated");
+                    let act_str = t
+                        .get("action")
+                        .or_else(|| t.get("recommended_action"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Isolated & Terminated");
                     let summary = if let Some(p) = proc_opt {
-                        format!("Peer Threat: {}{}: {} — Action: {}", tech_label, p, clean_reason, act_str)
+                        format!(
+                            "Peer Threat: {}{}: {} — Action: {}",
+                            tech_label, p, clean_reason, act_str
+                        )
                     } else {
-                        format!("Peer Threat: {}{} — Action: {}", tech_label, clean_reason, act_str)
+                        format!(
+                            "Peer Threat: {}{} — Action: {}",
+                            tech_label, clean_reason, act_str
+                        )
                     };
                     if summary.contains("Unknown Process")
                         || summary.contains("Execution Of Non-Existing File")
@@ -8121,7 +9120,10 @@ impl EdrOrchestrator {
                         continue;
                     }
 
-                    let status = if act_str.contains("Isolate") || act_str.contains("Terminated") || conf >= 0.70 {
+                    let status = if act_str.contains("Isolate")
+                        || act_str.contains("Terminated")
+                        || conf >= 0.70
+                    {
                         "REMEDIATED".to_string()
                     } else {
                         "ACTIVE".to_string()
@@ -8138,7 +9140,11 @@ impl EdrOrchestrator {
                     items.push(osoosi_types::GossipFeedItem {
                         id,
                         event_type: "MESH_THREAT_RECEIVED".to_string(),
-                        timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                        timestamp: if ts.is_empty() {
+                            chrono::Utc::now().to_rfc3339()
+                        } else {
+                            ts
+                        },
                         summary,
                         source_node: source,
                         process_name: proc,
@@ -8162,9 +9168,19 @@ impl EdrOrchestrator {
 
         // 3. Intelligent Sorting: Active threats first, then timestamp descending
         items.sort_by(|a, b| {
-            let a_prio = if a.is_threat && a.status == "ACTIVE" { 1 } else { 0 };
-            let b_prio = if b.is_threat && b.status == "ACTIVE" { 1 } else { 0 };
-            b_prio.cmp(&a_prio).then_with(|| b.timestamp.cmp(&a.timestamp))
+            let a_prio = if a.is_threat && a.status == "ACTIVE" {
+                1
+            } else {
+                0
+            };
+            let b_prio = if b.is_threat && b.status == "ACTIVE" {
+                1
+            } else {
+                0
+            };
+            b_prio
+                .cmp(&a_prio)
+                .then_with(|| b.timestamp.cmp(&a.timestamp))
         });
 
         // 4. Prune/deduplicate routine stale heartbeats so active threats stand out
@@ -8176,12 +9192,19 @@ impl EdrOrchestrator {
                 || item.summary.contains("Execution Of Non-Existing File")
                 || (item.summary.contains("Suspicious Activity") && item.process_name.is_none())
                 || (item.is_threat && item.confidence < 0.50)
-                || (item.is_threat && item.mitre_technique.as_deref() == Some("T1006") && item.process_name.as_deref().unwrap_or("unknown").eq_ignore_ascii_case("unknown"));
+                || (item.is_threat
+                    && item.mitre_technique.as_deref() == Some("T1006")
+                    && item
+                        .process_name
+                        .as_deref()
+                        .unwrap_or("unknown")
+                        .eq_ignore_ascii_case("unknown"));
             if is_invalid {
                 continue;
             }
 
-            if item.event_type == "MESH_HEARTBEAT_ACK" || item.event_type == "CONSENSUS_CLOCK_SYNC" {
+            if item.event_type == "MESH_HEARTBEAT_ACK" || item.event_type == "CONSENSUS_CLOCK_SYNC"
+            {
                 let key = format!("{}:{}", item.event_type, item.source_node);
                 if seen_routine.contains(&key) {
                     continue;
@@ -8230,11 +9253,21 @@ impl EdrOrchestrator {
     pub async fn broadcast_threat_to_mesh(&self, mut sig: osoosi_types::ThreatSignature) {
         // 1. Signal-to-noise ratio & Zero-Unknown Invariant:
         if sig.confidence < 0.50 {
-            debug!("[Mesh] Threat suppressed from gossip broadcast (confidence < 0.50): {:.2}", sig.confidence);
+            debug!(
+                "[Mesh] Threat suppressed from gossip broadcast (confidence < 0.50): {:.2}",
+                sig.confidence
+            );
             return;
         }
-        if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
-            debug!("[Mesh] Threat suppressed from gossip broadcast (Execution Of Non-Existing File)");
+        if sig
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("Execution Of Non-Existing File")
+        {
+            debug!(
+                "[Mesh] Threat suppressed from gossip broadcast (Execution Of Non-Existing File)"
+            );
             return;
         }
         let proc_clean = sig.process_name.as_deref().unwrap_or("").trim().to_string();
@@ -8295,7 +9328,9 @@ impl EdrOrchestrator {
         // 6. Broadcast over Wire Mesh (GossipSub topic "osoosi-threats-{zone}")
         let tx_guard = self.mesh_command_tx.lock().await;
         if let Some(ref tx) = *tx_guard {
-            let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(sig.clone())).await;
+            let _ = tx
+                .send(osoosi_wire::MeshCommand::Broadcast(sig.clone()))
+                .await;
             let proof = self.audit.root();
             let _ = tx.try_send(osoosi_wire::MeshCommand::BroadcastAuditProof(proof));
         }
@@ -8322,12 +9357,22 @@ impl EdrOrchestrator {
         };
         let reason_str = sig.reason.as_deref().unwrap_or("").trim();
         let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
-        let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+        let issue_desc = if reason_clean.is_empty() {
+            "Suspicious Activity"
+        } else {
+            reason_clean
+        };
 
         let summary = if !is_unknown_proc {
-            format!("Broadcast to Mesh: {}{}: {} — Action: {}", tech_label, proc, issue_desc, action)
+            format!(
+                "Broadcast to Mesh: {}{}: {} — Action: {}",
+                tech_label, proc, issue_desc, action
+            )
         } else {
-            format!("Broadcast to Mesh: {}{} — Action: {}", tech_label, issue_desc, action)
+            format!(
+                "Broadcast to Mesh: {}{} — Action: {}",
+                tech_label, issue_desc, action
+            )
         };
 
         self.audit.log(
@@ -8355,8 +9400,12 @@ impl EdrOrchestrator {
         let mut nodes = Vec::new();
         let mut edges = Vec::new();
 
-        let total_telemetry = self.telemetry_total_count.load(std::sync::atomic::Ordering::Relaxed);
-        let gossip_count = self.mesh_gossip_count_atomic.load(std::sync::atomic::Ordering::Relaxed) as u64;
+        let total_telemetry = self
+            .telemetry_total_count
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let gossip_count = self
+            .mesh_gossip_count_atomic
+            .load(std::sync::atomic::Ordering::Relaxed) as u64;
         let packets_rx = total_telemetry;
         let packets_tx = gossip_count;
 
@@ -8394,7 +9443,10 @@ impl EdrOrchestrator {
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let nostr_relays = if mesh_config.nostr_relays.is_empty() {
             if mesh_config.allow_public_relays {
-                vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+                vec![
+                    "wss://relay.damus.io".to_string(),
+                    "wss://nos.lol".to_string(),
+                ]
             } else {
                 Vec::new()
             }
@@ -8594,9 +9646,18 @@ impl EdrOrchestrator {
 
                 let score = peer["score"].as_f64().unwrap_or(0.85);
                 let is_threat = score < 0.3;
-                let is_hotspot = id.contains("10812adc") || peer["ip"].as_str().map_or(false, |ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
+                let is_hotspot = id.contains("10812adc")
+                    || peer["ip"]
+                        .as_str()
+                        .is_some_and(|ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
                 let network_type = if is_hotspot { "hotspot" } else { "lan" };
-                let role = if is_threat { "Suspect Node" } else if is_hotspot { "Mobile Hotspot Peer" } else { "LAN Mesh Peer" };
+                let role = if is_threat {
+                    "Suspect Node"
+                } else if is_hotspot {
+                    "Mobile Hotspot Peer"
+                } else {
+                    "LAN Mesh Peer"
+                };
                 let label = if is_hotspot {
                     "Hotspot Host (10812adc)".to_string()
                 } else if id.starts_with("did:") && id.len() > 18 {
@@ -8918,7 +9979,7 @@ impl EdrOrchestrator {
             )),
         }
     }
-    
+
     /// Record a manual false positive suppression for future detections.
     pub async fn record_manual_false_positive(
         &self,
@@ -8926,7 +9987,10 @@ impl EdrOrchestrator {
         hash_blake3: Option<String>,
     ) -> anyhow::Result<()> {
         let source = self.trust.did().to_string();
-        info!("[FP] Manual suppression recorded for Process: {:?}, Hash: {:?}", process_name, hash_blake3);
+        info!(
+            "[FP] Manual suppression recorded for Process: {:?}, Hash: {:?}",
+            process_name, hash_blake3
+        );
 
         // 1. Persist in memory store
         self.memory.record_false_positive_pattern(
@@ -8947,8 +10011,12 @@ impl EdrOrchestrator {
             }
         }
 
-        let fp_id = hash_blake3.as_deref().or(process_name.as_deref()).unwrap_or("fp");
-        self.decision_engine.record_rl_feedback(fp_id, -1.0, "benign");
+        let fp_id = hash_blake3
+            .as_deref()
+            .or(process_name.as_deref())
+            .unwrap_or("fp");
+        self.decision_engine
+            .record_rl_feedback(fp_id, -1.0, "benign");
 
         self.audit.log(
             "MANUAL_FP_SUBMISSION",
@@ -8971,17 +10039,20 @@ impl EdrOrchestrator {
         let threat_id = format!("manual-{}", uuid::Uuid::new_v4());
         let source = self.trust.did().to_string();
         let name = process_name.as_deref().unwrap_or("manual_threat");
-        
+
         // 1. Log to audit trail so it appears in recent threats
-        self.audit.log("THREAT_DETECTED", serde_json::json!({
-            "id": threat_id,
-            "process_name": name,
-            "hash_blake3": file_hash,
-            "source_node": source,
-            "confidence": 1.0,
-            "reason": "Manual analyst report",
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        }));
+        self.audit.log(
+            "THREAT_DETECTED",
+            serde_json::json!({
+                "id": threat_id,
+                "process_name": name,
+                "hash_blake3": file_hash,
+                "source_node": source,
+                "confidence": 1.0,
+                "reason": "Manual analyst report",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        );
 
         // 2. Insert into memory store so handle_confirm_and_entangle can find it
         self.memory.log_threat(&osoosi_types::ThreatSignature {
@@ -9301,7 +10372,10 @@ impl EdrOrchestrator {
                         &defense.learned_rule,
                         defense.severity,
                     );
-                    let _ = yara_orch.hot_load_rule(&defense.learned_rule, &format!("mesh_{}", uuid::Uuid::new_v4()));
+                    let _ = yara_orch.hot_load_rule(
+                        &defense.learned_rule,
+                        &format!("mesh_{}", uuid::Uuid::new_v4()),
+                    );
                 }
             }
         });
@@ -9344,8 +10418,10 @@ impl EdrOrchestrator {
                         .map(|r| r.score)
                         .unwrap_or(0.5)
                 };
-                let mut params = BftConsensusParams::default();
-                params.mesh_peer_hint = Some(mesh_peer_count_bft.load(Ordering::Relaxed).max(1));
+                let params = BftConsensusParams {
+                    mesh_peer_hint: Some(mesh_peer_count_bft.load(Ordering::Relaxed).max(1)),
+                    ..Default::default()
+                };
                 let outcome = analyze_policy_consensus(&snapshot, rep_fn, &params);
 
                 if outcome.mesh_validated {
@@ -9408,8 +10484,16 @@ impl EdrOrchestrator {
                     debug!("PeerThreatRx: Dropped low-confidence threat {}", sig.id);
                     continue;
                 }
-                if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
-                    debug!("PeerThreatRx: Dropped non-existing file noise threat {}", sig.id);
+                if sig
+                    .reason
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Execution Of Non-Existing File")
+                {
+                    debug!(
+                        "PeerThreatRx: Dropped non-existing file noise threat {}",
+                        sig.id
+                    );
                     continue;
                 }
                 let proc_clean = sig.process_name.as_deref().unwrap_or("").trim();
@@ -9434,12 +10518,22 @@ impl EdrOrchestrator {
                 self_threat.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
 
                 let proc = proc_clean.to_string();
-                let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
+                let tech = sig
+                    .mitre_technique
+                    .clone()
+                    .unwrap_or_else(|| "T1082".to_string());
                 let action = format!("{:?}", sig.recommended_action);
                 let reason_str = sig.reason.as_deref().unwrap_or("").trim();
                 let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
-                let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
-                let summary = format!("Peer Threat [{}]: {}: {} ({}) via {}", tech, proc, issue_desc, action, sig.source_node);
+                let issue_desc = if reason_clean.is_empty() {
+                    "Suspicious Activity"
+                } else {
+                    reason_clean
+                };
+                let summary = format!(
+                    "Peer Threat [{}]: {}: {} ({}) via {}",
+                    tech, proc, issue_desc, action, sig.source_node
+                );
 
                 self_threat.audit.log(
                     "MESH_THREAT_RECEIVED",
@@ -9510,7 +10604,7 @@ impl EdrOrchestrator {
                 let memory_inner = memory.clone();
                 let threat_model_inner = threat_model.clone();
                 let orch_inner = orch.clone();
-                
+
                 orch_inner.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::Normal, async move {
                     let _ = memory_inner
                         .set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
@@ -9718,7 +10812,7 @@ impl EdrOrchestrator {
                 let memory_inner = memory.clone();
                 let orch_inner = orch.clone();
                 let adaptive_inner = orch.adaptive.clone();
-                
+
                 adaptive_inner.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                     info!("BrowserGuard: Periodic sweep running...");
                     let threats = guard_inner.run_sweep().await;
@@ -9813,7 +10907,12 @@ impl EdrOrchestrator {
                     _ => {
                         let clean_ps = escape_powershell_arg(&username);
                         let mut cmd_ps = tokio::process::Command::new(&ps_bin);
-                        cmd_ps.args(["-NoProfile", "-NonInteractive", "-Command", &format!("Get-LocalUser -Name '{}'", clean_ps)]);
+                        cmd_ps.args([
+                            "-NoProfile",
+                            "-NonInteractive",
+                            "-Command",
+                            &format!("Get-LocalUser -Name '{}'", clean_ps),
+                        ]);
                         cmd_ps.creation_flags(CREATE_NO_WINDOW);
                         let ps_check = cmd_ps.output().await;
                         matches!(ps_check, Ok(ref out) if out.status.success())
@@ -9831,10 +10930,7 @@ impl EdrOrchestrator {
                 cmd_dis_net.args(net_args);
                 cmd_dis_net.creation_flags(CREATE_NO_WINDOW);
                 let res = cmd_dis_net.output().await;
-                let mut disabled = match res {
-                    Ok(output) if output.status.success() => true,
-                    _ => false,
-                };
+                let mut disabled = matches!(res, Ok(ref output) if output.status.success());
 
                 // Fallback to PowerShell Disable-LocalUser if net.exe failed
                 if !disabled {
@@ -9852,31 +10948,40 @@ impl EdrOrchestrator {
 
                 if disabled {
                     warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Successfully disabled unauthorized account created by T1136.001: {}", username);
-                    audit.log(NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT, serde_json::json!({
-                        "technique": "T1136.001",
-                        "user": username,
-                        "status": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
-                        "method": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD
-                    }));
+                    audit.log(
+                        NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT,
+                        serde_json::json!({
+                            "technique": "T1136.001",
+                            "user": username,
+                            "status": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
+                            "method": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD
+                        }),
+                    );
                 } else {
                     warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Failed to disable unauthorized account '{}'", username);
-                    audit.log(NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT, serde_json::json!({
-                        "technique": "T1136.001",
-                        "user": username,
-                        "status": "containment_failed",
-                        "method": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD
-                    }));
+                    audit.log(
+                        NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT,
+                        serde_json::json!({
+                            "technique": "T1136.001",
+                            "user": username,
+                            "status": "containment_failed",
+                            "method": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD
+                        }),
+                    );
                 }
             }
             #[cfg(not(target_os = "windows"))]
             {
                 warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Non-destructive account containment requested for user {}: (non-Windows platform)", username);
-                audit.log(NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT, serde_json::json!({
-                    "technique": "T1136.001",
-                    "user": username,
-                    "status": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
-                    "method": "simulated_non_windows"
-                }));
+                audit.log(
+                    NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT,
+                    serde_json::json!({
+                        "technique": "T1136.001",
+                        "user": username,
+                        "status": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
+                        "method": "simulated_non_windows"
+                    }),
+                );
             }
         });
     }
@@ -9943,7 +11048,9 @@ impl EdrOrchestrator {
                 } else {
                     debug!("Tarpit requested but no PID extracted from event");
                 }
-                if let Some(cmd) = event.data.get("CommandLine")
+                if let Some(cmd) = event
+                    .data
+                    .get("CommandLine")
                     .or_else(|| event.data.get("command_line"))
                     .or_else(|| event.data.get("cmdline"))
                     .and_then(|v| v.as_str())
@@ -9993,7 +11100,9 @@ impl EdrOrchestrator {
                         debug!("GhostTarpit thread containment skipped for PID {}: already tarpitted recently (debounce active)", pid);
                     }
                 }
-                if let Some(cmd) = event.data.get("CommandLine")
+                if let Some(cmd) = event
+                    .data
+                    .get("CommandLine")
                     .or_else(|| event.data.get("command_line"))
                     .or_else(|| event.data.get("cmdline"))
                     .and_then(|v| v.as_str())
@@ -10004,13 +11113,15 @@ impl EdrOrchestrator {
                 }
                 if crate::firewall::autoblock_enabled() {
                     let pid = extract_event_pid(event);
-                    let image = event.data.get("Image")
+                    let image = event
+                        .data
+                        .get("Image")
                         .or_else(|| event.data.get("NewProcessName"))
                         .or_else(|| event.data.get("image"))
                         .or_else(|| event.data.get("ImagePath"))
                         .and_then(|i| i.as_str());
                     let is_lolbin = image
-                        .map(|img| crate::system_check::is_administrative_lolbin(img))
+                        .map(crate::system_check::is_administrative_lolbin)
                         .unwrap_or(false);
                     if !is_lolbin {
                         match crate::firewall::block_process_network(pid, image) {
@@ -10029,7 +11140,10 @@ impl EdrOrchestrator {
                             Err(e) => warn!("Firewall auto-block failed: {}", e),
                         }
                     } else {
-                        debug!("Skipping firewall auto-block for administrative LOLBin {:?}", image);
+                        debug!(
+                            "Skipping firewall auto-block for administrative LOLBin {:?}",
+                            image
+                        );
                     }
                 }
                 if let Some(msg) =
@@ -10055,11 +11169,16 @@ impl EdrOrchestrator {
                     return Ok(());
                 }
 
-                warn!("Action: Targeted Process Block & Termination (confidence {:.2})", signature.confidence);
+                warn!(
+                    "Action: Targeted Process Block & Termination (confidence {:.2})",
+                    signature.confidence
+                );
                 self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "TargetedProcessBlock", "confidence": signature.confidence}));
 
                 if let Some(pid) = extract_event_pid(event) {
-                    let image = event.data.get("Image")
+                    let image = event
+                        .data
+                        .get("Image")
                         .or_else(|| event.data.get("NewProcessName"))
                         .or_else(|| event.data.get("image"))
                         .or_else(|| event.data.get("ImagePath"))
@@ -10075,7 +11194,7 @@ impl EdrOrchestrator {
 
                     // Block network access via WFP and kernel driver, unless target is an administrative LOLBin
                     let is_lolbin = image
-                        .map(|img| crate::system_check::is_administrative_lolbin(img))
+                        .map(crate::system_check::is_administrative_lolbin)
                         .unwrap_or(false);
                     if !is_lolbin {
                         match crate::firewall::block_process_network(Some(pid), image) {
@@ -10109,7 +11228,9 @@ impl EdrOrchestrator {
                 }
 
                 // Contain unauthorized accounts created by T1136.001 (strictly non-destructive)
-                if let Some(cmd) = event.data.get("CommandLine")
+                if let Some(cmd) = event
+                    .data
+                    .get("CommandLine")
                     .or_else(|| event.data.get("command_line"))
                     .or_else(|| event.data.get("cmdline"))
                     .and_then(|v| v.as_str())
@@ -10167,9 +11288,12 @@ impl EdrOrchestrator {
 
     /// Perform a deep memory scan using native MemoryScanner (Windows only).
     #[cfg(target_os = "windows")]
-    pub async fn run_hollows_hunter_for_pid(&self, pid: u32) -> anyhow::Result<osoosi_types::HollowsHunterResult> {
+    pub async fn run_hollows_hunter_for_pid(
+        &self,
+        pid: u32,
+    ) -> anyhow::Result<osoosi_types::HollowsHunterResult> {
         info!("Starting native memory scan for PID {}", pid);
-        
+
         let scanner = osoosi_memory::memory_scanner::MemoryScanner::new();
         let mut res = osoosi_types::HollowsHunterResult {
             pid,
@@ -10212,15 +11336,27 @@ impl EdrOrchestrator {
 
         // Run assess_security safely inside tokio::task::spawn_blocking with a 2-second timeout fallback.
         let assess_handle = tokio::task::spawn_blocking(crate::hardened::assess_security);
-        let hardened_status = match tokio::time::timeout(std::time::Duration::from_secs(2), assess_handle).await {
-            Ok(Ok(status)) => Some(status),
-            _ => None,
-        };
+        let hardened_status =
+            match tokio::time::timeout(std::time::Duration::from_secs(2), assess_handle).await {
+                Ok(Ok(status)) => Some(status),
+                _ => None,
+            };
 
-        let security_score = hardened_status.as_ref().map(|s| s.security_score).unwrap_or(100);
-        let recommendations = hardened_status.as_ref().map(|s| s.recommendations.clone()).unwrap_or_default();
-        let structured_recommendations = match hardened_status.as_ref().map(|s| &s.structured_recommendations) {
-            Some(recs) if !recs.is_empty() => serde_json::to_value(recs).unwrap_or_else(|_| serde_json::json!([])),
+        let security_score = hardened_status
+            .as_ref()
+            .map(|s| s.security_score)
+            .unwrap_or(100);
+        let recommendations = hardened_status
+            .as_ref()
+            .map(|s| s.recommendations.clone())
+            .unwrap_or_default();
+        let structured_recommendations = match hardened_status
+            .as_ref()
+            .map(|s| &s.structured_recommendations)
+        {
+            Some(recs) if !recs.is_empty() => {
+                serde_json::to_value(recs).unwrap_or_else(|_| serde_json::json!([]))
+            }
             _ => serde_json::json!([
                 {
                     "id": "tee",
@@ -10275,7 +11411,10 @@ impl EdrOrchestrator {
         })];
 
         let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
-        if let Ok(known_peers) = self.memory().query_json(query, &[self.trust.did().to_string(), self.trust.did().to_string()]) {
+        if let Ok(known_peers) = self.memory().query_json(
+            query,
+            &[self.trust.did().to_string(), self.trust.did().to_string()],
+        ) {
             for peer in known_peers {
                 let id = peer["node_id"].as_str().unwrap_or("?");
                 if id == self.trust.did().id.as_str() || nodes.iter().any(|n| n["id"] == id) {
@@ -10283,9 +11422,18 @@ impl EdrOrchestrator {
                 }
                 let score = peer["score"].as_f64().unwrap_or(0.85);
                 let is_threat = score < 0.3;
-                let is_hotspot = id.contains("10812adc") || peer["ip"].as_str().map_or(false, |ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
+                let is_hotspot = id.contains("10812adc")
+                    || peer["ip"]
+                        .as_str()
+                        .is_some_and(|ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
                 let network_type = if is_hotspot { "hotspot" } else { "lan" };
-                let role = if is_threat { "Suspect Node" } else if is_hotspot { "Mobile Hotspot Peer" } else { "LAN Mesh Peer" };
+                let role = if is_threat {
+                    "Suspect Node"
+                } else if is_hotspot {
+                    "Mobile Hotspot Peer"
+                } else {
+                    "LAN Mesh Peer"
+                };
                 let label = if is_hotspot {
                     format!("Hotspot Host ({})", &id[id.len().saturating_sub(8)..])
                 } else if id.starts_with("did:") && id.len() > 18 {
@@ -10310,7 +11458,11 @@ impl EdrOrchestrator {
         }
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
-        let relay_count = mesh_config.nostr_relays.iter().filter(|r| !r.trim().is_empty()).count();
+        let relay_count = mesh_config
+            .nostr_relays
+            .iter()
+            .filter(|r| !r.trim().is_empty())
+            .count();
         for relay in &mesh_config.nostr_relays {
             if !relay.trim().is_empty() {
                 nodes.push(serde_json::json!({
@@ -10326,7 +11478,12 @@ impl EdrOrchestrator {
             }
         }
 
-        let remote_host_count = nodes.iter().filter(|n| n["node_type"] == "endpoint_host" && n["id"] != self.trust.did().id.as_str()).count();
+        let remote_host_count = nodes
+            .iter()
+            .filter(|n| {
+                n["node_type"] == "endpoint_host" && n["id"] != self.trust.did().id.as_str()
+            })
+            .count();
         let host_count = 1 + remote_host_count.max(peer_count as usize);
 
         let _ = self.memory().save_zone_posture(
@@ -10393,7 +11550,8 @@ impl EdrOrchestrator {
         if let Some(pos) = queue.iter().position(|r| r.id == threat_id) {
             let request = queue.remove(pos);
             info!("Action approved: {} (ID: {})", request.action, threat_id);
-            self.decision_engine.record_rl_feedback(threat_id, 1.0, &request.action);
+            self.decision_engine
+                .record_rl_feedback(threat_id, 1.0, &request.action);
             self.policy.update_voter_weights_from_feedback(true, 0.05);
             self.audit.log(
                 "ACTION_APPROVED",
@@ -10425,7 +11583,8 @@ impl EdrOrchestrator {
         if let Some(pos) = queue.iter().position(|r| r.id == threat_id) {
             let request = queue.remove(pos);
             info!("Action rejected: {} (ID: {})", request.action, threat_id);
-            self.decision_engine.record_rl_feedback(threat_id, -1.0, "allow");
+            self.decision_engine
+                .record_rl_feedback(threat_id, -1.0, "allow");
             self.policy.update_voter_weights_from_feedback(false, 0.05);
             self.audit.log(
                 "ACTION_REJECTED",
@@ -10440,8 +11599,13 @@ impl EdrOrchestrator {
     /// Apply SkyRL reinforcement learning policy updates to consensus voters & decision engine.
     pub async fn apply_skyrl_policy_update(&self, mean_loss: f64, mean_reward: f64) {
         let is_positive = mean_reward >= 0.0;
-        self.policy.update_voter_weights_from_feedback(is_positive, 0.02);
-        self.decision_engine.record_rl_feedback("skyrl-continuous", mean_reward, if is_positive { "malicious" } else { "benign" });
+        self.policy
+            .update_voter_weights_from_feedback(is_positive, 0.02);
+        self.decision_engine.record_rl_feedback(
+            "skyrl-continuous",
+            mean_reward,
+            if is_positive { "malicious" } else { "benign" },
+        );
         info!(
             "[SKYRL-INTEGRATION] Applied RL policy update: mean_loss={:.4}, mean_reward={:.4}, voter_weight_nudge={:+0.02}",
             mean_loss, mean_reward, if is_positive { 0.02 } else { -0.02 }
@@ -10488,7 +11652,8 @@ impl EdrOrchestrator {
             &self.decision_engine,
             &self.blocking_manager,
             file_path,
-        ).await
+        )
+        .await
     }
 
     pub async fn evaluate_program_consensus_internal(
@@ -10503,13 +11668,22 @@ impl EdrOrchestrator {
         }
 
         let bytes = std::fs::read(file_path)?;
-        let hash = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
-        let file_stem = file_path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+        let hash = blake3::hash(&bytes)
+            .to_hex()
+            .to_string()
+            .to_ascii_lowercase();
+        let file_stem = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
         let file_path_str = file_path.to_string_lossy().to_string();
 
         // 1. Check clean-ignore database first (fast path)
         if memory.is_hash_clean_ignored(&hash) {
-            info!("Consensus Evaluation: Hash {} is already in clean ignore ledger. Bypassing.", hash);
+            info!(
+                "Consensus Evaluation: Hash {} is already in clean ignore ledger. Bypassing.",
+                hash
+            );
             return Ok(osoosi_types::ConsensusFinding {
                 id: format!("CONS-CACHED-{}", &hash[..hash.len().min(12)]),
                 hash_blake3: hash,
@@ -10537,7 +11711,11 @@ impl EdrOrchestrator {
             None => (0.0, false, "none".to_string(), "unknown".to_string()),
         };
 
-        let yara_str = if yara_matches.is_empty() { "none".to_string() } else { yara_matches };
+        let yara_str = if yara_matches.is_empty() {
+            "none".to_string()
+        } else {
+            yara_matches
+        };
         let (san_file_path, inj1) = osoosi_types::sanitize_untrusted_log_field(&file_path_str, 256);
         let (san_magika, inj2) = osoosi_types::sanitize_untrusted_log_field(&magika_label, 64);
         let (san_yara, inj3) = osoosi_types::sanitize_untrusted_log_field(&yara_str, 256);
@@ -10549,13 +11727,21 @@ impl EdrOrchestrator {
 
         let autonomy = osoosi_types::load_autonomy_config();
         let (verdict, confidence, action, summary) = if decision_engine.is_enabled() {
-            match decision_engine.evaluate_security_incident(&state_text).await {
+            match decision_engine
+                .evaluate_security_incident(&state_text)
+                .await
+            {
                 Ok(decision) => {
-                    let is_mal = !is_signed && (inj_flag
-                        || decision.verdict == "malicious"
-                        || decision.containment_action == "isolate"
-                        || decision.containment_action == "quarantine");
-                    let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
+                    let is_mal = !is_signed
+                        && (inj_flag
+                            || decision.verdict == "malicious"
+                            || decision.containment_action == "isolate"
+                            || decision.containment_action == "quarantine");
+                    let v = if is_mal {
+                        "malicious".to_string()
+                    } else {
+                        "benign".to_string()
+                    };
                     let conf = decision.verdict_probability as f32;
                     let act = if is_mal {
                         if conf >= 0.85 {
@@ -10572,25 +11758,54 @@ impl EdrOrchestrator {
                         act,
                         format!(
                             "Decision Model ({}): verdict={}, action={}, severity={}",
-                            decision.provider_used, decision.verdict, decision.containment_action, decision.threat_severity
+                            decision.provider_used,
+                            decision.verdict,
+                            decision.containment_action,
+                            decision.threat_severity
                         ),
                     )
                 }
                 Err(e) => {
                     warn!("Decision engine failed for consensus evaluation: {}. Falling back to ML/YARA.", e);
                     let is_mal = is_malware && (ml_score >= 0.80 || yara_str != "none");
-                    let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
+                    let v = if is_mal {
+                        "malicious".to_string()
+                    } else {
+                        "benign".to_string()
+                    };
                     let conf = ml_score as f32;
-                    let act = if is_mal { "contained_and_quarantined".to_string() } else { "ignored_and_allowed".to_string() };
-                    (v, conf, act, format!("Heuristic scan (ML: {:.2}, YARA: {})", ml_score, yara_str))
+                    let act = if is_mal {
+                        "contained_and_quarantined".to_string()
+                    } else {
+                        "ignored_and_allowed".to_string()
+                    };
+                    (
+                        v,
+                        conf,
+                        act,
+                        format!("Heuristic scan (ML: {:.2}, YARA: {})", ml_score, yara_str),
+                    )
                 }
             }
         } else {
             let is_mal = is_malware && (ml_score >= 0.80 || yara_str != "none");
-            let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
+            let v = if is_mal {
+                "malicious".to_string()
+            } else {
+                "benign".to_string()
+            };
             let conf = ml_score as f32;
-            let act = if is_mal { "contained_and_quarantined".to_string() } else { "ignored_and_allowed".to_string() };
-            (v, conf, act, format!("Malware scanner (ML: {:.2}, YARA: {})", ml_score, yara_str))
+            let act = if is_mal {
+                "contained_and_quarantined".to_string()
+            } else {
+                "ignored_and_allowed".to_string()
+            };
+            (
+                v,
+                conf,
+                act,
+                format!("Malware scanner (ML: {:.2}, YARA: {})", ml_score, yara_str),
+            )
         };
 
         if verdict == "malicious" {
@@ -10662,8 +11877,6 @@ impl EdrOrchestrator {
         }
     }
 
-
-
     /// Trigger an immediate filesystem baseline scan.
     pub fn trigger_baseline(&self) {
         let baseline_memory = self.memory.clone();
@@ -10718,6 +11931,7 @@ impl EdrOrchestrator {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use osoosi_types::ThreatSignature;
@@ -10758,11 +11972,23 @@ mod tests {
         assert!(is_developer_tool("wininit.exe", None));
         assert!(is_developer_tool("services.exe", None));
         assert!(is_developer_tool("lsass.exe", None));
-        assert!(is_developer_tool("custom-runner.exe", Some(Path::new(r"D:\project\.vscode\extensions\runner.exe"))));
-        assert!(is_developer_tool("worker.exe", Some(Path::new(r"D:\project\target\debug\worker.exe"))));
+        assert!(is_developer_tool(
+            "custom-runner.exe",
+            Some(Path::new(r"D:\project\.vscode\extensions\runner.exe"))
+        ));
+        assert!(is_developer_tool(
+            "worker.exe",
+            Some(Path::new(r"D:\project\target\debug\worker.exe"))
+        ));
 
-        assert!(!is_developer_tool("mimikatz.exe", Some(Path::new(r"C:\Windows\Temp\mimikatz.exe"))));
-        assert!(!is_developer_tool("evil.exe", Some(Path::new(r"C:\Users\Public\evil.exe"))));
+        assert!(!is_developer_tool(
+            "mimikatz.exe",
+            Some(Path::new(r"C:\Windows\Temp\mimikatz.exe"))
+        ));
+        assert!(!is_developer_tool(
+            "evil.exe",
+            Some(Path::new(r"C:\Users\Public\evil.exe"))
+        ));
         assert!(!is_developer_tool("cmd.exe", None));
         assert!(!is_developer_tool("powershell.exe", None));
         assert!(!is_developer_tool("gitminer.exe", None));
@@ -10771,27 +11997,67 @@ mod tests {
 
     #[test]
     fn test_should_skip_file_malware_scan() {
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\.vscode\settings.json")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\target\debug\app.pdb")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\target\debug\incremental\app.rmeta")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\src\main.rs")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\.git\index")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\node_modules\package\index.js")));
-        assert!(should_skip_file_malware_scan(Path::new(r"C:\Users\dev\.cargo\config.toml")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node")));
-        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node")));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\dev\my_project\.vscode\settings.json"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\dev\my_project\target\debug\app.pdb"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\dev\my_project\target\debug\incremental\app.rmeta"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\dev\my_project\src\main.rs"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\dev\my_project\.git\index"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\dev\my_project\node_modules\package\index.js"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"C:\Users\dev\.cargo\config.toml"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"
+        )));
+        assert!(should_skip_file_malware_scan(Path::new(
+            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node"
+        )));
 
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\System32\unknown_driver.sys")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\Public\Downloads\installer.exe")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\mimikatz.exe")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\ransomware.exe")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\vulkan-1.dll")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\victim\Downloads\msalruntime.dll")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\victim\Downloads\vsda.node")));
-        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\win32-app-container-tokens.node")));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Windows\System32\unknown_driver.sys"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Users\Public\Downloads\installer.exe"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Windows\Temp\mimikatz.exe"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Windows\Temp\ransomware.exe"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Windows\Temp\vulkan-1.dll"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Users\victim\Downloads\msalruntime.dll"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Users\victim\Downloads\vsda.node"
+        )));
+        assert!(!should_skip_file_malware_scan(Path::new(
+            r"C:\Windows\Temp\win32-app-container-tokens.node"
+        )));
     }
 
     #[test]
@@ -10813,7 +12079,10 @@ mod tests {
         let key2 = EdrOrchestrator::compute_suppression_key(&sig2);
 
         assert_eq!(key1, "abc123hash:powershell.exe:Intelligent Correlation");
-        assert_eq!(key1, key2, "Suppression keys must match regardless of random UUID id");
+        assert_eq!(
+            key1, key2,
+            "Suppression keys must match regardless of random UUID id"
+        );
 
         // Edge case: Empty or whitespace reason gracefully defaults to "generic"
         let mut sig_empty = ThreatSignature::new("node-1".to_string());
@@ -10942,14 +12211,23 @@ mod tests {
         let ev_malware_no_pid = make_test_event(serde_json::json!({
             "Image": r"C:\Windows\Temp\malware.exe",
         }));
-        assert!(!is_system_critical(&ev_malware_no_pid), "Malware without PID must NOT be system critical");
+        assert!(
+            !is_system_critical(&ev_malware_no_pid),
+            "Malware without PID must NOT be system critical"
+        );
 
         let ev_empty = make_test_event(serde_json::json!({}));
-        assert!(!is_system_critical(&ev_empty), "Empty event must NOT be system critical");
+        assert!(
+            !is_system_critical(&ev_empty),
+            "Empty event must NOT be system critical"
+        );
 
         // System/Kernel pseudo processes
         let ev_sys_img = make_test_event(serde_json::json!({"Image": "System"}));
-        assert!(is_system_critical(&ev_sys_img), "System pseudo-process must be system critical");
+        assert!(
+            is_system_critical(&ev_sys_img),
+            "System pseudo-process must be system critical"
+        );
 
         // 2. extract_event_pid ignores LoggingProcessId and extracts ProcessId from EventData
         let ev_with_logging_pid = make_test_event(serde_json::json!({
@@ -11040,10 +12318,7 @@ mod tests {
             extract_created_username("net user /delete rogue_admin"),
             None
         );
-        assert_eq!(
-            extract_created_username("whoami /all"),
-            None
-        );
+        assert_eq!(extract_created_username("whoami /all"), None);
     }
 
     #[test]
@@ -11195,12 +12470,18 @@ mod tests {
         assert!(!is_account_rollback_allowed("guest", &baseline));
         assert!(!is_account_rollback_allowed("DefaultAccount", &baseline));
         assert!(!is_account_rollback_allowed("Owner", &baseline));
-        assert!(!is_account_rollback_allowed("WDAGUtilityAccount", &baseline));
+        assert!(!is_account_rollback_allowed(
+            "WDAGUtilityAccount",
+            &baseline
+        ));
 
         assert!(!is_account_containment_allowed("guest", &baseline));
         assert!(!is_account_containment_allowed("DefaultAccount", &baseline));
         assert!(!is_account_containment_allowed("Owner", &baseline));
-        assert!(!is_account_containment_allowed("WDAGUtilityAccount", &baseline));
+        assert!(!is_account_containment_allowed(
+            "WDAGUtilityAccount",
+            &baseline
+        ));
 
         // Empty and whitespace strings are rejected
         assert!(!is_account_rollback_allowed("", &baseline));
@@ -11219,15 +12500,24 @@ mod tests {
         assert!(!is_account_containment_allowed("bad\0user", &baseline));
         assert!(!is_account_containment_allowed("bad\nuser", &baseline));
         assert!(!is_account_containment_allowed("bad\ruser", &baseline));
-        assert!(!is_account_containment_allowed("evil'; calc.exe; #", &baseline));
+        assert!(!is_account_containment_allowed(
+            "evil'; calc.exe; #",
+            &baseline
+        ));
         assert!(!is_account_containment_allowed("user&calc", &baseline));
         assert!(!is_account_containment_allowed("user|calc", &baseline));
 
         // Verifies that rogue accounts are allowed for non-destructive containment disabling if not in the baseline
         assert!(is_account_rollback_allowed("mallory_hacker", &baseline));
-        assert!(is_account_rollback_allowed("T1136.001_RogueUser", &baseline));
+        assert!(is_account_rollback_allowed(
+            "T1136.001_RogueUser",
+            &baseline
+        ));
         assert!(is_account_containment_allowed("mallory_hacker", &baseline));
-        assert!(is_account_containment_allowed("T1136.001_RogueUser", &baseline));
+        assert!(is_account_containment_allowed(
+            "T1136.001_RogueUser",
+            &baseline
+        ));
         assert!(is_account_containment_allowed("Rogue Admin", &baseline));
         assert!(is_account_containment_allowed("rogue'name", &baseline));
     }
@@ -11329,7 +12619,10 @@ mod tests {
         } else {
             false
         };
-        assert!(debounced, "Consecutive event for same PID must be debounced within 120s");
+        assert!(
+            debounced,
+            "Consecutive event for same PID must be debounced within 120s"
+        );
 
         // Clean up test entry
         RECENT_TARPITTED_PIDS.remove(&pid);
@@ -11346,9 +12639,24 @@ mod tests {
         assert!(is_cloud_storage_service("Box.exe", None));
         assert!(is_cloud_storage_service("iCloudServices.exe", None));
         assert!(is_cloud_storage_service("rclone.exe", None));
-        assert!(is_cloud_storage_service("custom_sync.exe", Some(std::path::Path::new(r"C:\Program Files\Google\DriveFS\custom_sync.exe"))));
-        assert!(is_cloud_storage_service("custom_sync.exe", Some(std::path::Path::new("C:/Program Files/Google/DriveFS/custom_sync.exe"))));
-        assert!(is_cloud_storage_service("sync_daemon.exe", Some(std::path::Path::new("C:/Users/dev/AppData/Local/Microsoft/OneDrive/sync_daemon.exe"))));
+        assert!(is_cloud_storage_service(
+            "custom_sync.exe",
+            Some(std::path::Path::new(
+                r"C:\Program Files\Google\DriveFS\custom_sync.exe"
+            ))
+        ));
+        assert!(is_cloud_storage_service(
+            "custom_sync.exe",
+            Some(std::path::Path::new(
+                "C:/Program Files/Google/DriveFS/custom_sync.exe"
+            ))
+        ));
+        assert!(is_cloud_storage_service(
+            "sync_daemon.exe",
+            Some(std::path::Path::new(
+                "C:/Users/dev/AppData/Local/Microsoft/OneDrive/sync_daemon.exe"
+            ))
+        ));
         assert!(is_cloud_storage_service("owncloud.exe", None));
         assert!(is_cloud_storage_service("pcloud.exe", None));
 
@@ -11356,17 +12664,26 @@ mod tests {
         assert!(!is_cloud_storage_service("cmd.exe", None));
         assert!(!is_cloud_storage_service("powershell.exe", None));
         assert!(!is_cloud_storage_service("mimikatz.exe", None));
-        assert!(!is_cloud_storage_service("payload.exe", Some(std::path::Path::new(r"C:\Windows\Temp\payload.exe"))));
-        assert!(!is_cloud_storage_service("payload.exe", Some(std::path::Path::new("C:/Windows/Temp/payload.exe"))));
+        assert!(!is_cloud_storage_service(
+            "payload.exe",
+            Some(std::path::Path::new(r"C:\Windows\Temp\payload.exe"))
+        ));
+        assert!(!is_cloud_storage_service(
+            "payload.exe",
+            Some(std::path::Path::new("C:/Windows/Temp/payload.exe"))
+        ));
     }
 
     #[tokio::test]
     async fn test_mesh_skill_knowledge_handling() {
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_skill_test_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_skill_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp_dir);
 
         let markdown = "# EDR-PAT-TEST\n\nDetect suspicious remote thread creation.";
-        let hash = blake3::hash(markdown.trim().as_bytes()).to_hex().to_string();
+        let hash = blake3::hash(markdown.trim().as_bytes())
+            .to_hex()
+            .to_string();
 
         let broadcast = osoosi_wire::SkillKnowledgeBroadcast {
             node_id: "peer-validator-01".to_string(),
@@ -11402,39 +12719,64 @@ mod tests {
         let res2 = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&broadcast, &temp_dir);
         assert!(res2.is_ok());
         let (_, is_dup2, _) = res2.unwrap();
-        assert!(is_dup2, "Second ingestion of identical pattern must be duplicate");
+        assert!(
+            is_dup2,
+            "Second ingestion of identical pattern must be duplicate"
+        );
         let peer_patterns_content_after = std::fs::read_to_string(&peer_patterns_file).unwrap();
-        assert_eq!(peer_patterns_content.len(), peer_patterns_content_after.len(), "Duplicate must not append to peer_patterns.md");
+        assert_eq!(
+            peer_patterns_content.len(),
+            peer_patterns_content_after.len(),
+            "Duplicate must not append to peer_patterns.md"
+        );
 
         // 3. Reject empty markdown content
         let mut empty_content = broadcast.clone();
         empty_content.markdown_content = "   \n\t  ".to_string();
-        let res_empty = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&empty_content, &temp_dir);
+        let res_empty =
+            EdrOrchestrator::ingest_skill_knowledge_to_workspace(&empty_content, &temp_dir);
         assert!(res_empty.is_err(), "Empty content must be rejected");
 
         // 4. Reject empty content_hash (bypassing hash checks)
         let mut empty_hash = broadcast.clone();
         empty_hash.content_hash = "".to_string();
-        let res_empty_hash = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&empty_hash, &temp_dir);
-        assert!(res_empty_hash.is_err(), "Empty content_hash must be rejected");
+        let res_empty_hash =
+            EdrOrchestrator::ingest_skill_knowledge_to_workspace(&empty_hash, &temp_dir);
+        assert!(
+            res_empty_hash.is_err(),
+            "Empty content_hash must be rejected"
+        );
 
         // 5. Reject forged mismatched hash
         let mut forged_hash = broadcast.clone();
-        forged_hash.content_hash = "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
-        let res_forged = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&forged_hash, &temp_dir);
-        assert!(res_forged.is_err(), "Forged mismatched content_hash must be rejected");
+        forged_hash.content_hash =
+            "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+        let res_forged =
+            EdrOrchestrator::ingest_skill_knowledge_to_workspace(&forged_hash, &temp_dir);
+        assert!(
+            res_forged.is_err(),
+            "Forged mismatched content_hash must be rejected"
+        );
 
         // 6. Reject forged single-character prefix hash
         let mut forged_prefix = broadcast.clone();
         forged_prefix.content_hash = hash[0..1].to_string();
-        let res_forged_prefix = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&forged_prefix, &temp_dir);
-        assert!(res_forged_prefix.is_err(), "Short single-character prefix hash must be rejected");
+        let res_forged_prefix =
+            EdrOrchestrator::ingest_skill_knowledge_to_workspace(&forged_prefix, &temp_dir);
+        assert!(
+            res_forged_prefix.is_err(),
+            "Short single-character prefix hash must be rejected"
+        );
 
         // 7. Directory traversal in content_hash defense
         let mut traversal = broadcast.clone();
         traversal.content_hash = "../../evil_path".to_string();
-        let res_traversal = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&traversal, &temp_dir);
-        assert!(res_traversal.is_err(), "Path traversal in content_hash must be rejected");
+        let res_traversal =
+            EdrOrchestrator::ingest_skill_knowledge_to_workspace(&traversal, &temp_dir);
+        assert!(
+            res_traversal.is_err(),
+            "Path traversal in content_hash must be rejected"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
@@ -11447,10 +12789,16 @@ mod tests {
         assert!(is_internal_or_deception_path("runs\\20261004.log"));
         assert!(is_internal_or_deception_path("runs/20261004.log"));
         assert!(is_internal_or_deception_path("logs\\osoosi.log"));
-        assert!(is_internal_or_deception_path("models\\securebert\\model.onnx"));
+        assert!(is_internal_or_deception_path(
+            "models\\securebert\\model.onnx"
+        ));
         assert!(is_internal_or_deception_path("database\\osoosi.db"));
-        assert!(is_internal_or_deception_path(".agents\\skills\\security.md"));
-        assert!(is_internal_or_deception_path(".gemini\\antigravity\\config"));
+        assert!(is_internal_or_deception_path(
+            ".agents\\skills\\security.md"
+        ));
+        assert!(is_internal_or_deception_path(
+            ".gemini\\antigravity\\config"
+        ));
 
         // Positive cases - exact directory/database names
         assert!(is_internal_or_deception_path("traps"));
@@ -11467,13 +12815,23 @@ mod tests {
         assert!(is_internal_or_deception_path("osoosi_core.log"));
 
         // Positive cases - absolute Windows paths
-        assert!(is_internal_or_deception_path("C:\\Program Files\\OshoosiClaw\\traps\\honey.txt"));
-        assert!(is_internal_or_deception_path("D:\\osoosi\\database\\state.db"));
-        assert!(is_internal_or_deception_path("C:\\ProgramData\\Oshoosi\\logs\\agent.log"));
+        assert!(is_internal_or_deception_path(
+            "C:\\Program Files\\OshoosiClaw\\traps\\honey.txt"
+        ));
+        assert!(is_internal_or_deception_path(
+            "D:\\osoosi\\database\\state.db"
+        ));
+        assert!(is_internal_or_deception_path(
+            "C:\\ProgramData\\Oshoosi\\logs\\agent.log"
+        ));
 
         // Negative cases - benign OS paths or substring traps
-        assert!(!is_internal_or_deception_path("C:\\Windows\\System32\\cmd.exe"));
-        assert!(!is_internal_or_deception_path("C:\\Users\\Bob\\Documents\\report.docx"));
+        assert!(!is_internal_or_deception_path(
+            "C:\\Windows\\System32\\cmd.exe"
+        ));
+        assert!(!is_internal_or_deception_path(
+            "C:\\Users\\Bob\\Documents\\report.docx"
+        ));
         assert!(!is_internal_or_deception_path("straps\\canary.docx"));
         assert!(!is_internal_or_deception_path("C:\\remodels\\engine.dll"));
         assert!(!is_internal_or_deception_path(""));
@@ -11486,42 +12844,69 @@ mod tests {
 
         // Insert 3 simulated hosts (2 hotspot, 1 lan)
         let now = chrono::Utc::now();
-        let did_hotspot1 = "did:osoosi:31b59725bd7728d80163d4407c0863544ca91604d38374003d7be7285aa61ca9";
+        let did_hotspot1 =
+            "did:osoosi:31b59725bd7728d80163d4407c0863544ca91604d38374003d7be7285aa61ca9";
         let did_lan = "did:osoosi:4885d3f54d7282b7fa192427d9a7d8b45cced40be66b687c73d43e7df7aac668";
-        let did_hotspot2 = "did:osoosi:14a974a992b5b95033f1040240820581a81f86d2b96768719c8af0b1ae80cf00";
+        let did_hotspot2 =
+            "did:osoosi:14a974a992b5b95033f1040240820581a81f86d2b96768719c8af0b1ae80cf00";
 
         for (did, os_ver) in [
             (did_hotspot1, "11 Pro"),
             (did_lan, "11 Enterprise"),
             (did_hotspot2, "11 Pro"),
         ] {
-            memory.upsert_peer_status(&osoosi_types::PeerAnnounce {
-                source_node: did.to_string(),
-                is_patched: true,
-                os_name: "Windows".to_string(),
-                os_version: os_ver.to_string(),
-                os_supported: true,
-                timestamp: now,
-                membership_proof: None,
-                attestation: None,
-            }).unwrap();
-            memory.upsert_reputation(&osoosi_types::ReputationScore {
-                node_id: did.to_string(),
-                score: 1.0,
-                alerts_verified: 5,
-                false_positives: 0,
-                last_updated: now,
-            }).unwrap();
+            memory
+                .upsert_peer_status(&osoosi_types::PeerAnnounce {
+                    source_node: did.to_string(),
+                    is_patched: true,
+                    os_name: "Windows".to_string(),
+                    os_version: os_ver.to_string(),
+                    os_supported: true,
+                    timestamp: now,
+                    membership_proof: None,
+                    attestation: None,
+                })
+                .unwrap();
+            memory
+                .upsert_reputation(&osoosi_types::ReputationScore {
+                    node_id: did.to_string(),
+                    score: 1.0,
+                    alerts_verified: 5,
+                    false_positives: 0,
+                    last_updated: now,
+                })
+                .unwrap();
         }
 
         // Verify query matches our get_zone_summary logic
         let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
-        let peers = memory.query_json(query, &["did:osoosi:local".to_string(), "did:osoosi:local".to_string()]).unwrap();
+        let peers = memory
+            .query_json(
+                query,
+                &[
+                    "did:osoosi:local".to_string(),
+                    "did:osoosi:local".to_string(),
+                ],
+            )
+            .unwrap();
         assert_eq!(peers.len(), 3);
 
         // Save posture
-        memory.save_zone_posture("zone-alpha-mesh", 80, true, true, true, "TPM 2.0 Anchored", "[]").unwrap();
-        let loaded = memory.load_zone_posture("zone-alpha-mesh").unwrap().unwrap();
+        memory
+            .save_zone_posture(
+                "zone-alpha-mesh",
+                80,
+                true,
+                true,
+                true,
+                "TPM 2.0 Anchored",
+                "[]",
+            )
+            .unwrap();
+        let loaded = memory
+            .load_zone_posture("zone-alpha-mesh")
+            .unwrap()
+            .unwrap();
         assert_eq!(loaded["security_score"], 80);
         assert_eq!(loaded["tpm_remediated"], true);
         assert_eq!(loaded["memory_shield_remediated"], true);
@@ -11530,7 +12915,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_evaluate_program_consensus_benign_and_ignore() {
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_consensus_test_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_consensus_test_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let temp_file = temp_dir.join("benign_tool.txt");
         std::fs::write(&temp_file, b"Hello world benign consensus program").unwrap();
@@ -11538,7 +12924,8 @@ mod tests {
         let memory = osoosi_memory::MemoryStore::new(":memory:").unwrap();
         let malware_scanner = osoosi_model::MalwareScanner::new(std::path::Path::new("dummy.onnx"));
         let decision_cfg = osoosi_types::load_decision_model_config();
-        let decision_engine = osoosi_behavioral::decision_model::ClefDecisionEngine::new(decision_cfg);
+        let decision_engine =
+            osoosi_behavioral::decision_model::ClefDecisionEngine::new(decision_cfg);
         let executor = std::sync::Arc::new(crate::secured_executor::DirectExecutor::new());
         let provisioner = std::sync::Arc::new(osoosi_telemetry::AgentProvisioner::new(executor));
         let blocking_manager = crate::blocking_manager::BlockingManager::new(provisioner);
@@ -11549,7 +12936,9 @@ mod tests {
             &decision_engine,
             &blocking_manager,
             &temp_file,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
 
         assert_eq!(finding.verdict, "benign");
         assert_eq!(finding.action_taken, "ignored_and_allowed");
@@ -11562,7 +12951,9 @@ mod tests {
             &decision_engine,
             &blocking_manager,
             &temp_file,
-        ).await.unwrap();
+        )
+        .await
+        .unwrap();
         assert_eq!(cached.action_taken, "ignored_and_allowed");
         assert!(cached.id.starts_with("CONS-CACHED-"));
 
@@ -11574,4 +12965,3 @@ mod tests {
         assert!(crate::memory_watchdog::trim_process_working_set());
     }
 }
-

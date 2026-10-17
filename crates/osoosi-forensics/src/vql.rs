@@ -19,9 +19,8 @@ pub enum VqlError {
 static SAFE_PATH_REGEX: OnceLock<Regex> = OnceLock::new();
 
 fn get_safe_path_regex() -> &'static Regex {
-    SAFE_PATH_REGEX.get_or_init(|| {
-        Regex::new(r"^[a-zA-Z0-9_\\\/\-.: ]+$").expect("valid regex for safe path")
-    })
+    SAFE_PATH_REGEX
+        .get_or_init(|| Regex::new(r"^[a-zA-Z0-9_\\\/\-.: ]+$").expect("valid regex for safe path"))
 }
 
 /// Validates that a process ID falls within standard operating system bounds [4, 4194304].
@@ -100,7 +99,10 @@ pub fn build_network_connections_query(pid: Option<u32>) -> Result<String, VqlEr
             safe_pid
         ))
     } else {
-        Ok("SELECT Pid, ProcessName, LocalAddress, RemoteAddress, Status FROM netstat()".to_string())
+        Ok(
+            "SELECT Pid, ProcessName, LocalAddress, RemoteAddress, Status FROM netstat()"
+                .to_string(),
+        )
     }
 }
 
@@ -169,7 +171,10 @@ mod tests {
     #[test]
     fn test_network_connections_query_builder() {
         let q_all = build_network_connections_query(None).expect("valid query");
-        assert_eq!(q_all, "SELECT Pid, ProcessName, LocalAddress, RemoteAddress, Status FROM netstat()");
+        assert_eq!(
+            q_all,
+            "SELECT Pid, ProcessName, LocalAddress, RemoteAddress, Status FROM netstat()"
+        );
 
         let q_pid = build_network_connections_query(Some(4321)).expect("valid query");
         assert!(q_pid.contains("WHERE Pid = 4321"));

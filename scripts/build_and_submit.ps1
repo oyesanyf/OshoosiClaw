@@ -453,13 +453,17 @@ if (-not $SkipSubmit) {
 # =============================================================================
 Write-Host "`n>>> [6b/8] Synchronizing Signed MSI Installer to GitHub Latest Release..." -ForegroundColor Yellow
 $ReleaseSyncScript = Join-Path $ProjectRoot "scripts\update_github_release_msi.py"
-if (Test-Path $ReleaseSyncScript) {
-    & python $ReleaseSyncScript
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "       -> GitHub Release MSI assets synchronized successfully." -ForegroundColor Green
-    } else {
-        Write-Warning "update_github_release_msi.py returned code $LASTEXITCODE"
+if ($env:OSOOSI_FORCE_LOCAL_RELEASE_UPLOAD -eq "1") {
+    if (Test-Path $ReleaseSyncScript) {
+        & python $ReleaseSyncScript
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "       -> GitHub Release MSI assets synchronized successfully." -ForegroundColor Green
+        } else {
+            Write-Warning "update_github_release_msi.py returned code $LASTEXITCODE"
+        }
     }
+} else {
+    Write-Host "       -> Skipping local GitHub release upload. Release assets, GPG signatures, and SLSA provenance are built and attested directly in GitHub Actions (.github/workflows/release.yml). Set OSOOSI_FORCE_LOCAL_RELEASE_UPLOAD=1 to override." -ForegroundColor Gray
 }
 
 # =============================================================================

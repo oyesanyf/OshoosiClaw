@@ -37,7 +37,11 @@ pub fn sign_config_file(path: &Path) -> anyhow::Result<String> {
         SIG_EXTENSION
     ));
     std::fs::write(&sig_path, &hash)?;
-    if path.file_name().map(|f| f.to_string_lossy() == "osoosi.toml").unwrap_or(false) {
+    if path
+        .file_name()
+        .map(|f| f.to_string_lossy() == "osoosi.toml")
+        .unwrap_or(false)
+    {
         let _ = std::fs::write(path.with_extension("xml.lock"), &hash);
     }
     info!("Signed config file {:?} → hash={}", path, &hash[..16]);
@@ -61,7 +65,12 @@ pub async fn sign_config_with_ed25519(
     ));
 
     let priv_key_bytes = std::fs::read(priv_key_path)?;
-    let signing_key = SigningKey::from_bytes(priv_key_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid Ed25519 private key"))?);
+    let signing_key = SigningKey::from_bytes(
+        priv_key_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Invalid Ed25519 private key"))?,
+    );
 
     let data = std::fs::read(path)?;
     let signature = signing_key.sign(&data);
@@ -120,7 +129,11 @@ pub fn verify_config_integrity(path: &Path) -> anyhow::Result<bool> {
     // Verification
     if current_hash == stored_hash {
         info!("Integrity OK: {:?} (SHA-256 hash verified)", path);
-        if path.file_name().map(|f| f.to_string_lossy() == "osoosi.toml").unwrap_or(false) {
+        if path
+            .file_name()
+            .map(|f| f.to_string_lossy() == "osoosi.toml")
+            .unwrap_or(false)
+        {
             let _ = std::fs::write(&xml_lock, &current_hash);
         }
         Ok(true)

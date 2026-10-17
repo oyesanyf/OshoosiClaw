@@ -15,7 +15,6 @@ use std::io::{BufRead, BufReader};
 #[cfg(not(target_os = "windows"))]
 use std::path::Path;
 
-
 /// Trait for platform-specific host event sources.
 pub trait HostEventReader: Send + Sync {
     /// Read new events since last poll. Returns normalized HostSecurityEvent list.
@@ -25,7 +24,9 @@ pub trait HostEventReader: Send + Sync {
 }
 
 /// Create the appropriate reader for the current OS.
-pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn HostEventReader + Send + Sync>> {
+pub fn create_host_event_reader(
+    channel_or_path: &str,
+) -> anyhow::Result<Box<dyn HostEventReader + Send + Sync>> {
     #[cfg(target_os = "windows")]
     {
         // On Windows, we use the WindowsEventReader which polls the Event Log (Sysmon).
@@ -58,13 +59,13 @@ impl NativeEbpfReader {
     pub fn new() -> anyhow::Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::channel(10_000);
         let engine = super::native::NativeTelemetryEngine::new(tx);
-        
+
         tokio::spawn(async move {
             if let Err(e) = engine.run().await {
                 tracing::error!("Native Telemetry Engine (Linux eBPF) failed: {}", e);
             }
         });
-        
+
         Ok(Self { rx })
     }
 }
@@ -127,14 +128,14 @@ impl NativeETWReader {
     pub fn new() -> anyhow::Result<Self> {
         let (tx, rx) = tokio::sync::mpsc::channel(10_000);
         let engine = super::native::NativeTelemetryEngine::new(tx);
-        
+
         // Spawn the native engine in a background task
         tokio::spawn(async move {
             if let Err(e) = engine.run().await {
                 tracing::error!("Native Telemetry Engine failed: {}", e);
             }
         });
-        
+
         Ok(Self { rx })
     }
 }
@@ -175,7 +176,10 @@ impl WindowsEventReader {
     pub fn new(channel: &str) -> anyhow::Result<Self> {
         let mut channels = Vec::new();
 
-        if channel.is_empty() || channel == "default" || channel == "Microsoft-Windows-Sysmon/Operational" {
+        if channel.is_empty()
+            || channel == "default"
+            || channel == "Microsoft-Windows-Sysmon/Operational"
+        {
             // Sysmon: capture ALL Sysmon event IDs (no restrictive filter)
             channels.push(WindowsChannelSubscription {
                 channel: "Microsoft-Windows-Sysmon/Operational".to_string(),
@@ -238,12 +242,12 @@ impl HostEventReader for WindowsEventReader {
     fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
         use windows::core::HSTRING;
         use windows::Win32::System::EventLog::{
-            EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml,
-            EvtQueryChannelPath, EvtQueryForwardDirection, EVT_HANDLE
+            EvtClose, EvtNext, EvtQuery, EvtQueryChannelPath, EvtQueryForwardDirection, EvtRender,
+            EvtRenderEventXml, EVT_HANDLE,
         };
 
         let mut out = Vec::new();
-        
+
         // 1. Get hook events from native engine
         if let Ok(mut native_events) = self.native.poll_events() {
             out.append(&mut native_events);
@@ -252,14 +256,20 @@ impl HostEventReader for WindowsEventReader {
         // 2. Poll configured Event Log channels concurrently
         for sub in &mut self.channels {
             let mut query = match &sub.query_filter {
-                Some(filter) => format!("*[System[({}) and TimeCreated[timediff(@SystemTime) <= 3600000]]]", filter),
+                Some(filter) => format!(
+                    "*[System[({}) and TimeCreated[timediff(@SystemTime) <= 3600000]]]",
+                    filter
+                ),
                 None => "*[System[TimeCreated[timediff(@SystemTime) <= 3600000]]]".to_string(),
             };
 
             if let Some(t) = sub.last_poll_time {
                 let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                 query = match &sub.query_filter {
-                    Some(filter) => format!("*[System[({}) and TimeCreated[@SystemTime > '{}']]]", filter, ts_str),
+                    Some(filter) => format!(
+                        "*[System[({}) and TimeCreated[@SystemTime > '{}']]]",
+                        filter, ts_str
+                    ),
                     None => format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str),
                 };
             }
@@ -303,26 +313,36 @@ impl HostEventReader for WindowsEventReader {
                 let mut returned = 0;
 
                 while EvtNext(handle, &mut events, 0, 0, &mut returned).is_ok() && returned > 0 {
-                    for i in 0..returned as usize {
-                        let evt = EVT_HANDLE(events[i]);
+                    for &evt_val in events.iter().take(returned as usize) {
+                        let evt = EVT_HANDLE(evt_val);
                         let mut buffer_used = 0;
                         let mut property_count = 0;
 
-                        let _ = EvtRender(None, evt, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
+                        let _ = EvtRender(
+                            None,
+                            evt,
+                            EvtRenderEventXml.0,
+                            0,
+                            None,
+                            &mut buffer_used,
+                            &mut property_count,
+                        );
 
                         let mut buffer: Vec<u16> = vec![0u16; (buffer_used / 2 + 1) as usize];
                         if EvtRender(
-                            None, 
-                            evt, 
-                            EvtRenderEventXml.0 as u32, 
-                            buffer.len() as u32 * 2, 
-                            Some(buffer.as_mut_ptr() as *mut std::ffi::c_void), 
-                            &mut buffer_used, 
-                            &mut property_count
-                        ).is_ok() {
+                            None,
+                            evt,
+                            EvtRenderEventXml.0,
+                            buffer.len() as u32 * 2,
+                            Some(buffer.as_mut_ptr() as *mut std::ffi::c_void),
+                            &mut buffer_used,
+                            &mut property_count,
+                        )
+                        .is_ok()
+                        {
                             let xml = String::from_utf16_lossy(&buffer);
                             let clean_xml = xml.trim_end_matches('\0');
-                            
+
                             if let Some(ev) = Self::parse_xml(clean_xml) {
                                 channel_events.push(ev);
                             }
@@ -346,11 +366,7 @@ impl HostEventReader for WindowsEventReader {
     }
 
     fn source_name(&self) -> String {
-        let active: Vec<&str> = self
-            .channels
-            .iter()
-            .map(|c| c.channel.as_str())
-            .collect();
+        let active: Vec<&str> = self.channels.iter().map(|c| c.channel.as_str()).collect();
         format!("windows-event-log:{}", active.join("+"))
     }
 }
@@ -361,9 +377,10 @@ impl WindowsEventReader {
         let event_id = Self::extract_tag_value(xml, "EventID")
             .and_then(|s| s.parse::<u32>().ok())
             .unwrap_or(0);
-        
-        let computer = Self::extract_tag_value(xml, "Computer").unwrap_or_else(|| "localhost".to_string());
-        
+
+        let computer =
+            Self::extract_tag_value(xml, "Computer").unwrap_or_else(|| "localhost".to_string());
+
         // Extract timestamp from TimeCreated SystemTime attribute
         let timestamp = Self::extract_tag_attribute(xml, "TimeCreated", "SystemTime")
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -475,14 +492,22 @@ impl WindowsEventReader {
         // --- NORMALIZATION ---
         // Normalize numeric and hex string fields (ProcessId, Ports, etc.) into integer numbers
         let numeric_keys = [
-            "ProcessId", "SourceProcessId", "TargetProcessId", "ParentProcessId",
-            "NewProcessId", "DestinationPort", "SourcePort",
+            "ProcessId",
+            "SourceProcessId",
+            "TargetProcessId",
+            "ParentProcessId",
+            "NewProcessId",
+            "DestinationPort",
+            "SourcePort",
         ];
         for key in numeric_keys {
             if let Some(val) = data.get(key) {
                 if let Some(s) = val.as_str() {
                     let trimmed = s.trim();
-                    let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                    let parsed = if let Some(hex) = trimmed
+                        .strip_prefix("0x")
+                        .or_else(|| trimmed.strip_prefix("0X"))
+                    {
                         u64::from_str_radix(hex, 16).ok()
                     } else {
                         trimmed.parse::<u64>().ok()
@@ -535,7 +560,10 @@ impl WindowsEventReader {
             .or_else(|| Self::extract_tag_attribute(xml, "Execution", "ProcessId"))
         {
             let trimmed = exec_pid_str.trim();
-            let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+            let parsed = if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
                 u64::from_str_radix(hex, 16).ok()
             } else {
                 trimmed.parse::<u64>().ok()
@@ -550,7 +578,10 @@ impl WindowsEventReader {
             .or_else(|| Self::extract_tag_attribute(xml, "Execution", "ThreadId"))
         {
             let trimmed = exec_tid_str.trim();
-            let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+            let parsed = if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
                 u64::from_str_radix(hex, 16).ok()
             } else {
                 trimmed.parse::<u64>().ok()
@@ -585,7 +616,13 @@ impl WindowsEventReader {
             let after_tag_name = abs_start + pattern.len();
             if after_tag_name < xml.len() {
                 let next_char = xml.as_bytes()[after_tag_name];
-                if next_char == b'>' || next_char == b' ' || next_char == b'/' || next_char == b'\t' || next_char == b'\n' || next_char == b'\r' {
+                if next_char == b'>'
+                    || next_char == b' '
+                    || next_char == b'/'
+                    || next_char == b'\t'
+                    || next_char == b'\n'
+                    || next_char == b'\r'
+                {
                     if let Some(close_bracket) = xml[abs_start..].find('>') {
                         let tag_header = &xml[abs_start..abs_start + close_bracket + 1];
                         if tag_header.ends_with("/>") {
@@ -595,7 +632,11 @@ impl WindowsEventReader {
                         let content_start = abs_start + close_bracket + 1;
                         let close_tag = format!("</{}>", tag);
                         if let Some(end_idx) = xml[content_start..].find(&close_tag) {
-                            return Some(xml[content_start..content_start + end_idx].trim().to_string());
+                            return Some(
+                                xml[content_start..content_start + end_idx]
+                                    .trim()
+                                    .to_string(),
+                            );
                         }
                     }
                 }
@@ -613,21 +654,31 @@ impl WindowsEventReader {
             let after_tag_name = abs_start + pattern.len();
             if after_tag_name < xml.len() {
                 let next_char = xml.as_bytes()[after_tag_name];
-                if next_char == b'>' || next_char == b' ' || next_char == b'/' || next_char == b'\t' || next_char == b'\n' || next_char == b'\r' {
+                if next_char == b'>'
+                    || next_char == b' '
+                    || next_char == b'/'
+                    || next_char == b'\t'
+                    || next_char == b'\n'
+                    || next_char == b'\r'
+                {
                     if let Some(close_bracket) = xml[abs_start..].find('>') {
                         let tag_header = &xml[abs_start..abs_start + close_bracket + 1];
                         let attr_pattern = format!("{}=\"", attr);
                         if let Some(attr_idx) = tag_header.find(&attr_pattern) {
                             let val_start = attr_idx + attr_pattern.len();
                             if let Some(val_end) = tag_header[val_start..].find('"') {
-                                return Some(tag_header[val_start..val_start + val_end].to_string());
+                                return Some(
+                                    tag_header[val_start..val_start + val_end].to_string(),
+                                );
                             }
                         }
                         let attr_single = format!("{}='", attr);
                         if let Some(attr_idx) = tag_header.find(&attr_single) {
                             let val_start = attr_idx + attr_single.len();
                             if let Some(val_end) = tag_header[val_start..].find('\'') {
-                                return Some(tag_header[val_start..val_start + val_end].to_string());
+                                return Some(
+                                    tag_header[val_start..val_start + val_end].to_string(),
+                                );
                             }
                         }
                     }
@@ -678,10 +729,11 @@ mod windows_tests {
 
     #[tokio::test]
     async fn parses_namespaced_sysmon_xml() {
-        let event = WindowsEventReader::parse_xml(&sample_sysmon_xml(12, r"C:\Windows\System32\cmd.exe"))
-            .expect("namespaced Sysmon XML should parse");
+        let event =
+            WindowsEventReader::parse_xml(&sample_sysmon_xml(12, r"C:\Windows\System32\cmd.exe"))
+                .expect("namespaced Sysmon XML should parse");
 
-        assert_eq!(event.event_id as u32, 1);
+        assert_eq!(event.event_id, 1);
         assert_eq!(event.computer, "test-host");
         assert_eq!(
             event.data.get("Image").and_then(|v| v.as_str()),
@@ -758,10 +810,22 @@ mod windows_tests {
 </Event>"#;
         let ev10 = WindowsEventReader::parse_xml(xml_10).expect("Sysmon 10 should parse");
         assert_eq!(ev10.event_id, 10);
-        assert_eq!(ev10.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Tools\mimikatz.exe"));
-        assert_eq!(ev10.data.get("ProcessId").and_then(|v| v.as_u64()), Some(5500));
-        assert_eq!(ev10.data.get("TargetProcessId").and_then(|v| v.as_u64()), Some(672));
-        assert_eq!(ev10.data.get("TargetImage").and_then(|v| v.as_str()), Some(r"C:\Windows\System32\lsass.exe"));
+        assert_eq!(
+            ev10.data.get("Image").and_then(|v| v.as_str()),
+            Some(r"C:\Tools\mimikatz.exe")
+        );
+        assert_eq!(
+            ev10.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(5500)
+        );
+        assert_eq!(
+            ev10.data.get("TargetProcessId").and_then(|v| v.as_u64()),
+            Some(672)
+        );
+        assert_eq!(
+            ev10.data.get("TargetImage").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\System32\lsass.exe")
+        );
 
         // Sysmon Event 22: DNS Query
         let xml_22 = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
@@ -779,8 +843,14 @@ mod windows_tests {
 </Event>"#;
         let ev22 = WindowsEventReader::parse_xml(xml_22).expect("Sysmon 22 should parse");
         assert_eq!(ev22.event_id, 22);
-        assert_eq!(ev22.data.get("ProcessId").and_then(|v| v.as_u64()), Some(1234));
-        assert_eq!(ev22.data.get("QueryName").and_then(|v| v.as_str()), Some("c2.malicious.net"));
+        assert_eq!(
+            ev22.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(1234)
+        );
+        assert_eq!(
+            ev22.data.get("QueryName").and_then(|v| v.as_str()),
+            Some("c2.malicious.net")
+        );
 
         // Sysmon Event 3: Network Connect
         let xml_3 = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
@@ -798,8 +868,14 @@ mod windows_tests {
 </Event>"#;
         let ev3 = WindowsEventReader::parse_xml(xml_3).expect("Sysmon 3 should parse");
         assert_eq!(ev3.event_id, 3);
-        assert_eq!(ev3.data.get("ProcessId").and_then(|v| v.as_u64()), Some(8899));
-        assert_eq!(ev3.data.get("DestinationPort").and_then(|v| v.as_u64()), Some(4444));
+        assert_eq!(
+            ev3.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(8899)
+        );
+        assert_eq!(
+            ev3.data.get("DestinationPort").and_then(|v| v.as_u64()),
+            Some(4444)
+        );
 
         // Sysmon Event 7: ImageLoaded should NOT populate TargetFilename
         let xml_7 = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
@@ -816,15 +892,24 @@ mod windows_tests {
 </Event>"#;
         let ev7 = WindowsEventReader::parse_xml(xml_7).expect("Sysmon 7 should parse");
         assert_eq!(ev7.event_id, 7);
-        assert_eq!(ev7.data.get("ImageLoaded").and_then(|v| v.as_str()), Some(r"C:\Windows\System32\amsi.dll"));
+        assert_eq!(
+            ev7.data.get("ImageLoaded").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\System32\amsi.dll")
+        );
         assert_eq!(ev7.data.get("TargetFilename"), None);
     }
 
     #[test]
     fn test_extract_tag_value_with_self_closing_tag_prefix() {
         let xml = r#"<Event><System><Correlation/><Channel/><EventID>1</EventID><Channel>Security</Channel></System></Event>"#;
-        assert_eq!(WindowsEventReader::extract_tag_value(xml, "EventID"), Some("1".to_string()));
-        assert_eq!(WindowsEventReader::extract_tag_value(xml, "Channel"), Some("Security".to_string()));
+        assert_eq!(
+            WindowsEventReader::extract_tag_value(xml, "EventID"),
+            Some("1".to_string())
+        );
+        assert_eq!(
+            WindowsEventReader::extract_tag_value(xml, "Channel"),
+            Some("Security".to_string())
+        );
     }
 
     #[tokio::test]
@@ -908,7 +993,8 @@ mod windows_tests {
   </EventData>
 </Event>"#;
 
-        let event = WindowsEventReader::parse_xml(xml).expect("Windows DNS Client Event 3008 should parse");
+        let event =
+            WindowsEventReader::parse_xml(xml).expect("Windows DNS Client Event 3008 should parse");
         assert_eq!(event.event_id, 3008);
         assert_eq!(event.computer, "dns-host-01");
         assert_eq!(
@@ -993,7 +1079,8 @@ mod windows_tests {
   </EventData>
 </Event>"#;
 
-        let event = WindowsEventReader::parse_xml(xml).expect("Unnamed EventData 3008 should parse");
+        let event =
+            WindowsEventReader::parse_xml(xml).expect("Unnamed EventData 3008 should parse");
         assert_eq!(event.event_id, 3008);
         assert_eq!(
             event.data.get("ProcessId").and_then(|v| v.as_u64()),
@@ -1026,11 +1113,24 @@ mod windows_tests {
     <Data Name="ProcessId">9999</Data>
   </EventData>
 </Event>"#;
-        let event = WindowsEventReader::parse_xml(xml_with_data_pid).expect("Sysmon event should parse");
-        assert_eq!(event.data.get("ProcessId").and_then(|v| v.as_u64()), Some(9999));
-        assert_eq!(event.data.get("LoggingProcessId").and_then(|v| v.as_u64()), Some(6580));
-        assert_eq!(event.data.get("ProviderProcessId").and_then(|v| v.as_u64()), Some(6580));
-        assert_eq!(event.data.get("LoggingThreadId").and_then(|v| v.as_u64()), Some(1234));
+        let event =
+            WindowsEventReader::parse_xml(xml_with_data_pid).expect("Sysmon event should parse");
+        assert_eq!(
+            event.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(9999)
+        );
+        assert_eq!(
+            event.data.get("LoggingProcessId").and_then(|v| v.as_u64()),
+            Some(6580)
+        );
+        assert_eq!(
+            event.data.get("ProviderProcessId").and_then(|v| v.as_u64()),
+            Some(6580)
+        );
+        assert_eq!(
+            event.data.get("LoggingThreadId").and_then(|v| v.as_u64()),
+            Some(1234)
+        );
 
         let xml_without_data_pid = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
   <System>
@@ -1042,11 +1142,24 @@ mod windows_tests {
     <Data Name="Type">ProcessTampering</Data>
   </EventData>
 </Event>"#;
-        let event2 = WindowsEventReader::parse_xml(xml_without_data_pid).expect("Sysmon event should parse");
+        let event2 =
+            WindowsEventReader::parse_xml(xml_without_data_pid).expect("Sysmon event should parse");
         assert_eq!(event2.data.get("ProcessId"), None);
-        assert_eq!(event2.data.get("LoggingProcessId").and_then(|v| v.as_u64()), Some(6580));
-        assert_eq!(event2.data.get("ProviderProcessId").and_then(|v| v.as_u64()), Some(6580));
-        assert_eq!(event2.data.get("LoggingThreadId").and_then(|v| v.as_u64()), Some(1234));
+        assert_eq!(
+            event2.data.get("LoggingProcessId").and_then(|v| v.as_u64()),
+            Some(6580)
+        );
+        assert_eq!(
+            event2
+                .data
+                .get("ProviderProcessId")
+                .and_then(|v| v.as_u64()),
+            Some(6580)
+        );
+        assert_eq!(
+            event2.data.get("LoggingThreadId").and_then(|v| v.as_u64()),
+            Some(1234)
+        );
     }
 }
 
@@ -1332,13 +1445,27 @@ impl HostEventReader for MacAuditReader {
 // --- Synthetic Canary Telemetry Stream Integration ---
 
 /// Maps an incoming HostSecurityEvent to its corresponding CanaryChannel and string payload.
-pub fn event_to_canary_payload(event: &HostSecurityEvent) -> Option<(crate::canary::CanaryChannel, String)> {
+pub fn event_to_canary_payload(
+    event: &HostSecurityEvent,
+) -> Option<(crate::canary::CanaryChannel, String)> {
     let payload = event.data.to_string();
     let channel = match (event.source, event.event_id) {
-        (osoosi_types::HostEventSource::WindowsEventLog, 1 | 4688) => Some(crate::canary::CanaryChannel::ProcessCreation),
-        (osoosi_types::HostEventSource::LinuxAudit | osoosi_types::HostEventSource::Ebpf | osoosi_types::HostEventSource::MacAudit | osoosi_types::HostEventSource::MacUnifiedLog, 1 | 59 | 221) => Some(crate::canary::CanaryChannel::ProcessCreation),
-        (osoosi_types::HostEventSource::WindowsEventLog, 22 | 3008) => Some(crate::canary::CanaryChannel::DnsResolution),
-        (osoosi_types::HostEventSource::WindowsEventLog, 7) => Some(crate::canary::CanaryChannel::ImageLoad),
+        (osoosi_types::HostEventSource::WindowsEventLog, 1 | 4688) => {
+            Some(crate::canary::CanaryChannel::ProcessCreation)
+        }
+        (
+            osoosi_types::HostEventSource::LinuxAudit
+            | osoosi_types::HostEventSource::Ebpf
+            | osoosi_types::HostEventSource::MacAudit
+            | osoosi_types::HostEventSource::MacUnifiedLog,
+            1 | 59 | 221,
+        ) => Some(crate::canary::CanaryChannel::ProcessCreation),
+        (osoosi_types::HostEventSource::WindowsEventLog, 22 | 3008) => {
+            Some(crate::canary::CanaryChannel::DnsResolution)
+        }
+        (osoosi_types::HostEventSource::WindowsEventLog, 7) => {
+            Some(crate::canary::CanaryChannel::ImageLoad)
+        }
         _ => {
             if crate::canary::is_canary_payload(&payload) {
                 if payload.contains(".probe.invalid") || payload.contains("probe.invalid") {
@@ -1370,4 +1497,3 @@ pub fn inspect_events_for_canary_batch(
         .filter_map(|ev| inspect_event_for_canary(correlator, ev))
         .collect()
 }
-

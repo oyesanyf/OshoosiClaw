@@ -1,12 +1,12 @@
-use async_trait::async_trait;
+pub use crate::agentic_voter::AgenticPolicyVoter;
 use crate::engine::{ThreatVoter, VoteResult};
-use osoosi_types::HostSecurityEvent;
-use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
+use async_trait::async_trait;
 use osoosi_audit::MerkleAuditTree;
+use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
 use osoosi_model::ThreatModel;
+use osoosi_types::HostSecurityEvent;
 use std::sync::Arc;
 use tracing::{debug, warn};
-pub use crate::agentic_voter::AgenticPolicyVoter;
 
 /// Zero-Day Vulnerability Voter
 /// Checks for known "In the Wild" exploits from Google's Zero-Day Tracker.
@@ -22,13 +22,20 @@ pub struct ZeroDayInfo {
     pub description: String,
 }
 
+impl Default for ZeroDayVoter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ZeroDayVoter {
     pub fn new() -> Self {
         let path = std::path::Path::new("config/google_zero_days.json");
         let vulnerabilities = if path.exists() {
             match std::fs::read_to_string(path) {
                 Ok(content) => {
-                    let data: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+                    let data: serde_json::Value =
+                        serde_json::from_str(&content).unwrap_or_default();
                     serde_json::from_value(data["vulnerabilities"].clone()).unwrap_or_default()
                 }
                 Err(_) => Vec::new(),
@@ -46,8 +53,17 @@ impl ThreatVoter for ZeroDayVoter {
         "ZeroDayTracker".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        let _version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let _version = event
+            .data
+            .get("ProductVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         for vuln in &self.vulnerabilities {
             // Match vendor or product in the image path or product name metadata
@@ -85,7 +101,11 @@ impl ThreatVoter for SandboxSurfaceVoter {
             return None;
         }
 
-        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
         if pid == 0 {
             return None;
         }
@@ -102,10 +122,16 @@ impl ThreatVoter for SandboxSurfaceVoter {
 
             // Flag suspicious integrity levels for non-system processes
             if info.integrity_level == "High" || info.integrity_level == "System" {
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if !image.to_lowercase().contains("windows\\system32") {
                     risk_score += 0.4;
-                    reasons.push("Running with High/System integrity from non-standard path".to_string());
+                    reasons.push(
+                        "Running with High/System integrity from non-standard path".to_string(),
+                    );
                 }
             }
 
@@ -114,7 +140,7 @@ impl ThreatVoter for SandboxSurfaceVoter {
                     confidence: risk_score.min(0.9),
                     reason: format!(
                         "Sandbox Surface Warning: {} (Integrity: {}, AppContainer: {}). Reasons: {}",
-                        info.is_elevated.then(|| "Elevated").unwrap_or("Non-elevated"),
+                        if info.is_elevated { "Elevated" } else { "Non-elevated" },
                         info.integrity_level,
                         info.is_app_container,
                         reasons.join(", ")
@@ -165,7 +191,8 @@ impl ThreatVoter for OtxVoter {
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let guard = self.indicators.read().ok()?;
-        let hit = crate::otx_connection::otx_match_sysmon_event_normalized(&guard, &self.memory, event);
+        let hit =
+            crate::otx_connection::otx_match_sysmon_event_normalized(&guard, &self.memory, event);
 
         hit.map(|reason| VoteResult {
             confidence: crate::otx_connection::OTX_CONSENSUS_CONFIDENCE,
@@ -174,8 +201,6 @@ impl ThreatVoter for OtxVoter {
         })
     }
 }
-
-
 
 /// LLM Reasoning Voter (The "Autonomous Cortex")
 /// Uses the configured LLM (DeepSeek R1, etc.) to reason about security events.
@@ -189,7 +214,9 @@ impl GemmaVoter {
     pub fn new(analyzer: Arc<osoosi_behavioral::Gemma4Analyzer>) -> Self {
         Self {
             analyzer,
-            last_call: std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(60)),
+            last_call: std::sync::Mutex::new(
+                std::time::Instant::now() - std::time::Duration::from_secs(60),
+            ),
         }
     }
 
@@ -201,7 +228,7 @@ impl GemmaVoter {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        
+
         let trusted_path = path.contains("\\windows\\system32\\")
             || path.contains("\\windows\\syswow64\\")
             || path.contains("\\program files\\")
@@ -216,9 +243,30 @@ impl GemmaVoter {
             || path.contains("\\appdata\\local\\programs\\python\\");
 
         const TRUSTED_STEMS: &[&str] = &[
-            "osoosi", "sysmon", "sysmon64", "csrss", "lsass", "winlogon", "services", 
-            "svchost", "explorer", "taskmgr", "runtimebroker", "searchindexer", 
-            "rustc", "cargo", "python", "git", "cursor", "antigravity", "code", "node", "ollama", "npm", "powershell", "cmd"
+            "osoosi",
+            "sysmon",
+            "sysmon64",
+            "csrss",
+            "lsass",
+            "winlogon",
+            "services",
+            "svchost",
+            "explorer",
+            "taskmgr",
+            "runtimebroker",
+            "searchindexer",
+            "rustc",
+            "cargo",
+            "python",
+            "git",
+            "cursor",
+            "antigravity",
+            "code",
+            "node",
+            "ollama",
+            "npm",
+            "powershell",
+            "cmd",
         ];
 
         trusted_path || TRUSTED_STEMS.contains(&stem.as_str())
@@ -238,9 +286,13 @@ impl ThreatVoter for BehavioralThreatVoter {
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event.data.get("Image").and_then(|v| v.as_str());
-        let process_name = image.and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
+        let process_name = image
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str());
         let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str());
-        let parent_name = parent_image.and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
+        let parent_name = parent_image
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str());
         let version = event.data.get("ProductVersion").and_then(|v| v.as_str());
 
         // Perform inference using the bulk-trained model
@@ -260,11 +312,14 @@ impl ThreatVoter for BehavioralThreatVoter {
         } else if score > 0.4 {
             return Some(VoteResult {
                 confidence: score,
-                reason: format!("Behavioral Threat Model: Suspicious behavioral context ({:.4}).", score),
+                reason: format!(
+                    "Behavioral Threat Model: Suspicious behavioral context ({:.4}).",
+                    score
+                ),
                 weight: 0.6,
             });
         }
-        
+
         None
     }
 }
@@ -274,7 +329,9 @@ impl ThreatVoter for GemmaVoter {
     fn name(&self) -> String {
         "LLM-Reasoning".to_string()
     }
-    fn is_heavy(&self) -> bool { true }
+    fn is_heavy(&self) -> bool {
+        true
+    }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event
             .data
@@ -304,38 +361,39 @@ impl ThreatVoter for GemmaVoter {
             .get("CommandLine")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let version = event
+            .data
+            .get("ProductVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         let summary = format!(
             "Process Create: image={} version={} cmdline={}",
             image, version, cmd_line
         );
 
-        match self.analyzer.reason_about_attack(&summary).await {
-            Ok(raw_reasoning) => {
-                // Strip DeepSeek <think>...</think> reasoning trace
-                let reasoning = strip_think_tags(&raw_reasoning);
+        if let Ok(raw_reasoning) = self.analyzer.reason_about_attack(&summary).await {
+            // Strip DeepSeek <think>...</think> reasoning trace
+            let reasoning = strip_think_tags(&raw_reasoning);
 
-                // Ignore empty/garbage responses (timeout, model confusion, etc.)
-                if reasoning.len() < 10 {
-                    return None;
-                }
-
-                let r_lower = reasoning.to_lowercase();
-                if r_lower.contains("malicious")
-                    || r_lower.contains("attack")
-                    || r_lower.contains("suspicious")
-                {
-                    // Truncate to 200 chars for clean log output
-                    let display: String = reasoning.chars().take(200).collect();
-                    return Some(VoteResult {
-                        confidence: 0.9,
-                        reason: format!("LLM Reasoning: {}", display),
-                        weight: 0.9, // LLM reasoning has high weight for complex TTPs
-                    });
-                }
+            // Ignore empty/garbage responses (timeout, model confusion, etc.)
+            if reasoning.len() < 10 {
+                return None;
             }
-            Err(_) => {}
+
+            let r_lower = reasoning.to_lowercase();
+            if r_lower.contains("malicious")
+                || r_lower.contains("attack")
+                || r_lower.contains("suspicious")
+            {
+                // Truncate to 200 chars for clean log output
+                let display: String = reasoning.chars().take(200).collect();
+                return Some(VoteResult {
+                    confidence: 0.9,
+                    reason: format!("LLM Reasoning: {}", display),
+                    weight: 0.9, // LLM reasoning has high weight for complex TTPs
+                });
+            }
         }
         None
     }
@@ -364,7 +422,9 @@ impl FoundationSecVoter {
     pub fn new(analyzer: Arc<osoosi_behavioral::FoundationSecAnalyzer>) -> Self {
         Self {
             analyzer,
-            last_call: std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(60)),
+            last_call: std::sync::Mutex::new(
+                std::time::Instant::now() - std::time::Duration::from_secs(60),
+            ),
         }
     }
 }
@@ -374,7 +434,9 @@ impl ThreatVoter for FoundationSecVoter {
     fn name(&self) -> String {
         "Foundation-Sec-Reasoning".to_string()
     }
-    fn is_heavy(&self) -> bool { true }
+    fn is_heavy(&self) -> bool {
+        true
+    }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event
             .data
@@ -402,35 +464,36 @@ impl ThreatVoter for FoundationSecVoter {
             .get("CommandLine")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let version = event
+            .data
+            .get("ProductVersion")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         let summary = format!(
             "Process Create: image={} version={} cmdline={}",
             image, version, cmd_line
         );
 
-        match self.analyzer.reason_about_attack(&summary).await {
-            Ok(raw_reasoning) => {
-                let reasoning = strip_think_tags(&raw_reasoning);
+        if let Ok(raw_reasoning) = self.analyzer.reason_about_attack(&summary).await {
+            let reasoning = strip_think_tags(&raw_reasoning);
 
-                if reasoning.len() < 10 {
-                    return None;
-                }
-
-                let r_lower = reasoning.to_lowercase();
-                if r_lower.contains("malicious")
-                    || r_lower.contains("attack")
-                    || r_lower.contains("suspicious")
-                {
-                    let display: String = reasoning.chars().take(200).collect();
-                    return Some(VoteResult {
-                        confidence: 0.92,
-                        reason: format!("Foundation-Sec: {}", display),
-                        weight: 0.95,
-                    });
-                }
+            if reasoning.len() < 10 {
+                return None;
             }
-            Err(_) => {}
+
+            let r_lower = reasoning.to_lowercase();
+            if r_lower.contains("malicious")
+                || r_lower.contains("attack")
+                || r_lower.contains("suspicious")
+            {
+                let display: String = reasoning.chars().take(200).collect();
+                return Some(VoteResult {
+                    confidence: 0.92,
+                    reason: format!("Foundation-Sec: {}", display),
+                    weight: 0.95,
+                });
+            }
         }
         None
     }
@@ -452,8 +515,14 @@ impl ThreatVoter for NativeVoter {
         if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
             if osoosi_types::reg_utils::is_self_protection_file_path(path) {
                 // If it's not Oshoosi itself or a trusted system process
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-                if !image.to_lowercase().contains("osoosi") && !image.to_lowercase().contains("system32") {
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !image.to_lowercase().contains("osoosi")
+                    && !image.to_lowercase().contains("system32")
+                {
                     return Some(VoteResult {
                         confidence: 0.95,
                         reason: format!("Self-Protection Violation: process {} attempted to access EDR binary/data at {}", image, path),
@@ -466,7 +535,11 @@ impl ThreatVoter for NativeVoter {
         if let Some(key) = event.data.get("TargetObject").and_then(|v| v.as_str()) {
             let normalized = osoosi_types::reg_utils::normalize_registry_path(key);
             if osoosi_types::reg_utils::is_self_protection_reg_path(&normalized) {
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if !image.to_lowercase().contains("osoosi") {
                     return Some(VoteResult {
                         confidence: 0.95,
@@ -477,14 +550,24 @@ impl ThreatVoter for NativeVoter {
             }
 
             // 2. Normalized Registry Persistence Check
-            if normalized.contains("software\\microsoft\\windows\\currentversion\\run") 
-               || normalized.contains("system\\currentcontrolset\\services") {
+            if normalized.contains("software\\microsoft\\windows\\currentversion\\run")
+                || normalized.contains("system\\currentcontrolset\\services")
+            {
                 // Suspicious if not from a known installer
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-                if !image.to_lowercase().contains("msiexec") && !image.to_lowercase().contains("setup") {
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !image.to_lowercase().contains("msiexec")
+                    && !image.to_lowercase().contains("setup")
+                {
                     return Some(VoteResult {
                         confidence: 0.75,
-                        reason: format!("Suspicious Persistence: process {} modifying boot/service key {}", image, normalized),
+                        reason: format!(
+                            "Suspicious Persistence: process {} modifying boot/service key {}",
+                            image, normalized
+                        ),
                         weight: 0.6,
                     });
                 }
@@ -492,15 +575,20 @@ impl ThreatVoter for NativeVoter {
         }
 
         // 3. USB Exfiltration Detection (using OpenEDR pattern)
-        if event.event_id == 11 { // 11: FileCreate
+        if event.event_id == 11 {
+            // 11: FileCreate
             if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
                 // If it's a drive usually associated with USB (D:, E:, etc. that isn't the system drive)
                 let p = path.to_lowercase();
-                if (p.starts_with("d:\\") || p.starts_with("e:\\") || p.starts_with("f:\\")) 
-                   && !p.contains("osoosi") {
+                if (p.starts_with("d:\\") || p.starts_with("e:\\") || p.starts_with("f:\\"))
+                    && !p.contains("osoosi")
+                {
                     return Some(VoteResult {
                         confidence: 0.6,
-                        reason: format!("Potential USB Exfiltration: file creation on removable media at {}", path),
+                        reason: format!(
+                            "Potential USB Exfiltration: file creation on removable media at {}",
+                            path
+                        ),
                         weight: 0.5,
                     });
                 }
@@ -530,7 +618,7 @@ impl ThreatVoter for TrustedVendorVoter {
         }
         // 1. Get the image path from telemetry
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
-        
+
         // 2. Extract Metadata natively (Goblin + X509-Parser)
         let meta = match osoosi_types::get_pe_metadata(std::path::Path::new(full_path)) {
             Some(m) => m,
@@ -541,43 +629,83 @@ impl ThreatVoter for TrustedVendorVoter {
         if let Some(publisher) = meta.publisher {
             let publisher_lc = publisher.to_lowercase();
             let trusted_publishers = [
-                "microsoft", "github, inc.", "google", "apple", "mozilla", 
-                "oracle", "amazon", "digicert", "sectigo", "comodo"
+                "microsoft",
+                "github, inc.",
+                "google",
+                "apple",
+                "mozilla",
+                "oracle",
+                "amazon",
+                "digicert",
+                "sectigo",
+                "comodo",
             ];
-            
+
             if trusted_publishers.iter().any(|&p| publisher_lc.contains(p)) {
                 // If WinVerifyTrust also says it's signed, we have high confidence
                 let weight = if meta.is_signed { -1.0 } else { -0.5 };
-                
+
                 return Some(VoteResult {
                     confidence: 0.0,
-                    reason: format!("Trusted Vendor (Native Verify): {} (Integrity: {})", publisher, if meta.is_signed { "Verified" } else { "Identity-only" }),
+                    reason: format!(
+                        "Trusted Vendor (Native Verify): {} (Integrity: {})",
+                        publisher,
+                        if meta.is_signed {
+                            "Verified"
+                        } else {
+                            "Identity-only"
+                        }
+                    ),
                     weight,
                 });
             }
         }
-        
+
         // Fallback to telemetry-based check if native extraction failed or publisher is missing
-        let status = event.data.get("SignatureStatus").or_else(|| event.data.get("Signature Status"))
+        let status = event
+            .data
+            .get("SignatureStatus")
+            .or_else(|| event.data.get("Signature Status"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let telemetry_publisher = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        
-        if (status.to_lowercase() == "valid" || status.to_lowercase().contains("trusted")) && !telemetry_publisher.is_empty() {
+        let telemetry_publisher = event
+            .data
+            .get("Signature")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+
+        if (status.to_lowercase() == "valid" || status.to_lowercase().contains("trusted"))
+            && !telemetry_publisher.is_empty()
+        {
             let trusted_publishers = [
-                "microsoft", "github, inc.", "google", "apple", "mozilla", 
-                "oracle", "amazon", "digicert", "sectigo", "comodo"
+                "microsoft",
+                "github, inc.",
+                "google",
+                "apple",
+                "mozilla",
+                "oracle",
+                "amazon",
+                "digicert",
+                "sectigo",
+                "comodo",
             ];
-            
-            if trusted_publishers.iter().any(|&p| telemetry_publisher.contains(p)) {
+
+            if trusted_publishers
+                .iter()
+                .any(|&p| telemetry_publisher.contains(p))
+            {
                 return Some(VoteResult {
                     confidence: 0.0,
-                    reason: format!("Trusted Vendor (Telemetry): {} (Status: {})", telemetry_publisher, status),
-                    weight: -0.4, 
+                    reason: format!(
+                        "Trusted Vendor (Telemetry): {} (Status: {})",
+                        telemetry_publisher, status
+                    ),
+                    weight: -0.4,
                 });
             }
         }
-        
+
         None
     }
 }
@@ -592,19 +720,42 @@ impl ThreatVoter for GitNoiseVoter {
         "Git-Noise-Filter".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
         if image.contains("git.exe") || image.contains("git-remote-http.exe") {
             // Check for known benign Git artifacts
-            let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-            let query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-            
+            let cmd_line = event
+                .data
+                .get("CommandLine")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let query = event
+                .data
+                .get("QueryName")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+
             let benign_git_strings = [
-                "crl.comodo.net", "crl.sectigo.com", "crl.digicert.com", 
-                "github.com", "bitbucket.org", "gitlab.com",
-                "git-receive-pack", "git-upload-pack"
+                "crl.comodo.net",
+                "crl.sectigo.com",
+                "crl.digicert.com",
+                "github.com",
+                "bitbucket.org",
+                "gitlab.com",
+                "git-receive-pack",
+                "git-upload-pack",
             ];
-            
-            if benign_git_strings.iter().any(|&s| cmd_line.contains(s) || query.contains(s)) {
+
+            if benign_git_strings
+                .iter()
+                .any(|&s| cmd_line.contains(s) || query.contains(s))
+            {
                 return Some(VoteResult {
                     confidence: 0.0,
                     reason: "Benign Git Forensic Artifact: legitimate Git network/CRL behavior detected.".to_string(),
@@ -669,20 +820,30 @@ impl ThreatVoter for DecompileVoter {
     fn name(&self) -> String {
         "Decompile".to_string()
     }
-    fn is_heavy(&self) -> bool { true }
+    fn is_heavy(&self) -> bool {
+        true
+    }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // We only decompile on ProcessCreate (1) or ImageLoad (7) to catch entry-point intent
         if !matches!(event.event_id, 1 | 7) {
             return None;
         }
 
-        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64()).map(|v| v as u32)?;
-        
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)?;
+
         // Deep analysis: SpiderEyes watches the process, disassembles, and reasons with Gemma 4
         match self.spider.watch_process(pid).await {
             Ok(report) => {
                 let r_lower = report.to_lowercase();
-                if r_lower.contains("malicious") || r_lower.contains("attack") || r_lower.contains("injection") || r_lower.contains("hollowing") {
+                if r_lower.contains("malicious")
+                    || r_lower.contains("attack")
+                    || r_lower.contains("injection")
+                    || r_lower.contains("hollowing")
+                {
                     return Some(VoteResult {
                         confidence: 0.98,
                         reason: format!("Decompile/SpiderEyes High-Confidence Hit: {}", report),
@@ -717,22 +878,37 @@ impl ThreatVoter for YaraXMemoryVoter {
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
-            use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
-            use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
             use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+            use windows::Win32::System::Threading::{
+                OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
+            };
 
-            if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()).map(|v| v as u32) {
+            if let Some(pid) = event
+                .data
+                .get("ProcessId")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32)
+            {
                 let rules = self.rules.clone();
                 return tokio::task::spawn_blocking(move || {
                     unsafe {
-                        let proc_handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid).ok()?;
+                        let proc_handle =
+                            OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid)
+                                .ok()?;
                         let mut buffer = vec![0u8; 8192]; // Use 8KB for better coverage
                         let mut bytes_read = 0usize;
-                        
-                        // Placeholder: in a real EDR we'd walk the VAD (Virtual Address Descriptor) 
+
+                        // Placeholder: in a real EDR we'd walk the VAD (Virtual Address Descriptor)
                         // or use VirtualQueryEx to find executable/private regions.
                         // Here we scan a 8KB chunk of the potential image base.
-                        let _ = ReadProcessMemory(proc_handle, 0x400000 as *const _, buffer.as_mut_ptr() as *mut _, buffer.len(), Some(&mut bytes_read));
+                        let _ = ReadProcessMemory(
+                            proc_handle,
+                            0x400000 as *const _,
+                            buffer.as_mut_ptr() as *mut _,
+                            buffer.len(),
+                            Some(&mut bytes_read),
+                        );
                         let _ = CloseHandle(proc_handle);
 
                         if bytes_read > 0 {
@@ -742,14 +918,17 @@ impl ThreatVoter for YaraXMemoryVoter {
                             if results.matching_rules().count() > 0 {
                                 return Some(VoteResult {
                                     confidence: 0.98,
-                                    reason: "Yara-X: Detected malicious pattern in process memory".to_string(),
+                                    reason: "Yara-X: Detected malicious pattern in process memory"
+                                        .to_string(),
                                     weight: 1.0,
                                 });
                             }
                         }
                     }
                     None
-                }).await.unwrap_or(None);
+                })
+                .await
+                .unwrap_or(None);
             }
         }
         None
@@ -790,7 +969,11 @@ fn kev_requires_exact_version(event: &HostSecurityEvent, full_path: &str) -> boo
 /// Suppress CISA-KEV on **ProcessCreate** and **ProcessTerminate** for ubiquitous tools in typical install
 /// locations (huge FP rate — e.g. `git.exe` + KEV "Git" on portable/custom paths, terminate events).
 /// Set `OSOOSI_KEV_QUIET_SYSTEM_TOOLS=0` to restore KEV on those events. **NetworkConnect / DNS / Image** still evaluated.
-fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str, config: &osoosi_types::PolicyConfig) -> bool {
+fn kev_quiet_benign_process_lifecycle(
+    path: &str,
+    stem: &str,
+    config: &osoosi_types::PolicyConfig,
+) -> bool {
     if std::env::var("OSOOSI_KEV_QUIET_SYSTEM_TOOLS")
         .map(|v| v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
         .unwrap_or(false)
@@ -800,10 +983,18 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str, config: &osoosi_ty
     let p = path.to_lowercase();
 
     // Configuration-driven suppression
-    if config.consensus_trusted_paths.iter().any(|t| p.contains(&t.to_lowercase())) {
+    if config
+        .consensus_trusted_paths
+        .iter()
+        .any(|t| p.contains(&t.to_lowercase()))
+    {
         return true;
     }
-    if config.consensus_noisy_stems.iter().any(|s| stem.eq_ignore_ascii_case(s)) {
+    if config
+        .consensus_noisy_stems
+        .iter()
+        .any(|s| stem.eq_ignore_ascii_case(s))
+    {
         return true;
     }
 
@@ -908,7 +1099,8 @@ impl ThreatVoter for KevVoter {
                 // we down-rank the confidence significantly.
                 let mut confidence = if is_known_good { 0.45 } else { 0.85 };
                 let mut exact_version = event
-                    .data.get("ProductVersion")
+                    .data
+                    .get("ProductVersion")
                     .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|version| {
@@ -989,7 +1181,9 @@ pub struct CveLookupVoter {
     pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
     pub memory: Arc<osoosi_memory::MemoryStore>,
     pub cve_cache: Option<Arc<tokio::sync::Mutex<crate::cve_cache::CveCache>>>,
-    pub broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
+    pub broadcaster: Arc<
+        tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>,
+    >,
     pub node_id: String,
 }
 
@@ -1006,7 +1200,7 @@ impl ThreatVoter for CveLookupVoter {
             return None;
         }
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
-        
+
         // 1. Extract Metadata (Product, Version, Signature) from PE
         let meta = match osoosi_types::get_pe_metadata(std::path::Path::new(full_path)) {
             Some(m) => m,
@@ -1015,10 +1209,14 @@ impl ThreatVoter for CveLookupVoter {
 
         // NEW: Suppress NVD lookup for signed Microsoft binaries or system files to avoid Consensus Veto spam.
         // We also check if the hash is in the NSRL known-good set.
-        let is_microsoft = meta.product_name.to_lowercase().contains("microsoft") || 
-                           meta.product_name.to_lowercase().contains("windows") ||
-                           meta.publisher.as_ref().map(|p| p.to_lowercase().contains("microsoft")).unwrap_or(false) ||
-                           full_path.to_lowercase().contains("\\windows\\system32");
+        let is_microsoft = meta.product_name.to_lowercase().contains("microsoft")
+            || meta.product_name.to_lowercase().contains("windows")
+            || meta
+                .publisher
+                .as_ref()
+                .map(|p| p.to_lowercase().contains("microsoft"))
+                .unwrap_or(false)
+            || full_path.to_lowercase().contains("\\windows\\system32");
 
         if meta.is_signed && is_microsoft {
             return None; // Abstain to prevent log spam/veto on core OS processes
@@ -1037,7 +1235,10 @@ impl ThreatVoter for CveLookupVoter {
                     .and_then(|h| {
                         h.split(',')
                             .map(str::trim)
-                            .find_map(|part| part.strip_prefix("SHA1=").or_else(|| part.strip_prefix("SHA1:")))
+                            .find_map(|part| {
+                                part.strip_prefix("SHA1=")
+                                    .or_else(|| part.strip_prefix("SHA1:"))
+                            })
                             .map(|s| s.trim().to_string())
                     })
             });
@@ -1049,7 +1250,7 @@ impl ThreatVoter for CveLookupVoter {
 
         // 2. Check Local Cache first
         let mut cached_cves = Vec::new();
-        
+
         // Try the new SQLite cache first
         if let Some(ref cache) = self.cve_cache {
             let cache_guard = cache.lock().await;
@@ -1060,7 +1261,10 @@ impl ThreatVoter for CveLookupVoter {
 
         // Fallback to old in-memory cache if SQLite cache is empty
         if cached_cves.is_empty() {
-            if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, &meta.version) {
+            if let Ok(cached) = self
+                .memory
+                .get_cached_cves(&meta.product_name, &meta.version)
+            {
                 cached_cves.extend(cached);
             }
             if cached_cves.is_empty() {
@@ -1077,17 +1281,31 @@ impl ThreatVoter for CveLookupVoter {
                 confidence = 0.65;
                 reason_note = " [CACHED, CONFIDENCE DOWNGRADED: SIGNED]";
             }
-            let cve_list: Vec<String> = cached_cves.iter().take(3).map(|(id, summary)| format!("{} ({:.50}...)", id, summary)).collect();
+            let cve_list: Vec<String> = cached_cves
+                .iter()
+                .take(3)
+                .map(|(id, summary)| format!("{} ({:.50}...)", id, summary))
+                .collect();
             return Some(VoteResult {
                 confidence,
-                reason: format!("Vulnerability Database Match: {} v{} has known CVEs: {}{}", meta.product_name, meta.version, cve_list.join(", "), reason_note),
+                reason: format!(
+                    "Vulnerability Database Match: {} v{} has known CVEs: {}{}",
+                    meta.product_name,
+                    meta.version,
+                    cve_list.join(", "),
+                    reason_note
+                ),
                 weight: 1.5,
             });
         }
 
         // 3. Query NVD API (or local cache via fetcher)
         let api_key = osoosi_types::resolve_nvd_api_key();
-        match self.fetcher.query_cve_by_product(&meta.product_name, &meta.version, api_key.as_deref()).await {
+        match self
+            .fetcher
+            .query_cve_by_product(&meta.product_name, &meta.version, api_key.as_deref())
+            .await
+        {
             Ok(cves) if !cves.is_empty() => {
                 let mut confidence = 0.95;
                 let mut reason_note = "";
@@ -1100,28 +1318,40 @@ impl ThreatVoter for CveLookupVoter {
 
                 // Cache the results locally and broadcast to mesh
                 for cve in &cves {
-                    let _ = self.memory.insert_cve_cache(&meta.product_name, &meta.version, &cve.id, &cve.summary);
+                    let _ = self.memory.insert_cve_cache(
+                        &meta.product_name,
+                        &meta.version,
+                        &cve.id,
+                        &cve.summary,
+                    );
                     if let Some(ref cache) = self.cve_cache {
                         let cache_guard = cache.lock().await;
-                        let _ = cache_guard.insert_cves(&meta.product_name, &meta.version, &[osoosi_types::Kev {
-                            cve_id: cve.id.clone(),
-                            vendor_project: "".to_string(),
-                            product: meta.product_name.clone(),
-                            vulnerability_name: cve.summary.clone(),
-                            date_added: chrono::Utc::now(),
-                            required_action: "".to_string(),
-                            due_date: chrono::Utc::now(),
-                            known_exploited: false,
-                            version_start_including: None,
-                            version_end_excluding: None,
-                        }]);
+                        let _ = cache_guard.insert_cves(
+                            &meta.product_name,
+                            &meta.version,
+                            &[osoosi_types::Kev {
+                                cve_id: cve.id.clone(),
+                                vendor_project: "".to_string(),
+                                product: meta.product_name.clone(),
+                                vulnerability_name: cve.summary.clone(),
+                                date_added: chrono::Utc::now(),
+                                required_action: "".to_string(),
+                                due_date: chrono::Utc::now(),
+                                known_exploited: false,
+                                version_start_including: None,
+                                version_end_excluding: None,
+                            }],
+                        );
                     }
-                    
+
                     let broadcaster_guard = self.broadcaster.read().await;
                     if let Some(ref broadcast) = *broadcaster_guard {
                         broadcast(osoosi_types::GlobalIntelligence {
                             source_url: "https://nvd.nist.gov".to_string(),
-                            summary: format!("NVD Discovery: {} v{} has vulnerability {}", meta.product_name, meta.version, cve.id),
+                            summary: format!(
+                                "NVD Discovery: {} v{} has vulnerability {}",
+                                meta.product_name, meta.version, cve.id
+                            ),
                             priority: 0.8,
                             defense: Some(osoosi_types::ZeroDayDefense {
                                 cve_id: cve.id.clone(),
@@ -1141,12 +1371,19 @@ impl ThreatVoter for CveLookupVoter {
                     }
                 }
 
-                let cve_list: Vec<String> = cves.iter().take(3).map(|c| format!("{} ({:.50}...)", c.id, c.summary)).collect();
+                let cve_list: Vec<String> = cves
+                    .iter()
+                    .take(3)
+                    .map(|c| format!("{} ({:.50}...)", c.id, c.summary))
+                    .collect();
                 let cve_display = cve_list.join(", ");
 
                 Some(VoteResult {
                     confidence,
-                    reason: format!("Vulnerability Database Match: {} v{} has known CVEs: {}{}", meta.product_name, meta.version, cve_display, reason_note),
+                    reason: format!(
+                        "Vulnerability Database Match: {} v{} has known CVEs: {}{}",
+                        meta.product_name, meta.version, cve_display, reason_note
+                    ),
                     weight: 1.5, // Tie-breaker weight
                 })
             }
@@ -1155,8 +1392,11 @@ impl ThreatVoter for CveLookupVoter {
                 // as missing CVE data is common for benign system processes.
                 Some(VoteResult {
                     confidence: 0.0,
-                    reason: format!("NVD: No matching CVEs found for {} v{}", meta.product_name, meta.version),
-                    weight: 0.0, 
+                    reason: format!(
+                        "NVD: No matching CVEs found for {} v{}",
+                        meta.product_name, meta.version
+                    ),
+                    weight: 0.0,
                 })
             }
             Err(e) if e.to_string().contains("Rate limit") => {
@@ -1164,7 +1404,10 @@ impl ThreatVoter for CveLookupVoter {
                 None // Abstain if rate limited
             }
             Err(e) => {
-                debug!("[CveLookupVoter] Query failed for {}: {}", meta.product_name, e);
+                debug!(
+                    "[CveLookupVoter] Query failed for {}: {}",
+                    meta.product_name, e
+                );
                 None
             }
         }
@@ -1211,7 +1454,10 @@ impl ThreatVoter for PrivacyVoter {
             // orchestrator level via THREAT_DETECTED; this per-vote entry is redundant.
             Some(VoteResult {
                 confidence: noisy_score,
-                reason: format!("Privacy-preserving detection (DP noise applied, score={:.3}).", noisy_score),
+                reason: format!(
+                    "Privacy-preserving detection (DP noise applied, score={:.3}).",
+                    noisy_score
+                ),
                 weight: 0.8,
             })
         } else {
@@ -1245,12 +1491,20 @@ impl ThreatVoter for InjectionTelemetryVoter {
         match hook_source {
             // --- Screen Capture Spyware Detection (BitBlt hook) ---
             "BitBlt" => {
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 // Trusted screen-capture processes (RDP, screenshot tools) are excluded
                 let img_lower = image.to_lowercase();
-                if img_lower.contains("sniphost") || img_lower.contains("snippingtool")
-                    || img_lower.contains("mstsc") || img_lower.contains("teamviewer")
-                    || img_lower.contains("obs") || img_lower.contains("osoosi") {
+                if img_lower.contains("sniphost")
+                    || img_lower.contains("snippingtool")
+                    || img_lower.contains("mstsc")
+                    || img_lower.contains("teamviewer")
+                    || img_lower.contains("obs")
+                    || img_lower.contains("osoosi")
+                {
                     return None;
                 }
                 Some(VoteResult {
@@ -1262,15 +1516,26 @@ impl ThreatVoter for InjectionTelemetryVoter {
 
             // --- Process Hollowing / Shellcode Injection Detection ---
             "NtAllocateVirtualMemory" => {
-                let protect = event.data.get("Protection").and_then(|v| v.as_str()).unwrap_or("");
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let protect = event
+                    .data
+                    .get("Protection")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 // PAGE_EXECUTE_READWRITE (0x40) is almost always shellcode injection
                 if protect.contains("RWX") || protect.contains("0x40") {
                     // Exclude known legitimate JIT engines
                     let img_lower = image.to_lowercase();
-                    if img_lower.contains("java") || img_lower.contains("dotnet")
-                        || img_lower.contains("node") || img_lower.contains("chrome")
-                        || img_lower.contains("firefox") {
+                    if img_lower.contains("java")
+                        || img_lower.contains("dotnet")
+                        || img_lower.contains("node")
+                        || img_lower.contains("chrome")
+                        || img_lower.contains("firefox")
+                    {
                         return None;
                     }
                     return Some(VoteResult {
@@ -1284,15 +1549,26 @@ impl ThreatVoter for InjectionTelemetryVoter {
 
             // --- Module Overloading Detection (NtProtectVirtualMemory hook) ---
             "NtProtectVirtualMemory" => {
-                let protect = event.data.get("Protection").and_then(|v| v.as_str()).unwrap_or("");
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let protect = event
+                    .data
+                    .get("Protection")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 // Changing existing memory (often module memory) to RWX is a major indicator of module overloading or hooking.
                 if protect.contains("RWX") || protect.contains("0x40") {
                     // Exclude known legitimate JIT engines
                     let img_lower = image.to_lowercase();
-                    if img_lower.contains("java") || img_lower.contains("dotnet")
-                        || img_lower.contains("node") || img_lower.contains("chrome")
-                        || img_lower.contains("firefox") {
+                    if img_lower.contains("java")
+                        || img_lower.contains("dotnet")
+                        || img_lower.contains("node")
+                        || img_lower.contains("chrome")
+                        || img_lower.contains("firefox")
+                    {
                         return None;
                     }
                     return Some(VoteResult {
@@ -1306,8 +1582,16 @@ impl ThreatVoter for InjectionTelemetryVoter {
 
             // --- Credential Dumping Detection (ReadProcessMemory / ptrace) ---
             "ReadProcessMemory" | "ptrace" => {
-                let target = event.data.get("TargetProcess").and_then(|v| v.as_str()).unwrap_or("");
-                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let target = event
+                    .data
+                    .get("TargetProcess")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let image = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let target_lower = target.to_lowercase();
                 // lsass.exe is THE target for credential dumping (Mimikatz, etc.)
                 if target_lower.contains("lsass") {
@@ -1321,7 +1605,10 @@ impl ThreatVoter for InjectionTelemetryVoter {
                 if target_lower.contains("osoosi") {
                     return Some(VoteResult {
                         confidence: 0.95,
-                        reason: format!("Self-Defense: Process {} attempted to read EDR process memory", image),
+                        reason: format!(
+                            "Self-Defense: Process {} attempted to read EDR process memory",
+                            image
+                        ),
                         weight: 1.0,
                     });
                 }
@@ -1330,11 +1617,18 @@ impl ThreatVoter for InjectionTelemetryVoter {
 
             // --- Execution Blocking (CreateProcessW / execve) ---
             "CreateProcessW" | "execve" => {
-                let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+                let cmd_line = event
+                    .data
+                    .get("CommandLine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let cmd_lower = cmd_line.to_lowercase();
 
                 // Detect encoded PowerShell commands (common malware evasion)
-                if cmd_lower.contains("-encodedcommand") || cmd_lower.contains("-enc ") || cmd_lower.contains("-e ") {
+                if cmd_lower.contains("-encodedcommand")
+                    || cmd_lower.contains("-enc ")
+                    || cmd_lower.contains("-e ")
+                {
                     return Some(VoteResult {
                         confidence: 0.88,
                         reason: format!("Encoded Execution Detected: child process launched with obfuscated arguments: {}", 
@@ -1346,10 +1640,14 @@ impl ThreatVoter for InjectionTelemetryVoter {
                 // Detect reverse shells
                 if (cmd_lower.contains("/dev/tcp") || cmd_lower.contains("bash -i"))
                     || (cmd_lower.contains("nc ") && cmd_lower.contains(" -e "))
-                    || cmd_lower.contains("ncat") && cmd_lower.contains("--sh-exec") {
+                    || cmd_lower.contains("ncat") && cmd_lower.contains("--sh-exec")
+                {
                     return Some(VoteResult {
                         confidence: 0.95,
-                        reason: format!("Reverse Shell Detected: {}", &cmd_line[..cmd_line.len().min(120)]),
+                        reason: format!(
+                            "Reverse Shell Detected: {}",
+                            &cmd_line[..cmd_line.len().min(120)]
+                        ),
                         weight: 0.95,
                     });
                 }
@@ -1359,28 +1657,34 @@ impl ThreatVoter for InjectionTelemetryVoter {
 
             // --- C2 Beacon Detection (send / WSASend) ---
             "send" | "WSASend" => {
-                let payload_hint = event.data.get("PayloadHint").and_then(|v| v.as_str()).unwrap_or("");
+                let payload_hint = event
+                    .data
+                    .get("PayloadHint")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let hint_lower = payload_hint.to_lowercase();
 
                 // DNS tunneling patterns: unusually long subdomain labels
                 if hint_lower.contains(".onion") || hint_lower.contains(".i2p") {
                     return Some(VoteResult {
                         confidence: 0.9,
-                        reason: format!("Darknet Communication: outbound traffic to anonymization network detected"),
+                        reason: "Darknet Communication: outbound traffic to anonymization network detected".to_string(),
                         weight: 0.85,
                     });
                 }
 
                 // HTTP beaconing with suspicious User-Agents
-                if hint_lower.contains("user-agent:") {
-                    if hint_lower.contains("cobalt") || hint_lower.contains("meterpreter")
-                        || hint_lower.contains("empire") || hint_lower.contains("covenant") {
-                        return Some(VoteResult {
+                if hint_lower.contains("user-agent:")
+                    && (hint_lower.contains("cobalt")
+                        || hint_lower.contains("meterpreter")
+                        || hint_lower.contains("empire")
+                        || hint_lower.contains("covenant"))
+                {
+                    return Some(VoteResult {
                             confidence: 0.95,
-                            reason: format!("C2 Framework Beacon: known attack framework User-Agent detected in outbound HTTP"),
+                            reason: "C2 Framework Beacon: known attack framework User-Agent detected in outbound HTTP".to_string(),
                             weight: 0.9,
                         });
-                    }
                 }
 
                 None
@@ -1414,13 +1718,31 @@ impl ThreatVoter for DnsShieldVoter {
             return None;
         }
 
-        let domain = event.data.get("DnsQuery").and_then(|v| v.as_str()).unwrap_or("");
-        let verdict = event.data.get("DnsVerdict").and_then(|v| v.as_str()).unwrap_or("");
-        let reason = event.data.get("DnsReason").and_then(|v| v.as_str()).unwrap_or("");
-        let entropy: f64 = event.data.get("DnsEntropy")
+        let domain = event
+            .data
+            .get("DnsQuery")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let verdict = event
+            .data
+            .get("DnsVerdict")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let reason = event
+            .data
+            .get("DnsReason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let entropy: f64 = event
+            .data
+            .get("DnsEntropy")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         match verdict {
             "BLOCKED" => {
@@ -1483,17 +1805,33 @@ impl ThreatVoter for SysmonDnsVoter {
         }
 
         let query_name = event.data.get("QueryName").and_then(|v| v.as_str())?;
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let pid = event
             .data
             .get("ProcessId")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let query_results = event.data.get("QueryResults").and_then(|v| v.as_str()).unwrap_or("");
-        let query_status = event.data.get("QueryStatus").and_then(|v| v.as_str()).unwrap_or("");
+        let query_results = event
+            .data
+            .get("QueryResults")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let query_status = event
+            .data
+            .get("QueryStatus")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // Extract process name from full image path
-        let proc_name = image.rsplit(['\\', '/']).next().unwrap_or(image).to_lowercase();
+        let proc_name = image
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(image)
+            .to_lowercase();
 
         // --- 1. Blocklist check ---
         if let Some(block_reason) = self.blocklist.is_blocked(query_name) {
@@ -1525,11 +1863,26 @@ impl ThreatVoter for SysmonDnsVoter {
                 // For suspicious domains, check if the process is unusual for making DNS queries
                 let is_unusual_resolver = !matches!(
                     proc_name.as_str(),
-                    "chrome.exe" | "firefox.exe" | "msedge.exe" | "svchost.exe"
-                    | "dns.exe" | "dnscache" | "systemd-resolved" | "mDNSResponder"
-                    | "curl.exe" | "wget" | "powershell.exe" | "cmd.exe"
-                    | "explorer.exe" | "teams.exe" | "slack.exe" | "outlook.exe"
-                    | "code.exe" | "osoosi" | "osoosi.exe" | "git.exe"
+                    "chrome.exe"
+                        | "firefox.exe"
+                        | "msedge.exe"
+                        | "svchost.exe"
+                        | "dns.exe"
+                        | "dnscache"
+                        | "systemd-resolved"
+                        | "mDNSResponder"
+                        | "curl.exe"
+                        | "wget"
+                        | "powershell.exe"
+                        | "cmd.exe"
+                        | "explorer.exe"
+                        | "teams.exe"
+                        | "slack.exe"
+                        | "outlook.exe"
+                        | "code.exe"
+                        | "osoosi"
+                        | "osoosi.exe"
+                        | "git.exe"
                 );
 
                 if is_unusual_resolver {
@@ -1560,8 +1913,13 @@ impl ThreatVoter for SysmonDnsVoter {
         // Even if the domain is clean, certain processes should NEVER make DNS queries
         let never_resolves = matches!(
             proc_name.as_str(),
-            "lsass.exe" | "csrss.exe" | "smss.exe" | "wininit.exe"
-            | "services.exe" | "winlogon.exe" | "dwm.exe"
+            "lsass.exe"
+                | "csrss.exe"
+                | "smss.exe"
+                | "wininit.exe"
+                | "services.exe"
+                | "winlogon.exe"
+                | "dwm.exe"
         );
 
         if never_resolves {
@@ -1610,14 +1968,18 @@ pub struct SigmaVoter {
 
 #[async_trait]
 impl ThreatVoter for SigmaVoter {
-    fn name(&self) -> String { "Sigma-Engine".to_string() }
+    fn name(&self) -> String {
+        "Sigma-Engine".to_string()
+    }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let matches = self.engine.check(event);
-        if matches.is_empty() { return None; }
+        if matches.is_empty() {
+            return None;
+        }
 
         let mut reason = String::new();
         let mut max_confidence = 0.0f32;
-        
+
         for rule in matches {
             let tags_str = if !rule.tags.is_empty() {
                 format!(" Tags: [{}]", rule.tags.join(", "))
@@ -1655,15 +2017,22 @@ pub struct IocVoter {
 
 #[async_trait]
 impl ThreatVoter for IocVoter {
-    fn name(&self) -> String { "IOC-Scanner".to_string() }
+    fn name(&self) -> String {
+        "IOC-Scanner".to_string()
+    }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let matches = self.engine.check_event(event);
-        if matches.is_empty() { return None; }
+        if matches.is_empty() {
+            return None;
+        }
 
         let m = &matches[0];
         Some(VoteResult {
             confidence: 1.0, // IOCs are high fidelity
-            reason: format!("IOC Match ({:?}): {} (Source: {})", m.kind, m.indicator, m.source),
+            reason: format!(
+                "IOC Match ({:?}): {} (Source: {})",
+                m.kind, m.indicator, m.source
+            ),
             weight: 1.0,
         })
     }
@@ -1695,7 +2064,9 @@ impl ThreatVoter for CredentialGuardVoter {
             return None;
         }
 
-        let raw_cmdline = event.data.get("CommandLine")
+        let raw_cmdline = event
+            .data
+            .get("CommandLine")
             .or_else(|| event.data.get("command_line"))
             .or_else(|| event.data.get("cmdline"))
             .or_else(|| event.data.get("Command"))
@@ -1703,7 +2074,9 @@ impl ThreatVoter for CredentialGuardVoter {
             .unwrap_or("");
         let cmdline = deobfuscate_command_line(raw_cmdline).to_ascii_lowercase();
 
-        let image = event.data.get("Image")
+        let image = event
+            .data
+            .get("Image")
             .or_else(|| event.data.get("NewProcessName"))
             .or_else(|| event.data.get("ProcessName"))
             .or_else(|| event.data.get("ImagePath"))
@@ -1713,19 +2086,25 @@ impl ThreatVoter for CredentialGuardVoter {
             .unwrap_or("")
             .to_ascii_lowercase();
 
-        let target_image = event.data.get("TargetImage")
+        let target_image = event
+            .data
+            .get("TargetImage")
             .or_else(|| event.data.get("target_image"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_ascii_lowercase();
 
-        let granted_access = event.data.get("GrantedAccess")
+        let granted_access = event
+            .data
+            .get("GrantedAccess")
             .or_else(|| event.data.get("granted_access"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_ascii_lowercase();
 
-        let call_trace = event.data.get("CallTrace")
+        let call_trace = event
+            .data
+            .get("CallTrace")
             .or_else(|| event.data.get("call_trace"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -1733,7 +2112,10 @@ impl ThreatVoter for CredentialGuardVoter {
 
         // Vector 1: LSASS & Process Memory Dumpers (T1003.001)
         if (cmdline.contains("comsvcs.dll") || image.contains("comsvcs.dll"))
-            && (cmdline.contains("minidump") || cmdline.contains("lsass") || cmdline.contains("#24") || cmdline.contains("full"))
+            && (cmdline.contains("minidump")
+                || cmdline.contains("lsass")
+                || cmdline.contains("#24")
+                || cmdline.contains("full"))
         {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1742,11 +2124,20 @@ impl ThreatVoter for CredentialGuardVoter {
             });
         }
 
-        let known_dumpers = ["procdump", "nanodump", "pypykatz", "mimikatz", "sekurlsa", "lsadump", "dumpert", "outflank"];
+        let known_dumpers = [
+            "procdump", "nanodump", "pypykatz", "mimikatz", "sekurlsa", "lsadump", "dumpert",
+            "outflank",
+        ];
         for tool in &known_dumpers {
             if image.contains(tool) || cmdline.contains(tool) {
-                let is_dedicated = matches!(*tool, "pypykatz" | "mimikatz" | "sekurlsa" | "lsadump" | "nanodump" | "outflank");
-                let targets_lsass = cmdline.contains("lsass") || cmdline.contains("-ma") || target_image.ends_with("lsass.exe") || target_image.contains("\\lsass.exe");
+                let is_dedicated = matches!(
+                    *tool,
+                    "pypykatz" | "mimikatz" | "sekurlsa" | "lsadump" | "nanodump" | "outflank"
+                );
+                let targets_lsass = cmdline.contains("lsass")
+                    || cmdline.contains("-ma")
+                    || target_image.ends_with("lsass.exe")
+                    || target_image.contains("\\lsass.exe");
                 if is_dedicated || targets_lsass {
                     return Some(VoteResult {
                         confidence: 0.96,
@@ -1777,7 +2168,9 @@ impl ThreatVoter for CredentialGuardVoter {
             });
         }
 
-        if (image.contains("sqldumper.exe") || cmdline.contains("sqldumper")) && cmdline.contains("0x01100") {
+        if (image.contains("sqldumper.exe") || cmdline.contains("sqldumper"))
+            && cmdline.contains("0x01100")
+        {
             return Some(VoteResult {
                 confidence: 0.96,
                 reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): sqldumper memory dumper abuse: {}", cmdline),
@@ -1796,7 +2189,8 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         if (image.contains("werfault.exe") || cmdline.contains("werfault"))
-            && cmdline.contains("-u") && cmdline.contains("-p")
+            && cmdline.contains("-u")
+            && cmdline.contains("-p")
         {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1823,7 +2217,11 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         if (image.ends_with("vaultcmd.exe") || cmdline.contains("vaultcmd"))
-            && (cmdline.contains("/list") || cmdline.contains("/listcreds") || cmdline.contains("/listproperties") || cmdline.contains("/listschema") || cmdline.is_empty())
+            && (cmdline.contains("/list")
+                || cmdline.contains("/listcreds")
+                || cmdline.contains("/listproperties")
+                || cmdline.contains("/listschema")
+                || cmdline.is_empty())
         {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1842,8 +2240,12 @@ impl ThreatVoter for CredentialGuardVoter {
             });
         }
 
-        if (image.contains("control.exe") || cmdline.contains("control.exe") || cmdline.contains("control "))
-            && (cmdline.contains("credentialmanager") || cmdline.contains("srchadmin.dll") || cmdline.contains("/name microsoft.credentialmanager"))
+        if (image.contains("control.exe")
+            || cmdline.contains("control.exe")
+            || cmdline.contains("control "))
+            && (cmdline.contains("credentialmanager")
+                || cmdline.contains("srchadmin.dll")
+                || cmdline.contains("/name microsoft.credentialmanager"))
         {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1866,8 +2268,15 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         // Vector 3: Registry SAM / SECURITY / SYSTEM / LSA Secrets Extraction (T1003.002 / T1003.004)
-        let is_reg_tool = image.ends_with("reg.exe") || cmdline.starts_with("reg ") || cmdline.contains("reg.exe ") || image.ends_with("esentutl.exe") || cmdline.contains("esentutl");
-        let has_save_op = cmdline.contains("save") || cmdline.contains("export") || cmdline.contains("/y") || cmdline.contains("/vss");
+        let is_reg_tool = image.ends_with("reg.exe")
+            || cmdline.starts_with("reg ")
+            || cmdline.contains("reg.exe ")
+            || image.ends_with("esentutl.exe")
+            || cmdline.contains("esentutl");
+        let has_save_op = cmdline.contains("save")
+            || cmdline.contains("export")
+            || cmdline.contains("/y")
+            || cmdline.contains("/vss");
         let has_hive_target = cmdline.contains("hklm\\sam")
             || cmdline.contains("hklm\\system")
             || cmdline.contains("hklm\\security")
@@ -1888,7 +2297,14 @@ impl ThreatVoter for CredentialGuardVoter {
             });
         }
 
-        let lsa_tools = ["powerdump", "dumper.ps1", "invoke-powerdump", "get-lsasecret", "get-bootkey", "secretsdump"];
+        let lsa_tools = [
+            "powerdump",
+            "dumper.ps1",
+            "invoke-powerdump",
+            "get-lsasecret",
+            "get-bootkey",
+            "secretsdump",
+        ];
         for tool in &lsa_tools {
             if cmdline.contains(tool) || image.contains(tool) {
                 return Some(VoteResult {
@@ -1901,7 +2317,10 @@ impl ThreatVoter for CredentialGuardVoter {
 
         // Vector 4: Active Directory NTDS.dit, Volume Shadow Copy & DCSync (T1003.003 / T1003.006)
         if (image.ends_with("ntdsutil.exe") || cmdline.contains("ntdsutil"))
-            && (cmdline.contains("ac i ntds") || cmdline.contains("ifm") || cmdline.contains("create full") || cmdline.contains("activate instance ntds"))
+            && (cmdline.contains("ac i ntds")
+                || cmdline.contains("ifm")
+                || cmdline.contains("create full")
+                || cmdline.contains("activate instance ntds"))
         {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1910,15 +2329,26 @@ impl ThreatVoter for CredentialGuardVoter {
             });
         }
 
-        let is_shadow_tool = image.ends_with("vssadmin.exe") || cmdline.contains("vssadmin") || image.ends_with("diskshadow.exe") || cmdline.contains("diskshadow") || image.ends_with("wmic.exe") || cmdline.contains("wmic");
-        if is_shadow_tool && (cmdline.contains("shadow") || cmdline.contains("ntds.dit") || cmdline.contains("system32\\config\\sam") || cmdline.contains("create")) {
-            if cmdline.contains("ntds.dit") || cmdline.contains("config\\sam") || cmdline.contains("create") {
-                return Some(VoteResult {
+        let is_shadow_tool = image.ends_with("vssadmin.exe")
+            || cmdline.contains("vssadmin")
+            || image.ends_with("diskshadow.exe")
+            || cmdline.contains("diskshadow")
+            || image.ends_with("wmic.exe")
+            || cmdline.contains("wmic");
+        if is_shadow_tool
+            && (cmdline.contains("shadow")
+                || cmdline.contains("ntds.dit")
+                || cmdline.contains("system32\\config\\sam")
+                || cmdline.contains("create"))
+            && (cmdline.contains("ntds.dit")
+                || cmdline.contains("config\\sam")
+                || cmdline.contains("create"))
+        {
+            return Some(VoteResult {
                     confidence: 0.96,
                     reason: format!("[CredentialGuard-Memory]: Active Directory NTDS.dit Dumping (T1003.003): Shadow copy credential extraction: {}", cmdline),
                     weight: 1.25,
                 });
-            }
         }
 
         if cmdline.contains("dcsync")
@@ -1948,7 +2378,11 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         if (image.ends_with("appcmd.exe") || cmdline.contains("appcmd"))
-            && (cmdline.contains("list apppool") || cmdline.contains("list vdir") || cmdline.contains("/text:*") || cmdline.contains("password") || cmdline.contains("processmodel"))
+            && (cmdline.contains("list apppool")
+                || cmdline.contains("list vdir")
+                || cmdline.contains("/text:*")
+                || cmdline.contains("password")
+                || cmdline.contains("processmodel"))
         {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1958,9 +2392,19 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         let browser_targets = ["login data", "web data", "key4.db", "logins.json"];
-        let copy_tools = ["copy", "cp", "esentutl", "sqlite", "python", "powershell", "cmd"];
+        let copy_tools = [
+            "copy",
+            "cp",
+            "esentutl",
+            "sqlite",
+            "python",
+            "powershell",
+            "cmd",
+        ];
         let targets_browser_db = browser_targets.iter().any(|bt| cmdline.contains(bt));
-        let uses_copy_tool = copy_tools.iter().any(|ct| image.contains(ct) || cmdline.contains(ct));
+        let uses_copy_tool = copy_tools
+            .iter()
+            .any(|ct| image.contains(ct) || cmdline.contains(ct));
         if targets_browser_db && uses_copy_tool {
             return Some(VoteResult {
                 confidence: 0.96,
@@ -1970,10 +2414,15 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         // Vector 6: Direct LSASS Process Handle Access (T1003.001)
-        if event.event_id == 10 && (target_image.ends_with("lsass.exe") || target_image.ends_with("\\lsass.exe")) {
-            let high_priv_access = ["0x1fffff", "0x1410", "0x1010", "0x1438", "0x143a", "0x1400", "0x1f0fff", "0x1f1fff", "0x1f2fff", "0x1f3fff"]
-                .iter()
-                .any(|mask| granted_access.contains(mask));
+        if event.event_id == 10
+            && (target_image.ends_with("lsass.exe") || target_image.ends_with("\\lsass.exe"))
+        {
+            let high_priv_access = [
+                "0x1fffff", "0x1410", "0x1010", "0x1438", "0x143a", "0x1400", "0x1f0fff",
+                "0x1f1fff", "0x1f2fff", "0x1f3fff",
+            ]
+            .iter()
+            .any(|mask| granted_access.contains(mask));
 
             // Whitelist legitimate core OS and security services opening LSASS
             let is_legit_source = image.ends_with("\\csrss.exe")
@@ -2028,7 +2477,8 @@ impl ThreatVoter for HarTrafficVoter {
             return None;
         }
 
-        let har_json = if let Some(content) = event.data.get("HarContent").and_then(|v| v.as_str()) {
+        let har_json = if let Some(content) = event.data.get("HarContent").and_then(|v| v.as_str())
+        {
             Some(content.to_string())
         } else if let Some(target) = event
             .data
@@ -2088,14 +2538,27 @@ impl ThreatVoter for MercuryFluidVoter {
             || event.data.get("AgentBreakoutVector").is_some();
 
         if is_mercury_event {
-            let weber = event.data.get("WeberNumber").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let state = event.data.get("PassivationState").and_then(|v| v.as_str()).unwrap_or("Unknown");
-            let pore = event.data.get("PoreClass").and_then(|v| v.as_str()).unwrap_or("Pore");
-            let confidence = if weber >= 12.0 || state.contains("Passivated") || state.contains("Shattered") {
-                0.96
-            } else {
-                0.85
-            };
+            let weber = event
+                .data
+                .get("WeberNumber")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let state = event
+                .data
+                .get("PassivationState")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let pore = event
+                .data
+                .get("PoreClass")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Pore");
+            let confidence =
+                if weber >= 12.0 || state.contains("Passivated") || state.contains("Shattered") {
+                    0.96
+                } else {
+                    0.85
+                };
 
             return Some(VoteResult {
                 confidence,
@@ -2135,16 +2598,42 @@ impl ThreatVoter for SpiderWebPhysicsVoter {
             || event.data.get("PromptInjectionExfil").is_some();
 
         if is_spider_event {
-            let regime = event.data.get("SilkRegime").and_then(|v| v.as_str()).unwrap_or("");
-            let strain = event.data.get("StrainEpsilon").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let fracture = event.data.get("SacrificialFracture").and_then(|v| v.as_bool()).unwrap_or(false);
-            let viol = event.data.get("BusinessPolicyViolation").and_then(|v| v.as_str()).unwrap_or("");
+            let regime = event
+                .data
+                .get("SilkRegime")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let strain = event
+                .data
+                .get("StrainEpsilon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let fracture = event
+                .data
+                .get("SacrificialFracture")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let viol = event
+                .data
+                .get("BusinessPolicyViolation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
-            let (confidence, weight) = if fracture || strain >= 0.35 || regime.contains("Sacrificial") || regime.contains("REGIME_IV") {
+            let (confidence, weight) = if fracture
+                || strain >= 0.35
+                || regime.contains("Sacrificial")
+                || regime.contains("REGIME_IV")
+            {
                 (0.98, 1.40)
-            } else if strain >= 0.20 || regime.contains("StrainStiffening") || regime.contains("REGIME_III") {
+            } else if strain >= 0.20
+                || regime.contains("StrainStiffening")
+                || regime.contains("REGIME_III")
+            {
                 (0.90, 1.30)
-            } else if strain >= 0.02 || regime.contains("EntropicUnfolding") || regime.contains("REGIME_II") {
+            } else if strain >= 0.02
+                || regime.contains("EntropicUnfolding")
+                || regime.contains("REGIME_II")
+            {
                 (0.75, 1.15)
             } else {
                 (0.60, 1.0)
@@ -2178,8 +2667,7 @@ pub fn deobfuscate_command_line(raw: &str) -> String {
     let mut cleaned = raw
         .replace("\"\"", "")
         .replace("''", "")
-        .replace('^', "")
-        .replace('`', "");
+        .replace(['^', '`'], "");
 
     let tokens: Vec<&str> = cleaned.split_whitespace().collect();
     let mut decoded_parts: Vec<String> = Vec::new();
@@ -2200,7 +2688,8 @@ pub fn deobfuscate_command_line(raw: &str) -> String {
             || t_lower.starts_with("/e:")
         {
             token.split_once(':').map(|x| x.1)
-        } else if t_lower.starts_with("-encodedcommand:") || t_lower.starts_with("/encodedcommand:") {
+        } else if t_lower.starts_with("-encodedcommand:") || t_lower.starts_with("/encodedcommand:")
+        {
             token.split_once(':').map(|x| x.1)
         } else {
             None
@@ -2218,7 +2707,9 @@ pub fn deobfuscate_command_line(raw: &str) -> String {
                         // Attempt UTF-16LE decoding (standard for PowerShell -EncodedCommand)
                         if bytes.len() % 2 == 0 {
                             let u16s: Vec<u16> = bytes
-                                .chunks_exact(2)
+                                .as_chunks::<2>()
+                                .0
+                                .iter()
                                 .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
                                 .collect();
                             let utf16_str = String::from_utf16_lossy(&u16s);
@@ -2341,9 +2832,15 @@ mod tests {
         let voter = CredentialGuardVoter;
 
         // 1. rundll32.exe keymgr.dll,KRShowKeyMgr (T1003)
-        let ev1 = make_proc_event("C:\\Windows\\System32\\rundll32.exe", "rundll32.exe keymgr.dll,KRShowKeyMgr");
+        let ev1 = make_proc_event(
+            "C:\\Windows\\System32\\rundll32.exe",
+            "rundll32.exe keymgr.dll,KRShowKeyMgr",
+        );
         let res1 = voter.vote(&ev1).await;
-        assert!(res1.is_some(), "keymgr.dll KRShowKeyMgr must trigger CredentialGuard");
+        assert!(
+            res1.is_some(),
+            "keymgr.dll KRShowKeyMgr must trigger CredentialGuard"
+        );
         let v1 = res1.unwrap();
         assert_eq!(v1.confidence, 0.96);
         assert!(v1.reason.contains("T1003"));
@@ -2356,7 +2853,10 @@ mod tests {
         assert!(res2.unwrap().reason.contains("credwiz.exe"));
 
         // 3. vaultcmd.exe /listcreds:"Windows Credentials"
-        let ev3 = make_proc_event("C:\\Windows\\System32\\vaultcmd.exe", "vaultcmd.exe /listcreds:\"Windows Credentials\"");
+        let ev3 = make_proc_event(
+            "C:\\Windows\\System32\\vaultcmd.exe",
+            "vaultcmd.exe /listcreds:\"Windows Credentials\"",
+        );
         let res3 = voter.vote(&ev3).await;
         assert!(res3.is_some(), "vaultcmd.exe must trigger CredentialGuard");
         let v3 = res3.unwrap();
@@ -2369,32 +2869,59 @@ mod tests {
         assert!(res4.unwrap().reason.contains("cmdkey"));
 
         // 5. reg.exe save HKLM\SAM sam.hiv (T1003.002)
-        let ev5 = make_proc_event("C:\\Windows\\System32\\reg.exe", "reg.exe save HKLM\\SAM sam.hiv");
+        let ev5 = make_proc_event(
+            "C:\\Windows\\System32\\reg.exe",
+            "reg.exe save HKLM\\SAM sam.hiv",
+        );
         let res5 = voter.vote(&ev5).await;
-        assert!(res5.is_some(), "reg save HKLM\\SAM must trigger CredentialGuard");
+        assert!(
+            res5.is_some(),
+            "reg save HKLM\\SAM must trigger CredentialGuard"
+        );
         let v5 = res5.unwrap();
         assert!(v5.reason.contains("T1003.002"));
 
         // 6. ntdsutil "ac i ntds" "ifm" "create full c:\temp" (T1003.003)
-        let ev6 = make_proc_event("C:\\Windows\\System32\\ntdsutil.exe", "ntdsutil \"ac i ntds\" \"ifm\" \"create full c:\\temp\"");
+        let ev6 = make_proc_event(
+            "C:\\Windows\\System32\\ntdsutil.exe",
+            "ntdsutil \"ac i ntds\" \"ifm\" \"create full c:\\temp\"",
+        );
         let res6 = voter.vote(&ev6).await;
-        assert!(res6.is_some(), "ntdsutil IFM dump must trigger CredentialGuard");
+        assert!(
+            res6.is_some(),
+            "ntdsutil IFM dump must trigger CredentialGuard"
+        );
         let v6 = res6.unwrap();
         assert!(v6.reason.contains("T1003.003"));
 
         // 7. gsecdump -a & appcmd.exe list apppool /text:*
         let ev7a = make_proc_event("C:\\temp\\gsecdump.exe", "gsecdump -a");
-        assert!(voter.vote(&ev7a).await.is_some(), "gsecdump must trigger CredentialGuard");
+        assert!(
+            voter.vote(&ev7a).await.is_some(),
+            "gsecdump must trigger CredentialGuard"
+        );
 
-        let ev7b = make_proc_event("C:\\Windows\\System32\\inetsrv\\appcmd.exe", "appcmd.exe list apppool /text:*");
+        let ev7b = make_proc_event(
+            "C:\\Windows\\System32\\inetsrv\\appcmd.exe",
+            "appcmd.exe list apppool /text:*",
+        );
         let res7b = voter.vote(&ev7b).await;
-        assert!(res7b.is_some(), "appcmd.exe credential dump must trigger CredentialGuard");
+        assert!(
+            res7b.is_some(),
+            "appcmd.exe credential dump must trigger CredentialGuard"
+        );
         assert!(res7b.unwrap().reason.contains("T1552"));
 
         // 8. Benign: rundll32.exe shell32.dll,Control_RunDLL (must return None - zero false positives!)
-        let ev_benign = make_proc_event("C:\\Windows\\System32\\rundll32.exe", "rundll32.exe shell32.dll,Control_RunDLL");
+        let ev_benign = make_proc_event(
+            "C:\\Windows\\System32\\rundll32.exe",
+            "rundll32.exe shell32.dll,Control_RunDLL",
+        );
         let res_benign = voter.vote(&ev_benign).await;
-        assert!(res_benign.is_none(), "Benign Control_RunDLL must NOT trigger CredentialGuard");
+        assert!(
+            res_benign.is_none(),
+            "Benign Control_RunDLL must NOT trigger CredentialGuard"
+        );
     }
 
     #[test]
@@ -2453,4 +2980,3 @@ mod tests {
         assert!(v25.reason.contains("T1055.012"));
     }
 }
-

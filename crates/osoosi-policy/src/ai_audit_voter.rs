@@ -6,9 +6,9 @@
 //! 2. Persistent Agent Memory & Config Poisoning (Unauthorized modifications to agent memory/rules).
 //! 3. Process Memory Safety & Remote Thread Tampering (Process injection into AI agent runtimes).
 
+use crate::engine::{ThreatVoter, VoteResult};
 use async_trait::async_trait;
 use osoosi_types::HostSecurityEvent;
-use crate::engine::{ThreatVoter, VoteResult};
 use regex::Regex;
 use serde_json::Value;
 use tracing::warn;
@@ -85,9 +85,21 @@ impl AiSecurityAuditVoter {
 
     /// Evaluates Sysmon Event 1 for Tool-Argument Injection.
     fn evaluate_process_creation(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-        let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str()).unwrap_or("");
-        let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let parent_image = event
+            .data
+            .get("ParentImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cmd_line = event
+            .data
+            .get("CommandLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         let self_is_ai = self.is_ai_runtime(image);
         let parent_is_ai = self.is_ai_runtime(parent_image);
@@ -96,8 +108,13 @@ impl AiSecurityAuditVoter {
             return None;
         }
 
-        let pid = event.data.get("ProcessId")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
             .unwrap_or(0);
 
         // 1. Check for Tool-Argument Shell Injection
@@ -143,14 +160,27 @@ impl AiSecurityAuditVoter {
 
     /// Evaluates Sysmon Event 11 for Persistent Agent Memory & Config Poisoning.
     fn evaluate_file_event(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-        let target_file = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let target_file = event
+            .data
+            .get("TargetFilename")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // Check if the modified target is an agent memory/rule/config file
         if let Some(m) = self.protected_config_regex.find(target_file) {
             // If modified by an untrusted worker runtime or script
-            let pid = event.data.get("ProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+            let pid = event
+                .data
+                .get("ProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .unwrap_or(0);
 
             warn!(
@@ -175,16 +205,34 @@ impl AiSecurityAuditVoter {
 
     /// Evaluates Sysmon Event 8 for Remote Thread Injection into AI Agent Runtimes.
     fn evaluate_remote_thread(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let source_image = event.data.get("SourceImage").and_then(|v| v.as_str()).unwrap_or("");
-        let target_image = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("");
+        let source_image = event
+            .data
+            .get("SourceImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let target_image = event
+            .data
+            .get("TargetImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // If target is an AI agent runtime being injected into by an external process
         if self.is_ai_runtime(target_image) && !self.is_ai_runtime(source_image) {
-            let source_pid = event.data.get("SourceProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+            let source_pid = event
+                .data
+                .get("SourceProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .unwrap_or(0);
-            let target_pid = event.data.get("TargetProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+            let target_pid = event
+                .data
+                .get("TargetProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .unwrap_or(0);
 
             warn!(
@@ -210,9 +258,21 @@ impl AiSecurityAuditVoter {
 
     /// Evaluates Sysmon Event 10 for Process Memory Access with write privileges into Agent Runtimes.
     fn evaluate_process_access(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let source_image = event.data.get("SourceImage").and_then(|v| v.as_str()).unwrap_or("");
-        let target_image = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("");
-        let granted_access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("");
+        let source_image = event
+            .data
+            .get("SourceImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let target_image = event
+            .data
+            .get("TargetImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let granted_access = event
+            .data
+            .get("GrantedAccess")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // If targeting an AI agent runtime
         if self.is_ai_runtime(target_image) && !self.is_ai_runtime(source_image) {
@@ -223,11 +283,21 @@ impl AiSecurityAuditVoter {
                 || granted_access.contains("0x0010");
 
             if is_write_access {
-                let source_pid = event.data.get("SourceProcessId")
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+                let source_pid = event
+                    .data
+                    .get("SourceProcessId")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                    })
                     .unwrap_or(0);
-                let target_pid = event.data.get("TargetProcessId")
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+                let target_pid = event
+                    .data
+                    .get("TargetProcessId")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                    })
                     .unwrap_or(0);
 
                 return Some(VoteResult {
@@ -286,12 +356,15 @@ mod tests {
         let voter = AiSecurityAuditVoter::new();
 
         // Benign cargo build executed by python agent
-        let ev = make_test_event(1, json!({
-            "ParentImage": "C:\\Python311\\python.exe",
-            "Image": "C:\\Users\\user\\.cargo\\bin\\cargo.exe",
-            "CommandLine": "cargo test --lib",
-            "ProcessId": 1234
-        }));
+        let ev = make_test_event(
+            1,
+            json!({
+                "ParentImage": "C:\\Python311\\python.exe",
+                "Image": "C:\\Users\\user\\.cargo\\bin\\cargo.exe",
+                "CommandLine": "cargo test --lib",
+                "ProcessId": 1234
+            }),
+        );
 
         assert!(voter.evaluate_event(&ev).is_none());
     }
@@ -301,12 +374,15 @@ mod tests {
         let voter = AiSecurityAuditVoter::new();
 
         // Downstream command injection inside tool argument
-        let ev = make_test_event(1, json!({
-            "ParentImage": "C:\\Python311\\python.exe",
-            "Image": "C:\\Windows\\System32\\cmd.exe",
-            "CommandLine": "cmd.exe /c echo test; rm -rf /",
-            "ProcessId": 5678
-        }));
+        let ev = make_test_event(
+            1,
+            json!({
+                "ParentImage": "C:\\Python311\\python.exe",
+                "Image": "C:\\Windows\\System32\\cmd.exe",
+                "CommandLine": "cmd.exe /c echo test; rm -rf /",
+                "ProcessId": 5678
+            }),
+        );
 
         let vote = voter.evaluate_event(&ev);
         assert!(vote.is_some());
@@ -321,12 +397,15 @@ mod tests {
         let voter = AiSecurityAuditVoter::new();
 
         // Downstream path traversal into sensitive system asset
-        let ev = make_test_event(1, json!({
-            "ParentImage": "C:\\Program Files\\nodejs\\node.exe",
-            "Image": "C:\\Windows\\System32\\tar.exe",
-            "CommandLine": "tar -xf archive.tar -C ../../Windows/System32",
-            "ProcessId": 9012
-        }));
+        let ev = make_test_event(
+            1,
+            json!({
+                "ParentImage": "C:\\Program Files\\nodejs\\node.exe",
+                "Image": "C:\\Windows\\System32\\tar.exe",
+                "CommandLine": "tar -xf archive.tar -C ../../Windows/System32",
+                "ProcessId": 9012
+            }),
+        );
 
         let vote = voter.evaluate_event(&ev);
         assert!(vote.is_some());
@@ -341,11 +420,14 @@ mod tests {
         let voter = AiSecurityAuditVoter::new();
 
         // Unauthorized process writing to .agents/memory.md
-        let ev = make_test_event(11, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "TargetFilename": "D:\\harfile\\OshoosiClaw\\.agents\\memory.md",
-            "ProcessId": 3344
-        }));
+        let ev = make_test_event(
+            11,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "TargetFilename": "D:\\harfile\\OshoosiClaw\\.agents\\memory.md",
+                "ProcessId": 3344
+            }),
+        );
 
         let vote = voter.evaluate_event(&ev);
         assert!(vote.is_some());
@@ -360,12 +442,15 @@ mod tests {
         let voter = AiSecurityAuditVoter::new();
 
         // External malicious process creating remote thread in python.exe
-        let ev = make_test_event(8, json!({
-            "SourceImage": "C:\\Temp\\injector.exe",
-            "SourceProcessId": 7788,
-            "TargetImage": "C:\\Python311\\python.exe",
-            "TargetProcessId": 1122
-        }));
+        let ev = make_test_event(
+            8,
+            json!({
+                "SourceImage": "C:\\Temp\\injector.exe",
+                "SourceProcessId": 7788,
+                "TargetImage": "C:\\Python311\\python.exe",
+                "TargetProcessId": 1122
+            }),
+        );
 
         let vote = voter.evaluate_event(&ev);
         assert!(vote.is_some());
@@ -380,13 +465,16 @@ mod tests {
         let voter = AiSecurityAuditVoter::new();
 
         // External malicious process requesting write/tampering access to python.exe runtime
-        let ev = make_test_event(10, json!({
-            "SourceImage": "C:\\Temp\\injector.exe",
-            "SourceProcessId": 7788,
-            "TargetImage": "C:\\Python311\\python.exe",
-            "TargetProcessId": 1122,
-            "GrantedAccess": "0x1F0FFF"
-        }));
+        let ev = make_test_event(
+            10,
+            json!({
+                "SourceImage": "C:\\Temp\\injector.exe",
+                "SourceProcessId": 7788,
+                "TargetImage": "C:\\Python311\\python.exe",
+                "TargetProcessId": 1122,
+                "GrantedAccess": "0x1F0FFF"
+            }),
+        );
 
         let vote = voter.evaluate_event(&ev);
         assert!(vote.is_some());
