@@ -762,6 +762,7 @@ impl AgentProvisioner {
     /// Linux: Install Auditd
     /// Linux: Native eBPF / auditd
     #[cfg(target_os = "linux")]
+    #[allow(dead_code)]
     async fn provision_linux(&self) -> anyhow::Result<()> {
         info!("Provisioning Linux telemetry (Native eBPF)...");
         Ok(())

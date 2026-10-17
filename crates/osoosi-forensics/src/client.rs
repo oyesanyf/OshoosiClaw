@@ -172,12 +172,76 @@ impl VelociraptorClient {
         pid: u32,
     ) -> Result<Vec<VadMemoryArtifact>, anyhow::Error> {
         if !self.is_available() {
+            #[cfg(target_os = "linux")]
+            if let Ok(artifacts) = Self::inspect_linux_proc_maps_vad(pid) {
+                if !artifacts.is_empty() {
+                    return Ok(artifacts);
+                }
+            }
             // Hermetic mock fallback when binary is absent
             return Ok(MockVelociraptorDriver::mock_vad_artifacts(pid));
         }
 
         let query = build_process_vad_query(pid)?;
         self.execute_vql(&query).await
+    }
+
+    /// Parses Linux `/proc/<pid>/maps` to synthesize `VadMemoryArtifact` records natively,
+    /// flagging anonymous `rwxp` (W^X violation) or `memfd:` fileless execution regions.
+    pub fn parse_linux_proc_maps_vad(pid: u32, maps_content: &str) -> Vec<VadMemoryArtifact> {
+        let mut out = Vec::new();
+        for line in maps_content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 5 {
+                continue;
+            }
+            let addr_range = parts[0];
+            let perms = parts[1];
+            if !perms.contains('x') {
+                continue;
+            }
+            let mut addr_iter = addr_range.split('-');
+            let start_hex = addr_iter.next().unwrap_or("0");
+            let end_hex = addr_iter.next().unwrap_or("0");
+            let start_addr = u64::from_str_radix(start_hex, 16).unwrap_or(0);
+            let end_addr = u64::from_str_radix(end_hex, 16).unwrap_or(0);
+            let pathname = if parts.len() >= 6 {
+                parts[5..].join(" ")
+            } else {
+                String::new()
+            };
+            let is_unbacked = pathname.is_empty()
+                || pathname.starts_with("/memfd:")
+                || pathname.contains("(deleted)")
+                || pathname == "[heap]"
+                || pathname == "[stack]";
+            let protection = if perms.starts_with("rwx") {
+                "PAGE_EXECUTE_READWRITE".to_string()
+            } else {
+                "PAGE_EXECUTE_READ".to_string()
+            };
+            out.push(VadMemoryArtifact {
+                pid,
+                address: format!("0x{:x}", start_addr),
+                size: end_addr.saturating_sub(start_addr),
+                protection,
+                mapping_type: if is_unbacked {
+                    "MEM_PRIVATE".to_string()
+                } else {
+                    "MEM_IMAGE".to_string()
+                },
+                filename: if is_unbacked { None } else { Some(pathname) },
+                is_unbacked_executable: is_unbacked,
+            });
+        }
+        out
+    }
+
+    #[cfg(target_os = "linux")]
+    fn inspect_linux_proc_maps_vad(pid: u32) -> Result<Vec<VadMemoryArtifact>, anyhow::Error> {
+        let maps_path = format!("/proc/{}/maps", pid);
+        let content = std::fs::read_to_string(&maps_path)?;
+        Ok(Self::parse_linux_proc_maps_vad(pid, &content))
     }
 
     /// Performs an NTFS Master File Table scan starting with a given directory prefix.
@@ -323,5 +387,20 @@ mod tests {
         assert!(report.confidence_delta > 0.0);
         assert!(!report.vad_findings.is_empty());
         assert!(!report.mft_discrepancies.is_empty());
+    }
+
+    #[test]
+    fn test_parse_linux_proc_maps_vad() {
+        let sample_maps = "\
+55a1c2e00000-55a1c2e25000 r-xp 00001000 08:01 131074 /usr/bin/osoosi\n\
+7f9b40000000-7f9b40004000 rwxp 00000000 00:00 0 \n\
+7f9b50000000-7f9b50008000 r-xp 00000000 00:01 2048 /memfd:payload (deleted)\n";
+        let vads = VelociraptorClient::parse_linux_proc_maps_vad(4242, sample_maps);
+        assert_eq!(vads.len(), 3);
+        assert!(!vads[0].is_unbacked_executable);
+        assert_eq!(vads[0].protection, "PAGE_EXECUTE_READ");
+        assert!(vads[1].is_unbacked_executable);
+        assert_eq!(vads[1].protection, "PAGE_EXECUTE_READWRITE");
+        assert!(vads[2].is_unbacked_executable);
     }
 }

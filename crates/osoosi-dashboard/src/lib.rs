@@ -8172,22 +8172,23 @@ pub async fn handle_audit_nsrl_aslr_merkle() -> impl IntoResponse {
         if let Some(p) = proof_obj {
             p
         } else {
-            let exe_path =
-                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("Cargo.toml"));
+            let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("Cargo.toml"));
             let bytes = std::fs::read(&exe_path)
                 .unwrap_or_else(|_| b"[package]\nname = \"osoosi\"\n".to_vec());
             let tree = osoosi_audit::NsrlDemandPagedMerkleTree::from_bytes(
                 &exe_path.to_string_lossy(),
                 &bytes,
             );
-            let proof = tree.generate_page_proof(0).unwrap_or_else(|| osoosi_audit::NsrlPageProof {
-                canonical_path: exe_path.to_string_lossy().to_string(),
-                page_index: 0,
-                total_pages: 1,
-                leaf_hash: "0".repeat(64),
-                audit_path: Vec::new(),
-                page_merkle_root: "0".repeat(64),
-            });
+            let proof =
+                tree.generate_page_proof(0)
+                    .unwrap_or_else(|| osoosi_audit::NsrlPageProof {
+                        canonical_path: exe_path.to_string_lossy().to_string(),
+                        page_index: 0,
+                        total_pages: 1,
+                        leaf_hash: "0".repeat(64),
+                        audit_path: Vec::new(),
+                        page_merkle_root: "0".repeat(64),
+                    });
             let is_valid = osoosi_audit::verify_merkle_audit_path(
                 &proof.leaf_hash,
                 &proof.audit_path,
@@ -8309,7 +8310,9 @@ mod tests {
             json_val["nsrl_demand_paged_merkle"]["page_size_bytes"],
             4096
         );
-        assert!(json_val["nsrl_demand_paged_merkle"]["sample_verified_proof"]["leaf_hash"].is_string());
+        assert!(
+            json_val["nsrl_demand_paged_merkle"]["sample_verified_proof"]["leaf_hash"].is_string()
+        );
         assert_eq!(
             json_val["nsrl_demand_paged_merkle"]["sample_verified_proof"]["verified"],
             true
@@ -8319,7 +8322,8 @@ mod tests {
             true
         );
         assert_eq!(
-            json_val["aslr_invariant_merkle"]["hardware_security_status"]["cet_control_flow_enforced"],
+            json_val["aslr_invariant_merkle"]["hardware_security_status"]
+                ["cet_control_flow_enforced"],
             true
         );
         assert_eq!(

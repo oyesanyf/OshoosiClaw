@@ -237,6 +237,64 @@ pub fn is_administrative_lolbin(path: &str) -> bool {
             | "at.exe"
             | "bash.exe"
             | "wsl.exe"
+            // Linux administrative / GTFOBin dual-use binaries
+            | "bash"
+            | "sh"
+            | "dash"
+            | "zsh"
+            | "python"
+            | "python3"
+            | "perl"
+            | "ruby"
+            | "php"
+            | "node"
+            | "curl"
+            | "wget"
+            | "systemctl"
+            | "journalctl"
+            | "service"
+            | "iptables"
+            | "ip6tables"
+            | "nft"
+            | "ip"
+            | "ss"
+            | "netstat"
+            | "nc"
+            | "netcat"
+            | "ncat"
+            | "socat"
+            | "openssl"
+            | "ssh"
+            | "scp"
+            | "sftp"
+            | "rsync"
+            | "tar"
+            | "find"
+            | "awk"
+            | "gawk"
+            | "sed"
+            | "dd"
+            | "mount"
+            | "umount"
+            | "chmod"
+            | "chown"
+            | "chattr"
+            | "useradd"
+            | "usermod"
+            | "userdel"
+            | "passwd"
+            | "sudo"
+            | "su"
+            | "pkexec"
+            | "crontab"
+            | "at"
+            | "gdb"
+            | "strace"
+            | "ltrace"
+            | "bpftool"
+            | "insmod"
+            | "modprobe"
+            | "rmmod"
     )
 }
 
@@ -260,8 +318,8 @@ pub async fn validate_file_safety_with_veto(path: &str, has_active_threat: bool)
     validate_windows_file_integrity(path).await
 }
 
-/// Runs SFC /SCANFILE on Windows to verify if a file is an untampered system file.
-/// Returns true if the file is verified clean by Microsoft's store.
+/// Runs SFC /SCANFILE on Windows (or dpkg/rpm/ELF trust verification on Linux) to verify if a file is an untampered system file.
+/// Returns true if the file is verified clean by the OS store.
 pub async fn validate_windows_file_integrity(path: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
@@ -334,7 +392,66 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
     }
 
     #[cfg(not(target_os = "windows"))]
-    let _ = path;
+    {
+        use std::path::Path;
+        use std::process::Command;
+
+        if path.contains("..")
+            || path.chars().any(|c| {
+                c.is_control()
+                    || c == '"'
+                    || c == '&'
+                    || c == '|'
+                    || c == ';'
+                    || c == '`'
+                    || c == '$'
+            })
+        {
+            return false;
+        }
+
+        let p = Path::new(path);
+        if !p.exists() {
+            return false;
+        }
+
+        let is_linux_sys_path = path.starts_with("/bin/")
+            || path.starts_with("/sbin/")
+            || path.starts_with("/usr/bin/")
+            || path.starts_with("/usr/sbin/")
+            || path.starts_with("/lib/")
+            || path.starts_with("/lib64/")
+            || path.starts_with("/usr/lib/");
+        if !is_linux_sys_path {
+            return false;
+        }
+
+        // Check RPM verification (`rpm -Vf <path>`) if rpm is installed
+        if Path::new("/usr/bin/rpm").exists() || Path::new("/bin/rpm").exists() {
+            if let Ok(out) = Command::new("rpm").args(["-Vf", path]).output() {
+                if out.status.success() && out.stdout.is_empty() {
+                    info!(
+                        "Linux Package Validation: File {} verified CLEAN by rpm -Vf.",
+                        path
+                    );
+                    return true;
+                }
+            }
+        }
+
+        // Check Debian/Ubuntu package ownership (`dpkg -S <path>`) + root ownership
+        if Path::new("/usr/bin/dpkg").exists() || Path::new("/bin/dpkg").exists() {
+            if let Ok(out) = Command::new("dpkg").args(["-S", path]).output() {
+                if out.status.success() && crate::win_trust::verify_file_signature(path) {
+                    info!(
+                        "Linux Package Validation: File {} verified CLEAN by dpkg + ELF trust.",
+                        path
+                    );
+                    return true;
+                }
+            }
+        }
+    }
 
     false
 }

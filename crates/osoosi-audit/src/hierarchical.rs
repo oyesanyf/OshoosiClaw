@@ -1050,4 +1050,306 @@ mod tests {
             .expect("proof must exist for anchor leaf");
         assert_eq!(proof.root_hash, anchor.global_merkle_root);
     }
+
+    #[test]
+    fn test_adversarial_arm_merkle_chain_tamper_rejection() {
+        let registry = HierarchicalMerkleRegistry::new();
+        let arm_id = "arm-adversarial-limb";
+
+        // Build a legitimate 5-event chain
+        let mut recs = Vec::new();
+        for i in 1..=5 {
+            let rec = registry.record_arm_event(
+                arm_id,
+                1,
+                "worker",
+                &format!("action_{}", i),
+                &format!("sig_{}", i),
+            );
+            recs.push(rec);
+        }
+
+        assert!(
+            registry.verify_arm_chain(arm_id),
+            "Baseline chain must verify"
+        );
+
+        // Attack Scenario 1: Flip bit in hash of record 2 (middle of chain)
+        {
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            let original_hash = chain.records[2].hash.clone();
+            chain.records[2].hash = "deadbeef".repeat(8);
+            drop(chain);
+            drop(chain_entry);
+
+            assert!(
+                !registry.verify_arm_chain(arm_id),
+                "Tampered middle record hash MUST be rejected by verify_arm_chain"
+            );
+
+            // Restore
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[2].hash = original_hash;
+        }
+        assert!(registry.verify_arm_chain(arm_id), "Chain restored");
+
+        // Attack Scenario 2: Perturb prev_hash of record 3 (chain continuity break)
+        {
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            let original_prev = chain.records[3].prev_hash.clone();
+            chain.records[3].prev_hash = "baadf00d".repeat(8);
+            drop(chain);
+            drop(chain_entry);
+
+            assert!(
+                !registry.verify_arm_chain(arm_id),
+                "Perturbed prev_hash MUST be rejected"
+            );
+
+            // Restore
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[3].prev_hash = original_prev;
+        }
+        assert!(registry.verify_arm_chain(arm_id), "Chain restored");
+
+        // Attack Scenario 3: Attacker replays/modifies epoch to 999
+        {
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[1].epoch = 999;
+            drop(chain);
+            drop(chain_entry);
+
+            assert!(
+                !registry.verify_arm_chain(arm_id),
+                "Forged epoch in record MUST be rejected due to BLAKE3 mismatch"
+            );
+
+            // Restore
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[1].epoch = 1;
+        }
+        assert!(registry.verify_arm_chain(arm_id), "Chain restored");
+
+        // Attack Scenario 4: Forged tool call payload
+        {
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[4].tool_call_hash = "0".repeat(64);
+            drop(chain);
+            drop(chain_entry);
+
+            assert!(
+                !registry.verify_arm_chain(arm_id),
+                "Forged tool_call_hash MUST be rejected"
+            );
+
+            // Restore
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[4].tool_call_hash = recs[4].tool_call_hash.clone();
+        }
+        assert!(registry.verify_arm_chain(arm_id), "Chain restored");
+
+        // Attack Scenario 5: Forged HMAC signature
+        {
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[0].hmac_sig = "forged_signature_token".to_string();
+            drop(chain);
+            drop(chain_entry);
+
+            assert!(
+                !registry.verify_arm_chain(arm_id),
+                "Forged hmac_sig MUST be rejected"
+            );
+
+            // Restore
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.records[0].hmac_sig = recs[0].hmac_sig.clone();
+        }
+        assert!(registry.verify_arm_chain(arm_id), "Chain restored");
+
+        // Attack Scenario 6: Desynchronized current_head
+        {
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            let original_head = chain.current_head.clone();
+            chain.current_head = "1".repeat(64);
+            drop(chain);
+            drop(chain_entry);
+
+            assert!(
+                !registry.verify_arm_chain(arm_id),
+                "Desynced current_head MUST cause verification failure"
+            );
+
+            // Restore
+            let chain_entry = registry.arms.get(arm_id).unwrap();
+            let mut chain = chain_entry.value().lock().unwrap();
+            chain.current_head = original_head;
+        }
+        assert!(
+            registry.verify_arm_chain(arm_id),
+            "Chain verified cleanly after restoration"
+        );
+    }
+
+    #[test]
+    fn test_adversarial_autotomy_fracture_proof_and_signature_forgery() {
+        let registry = HierarchicalMerkleRegistry::new();
+        let arm_id = "arm-sever-target";
+
+        registry.record_arm_event(arm_id, 1, "worker", "exec_tool", "sig_epoch1_1");
+        let rec2 = registry.record_arm_event(arm_id, 1, "worker", "exec_tool_2", "sig_epoch1_2");
+
+        // Execute surgical autotomy severance
+        let fracture =
+            registry.record_arm_fracture(arm_id, 1, 2, "lateral_escape_attempt_detected", None);
+
+        assert_eq!(fracture.arm_id, arm_id);
+        assert_eq!(fracture.old_epoch, 1);
+        assert_eq!(fracture.new_epoch, 2);
+        assert_eq!(fracture.terminal_hash, rec2.hash);
+        assert!(fracture.global_root.is_some());
+
+        let anchor = registry
+            .get_latest_anchor()
+            .expect("Anchor created on fracture");
+        assert_eq!(anchor.anchor_seq, fracture.anchor_seq);
+        assert!(HierarchicalMerkleRegistry::verify_anchor_signature(&anchor).unwrap());
+
+        // Attack Scenario 1: Forged Ed25519 signature bytes
+        let mut tampered_sig_anchor = anchor.clone();
+        let mut sig_bytes = hex::decode(&tampered_sig_anchor.ed25519_sig).unwrap();
+        sig_bytes[5] ^= 0xFF; // Invert bits
+        tampered_sig_anchor.ed25519_sig = hex::encode(sig_bytes);
+        assert!(
+            HierarchicalMerkleRegistry::verify_anchor_signature(&tampered_sig_anchor).is_err(),
+            "Forged Ed25519 signature MUST fail verification"
+        );
+
+        // Attack Scenario 2: Forged interior node hash
+        let mut tampered_hash_anchor = anchor.clone();
+        tampered_hash_anchor.interior_hash = "f".repeat(64);
+        assert!(
+            HierarchicalMerkleRegistry::verify_anchor_signature(&tampered_hash_anchor).is_err(),
+            "Tampered interior hash MUST fail Ed25519 signature check"
+        );
+
+        // Attack Scenario 3: Substituted public key
+        let other_key = SigningKey::generate(&mut OsRng).verifying_key();
+        let mut tampered_pk_anchor = anchor.clone();
+        tampered_pk_anchor.public_key = hex::encode(other_key.to_bytes());
+        assert!(
+            HierarchicalMerkleRegistry::verify_anchor_signature(&tampered_pk_anchor).is_err(),
+            "Signature check against wrong public key MUST fail"
+        );
+
+        // Attack Scenario 4: Malformed hex strings (truncated or non-hex)
+        let mut malformed_anchor = anchor.clone();
+        malformed_anchor.ed25519_sig = "invalid_non_hex_sig".to_string();
+        assert!(HierarchicalMerkleRegistry::verify_anchor_signature(&malformed_anchor).is_err());
+
+        let mut malformed_pk = anchor.clone();
+        malformed_pk.public_key = "1234".to_string(); // Too short
+        assert!(HierarchicalMerkleRegistry::verify_anchor_signature(&malformed_pk).is_err());
+    }
+
+    #[test]
+    fn test_adversarial_cross_ring_blinding_matrix_and_chain_tamper() {
+        let registry = HierarchicalMerkleRegistry::new();
+
+        // 1. Matrix: Multiple asymmetric blinding ratios
+        // Scenario A: N0 = 10 in Ring 0, N2 = 5 in Ring 2 (5 dropped events)
+        for i in 0..10 {
+            registry.record_ring_transition(
+                ContainmentRingId::Ring0Kernel,
+                &format!("evt-a0-{}", i),
+                "TRANSITION",
+                "k_payload",
+                true,
+            );
+        }
+        for i in 0..5 {
+            registry.record_ring_transition(
+                ContainmentRingId::Ring2PolicyMesh,
+                &format!("evt-a2-{}", i),
+                "TRANSITION",
+                "k_payload",
+                true,
+            );
+        }
+        let status_a = registry.verify_cross_ring_continuity();
+        assert!(!status_a.intact);
+        assert_eq!(status_a.dropped_events, 5);
+        assert!(status_a.ring_chains_verified);
+        assert!(status_a
+            .reason
+            .contains("Asymmetric pipeline blinding detected"));
+
+        // Scenario B: Total blinding: 20 more events in Ring 0, 0 in Ring 2
+        for i in 0..20 {
+            registry.record_ring_transition(
+                ContainmentRingId::Ring0Kernel,
+                &format!("evt-blind-{}", i),
+                "TOTAL_BLIND",
+                "k_payload",
+                true,
+            );
+        }
+        let status_b = registry.verify_cross_ring_continuity();
+        assert!(!status_b.intact);
+        assert_eq!(status_b.dropped_events, 25); // 5 previous + 20 new
+
+        // 2. Chain Hash Tampering: Attacker attempts to forge an event in Ring 0
+        {
+            let r0_arc = registry.rings[0].clone();
+            let mut r0 = r0_arc.lock().unwrap();
+            let original_r0_hash = r0.records[2].hash.clone();
+            r0.records[2].hash = "e".repeat(64);
+            drop(r0);
+
+            let tamper_status = registry.verify_cross_ring_continuity();
+            assert!(!tamper_status.intact);
+            assert!(!tamper_status.ring_chains_verified);
+            assert!(
+                tamper_status
+                    .reason
+                    .contains("Tampering detected in ring chain"),
+                "Ring chain hash tampering must be explicitly diagnosed: {}",
+                tamper_status.reason
+            );
+
+            // Restore
+            let mut r0 = r0_arc.lock().unwrap();
+            r0.records[2].hash = original_r0_hash;
+        }
+
+        // 3. Chain Hash Tampering in Ring 2
+        {
+            let r2_arc = registry.rings[2].clone();
+            let mut r2 = r2_arc.lock().unwrap();
+            let original_r2_prev = r2.records[1].prev_hash.clone();
+            r2.records[1].prev_hash = "c".repeat(64);
+            drop(r2);
+
+            let tamper_status_r2 = registry.verify_cross_ring_continuity();
+            assert!(!tamper_status_r2.intact);
+            assert!(!tamper_status_r2.ring_chains_verified);
+            assert!(tamper_status_r2
+                .reason
+                .contains("Tampering detected in ring chain"));
+
+            // Restore
+            let mut r2 = r2_arc.lock().unwrap();
+            r2.records[1].prev_hash = original_r2_prev;
+        }
+    }
 }
