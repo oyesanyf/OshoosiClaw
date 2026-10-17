@@ -254,16 +254,30 @@ impl OpenJevClient {
     }
 
     /// [SEC-OJEV-01] Reads response body bounded to `max_bytes` to prevent OOM/DoS from unbounded HTTP streams.
-    async fn read_bounded_json(mut resp: reqwest::Response, max_bytes: usize) -> Result<serde_json::Value> {
+    async fn read_bounded_json(
+        mut resp: reqwest::Response,
+        max_bytes: usize,
+    ) -> Result<serde_json::Value> {
         if let Some(cl) = resp.content_length() {
             if cl as usize > max_bytes {
-                anyhow::bail!("Response content-length {} exceeds {} byte limit", cl, max_bytes);
+                anyhow::bail!(
+                    "Response content-length {} exceeds {} byte limit",
+                    cl,
+                    max_bytes
+                );
             }
         }
         let mut body = Vec::new();
-        while let Some(chunk) = resp.chunk().await.context("Failed reading response chunk")? {
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .context("Failed reading response chunk")?
+        {
             if body.len() + chunk.len() > max_bytes {
-                anyhow::bail!("Response body exceeded maximum limit of {} bytes", max_bytes);
+                anyhow::bail!(
+                    "Response body exceeded maximum limit of {} bytes",
+                    max_bytes
+                );
             }
             body.extend_from_slice(&chunk);
         }

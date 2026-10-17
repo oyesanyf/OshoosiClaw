@@ -494,7 +494,10 @@ impl TarpitManager {
         );
 
         let ring_merkle = osoosi_audit::global_hierarchical_merkle();
-        let payload = format!("APPLY_TARPIT: pid={}, proc={}, duration={}s", pid, proc_name, duration_secs);
+        let payload = format!(
+            "APPLY_TARPIT: pid={}, proc={}, duration={}s",
+            pid, proc_name, duration_secs
+        );
         let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)

@@ -24,7 +24,14 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if fname_lc == "osoosi.exe" || fname_lc == "osoosi.db" || fname_lc == "osoosi.toml" {
+    if fname_lc == "osoosi"
+        || fname_lc == "osoosi.exe"
+        || fname_lc == "osoosi-linux-x86_64"
+        || fname_lc == "osoosi_probe.bpf.o"
+        || fname_lc == "osoosi-ebpf.o"
+        || fname_lc == "osoosi.db"
+        || fname_lc == "osoosi.toml"
+    {
         anyhow::bail!(
             "Refusing to quarantine self-infrastructure binary/file: {}",
             file_path
@@ -45,15 +52,23 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
         }
     }
 
-    // System protection: refuse to quarantine Windows system binaries or administrative LOLBins
+    // System protection: refuse to quarantine Windows/Linux system binaries or administrative LOLBins
     let path_lc = file_path.to_ascii_lowercase();
     if path_lc.contains(r"\windows\system32\")
         || path_lc.contains(r"\windows\syswow64\")
         || path_lc.contains(r"\windows\winsxs\")
+        || path_lc.starts_with("/bin/")
+        || path_lc.starts_with("/sbin/")
+        || path_lc.starts_with("/usr/bin/")
+        || path_lc.starts_with("/usr/sbin/")
+        || path_lc.starts_with("/lib/")
+        || path_lc.starts_with("/lib64/")
+        || path_lc.starts_with("/usr/lib/")
+        || path_lc.starts_with("/etc/systemd/")
         || crate::system_check::is_administrative_lolbin(file_path)
     {
         anyhow::bail!(
-            "Refusing to quarantine Windows system binary / administrative LOLBin: {}",
+            "Refusing to quarantine system binary / administrative LOLBin: {}",
             file_path
         );
     }

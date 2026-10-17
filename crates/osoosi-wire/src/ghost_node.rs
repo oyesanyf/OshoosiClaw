@@ -66,11 +66,13 @@ impl GhostNodeManager {
         let total_interactions = self.total_interactions.clone();
 
         tokio::spawn(async move {
-            let dp = Arc::new(osoosi_dp::DifferentialPrivacy::new(osoosi_dp::PrivacyConfig {
-                epsilon: 1.0,
-                min_samples: 1,
-                sensitivity: 1.0,
-            }));
+            let dp = Arc::new(osoosi_dp::DifferentialPrivacy::new(
+                osoosi_dp::PrivacyConfig {
+                    epsilon: 1.0,
+                    min_samples: 1,
+                    sensitivity: 1.0,
+                },
+            ));
 
             // [SEC-WIRE-01] Bounded concurrency semaphore (max 64 concurrent deceptive sessions)
             let semaphore = Arc::new(tokio::sync::Semaphore::new(64));
@@ -113,11 +115,12 @@ impl GhostNodeManager {
                     // Notify mesh (Tarpit)
                     let tx_guard = mesh_tx_clone.lock().await;
                     if let Some(ref tx) = *tx_guard {
-                        let _ = tx.try_send(crate::MeshCommand::BroadcastTarpit(crate::TarpitSignal {
-                            target_ip: addr.ip().to_string(),
-                            confidence: 1.0,
-                            attack_type: format!("Ghost Node (Coy): {}", service_name_clone),
-                        }));
+                        let _ =
+                            tx.try_send(crate::MeshCommand::BroadcastTarpit(crate::TarpitSignal {
+                                target_ip: addr.ip().to_string(),
+                                confidence: 1.0,
+                                attack_type: format!("Ghost Node (Coy): {}", service_name_clone),
+                            }));
                     }
                     drop(tx_guard);
 
@@ -144,7 +147,10 @@ impl GhostNodeManager {
                         &tarpit_rec.hash,
                         false,
                     );
-                    ring_merkle.anchor_to_global_tree(None, &format!("coy_interaction:{}", service_name_clone));
+                    ring_merkle.anchor_to_global_tree(
+                        None,
+                        &format!("coy_interaction:{}", service_name_clone),
+                    );
 
                     // "Coy" Behavior: Send dynamic, teasing banners
                     let banner: &[u8] = match service_name_clone.as_str() {

@@ -90,10 +90,7 @@ pub fn compute_merkle_root_from_leaves(leaves: &[String]) -> String {
 }
 
 /// Generates an audit path from leaf index `idx` in precomputed Merkle levels.
-pub fn generate_merkle_audit_path(
-    levels: &[Vec<String>],
-    mut idx: usize,
-) -> Vec<(String, bool)> {
+pub fn generate_merkle_audit_path(levels: &[Vec<String>], mut idx: usize) -> Vec<(String, bool)> {
     let mut path = Vec::new();
 
     for level in levels.iter().take(levels.len().saturating_sub(1)) {
@@ -252,10 +249,7 @@ impl NsrlDemandPagedMerkleTree {
     }
 
     /// Verifies an NSRL executable inclusion proof against a global NSRL allowlist root in O(log N).
-    pub fn verify_nsrl_executable_proof(
-        global_root: &str,
-        proof: &NsrlInclusionProof,
-    ) -> bool {
+    pub fn verify_nsrl_executable_proof(global_root: &str, proof: &NsrlInclusionProof) -> bool {
         let expected_leaf = NsrlApprovedBinaryProfile::compute_profile_leaf_hash(
             &proof.canonical_path,
             &proof.file_blake3,
@@ -352,11 +346,8 @@ impl NsrlApprovedBinaryProfile {
             .cloned()
             .unwrap_or_else(|| "0".repeat(64));
 
-        let leaf_hash = Self::compute_profile_leaf_hash(
-            canonical_path,
-            &file_blake3,
-            &page_merkle_root,
-        );
+        let leaf_hash =
+            Self::compute_profile_leaf_hash(canonical_path, &file_blake3, &page_merkle_root);
 
         Self {
             binary_name,
@@ -401,7 +392,8 @@ impl NsrlAllowlistMerkleEngine {
 
     /// Registers or updates an approved binary profile, recomputing the global NSRL allowlist root.
     pub fn register_profile(&self, profile: NsrlApprovedBinaryProfile) {
-        self.profiles.insert(profile.canonical_path.clone(), profile);
+        self.profiles
+            .insert(profile.canonical_path.clone(), profile);
         self.recompute_global_root();
     }
 
@@ -781,7 +773,12 @@ impl AslrInvariantCodeVerifier {
         preferred_base_va: u64,
         reloc_rva_offsets: &[usize],
     ) -> Vec<u8> {
-        normalize_aslr_code_segment(code_bytes, runtime_base_va, preferred_base_va, reloc_rva_offsets)
+        normalize_aslr_code_segment(
+            code_bytes,
+            runtime_base_va,
+            preferred_base_va,
+            reloc_rva_offsets,
+        )
     }
 
     /// Computes the ASLR-invariant Merkle root across 4 KB pages.
@@ -791,7 +788,12 @@ impl AslrInvariantCodeVerifier {
         preferred_base_va: u64,
         reloc_rva_offsets: &[usize],
     ) -> (String, Vec<String>) {
-        compute_aslr_invariant_code_root(code_bytes, runtime_base_va, preferred_base_va, reloc_rva_offsets)
+        compute_aslr_invariant_code_root(
+            code_bytes,
+            runtime_base_va,
+            preferred_base_va,
+            reloc_rva_offsets,
+        )
     }
 
     /// Verifies a runtime code segment against the expected invariant Merkle root.
@@ -839,10 +841,14 @@ impl AslrInvariantCodeVerifier {
         is_shadow_stack: bool,
     ) -> Result<(), &'static str> {
         if is_writable && is_executable {
-            return Err("W^X violation: Memory region is both WRITABLE and EXECUTABLE (DEP bypass risk)");
+            return Err(
+                "W^X violation: Memory region is both WRITABLE and EXECUTABLE (DEP bypass risk)",
+            );
         }
         if is_shadow_stack && is_writable {
-            return Err("CET shadow stack violation: Shadow stack region must not be user-writable");
+            return Err(
+                "CET shadow stack violation: Shadow stack region must not be user-writable",
+            );
         }
         Ok(())
     }
@@ -1035,17 +1041,22 @@ mod tests {
         binary_bytes[4096..4100].copy_from_slice(b"PAGE");
 
         let path = "C:\\Windows\\System32\\test_binary.exe";
-        let profile = NsrlApprovedBinaryProfile::from_bytes(path, &binary_bytes, NSRL_RDS_VERSION, true);
+        let profile =
+            NsrlApprovedBinaryProfile::from_bytes(path, &binary_bytes, NSRL_RDS_VERSION, true);
         engine.register_profile(profile);
 
         assert_eq!(engine.profile_count(), 1);
 
         // 1. Verify Page 0 and Page 1 via NsrlAllowlistMerkleEngine
-        let proof0 = engine.generate_page_proof(path, 0).expect("Proof for page 0");
+        let proof0 = engine
+            .generate_page_proof(path, 0)
+            .expect("Proof for page 0");
         let page0_bytes = &binary_bytes[0..4096];
         assert!(engine.verify_demand_paged_block(path, 0, page0_bytes, &proof0));
 
-        let proof1 = engine.generate_page_proof(path, 1).expect("Proof for page 1");
+        let proof1 = engine
+            .generate_page_proof(path, 1)
+            .expect("Proof for page 1");
         let page1_bytes = &binary_bytes[4096..8192];
         assert!(engine.verify_demand_paged_block(path, 1, page1_bytes, &proof1));
 
@@ -1054,7 +1065,9 @@ mod tests {
         assert_eq!(demand_tree.total_pages(), 2);
         assert_eq!(demand_tree.total_size(), 8192);
 
-        let dt_proof0 = demand_tree.generate_page_proof(0).expect("Demand tree proof page 0");
+        let dt_proof0 = demand_tree
+            .generate_page_proof(0)
+            .expect("Demand tree proof page 0");
         assert!(demand_tree.verify_page(0, page0_bytes, &dt_proof0));
         assert!(NsrlDemandPagedMerkleTree::verify_demand_paged_block(
             demand_tree.root_hash(),
@@ -1084,15 +1097,32 @@ mod tests {
         let bin2 = vec![0x90u8; 4096];
         let bin3 = vec![0xAAu8; 4096];
 
-        let p1 = NsrlApprovedBinaryProfile::from_bytes("C:\\Bin\\one.exe", &bin1, NSRL_RDS_VERSION, true);
-        let p2 = NsrlApprovedBinaryProfile::from_bytes("C:\\Bin\\two.exe", &bin2, NSRL_RDS_VERSION, true);
-        let p3 = NsrlApprovedBinaryProfile::from_bytes("C:\\Bin\\three.exe", &bin3, NSRL_RDS_VERSION, true);
+        let p1 = NsrlApprovedBinaryProfile::from_bytes(
+            "C:\\Bin\\one.exe",
+            &bin1,
+            NSRL_RDS_VERSION,
+            true,
+        );
+        let p2 = NsrlApprovedBinaryProfile::from_bytes(
+            "C:\\Bin\\two.exe",
+            &bin2,
+            NSRL_RDS_VERSION,
+            true,
+        );
+        let p3 = NsrlApprovedBinaryProfile::from_bytes(
+            "C:\\Bin\\three.exe",
+            &bin3,
+            NSRL_RDS_VERSION,
+            true,
+        );
 
         engine.register_profile(p1);
         engine.register_profile(p2);
         engine.register_profile(p3);
 
-        let proof2 = engine.generate_inclusion_proof("C:\\Bin\\two.exe").expect("Inclusion proof for two.exe");
+        let proof2 = engine
+            .generate_inclusion_proof("C:\\Bin\\two.exe")
+            .expect("Inclusion proof for two.exe");
         assert!(engine.verify_nsrl_executable_proof(&proof2));
 
         // Verify via NsrlDemandPagedMerkleTree static method
@@ -1121,7 +1151,7 @@ mod tests {
 
         // Synthesize an 8 KB code segment with two 64-bit absolute pointers relocated by the loader
         let mut code_preferred = vec![0x90u8; 8192];
-        let reloc1 = 64;   // In page 0
+        let reloc1 = 64; // In page 0
         let reloc2 = 4160; // In page 1
         let relocs = vec![reloc1, reloc2];
 
@@ -1185,8 +1215,15 @@ mod tests {
             &root2,
             Some(&page_hashes2),
         );
-        assert!(!check_hooked.intact, "Single-byte hooked code must fail verification!");
-        assert_eq!(check_hooked.tampered_page_offsets, vec![0], "Must pinpoint tampered page offset 0");
+        assert!(
+            !check_hooked.intact,
+            "Single-byte hooked code must fail verification!"
+        );
+        assert_eq!(
+            check_hooked.tampered_page_offsets,
+            vec![0],
+            "Must pinpoint tampered page offset 0"
+        );
 
         // 3. Multi-byte hook: 0xE9 JMP in Page 1
         let mut jmp_hooked = code_aslr1.clone();
@@ -1203,7 +1240,11 @@ mod tests {
             Some(&page_hashes2),
         );
         assert!(!check_jmp.intact, "JMP hooked code must fail verification!");
-        assert_eq!(check_jmp.tampered_page_offsets, vec![4096], "Must pinpoint tampered page offset 4096");
+        assert_eq!(
+            check_jmp.tampered_page_offsets,
+            vec![4096],
+            "Must pinpoint tampered page offset 4096"
+        );
     }
 
     #[test]
@@ -1246,7 +1287,10 @@ mod tests {
         );
 
         assert!(!hollow_check.intact, "Process hollowing MUST be rejected!");
-        assert!(!hollow_check.matched_root, "Merkle roots must not match under hollowing!");
+        assert!(
+            !hollow_check.matched_root,
+            "Merkle roots must not match under hollowing!"
+        );
         assert_eq!(
             hollow_check.tampered_page_offsets,
             vec![0, 4096],
@@ -1285,12 +1329,25 @@ mod tests {
 
         let summary = guard.get_summary();
         assert_eq!(summary["status"], "ok");
-        assert!(summary["aslr_process_guard"]["anchored_processes_count"].as_u64().unwrap() >= 1);
+        assert!(
+            summary["aslr_process_guard"]["anchored_processes_count"]
+                .as_u64()
+                .unwrap()
+                >= 1
+        );
 
         // Security boundary validation via AslrInvariantCodeVerifier
-        assert!(AslrInvariantCodeVerifier::verify_memory_region_security(false, true, false).is_ok()); // .text
-        assert!(AslrInvariantCodeVerifier::verify_memory_region_security(true, false, false).is_ok());  // heap/stack
-        assert!(AslrInvariantCodeVerifier::verify_memory_region_security(true, true, false).is_err());   // W^X violation
-        assert!(AslrInvariantCodeVerifier::verify_memory_region_security(true, false, true).is_err());   // CET writable shadow stack
+        assert!(
+            AslrInvariantCodeVerifier::verify_memory_region_security(false, true, false).is_ok()
+        ); // .text
+        assert!(
+            AslrInvariantCodeVerifier::verify_memory_region_security(true, false, false).is_ok()
+        ); // heap/stack
+        assert!(
+            AslrInvariantCodeVerifier::verify_memory_region_security(true, true, false).is_err()
+        ); // W^X violation
+        assert!(
+            AslrInvariantCodeVerifier::verify_memory_region_security(true, false, true).is_err()
+        ); // CET writable shadow stack
     }
 }

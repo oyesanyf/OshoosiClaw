@@ -14,6 +14,8 @@ pub const OSOOSI_ARGS_LEN: usize = 512;
 pub const OSOOSI_EBPF_EVENT_EXEC: u32 = 1;
 pub const OSOOSI_EBPF_EVENT_EXIT: u32 = 2;
 pub const OSOOSI_EBPF_EVENT_LSM_BLOCK: u32 = 3;
+pub const OSOOSI_EBPF_EVENT_MPROTECT_WX: u32 = 4;
+pub const OSOOSI_EBPF_EVENT_PTRACE_TAMPER: u32 = 5;
 
 /// Binary struct layout matching `struct ebpf_process_event` in kernel memory.
 #[repr(C)]
@@ -151,6 +153,34 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
             );
             (25, map)
         }
+        OSOOSI_EBPF_EVENT_MPROTECT_WX => {
+            let mut map = serde_json::Map::new();
+            map.insert("ProcessId".to_string(), serde_json::json!(event.pid));
+            map.insert(
+                "Image".to_string(),
+                serde_json::json!(if !filename.is_empty() { filename } else { comm }),
+            );
+            map.insert("CommandLine".to_string(), serde_json::json!(command_line));
+            map.insert(
+                "Reason".to_string(),
+                serde_json::json!("Linux sys_enter_mprotect: memory protection set to WRITABLE and EXECUTABLE (W^X violation)"),
+            );
+            (25, map)
+        }
+        OSOOSI_EBPF_EVENT_PTRACE_TAMPER => {
+            let mut map = serde_json::Map::new();
+            map.insert("ProcessId".to_string(), serde_json::json!(event.pid));
+            map.insert(
+                "Image".to_string(),
+                serde_json::json!(if !filename.is_empty() { filename } else { comm }),
+            );
+            map.insert("CommandLine".to_string(), serde_json::json!(command_line));
+            map.insert(
+                "Reason".to_string(),
+                serde_json::json!("Linux sys_enter_ptrace: memory tampering or remote process injection attempted"),
+            );
+            (8, map)
+        }
         _ => return None,
     };
 
@@ -242,6 +272,9 @@ impl EbpfTelemetryEngine {
             vec![std::path::PathBuf::from(custom)]
         } else {
             vec![
+                std::path::PathBuf::from("ebpf/osoosi_probe.bpf.o"),
+                std::path::PathBuf::from("osoosi_probe.bpf.o"),
+                std::path::PathBuf::from("/usr/lib/oshoosiclaw/osoosi_probe.bpf.o"),
                 std::path::PathBuf::from("osoosi-ebpf.o"),
                 std::path::PathBuf::from("ebpf/bin/osoosi-ebpf.o"),
                 std::path::PathBuf::from("/usr/lib/osoosi/osoosi-ebpf.o"),
@@ -288,6 +321,13 @@ impl EbpfTelemetryEngine {
             "sched_process_exit",
         )?;
         self.attach_tracepoint(&mut bpf, "handle_connect", "syscalls", "sys_enter_connect")?;
+        let _ = self.attach_tracepoint(
+            &mut bpf,
+            "handle_mprotect",
+            "syscalls",
+            "sys_enter_mprotect",
+        );
+        let _ = self.attach_tracepoint(&mut bpf, "handle_ptrace", "syscalls", "sys_enter_ptrace");
 
         let process_map = bpf
             .take_map("process_ring")
@@ -532,5 +572,59 @@ mod tests {
         assert_eq!(event.data["ProcessId"], 7777);
         assert_eq!(event.data["DestinationIp"], "2001:db8::1");
         assert_eq!(event.data["DestinationPort"], 80);
+    }
+
+    #[test]
+    fn test_parse_mprotect_wx_event() {
+        let mut raw = EbpfProcessEvent::default();
+        raw.pid = 6666;
+        raw.event_type = OSOOSI_EBPF_EVENT_MPROTECT_WX;
+
+        let comm = b"exploit_jit\0";
+        raw.comm[..comm.len()].copy_from_slice(comm);
+
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &raw as *const _ as *const u8,
+                std::mem::size_of::<EbpfProcessEvent>(),
+            )
+        };
+
+        let event = parse_process_event(bytes).expect("Should parse mprotect W^X event");
+        assert_eq!(event.source, HostEventSource::Ebpf);
+        assert_eq!(event.event_id, 25);
+        assert_eq!(event.data["ProcessId"], 6666);
+        assert_eq!(event.data["Image"], "exploit_jit");
+        assert!(event.data["Reason"]
+            .as_str()
+            .unwrap()
+            .contains("W^X violation"));
+    }
+
+    #[test]
+    fn test_parse_ptrace_tamper_event() {
+        let mut raw = EbpfProcessEvent::default();
+        raw.pid = 7777;
+        raw.event_type = OSOOSI_EBPF_EVENT_PTRACE_TAMPER;
+
+        let comm = b"ptrace_injector\0";
+        raw.comm[..comm.len()].copy_from_slice(comm);
+
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &raw as *const _ as *const u8,
+                std::mem::size_of::<EbpfProcessEvent>(),
+            )
+        };
+
+        let event = parse_process_event(bytes).expect("Should parse ptrace tamper event");
+        assert_eq!(event.source, HostEventSource::Ebpf);
+        assert_eq!(event.event_id, 8);
+        assert_eq!(event.data["ProcessId"], 7777);
+        assert_eq!(event.data["Image"], "ptrace_injector");
+        assert!(event.data["Reason"]
+            .as_str()
+            .unwrap()
+            .contains("ptrace: memory tampering or remote process injection"));
     }
 }

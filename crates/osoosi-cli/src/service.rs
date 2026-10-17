@@ -248,9 +248,37 @@ pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
 
 #[cfg(not(windows))]
 pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
-    anyhow::bail!("Detached background daemon is currently only implemented for Windows");
+    use std::os::unix::process::CommandExt;
+    let exe = std::env::current_exe()?;
+    let app_root = resolve_app_root_from_exe(&exe);
+    info!(
+        "Spawning detached Linux/Unix background daemon: {} from {}",
+        exe.display(),
+        app_root.display()
+    );
+    let mut cmd = Command::new(&exe);
+    cmd.arg("start")
+        .arg("--no-browser")
+        .current_dir(&app_root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    unsafe {
+        cmd.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let child = cmd.spawn()?;
+    let pid = child.id();
+    info!(
+        "Detached Linux/Unix background daemon spawned with PID: {}",
+        pid
+    );
+    Ok(pid)
 }
 
+#[cfg(windows)]
 pub fn install_service() -> anyhow::Result<()> {
     match ensure_elevated_for_service_action("install") {
         Ok(true) => return Ok(()),
@@ -344,6 +372,7 @@ pub fn install_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn start_service() -> anyhow::Result<()> {
     match ensure_elevated_for_service_action("start") {
         Ok(true) => return Ok(()),
@@ -425,6 +454,7 @@ pub fn start_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn stop_service() -> anyhow::Result<()> {
     if ensure_elevated_for_service_action("stop")? {
         return Ok(());
@@ -461,6 +491,7 @@ pub fn stop_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn restart_service() -> anyhow::Result<()> {
     if ensure_elevated_for_service_action("restart")? {
         return Ok(());
@@ -471,6 +502,7 @@ pub fn restart_service() -> anyhow::Result<()> {
     start_service()
 }
 
+#[cfg(windows)]
 pub fn delete_service() -> anyhow::Result<()> {
     if let Ok(output) = run_sc_cmd(&["query", SERVICE_NAME]) {
         let out = String::from_utf8_lossy(&output.stdout);
@@ -508,15 +540,213 @@ pub fn delete_service() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn query_service_state() -> anyhow::Result<String> {
     let output = run_sc_cmd(&["queryex", SERVICE_NAME])?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     Ok(stdout)
 }
 
+#[cfg(windows)]
 pub fn status_service() -> anyhow::Result<()> {
     let status_str = query_service_state()?;
     println!("=== Windows Service Status: {} ===", SERVICE_NAME);
+    println!("{}", status_str);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Linux / Unix systemd Service Implementation
+// ---------------------------------------------------------------------------
+
+#[cfg(not(windows))]
+fn get_systemd_unit_path() -> std::path::PathBuf {
+    if osoosi_types::is_elevated() {
+        std::path::PathBuf::from("/etc/systemd/system/osoosi-edr.service")
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+        std::path::PathBuf::from(home).join(".config/systemd/user/osoosi-edr.service")
+    }
+}
+
+#[cfg(not(windows))]
+fn is_user_systemd() -> bool {
+    !osoosi_types::is_elevated()
+}
+
+#[cfg(not(windows))]
+fn run_systemctl(args: &[&str]) -> anyhow::Result<std::process::Output> {
+    let mut cmd = Command::new("systemctl");
+    if is_user_systemd() {
+        cmd.arg("--user");
+    }
+    cmd.args(args);
+    let out = cmd
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to execute systemctl: {}", e))?;
+    Ok(out)
+}
+
+#[cfg(not(windows))]
+pub fn install_service() -> anyhow::Result<()> {
+    let exe = std::env::current_exe()?;
+    let app_root = resolve_app_root_from_exe(&exe);
+    let unit_path = get_systemd_unit_path();
+
+    if let Some(parent) = unit_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let wanted_by = if is_user_systemd() {
+        "default.target"
+    } else {
+        "multi-user.target"
+    };
+
+    let unit_content = format!(
+        "[Unit]
+Description=OpenOsoosi Autonomous EDR Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart={} service run --no-browser
+WorkingDirectory={}
+Restart=always
+RestartSec=5s
+KillMode=process
+
+[Install]
+WantedBy={}
+",
+        exe.display(),
+        app_root.display(),
+        wanted_by
+    );
+
+    match std::fs::write(&unit_path, unit_content) {
+        Ok(_) => {
+            println!("Installed systemd unit at: {}", unit_path.display());
+            let _ = run_systemctl(&["daemon-reload"]);
+            let _ = run_systemctl(&["enable", "osoosi-edr.service"]);
+            println!("Service 'osoosi-edr' enabled via systemctl.");
+            let _ = start_service();
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Failed to write systemd unit file ({}): {}. Falling back to detached background daemon...", unit_path.display(), e);
+            if !is_dashboard_port_listening(3030) {
+                let _ = spawn_detached_background_daemon()?;
+            }
+            if wait_for_dashboard_ready(3030, 20) {
+                println!("[+] WebUI active at: http://127.0.0.1:3030/");
+                Ok(())
+            } else {
+                anyhow::bail!(
+                    "Detached background daemon started but port 3030 did not become ready."
+                );
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn start_service() -> anyhow::Result<()> {
+    let mut systemctl_ok = false;
+    if let Ok(out) = run_systemctl(&["start", "osoosi-edr.service"]) {
+        if out.status.success() {
+            println!("Service 'osoosi-edr' started via systemctl.");
+            systemctl_ok = true;
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            warn!("systemctl start osoosi-edr.service failed: {}. Falling back to detached background daemon...", err);
+        }
+    } else {
+        warn!("systemctl unavailable. Falling back to detached background daemon...");
+    }
+
+    if !systemctl_ok {
+        if !is_dashboard_port_listening(3030) {
+            let _ = spawn_detached_background_daemon()?;
+        }
+    }
+
+    println!("[*] Waiting for WebUI (http://127.0.0.1:3030) to bind...");
+    if wait_for_dashboard_ready(3030, 20) {
+        println!("[+] WebUI active at: http://127.0.0.1:3030/");
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "Service start initiated but WebUI port 3030 failed to respond within 20 seconds."
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn stop_service() -> anyhow::Result<()> {
+    let _ = run_systemctl(&["stop", "osoosi-edr.service"]);
+    println!("Service 'osoosi-edr' stop signal sent via systemctl.");
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn restart_service() -> anyhow::Result<()> {
+    println!("Restarting service 'osoosi-edr'...");
+    let _ = stop_service();
+    std::thread::sleep(Duration::from_millis(500));
+    start_service()
+}
+
+#[cfg(not(windows))]
+pub fn delete_service() -> anyhow::Result<()> {
+    let _ = run_systemctl(&["stop", "osoosi-edr.service"]);
+    let _ = run_systemctl(&["disable", "osoosi-edr.service"]);
+    let unit_path = get_systemd_unit_path();
+    if unit_path.exists() {
+        let _ = std::fs::remove_file(&unit_path);
+        let _ = run_systemctl(&["daemon-reload"]);
+        println!(
+            "Service 'osoosi-edr' unit removed from {}.",
+            unit_path.display()
+        );
+    } else {
+        println!(
+            "Service 'osoosi-edr' unit not found at {}.",
+            unit_path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn query_service_state() -> anyhow::Result<String> {
+    if let Ok(out) = run_systemctl(&["status", "osoosi-edr.service", "--no-pager"]) {
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let status = if !stdout.trim().is_empty() {
+            stdout
+        } else {
+            stderr
+        };
+        let port_listening = is_dashboard_port_listening(3030);
+        Ok(format!(
+            "{}\nWebUI Port 3030 Listening: {}",
+            status.trim(),
+            port_listening
+        ))
+    } else {
+        let port_listening = is_dashboard_port_listening(3030);
+        Ok(format!(
+            "systemctl status unavailable. WebUI Port 3030 Listening: {}",
+            port_listening
+        ))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn status_service() -> anyhow::Result<()> {
+    let status_str = query_service_state()?;
+    println!("=== Linux Service Status: osoosi-edr ===");
     println!("{}", status_str);
     Ok(())
 }

@@ -8,9 +8,11 @@
 #endif
 
 // Event Types
-#define OSOOSI_EBPF_EVENT_EXEC      1
-#define OSOOSI_EBPF_EVENT_EXIT      2
-#define OSOOSI_EBPF_EVENT_LSM_BLOCK 3
+#define OSOOSI_EBPF_EVENT_EXEC          1
+#define OSOOSI_EBPF_EVENT_EXIT          2
+#define OSOOSI_EBPF_EVENT_LSM_BLOCK     3
+#define OSOOSI_EBPF_EVENT_MPROTECT_WX   4
+#define OSOOSI_EBPF_EVENT_PTRACE_TAMPER 5
 
 // Maximum string lengths
 #define OSOOSI_COMM_LEN             16

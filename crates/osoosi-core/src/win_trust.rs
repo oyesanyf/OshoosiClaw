@@ -41,10 +41,7 @@ pub fn get_cached_authenticode_status(path: &str) -> AuthenticodeStatus {
         return AuthenticodeStatus::NotSigned;
     }
 
-    #[cfg(target_os = "windows")]
     let mut status = osoosi_types::check_authenticode_status(path);
-    #[cfg(not(target_os = "windows"))]
-    let status = AuthenticodeStatus::NotSigned;
 
     #[cfg(target_os = "windows")]
     if let AuthenticodeStatus::OtherError(code) = status {
@@ -104,6 +101,13 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
             if lower.starts_with("c:\\program files\\")
                 || lower.starts_with("c:\\program files (x86)\\")
                 || lower.starts_with("c:\\windows\\")
+                || path_str.starts_with("/bin/")
+                || path_str.starts_with("/sbin/")
+                || path_str.starts_with("/usr/bin/")
+                || path_str.starts_with("/usr/sbin/")
+                || path_str.starts_with("/lib/")
+                || path_str.starts_with("/lib64/")
+                || path_str.starts_with("/usr/lib/")
             {
                 return true;
             }

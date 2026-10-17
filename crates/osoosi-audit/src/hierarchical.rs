@@ -788,7 +788,9 @@ impl HierarchicalMerkleRegistry {
         let public_key = self.verifying_key_hex();
 
         let cross_ring = self.verify_cross_ring_continuity();
-        let nsrl_allowlist_root = crate::nsrl_aslr_merkle::global_nsrl_aslr_merkle().nsrl_engine().global_root();
+        let nsrl_allowlist_root = crate::nsrl_aslr_merkle::global_nsrl_aslr_merkle()
+            .nsrl_engine()
+            .global_root();
 
         // 6. Anchor to Global Tree & TPM
         let anchor_payload = serde_json::json!({
