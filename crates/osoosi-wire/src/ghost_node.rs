@@ -66,57 +66,106 @@ impl GhostNodeManager {
         let total_interactions = self.total_interactions.clone();
 
         tokio::spawn(async move {
-            let dp = osoosi_dp::DifferentialPrivacy::new(osoosi_dp::PrivacyConfig {
+            let dp = Arc::new(osoosi_dp::DifferentialPrivacy::new(osoosi_dp::PrivacyConfig {
                 epsilon: 1.0,
                 min_samples: 1,
                 sensitivity: 1.0,
-            });
+            }));
+
+            // [SEC-WIRE-01] Bounded concurrency semaphore (max 64 concurrent deceptive sessions)
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(64));
 
             while let Ok((mut socket, addr)) = listener.accept().await {
                 total_interactions.fetch_add(1, Ordering::Relaxed);
-                let jitter = dp.laplace_noise();
-                let noisy_addr = if jitter > 0.5 {
-                    addr.to_string()
-                } else {
-                    "REDACTED".to_string()
-                };
 
-                warn!(
-                    "DECEPTION ALERT: Interaction from {} on '{}' (Node: {})",
-                    noisy_addr, service_name, node_id
-                );
-
-                // Notify mesh (Tarpit)
-                let tx_guard = mesh_tx.lock().await;
-                if let Some(ref tx) = *tx_guard {
-                    let _ = tx.try_send(crate::MeshCommand::BroadcastTarpit(crate::TarpitSignal {
-                        target_ip: addr.ip().to_string(),
-                        confidence: 1.0,
-                        attack_type: format!("Ghost Node (Coy): {}", service_name),
-                    }));
-                }
-                drop(tx_guard);
-
-                // "Coy" Behavior: Send dynamic, teasing banners
-                let banner: &[u8] = match service_name.as_str() {
-                    "SSH" => {
-                        if jitter > 0.0 {
-                            b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n"
-                        } else {
-                            b"SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3\r\n"
-                            // Look older/vulnerable
-                        }
+                let permit = match semaphore.clone().try_acquire_owned() {
+                    Ok(p) => p,
+                    Err(_) => {
+                        warn!(
+                            "Coy Deception: Concurrency limit (64) reached for '{}'; shedding connection from {}",
+                            service_name, addr
+                        );
+                        let _ = socket.shutdown().await;
+                        continue;
                     }
-                    "SMB" => b"\x00\x00\x00\x85\xffSMB\x72\x00\x00\x00\x00\x18\x53\xc8\x00\x00",
-                    _ => b"Access Denied. Internal Resource Only.\r\n",
                 };
 
-                let _ = socket.write_all(banner).await;
+                let dp_clone = dp.clone();
+                let service_name_clone = service_name.clone();
+                let node_id_clone = node_id.clone();
+                let mesh_tx_clone = mesh_tx.clone();
 
-                // Adaptive Tarpitting: wait longer based on noise
-                let sleep_secs = 5 + (jitter.abs() as u64 % 10);
-                tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
-                let _ = socket.shutdown().await;
+                // [SEC-WIRE-01] Non-blocking per-connection task so listener.accept() is never starved
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let jitter = dp_clone.laplace_noise();
+                    let noisy_addr = if jitter > 0.5 {
+                        addr.to_string()
+                    } else {
+                        "REDACTED".to_string()
+                    };
+
+                    warn!(
+                        "DECEPTION ALERT: Interaction from {} on '{}' (Node: {})",
+                        noisy_addr, service_name_clone, node_id_clone
+                    );
+
+                    // Notify mesh (Tarpit)
+                    let tx_guard = mesh_tx_clone.lock().await;
+                    if let Some(ref tx) = *tx_guard {
+                        let _ = tx.try_send(crate::MeshCommand::BroadcastTarpit(crate::TarpitSignal {
+                            target_ip: addr.ip().to_string(),
+                            confidence: 1.0,
+                            attack_type: format!("Ghost Node (Coy): {}", service_name_clone),
+                        }));
+                    }
+                    drop(tx_guard);
+
+                    // Record tarpit event into Hierarchical Merkle chain & Ring 1
+                    let ring_merkle = osoosi_audit::global_hierarchical_merkle();
+                    let payload_msg = format!(
+                        "DECEPTION_INTERACTION: ip={}, service={}, node={}",
+                        addr, service_name_clone, node_id_clone
+                    );
+                    let now_ns = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos() as u64)
+                        .unwrap_or(0);
+                    let tarpit_rec = ring_merkle.record_tarpit_event(
+                        0,
+                        &format!("coy:{}:{}", service_name_clone, addr),
+                        payload_msg.as_bytes(),
+                        now_ns,
+                    );
+                    ring_merkle.record_ring_transition(
+                        osoosi_audit::ContainmentRingId::Ring1Sentinel,
+                        &format!("coy:{}", service_name_clone),
+                        "ghost_service_interaction",
+                        &tarpit_rec.hash,
+                        false,
+                    );
+                    ring_merkle.anchor_to_global_tree(None, &format!("coy_interaction:{}", service_name_clone));
+
+                    // "Coy" Behavior: Send dynamic, teasing banners
+                    let banner: &[u8] = match service_name_clone.as_str() {
+                        "SSH" => {
+                            if jitter > 0.0 {
+                                b"SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n"
+                            } else {
+                                b"SSH-2.0-OpenSSH_7.6p1 Ubuntu-4ubuntu0.3\r\n"
+                            }
+                        }
+                        "SMB" => b"\x00\x00\x00\x85\xffSMB\x72\x00\x00\x00\x00\x18\x53\xc8\x00\x00",
+                        _ => b"Access Denied. Internal Resource Only.\r\n",
+                    };
+
+                    let _ = socket.write_all(banner).await;
+
+                    // Adaptive Tarpitting: wait longer based on noise
+                    let sleep_secs = 5 + (jitter.abs() as u64 % 10);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+                    let _ = socket.shutdown().await;
+                });
             }
         });
     }

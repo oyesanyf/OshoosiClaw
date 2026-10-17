@@ -133,7 +133,10 @@ impl BehavioralLogReader {
                         "/var/log/apache2/access.log".to_string(),
                     ]
                 });
-            Self { paths }
+            Self {
+                paths,
+                use_journald: true,
+            }
         }
 
         #[cfg(target_os = "macos")]
@@ -147,7 +150,10 @@ impl BehavioralLogReader {
                         "/var/log/apache2/access_log".to_string(),
                     ]
                 });
-            Self { paths }
+            Self {
+                paths,
+                use_unified: true,
+            }
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -172,7 +178,7 @@ impl BehavioralLogReader {
         #[cfg(target_os = "linux")]
         {
             for path in &self.paths {
-                if let Ok(events) = Self::read_linux_log_file(path) {
+                if let Ok(events) = self.read_linux_log_file(path) {
                     out.extend(events);
                 }
             }

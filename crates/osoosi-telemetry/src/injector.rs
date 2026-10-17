@@ -131,7 +131,7 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
+pub fn inject_dll(_pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
     if !dll_path.exists() {
         return Err(InjectionError::InvalidDllPath(
             dll_path.to_string_lossy().to_string(),
@@ -156,7 +156,7 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
     {
         warn!(
             "macOS EDR Injection: Cannot dynamically inject into PID {} due to System Integrity Protection (SIP).",
-            pid
+            _pid
         );
         info!("macOS requires Endpoint Security Framework (ESF) for execution blocking.");
     }

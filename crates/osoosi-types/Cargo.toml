@@ -22,12 +22,15 @@ hex = { workspace = true }
 rand = { workspace = true }
 dirs = { workspace = true }
 zip = { workspace = true }
-windows = { workspace = true }
 goblin = "0.8"
 x509-parser = { version = "0.16", features = ["verify"] }
 rustls-native-certs = "0.7"
 
 [target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
 wmi = "0.13"
 winreg = "0.7"
 pelite = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

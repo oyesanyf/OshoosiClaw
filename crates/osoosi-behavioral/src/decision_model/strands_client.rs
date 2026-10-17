@@ -283,31 +283,25 @@ impl StrandsClient {
         let mut answers = HashMap::new();
         answers.insert(
             "verdict".to_string(),
-            DecisionAnswer::from_choice(ChoiceAnswer {
-                value: verdict,
-                probabilities: verdict_probs,
-            }),
+            DecisionAnswer::from_choice(ChoiceAnswer::new(verdict, verdict_probs)),
         );
         answers.insert(
             "containment_action".to_string(),
-            DecisionAnswer::from_choice(ChoiceAnswer {
-                value: containment_action,
-                probabilities: action_probs,
-            }),
+            DecisionAnswer::from_choice(ChoiceAnswer::new(containment_action, action_probs)),
         );
         answers.insert(
             "human_escalation".to_string(),
-            DecisionAnswer::from_bool(BoolAnswer {
-                value: is_critical,
-                probability: if is_critical { 0.90 } else { 0.15 },
-            }),
+            DecisionAnswer::from_bool(BoolAnswer::new(
+                is_critical,
+                if is_critical { 0.90 } else { 0.15 },
+            )),
         );
         answers.insert(
             "deep_reasoning_required".to_string(),
-            DecisionAnswer::from_bool(BoolAnswer {
-                value: is_malicious,
-                probability: if is_malicious { 0.88 } else { 0.12 },
-            }),
+            DecisionAnswer::from_bool(BoolAnswer::new(
+                is_malicious,
+                if is_malicious { 0.88 } else { 0.12 },
+            )),
         );
 
         let (severity, sev_probs) = if is_critical {
@@ -362,10 +356,7 @@ impl StrandsClient {
         }
         answers.insert(
             "threat_severity".to_string(),
-            DecisionAnswer::from_score(ScoreAnswer {
-                value: severity,
-                probabilities: sp_map,
-            }),
+            DecisionAnswer::from_score(ScoreAnswer::new(severity, sp_map, None)),
         );
 
         DecisionResponse {

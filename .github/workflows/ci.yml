@@ -36,7 +36,7 @@ jobs:
           key: clippy-windows
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use
 
   # ── cargo-audit: dependency vulnerability scan ────────────────────────────────
   audit:

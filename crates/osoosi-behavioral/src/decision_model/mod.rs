@@ -2,6 +2,7 @@ pub mod cloudflare_client;
 pub mod engine;
 pub mod local_engine;
 pub mod models;
+pub mod openjev_client;
 pub mod strands_client;
 
 pub use cloudflare_client::CloudflareClient;
@@ -12,6 +13,7 @@ pub use models::{
     parse_security_incident_response, BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest,
     DecisionResponse, QuestionDefinition, QuestionType, ScoreAnswer, SecurityIncidentDecision,
 };
+pub use openjev_client::{OpenJevClient, SUPPORTED_OPENJEV_MODELS};
 pub use strands_client::StrandsClient;
 
 #[cfg(test)]
@@ -337,5 +339,62 @@ mod tests {
         assert!(dec.containment_action == "isolate" || dec.containment_action == "tarpit");
         let metrics = engine.metrics();
         assert_eq!(metrics.hybrid_evaluations, 1);
+    }
+
+    #[test]
+    fn test_openjev_systemone_readout_and_shannon_entropy_confidence() {
+        let req = build_security_incident_request(
+            "openjev-latest",
+            "Process Image: C:\\Users\\Public\\mimikatz.exe | CommandLine: sekurlsa::logonpasswords | MITRE: T1003.001 | IsSigned: false",
+        );
+        let resp = OpenJevClient::local_systemone_readout(&req);
+        assert_eq!(resp.provider, "openjev-systemone");
+
+        // Verify probabilities sum to 1.0 and confidence is within [0.0, 1.0]
+        for (q_name, ans) in &resp.answers {
+            if let Some(probs) = &ans.probabilities {
+                let sum: f64 = probs.values().sum();
+                assert!(
+                    (sum - 1.0).abs() < 1e-5,
+                    "Question {} probabilities sum to {}, expected 1.0",
+                    q_name,
+                    sum
+                );
+            }
+            if let Some(conf) = ans.confidence {
+                assert!(
+                    (0.0..=1.0).contains(&conf),
+                    "Question {} confidence out of bounds: {}",
+                    q_name,
+                    conf
+                );
+            }
+        }
+
+        let dec = parse_security_incident_response(&resp);
+        assert_eq!(dec.verdict, "malicious");
+        assert!(dec.containment_action == "isolate" || dec.containment_action == "tarpit");
+        assert!(dec.action_probability > 0.60);
+    }
+
+    #[tokio::test]
+    async fn test_openjev_provider_routing_in_engine() {
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "openjev".to_string();
+        cfg.openjev_model = "openjev-latest".to_string();
+        cfg.openjev_endpoint = Some("http://127.0.0.1:8080".to_string());
+        cfg.openjev_timeout_ms = 100;
+        cfg.fallback_to_local = true;
+
+        let engine = ClefDecisionEngine::new(cfg);
+        let dec = engine
+            .evaluate_security_incident(
+                "Process Image: C:\\Windows\\System32\\svchost.exe | CommandLine: -k DcomLaunch | IsSigned: true | Invariants: Nominal",
+            )
+            .await
+            .expect("OpenJev routing evaluation must succeed");
+
+        assert_eq!(dec.verdict, "benign");
+        assert_eq!(dec.containment_action, "allow");
     }
 }

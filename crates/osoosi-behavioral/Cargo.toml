@@ -41,6 +41,7 @@ walkdir = { workspace = true }
 # proc-maps = { workspace = true }
 iced-x86 = { workspace = true }
 sysinfo = { workspace = true }
+[target.'cfg(windows)'.dependencies]
 winapi = { workspace = true }
 windows = { workspace = true }
 

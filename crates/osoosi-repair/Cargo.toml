@@ -19,6 +19,8 @@ serde_json.workspace = true
 reqwest = { workspace = true }
 bytes = { workspace = true }
 libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 winapi = { workspace = true }
 windows = { workspace = true }
 winreg = { workspace = true }

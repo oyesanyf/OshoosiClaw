@@ -1,7 +1,13 @@
-use anyhow::{anyhow, Result};
+#[cfg(target_os = "windows")]
+use anyhow::anyhow;
+use anyhow::Result;
+#[cfg(target_os = "windows")]
 use std::process::Command;
+#[cfg(target_os = "windows")]
 use tracing::{info, warn};
+#[cfg(target_os = "windows")]
 use winreg::enums::*;
+#[cfg(target_os = "windows")]
 use winreg::RegKey;
 
 /// Registry persistence remediator.
@@ -14,6 +20,7 @@ impl RegistryRemediator {
     pub fn remediate_process_persistence(image_path: &str) -> Result<Vec<String>> {
         #[cfg(not(target_os = "windows"))]
         {
+            let _ = image_path;
             return Ok(vec![
                 "Registry remediation only supported on Windows".to_string()
             ]);

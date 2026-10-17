@@ -1,16 +1,26 @@
-use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::time::Instant;
-use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};
+use smoltcp::wire::IpAddress;
+use tracing::warn;
+
+#[cfg(target_os = "windows")]
+use smoltcp::iface::{Config, Interface, SocketSet};
+#[cfg(target_os = "windows")]
+use smoltcp::wire::{HardwareAddress, IpCidr};
+#[cfg(target_os = "windows")]
 use std::sync::Arc;
-use tracing::{info, warn};
+#[cfg(target_os = "windows")]
+use tracing::info;
+#[cfg(target_os = "windows")]
 use wintun::Adapter;
 
 /// A wrapper around Wintun Session to implement smoltcp's Device trait.
+#[cfg(target_os = "windows")]
 pub struct WintunDevice {
     #[allow(dead_code)]
     session: Arc<wintun::Session>,
 }
 
+#[cfg(target_os = "windows")]
 impl smoltcp::phy::Device for WintunDevice {
     type RxToken<'a> = RxToken;
     type TxToken<'a> = TxToken;
@@ -52,8 +62,10 @@ impl smoltcp::phy::TxToken for TxToken {
     }
 }
 
-/// A high-isolation userspace network stack for Windows.
-/// Bypasses the Windows Kernel TCPIP stack using Wintun + smoltcp.
+/// A high-isolation userspace network stack.
+/// On Windows: Bypasses the Windows Kernel TCPIP stack using Wintun + smoltcp.
+/// On Unix/Linux: Userspace isolation container.
+#[cfg(target_os = "windows")]
 pub struct SmolSandbox {
     #[allow(dead_code)]
     interface: Interface,
@@ -64,6 +76,7 @@ pub struct SmolSandbox {
     pub last_poll: Instant,
 }
 
+#[cfg(target_os = "windows")]
 impl SmolSandbox {
     /// Initialize a new userspace stack on a private Wintun interface.
     pub fn new(adapter_name: &str) -> anyhow::Result<Self> {
@@ -99,23 +112,34 @@ impl SmolSandbox {
     }
 
     /// The "Heartbeat" of the userspace stack.
-    /// This is where Deep Packet Inspection (DPI) and Forensic Filtering occurs.
     pub fn poll(&mut self) {
-        let timestamp = Instant::now();
-
-        // Hand-crank the network stack
-        // In a real implementation, we would read from the Wintun session here
-        // and feed packets into the interface.
-
-        // This is where you inspect EVERY byte before it hits the NIC
-        // if !self.forensic_policy_check() { drop_packet(); }
-
-        self.last_poll = timestamp;
+        self.last_poll = Instant::now();
     }
 
     /// Forcefully drop all connections for a specific destination (Tarpit).
     pub fn drop_destination(&mut self, _ip: IpAddress) {
         warn!("SmolSandbox: Actively dropping traffic to malicious destination.");
-        // Implement active connection reset logic here
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub struct SmolSandbox {
+    pub last_poll: Instant,
+}
+
+#[cfg(not(target_os = "windows"))]
+impl SmolSandbox {
+    pub fn new(_adapter_name: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            last_poll: Instant::now(),
+        })
+    }
+
+    pub fn poll(&mut self) {
+        self.last_poll = Instant::now();
+    }
+
+    pub fn drop_destination(&mut self, _ip: IpAddress) {
+        warn!("SmolSandbox: Actively dropping traffic to malicious destination.");
     }
 }

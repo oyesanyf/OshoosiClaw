@@ -108,7 +108,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm dpkg-dev clang llvm libelf-dev
+          sudo apt-get install -y rpm dpkg-dev clang llvm libelf-dev gcc-multilib linux-libc-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -121,7 +121,7 @@ jobs:
       - name: Compile CO-RE eBPF probe
         run: |
           mkdir -p ebpf
-          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -c ebpf/src/osoosi_probe.bpf.c -o ebpf/osoosi_probe.bpf.o || true
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -I/usr/include/x86_64-linux-gnu -c ebpf/src/osoosi_probe.bpf.c -o ebpf/osoosi_probe.bpf.o || true
 
       - name: Build release (osoosi-cli)
         run: cargo build --release -p osoosi-cli

@@ -346,11 +346,11 @@ impl StaticAnalyzer {
 
     async fn run_composition_analysis(
         &self,
-        file_path: &Path,
+        _file_path: &Path,
     ) -> anyhow::Result<Option<crate::pe_inspector::InspectionFindings>> {
         #[cfg(target_os = "windows")]
         {
-            let path = file_path.to_path_buf();
+            let path = _file_path.to_path_buf();
             let result = self
                 .adaptive
                 .run_adaptive(ResourceCategory::IO, Priority::Normal, async move {

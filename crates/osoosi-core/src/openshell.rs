@@ -8,7 +8,9 @@
 //! Rust crate dependency, because it uses a different Rust edition (2024)
 //! and has heavy gRPC/K8s dependencies.
 
+#[cfg(windows)]
 use std::env;
+#[cfg(windows)]
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;

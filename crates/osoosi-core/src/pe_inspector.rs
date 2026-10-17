@@ -1,5 +1,7 @@
 use anyhow::Result;
+#[cfg(target_os = "windows")]
 use pelite::pe64::Pe;
+#[cfg(target_os = "windows")]
 use pelite::pe64::PeFile;
 use std::path::Path;
 
@@ -279,6 +281,7 @@ unsafe fn inspect_handle(
 }
 
 /// Inspect a file on disk using pelite for composition and heuristics.
+#[cfg(target_os = "windows")]
 pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
     let bytes = std::fs::read(path)?;
     let pe = PeFile::from_bytes(&bytes)?;
@@ -351,6 +354,11 @@ pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
     }
 
     Ok(findings)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn inspect_file(_path: &Path) -> Result<InspectionFindings> {
+    Ok(InspectionFindings::default())
 }
 
 #[cfg(test)]

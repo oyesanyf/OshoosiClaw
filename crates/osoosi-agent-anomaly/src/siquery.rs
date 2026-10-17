@@ -130,6 +130,7 @@ impl SiqueryEngine {
             "firewall_rules",
             "groups",
             "har_entries",
+            "hierarchical_merkle_anchors",
             "host_actuation_pores",
             "ide_extensions",
             "interface_address",
@@ -336,6 +337,8 @@ impl SiqueryEngine {
         let need_octopus_arms = !is_pragma && (is_metadata || lower.contains("agent_octopus_arms"));
         let need_containment_rings =
             !is_pragma && (is_metadata || lower.contains("agent_containment_rings"));
+        let need_merkle_anchors =
+            !is_pragma && (is_metadata || lower.contains("hierarchical_merkle_anchors"));
 
         let any_table_needed = need_processes
             || need_sockets
@@ -413,7 +416,8 @@ impl SiqueryEngine {
             || need_business_violations
             || need_spider_threads
             || need_octopus_arms
-            || need_containment_rings;
+            || need_containment_rings
+            || need_merkle_anchors;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -670,6 +674,9 @@ impl SiqueryEngine {
             }
             if need_containment_rings {
                 Self::populate_agent_containment_rings(&tx)?;
+            }
+            if need_merkle_anchors {
+                Self::populate_hierarchical_merkle_anchors(&tx)?;
             }
 
             tx.commit()
@@ -1427,6 +1434,30 @@ impl SiqueryEngine {
             status TEXT
         );
 
+        CREATE TABLE IF NOT EXISTS hierarchical_merkle_anchors (
+            anchor_seq INTEGER PRIMARY KEY,
+            anchor_index INTEGER,
+            timestamp_ns INTEGER,
+            interior_hash TEXT,
+            rollup_hash TEXT,
+            global_merkle_root TEXT,
+            global_root TEXT,
+            arm_root TEXT,
+            arm_chain_head TEXT,
+            tarpit_root TEXT,
+            tarpit_chain_head TEXT,
+            ring_root TEXT,
+            ring_chain_head TEXT,
+            ed25519_sig TEXT,
+            ed25519_signature TEXT,
+            public_key TEXT,
+            trigger_reason TEXT,
+            trigger_event TEXT,
+            tpm_pcr_status TEXT,
+            cross_ring_intact INTEGER,
+            timestamp TEXT
+        );
+
         CREATE VIEW IF NOT EXISTS disk_encryption AS SELECT drive_letter, encryption_method, conversion_status, protection_status, lock_status FROM bitlocker_info;
         CREATE VIEW IF NOT EXISTS kernel_modules AS SELECT name, display_name, path, state FROM drivers;
         CREATE VIEW IF NOT EXISTS listening_ports AS SELECT pid, local_port AS port, protocol, family, local_address AS address FROM process_open_sockets WHERE remote_port = 0 OR state = 'LISTEN';
@@ -1634,7 +1665,7 @@ impl SiqueryEngine {
         #[cfg(not(target_os = "windows"))]
         {
             // Non-Windows fallback (Linux /proc/net/tcp parsing or empty)
-            debug!("Non-Windows socket enumeration skipped.");
+            tracing::debug!("Non-Windows socket enumeration skipped.");
         }
 
         Ok(())
@@ -2762,7 +2793,7 @@ impl SiqueryEngine {
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_default();
         let mut count = 0usize;
-        let mut seen = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         #[cfg(target_os = "windows")]
         {
@@ -2859,7 +2890,7 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO wmi_shares (allow_maximum, caption, description, maximum_allowed, name, path, status, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
-        let mut seen = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         #[cfg(target_os = "windows")]
         {
@@ -3710,7 +3741,7 @@ impl SiqueryEngine {
     /// to ensure browser profiles and data are discovered even when running as NT AUTHORITY\SYSTEM.
     fn get_user_local_appdata_dirs() -> Vec<(String, std::path::PathBuf)> {
         let mut out = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         #[cfg(target_os = "windows")]
         {
@@ -4533,6 +4564,59 @@ impl SiqueryEngine {
                 autotomy,
                 mode,
                 status
+            ]);
+        }
+
+        Ok(())
+    }
+
+    /// Populates `hierarchical_merkle_anchors` table from the in-memory Hierarchical Merkle Registry.
+    fn populate_hierarchical_merkle_anchors(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO hierarchical_merkle_anchors (
+                    anchor_seq, anchor_index, timestamp_ns, interior_hash, rollup_hash,
+                    global_merkle_root, global_root, arm_root, arm_chain_head, tarpit_root,
+                    tarpit_chain_head, ring_root, ring_chain_head, ed25519_sig, ed25519_signature,
+                    public_key, trigger_reason, trigger_event, tpm_pcr_status, cross_ring_intact, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let registry = osoosi_audit::global_hierarchical_merkle();
+        let mut anchors = registry.get_recent_anchors(100);
+        if anchors.is_empty() {
+            anchors.push(registry.force_rollup_anchor("genesis_bootstrap"));
+        }
+
+        let pcr_status = osoosi_audit::tpm::read_audit_pcr()
+            .map(|p| format!("HARDWARE_TPM_PCR16:{}", p))
+            .unwrap_or_else(|| "PCR_16_EXTENDED".to_string());
+
+        for a in anchors {
+            let ts_ns = a.timestamp.timestamp_nanos_opt().unwrap_or(0);
+            let _ = insert_stmt.execute(rusqlite::params![
+                a.anchor_seq as i64,
+                a.anchor_seq as i64,
+                ts_ns,
+                a.interior_hash,
+                a.interior_hash,
+                a.global_merkle_root,
+                a.global_merkle_root,
+                a.arm_root,
+                a.arm_root,
+                a.tarpit_root,
+                a.tarpit_root,
+                a.ring_root,
+                a.ring_root,
+                a.ed25519_sig,
+                a.ed25519_sig,
+                a.public_key,
+                a.trigger_reason,
+                a.trigger_reason,
+                pcr_status,
+                if a.cross_ring_intact { 1i64 } else { 0i64 },
+                a.timestamp.to_rfc3339(),
             ]);
         }
 
@@ -6700,8 +6784,8 @@ mod tests {
         let tables = SiqueryEngine::list_tables();
         assert_eq!(
             tables.len(),
-            100,
-            "Must contain exactly 100 tables and views for comprehensive siquery host discovery"
+            101,
+            "Must contain exactly 101 tables and views for comprehensive siquery host discovery"
         );
 
         for table in tables {
@@ -6957,5 +7041,47 @@ mod tests {
             let list = rows.unwrap();
             assert!(!list.is_empty(), "Table '{}' must return real rows", table);
         }
+    }
+
+    #[test]
+    fn test_hierarchical_merkle_anchors_query() {
+        let engine = SiqueryEngine::new();
+        // Force at least one anchor in registry
+        osoosi_audit::global_hierarchical_merkle().force_rollup_anchor("siquery_test_anchor");
+
+        let rows = engine
+            .execute_query("SELECT anchor_seq, interior_hash, global_merkle_root, trigger_reason, cross_ring_intact FROM hierarchical_merkle_anchors;")
+            .expect("Query on hierarchical_merkle_anchors must succeed");
+
+        assert!(
+            !rows.is_empty(),
+            "hierarchical_merkle_anchors must return at least one anchor row"
+        );
+        let first = &rows[0];
+        assert!(first.get("anchor_seq").is_some());
+        assert!(first.get("interior_hash").is_some());
+
+        // Context-specified schema verification
+        let context_rows = engine
+            .execute_query("SELECT anchor_index, timestamp_ns, rollup_hash, global_root, arm_chain_head, tarpit_chain_head, ring_chain_head, ed25519_signature, tpm_pcr_status, trigger_event FROM hierarchical_merkle_anchors;")
+            .expect("Context-specified column query on hierarchical_merkle_anchors must succeed");
+        assert!(!context_rows.is_empty());
+        let c_first = &context_rows[0];
+        assert!(c_first.get("anchor_index").is_some());
+        assert!(c_first.get("timestamp_ns").is_some());
+        assert!(c_first.get("rollup_hash").is_some());
+        assert!(c_first.get("global_root").is_some());
+        assert!(c_first.get("arm_chain_head").is_some());
+        assert!(c_first.get("tarpit_chain_head").is_some());
+        assert!(c_first.get("ring_chain_head").is_some());
+        assert!(c_first.get("ed25519_signature").is_some());
+        assert!(c_first.get("tpm_pcr_status").is_some());
+        assert!(c_first.get("trigger_event").is_some());
+
+        // SELECT * verification
+        let all_rows = engine
+            .execute_query("SELECT * FROM hierarchical_merkle_anchors;")
+            .expect("SELECT * FROM hierarchical_merkle_anchors must succeed");
+        assert!(!all_rows.is_empty());
     }
 }

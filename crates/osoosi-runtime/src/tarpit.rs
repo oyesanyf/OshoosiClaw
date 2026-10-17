@@ -215,6 +215,26 @@ impl ActiveProcessTarpit {
             flag.store(false, Ordering::SeqCst);
             let proc_name = get_process_name(pid);
             info!("ActiveProcessTarpit: Released PID {} ({})", pid, proc_name);
+
+            let ring_merkle = osoosi_audit::global_hierarchical_merkle();
+            let payload = format!("RELEASE_TARPIT: pid={}, proc={}", pid, proc_name);
+            let now_ns = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(0);
+            let tarpit_rec = ring_merkle.record_tarpit_event(
+                pid,
+                &format!("tarpit-{}", pid),
+                payload.as_bytes(),
+                now_ns,
+            );
+            ring_merkle.record_ring_transition(
+                osoosi_audit::ContainmentRingId::Ring3SandboxWorker,
+                &format!("pid:{}", pid),
+                "release_tarpit",
+                &tarpit_rec.hash,
+                false,
+            );
         }
     }
 
@@ -472,6 +492,27 @@ impl TarpitManager {
             "Applying Active Tarpit & Priority Throttling to PID {} ({}) for {}s...",
             pid, proc_name, duration_secs
         );
+
+        let ring_merkle = osoosi_audit::global_hierarchical_merkle();
+        let payload = format!("APPLY_TARPIT: pid={}, proc={}, duration={}s", pid, proc_name, duration_secs);
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        let tarpit_rec = ring_merkle.record_tarpit_event(
+            pid,
+            &format!("tarpit-{}", pid),
+            payload.as_bytes(),
+            now_ns,
+        );
+        ring_merkle.record_ring_transition(
+            osoosi_audit::ContainmentRingId::Ring3SandboxWorker,
+            &format!("pid:{}", pid),
+            "apply_tarpit",
+            &tarpit_rec.hash,
+            false,
+        );
+        ring_merkle.anchor_to_global_tree(None, &format!("tarpit_applied:{}", pid));
 
         // Platform-specific priority throttle
         #[cfg(target_os = "windows")]

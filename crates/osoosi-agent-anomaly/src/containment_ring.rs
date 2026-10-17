@@ -120,7 +120,20 @@ impl AgentContainmentRing {
             payload
         );
         let hmac_bytes = compute_ring_hmac(&key, sign_data.as_bytes());
-        (epoch, hex::encode(hmac_bytes))
+        let sig_hex = hex::encode(hmac_bytes);
+
+        // Record arm Merkle chain event and Ring 2 transition
+        let ring_merkle = osoosi_audit::global_hierarchical_merkle();
+        let arm_rec = ring_merkle.record_arm_event(agent_id, epoch, role, "sign_message", &sig_hex);
+        ring_merkle.record_ring_transition(
+            osoosi_audit::ContainmentRingId::Ring2PolicyMesh,
+            agent_id,
+            "sign_message",
+            &arm_rec.hash,
+            false,
+        );
+
+        (epoch, sig_hex)
     }
 
     /// Verifies an inter-agent message signature using constant-time comparison.
@@ -180,6 +193,23 @@ impl AgentContainmentRing {
             return Err("Cryptographic HMAC signature verification failed".to_string());
         }
 
+        // Record arm Merkle chain event and Ring 2 transition
+        let ring_merkle = osoosi_audit::global_hierarchical_merkle();
+        let arm_rec = ring_merkle.record_arm_event(
+            sender_id,
+            epoch,
+            role,
+            "verify_inter_agent_message",
+            signature_hex,
+        );
+        ring_merkle.record_ring_transition(
+            osoosi_audit::ContainmentRingId::Ring2PolicyMesh,
+            sender_id,
+            "verify_inter_agent_message",
+            &arm_rec.hash,
+            false,
+        );
+
         Ok(())
     }
 
@@ -205,12 +235,39 @@ impl AgentContainmentRing {
 
         self.autotomy_severances.fetch_add(1, Ordering::Relaxed);
 
-        // Optionally terminate confirmed rogue child process handle (never touch PID <= 4 or system)
+        // Record arm fracture proof and Ring 0 transition
+        let ring_merkle = osoosi_audit::global_hierarchical_merkle();
+        let fracture_proof = ring_merkle.record_arm_fracture(
+            agent_id,
+            old_epoch,
+            new_epoch,
+            reason,
+            None,
+        );
+        ring_merkle.record_ring_transition(
+            osoosi_audit::ContainmentRingId::Ring0Kernel,
+            agent_id,
+            "sever_rogue_agent_branch",
+            &fracture_proof.fracture_hash,
+            true,
+        );
+        ring_merkle.anchor_to_global_tree(None, &format!("autotomy_sever:{}", agent_id));
+
+        // Optionally terminate confirmed rogue child process handle (never touch PID <= 4, system, or self [SEC-RING-01])
+        let my_pid = std::process::id();
         let action_taken = if let Some(pid) = target_child_pid {
-            if pid > 4 {
+            if pid > 4 && pid != my_pid {
                 #[cfg(target_os = "windows")]
                 {
-                    let mut cmd = std::process::Command::new("taskkill");
+                    let system_root =
+                        std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+                    let taskkill_path =
+                        std::path::Path::new(&system_root).join("System32").join("taskkill.exe");
+                    let mut cmd = if taskkill_path.exists() {
+                        std::process::Command::new(taskkill_path)
+                    } else {
+                        std::process::Command::new("taskkill")
+                    };
                     cmd.args(["/F", "/T", "/PID", &pid.to_string()]);
                     #[cfg(windows)]
                     {
@@ -240,6 +297,11 @@ impl AgentContainmentRing {
                         pid, old_epoch, new_epoch
                     )
                 }
+            } else if pid == my_pid {
+                format!(
+                    "Advanced epoch {} -> {} (self PID {} preserved from termination)",
+                    old_epoch, new_epoch, pid
+                )
             } else {
                 format!(
                     "Advanced epoch {} -> {} (system PID {} protected)",
@@ -329,6 +391,7 @@ impl AgentContainmentRing {
             "active_monitored_agents": self.agent_epochs.len(),
             "recent_audit_log": recent_audits,
             "recent_mesh_watchouts": recent_watchouts,
+            "merkle_hierarchy": osoosi_audit::global_hierarchical_merkle().get_summary(),
         })
     }
 }
@@ -383,5 +446,25 @@ mod tests {
         );
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("Lateral movement blocked"));
+    }
+
+    #[tokio::test]
+    async fn test_sec_ring_01_self_pid_protection_and_merkle_chain() {
+        let ring = AgentContainmentRing::new();
+        let agent_id = "agent_rogue_9";
+        let my_pid = std::process::id();
+
+        // Severing branch targeting our own PID must preserve self PID
+        let new_epoch = ring
+            .sever_rogue_agent_branch(agent_id, "Attempted self kill", Some(my_pid))
+            .await;
+        assert!(new_epoch >= 2);
+
+        let summary = ring.get_status_summary().await;
+        assert!(summary.get("merkle_hierarchy").is_some());
+
+        // Verify arm chain in hierarchical merkle registry
+        let merkle = osoosi_audit::global_hierarchical_merkle();
+        assert!(merkle.verify_arm_chain(agent_id));
     }
 }

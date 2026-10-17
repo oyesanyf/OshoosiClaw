@@ -224,7 +224,12 @@ impl MultiSensorFusionEngine {
             (1.8, 0.00, self.event_influx_velocity)
         };
 
-        let canary_health: f64 = if canary_latency < 10.0 && token_loss < 0.01 {
+        // Cross-Ring Continuity check: If asymmetric pipeline blinding is detected, canary health drops to 0.10 (Critical)
+        let cross_ring = osoosi_audit::global_hierarchical_merkle().verify_cross_ring_continuity();
+
+        let canary_health: f64 = if !cross_ring.intact {
+            0.10
+        } else if canary_latency < 10.0 && token_loss < 0.01 {
             1.0
         } else {
             0.50
@@ -238,10 +243,12 @@ impl MultiSensorFusionEngine {
             health_score: canary_health.clamp(0.0, 1.0),
             confidence: 0.96,
             details: format!(
-                "Canary probe latency: {:.2}ms, Token loss: {:.2}%, Event influx velocity: {:.1} evt/s",
+                "Canary probe latency: {:.2}ms, Token loss: {:.2}%, Event influx velocity: {:.1} evt/s, Cross-Ring Continuity: {} (dropped: {})",
                 canary_latency,
                 token_loss * 100.0,
-                influx_vel
+                influx_vel,
+                if cross_ring.intact { "INTACT" } else { "BLINDED_ALERT" },
+                cross_ring.dropped_events
             ),
         });
 

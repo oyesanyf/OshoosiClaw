@@ -13,6 +13,8 @@ use tfhe::{generate_keys, ConfigBuilder, FheUint8};
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
 use tracing::info;
+#[cfg(not(target_os = "windows"))]
+use tracing::warn;
 
 // Note: tfhe integration for "active" traps.
 // In a full implementation, we'd use tfhe type safe API.

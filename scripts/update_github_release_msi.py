@@ -300,6 +300,95 @@ def sync_legacy_release_v011(gpg_path: str, key_fingerprint: str, headers: dict,
     print("       [+] Legacy release v0.1.1 updated with verified GPG signatures & DSSE provenance.")
 
 
+def sign_and_prepare_linux_artifacts(repo_root: str, gpg_path: str) -> list:
+    """
+    Inspects deploy/linux for compiled packages and binaries, generates SHA256 checksums,
+    produces genuine OpenPGP detached signatures (.asc, .sig), signs SHA256SUMS.txt,
+    and returns a list of tuples (filename, data_bytes, mime_type) for upload.
+    """
+    deploy_linux_dir = os.path.join(repo_root, "deploy", "linux")
+    if not os.path.isdir(deploy_linux_dir):
+        return []
+
+    items = sorted(os.listdir(deploy_linux_dir))
+    raw_packages = []
+    for f in items:
+        if f.endswith(".asc") or f.endswith(".sig") or f.endswith(".jsonl") or f == "SHA256SUMS.txt":
+            continue
+        full = os.path.join(deploy_linux_dir, f)
+        if os.path.isfile(full):
+            raw_packages.append(f)
+
+    if not raw_packages:
+        return []
+
+    print(f"[*] Processing {len(raw_packages)} Linux release artifacts in {deploy_linux_dir}...")
+
+    checksum_lines = []
+    artifacts_to_upload = []
+
+    for pkg in raw_packages:
+        pkg_path = os.path.join(deploy_linux_dir, pkg)
+        with open(pkg_path, "rb") as pf:
+            data = pf.read()
+
+        sha256 = hashlib.sha256(data).hexdigest()
+        checksum_lines.append(f"{sha256}  {pkg}")
+
+        if pkg.endswith(".deb"):
+            mime = "application/vnd.debian.binary-package"
+        elif pkg.endswith(".rpm"):
+            mime = "application/x-rpm"
+        elif pkg.endswith(".tar.gz") or pkg.endswith(".tgz"):
+            mime = "application/gzip"
+        else:
+            mime = "application/octet-stream"
+
+        artifacts_to_upload.append((pkg, data, mime))
+
+        # Generate detached GPG signatures
+        asc_path = pkg_path + ".asc"
+        if not os.path.exists(asc_path):
+            asc_bytes = gpg_sign_detached(gpg_path, data, armored=True)
+            with open(asc_path, "wb") as af:
+                af.write(asc_bytes)
+            print(f"    [+] Created armored signature: {os.path.basename(asc_path)}")
+        else:
+            with open(asc_path, "rb") as af:
+                asc_bytes = af.read()
+
+        artifacts_to_upload.append((pkg + ".asc", asc_bytes, "text/plain"))
+
+        sig_path = pkg_path + ".sig"
+        if not os.path.exists(sig_path):
+            sig_bytes = gpg_sign_detached(gpg_path, data, armored=False)
+            with open(sig_path, "wb") as sf:
+                sf.write(sig_bytes)
+        else:
+            with open(sig_path, "rb") as sf:
+                sig_bytes = sf.read()
+
+        artifacts_to_upload.append((pkg + ".sig", sig_bytes, "application/octet-stream"))
+
+    # Write and sign SHA256SUMS.txt
+    sha_content = "\n".join(checksum_lines) + "\n"
+    sha_bytes = sha_content.encode("utf-8")
+    sha_path = os.path.join(deploy_linux_dir, "SHA256SUMS.txt")
+    with open(sha_path, "wb") as sf:
+        sf.write(sha_bytes)
+
+    sha_asc_bytes = gpg_sign_detached(gpg_path, sha_bytes, armored=True)
+    sha_asc_path = os.path.join(deploy_linux_dir, "SHA256SUMS.txt.asc")
+    with open(sha_asc_path, "wb") as saf:
+        saf.write(sha_asc_bytes)
+
+    print(f"    [+] Generated SHA256SUMS.txt and signed SHA256SUMS.txt.asc with GPG.")
+    artifacts_to_upload.append(("SHA256SUMS.txt", sha_bytes, "text/plain"))
+    artifacts_to_upload.append(("SHA256SUMS.txt.asc", sha_asc_bytes, "text/plain"))
+
+    return artifacts_to_upload
+
+
 def main():
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     msi_path = os.path.join(repo_root, "OshoosiClaw.msi")
@@ -347,6 +436,18 @@ def main():
     print("    [+] Armored signature (.asc) verified successfully with gpg --verify")
     print("    [+] Binary signature (.sig) verified successfully with gpg --verify")
 
+    # Discover and prepare Linux artifacts from deploy/linux
+    linux_artifacts = sign_and_prepare_linux_artifacts(repo_root, gpg_path)
+
+    # Collect subjects for DSSE provenance
+    subjects = [
+        {"name": f"OshoosiClaw-{ver}.msi", "digest": {"sha256": sha256_hex}},
+        {"name": "OshoosiClaw.msi", "digest": {"sha256": sha256_hex}},
+    ]
+    for name, data, _ in linux_artifacts:
+        if not (name.endswith(".asc") or name.endswith(".sig") or name.endswith(".jsonl")):
+            subjects.append({"name": name, "digest": {"sha256": hashlib.sha256(data).hexdigest()}})
+
     # DSSE In-Toto / SLSA Provenance Envelope
     print("[*] Generating Dead Simple Signing Envelope (DSSE) in-toto provenance...")
     git_sha = "HEAD"
@@ -358,10 +459,7 @@ def main():
     dsse_intoto_bytes = build_dsse_intoto(
         gpg_path,
         key_fingerprint,
-        [
-            {"name": f"OshoosiClaw-{ver}.msi", "digest": {"sha256": sha256_hex}},
-            {"name": "OshoosiClaw.msi", "digest": {"sha256": sha256_hex}},
-        ],
+        subjects,
         git_sha=git_sha
     )
     print("    [+] DSSE envelope created and PAE signed with GPG key.")
@@ -383,6 +481,7 @@ def main():
         ("osoosi-linux-packaging.tar.gz", linux_pkg_bytes, "application/gzip"),
         ("PUBLIC_KEY.asc", public_key_bytes, "text/plain"),
     ]
+    assets_to_upload.extend(linux_artifacts)
 
     existing_assets = {a["name"]: a["id"] for a in rel.get("assets", [])}
     print(f"[*] Uploading assets to {tag} release...")

@@ -4,10 +4,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    groups:
-      wasmtime:
-        patterns:
-          - "wasmtime*"
+    ignore:
+      - dependency-name: "wasmtime*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

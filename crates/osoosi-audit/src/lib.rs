@@ -11,7 +11,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
+pub mod hierarchical;
+pub mod nsrl_aslr_merkle;
 pub mod tpm;
+
+pub use hierarchical::*;
+pub use nsrl_aslr_merkle::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuditEntry {

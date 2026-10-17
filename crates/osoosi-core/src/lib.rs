@@ -7881,6 +7881,7 @@ impl EdrOrchestrator {
             .map(|t| !t.trim().is_empty())
             .unwrap_or(false);
 
+        #[allow(unused_mut)]
         let mut effective_action = if is_lockdown_mode
             && (signature.confidence >= autonomy.action_confidence_threshold
                 || is_catalog_attack
@@ -11253,6 +11254,7 @@ impl EdrOrchestrator {
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
+                        let _ = pid;
                         warn!("MemoryScan only supported on Windows.");
                     }
                 }

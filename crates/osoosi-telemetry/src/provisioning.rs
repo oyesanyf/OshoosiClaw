@@ -5,7 +5,9 @@
 //! Linux: Native eBPF / auditd
 //! macOS: Endpoint Security Framework
 
-use osoosi_types::{extract_zip, SecuredExecutor};
+#[cfg(target_os = "windows")]
+use osoosi_types::extract_zip;
+use osoosi_types::SecuredExecutor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;

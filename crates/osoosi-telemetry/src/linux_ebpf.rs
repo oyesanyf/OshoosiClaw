@@ -232,7 +232,6 @@ impl EbpfTelemetryEngine {
 
     pub async fn run(&self) -> anyhow::Result<()> {
         use aya::maps::{MapData, RingBuf};
-        use aya::programs::TracePoint;
         use aya::Ebpf;
         use std::sync::atomic::Ordering;
         use tracing::{info, warn};

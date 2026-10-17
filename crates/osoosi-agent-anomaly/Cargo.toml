@@ -19,6 +19,7 @@ regex = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-policy = { path = "../osoosi-policy" }
+osoosi-audit = { path = "../osoosi-audit" }
 sha2 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
@@ -39,6 +40,9 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Memory",
     "Win32_System_Threading",
 ] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
