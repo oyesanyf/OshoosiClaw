@@ -12,6 +12,15 @@
 - **Standard Command:** Use `powershell -ExecutionPolicy Bypass -File scripts/build_and_submit.ps1` as the canonical command to build, sign, package, and submit to Microsoft in one go.
 - **Mandatory GitHub Release MSI Sync on Every Build:** Every time `OshoosiClaw.msi` is built and signed, it MUST also be uploaded to the latest GitHub Release (`https://github.com/oyesanyf/OshoosiClaw/releases/latest`) along with its updated `.intoto.jsonl`, `.sig`, and `.asc` attestations via `python scripts/update_github_release_msi.py` (automatically invoked by `scripts/build_and_submit.ps1`).
 
+## Mandatory Full-Lifecycle Completion: Build All Packages, Fix Security, & Update Docs/Diagrams
+- **User Requirement:** "remember to always build packages fix security update docs and diagrams"
+- **1. Build All Release Packages (Windows, Linux, & Docker):** Whenever code, WebUI, or configuration changes are finalized, always build and verify all distribution targets:
+  - **Windows:** `OshoosiClaw.msi` and signed release binaries via `scripts/build_and_submit.ps1`.
+  - **Linux (WSL):** Compile `/root/osoosi-linux-target/release/osoosi`, package `.deb`, `.rpm`, and `.tar.gz` via `packaging/linux/build_packages.sh`, copy to `deploy/linux/`, and sync GPG-signed/DSSE-attested assets via `python scripts/update_github_release_msi.py`.
+  - **Docker:** Build and verify the hardened multi-stage container (`docker build -t ghcr.io/oyesanyf/oshoosiclaw:1.2.0 .`) with digest-pinned base images, non-root `UID 65532:65532`, `0` SUID/SGID files, `--read-only` rootfs, `--cap-drop=ALL`, and `docker/seccomp-oshoosi.json`.
+- **2. Proactive Security Audit & Zero Regressions:** Every change must be verified against authentication bypasses (`HttpOnly; SameSite=Strict` cookies, constant-time token comparison), async lock panics (never call `blocking_read()`/`blocking_write()` inside async Tokio tasks), and container/OS confinement invariants.
+- **3. Documentation & Mermaid Diagrams Sync:** Every feature, security fix, or packaging update must update `README.md`, relevant security reports, and `mermaid` architecture diagrams before shipping the PR.
+
 ## Strict Invariant: PATH & Environment Variable Protection
 - **User Requirement:** "my path must never ever be over wrote"
 - **Zero-Overwrite Rule:** Under NO circumstance may any script, installer definition, registry operation, or code modification overwrite, replace, or truncate the user or system `PATH` or any environment variable.
