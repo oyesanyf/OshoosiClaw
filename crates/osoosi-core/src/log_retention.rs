@@ -29,7 +29,12 @@ impl LogRetentionManager {
     /// Determines whether a filename matches log file naming patterns.
     pub fn is_log_file(filename: &str) -> bool {
         let lower = filename.to_ascii_lowercase();
-        lower.ends_with(".log") || lower.starts_with("osoosi.log")
+        lower.ends_with(".log")
+            || lower.starts_with("osoosi.log")
+            || lower.ends_with(".log.old")
+            || lower.ends_with(".log.bak")
+            || lower.ends_with(".rotated")
+            || (lower.starts_with("edr_daemon") && lower.contains(".log"))
     }
 
     /// Format bytes into a human readable display string.
@@ -166,11 +171,50 @@ impl LogRetentionManager {
                             entry.size_bytes = 0;
                             entry.modified = SystemTime::now();
                         }
-                        Err(e) => {
-                            warn!(
-                                "LogRetentionManager: Could not rotate active log {} (possibly in active write lock): {}",
-                                entry.filename, e
+                        Err(rename_err) => {
+                            debug!(
+                                "LogRetentionManager: Rename failed for active log {} ({}); attempting copy + truncate fallback",
+                                entry.filename, rename_err
                             );
+                            match fs::copy(&entry.path, &rotated_path) {
+                                Ok(_) => {
+                                    match fs::OpenOptions::new()
+                                        .write(true)
+                                        .truncate(true)
+                                        .open(&entry.path)
+                                    {
+                                        Ok(_) => {
+                                            info!(
+                                                "LogRetentionManager: Rotated and truncated locked active log {} -> {} via copy+truncate ({} bytes)",
+                                                entry.filename, rotated_name, entry.size_bytes
+                                            );
+                                            bytes_freed += entry.size_bytes;
+                                            newly_rotated.push(LogFileEntry {
+                                                path: rotated_path,
+                                                filename: rotated_name,
+                                                size_bytes: entry.size_bytes,
+                                                modified: entry.modified,
+                                                is_active: false,
+                                            });
+                                            entry.size_bytes = 0;
+                                            entry.modified = SystemTime::now();
+                                        }
+                                        Err(trunc_err) => {
+                                            warn!(
+                                                "LogRetentionManager: Copied {} -> {} but failed to truncate active log: {}",
+                                                entry.filename, rotated_name, trunc_err
+                                            );
+                                            let _ = fs::remove_file(&rotated_path);
+                                        }
+                                    }
+                                }
+                                Err(copy_err) => {
+                                    warn!(
+                                        "LogRetentionManager: Could not rotate active log {} (rename error: {}, copy error: {})",
+                                        entry.filename, rename_err, copy_err
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -401,6 +445,92 @@ impl LogRetentionManager {
 
         Ok(buffer.into())
     }
+
+    /// Computes dynamic log retention configuration based on available disk space and total disk size.
+    pub fn compute_dynamic_log_config(
+        base: &LogRetentionConfig,
+        available_disk_bytes: u64,
+        total_disk_bytes: u64,
+    ) -> LogRetentionConfig {
+        compute_dynamic_log_config(base, available_disk_bytes, total_disk_bytes)
+    }
+}
+
+/// Computes dynamic log retention configuration based on available disk space and total disk size.
+/// Pressure tiers:
+/// - Critical: < 10 GB available OR < 5% available (max 2 days, 100 MB total, 10 MB single)
+/// - Elevated: < 25 GB available OR < 12% available (max 7 days, 250 MB total, 25 MB single)
+/// - Moderate: < 50 GB available OR < 20% available (max 14 days, 500 MB total, 50 MB single)
+/// - Nominal: Adequate space (preserves base configuration)
+pub fn compute_dynamic_log_config(
+    base: &LogRetentionConfig,
+    available_disk_bytes: u64,
+    total_disk_bytes: u64,
+) -> LogRetentionConfig {
+    const GB: u64 = 1024 * 1024 * 1024;
+    let ratio = if total_disk_bytes > 0 {
+        available_disk_bytes as f64 / total_disk_bytes as f64
+    } else {
+        1.0
+    };
+
+    if available_disk_bytes < 10 * GB || ratio < 0.05 {
+        LogRetentionConfig {
+            max_log_days: if base.max_log_days > 0 {
+                base.max_log_days.min(2)
+            } else {
+                2
+            },
+            max_total_size_mb: if base.max_total_size_mb > 0 {
+                base.max_total_size_mb.min(100)
+            } else {
+                100
+            },
+            max_single_file_size_mb: if base.max_single_file_size_mb > 0 {
+                base.max_single_file_size_mb.min(10)
+            } else {
+                10
+            },
+        }
+    } else if available_disk_bytes < 25 * GB || ratio < 0.12 {
+        LogRetentionConfig {
+            max_log_days: if base.max_log_days > 0 {
+                base.max_log_days.min(7)
+            } else {
+                7
+            },
+            max_total_size_mb: if base.max_total_size_mb > 0 {
+                base.max_total_size_mb.min(250)
+            } else {
+                250
+            },
+            max_single_file_size_mb: if base.max_single_file_size_mb > 0 {
+                base.max_single_file_size_mb.min(25)
+            } else {
+                25
+            },
+        }
+    } else if available_disk_bytes < 50 * GB || ratio < 0.20 {
+        LogRetentionConfig {
+            max_log_days: if base.max_log_days > 0 {
+                base.max_log_days.min(14)
+            } else {
+                14
+            },
+            max_total_size_mb: if base.max_total_size_mb > 0 {
+                base.max_total_size_mb.min(500)
+            } else {
+                500
+            },
+            max_single_file_size_mb: if base.max_single_file_size_mb > 0 {
+                base.max_single_file_size_mb.min(50)
+            } else {
+                50
+            },
+        }
+    } else {
+        base.clone()
+    }
 }
 
 #[cfg(test)]
@@ -435,6 +565,11 @@ mod tests {
         assert!(LogRetentionManager::is_log_file("osoosi.log"));
         assert!(LogRetentionManager::is_log_file("osoosi.log.2026-09-25"));
         assert!(LogRetentionManager::is_log_file("audit_trail.log"));
+        assert!(LogRetentionManager::is_log_file("agent.log.old"));
+        assert!(LogRetentionManager::is_log_file("backup.log.bak"));
+        assert!(LogRetentionManager::is_log_file("osoosi.2026.rotated"));
+        assert!(LogRetentionManager::is_log_file("edr_daemon_worker.log"));
+        assert!(!LogRetentionManager::is_log_file("edr_daemon.exe"));
         assert!(!LogRetentionManager::is_log_file("osoosi.toml"));
         assert!(!LogRetentionManager::is_log_file("data.db"));
     }
@@ -576,5 +711,46 @@ mod tests {
 
         let _ = LogRetentionManager::maintain_logs(log_dir, &config).unwrap();
         assert!(active_path.exists());
+    }
+
+    #[test]
+    fn test_compute_dynamic_log_config_tiers() {
+        let base = LogRetentionConfig {
+            max_log_days: 30,
+            max_total_size_mb: 1000,
+            max_single_file_size_mb: 100,
+        };
+        const GB: u64 = 1024 * 1024 * 1024;
+        let total = 500 * GB;
+
+        // 1. Critical tier: < 10 GB available (or < 5%)
+        let critical = compute_dynamic_log_config(&base, 5 * GB, total);
+        assert_eq!(critical.max_log_days, 2);
+        assert_eq!(critical.max_total_size_mb, 100);
+        assert_eq!(critical.max_single_file_size_mb, 10);
+
+        // Also critical by ratio: 20 GB free out of 500 GB is 4% (< 5%)
+        let critical_ratio = compute_dynamic_log_config(&base, 20 * GB, 500 * GB);
+        assert_eq!(critical_ratio.max_log_days, 2);
+        assert_eq!(critical_ratio.max_total_size_mb, 100);
+        assert_eq!(critical_ratio.max_single_file_size_mb, 10);
+
+        // 2. Elevated tier: < 25 GB available (or < 12%)
+        let elevated = compute_dynamic_log_config(&base, 20 * GB, 100 * GB); // 20 GB < 25 GB
+        assert_eq!(elevated.max_log_days, 7);
+        assert_eq!(elevated.max_total_size_mb, 250);
+        assert_eq!(elevated.max_single_file_size_mb, 25);
+
+        // 3. Moderate tier: < 50 GB available (or < 20%)
+        let moderate = compute_dynamic_log_config(&base, 40 * GB, 100 * GB); // 40 GB < 50 GB
+        assert_eq!(moderate.max_log_days, 14);
+        assert_eq!(moderate.max_total_size_mb, 500);
+        assert_eq!(moderate.max_single_file_size_mb, 50);
+
+        // 4. Nominal tier: >= 50 GB and >= 20%
+        let nominal = compute_dynamic_log_config(&base, 100 * GB, 200 * GB); // 50%
+        assert_eq!(nominal.max_log_days, 30);
+        assert_eq!(nominal.max_total_size_mb, 1000);
+        assert_eq!(nominal.max_single_file_size_mb, 100);
     }
 }

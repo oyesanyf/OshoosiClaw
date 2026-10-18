@@ -105,10 +105,20 @@ pub fn trim_process_working_set() -> bool {
     }
 }
 
-/// On non-Windows platforms, trimming is a no-op or delegates to malloc_trim if available.
+/// On non-Windows platforms, trimming delegates to malloc_trim on Linux GNU or is a no-op.
 #[cfg(not(target_os = "windows"))]
 pub fn trim_process_working_set() -> bool {
-    true
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    {
+        extern "C" {
+            fn malloc_trim(pad: usize) -> i32;
+        }
+        unsafe { malloc_trim(0) != 0 }
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    {
+        true
+    }
 }
 
 /// Spawns a proactive memory watchdog background task (if not already running).

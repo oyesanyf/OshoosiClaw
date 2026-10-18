@@ -98,8 +98,36 @@ pub fn inspect_process(pid: u32) -> Result<InspectionFindings> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = pid;
-        Ok(InspectionFindings::default())
+        let mut findings = InspectionFindings::default();
+        let maps_path = format!("/proc/{}/maps", pid);
+        if let Ok(content) = std::fs::read_to_string(&maps_path) {
+            for line in content.lines() {
+                let is_deleted = line.contains("(deleted)");
+                let is_rwxp = line.contains("rwxp") || line.contains("rwx");
+                let is_libc_or_ld = line.contains("libc.so") || line.contains("ld-linux") || line.contains("libc-");
+
+                if is_deleted && (is_libc_or_ld || line.contains(".so")) {
+                    findings.hollowing_detected = true;
+                    findings
+                        .suspicious_sections
+                        .push(format!("Deleted library mapped: {}", line.trim()));
+                    findings.composition_score += 0.4;
+                }
+                if is_rwxp && (is_libc_or_ld || line.contains(".so")) {
+                    findings.hollowing_detected = true;
+                    findings
+                        .suspicious_sections
+                        .push(format!("RWX library segment in {}: {}", pid, line.trim()));
+                    findings.composition_score += 0.3;
+                }
+            }
+        }
+
+        if let Ok(patches) = inspect_remote_dll_patches(pid) {
+            findings.byte_patches = patches;
+        }
+
+        Ok(findings)
     }
 }
 
@@ -192,8 +220,32 @@ pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn inspect_remote_dll_patches(_pid: u32) -> Result<Vec<String>> {
-    Ok(Vec::new())
+pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
+    let mut patches = Vec::new();
+    let maps_path = format!("/proc/{}/maps", pid);
+    if let Ok(content) = std::fs::read_to_string(&maps_path) {
+        for line in content.lines() {
+            let is_deleted = line.contains("(deleted)");
+            let is_rwxp = line.contains("rwxp") || line.contains("rwx");
+            let is_libc_or_ld = line.contains("libc.so") || line.contains("ld-linux") || line.contains("libc-");
+
+            if is_deleted && (is_libc_or_ld || line.contains(".so")) {
+                patches.push(format!(
+                    "Unlinked/deleted library mapped in pid {}: {}",
+                    pid,
+                    line.trim()
+                ));
+            }
+            if is_rwxp && (is_libc_or_ld || line.contains(".so")) {
+                patches.push(format!(
+                    "RWX shared library segment detected in pid {}: {}",
+                    pid,
+                    line.trim()
+                ));
+            }
+        }
+    }
+    Ok(patches)
 }
 
 #[cfg(target_os = "windows")]
@@ -280,85 +332,148 @@ unsafe fn inspect_handle(
     Ok(InspectionFindings::default())
 }
 
-/// Inspect a file on disk using pelite for composition and heuristics.
-#[cfg(target_os = "windows")]
-pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
-    let bytes = std::fs::read(path)?;
-    let pe = PeFile::from_bytes(&bytes)?;
+/// Inspect an ELF64 binary for suspicious PT_LOAD RWX segments and injection symbols.
+fn inspect_elf64(bytes: &[u8], findings: &mut InspectionFindings) {
+    if bytes.len() < 64 || bytes[4] != 2 {
+        return;
+    }
+    let is_le = bytes[5] == 1;
 
-    let mut findings = InspectionFindings::default();
+    let read_u16 = |offset: usize| -> Option<u16> {
+        let slice: [u8; 2] = bytes.get(offset..offset + 2)?.try_into().ok()?;
+        Some(if is_le { u16::from_le_bytes(slice) } else { u16::from_be_bytes(slice) })
+    };
+    let read_u32 = |offset: usize| -> Option<u32> {
+        let slice: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
+        Some(if is_le { u32::from_le_bytes(slice) } else { u32::from_be_bytes(slice) })
+    };
+    let read_u64 = |offset: usize| -> Option<u64> {
+        let slice: [u8; 8] = bytes.get(offset..offset + 8)?.try_into().ok()?;
+        Some(if is_le { u64::from_le_bytes(slice) } else { u64::from_be_bytes(slice) })
+    };
 
-    // 1. Check for suspicious section characteristics (e.g. RWX)
-    let section_table = pe.section_headers();
-    for section in section_table {
-        if let Ok(name) = section.name() {
-            let chars = section.Characteristics;
+    if let (Some(e_phoff), Some(e_phentsize), Some(e_phnum)) =
+        (read_u64(32), read_u16(54), read_u16(56))
+    {
+        let e_phoff = e_phoff as usize;
+        let e_phentsize = e_phentsize as usize;
+        let e_phnum = e_phnum as usize;
 
-            // IMAGE_SCN_MEM_EXECUTE (0x20000000) | IMAGE_SCN_MEM_WRITE (0x80000000)
-            if (chars & 0xA0000000) == 0xA0000000 {
-                findings
-                    .suspicious_sections
-                    .push(format!("RWX section: {}", name));
-                findings.composition_score += 0.3;
+        if e_phentsize >= 56 {
+            for i in 0..e_phnum {
+                let ph_offset = e_phoff.saturating_add(i * e_phentsize);
+                if ph_offset + 56 > bytes.len() {
+                    break;
+                }
+                let p_type = read_u32(ph_offset).unwrap_or(0);
+                let p_flags = read_u32(ph_offset + 4).unwrap_or(0);
+
+                // PT_LOAD = 1, RWX = 0x7 (PF_R | PF_W | PF_X)
+                if p_type == 1 && (p_flags & 0x7) == 0x7 {
+                    findings.suspicious_sections.push("RWX ELF segment".to_string());
+                    findings.composition_score += 0.3;
+                }
             }
-
-            // High entropy check could go here if we calculate per section
         }
     }
 
-    // 2. Extract Imports (Shadow Dependency Check)
-    if let Ok(imports) = pe.imports() {
-        for desc in imports {
-            if let Ok(dll_name) = desc.dll_name() {
-                let dll_name = dll_name.to_string();
-                findings.imports.push(dll_name.clone());
+    let suspicious_symbols = [
+        "ptrace",
+        "memfd_create",
+        "process_vm_writev",
+        "dlopen",
+        "LD_PRELOAD",
+    ];
 
-                // Flag "grayware" or unusual libraries
-                let low_dll = dll_name.to_lowercase();
-                if low_dll.contains("winhttp") || low_dll.contains("wininet") {
-                    // Network capabilities in a non-network tool
-                    findings.composition_score += 0.1;
+    for &sym in &suspicious_symbols {
+        if bytes.windows(sym.len()).any(|w| w == sym.as_bytes()) {
+            findings.suspicious_dependencies.push(sym.to_string());
+            findings.composition_score += 0.2;
+        }
+    }
+}
+
+/// Inspect a file on disk (PE on Windows or ELF64 on all platforms) for composition and heuristics.
+pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
+    let bytes = std::fs::read(path)?;
+    let mut findings = InspectionFindings::default();
+
+    if bytes.starts_with(b"\x7FELF") {
+        inspect_elf64(&bytes, &mut findings);
+        return Ok(findings);
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(pe) = PeFile::from_bytes(&bytes) {
+            // 1. Check for suspicious section characteristics (e.g. RWX)
+            let section_table = pe.section_headers();
+            for section in section_table {
+                if let Ok(name) = section.name() {
+                    let chars = section.Characteristics;
+
+                    // IMAGE_SCN_MEM_EXECUTE (0x20000000) | IMAGE_SCN_MEM_WRITE (0x80000000)
+                    if (chars & 0xA0000000) == 0xA0000000 {
+                        findings
+                            .suspicious_sections
+                            .push(format!("RWX section: {}", name));
+                        findings.composition_score += 0.3;
+                    }
+
+                    // High entropy check could go here if we calculate per section
                 }
             }
 
-            // Function imports (using Import Name Table for static analysis)
-            if let Ok(int) = desc.int() {
-                for import in int {
-                    if let Ok(import) = import {
-                        if let pelite::pe64::imports::Import::ByName { name, .. } = import {
-                            let name = name.to_string();
-                            let low_name = name.to_lowercase();
+            // 2. Extract Imports (Shadow Dependency Check)
+            if let Ok(imports) = pe.imports() {
+                for desc in imports {
+                    if let Ok(dll_name) = desc.dll_name() {
+                        let dll_name = dll_name.to_string();
+                        findings.imports.push(dll_name.clone());
 
-                            // High-risk injection APIs
-                            if low_name.contains("virtualalloc")
-                                || low_name.contains("writeprocessmemory")
-                                || low_name.contains("createremotethread")
-                                || low_name.contains("ntunmapviewofsection")
-                                || low_name.contains("setthreadcontext")
-                            {
-                                findings.suspicious_dependencies.push(name.clone());
-                                findings.composition_score += 0.2;
+                        // Flag "grayware" or unusual libraries
+                        let low_dll = dll_name.to_lowercase();
+                        if low_dll.contains("winhttp") || low_dll.contains("wininet") {
+                            // Network capabilities in a non-network tool
+                            findings.composition_score += 0.1;
+                        }
+                    }
+
+                    // Function imports (using Import Name Table for static analysis)
+                    if let Ok(int) = desc.int() {
+                        for import in int {
+                            if let Ok(import) = import {
+                                if let pelite::pe64::imports::Import::ByName { name, .. } = import {
+                                    let name = name.to_string();
+                                    let low_name = name.to_lowercase();
+
+                                    // High-risk injection APIs
+                                    if low_name.contains("virtualalloc")
+                                        || low_name.contains("writeprocessmemory")
+                                        || low_name.contains("createremotethread")
+                                        || low_name.contains("ntunmapviewofsection")
+                                        || low_name.contains("setthreadcontext")
+                                    {
+                                        findings.suspicious_dependencies.push(name.clone());
+                                        findings.composition_score += 0.2;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-    }
 
-    // 3. Check for .NET (COM Descriptor Directory is at index 14)
-    if let Some(dir) = pe.data_directory().get(14) {
-        if dir.Size > 0 {
-            findings.is_dot_net = true;
+            // 3. Check for .NET (COM Descriptor Directory is at index 14)
+            if let Some(dir) = pe.data_directory().get(14) {
+                if dir.Size > 0 {
+                    findings.is_dot_net = true;
+                }
+            }
         }
     }
 
     Ok(findings)
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn inspect_file(_path: &Path) -> Result<InspectionFindings> {
-    Ok(InspectionFindings::default())
 }
 
 #[cfg(test)]
@@ -382,5 +497,39 @@ mod tests {
         // 4. Random non-call instructions (e.g. mov rax, 1)
         let non_call = vec![0x48, 0xC7, 0xC0, 0x01, 0x00, 0x00, 0x00];
         assert!(!is_preceded_by_call(&non_call));
+    }
+
+    #[test]
+    fn test_inspect_elf64_rwx_and_symbols() {
+        let mut elf_bytes = vec![0u8; 128];
+        // e_ident
+        elf_bytes[0..4].copy_from_slice(b"\x7FELF");
+        elf_bytes[4] = 2; // ELFCLASS64
+        elf_bytes[5] = 1; // ELFDATA2LSB (little endian)
+        elf_bytes[6] = 1; // EV_CURRENT
+
+        // e_phoff = 64
+        elf_bytes[32..40].copy_from_slice(&64u64.to_le_bytes());
+        // e_phentsize = 56
+        elf_bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
+        // e_phnum = 1
+        elf_bytes[56..58].copy_from_slice(&1u16.to_le_bytes());
+
+        // Program header at offset 64:
+        // p_type = 1 (PT_LOAD)
+        elf_bytes[64..68].copy_from_slice(&1u32.to_le_bytes());
+        // p_flags = 7 (PF_R | PF_W | PF_X = RWX)
+        elf_bytes[68..72].copy_from_slice(&7u32.to_le_bytes());
+
+        // Append suspicious symbols
+        elf_bytes.extend_from_slice(b"some_code_ptrace_memfd_create_done");
+
+        let mut findings = InspectionFindings::default();
+        inspect_elf64(&elf_bytes, &mut findings);
+
+        assert!(findings.suspicious_sections.contains(&"RWX ELF segment".to_string()));
+        assert!(findings.suspicious_dependencies.contains(&"ptrace".to_string()));
+        assert!(findings.suspicious_dependencies.contains(&"memfd_create".to_string()));
+        assert!(findings.composition_score >= 0.7);
     }
 }

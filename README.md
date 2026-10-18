@@ -142,13 +142,16 @@ On Linux endpoints (`x86_64-unknown-linux-gnu`), OpenỌ̀ṣọ́ọ̀sì achie
 
 ### User-Mode Orchestrator & Defense-in-Depth Fallback
 
-The OpenỌ̀ṣọ́ọ̀sì runtime orchestrator (`crates/osoosi-runtime/src/kernel_driver.rs`) maintains continuous synchronization with the kernel:
+The OpenỌ̀ṣọ́ọ̀sì runtime orchestrator (`crates/osoosi-runtime/src/kernel_driver.rs` and `crates/osoosi-telemetry/src/native.rs`) maintains continuous synchronization with the kernel:
 
 1. **Autonomy Mode Synchronization**:
    - `Audit` (`0`): Kernel driver monitors and logs all process creations to the ring buffer without blocking.
    - `Active` (`1`): Kernel driver enforces pre-operation blocking on all matched rules (`STATUS_ACCESS_DENIED` / `-EACCES`).
-   - `Lockdown` (`2`): Strictest posture; all unverified or high-risk execution attempts are blocked by the kernel.
-2. **Graceful Fallback**: If the Ring-0 kernel driver or eBPF LSM is not installed or the endpoint lacks elevated driver-load privileges, OpenỌ̀ṣọ́ọ̀sì automatically and seamlessly falls back to defense-in-depth user-mode containment:
+   - `Lockdown` (`2`): Strictest posture; all unverified or high-risk execution attempts (including signed LOLBin credential-harvesting invocations such as `rundll32.exe keymgr,KRShowKeyMgr` and `comsvcs.dll,MiniDump`) are immediately intercepted and terminated without waiting for human approval.
+2. **Graceful Fallback & Real-Time Kernel Command-Line Inspection**: If the Ring-0 kernel driver or eBPF LSM is not installed or the endpoint lacks elevated driver-load privileges, OpenỌ̀ṣọ́ọ̀sì automatically and seamlessly falls back to defense-in-depth user-mode containment:
+   - **Live `Microsoft-Windows-Kernel-Process` ETW + 750ms Kernel Delta Poller**: Enriches process creation events directly via `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` + `QueryFullProcessImageNameW` + `NtQueryInformationProcess(ProcessCommandLineInformation = 60)` so command lines of elevated or GUI-hosted LOLBins (`rundll32.exe`, `regsvr32.exe`, `mshta.exe`) are captured even when standard PEB `PROCESS_VM_READ` queries return empty.
+   - **Signed LOLBin Veto Override**: Prevents `TrustedVendorVoter` (Authenticode/NSRL allowlisting on Microsoft-signed system binaries) from vetoing consensus when behavioral or credential-access voters (`CredentialGuard-Memory`, `BehavioralYara`, `Sigma-Rule-Engine`) detect active credential harvesting or injection.
+   - **Kernel & EDR Blocklist Manager (`Exclude & Unlock` / `Purge Benign`)**: Protects core OS binaries, non-executables (`.winmd`, `.so`, `.pyd`), and signed developer/database toolchains from accidental IFEO registry hijacking, while providing one-click **Exclude & Unlock** (`/api/blocking/rules/exclude`) and **Purge Benign** (`/api/blocking/rules/purge-benign`) controls that remove IFEO keys and persist BLAKE3 + path exclusions across background scans.
    - **WFP (Windows Filtering Platform)**: Outbound packet inspection and network quarantine.
    - **Active Process Hollowing & Thread Tarpitting**: Microsecond process suspension and memory fence isolation.
    - **Job Object Sandboxing**: Resource and token restrictions.
@@ -830,10 +833,22 @@ graph TD
   - Reports cumulative advantage $\text{Advantage} = \bar{R}_{\text{RL}} - \bar{R}_{\text{heuristic}}$.
 - **Oracle Counterfactual Regret**: Measures instantaneous policy regret against the counterfactual optimal oracle action: $\text{Regret}_t = \max(0.0, R^* - R(a_t))$, providing an objective benchmark of decision quality.
 
-### Pillar 6: Temporal Learning Dynamics
+### Pillar 6: Temporal Learning Dynamics & Contextual Decision-Model Token Q-Learning
 - **Early vs. Late Reward Progression**: Tracks early mean rewards ($t < 100$) versus late mean rewards ($t \ge 100$), mathematically verifying learning progression: $R_{\text{late}} > R_{\text{early}}$.
 - **Asymptotic Regret Decay**: Proves policy convergence through monotonically decaying regret: $\lim_{t \to \infty} \text{Regret}_t \to 0$.
 - **False-Positive Rollback Drops**: Tracks rollback strategies executed for false positives to monitor mitigation reversibility and friction reduction.
+- **Closed-Loop Contextual Token Q-Learning (`learned_token_weights`)**: In addition to per-voter reliability calibration and 32-D contextual bandit updates, every verified consensus threat and analyst feedback outcome calls `ClefDecisionEngine::record_contextual_rl_feedback(&state_text, actual_malicious, reward_signal)`. The local decision engine extracts discriminative command-line tokens, DLL exports, and MITRE technique identifiers (e.g., `keymgr`, `krshowkeymgr`, `comsvcs`, `minidump`, `/etc/shadow`, `mimipenguin`, `t1003`, `t1555.004`) and updates bounded per-token Q-weights in `learned_token_weights` ($\Delta w_k = \text{clamp}(\eta \cdot r, -3.5, +4.0)$). This guarantees that signed OS LOLBins abused for local credential harvesting are immediately recognized and isolated (`verdict = "malicious"`, `action = "isolate"`, `human_escalation_required = false`) without ever allowing `Signed: true` or `NSRL` allowlisting to suppress active credential dumps.
+
+```mermaid
+flowchart LR
+    A["Live Process / ETW / eBPF Event<br/>(e.g. rundll32.exe keymgr,KRShowKeyMgr)"] --> B["PolicyEngine Voters<br/>CredentialGuard-Memory (0.98) + Sigma"]
+    B --> C{"Signed / NSRL Binary?"}
+    C -- "Behavioral / Credential Override" --> D["Synthesize ThreatSignature<br/>(T1003 / T1555.004, Isolate)"]
+    D --> E["Clef / OpenJev / Strands Decision Layer<br/>+ Contextual RL Token Q-Weights"]
+    E --> F["Surgical Process-Tree Kill<br/>(Child PID Terminated, OS Binary Preserved)"]
+    F --> G["Closed-Loop RL Feedback<br/>Update Voter Weights + learned_token_weights"]
+    G -.-> E
+```
 
 ---
 
@@ -1440,7 +1455,23 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 | `trust` | Decentralized Identity (DID) & certificate management | `who-am-i`, `init-ca`, `issue` |
 | `story` | Generate forensic attack narrative from Merkle Audit Trail | — |
 | `status` | Agent health, detection engine, and NSRL status check | — |
+| `clean` | Dynamic host disk, log, database, & memory cleanup | `--models`, `--aggressive`, `--days <N>` |
 | `update-stix` | Synchronize MITRE ATT&CK & ATLAS STIX 2.1 catalog | `--force`, `--broadcast` |
+
+### `clean` — Dynamic Host Disk, Log, Database & Memory Cleanup
+
+```powershell
+# Dynamic pressure-aware cleanup (auto-scales retention from 30d down to 2d based on mount-point free disk space)
+.\osoosi.exe clean
+
+# Aggressive deep cleanup (2-day retention + temp/cache purge + SQLite WAL checkpoint & VACUUM + working-set trim)
+.\osoosi.exe clean --aggressive
+
+# Custom retention cutoff and optional unused model cache cleanup
+.\osoosi.exe clean --days 7 --models
+```
+
+Inspects real-time free disk space on the active mount point (`NOMINAL`, `MODERATE`, `ELEVATED`, `CRITICAL`), rotates active logs safely even when held open by background processes (fallback copy + in-place truncate on Windows `ERROR_SHARING_VIOLATION`), prunes aged quarantine/temp/audit artifacts, compacts SQLite (`PRAGMA wal_checkpoint(TRUNCATE)` + `VACUUM`), and trims OS working sets. Also accessible in the WebUI **Utilities** tab (`GET /api/system/disk-status` and `POST /api/system/cleanup`).
 
 ### `start` — Launch the Autonomous Security Loop
 
@@ -2073,8 +2104,11 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
 
+- **Cross-Platform Lockdown Credential-Guard Enforcement & Signed LOLBin Veto Override (`crates/osoosi-policy/` & `crates/osoosi-core/`)**: Prevents `TrustedVendorVoter` and `NSRL-Veto` from suppressing consensus when deterministic behavioral or memory voters (`CredentialGuard-Memory`, `ProcessInjection-Memory`, `Sigma-Detection`) fire on signed OS LOLBins (`rundll32.exe keymgr,KRShowKeyMgr`, `comsvcs.dll MiniDump`, `vaultcmd`, `credwiz`, `/etc/shadow` readers, `mimipenguin`, `unshadow`, `gcore`/`gdb` memory dumpers, `/etc/ld.so.preload`). Performs surgical process-tree termination of offending child PIDs while protecting core OS and signed vendor binaries from persistent `FileBlockExecutable` bricking (`is_protected_or_benign_system_path`), accompanied by one-click WebUI **Exclude (Whitelist)** (`/api/blocking/rules/exclude`) and **Purge Benign / Signed FPs** (`/api/blocking/rules/purge-benign`) controls.
+- **Closed-Loop Contextual RL Token Q-Learning (`learned_token_weights`) in Hybrid Decision Engine (`crates/osoosi-behavioral/src/decision_model/`)**: `ClefDecisionEngine` (`LocalDecisionEngine`, `OpenJevClient`, `StrandsClient`) learns bounded per-token Q-weights (`record_contextual_rl_feedback`) from live telemetry and operator feedback, overriding `Signed: true` bonuses whenever credential-harvesting or MITRE `T1003`/`T1555.004` indicators are present and eliminating false benign suppressions.
+- **Dynamic Mount-Point Disk & Memory Cleanup Manager (`crates/osoosi-core/src/log_retention.rs`, `/api/system/cleanup`, & `osoosi clean`)**: Resolves the active working directory's mount point via `sysinfo::Disks`, scales retention across 4 disk pressure tiers (`NOMINAL` 30d, `MODERATE` 14d, `ELEVATED` 7d, `CRITICAL` 2d), safely rotates locked active log files on Windows via copy + in-place truncate fallback (`ERROR_SHARING_VIOLATION` resilient), compacts SQLite WAL + `VACUUM`, trims OS working sets, and exposes a live **Dynamic Host Disk & Memory Cleanup Manager** card in the WebUI **Utilities** tab.
 - **Two-Tier Hierarchical BLAKE3 Merkle Hash Chain Architecture (`crates/osoosi-audit/src/hierarchical.rs`)**: Lock-free domain-separated rolling BLAKE3 chains per Arm (`OSOOSI_ARM_MERKLE_V1`, monotonic epoch binding & fracture proofs on surgical autotomy), per Tarpit (`OSOOSI_TARPIT_MERKLE_V1`, wire-speed deception non-repudiation), and per Containment Ring (`OSOOSI_RING_MERKLE_V1`, Rings 0..3 cross-ring pipeline blinding detection $N_0$ vs $N_2$), periodically folding into an Ed25519-signed interior rollup node anchored into the global `MerkleAuditTree`, Siquery table `hierarchical_merkle_anchors`, and `GET /api/audit/merkle-hierarchy`.
-- **NSRL Demand-Paged 4 KB Binary Allowlist Merkle Tree & ASLR-Invariant Process Code-Segment Merkle Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs`)**: $O(\log N)$ global allowlist inclusion proofs (`verify_nsrl_executable_proof`) + $O(\log m)$ 4 KB demand-paged page-cache verification (`verify_demand_paged_block`) paired with Linux `fs-verity` (`FS_IOC_GETFLAGS` / `FS_IOC_MEASURE_VERITY`) and Windows Security Catalog / Authenticode. Relocation-normalized ($\Delta_k = \text{VA} - \text{RandomizedBase}$) `.text` page hashing (`verify_aslr_code_segment_pages`) produces identical Merkle roots across randomized ASLR bases on both Windows PE and Linux ELF64 PIE/PIC executables while catching single-byte inline hooks (`0xCC`, `0xE9`) and process hollowing (`GET /api/audit/nsrl-aslr-merkle`).
+- **Cross-Platform NSRL (Windows, Linux, macOS), Demand-Paged 4 KB Binary Allowlist Merkle Tree, & PE64/ELF64 ASLR Code-Segment Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs` & `crates/osoosi-memory/`)**: Indexed SQLite NSRL lookups (`idx_nsrl_sha256`, `idx_nsrl_md5`) + Linux `dpkg -S` / `rpm -Vf` + ELF64 trust + cross-platform 4 KB block-level `fs-verity` Merkle digests (`measure_linux_fs_verity`), paired with both PE64 (`extract_pe64_code_segment`) and ELF64 (`extract_elf64_code_segment`) relocation-normalized `.text` code-segment anchoring (`anchor_current_process`).
 - **OpenJev ("System One") Non-Autoregressive Single-Forward-Pass Decision Engine (`crates/osoosi-behavioral/src/decision_model/openjev_client.rs`)**: Sub-40ms non-autoregressive decision classification extracting exact boolean (`Yes`/`No`) and ordinal (`1..5`) logit probabilities in a single forward pass with Shannon entropy uncertainty quantification and 1 MB bounded stream protection.
 - **Full-Stack Native Linux (`x86_64-unknown-linux-gnu`) Support & GPG-Signed Release Packages (`v1.2.0`)**: Native CO-RE eBPF probes (`sched_process_exec`, `sched_process_exit`, `sys_enter_connect`, `sys_enter_mprotect` $W \oplus X$, `sys_enter_ptrace` process tampering, `lsm/bprm_check_security`), Linux `systemd` (`osoosi-edr.service`) CLI management, `/proc/<pid>/maps` VAD forensics, `dpkg -S` / `rpm -Vf` + ELF64 trust & `fs-verity`, and pre-built `.deb` (`oshoosiclaw_1.2.0_amd64.deb`), `.rpm` (`oshoosiclaw-1.2.0-1.x86_64.rpm`), and `.tar.gz` (`oshoosiclaw-1.2.0-linux-x86_64.tar.gz`) packages alongside the Authenticode-signed Windows `OshoosiClaw.msi` (`50.5 MB`).
 - **100% Native Rust `siquery-rs` 101-Table Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**: In-memory `rusqlite` SQL engine (`PRAGMA query_only = ON` and statement-level `stmt.readonly()` enforcement) with zero external `osqueryi.exe` dependencies. Implements 101 OS, cryptographic Merkle (`hierarchical_merkle_anchors`), and AI agent security tables, 45-second continuous `EdrOrchestrator::run_siquery_edr_audit_sweep()` sweeps, `osoosi siquery` CLI, and the interactive `#siquery-view` WebUI SQL Console.

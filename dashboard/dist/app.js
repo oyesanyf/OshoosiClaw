@@ -4633,7 +4633,8 @@ async function fetchBlockingRules() {
                     <td style="padding: 12px 16px;">${kindBadge}</td>
                     <td style="padding: 12px 16px;"><span class="badge" style="font-family: monospace; font-size: 11px;" title="${escapeHtml(hashVal || rule.path)}">${escapeHtml(displayHash)}</span></td>
                     <td style="padding: 12px 16px;"><span class="badge green">📡 Broadcast to Mesh</span></td>
-                    <td style="padding: 12px 16px; text-align: right;">
+                    <td style="padding: 12px 16px; text-align: right; white-space: nowrap;">
+                        <button class="btn-text" style="color:var(--accent-green); cursor:pointer; margin-right: 10px;" title="Remove rule and permanently whitelist as benign false positive" onclick="excludeRule('${encodeURIComponent(rule.path).replace(/'/g, '%27')}')">Exclude (Whitelist)</button>
                         <button class="btn-text" style="color:var(--accent-red); cursor:pointer;" onclick="unlockRule('${encodeURIComponent(rule.path).replace(/'/g, '%27')}')">Unlock / Remove</button>
                     </td>
                 </tr>
@@ -4737,8 +4738,59 @@ async function unlockRule(encodedPath) {
     }
 }
 
+async function excludeRule(encodedPath) {
+    const path = decodeURIComponent(encodedPath);
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/blocking/rules/exclude`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, exclude: true })
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.ok) {
+            showSkyrlToast(`Rule excluded and permanently whitelisted: ${path}`, 'success');
+            await fetchBlockingRules();
+        } else {
+            showUserError('Blocklist Exclude', data || 'Failed to exclude rule');
+        }
+    } catch (e) {
+        showUserError('Blocklist Exclude', e);
+    }
+}
+
+async function purgeBenignBlocklistRules() {
+    const btn = document.getElementById('btn-purge-benign-rules');
+    try {
+        if (btn) {
+            btn.disabled = true;
+            btn.innerText = 'Purging...';
+        }
+        const res = await fetchWithRetry(`${API_BASE}/blocking/rules/purge-benign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.ok) {
+            showSkyrlToast(data.message || `Purged ${data.purged_count || 0} benign/signed rules`, 'success');
+            await fetchBlockingRules();
+        } else {
+            showUserError('Purge Benign Rules', data || 'Failed to purge benign rules');
+        }
+    } catch (e) {
+        showUserError('Purge Benign Rules', e);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = '🧹 Purge Benign / Signed FPs';
+        }
+    }
+}
+
 window.submitBlocklistRule = submitBlocklistRule;
 window.unlockRule = unlockRule;
+window.excludeRule = excludeRule;
+window.purgeBenignBlocklistRules = purgeBenignBlocklistRules;
 window.fetchBlockingRules = fetchBlockingRules;
 
 /**
@@ -7922,6 +7974,7 @@ function renderUtilitiesView() {
     try {
         loadCalibratedModels();
         pollModelPullProgress();
+        loadDynamicDiskStatus();
         if (window.lucide) {
             window.lucide.createIcons();
         }
@@ -8277,11 +8330,159 @@ function copyTerminalCommand(cmd, btn) {
     });
 }
 
+// Dynamic Host Disk & Memory Cleanup Manager
+async function loadDynamicDiskStatus() {
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/system/disk-status`, {}, 2, 300);
+        if (!resp || !resp.ok) {
+            console.warn('[loadDynamicDiskStatus] Failed to load disk status:', resp ? resp.status : 'no response');
+            return;
+        }
+        const data = await resp.json();
+        if (!data || data.status !== 'ok') return;
+
+        // 1. Badge & Pressure
+        const badge = document.getElementById('disk-pressure-badge');
+        if (badge) {
+            badge.innerText = data.pressure_tier || 'NOMINAL';
+            if (data.pressure_tier === 'CRITICAL') {
+                badge.className = 'badge red';
+            } else if (data.pressure_tier === 'ELEVATED') {
+                badge.className = 'badge orange';
+            } else if (data.pressure_tier === 'MODERATE') {
+                badge.className = 'badge yellow';
+            } else {
+                badge.className = 'badge green';
+            }
+        }
+
+        // 2. Summary text
+        const summary = document.getElementById('disk-free-summary-text');
+        if (summary) {
+            summary.innerHTML = `<strong>Free Space:</strong> ${data.free_gb} GB (${data.free_pct}% free of ${data.total_gb} GB) &nbsp;·&nbsp; <strong>Pressure Tier:</strong> ${escapeHtml(data.pressure_tier)} &nbsp;·&nbsp; <strong>Recommended Retention:</strong> ${data.recommended_retention_days} days`;
+        }
+
+        // 3. Stats Grid
+        const statFree = document.getElementById('stat-disk-free');
+        if (statFree) statFree.innerText = `${data.free_gb} GB`;
+
+        const statUsedPct = document.getElementById('stat-disk-used-pct');
+        if (statUsedPct) statUsedPct.innerText = `${data.used_pct}% Used (${data.total_gb} GB Total)`;
+
+        const statDb = document.getElementById('stat-disk-db');
+        if (statDb) statDb.innerText = data.formatted_database || '-- MB';
+
+        const statLogs = document.getElementById('stat-disk-logs');
+        if (statLogs) statLogs.innerText = data.formatted_logs || '-- MB';
+
+        const statLogsCount = document.getElementById('stat-disk-logs-count');
+        if (statLogsCount) statLogsCount.innerText = `${data.logs_count || 0} files`;
+
+        const statQuarantine = document.getElementById('stat-disk-quarantine');
+        if (statQuarantine) statQuarantine.innerText = data.formatted_quarantine || '-- MB';
+
+        const statQuarantineCount = document.getElementById('stat-disk-quarantine-count');
+        if (statQuarantineCount) statQuarantineCount.innerText = `${data.quarantine_count || 0} files`;
+
+        const statTemp = document.getElementById('stat-disk-temp');
+        if (statTemp) statTemp.innerText = data.formatted_temp_cache || '-- MB';
+
+        const statTempCount = document.getElementById('stat-disk-temp-count');
+        if (statTempCount) statTempCount.innerText = `${data.temp_cache_count || 0} files`;
+
+    } catch (err) {
+        console.error('[loadDynamicDiskStatus] Error:', err);
+    }
+}
+
+async function runDynamicDiskCleanup(aggressive = false) {
+    const btnDynamic = document.getElementById('btn-run-disk-cleanup');
+    const btnAggressive = document.getElementById('btn-run-aggressive-cleanup');
+    const banner = document.getElementById('disk-cleanup-result-banner');
+    const retentionSelect = document.getElementById('disk-cleanup-retention-select');
+
+    let daysRetention = undefined;
+    if (aggressive) {
+        daysRetention = 0;
+    } else if (retentionSelect) {
+        const val = retentionSelect.value;
+        if (val !== 'auto') {
+            daysRetention = parseInt(val, 10);
+        }
+    }
+
+    const payload = {};
+    if (daysRetention !== undefined && !isNaN(daysRetention)) {
+        payload.days_retention = daysRetention;
+    }
+    if (aggressive || daysRetention === 0) {
+        payload.aggressive = true;
+    }
+
+    if (btnDynamic) btnDynamic.disabled = true;
+    if (btnAggressive) btnAggressive.disabled = true;
+    if (banner) {
+        banner.style.display = 'block';
+        banner.style.background = 'rgba(59, 130, 246, 0.15)';
+        banner.style.border = '1px solid var(--accent-blue, #3b82f6)';
+        banner.style.color = 'var(--text-primary)';
+        banner.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px; margin-right:6px; vertical-align:middle;"></i> Running dynamic disk and memory maintenance cycle...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    try {
+        const resp = await fetchWithRetry(`${API_BASE}/system/cleanup`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        }, 1, 500);
+
+        if (!resp || !resp.ok) {
+            throw new Error(`HTTP ${resp ? resp.status : 'no response'}`);
+        }
+
+        const data = await resp.json();
+        if (data.status === 'success') {
+            if (banner) {
+                banner.style.background = 'rgba(16, 185, 129, 0.15)';
+                banner.style.border = '1px solid var(--accent-green, #10b981)';
+                banner.style.color = 'var(--accent-green, #10b981)';
+                banner.innerHTML = `✅ <strong>Cleanup Successful:</strong> Freed <strong>${escapeHtml(data.formatted_bytes_freed || '0 B')}</strong>. Effective retention: ${data.effective_retention_days}d (Pressure: ${escapeHtml(data.pressure_tier)}). In-memory caches pruned and OS working set trimmed.`;
+            }
+            if (typeof showToast === 'function') {
+                showToast(`🧹 Host Disk & Memory Cleanup: Freed ${data.formatted_bytes_freed || '0 B'}`, 'success');
+            }
+        } else {
+            throw new Error(data.message || 'Cleanup returned non-success');
+        }
+
+        await loadDynamicDiskStatus();
+
+    } catch (err) {
+        console.error('[runDynamicDiskCleanup] Error:', err);
+        if (banner) {
+            banner.style.background = 'rgba(239, 68, 68, 0.15)';
+            banner.style.border = '1px solid var(--accent-red, #ef4444)';
+            banner.style.color = 'var(--accent-red, #ef4444)';
+            banner.innerHTML = `❌ <strong>Cleanup Error:</strong> ${escapeHtml(err.message)}`;
+        }
+        if (typeof showToast === 'function') {
+            showToast('Cleanup failed: ' + err.message, 'error');
+        }
+    } finally {
+        if (btnDynamic) btnDynamic.disabled = false;
+        if (btnAggressive) btnAggressive.disabled = false;
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
 window.renderUtilitiesView = renderUtilitiesView;
 window.loadCalibratedModels = loadCalibratedModels;
 window.downloadCalibratedModel = downloadCalibratedModel;
 window.downloadAllCalibratedModels = downloadAllCalibratedModels;
 window.copyTerminalCommand = copyTerminalCommand;
+window.loadDynamicDiskStatus = loadDynamicDiskStatus;
+window.runDynamicDiskCleanup = runDynamicDiskCleanup;
 
 // ==========================================
 // Siquery-RS Live EDR SQL Console (98-Table Parity)

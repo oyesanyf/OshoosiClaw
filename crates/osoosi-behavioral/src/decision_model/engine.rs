@@ -731,6 +731,23 @@ impl ClefDecisionEngine {
             .record_rl_feedback(decision_id, reward, actual_outcome);
     }
 
+    /// Record contextual Reinforcement Learning for Calibrated Decisions (RLCD) feedback.
+    pub fn record_contextual_rl_feedback(
+        &self,
+        decision_id: &str,
+        state_text: &str,
+        reward: f64,
+        actual_outcome: &str,
+    ) {
+        self.local_engine
+            .record_contextual_rl_feedback(decision_id, state_text, reward, actual_outcome);
+    }
+
+    /// Retrieve dynamically learned RL token weight.
+    pub fn learned_token_weight(&self, token: &str) -> Option<f64> {
+        self.local_engine.learned_token_weight(token)
+    }
+
     /// Returns a point-in-time metrics summary for supervisor telemetry.
     pub fn metrics(&self) -> DecisionMetricsSummary {
         let total = self.metrics.total_evaluations.load(Ordering::Relaxed);

@@ -35,9 +35,8 @@ fn event_warrants_process_network_shaping(ev: &HostSecurityEvent) -> bool {
     )
 }
 
-/// Apply Windows QoS “Ghost Tarpit” to the process image when Tarpit / GhostTarpit is in effect
+/// Apply network QoS “Ghost Tarpit” to the process image when Tarpit / GhostTarpit is in effect
 /// and the threat is OTX- or network/DNS-originated. Returns a message for logs/audit.
-#[cfg(target_os = "windows")]
 pub fn try_apply_process_network_qostarpit(
     event: &HostSecurityEvent,
     signature: &ThreatSignature,
@@ -67,15 +66,6 @@ pub fn try_apply_process_network_qostarpit(
         Ok(msg) => Some(msg),
         Err(e) => Some(format!("Network QoS tarpit not applied: {}", e)),
     }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn try_apply_process_network_qostarpit(
-    _event: &HostSecurityEvent,
-    _signature: &ThreatSignature,
-    _action: ResponseAction,
-) -> Option<String> {
-    None
 }
 
 /// JSON payload for audit when QoS tarpit is attempted.

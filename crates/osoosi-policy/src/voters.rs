@@ -772,15 +772,27 @@ pub struct NsrlVoter {
     pub memory: Arc<osoosi_memory::MemoryStore>,
 }
 
-fn sha1_from_sysmon_hashes(event: &HostSecurityEvent) -> Option<String> {
-    let hashes = event.data.get("Hashes")?.as_str()?;
-    for part in hashes.split(',') {
-        let p = part.trim();
-        if let Some(rest) = p.strip_prefix("SHA1=").or_else(|| p.strip_prefix("SHA1:")) {
-            return Some(rest.trim().to_ascii_lowercase());
+pub(crate) fn extract_all_candidate_hashes(event: &HostSecurityEvent) -> Vec<String> {
+    let mut hashes = Vec::new();
+    if let Some(h_str) = event.data.get("Hashes").and_then(|v| v.as_str()) {
+        for part in h_str.split(',') {
+            let p = part.trim();
+            for prefix in &["SHA1=", "SHA1:", "SHA256=", "SHA256:", "MD5=", "MD5:"] {
+                if let Some(rest) = p.strip_prefix(prefix) {
+                    hashes.push(rest.trim().to_ascii_lowercase());
+                }
+            }
         }
     }
-    None
+    for field in &["SHA1", "sha1", "SHA256", "sha256", "MD5", "md5", "Hash", "hash", "blake3"] {
+        if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+            let trimmed = val.trim().to_ascii_lowercase();
+            if !trimmed.is_empty() && !hashes.contains(&trimmed) {
+                hashes.push(trimmed);
+            }
+        }
+    }
+    hashes
 }
 
 #[async_trait]
@@ -789,14 +801,53 @@ impl ThreatVoter for NsrlVoter {
         "NSRL-Veto".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let sha1 = sha1_from_sysmon_hashes(event)?;
-        if self.cache.get(&sha1).map(|e| *e.value()).unwrap_or(false) {
-            return Some(vote_result_nsrl_veto());
+        let candidate_hashes = extract_all_candidate_hashes(event);
+        for h in &candidate_hashes {
+            if self.cache.get(h).map(|e| *e.value()).unwrap_or(false) {
+                return Some(vote_result_nsrl_veto());
+            }
+            if self.memory.is_nsrl_known_good(h).unwrap_or(false) {
+                self.cache.insert(h.clone(), true);
+                return Some(vote_result_nsrl_veto());
+            }
         }
-        if self.memory.is_nsrl_known_good(&sha1).unwrap_or(false) {
-            self.cache.insert(sha1, true);
-            return Some(vote_result_nsrl_veto());
+
+        let image_path = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("image"))
+            .or_else(|| event.data.get("ImagePath"))
+            .and_then(|v| v.as_str());
+
+        if let Some(img) = image_path {
+            if self.cache.get(img).map(|e| *e.value()).unwrap_or(false) {
+                return Some(vote_result_nsrl_veto());
+            }
+
+            if osoosi_audit::nsrl_aslr_merkle::global_nsrl_aslr_guard()
+                .nsrl_engine()
+                .get_profile(img)
+                .is_some()
+            {
+                self.cache.insert(img.to_string(), true);
+                return Some(vote_result_nsrl_veto());
+            }
+
+            // On Linux/Unix, compute hash of host binary on disk if readable
+            let path = std::path::Path::new(img);
+            if path.is_file() {
+                if let Ok(bytes) = std::fs::read(path) {
+                    use sha2::Digest;
+                    let sha256_hex = hex::encode(sha2::Sha256::digest(&bytes));
+                    if self.memory.is_nsrl_known_good(&sha256_hex).unwrap_or(false) {
+                        self.cache.insert(img.to_string(), true);
+                        return Some(vote_result_nsrl_veto());
+                    }
+                }
+                self.cache.insert(img.to_string(), false);
+            }
         }
+
         None
     }
 }
@@ -1222,28 +1273,9 @@ impl ThreatVoter for CveLookupVoter {
             return None; // Abstain to prevent log spam/veto on core OS processes
         }
 
-        let sha1 = event
-            .data
-            .get("SHA1")
-            .and_then(|v| v.as_str())
-            .map(ToOwned::to_owned)
-            .or_else(|| {
-                event
-                    .data
-                    .get("Hashes")
-                    .and_then(|v| v.as_str())
-                    .and_then(|h| {
-                        h.split(',')
-                            .map(str::trim)
-                            .find_map(|part| {
-                                part.strip_prefix("SHA1=")
-                                    .or_else(|| part.strip_prefix("SHA1:"))
-                            })
-                            .map(|s| s.trim().to_string())
-                    })
-            });
-        if let Some(s) = sha1 {
-            if self.memory.is_nsrl_known_good(&s).unwrap_or(false) {
+        let candidate_hashes = extract_all_candidate_hashes(event);
+        for h in &candidate_hashes {
+            if self.memory.is_nsrl_known_good(h).unwrap_or(false) {
                 return None; // Abstain for known-good files
             }
         }
@@ -2200,11 +2232,14 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         // Vector 2: Windows Credential Manager, Vault, DPAPI & GUI/DLL Applets (T1003 / T1555.004)
-        if cmdline.contains("keymgr.dll") || cmdline.contains("krshowkeymgr") {
+        if cmdline.contains("keymgr.dll")
+            || cmdline.contains("krshowkeymgr")
+            || ((image.contains("rundll32") || cmdline.contains("rundll32")) && cmdline.contains("keymgr"))
+        {
             return Some(VoteResult {
-                confidence: 0.96,
-                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1003): keymgr.dll invocation: {}", cmdline),
-                weight: 1.25,
+                confidence: 0.98,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1003.007 / T1003 / T1555.004): keymgr.dll invocation: {}", cmdline),
+                weight: 1.50,
             });
         }
 
@@ -2444,6 +2479,81 @@ impl ThreatVoter for CredentialGuardVoter {
                     weight: 1.25,
                 });
             }
+        }
+
+        // Vector 7: Linux & Cross-Platform Local Credential Dumping & Post-Compromise Extraction (T1003.007 / T1003.008 / T1552)
+        // 7a. Dedicated Linux credential dumpers
+        let linux_dumpers = [
+            "mimipenguin", "lazagne", "unshadow", "linpeas", "linuxprivchecker", "sudokill", "3snake",
+        ];
+        if linux_dumpers.iter().any(|d| image.contains(d) || cmdline.contains(d)) {
+            return Some(VoteResult {
+                confidence: 0.98,
+                reason: format!(
+                    "[CredentialGuard-Memory]: Linux Credential Dumper Tool Detected (T1003.007 / T1552): {}",
+                    cmdline
+                ),
+                weight: 1.50,
+            });
+        }
+
+        // 7b. Unauthorized /etc/shadow, /etc/gshadow, /etc/security/opasswd, /etc/master.passwd dumping
+        let shadow_targets = ["/etc/shadow", "/etc/gshadow", "/etc/security/opasswd", "/etc/master.passwd"];
+        if shadow_targets.iter().any(|t| cmdline.contains(t)) {
+            let reader_tools = [
+                "cat ", "grep ", "awk ", "sed ", "cp ", "tar ", "base64", "head ", "tail ", "less ",
+                "more ", "strings ", "xxd", "od ", "dd ", "python", "perl", "ruby", "php", "node",
+                "curl", "wget",
+            ];
+            let legit_auth = [
+                "sshd", "passwd", "unix_chkpwd", "useradd", "usermod", "userdel", "chage", "gpasswd",
+                "newusers", "chpasswd", "login", "su", "sudo", "systemd", "pam",
+            ];
+            let is_legit_auth = legit_auth.iter().any(|b| image.ends_with(b) || image.contains(&format!("/{b}")));
+            let is_reader = reader_tools.iter().any(|r| cmdline.contains(r) || image.contains(r.trim()));
+            if is_reader && !is_legit_auth {
+                return Some(VoteResult {
+                    confidence: 0.98,
+                    reason: format!(
+                        "[CredentialGuard-Memory]: Unauthorized Linux Shadow Password File Dumping (T1003.008 / T1552.001): {}",
+                        cmdline
+                    ),
+                    weight: 1.50,
+                });
+            }
+        }
+
+        // 7c. Linux process memory dumping targeting credential processes or /proc memory scraping
+        let is_gdb_or_gcore = (image.contains("gcore") || cmdline.contains("gcore"))
+            || ((image.contains("gdb") || cmdline.contains("gdb"))
+                && (cmdline.contains("-p") || cmdline.contains("--pid") || cmdline.contains("attach") || cmdline.contains("dump memory")));
+        let is_proc_mem_scrape = cmdline.contains("/mem") && (cmdline.contains("/proc/") || image.contains("dd") || image.contains("cat") || image.contains("python") || cmdline.contains("dd ") || cmdline.contains("cat "));
+        
+        let cred_procs = [
+            "sshd", "sudo", "su", "gpg-agent", "ssh-agent", "gnome-keyring", "kwalletd", "vsftpd", "postgres", "mysqld",
+        ];
+        let targets_cred_proc = cred_procs.iter().any(|p| cmdline.contains(p) || target_image.contains(p));
+        if (is_gdb_or_gcore && (targets_cred_proc || cmdline.contains("dump"))) || (is_proc_mem_scrape && (targets_cred_proc || cmdline.contains("/proc/self/mem"))) {
+            return Some(VoteResult {
+                confidence: 0.98,
+                reason: format!(
+                    "[CredentialGuard-Memory]: Linux Process Memory Credential Dumping (T1003.007): {}",
+                    cmdline
+                ),
+                weight: 1.50,
+            });
+        }
+
+        // 7d. /etc/ld.so.preload rootkit tampering
+        if cmdline.contains("/etc/ld.so.preload") || event.data.get("TargetFilename").and_then(|v| v.as_str()).map(|f| f.contains("/etc/ld.so.preload")).unwrap_or(false) {
+            return Some(VoteResult {
+                confidence: 0.98,
+                reason: format!(
+                    "[CredentialGuard-Memory]: Linux Shared Library Hijack / Rootkit Tampering via /etc/ld.so.preload (T1574.006): {}",
+                    cmdline
+                ),
+                weight: 1.50,
+            });
         }
 
         None
@@ -2831,7 +2941,7 @@ mod tests {
     async fn test_credential_guard_voter_all_vectors() {
         let voter = CredentialGuardVoter;
 
-        // 1. rundll32.exe keymgr.dll,KRShowKeyMgr (T1003)
+        // 1. rundll32.exe keymgr.dll,KRShowKeyMgr (T1003) and extensionless keymgr,KRShowKeyMgr
         let ev1 = make_proc_event(
             "C:\\Windows\\System32\\rundll32.exe",
             "rundll32.exe keymgr.dll,KRShowKeyMgr",
@@ -2842,9 +2952,20 @@ mod tests {
             "keymgr.dll KRShowKeyMgr must trigger CredentialGuard"
         );
         let v1 = res1.unwrap();
-        assert_eq!(v1.confidence, 0.96);
+        assert_eq!(v1.confidence, 0.98);
         assert!(v1.reason.contains("T1003"));
         assert!(v1.reason.contains("keymgr.dll"));
+
+        let ev1_extless = make_proc_event(
+            "C:\\WINDOWS\\system32\\rundll32.exe",
+            "\"C:\\WINDOWS\\system32\\rundll32.exe\" keymgr,KRShowKeyMgr",
+        );
+        let res1_extless = voter.vote(&ev1_extless).await;
+        assert!(
+            res1_extless.is_some(),
+            "extensionless keymgr,KRShowKeyMgr must trigger CredentialGuard"
+        );
+        assert_eq!(res1_extless.unwrap().confidence, 0.98);
 
         // 2. credwiz.exe
         let ev2 = make_proc_event("C:\\Windows\\System32\\credwiz.exe", "credwiz.exe");

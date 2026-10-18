@@ -287,7 +287,11 @@ fn classify_vote(
         }
         "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
         "NVD-CVE-Lookup" => (EvidenceClass::ThreatIntel, 1.0, true), // High reliability, triggers strong action
-        "BehavioralYara" => (EvidenceClass::Behavior, 0.88, true),
+        "BehavioralYara" | "Behavioral-Threat-Model" => (EvidenceClass::Behavior, 0.88, true),
+        "Foundation-Sec-Reasoning" => (EvidenceClass::Behavior, 0.85, true),
+        "Native-Instrumentation" => (EvidenceClass::Memory, 0.94, true),
+        "Injection-Telemetry" => (EvidenceClass::Memory, 0.95, true),
+        "DNS-Shield" | "Sysmon-DNS-Voter" => (EvidenceClass::LiveNetwork, 0.90, true),
         "CredentialGuard-Memory" | "ProcessInjection-Memory" => (EvidenceClass::Memory, 0.96, true),
         "YaraX-Signatures"
         | "YaraX-Memory"
@@ -373,11 +377,25 @@ fn orchestrate_evidence(
 
     let independent = classes.len();
     let base = if mass > 0.0 { support / mass } else { 0.0 };
-    let corroboration = match independent {
+    let corroboration: f32 = match independent {
         0 => 0.0,
         1 => 0.52,
         2 => 0.82,
         _ => 1.0,
+    };
+    let has_deterministic_credential_or_memory_guard = votes.iter().any(|v| {
+        v.strong_action
+            && v.reliability >= 0.90
+            && v.result.confidence >= 0.90
+            && (matches!(v.class, EvidenceClass::Memory)
+                || v.result.reason.contains("CredentialGuard")
+                || v.result.reason.contains("keymgr")
+                || v.result.reason.contains("comsvcs"))
+    });
+    let corroboration = if has_deterministic_credential_or_memory_guard {
+        corroboration.max(0.92f32)
+    } else {
+        corroboration
     };
     let mut confidence = (base * corroboration + max_single.min(1.0) * 0.12).min(1.0);
 
@@ -395,20 +413,22 @@ fn orchestrate_evidence(
     if threat_intel_only {
         confidence = confidence.min(0.49);
     }
-    if lifecycle_only && !has_behavior && !has_memory && !has_live_network {
-        confidence = confidence.min(0.62);
-    }
-    if has_static && !has_behavior && !has_memory && !has_live_network && independent < 3 {
-        confidence = confidence.min(0.68);
-    }
-    if (trusted_operational_tool || is_dev_or_signed_target)
-        && !has_live_network
-        && !has_behavior
-        && !has_memory
-    {
-        confidence = confidence.min(0.18);
-    } else if (trusted_operational_tool || is_dev_or_signed_target) && !strong_action {
-        confidence = confidence.min(0.40);
+    if !has_deterministic_credential_or_memory_guard {
+        if lifecycle_only && !has_behavior && !has_memory && !has_live_network {
+            confidence = confidence.min(0.62);
+        }
+        if has_static && !has_behavior && !has_memory && !has_live_network && independent < 3 {
+            confidence = confidence.min(0.68);
+        }
+        if (trusted_operational_tool || is_dev_or_signed_target)
+            && !has_live_network
+            && !has_behavior
+            && !has_memory
+        {
+            confidence = confidence.min(0.18);
+        } else if (trusted_operational_tool || is_dev_or_signed_target) && !strong_action {
+            confidence = confidence.min(0.40);
+        }
     }
 
     // NVD-Negative Suppression: if the CVE lookup explicitly found NO CVEs, and we only have static/intel evidence,
@@ -420,8 +440,11 @@ fn orchestrate_evidence(
         confidence = confidence.min(0.35);
     }
 
-    let require_approval = confidence >= 0.70 && independent < 2;
-    let action = if confidence >= 0.94 && independent >= 3 && strong_action {
+    let require_approval =
+        confidence >= 0.70 && independent < 2 && !has_deterministic_credential_or_memory_guard;
+    let action = if (confidence >= 0.94 && independent >= 3 && strong_action)
+        || (confidence >= 0.90 && has_deterministic_credential_or_memory_guard)
+    {
         ResponseAction::Isolate
     } else if confidence >= 0.82 && has_live_network && (has_behavior || has_static || has_memory) {
         ResponseAction::GhostTarpit
@@ -899,7 +922,7 @@ impl PolicyEngine {
                     res.weight *= mult;
                 }
                 if res.weight < 0.0 {
-                    if vname == "NSRL-Veto" {
+                    if vname == "NSRL-Veto" || vname == "Trusted-Vendor" || vname == "Git-Noise-Filter" {
                         nsrl_vetoed = true;
                     } else {
                         vetoed = true;
@@ -911,34 +934,34 @@ impl PolicyEngine {
                         "[CONSENSUS] veto — detection blocked"
                     );
                     signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
-                    // We don't break immediately here because we already ran them all,
-                    // but we mark as vetoed.
                 }
 
-                let contribution = res.confidence * res.weight;
-                debug!(
-                    target: CONSENSUS_LOG_TARGET,
-                    voter = %vname,
-                    conf = res.confidence,
-                    weight = res.weight,
-                    contribution,
-                    reason = %res.reason,
-                    "[CONSENSUS] voter YIELD"
-                );
-                total_score += contribution;
-                vote_count += 1;
-                signature.add_reason(format!("[{}]: {}", vname, res.reason));
-                is_threat = true;
-                if vname == OTX_VOTER {
-                    otx_voted = true;
+                if res.weight > 0.0 && res.confidence > 0.0 {
+                    let contribution = res.confidence * res.weight;
+                    debug!(
+                        target: CONSENSUS_LOG_TARGET,
+                        voter = %vname,
+                        conf = res.confidence,
+                        weight = res.weight,
+                        contribution,
+                        reason = %res.reason,
+                        "[CONSENSUS] voter YIELD"
+                    );
+                    total_score += contribution;
+                    vote_count += 1;
+                    signature.add_reason(format!("[{}]: {}", vname, res.reason));
+                    is_threat = true;
+                    if vname == OTX_VOTER {
+                        otx_voted = true;
+                    }
+                    let (class, reliability, strong_action) = classify_vote(&vname, &res, event);
+                    evidence_votes.push(EvidenceVote {
+                        result: res,
+                        class,
+                        reliability,
+                        strong_action,
+                    });
                 }
-                let (class, reliability, strong_action) = classify_vote(&vname, &res, event);
-                evidence_votes.push(EvidenceVote {
-                    result: res,
-                    class,
-                    reliability,
-                    strong_action,
-                });
             } else {
                 debug!(
                     target: CONSENSUS_LOG_TARGET,
@@ -949,7 +972,7 @@ impl PolicyEngine {
             }
         }
 
-        // Active behavioral threats (Sigma, memory, live network) override NSRL static known-good
+        // Active behavioral threats (Sigma, memory, live network) override NSRL/Trusted-Vendor static known-good
         let has_behavioral_or_active_threat = evidence_votes.iter().any(|v| {
             matches!(
                 v.class,
@@ -957,7 +980,7 @@ impl PolicyEngine {
             )
         });
 
-        if vetoed || (nsrl_vetoed && !has_behavioral_or_active_threat) {
+        if (vetoed || nsrl_vetoed) && !has_behavioral_or_active_threat {
             debug!(target: CONSENSUS_LOG_TARGET, "[CONSENSUS] round aborted (veto)");
             return None;
         }
@@ -1042,11 +1065,38 @@ impl PolicyEngine {
             .and_then(|v| v.as_str())
             .map(ToOwned::to_owned);
 
+        if signature.mitre_technique.is_none() {
+            if let Some(ref reason_str) = signature.reason {
+                static MITRE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+                let re = MITRE_RE.get_or_init(|| {
+                    regex::Regex::new(r"\b(T1\d{3}(?:\.\d{1,4})?)\b").unwrap()
+                });
+                if let Some(caps) = re.captures(reason_str) {
+                    if let Some(m) = caps.get(1) {
+                        let tech_id = m.as_str().to_string();
+                        if let Some(tech) = crate::mitre_kb::lookup_technique(&tech_id) {
+                            signature.mitre_tactic = Some(tech.tactic_name);
+                            signature.mitre_technique_name = Some(tech.name);
+                        }
+                        signature.mitre_technique = Some(tech_id);
+                    }
+                }
+            }
+        }
+
         let decision = orchestrate_evidence(&evidence_votes, event, &self.config);
         signature.confidence = decision.confidence;
 
         // Apply suppression for noisy/trusted paths by capping confidence
-        if is_noisy {
+        let has_strong_behavioral_or_memory = evidence_votes.iter().any(|v| {
+            v.strong_action
+                && v.result.confidence >= 0.85
+                && matches!(
+                    v.class,
+                    EvidenceClass::Memory | EvidenceClass::Behavior | EvidenceClass::LiveNetwork
+                )
+        });
+        if is_noisy && !has_strong_behavioral_or_memory {
             signature.confidence = signature.confidence.min(0.15);
             signature
                 .add_reason("Suppressed: Matches consensus_noisy_stems or consensus_trusted_paths");
@@ -1150,6 +1200,9 @@ impl PolicyEngine {
 
             if is_system_tampering_or_critical && signature.confidence >= 0.35 {
                 signature.recommended_action = ResponseAction::Isolate;
+                if signature.confidence >= 0.85 {
+                    signature.require_approval = false;
+                }
             } else if let Some(tech_meta) = crate::mitre_kb::lookup_technique(tech_id) {
                 match tech_meta.consensus_action.as_str() {
                     "Isolate" => {
@@ -1172,29 +1225,44 @@ impl PolicyEngine {
             }
         }
 
+        let is_explicit_alert = signature
+            .mitre_technique
+            .as_deref()
+            .and_then(crate::mitre_kb::lookup_technique)
+            .map(|m| m.consensus_action == "Alert")
+            .unwrap_or(false);
+
         let autonomy = osoosi_types::load_autonomy_config();
         let is_lockdown_mode =
-            autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
-        if is_lockdown_mode && signature.confidence >= autonomy.action_confidence_threshold {
-            signature.recommended_action = ResponseAction::Isolate;
+            autonomy.auto_quarantine_malware && autonomy.quarantine_confidence_threshold <= 0.60;
+        if is_lockdown_mode && signature.confidence >= autonomy.quarantine_confidence_threshold {
+            if signature.recommended_action == ResponseAction::Alert && !is_explicit_alert {
+                signature.recommended_action = ResponseAction::Isolate;
+            }
             signature.require_approval = false;
         } else if autonomy.auto_quarantine_malware
-            && signature.confidence >= autonomy.action_confidence_threshold
+            && signature.confidence >= autonomy.quarantine_confidence_threshold
             && signature.mitre_technique.is_some()
             && signature.recommended_action == ResponseAction::Alert
+            && !is_explicit_alert
         {
             signature.recommended_action = ResponseAction::Isolate;
         }
 
         // Zero-"Unknown Process" Alert Invariant & Noise Gate:
-        // Never emit an alert for an unknown process, non-existing file heuristic artifacts, or confidence < 0.50.
+        // Never emit an alert for an unknown process, non-existing file heuristic artifacts, or confidence below floor.
+        let min_confidence_floor = if is_lockdown_mode {
+            autonomy.action_confidence_threshold.min(0.35)
+        } else {
+            0.50
+        };
         let proc_clean = signature.process_name.as_deref().unwrap_or("").trim();
         let combined_reason = signature.reason.as_deref().unwrap_or("");
         if proc_clean.is_empty()
             || proc_clean.eq_ignore_ascii_case("unknown")
             || proc_clean.eq_ignore_ascii_case("unknown process")
             || combined_reason.contains("Execution Of Non-Existing File")
-            || signature.confidence < 0.50
+            || signature.confidence < min_confidence_floor
         {
             debug!(
                 target: CONSENSUS_LOG_TARGET,
@@ -1633,5 +1701,50 @@ mod tests {
         let res = vote.unwrap();
         assert!(res.confidence >= 0.95);
         assert!(res.reason.contains("comsvcs.dll"));
+    }
+
+    #[tokio::test]
+    async fn test_rundll32_keymgr_isolated() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        engine.add_voter(Box::new(crate::voters::TrustedVendorVoter)).await;
+        engine.add_voter(Box::new(crate::voters::CredentialGuardVoter)).await;
+
+        let event = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\WINDOWS\system32\rundll32.exe",
+                "CommandLine": r"C:\WINDOWS\system32\rundll32.exe keymgr,KRShowKeyMgr",
+            }),
+            timestamp: chrono::Utc::now(),
+            causal_parent: None,
+        };
+
+        let sig_opt = engine.scan_event(&event).await;
+        assert!(sig_opt.is_some(), "Expected threat signature for rundll32 keymgr");
+        let sig = sig_opt.unwrap();
+        assert!(
+            sig.confidence >= 0.90,
+            "Expected confidence >= 0.90, got: {}",
+            sig.confidence
+        );
+        assert_eq!(
+            sig.recommended_action,
+            osoosi_types::ResponseAction::Isolate,
+            "Expected Isolate action"
+        );
+        assert_eq!(
+            sig.require_approval, false,
+            "Expected require_approval to be false"
+        );
+        assert_eq!(
+            sig.mitre_technique.as_deref(),
+            Some("T1003.007"),
+            "Expected MITRE technique T1003.007 to be extracted"
+        );
     }
 }

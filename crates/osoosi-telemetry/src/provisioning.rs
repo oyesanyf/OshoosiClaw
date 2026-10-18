@@ -824,6 +824,59 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
+    pub fn is_safe_for_ifeo_block(path_str: &str) -> bool {
+        let path = std::path::Path::new(path_str);
+        let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) else {
+            return false;
+        };
+        let lower_name = exe_name.to_ascii_lowercase();
+        if !lower_name.ends_with(".exe") {
+            return false;
+        }
+        let lower_path = path_str.to_ascii_lowercase().replace('/', "\\");
+        if lower_path.starts_with("c:\\windows\\system32\\")
+            || lower_path.starts_with("c:\\windows\\syswow64\\")
+            || lower_path.starts_with("c:\\windows\\winsxs\\")
+        {
+            return false;
+        }
+        const PROTECTED_SYSTEM_EXES: &[&str] = &[
+            "rundll32.exe",
+            "cmd.exe",
+            "powershell.exe",
+            "pwsh.exe",
+            "conhost.exe",
+            "svchost.exe",
+            "explorer.exe",
+            "reg.exe",
+            "regsvr32.exe",
+            "msiexec.exe",
+            "taskmgr.exe",
+            "taskkill.exe",
+            "services.exe",
+            "lsass.exe",
+            "csrss.exe",
+            "wininit.exe",
+            "winlogon.exe",
+            "smss.exe",
+            "wmiprvse.exe",
+            "dllhost.exe",
+            "certutil.exe",
+            "bitsadmin.exe",
+            "mshta.exe",
+            "wscript.exe",
+            "cscript.exe",
+            "schtasks.exe",
+            "sc.exe",
+            "net.exe",
+            "net1.exe",
+            "netsh.exe",
+            "whoami.exe",
+        ];
+        !PROTECTED_SYSTEM_EXES.contains(&lower_name.as_str())
+    }
+
+    #[cfg(target_os = "windows")]
     pub async fn apply_blocking_rules(
         &self,
         rules: &[osoosi_types::BlockingRule],
@@ -835,21 +888,30 @@ impl AgentProvisioner {
 
         for rule in rules {
             if rule.kind == osoosi_types::BlockingKind::Executable {
+                if !Self::is_safe_for_ifeo_block(&rule.path) {
+                    continue;
+                }
                 let path = std::path::Path::new(&rule.path);
                 if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
                     info!(
-                        "Enforcing Hard-Block for {}: IFEO Debugger -> blocked.exe",
+                        "Enforcing Hard-Block for {}: IFEO Debugger -> systray.exe",
                         exe_name
                     );
 
                     let mut cmd = Command::new(osoosi_types::resolve_system_binary("reg.exe"));
                     cmd.args([
                         "add",
-                        &format!(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}", exe_name),
-                        "/v", "Debugger",
-                        "/t", "REG_SZ",
-                        "/d", "systray.exe", // Using systray.exe as a safe "noop" debugger
-                        "/f"
+                        &format!(
+                            r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}",
+                            exe_name
+                        ),
+                        "/v",
+                        "Debugger",
+                        "/t",
+                        "REG_SZ",
+                        "/d",
+                        "systray.exe",
+                        "/f",
                     ]);
 
                     if let Err(e) = self.executor.execute(cmd).await {
@@ -857,6 +919,26 @@ impl AgentProvisioner {
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    pub async fn remove_blocking_rule_registry(&self, path_str: &str) -> anyhow::Result<()> {
+        let path = std::path::Path::new(path_str);
+        if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
+            let mut cmd = Command::new(osoosi_types::resolve_system_binary("reg.exe"));
+            cmd.args([
+                "delete",
+                &format!(
+                    r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}",
+                    exe_name
+                ),
+                "/v",
+                "Debugger",
+                "/f",
+            ]);
+            let _ = self.executor.execute(cmd).await;
         }
         Ok(())
     }

@@ -808,6 +808,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             get(get_blocking_rules).post(post_blocking_rule),
         )
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
+        .route("/api/blocking/rules/exclude", post(post_blocking_exclude))
+        .route("/api/blocking/rules/purge-benign", post(post_blocking_purge_benign))
         .route("/api/deception/status", get(get_deception_status_endpoint))
         .route(
             "/api/deception/deploy-traps",
@@ -918,6 +920,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/audit/nsrl-aslr-merkle",
             get(handle_audit_nsrl_aslr_merkle),
         )
+        .route("/api/system/disk-status", get(get_system_disk_status))
+        .route("/api/system/cleanup", post(post_system_disk_cleanup))
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -2844,6 +2848,126 @@ async fn post_auto_remediate_gap(
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct SystemDiskCleanupRequest {
+    pub days_retention: Option<u32>,
+    pub aggressive: Option<bool>,
+}
+
+async fn get_system_disk_status(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => Json(orch.get_dynamic_disk_status()),
+        None => {
+            let disks = sysinfo::Disks::new_with_refreshed_list();
+            let cur_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let matched_disk = disks
+                .iter()
+                .filter(|d| cur_dir.starts_with(d.mount_point()))
+                .max_by_key(|d| d.mount_point().as_os_str().len())
+                .or_else(|| disks.list().first());
+
+            let (available_bytes, total_bytes) = if let Some(disk) = matched_disk {
+                (disk.available_space(), disk.total_space())
+            } else {
+                (0u64, 0u64)
+            };
+
+            let free_gb = available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            let total_gb = total_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+            let used_pct = if total_bytes > 0 {
+                ((total_bytes.saturating_sub(available_bytes)) as f64 / total_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+            let free_pct = if total_bytes > 0 {
+                (available_bytes as f64 / total_bytes as f64) * 100.0
+            } else {
+                100.0
+            };
+
+            let pressure_tier = if free_gb < 10.0 || free_pct < 5.0 {
+                "CRITICAL"
+            } else if free_gb < 25.0 || free_pct < 12.0 {
+                "ELEVATED"
+            } else if free_gb < 50.0 || free_pct < 20.0 {
+                "MODERATE"
+            } else {
+                "NOMINAL"
+            };
+
+            let recommended_retention_days = match pressure_tier {
+                "CRITICAL" => 2u32,
+                "ELEVATED" => 7u32,
+                "MODERATE" => 14u32,
+                _ => 30u32,
+            };
+
+            Json(json!({
+                "status": "ok",
+                "available_bytes": available_bytes,
+                "total_bytes": total_bytes,
+                "free_gb": (free_gb * 100.0).round() / 100.0,
+                "total_gb": (total_gb * 100.0).round() / 100.0,
+                "used_pct": (used_pct * 10.0).round() / 10.0,
+                "free_pct": (free_pct * 10.0).round() / 10.0,
+                "pressure_tier": pressure_tier,
+                "recommended_retention_days": recommended_retention_days,
+                "logs_bytes": 0,
+                "logs_count": 0,
+                "formatted_logs": "0 B",
+                "database_bytes": 0,
+                "formatted_database": "0 B",
+                "quarantine_bytes": 0,
+                "quarantine_count": 0,
+                "formatted_quarantine": "0 B",
+                "temp_cache_bytes": 0,
+                "temp_cache_count": 0,
+                "formatted_temp_cache": "0 B",
+            }))
+        }
+    }
+}
+
+async fn post_system_disk_cleanup(
+    State(state): State<DashboardState>,
+    body: Option<Json<SystemDiskCleanupRequest>>,
+) -> Json<Value> {
+    let req = body.map(|Json(b)| b).unwrap_or_default();
+    let aggressive = req.aggressive.unwrap_or(false);
+    let days = if aggressive {
+        0
+    } else {
+        req.days_retention.unwrap_or(30)
+    };
+
+    match &state.backend {
+        Some(orch) => Json(orch.cleanup_memory_and_disk(days)),
+        None => {
+            let working_set_trimmed = osoosi_core::memory_watchdog::trim_process_working_set();
+            Json(json!({
+                "status": "success",
+                "effective_retention_days": days,
+                "pressure_tier": "NOMINAL",
+                "bytes_freed": 0,
+                "formatted_bytes_freed": "0 B",
+                "in_memory_evicted": {},
+                "disk_cleaned": {
+                    "locked_swap_files": 0,
+                    "quarantine_files": 0,
+                    "temp_files": 0,
+                    "db_pruned": false,
+                    "logs_maintained": false,
+                },
+                "os_working_set_trimmed": working_set_trimmed,
+                "disk_status": {
+                    "pressure_tier": "NOMINAL",
+                    "free_gb": 0.0,
+                }
+            }))
+        }
+    }
+}
+
 async fn get_story(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
@@ -3812,6 +3936,8 @@ fn default_blocking_kind() -> String {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct UnlockRequest {
     pub path: String,
+    #[serde(default)]
+    pub exclude: bool,
 }
 
 async fn get_blocking_rules(State(state): State<DashboardState>) -> Json<Value> {
@@ -3973,6 +4099,14 @@ async fn post_blocking_rule(
     }
 }
 
+async fn post_blocking_exclude(
+    state: State<DashboardState>,
+    Json(mut req): Json<UnlockRequest>,
+) -> Json<Value> {
+    req.exclude = true;
+    post_blocking_unlock(state, Json(req)).await
+}
+
 async fn post_blocking_unlock(
     State(state): State<DashboardState>,
     Json(req): Json<UnlockRequest>,
@@ -3987,7 +4121,83 @@ async fn post_blocking_unlock(
     }
     match &state.backend {
         Some(orch) => match orch.blocking_manager.remove_rule(trimmed_path).await {
-            Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
+            Ok(_) => {
+                let computed_hash = if std::path::Path::new(trimmed_path).is_file() {
+                    match std::fs::read(trimmed_path) {
+                        Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
+                        Err(_) => blake3::hash(trimmed_path.as_bytes()).to_hex().to_string(),
+                    }
+                } else {
+                    blake3::hash(trimmed_path.as_bytes()).to_hex().to_string()
+                };
+
+                let file_stem = std::path::Path::new(trimmed_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str());
+
+                let source_tag = if req.exclude {
+                    "operator_blocklist_exclude"
+                } else {
+                    "operator_blocklist_unlock"
+                };
+
+                let _ = orch.memory().mark_hash_clean_ignored(
+                    &computed_hash,
+                    file_stem,
+                    Some(trimmed_path),
+                    source_tag,
+                );
+
+                if let Some(stem) = file_stem {
+                    let _ = orch.memory().record_false_positive_pattern(
+                        Some(stem),
+                        Some(&computed_hash),
+                        source_tag,
+                    );
+                } else {
+                    let _ = orch.memory().record_false_positive_pattern(
+                        Some(trimmed_path),
+                        Some(&computed_hash),
+                        source_tag,
+                    );
+                }
+
+                let _ = orch.memory().mark_false_positive(
+                    file_stem.or(Some(trimmed_path)),
+                    Some(&computed_hash),
+                );
+
+                orch.audit().log(
+                    if req.exclude {
+                        "BLOCKLIST_RULE_EXCLUDED"
+                    } else {
+                        "BLOCKLIST_RULE_UNLOCKED"
+                    },
+                    serde_json::json!({
+                        "path": trimmed_path,
+                        "hash": computed_hash,
+                        "excluded": req.exclude,
+                    }),
+                );
+
+                if req.exclude {
+                    Json(json!({
+                        "ok": true,
+                        "excluded": true,
+                        "message": "Blocking rule removed and permanently excluded/whitelisted",
+                        "path": trimmed_path,
+                        "hash": computed_hash
+                    }))
+                } else {
+                    Json(json!({
+                        "ok": true,
+                        "excluded": false,
+                        "message": "Blocking rule removed (unlocked) and whitelisted against re-scan",
+                        "path": trimmed_path,
+                        "hash": computed_hash
+                    }))
+                }
+            }
             Err(e) => api_error_json(
                 "UNLOCK_FAILED",
                 e.to_string(),
@@ -3997,8 +4207,85 @@ async fn post_blocking_unlock(
         None => {
             let mut rules = state.mock_blocking_rules.write().await;
             rules.retain(|r| r.path != trimmed_path && r.path != req.path);
-            Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" }))
+            Json(json!({
+                "ok": true,
+                "excluded": req.exclude,
+                "message": if req.exclude {
+                    "Blocking rule removed and excluded (mock)"
+                } else {
+                    "Blocking rule removed (unlocked)"
+                }
+            }))
         }
+    }
+}
+
+async fn post_blocking_purge_benign(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => match orch.blocking_manager.purge_benign_rules().await {
+            Ok(purged) => {
+                for p in &purged {
+                    let computed_hash = if std::path::Path::new(p).is_file() {
+                        match std::fs::read(p) {
+                            Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
+                            Err(_) => blake3::hash(p.as_bytes()).to_hex().to_string(),
+                        }
+                    } else {
+                        blake3::hash(p.as_bytes()).to_hex().to_string()
+                    };
+                    let file_stem = std::path::Path::new(p)
+                        .file_stem()
+                        .and_then(|s| s.to_str());
+                    let _ = orch.memory().mark_hash_clean_ignored(
+                        &computed_hash,
+                        file_stem,
+                        Some(p.as_str()),
+                        "operator_purge_benign",
+                    );
+                    if let Some(stem) = file_stem {
+                        let _ = orch.memory().record_false_positive_pattern(
+                            Some(stem),
+                            Some(&computed_hash),
+                            "operator_purge_benign",
+                        );
+                    } else {
+                        let _ = orch.memory().record_false_positive_pattern(
+                            Some(p.as_str()),
+                            Some(&computed_hash),
+                            "operator_purge_benign",
+                        );
+                    }
+                    let _ = orch.memory().mark_false_positive(
+                        file_stem.or(Some(p.as_str())),
+                        Some(&computed_hash),
+                    );
+                }
+                orch.audit().log(
+                    "BLOCKLIST_PURGE_BENIGN_RULES",
+                    serde_json::json!({
+                        "count": purged.len(),
+                        "purged": purged
+                    }),
+                );
+                Json(json!({
+                    "ok": true,
+                    "purged_count": purged.len(),
+                    "purged": purged,
+                    "message": format!("Purged {} benign/signed false-positive rules", purged.len())
+                }))
+            }
+            Err(e) => api_error_json(
+                "PURGE_FAILED",
+                e.to_string(),
+                "Error purging benign rules from blocking manager.",
+            ),
+        },
+        None => Json(json!({
+            "ok": true,
+            "purged_count": 0,
+            "purged": [],
+            "message": "Purged 0 benign/signed false-positive rules (mock)"
+        })),
     }
 }
 
@@ -9281,6 +9568,7 @@ mod tests {
 
         let empty_unlock = UnlockRequest {
             path: "   ".to_string(),
+            exclude: false,
         };
         let empty_unlock_res = post_blocking_unlock(State(state.clone()), Json(empty_unlock))
             .await
@@ -9309,6 +9597,7 @@ mod tests {
             State(state.clone()),
             Json(UnlockRequest {
                 path: r"C:\Windows\Temp\test0x.exe".to_string(),
+                exclude: false,
             }),
         )
         .await;
@@ -9343,11 +9632,28 @@ mod tests {
         // 3. Unlock/remove rule
         let unlock_req = UnlockRequest {
             path: r"C:\Windows\Temp\mimikatz.exe".to_string(),
+            exclude: false,
         };
         let unlock_res = post_blocking_unlock(State(state.clone()), Json(unlock_req))
             .await
             .0;
         assert_eq!(unlock_res["ok"], true);
+
+        // 3b. Verify post_blocking_exclude and post_blocking_purge_benign
+        let exclude_res = post_blocking_exclude(
+            State(state.clone()),
+            Json(UnlockRequest {
+                path: r"C:\Program Files\PostgreSQL\18\bin\pgbench.exe".to_string(),
+                exclude: true,
+            }),
+        )
+        .await
+        .0;
+        assert_eq!(exclude_res["ok"], true);
+        assert_eq!(exclude_res["excluded"], true);
+
+        let purge_res = post_blocking_purge_benign(State(state.clone())).await.0;
+        assert_eq!(purge_res["ok"], true);
 
         // 4. Verify rule list is now empty
         let rules_res_after = get_blocking_rules(State(state.clone())).await.0;

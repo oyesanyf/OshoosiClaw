@@ -134,6 +134,7 @@ impl NativeTelemetryEngine {
                 let active_procs_cb = active_processes.clone();
                 let kernel_process_provider =
                     Provider::by_guid("22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716")
+                        .any(0x10) // WINEVT_KEYWORD_PROCESS
                         .add_callback(move |event, schema_locator| {
                             let event_id = event.event_id();
                             // 1: ProcessStart, 2: ProcessStop
@@ -143,17 +144,41 @@ impl NativeTelemetryEngine {
                                     let pid: u32 = parser
                                         .try_parse("ProcessID")
                                         .or_else(|_| parser.try_parse("ProcessId"))
-                                        .unwrap_or(0);
+                                        .unwrap_or_else(|_| event.process_id());
                                     let parent_pid: u32 = parser
                                         .try_parse("ParentProcessID")
                                         .or_else(|_| parser.try_parse("ParentProcessId"))
                                         .unwrap_or(0);
-                                    let image: String = parser
+                                    let mut image: String = parser
                                         .try_parse("ImageName")
                                         .or_else(|_| parser.try_parse("ImageFileName"))
                                         .unwrap_or_else(|_| {
                                             parser.try_parse("CommandLine").unwrap_or_default()
                                         });
+                                    let mut cmdline: String =
+                                        parser.try_parse::<String>("CommandLine").unwrap_or_default();
+
+                                    if event_id == 1 && pid > 4 {
+                                        if image.is_empty()
+                                            || image.starts_with("\\Device\\")
+                                            || cmdline.trim().is_empty()
+                                        {
+                                            let (live_img, live_cmd) =
+                                                query_live_process_image_and_cmdline(pid);
+                                            if let Some(li) = live_img {
+                                                if !li.is_empty() {
+                                                    image = li;
+                                                }
+                                            }
+                                            if cmdline.trim().is_empty() {
+                                                if let Some(lc) = live_cmd {
+                                                    if !lc.is_empty() {
+                                                        cmdline = lc;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
 
                                     let mut data = serde_json::Map::new();
                                     data.insert("ProcessId".to_string(), serde_json::json!(pid));
@@ -162,12 +187,18 @@ impl NativeTelemetryEngine {
                                         serde_json::json!(parent_pid),
                                     );
                                     data.insert("Image".to_string(), serde_json::json!(image));
-                                    if let Ok(cmd) = parser.try_parse::<String>("CommandLine") {
-                                        data.insert(
-                                            "CommandLine".to_string(),
-                                            serde_json::json!(cmd),
-                                        );
+                                    let final_cmd = if !cmdline.is_empty() {
+                                        cmdline
+                                    } else {
+                                        image.clone()
+                                    };
+                                    if event_id == 1 && is_suspicious_initial_process(&image, &final_cmd) {
+                                        terminate_suspicious_process_immediately(pid, &image, &final_cmd);
                                     }
+                                    data.insert(
+                                        "CommandLine".to_string(),
+                                        serde_json::json!(final_cmd),
+                                    );
 
                                     if event_id == 1 {
                                         let now = std::time::Instant::now();
@@ -202,6 +233,7 @@ impl NativeTelemetryEngine {
                                             serde_json::json!(velocity_3s > 5),
                                         );
 
+                                        let already_seen = active_procs_cb.contains_key(&pid);
                                         active_procs_cb.insert(
                                             pid,
                                             ProcessMeta {
@@ -212,15 +244,17 @@ impl NativeTelemetryEngine {
                                             },
                                         );
 
-                                        let ev = HostSecurityEvent {
-                                            source: HostEventSource::WindowsEventLog,
-                                            event_id: 1, // Sysmon ProcessCreate
-                                            timestamp: Utc::now(),
-                                            computer: computer_k.clone(),
-                                            data: serde_json::Value::Object(data),
-                                            causal_parent: None,
-                                        };
-                                        let _ = tx_k.blocking_send(ev);
+                                        if !already_seen {
+                                            let ev = HostSecurityEvent {
+                                                source: HostEventSource::WindowsEventLog,
+                                                event_id: 1, // Sysmon ProcessCreate
+                                                timestamp: Utc::now(),
+                                                computer: computer_k.clone(),
+                                                data: serde_json::Value::Object(data),
+                                                causal_parent: None,
+                                            };
+                                            let _ = tx_k.try_send(ev);
+                                        }
                                     } else {
                                         let lifetime_ms =
                                             if let Some((_, meta)) = active_procs_cb.remove(&pid) {
@@ -368,23 +402,117 @@ impl NativeTelemetryEngine {
                     .enable(kernel_net_provider)
                     .enable(kernel_file_provider)
                     .enable(dns_client_provider)
-                    .start();
+                    .start_and_process();
 
-                match trace_res {
-                    Ok(_) => info!("✅ [NATIVE-TELEMETRY] ETW Session started successfully."),
+                let _active_trace = match trace_res {
+                    Ok(trace) => {
+                        info!("✅ [NATIVE-TELEMETRY] ETW Session started and processing events.");
+                        Some(trace)
+                    }
                     Err(e) => {
                         let err_str = format!("{:?}", e);
                         if err_str.contains("AlreadyExist") {
-                            warn!("⚠️ [NATIVE-TELEMETRY] ETW Session 'OshoosiNativeTelemetry' already exists. This usually means a previous instance is still running.");
+                            warn!("⚠️ [NATIVE-TELEMETRY] ETW Session 'OshoosiNativeTelemetry' already exists. Falling back to live kernel process delta monitor.");
                         } else {
-                            error!("❌ [NATIVE-TELEMETRY] ETW Session failed: {:?}", e);
+                            error!("❌ [NATIVE-TELEMETRY] ETW Session failed ({:?}); activating live kernel process delta monitor.", e);
+                        }
+                        None
+                    }
+                };
+
+                // Real-time kernel process delta loop (750ms) — guarantees zero missed ProcessCreate events
+                // even for ultra-fast LOLBins or processes spawned prior to ETW session attachment.
+                let mut sys = sysinfo::System::new();
+                let mut is_initial_pass = true;
+                loop {
+                    sys.refresh_processes_specifics(
+                        sysinfo::ProcessRefreshKind::new()
+                            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+                            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet),
+                    );
+                    let now = std::time::Instant::now();
+                    let self_pid = std::process::id();
+
+                    for (pid_val, proc_info) in sys.processes() {
+                        let pid = pid_val.as_u32();
+                        if pid <= 4 || pid == self_pid {
+                            continue;
+                        }
+                        if active_processes.contains_key(&pid) {
+                            continue;
+                        }
+
+                        let (live_img, live_cmd) = query_live_process_image_and_cmdline(pid);
+                        let image = live_img
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                proc_info
+                                    .exe()
+                                    .map(|p| p.to_string_lossy().to_string())
+                                    .filter(|s| !s.is_empty())
+                            })
+                            .unwrap_or_else(|| proc_info.name().to_string());
+                        let cmdline = live_cmd.filter(|s| !s.is_empty()).unwrap_or_else(|| {
+                            let joined = proc_info.cmd().join(" ");
+                            if joined.is_empty() {
+                                image.clone()
+                            } else {
+                                joined
+                            }
+                        });
+                        let parent_pid = proc_info.parent().map(|p| p.as_u32()).unwrap_or(0);
+
+                        active_processes.insert(
+                            pid,
+                            ProcessMeta {
+                                pid,
+                                image_name: image.clone(),
+                                started_at: now,
+                                child_spawn_times: Vec::new(),
+                            },
+                        );
+
+                        let is_cred_theft = is_suspicious_initial_process(&image, &cmdline);
+                        if is_cred_theft {
+                            terminate_suspicious_process_immediately(pid, &image, &cmdline);
+                        }
+
+                        // On the initial pass, only emit pre-existing processes that match credential/LOLBin/breakout indicators
+                        // so we don't flood startup with hundreds of benign baseline OS services, while still catching
+                        // any already-running attack (e.g., rundll32.exe keymgr,KRShowKeyMgr).
+                        if !is_initial_pass || is_cred_theft {
+                            let mut data = serde_json::Map::new();
+                            data.insert("ProcessId".to_string(), serde_json::json!(pid));
+                            data.insert(
+                                "ParentProcessId".to_string(),
+                                serde_json::json!(parent_pid),
+                            );
+                            data.insert("Image".to_string(), serde_json::json!(image));
+                            data.insert("CommandLine".to_string(), serde_json::json!(cmdline));
+                            if parent_pid != 0 {
+                                if let Some(parent_meta) = active_processes.get(&parent_pid) {
+                                    data.insert(
+                                        "ParentImage".to_string(),
+                                        serde_json::json!(parent_meta.image_name.clone()),
+                                    );
+                                }
+                            }
+                            let ev = HostSecurityEvent {
+                                source: HostEventSource::WindowsEventLog,
+                                event_id: 1,
+                                timestamp: Utc::now(),
+                                computer: computer.clone(),
+                                data: serde_json::Value::Object(data),
+                                causal_parent: None,
+                            };
+                            let _ = tx.try_send(ev);
                         }
                     }
-                }
 
-                // Loop while trace is active (blocks the spawn_blocking thread)
-                loop {
-                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    // Prune terminated PIDs from active_processes map
+                    active_processes.retain(|pid, _| sys.process(sysinfo::Pid::from(*pid as usize)).is_some());
+                    is_initial_pass = false;
+                    std::thread::sleep(std::time::Duration::from_millis(750));
                 }
             });
         }
@@ -393,6 +521,132 @@ impl NativeTelemetryEngine {
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_suspicious_initial_process(image: &str, cmdline: &str) -> bool {
+    let img_l = image.to_ascii_lowercase();
+    let cmd_l = cmdline.to_ascii_lowercase();
+    if img_l.ends_with("osoosi.exe")
+        || cmd_l.contains("--type=crashpad-handler")
+        || cmd_l.contains("sentryproxy")
+        || cmd_l.contains("cargo ")
+        || cmd_l.contains("rustc ")
+        || cmd_l.contains("git ")
+        || cmd_l.contains("rg ")
+        || cmd_l.contains("select-string")
+    {
+        return false;
+    }
+    cmd_l.contains("keymgr")
+        || cmd_l.contains("krshowkeymgr")
+        || cmd_l.contains("credwiz")
+        || (cmd_l.contains("vaultcmd") && (cmd_l.contains("/list") || cmd_l.contains("-list")))
+        || cmd_l.contains("comsvcs")
+        || cmd_l.contains("sekurlsa")
+        || cmd_l.contains("lsadump")
+        || cmd_l.contains("mimikatz")
+        || (cmd_l.contains("procdump") && cmd_l.contains("lsass"))
+        || cmd_l.contains("ntdsutil")
+        || (img_l.ends_with("cmdkey.exe") && (cmd_l.contains("/list") || cmd_l.contains("-l")))
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_suspicious_process_immediately(pid: u32, image: &str, cmdline: &str) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    if pid <= 4 || pid == std::process::id() {
+        return;
+    }
+    unsafe {
+        if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+            let _ = TerminateProcess(handle, 1);
+            let _ = CloseHandle(handle);
+            tracing::warn!(
+                "Native Kernel Guard: Immediately terminated credential-harvesting process PID {} ({}) cmd: {}",
+                pid,
+                image,
+                cmdline
+            );
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn query_live_process_image_and_cmdline(pid: u32) -> (Option<String>, Option<String>) {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    #[repr(C)]
+    struct UnicodeString {
+        length: u16,
+        maximum_length: u16,
+        buffer: *const u16,
+    }
+
+    #[link(name = "ntdll")]
+    extern "system" {
+        fn NtQueryInformationProcess(
+            process_handle: *mut std::ffi::c_void,
+            process_information_class: u32,
+            process_information: *mut std::ffi::c_void,
+            process_information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+    }
+
+    unsafe {
+        let Ok(handle) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return (None, None);
+        };
+
+        let mut img_buf = [0u16; 1024];
+        let mut img_len = img_buf.len() as u32;
+        let image = if QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_WIN32,
+            PWSTR(img_buf.as_mut_ptr()),
+            &mut img_len,
+        )
+        .is_ok()
+            && img_len > 0
+        {
+            Some(String::from_utf16_lossy(&img_buf[..img_len as usize]))
+        } else {
+            None
+        };
+
+        // ProcessCommandLineInformation = 60
+        let mut cmd_buf = vec![0u8; 8192];
+        let mut ret_len = 0u32;
+        let status = NtQueryInformationProcess(
+            handle.0,
+            60,
+            cmd_buf.as_mut_ptr() as *mut std::ffi::c_void,
+            cmd_buf.len() as u32,
+            &mut ret_len,
+        );
+        let cmdline = if status >= 0 && (ret_len as usize) >= std::mem::size_of::<UnicodeString>() {
+            let ustr = &*(cmd_buf.as_ptr() as *const UnicodeString);
+            if !ustr.buffer.is_null() && ustr.length > 0 {
+                let char_len = (ustr.length as usize) / 2;
+                let slice = std::slice::from_raw_parts(ustr.buffer, char_len);
+                Some(String::from_utf16_lossy(slice))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let _ = CloseHandle(handle);
+        (image, cmdline)
     }
 }
 

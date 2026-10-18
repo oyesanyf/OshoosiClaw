@@ -186,6 +186,11 @@ impl StrandsClient {
         None
     }
 
+    /// Helper forwarding to local calibrated estimation for Strands Decider readout.
+    pub fn local_strands_readout(request: &DecisionRequest) -> DecisionResponse {
+        Self::local_calibrated_estimation(request)
+    }
+
     /// Local calibrated estimation implementing the Strands Decider 2B discrete pointer-head distribution.
     /// Always produces valid normalized probability distributions summing to 1.0 +/- 1e-5.
     pub fn local_calibrated_estimation(request: &DecisionRequest) -> DecisionResponse {
@@ -201,7 +206,32 @@ impl StrandsClient {
             || state_lower.contains("mimikatz")
             || state_lower.contains("lsass")
             || state_lower.contains("nanodump")
-            || state_lower.contains("t1003");
+            || state_lower.contains("t1003")
+            || state_lower.contains("keymgr")
+            || state_lower.contains("krshowkeymgr")
+            || state_lower.contains("credwiz")
+            || state_lower.contains("vaultcmd")
+            || state_lower.contains("cmdkey")
+            || state_lower.contains("comsvcs")
+            || state_lower.contains("minidump")
+            || state_lower.contains("hklm\\sam")
+            || state_lower.contains("hklm\\security")
+            || state_lower.contains("ntds.dit")
+            || state_lower.contains("ntdsutil")
+            || state_lower.contains("gsecdump")
+            || state_lower.contains("lazagne")
+            || state_lower.contains("dpapi")
+            || state_lower.contains("mimipenguin")
+            || state_lower.contains("unshadow")
+            || state_lower.contains("/etc/shadow")
+            || state_lower.contains("/etc/gshadow")
+            || state_lower.contains("ld.so.preload")
+            || state_lower.contains("gcore")
+            || state_lower.contains("credentialguard")
+            || state_lower.contains("processinjection")
+            || state_lower.contains("hollowshunter")
+            || state_lower.contains("t1555")
+            || state_lower.contains("t1552");
         let has_injection = state_lower.contains("meterpreter")
             || state_lower.contains("cobalt")
             || state_lower.contains("beacon")
@@ -211,7 +241,7 @@ impl StrandsClient {
         let is_malicious = is_critical || has_credential_theft || has_injection;
 
         // Discrete candidate actions: [allow, alert, tarpit, ghost_tarpit, quarantine, isolate]
-        let (containment_action, action_probs) = if is_critical {
+        let (containment_action, action_probs) = if is_critical || has_credential_theft {
             let mut probs = HashMap::new();
             probs.insert("allow".to_string(), 0.005);
             probs.insert("alert".to_string(), 0.015);
@@ -250,7 +280,7 @@ impl StrandsClient {
         };
 
         // Verdict distribution
-        let (verdict, verdict_probs) = if is_critical {
+        let (verdict, verdict_probs) = if is_critical || has_credential_theft {
             let mut probs = HashMap::new();
             probs.insert("benign".to_string(), 0.005);
             probs.insert("suspicious".to_string(), 0.025);
@@ -289,11 +319,23 @@ impl StrandsClient {
             "containment_action".to_string(),
             DecisionAnswer::from_choice(ChoiceAnswer::new(containment_action, action_probs)),
         );
+        let human_esc_prob = if has_credential_theft {
+            0.08
+        } else if is_critical {
+            0.90
+        } else {
+            0.15
+        };
+        let human_esc_val = if has_credential_theft {
+            false
+        } else {
+            is_critical
+        };
         answers.insert(
             "human_escalation".to_string(),
             DecisionAnswer::from_bool(BoolAnswer::new(
-                is_critical,
-                if is_critical { 0.90 } else { 0.15 },
+                human_esc_val,
+                human_esc_prob,
             )),
         );
         answers.insert(
@@ -304,7 +346,18 @@ impl StrandsClient {
             )),
         );
 
-        let (severity, sev_probs) = if is_critical {
+        let (severity, sev_probs) = if is_critical || has_credential_theft {
+            (
+                "Critical".to_string(),
+                [
+                    ("None", 0.01),
+                    ("Low", 0.02),
+                    ("Medium", 0.07),
+                    ("High", 0.20),
+                    ("Critical", 0.70),
+                ],
+            )
+        } else if is_malicious {
             (
                 "Critical".to_string(),
                 [

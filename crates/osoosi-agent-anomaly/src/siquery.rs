@@ -1484,6 +1484,66 @@ impl SiqueryEngine {
             .map_err(|e| format!("Failed to create siquery relational schemas: {}", e))
     }
 
+    #[cfg(target_os = "windows")]
+    fn query_process_cmdline_win32(pid: u32) -> Option<String> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        #[repr(C)]
+        struct UnicodeString {
+            length: u16,
+            maximum_length: u16,
+            buffer: *const u16,
+        }
+
+        #[link(name = "ntdll")]
+        extern "system" {
+            fn NtQueryInformationProcess(
+                process_handle: *mut std::ffi::c_void,
+                process_information_class: u32,
+                process_information: *mut std::ffi::c_void,
+                process_information_length: u32,
+                return_length: *mut u32,
+            ) -> i32;
+        }
+
+        if pid <= 4 {
+            return None;
+        }
+
+        unsafe {
+            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if handle.is_null() {
+                return None;
+            }
+            let mut buf = vec![0u8; 8192];
+            let mut ret_len = 0u32;
+            let status = NtQueryInformationProcess(
+                handle,
+                60, // ProcessCommandLineInformation
+                buf.as_mut_ptr() as *mut std::ffi::c_void,
+                buf.len() as u32,
+                &mut ret_len,
+            );
+            let res = if status >= 0 && (ret_len as usize) >= std::mem::size_of::<UnicodeString>() {
+                let ustr = &*(buf.as_ptr() as *const UnicodeString);
+                if !ustr.buffer.is_null() && ustr.length > 0 {
+                    let char_len = (ustr.length as usize) / 2;
+                    let slice = std::slice::from_raw_parts(ustr.buffer, char_len);
+                    Some(String::from_utf16_lossy(slice))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            CloseHandle(handle);
+            res
+        }
+    }
+
     /// Populates `processes` table in pure Rust using `sysinfo::System`.
     fn populate_processes(conn: &Connection, sys: &System) -> Result<(), String> {
         let mut stmt = conn
@@ -1506,7 +1566,18 @@ impl SiqueryEngine {
                 .exe()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
-            let cmdline = proc.cmd().join(" ");
+            let mut cmdline = proc.cmd().join(" ");
+            #[cfg(target_os = "windows")]
+            if cmdline.trim().is_empty()
+                || cmdline.eq_ignore_ascii_case(name)
+                || cmdline.eq_ignore_ascii_case(&path)
+            {
+                if let Some(win_cmd) = Self::query_process_cmdline_win32(pid.as_u32()) {
+                    if !win_cmd.trim().is_empty() {
+                        cmdline = win_cmd;
+                    }
+                }
+            }
             let state = format!("{:?}", proc.status());
             let cwd = proc
                 .cwd()
@@ -1674,8 +1745,100 @@ impl SiqueryEngine {
 
         #[cfg(not(target_os = "windows"))]
         {
-            // Non-Windows fallback (Linux /proc/net/tcp parsing or empty)
-            tracing::debug!("Non-Windows socket enumeration skipped.");
+            // 1. Build inode -> (pid, fd) map from /proc/<pid>/fd
+            let mut inode_to_pid_fd: std::collections::HashMap<u64, (i64, i64)> =
+                std::collections::HashMap::new();
+
+            if let Ok(proc_dir) = std::fs::read_dir("/proc") {
+                for entry in proc_dir.filter_map(|e| e.ok()) {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if let Ok(pid) = name_str.parse::<i64>() {
+                        let fd_dir_path = entry.path().join("fd");
+                        if let Ok(fd_entries) = std::fs::read_dir(&fd_dir_path) {
+                            for fd_entry in fd_entries.filter_map(|e| e.ok()) {
+                                let fd_str = fd_entry.file_name().to_string_lossy().to_string();
+                                let fd_num = fd_str.parse::<i64>().unwrap_or(0);
+                                if let Ok(link) = std::fs::read_link(fd_entry.path()) {
+                                    let link_str = link.to_string_lossy();
+                                    if link_str.starts_with("socket:[") && link_str.ends_with(']') {
+                                        if let Ok(inode) =
+                                            link_str[8..link_str.len() - 1].parse::<u64>()
+                                        {
+                                            inode_to_pid_fd.insert(inode, (pid, fd_num));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Parse /proc/net/tcp, /proc/net/tcp6, /proc/net/udp, /proc/net/udp6
+            let socket_sources = [
+                ("/proc/net/tcp", 2i64, 6i64, false, true),   // AF_INET, IPPROTO_TCP
+                ("/proc/net/tcp6", 10i64, 6i64, true, true),  // AF_INET6, IPPROTO_TCP
+                ("/proc/net/udp", 2i64, 17i64, false, false), // AF_INET, IPPROTO_UDP
+                ("/proc/net/udp6", 10i64, 17i64, true, false), // AF_INET6, IPPROTO_UDP
+            ];
+
+            for (path, family, protocol, is_v6, is_tcp) in socket_sources {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    for line in content.lines().skip(1) {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() > 9 {
+                            let (local_ip, local_port) = if let Some((ip_hex, port_hex)) = parts[1].split_once(':') {
+                                let port = u16::from_str_radix(port_hex, 16).unwrap_or(0) as i64;
+                                let ip = if is_v6 {
+                                    parse_linux_ipv6_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "::".to_string())
+                                } else {
+                                    parse_linux_ipv4_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string())
+                                };
+                                (ip, port)
+                            } else {
+                                (if is_v6 { "::".to_string() } else { "0.0.0.0".to_string() }, 0i64)
+                            };
+
+                            let (remote_ip, remote_port) = if let Some((ip_hex, port_hex)) = parts[2].split_once(':') {
+                                let port = u16::from_str_radix(port_hex, 16).unwrap_or(0) as i64;
+                                let ip = if is_v6 {
+                                    parse_linux_ipv6_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "::".to_string())
+                                } else {
+                                    parse_linux_ipv4_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string())
+                                };
+                                (ip, port)
+                            } else {
+                                (if is_v6 { "::".to_string() } else { "0.0.0.0".to_string() }, 0i64)
+                            };
+
+                            let state = if is_tcp {
+                                let st_val = u32::from_str_radix(parts[3], 16).unwrap_or(0);
+                                linux_tcp_state_name(st_val)
+                            } else {
+                                ""
+                            };
+
+                            let inode = parts[9].parse::<u64>().unwrap_or(0);
+                            let (pid, fd) = inode_to_pid_fd.get(&inode).copied().unwrap_or((0, 0));
+
+                            let _ = stmt.execute(rusqlite::params![
+                                pid,
+                                fd,
+                                inode as i64,
+                                family,
+                                protocol,
+                                local_ip,
+                                remote_ip,
+                                local_port,
+                                remote_port,
+                                "",
+                                state,
+                            ]);
+                        }
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -1785,6 +1948,67 @@ impl SiqueryEngine {
             }
         }
 
+        #[cfg(not(target_os = "windows"))]
+        {
+            let target_pid = extract_pid_hint(query_hint);
+            let current_pid = std::process::id();
+
+            let pids_to_scan: Vec<u32> = if let Some(p) = target_pid {
+                vec![p]
+            } else {
+                let mut pids = vec![current_pid];
+                for (p, _) in sys.processes().iter().take(25) {
+                    let u = p.as_u32();
+                    if u != current_pid && !pids.contains(&u) {
+                        pids.push(u);
+                    }
+                }
+                pids
+            };
+
+            for scan_pid in pids_to_scan {
+                let maps_path = format!("/proc/{}/maps", scan_pid);
+                if let Ok(content) = std::fs::read_to_string(&maps_path) {
+                    for line in content.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 5 {
+                            let (start, end) = if let Some((s, e)) = parts[0].split_once('-') {
+                                (format!("0x{}", s), format!("0x{}", e))
+                            } else {
+                                (parts[0].to_string(), parts[0].to_string())
+                            };
+                            let permissions = parts[1].to_string();
+                            let offset = i64::from_str_radix(parts[2], 16).unwrap_or(0);
+                            let device = parts[3].to_string();
+                            let inode = parts[4].parse::<i64>().unwrap_or(0);
+                            let path = if parts.len() >= 6 {
+                                parts[5..].join(" ")
+                            } else {
+                                String::new()
+                            };
+                            let pseudo = if path.starts_with('[') && path.ends_with(']') || path.is_empty() {
+                                1i64
+                            } else {
+                                0i64
+                            };
+
+                            let _ = stmt.execute(rusqlite::params![
+                                scan_pid as i64,
+                                start,
+                                end,
+                                permissions,
+                                offset,
+                                device,
+                                inode,
+                                path,
+                                pseudo,
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -1826,6 +2050,31 @@ impl SiqueryEngine {
                         -1i64,
                         "PIPE_ACCESS_DUPLEX",
                     ]);
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(content) = std::fs::read_to_string("/proc/net/unix") {
+                for line in content.lines().skip(1) {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 6 {
+                        let ref_cnt = parts[1].parse::<i64>().unwrap_or(1);
+                        let inode = parts.get(6).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                        let path = if parts.len() >= 8 {
+                            parts[7].to_string()
+                        } else {
+                            format!("unix_socket_{}", inode)
+                        };
+                        let _ = stmt.execute(rusqlite::params![
+                            0i64,
+                            path,
+                            ref_cnt,
+                            -1i64,
+                            "AF_UNIX",
+                        ]);
+                    }
                 }
             }
         }
@@ -2753,10 +3002,64 @@ impl SiqueryEngine {
             }
         }
 
+        #[cfg(not(target_os = "windows"))]
+        {
+            let service_dirs = ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"];
+            for sdir in &service_dirs {
+                if let Ok(entries) = std::fs::read_dir(sdir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        if fname.ends_with(".service") {
+                            let path = entry.path();
+                            let path_str = path.to_string_lossy().to_string();
+                            let mut desc = fname.clone();
+                            let mut exec_start = path_str.clone();
+                            let mut user = "root".to_string();
+                            let mut svc_type = "simple".to_string();
+
+                            if let Ok(content) = std::fs::read_to_string(&path) {
+                                for line in content.lines() {
+                                    let trimmed = line.trim();
+                                    if let Some(val) = trimmed.strip_prefix("Description=") {
+                                        desc = val.trim().to_string();
+                                    } else if let Some(val) = trimmed.strip_prefix("ExecStart=") {
+                                        exec_start = val.trim().to_string();
+                                    } else if let Some(val) = trimmed.strip_prefix("User=") {
+                                        user = val.trim().to_string();
+                                    } else if let Some(val) = trimmed.strip_prefix("Type=") {
+                                        svc_type = val.trim().to_string();
+                                    }
+                                }
+                            }
+
+                            let _ = stmt.execute(rusqlite::params![
+                                "FALSE",
+                                "TRUE",
+                                fname,
+                                desc,
+                                fname,
+                                "Normal",
+                                0i64,
+                                fname,
+                                exec_start,
+                                0i64,
+                                svc_type,
+                                "TRUE",
+                                "Auto",
+                                user,
+                                "Running",
+                                "OK"
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
-    /// Populates `wmi_products` table from installed software in Windows Registry.
+    /// Populates `wmi_products` table from installed software in Windows Registry or dpkg status on Linux.
     fn populate_wmi_products(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_products (install_date, name, vendor, version) VALUES (?, ?, ?, ?);")
@@ -2785,6 +3088,41 @@ impl SiqueryEngine {
                                     stmt.execute(rusqlite::params![date, name, vendor, version]);
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(content) = std::fs::read_to_string("/var/lib/dpkg/status") {
+                let mut count = 0;
+                for block in content.split("\n\n") {
+                    if count >= 200 {
+                        break;
+                    }
+                    let mut name = String::new();
+                    let mut version = String::new();
+                    let mut maintainer = String::new();
+
+                    for line in block.lines() {
+                        if let Some(pkg) = line.strip_prefix("Package: ") {
+                            name = pkg.trim().to_string();
+                        } else if let Some(ver) = line.strip_prefix("Version: ") {
+                            version = ver.trim().to_string();
+                        } else if let Some(maint) = line.strip_prefix("Maintainer: ") {
+                            maintainer = maint.trim().to_string();
+                        }
+                    }
+
+                    if !name.is_empty() {
+                        count += 1;
+                        let _ = stmt.execute(rusqlite::params![
+                            "", // install_date
+                            name,
+                            maintainer,
+                            version
+                        ]);
                     }
                 }
             }
@@ -3625,6 +3963,27 @@ impl SiqueryEngine {
                 }
             }
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(content) = std::fs::read_to_string("/proc/net/arp") {
+                for line in content.lines().skip(1) {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 6 {
+                        let ip = parts[0];
+                        let flags_num = parts[2]
+                            .strip_prefix("0x")
+                            .and_then(|s| u32::from_str_radix(s, 16).ok())
+                            .unwrap_or(0);
+                        let permanent = if (flags_num & 0x04) != 0 { "1" } else { "0" };
+                        let mac = parts[3];
+                        let iface = parts[5];
+                        let _ = stmt.execute(rusqlite::params![ip, mac, iface, permanent]);
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -3724,6 +4083,93 @@ impl SiqueryEngine {
                 }
             }
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // 1. /etc/xdg/autostart
+            if let Ok(entries) = std::fs::read_dir("/etc/xdg/autostart") {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    let fpath = entry.path().to_string_lossy().to_string();
+                    let mut exec = fpath.clone();
+                    if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                        for line in content.lines() {
+                            if let Some(cmd) = line.strip_prefix("Exec=") {
+                                exec = cmd.trim().to_string();
+                                break;
+                            }
+                        }
+                    }
+                    let _ = stmt.execute(rusqlite::params![
+                        fname,
+                        exec,
+                        "",
+                        "XDG Autostart",
+                        "/etc/xdg/autostart",
+                        "Enabled"
+                    ]);
+                }
+            }
+
+            // 2. /etc/cron.d
+            if let Ok(entries) = std::fs::read_dir("/etc/cron.d") {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    let fpath = entry.path().to_string_lossy().to_string();
+                    let _ = stmt.execute(rusqlite::params![
+                        fname,
+                        fpath,
+                        "",
+                        "cron.d",
+                        "/etc/cron.d",
+                        "Enabled"
+                    ]);
+                }
+            }
+
+            // 3. /etc/rc.local
+            if std::path::Path::new("/etc/rc.local").exists() {
+                let _ = stmt.execute(rusqlite::params![
+                    "rc.local",
+                    "/etc/rc.local",
+                    "",
+                    "rc.local",
+                    "/etc/rc.local",
+                    "Enabled"
+                ]);
+            }
+
+            // 4. /etc/ld.so.preload
+            if std::path::Path::new("/etc/ld.so.preload").exists() {
+                let _ = stmt.execute(rusqlite::params![
+                    "ld.so.preload",
+                    "/etc/ld.so.preload",
+                    "",
+                    "ld.so.preload",
+                    "/etc/ld.so.preload",
+                    "Enabled"
+                ]);
+            }
+
+            // 5. /Library/LaunchAgents and /Library/LaunchDaemons
+            for launch_dir in &["/Library/LaunchAgents", "/Library/LaunchDaemons"] {
+                if let Ok(entries) = std::fs::read_dir(launch_dir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let fname = entry.file_name().to_string_lossy().to_string();
+                        let fpath = entry.path().to_string_lossy().to_string();
+                        let _ = stmt.execute(rusqlite::params![
+                            fname,
+                            fpath,
+                            "",
+                            "Launchd",
+                            *launch_dir,
+                            "Enabled"
+                        ]);
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -3796,9 +4242,36 @@ impl SiqueryEngine {
 
         #[cfg(not(target_os = "windows"))]
         {
+            for parent in &["/home", "/Users"] {
+                if let Ok(entries) = std::fs::read_dir(parent) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        if let Ok(ft) = entry.file_type() {
+                            if !ft.is_dir() {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                        let username = entry.file_name().to_string_lossy().to_string();
+                        if username == "Shared" || username.starts_with('.') {
+                            continue;
+                        }
+                        let p = entry.path();
+                        let key = p.to_string_lossy().to_string();
+                        if seen.insert(key) {
+                            out.push((username, p));
+                        }
+                    }
+                }
+            }
             if let Ok(home) = std::env::var("HOME") {
                 let p = std::path::PathBuf::from(home);
-                out.push(("current".to_string(), p));
+                if p.exists() && p.is_dir() {
+                    let key = p.to_string_lossy().to_string();
+                    if seen.insert(key) {
+                        out.push(("current".to_string(), p));
+                    }
+                }
             }
         }
 
@@ -3810,14 +4283,24 @@ impl SiqueryEngine {
         let mut profiles = Vec::new();
         let user_dirs = Self::get_user_local_appdata_dirs();
 
-        for (_user, appdata_local) in user_dirs {
-            let browser_roots: [(&'static str, std::path::PathBuf); 3] = [
-                ("Chrome", appdata_local.join(r"Google\Chrome\User Data")),
-                ("Edge", appdata_local.join(r"Microsoft\Edge\User Data")),
+        for (_user, base_dir) in user_dirs {
+            let browser_roots: [(&'static str, std::path::PathBuf); 10] = [
+                // Windows paths (via local appdata)
+                ("Chrome", base_dir.join(r"Google\Chrome\User Data")),
+                ("Edge", base_dir.join(r"Microsoft\Edge\User Data")),
                 (
                     "Brave",
-                    appdata_local.join(r"BraveSoftware\Brave-Browser\User Data"),
+                    base_dir.join(r"BraveSoftware\Brave-Browser\User Data"),
                 ),
+                // Linux paths
+                ("Chrome", base_dir.join(".config/google-chrome")),
+                ("Chromium", base_dir.join(".config/chromium")),
+                ("Brave", base_dir.join(".config/BraveSoftware/Brave-Browser")),
+                ("Edge", base_dir.join(".config/microsoft-edge")),
+                // macOS paths
+                ("Chrome", base_dir.join("Library/Application Support/Google/Chrome")),
+                ("Brave", base_dir.join("Library/Application Support/BraveSoftware/Brave-Browser")),
+                ("Edge", base_dir.join("Library/Application Support/Microsoft Edge")),
             ];
 
             for (browser, user_data_dir) in browser_roots {
@@ -5554,6 +6037,29 @@ impl SiqueryEngine {
                 }
             }
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(content) = std::fs::read_to_string("/etc/resolv.conf") {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if let Some(ns) = trimmed.strip_prefix("nameserver") {
+                        let addr = ns.trim();
+                        if !addr.is_empty() {
+                            let family = if addr.contains(':') { "IPv6" } else { "IPv4" };
+                            let _ = stmt.execute(rusqlite::params![addr, "resolv.conf", family, 1i64]);
+                        }
+                    } else if let Some(search) = trimmed.strip_prefix("search") {
+                        for domain in search.split_whitespace() {
+                            if !domain.is_empty() {
+                                let _ = stmt.execute(rusqlite::params![domain, "search", "DNS_SEARCH", 1i64]);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -5801,6 +6307,37 @@ impl SiqueryEngine {
                 }
             }
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(content) = std::fs::read_to_string("/proc/net/route") {
+                for line in content.lines().skip(1) {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 8 {
+                        let iface = parts[0];
+                        let dest_hex = parts[1];
+                        let gw_hex = parts[2];
+                        let metric_val = parts[6].parse::<i64>().unwrap_or(0);
+                        let mask_hex = parts[7];
+
+                        let dest_ip = parse_linux_ipv4_hex(dest_hex)
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_else(|| "0.0.0.0".to_string());
+                        let gw_ip = parse_linux_ipv4_hex(gw_hex)
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_else(|| "0.0.0.0".to_string());
+                        let mask_ip = parse_linux_ipv4_hex(mask_hex)
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_else(|| "0.0.0.0".to_string());
+
+                        let _ = stmt.execute(rusqlite::params![
+                            dest_ip, mask_ip, gw_ip, "local", iface, metric_val, "remote"
+                        ]);
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -5831,6 +6368,55 @@ impl SiqueryEngine {
                 }
             }
         }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let cron_dirs = [
+                "/etc/cron.d",
+                "/etc/cron.daily",
+                "/etc/cron.hourly",
+                "/var/spool/cron/crontabs",
+            ];
+            for cdir in &cron_dirs {
+                if let Ok(entries) = std::fs::read_dir(cdir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let path = entry.path().to_string_lossy().to_string();
+                        let _ = stmt.execute(rusqlite::params![
+                            name,
+                            path,
+                            "Cron Execution",
+                            "Ready",
+                            "1",
+                            "",
+                            ""
+                        ]);
+                    }
+                }
+            }
+
+            let timer_dirs = ["/lib/systemd/system", "/etc/systemd/system"];
+            for tdir in &timer_dirs {
+                if let Ok(entries) = std::fs::read_dir(tdir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.ends_with(".timer") {
+                            let path = entry.path().to_string_lossy().to_string();
+                            let _ = stmt.execute(rusqlite::params![
+                                name,
+                                path,
+                                "Systemd Timer",
+                                "Active",
+                                "1",
+                                "",
+                                ""
+                            ]);
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -6660,6 +7246,56 @@ fn tcp_state_name(state: u32) -> &'static str {
     }
 }
 
+/// Translates Linux kernel /proc/net/tcp hex state integers to canonical names.
+#[allow(dead_code)]
+fn linux_tcp_state_name(st: u32) -> &'static str {
+    match st {
+        0x01 => "ESTABLISHED",
+        0x02 => "SYN_SENT",
+        0x03 => "SYN_RECV",
+        0x04 => "FIN_WAIT1",
+        0x05 => "FIN_WAIT2",
+        0x06 => "TIME_WAIT",
+        0x07 => "CLOSED",
+        0x08 => "CLOSE_WAIT",
+        0x09 => "LAST_ACK",
+        0x0A => "LISTEN",
+        0x0B => "CLOSING",
+        _ => "UNKNOWN",
+    }
+}
+
+/// Parses an 8-character little-endian IPv4 hex string from Linux /proc/net tables.
+#[allow(dead_code)]
+fn parse_linux_ipv4_hex(hex_str: &str) -> Option<Ipv4Addr> {
+    let num = u32::from_str_radix(hex_str, 16).ok()?;
+    let octets = [
+        (num & 0xFF) as u8,
+        ((num >> 8) & 0xFF) as u8,
+        ((num >> 16) & 0xFF) as u8,
+        ((num >> 24) & 0xFF) as u8,
+    ];
+    Some(Ipv4Addr::from(octets))
+}
+
+/// Parses a 32-character little-endian IPv6 hex string from Linux /proc/net tables.
+#[allow(dead_code)]
+fn parse_linux_ipv6_hex(hex_str: &str) -> Option<Ipv6Addr> {
+    if hex_str.len() != 32 {
+        return None;
+    }
+    let mut octets = [0u8; 16];
+    for i in 0..4 {
+        let chunk = &hex_str[i * 8..(i + 1) * 8];
+        let num = u32::from_str_radix(chunk, 16).ok()?;
+        octets[i * 4] = (num & 0xFF) as u8;
+        octets[i * 4 + 1] = ((num >> 8) & 0xFF) as u8;
+        octets[i * 4 + 2] = ((num >> 16) & 0xFF) as u8;
+        octets[i * 4 + 3] = ((num >> 24) & 0xFF) as u8;
+    }
+    Some(Ipv6Addr::from(octets))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7108,5 +7744,24 @@ mod tests {
             .execute_query("SELECT * FROM hierarchical_merkle_anchors;")
             .expect("SELECT * FROM hierarchical_merkle_anchors must succeed");
         assert!(!all_rows.is_empty());
+    }
+
+    #[test]
+    fn test_linux_network_parsing_helpers() {
+        // IPv4 127.0.0.1 in Linux /proc/net/tcp format
+        let ip4 = parse_linux_ipv4_hex("0100007F").unwrap();
+        assert_eq!(ip4, Ipv4Addr::new(127, 0, 0, 1));
+
+        // IPv4 192.168.1.1
+        let ip4_gw = parse_linux_ipv4_hex("0101A8C0").unwrap();
+        assert_eq!(ip4_gw, Ipv4Addr::new(192, 168, 1, 1));
+
+        // IPv6 ::1
+        let ip6_loop = parse_linux_ipv6_hex("00000000000000000000000001000000").unwrap();
+        assert_eq!(ip6_loop, Ipv6Addr::LOCALHOST);
+
+        // TCP states
+        assert_eq!(linux_tcp_state_name(0x01), "ESTABLISHED");
+        assert_eq!(linux_tcp_state_name(0x0A), "LISTEN");
     }
 }
