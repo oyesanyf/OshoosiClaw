@@ -34,4 +34,9 @@ model: gemini-3.1-pro
    - The workflow moves the commit to a temporary `pr/solo-<timestamp>` branch, opens a GitHub PR, triggers `github-actions[bot]` via `.github/workflows/auto-review-bot.yml` to verify identity and security invariants, submits an official `APPROVED` review, and squash-merges into `main`.
    - This satisfies GitHub Branch Protection requirements and maintains 10/10 on OpenSSF Scorecard `Code-Review` and `CI-Tests` checks.
 
-
+6. **Mandatory Full-Lifecycle Deliverable Gate (Packages + Security + Docs & Diagrams)**:
+   - **User Preference**: "remember to always build packages fix security update docs and diagrams"
+   - Every completed task must:
+     1. **Build & Sync All Packages**: Rebuild Windows (`OshoosiClaw.msi`), Linux (`.deb`, `.rpm`, `.tar.gz` via WSL `packaging/linux/build_packages.sh`), and the hardened Docker image (`ghcr.io/oyesanyf/oshoosiclaw:1.2.0`), and sync signed release assets to GitHub Releases.
+     2. **Verify Security Invariants**: Audit for zero auth regressions, zero token leaks, zero async `blocking_read()`/`blocking_write()` panics, and strict non-root (`65532:65532`) read-only container confinement.
+     3. **Update Documentation & Diagrams**: Update `README.md` and `mermaid` architecture diagrams to reflect all new capabilities, security hardening, and packaging workflows.
