@@ -75,6 +75,7 @@ pub mod secured_executor;
 pub mod self_healing;
 pub mod supervisor;
 pub mod voters;
+pub mod wfp;
 
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 

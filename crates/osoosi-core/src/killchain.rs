@@ -425,16 +425,97 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
     Ok(guard.status.clone())
 }
 
+/// Unconditional host restoration for service shutdown and emergency recovery.
+/// Bypasses authentication and lockout checks to guarantee the host is never locked out on daemon exit.
+pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
+    info!("🟢 [KILLCHAIN] Unconditional Host Restoration initiated during service shutdown/stop.");
+
+    // 1. Remove network quarantine rules
+    if let Err(e) = remove_network_hermetic_quarantine() {
+        error!("❌ [KILLCHAIN] Error removing network quarantine rules: {}", e);
+    } else {
+        info!("🟢 [KILLCHAIN] Network quarantine rules flushed.");
+    }
+
+    let mut guard = KILLCHAIN_STORAGE.write().unwrap();
+    let now = Utc::now().to_rfc3339();
+
+    // 2. Resume suspended processes
+    let resumed_count = resume_frozen_processes(&guard.status.frozen_pids);
+    info!("🟢 [KILLCHAIN] Resumed {} frozen processes.", resumed_count);
+
+    // 3. Restore kernel driver mode
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(driver) = osoosi_runtime::kernel_driver::KernelDriverClient::connect() {
+            let _ = driver.set_mode(osoosi_runtime::kernel_driver::DriverAutonomyMode::Active);
+            info!("🟢 [KILLCHAIN] Ring-0 kernel driver restored to Active mode.");
+        }
+    }
+
+    let reason = "Service Shutdown / Emergency Host Restoration";
+    let operator = "SYSTEM_SHUTDOWN";
+    let event_payload = format!("{}:{}:{}:disarmed", now, operator, reason);
+    let event_hash = blake3::hash(event_payload.as_bytes()).to_hex().to_string();
+
+    guard.status = KillChainStatus {
+        isolated: false,
+        isolated_at: None,
+        isolated_by: None,
+        reason: Some(reason.to_string()),
+        network_isolated: false,
+        processes_frozen_count: 0,
+        kernel_lockdown_active: false,
+        allowlisted_ports: vec![3030],
+        quarantined_interfaces: vec![],
+        frozen_pids: vec![],
+        last_action_timestamp: Some(now.clone()),
+        lockout_remaining_secs: 0,
+    };
+
+    guard.history.insert(
+        0,
+        KillChainHistoryEntry {
+            timestamp: now,
+            action: "DISARMED_SHUTDOWN".to_string(),
+            operator: operator.to_string(),
+            reason: reason.to_string(),
+            event_hash,
+        },
+    );
+
+    let _ = save_storage_to_disk(&guard);
+    record_successful_auth();
+    Ok(guard.status.clone())
+}
+
 // ---------------------------------------------------------------------------
 // Network Isolation Primitives
 // ---------------------------------------------------------------------------
+
+/// Execute a system firewall command with stdout and stderr fully silenced,
+/// preventing command-line noise (e.g. netsh 'No rules match the specified criteria').
+fn run_firewall_cmd(cmd: &str, args: &[&str]) {
+    #[allow(unused_mut)]
+    let mut command = Command::new(cmd);
+    command.args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let _ = command.status();
+}
 
 fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
     #[cfg(target_os = "windows")]
     {
         // 1. Ensure loopback and port 3030 allow rules exist first with highest priority
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -444,11 +525,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "action=allow",
                 "localip=127.0.0.1,::1",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -458,11 +540,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "action=allow",
                 "remoteip=127.0.0.1,::1",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -473,11 +556,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "protocol=TCP",
                 "localport=3030",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -488,11 +572,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "protocol=TCP",
                 "localport=3030",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -503,12 +588,13 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "protocol=TCP",
                 "remoteport=3030",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
         // 2. Block all non-loopback inbound and outbound network traffic
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -518,11 +604,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "action=block",
                 "remoteip=0.0.0.0-126.255.255.255",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -532,11 +619,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "action=block",
                 "remoteip=128.0.0.0-255.255.255.255",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -546,11 +634,12 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "action=block",
                 "remoteip=0.0.0.0-126.255.255.255",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
-        let _ = Command::new("netsh")
-            .args([
+        run_firewall_cmd(
+            "netsh",
+            &[
                 "advfirewall",
                 "firewall",
                 "add",
@@ -560,32 +649,21 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "action=block",
                 "remoteip=128.0.0.0-255.255.255.255",
                 "profile=any",
-            ])
-            .status();
+            ],
+        );
 
         Ok(vec!["All-Windows-Adapters (Loopback Preserved)".to_string()])
     }
 
     #[cfg(target_os = "linux")]
     {
-        let _ = Command::new("iptables")
-            .args(["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"])
-            .status();
-        let _ = Command::new("iptables")
-            .args(["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
-                "-I", "INPUT", "2", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
-                "-I", "OUTPUT", "2", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+        run_firewall_cmd("iptables", &["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "INPUT", "2", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "OUTPUT", "2", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT"]);
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-A",
                 "INPUT",
                 "-m",
@@ -594,10 +672,11 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "Osoosi-KillChain",
                 "-j",
                 "DROP",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-A",
                 "OUTPUT",
                 "-m",
@@ -606,10 +685,11 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "Osoosi-KillChain",
                 "-j",
                 "DROP",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-A",
                 "FORWARD",
                 "-m",
@@ -618,8 +698,8 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
                 "Osoosi-KillChain",
                 "-j",
                 "DROP",
-            ])
-            .status();
+            ],
+        );
 
         Ok(vec!["All-Linux-Interfaces (lo Preserved)".to_string()])
     }
@@ -645,23 +725,25 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
             "Osoosi-KillChain-Allow-Loopback-Out",
         ];
         for r in rules {
-            let _ = Command::new("netsh")
-                .args([
+            run_firewall_cmd(
+                "netsh",
+                &[
                     "advfirewall",
                     "firewall",
                     "delete",
                     "rule",
                     &format!("name={}", r),
-                ])
-                .status();
+                ],
+            );
         }
         Ok(())
     }
 
     #[cfg(target_os = "linux")]
     {
-        let _ = Command::new("iptables")
-            .args([
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-D",
                 "INPUT",
                 "-m",
@@ -670,10 +752,11 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
                 "Osoosi-KillChain",
                 "-j",
                 "DROP",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-D",
                 "OUTPUT",
                 "-m",
@@ -682,10 +765,11 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
                 "Osoosi-KillChain",
                 "-j",
                 "DROP",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-D",
                 "FORWARD",
                 "-m",
@@ -694,24 +778,22 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
                 "Osoosi-KillChain",
                 "-j",
                 "DROP",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args(["-D", "INPUT", "-i", "lo", "-j", "ACCEPT"])
-            .status();
-        let _ = Command::new("iptables")
-            .args(["-D", "OUTPUT", "-o", "lo", "-j", "ACCEPT"])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+            ],
+        );
+        run_firewall_cmd("iptables", &["-D", "INPUT", "-i", "lo", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-D", "OUTPUT", "-o", "lo", "-j", "ACCEPT"]);
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-D", "INPUT", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT",
-            ])
-            .status();
-        let _ = Command::new("iptables")
-            .args([
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
                 "-D", "OUTPUT", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
-            ])
-            .status();
+            ],
+        );
         Ok(())
     }
 
@@ -1108,8 +1190,34 @@ pub fn authenticate_hybrid_credentials(
                 record_successful_auth();
                 return Ok(true);
             }
-        } else if let Ok(current_user) = std::env::var("USERNAME") {
-            if win_auth::verify_windows_credentials(&current_user, password) {
+        }
+        let mut candidate_users: Vec<String> = Vec::new();
+        if let Ok(current_user) = std::env::var("USERNAME") {
+            if !current_user.trim().is_empty() && !current_user.eq_ignore_ascii_case("SYSTEM") {
+                candidate_users.push(current_user);
+            }
+        }
+        // If running as Windows Service (SYSTEM), enumerate real user accounts from C:\Users
+        if let Ok(entries) = std::fs::read_dir("C:\\Users") {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let name_lc = name.to_ascii_lowercase();
+                        if name_lc != "public"
+                            && name_lc != "default"
+                            && name_lc != "default user"
+                            && name_lc != "all users"
+                            && !candidate_users.contains(&name)
+                        {
+                            candidate_users.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        for candidate in &candidate_users {
+            if win_auth::verify_windows_credentials(candidate, password) {
                 record_successful_auth();
                 return Ok(true);
             }
@@ -1124,8 +1232,27 @@ pub fn authenticate_hybrid_credentials(
                 record_successful_auth();
                 return Ok(true);
             }
-        } else if let Ok(current_user) = std::env::var("USER") {
-            if unix_auth::verify_unix_credentials(&current_user, password) {
+        }
+        let mut candidate_users: Vec<String> = Vec::new();
+        if let Ok(current_user) = std::env::var("USER") {
+            if !current_user.trim().is_empty() && current_user != "root" {
+                candidate_users.push(current_user);
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir("/home") {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if !candidate_users.contains(&name) {
+                            candidate_users.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        for candidate in &candidate_users {
+            if unix_auth::verify_unix_credentials(candidate, password) {
                 record_successful_auth();
                 return Ok(true);
             }

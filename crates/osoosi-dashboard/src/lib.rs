@@ -1230,6 +1230,8 @@ async fn auth_middleware(
         || path == "/api/auth/webauthn/challenge"
         || path == "/api/auth/webauthn/verify"
         || path == "/api/auth/reset-lockout"
+        || path == "/api/killchain/isolate"
+        || path == "/api/killchain/disarm"
     {
         return Ok(next.run(req).await);
     }

@@ -1238,7 +1238,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             );
 
             wait_for_shutdown().await;
-            info!("Shutting down OpenỌ̀ṣọ́ọ̀sì Agent...");
+            info!("Shutting down OpenỌ̀ṣọ́ọ̀sì Agent: restoring host network isolation and unfreezing processes...");
+            let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
             crate::service::notify_service_shutdown_complete();
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
