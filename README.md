@@ -1167,11 +1167,78 @@ On Windows 11 systems with **Smart App Control (SAC)** or AppLocker / Windows De
   cargo build --release
   ```
 
-### Docker (Coming Soon)
+### Linux Packages (`v1.2.0` — `.deb`, `.rpm`, `.tar.gz`)
+
+Every release ships GPG-signed (`PUBLIC_KEY.asc`) and SLSA in-toto DSSE-attested Linux packages for Debian/Ubuntu (`.deb`), RHEL/Fedora/Rocky (`.rpm`), and portable x86_64 systems (`.tar.gz`):
 
 ```bash
-docker pull oyesanyf/oshoosiclaw:latest
-docker run --privileged --net=host oyesanyf/oshoosiclaw
+# 1. Verify OpenPGP detached signature against PUBLIC_KEY.asc
+gpg --import PUBLIC_KEY.asc
+gpg --verify oshoosiclaw_1.2.0_amd64.deb.asc oshoosiclaw_1.2.0_amd64.deb
+
+# 2a. Debian / Ubuntu (.deb)
+sudo dpkg -i oshoosiclaw_1.2.0_amd64.deb
+osoosi --version
+
+# 2b. RHEL / Fedora / Rocky / AlmaLinux (.rpm)
+sudo rpm -Uvh oshoosiclaw-1.2.0-1.x86_64.rpm
+osoosi --version
+
+# 2c. Portable Linux Tarball (.tar.gz)
+tar -xzf oshoosiclaw-1.2.0-linux-x86_64.tar.gz
+sudo ./install.sh
+```
+
+### 🐳 Hardened Docker & Docker Compose (`CIS Docker Benchmark Level 2`)
+
+OpenỌ̀ṣọ́ọ̀sì ships a multi-stage, zero-trust container image (`ghcr.io/oyesanyf/oshoosiclaw:1.2.0`) engineered to satisfy **OpenSSF Scorecard `Pinned-Dependencies` (10/10)** and **CIS Docker Benchmark v1.6 Level 2**:
+
+- **Immutable SHA-256 Base Digests**: Both `builder` and `runtime` stages pin `ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac`.
+- **Non-Root Execution (`UID 65532:65532`)**: Executes under a dedicated unprivileged `osoosi:osoosi` account (`/usr/sbin/nologin`) with the `root` account locked (`passwd -l root`).
+- **Immutable Code & Read-Only RootFS**: `/app/osoosi` (`0555`) and `/app/dashboard/dist` (`0444`) are owned by `0:0` (`root:root`), preventing runtime binary or WebUI self-modification even under a hypothetical RCE.
+- **Zero SUID/SGID & Package Manager Purge**: All `SUID`/`SGID` bits are stripped across the filesystem and `apt`/`dpkg` are removed from the runtime image.
+- **Kernel Capability Drop & Seccomp Filtering**: Drops all Linux capabilities (`--cap-drop=ALL`), enforces `no-new-privileges:true`, and applies a custom 52-syscall blocklist (`docker/seccomp-oshoosi.json`).
+
+```mermaid
+flowchart LR
+    subgraph Stage1["Stage 1: Builder (Digest-Pinned)"]
+        S1A["Rust Workspace / Pre-Built ELF"] --> S1B["strip --strip-unneeded"]
+        S1B --> S1C["chmod 0555 /out/app/osoosi"]
+        S1C --> S1D["chmod 0444 /out/app/dashboard/dist"]
+    end
+
+    subgraph Stage2["Stage 2: Hardened Runtime (UID 65532:65532)"]
+        S2A["Purge apt/dpkg & Strip All SUID/SGID"] --> S2B["Immutable 0:0 /app/osoosi & /app/dashboard"]
+        S2B --> S2C["Isolated 65532:65532 Volumes (/app/database, /app/logs, /app/quarantine)"]
+    end
+
+    subgraph Confinement["Runtime Kernel Confinement"]
+        C1["--read-only RootFS + noexec /tmp tmpfs"]
+        C2["--cap-drop=ALL + no-new-privileges:true"]
+        C3["docker/seccomp-oshoosi.json (52 Syscalls Blocked)"]
+    end
+
+    Stage1 --> Stage2 --> Confinement
+```
+
+```bash
+# Build the hardened multi-stage image locally
+docker build -t ghcr.io/oyesanyf/oshoosiclaw:1.2.0 .
+
+# Run with read-only rootfs, dropped capabilities, and seccomp confinement
+docker run -d \
+  --name oshoosi-edr \
+  --user 65532:65532 \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  --security-opt seccomp=docker/seccomp-oshoosi.json \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+  -p 127.0.0.1:3031:3030 \
+  ghcr.io/oyesanyf/oshoosiclaw:1.2.0
+
+# Or launch via the hardened docker-compose.yml profile
+docker compose up -d --build
 ```
 
 ---
