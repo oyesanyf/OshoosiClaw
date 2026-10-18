@@ -491,6 +491,21 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
             ])
             .status();
 
+        let _ = Command::new("netsh")
+            .args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-WebUI-Out-Remote",
+                "dir=out",
+                "action=allow",
+                "protocol=TCP",
+                "remoteport=3030",
+                "profile=any",
+            ])
+            .status();
+
         // 2. Block all non-loopback inbound and outbound network traffic
         let _ = Command::new("netsh")
             .args([
@@ -625,6 +640,7 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
             "Osoosi-KillChain-Block-Outbound-High",
             "Osoosi-KillChain-Allow-WebUI-In",
             "Osoosi-KillChain-Allow-WebUI-Out",
+            "Osoosi-KillChain-Allow-WebUI-Out-Remote",
             "Osoosi-KillChain-Allow-Loopback-In",
             "Osoosi-KillChain-Allow-Loopback-Out",
         ];
@@ -727,6 +743,20 @@ fn is_critical_system_pid(pid: u32, name: &str) -> bool {
             | "smss.exe"
             | "csrss.exe"
             | "wininit.exe"
+            | "winlogon.exe"
+            | "logonui.exe"
+            | "credentialproviderhost.exe"
+            | "sihost.exe"
+            | "runtimebroker.exe"
+            | "taskmgr.exe"
+            | "securityhealthservice.exe"
+            | "securityhealthsystray.exe"
+            | "smartscreen.exe"
+            | "consent.exe"
+            | "fontdrvhost.exe"
+            | "searchhost.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
             | "services.exe"
             | "lsass.exe"
             | "dwm.exe"
@@ -735,15 +765,40 @@ fn is_critical_system_pid(pid: u32, name: &str) -> bool {
             | "sysmon.exe"
             | "sysmon64.exe"
             | "msmpeng.exe"
+            | "chrome.exe"
+            | "msedge.exe"
+            | "firefox.exe"
+            | "brave.exe"
+            | "opera.exe"
+            | "code.exe"
+            | "antigravity.exe"
+            | "windowsterminal.exe"
+            | "openconsole.exe"
+            | "conhost.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "cmd.exe"
             | "init"
             | "systemd"
+            | "systemd-logind"
             | "systemd-journald"
+            | "dbus-daemon"
+            | "gdm"
+            | "gdm3"
+            | "lightdm"
+            | "sddm"
+            | "xorg"
+            | "xwayland"
+            | "gnome-shell"
+            | "kwin"
+            | "polkitd"
+            | "agetty"
+            | "windowserver"
+            | "loginwindow"
+            | "launchd"
             | "sshd"
             | "cargo.exe"
             | "rustc.exe"
-            | "powershell.exe"
-            | "cmd.exe"
-            | "conhost.exe"
             | "bash"
             | "sh"
             | "zsh"
