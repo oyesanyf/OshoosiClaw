@@ -57,10 +57,12 @@ db_path = "./database/osoosi.db"
 # P2P listen address
 # listen_addr = "/ip4/0.0.0.0/tcp/9000"
 # Static bootstrap peers (PeerId@Multiaddr)
-peers = []
+peers = [
+    "/dns4/oshoosi.duckdns.org/tcp/4001"
+]
 # Canonical DuckDNS domain for zero-touch cross-network WAN auto-peering (disabled by default)
-duckdns_domain = ""
-auto_bootstrap_duckdns = false
+duckdns_domain = "oshoosi"
+auto_bootstrap_duckdns = true
 duckdns_port = 4001
 # Nostr Relays for decentralized threat intelligence sharing (disabled by default)
 # Set to custom active relays if available, e.g. ["wss://relay.damus.io"]

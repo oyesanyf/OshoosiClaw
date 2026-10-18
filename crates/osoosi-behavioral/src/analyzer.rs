@@ -141,7 +141,12 @@ impl BehavioralAnalyzer {
     }
 
     pub fn is_configured(&self) -> bool {
-        !self.api_key.is_empty() || self.smollm.blocking_read().is_some()
+        !self.api_key.is_empty()
+            || self
+                .smollm
+                .try_read()
+                .map(|g| g.is_some())
+                .unwrap_or(false)
     }
 
     /// Initialize SmolLM in a background blocking thread.

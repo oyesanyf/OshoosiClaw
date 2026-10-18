@@ -1,3 +1,5 @@
+#![allow(linker_messages)]
+
 use clap::{Parser, Subcommand};
 use osoosi_core::{secured_executor::DirectExecutor, EdrOrchestrator};
 use osoosi_policy::ThreatFeedFetcher;

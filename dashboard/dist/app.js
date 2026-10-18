@@ -899,11 +899,15 @@ function showSkyrlToast(message, type = 'info', guidance = null, errorCode = nul
  * Resilient fetch with exponential backoff retry for interactive endpoints
  */
 async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
+    const opts = { ...options };
+    opts.credentials = opts.credentials || 'same-origin';
     let lastError = null;
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
-            const resp = await fetch(url, options);
-            if (resp.ok || resp.status < 500) {
+            const resp = await fetch(url, opts);
+            if (resp.status === 401 && attempt === 0) {
+                await fetch(`${API_BASE}/status`, { credentials: 'same-origin' }).catch(() => null);
+            } else if (resp.ok || resp.status < 500) {
                 return resp;
             }
             lastError = new Error(`HTTP ${resp.status} ${resp.statusText}`);
@@ -1025,11 +1029,8 @@ window.showNotification = showNotification;
  * Helper to fetch from API with SLA timeout and structured error decoding
  */
 async function fetchAPI(endpoint) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`, { signal: controller.signal });
-        clearTimeout(timeoutId);
+        const response = await fetchWithRetry(`${API_BASE}${endpoint}`, {}, 2, 350);
         if (!response.ok) {
             const errData = await response.json().catch(() => null);
             if (errData && errData.status === 'error') {
@@ -1041,12 +1042,7 @@ async function fetchAPI(endpoint) {
         }
         return await response.json();
     } catch (err) {
-        clearTimeout(timeoutId);
-        if (err.name === 'AbortError') {
-            console.warn(`Fetch timeout for ${endpoint} (4s SLA exceeded)`);
-        } else {
-            console.warn(`Error fetching ${endpoint}:`, err);
-        }
+        console.warn(`Error fetching ${endpoint}:`, err);
         return null;
     }
 }
@@ -1055,16 +1051,12 @@ async function fetchAPI(endpoint) {
  * Helper to POST to API with standardized error object return on failure
  */
 async function postAPI(endpoint, payload = {}) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`, {
+        const response = await fetchWithRetry(`${API_BASE}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload),
-            signal: controller.signal
+            body: JSON.stringify(payload)
         });
-        clearTimeout(timeoutId);
         const data = await response.json().catch(() => null);
         if (!response.ok) {
             if (data && (data.status === 'error' || data.error || data.message)) {
@@ -1080,16 +1072,15 @@ async function postAPI(endpoint, payload = {}) {
                 success: false
             };
         }
-        return data || { ok: true, success: true };
+        return data || { ok: true, status: 'ok' };
     } catch (err) {
-        clearTimeout(timeoutId);
-        console.warn(`Error in postAPI ${endpoint}:`, err);
+        console.warn(`Error in postAPI for ${endpoint}:`, err);
         return {
             status: 'error',
-            error_code: err.name === 'AbortError' ? 'TIMEOUT_ERROR' : 'NETWORK_ERROR',
-            message: err.message || 'Network request failed',
-            user_guidance: 'Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active at http://127.0.0.1:3030.',
-            error: err.message || 'Network request failed',
+            error_code: 'NETWORK_ERROR',
+            message: err.message || 'Network error executing POST request',
+            user_guidance: 'Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active and reachability is maintained.',
+            error: err.message,
             ok: false,
             success: false
         };
@@ -1838,7 +1829,7 @@ async function renderMeshView(mesh) {
 
 window.meshAllowPeer = async function(id) {
     try {
-        const res = await fetch(`${API_BASE}/pending-joins/${id}/allow`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/pending-joins/${id}/allow`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Mesh Allow Peer', data || `HTTP ${res.status}`);
@@ -1852,7 +1843,7 @@ window.meshAllowPeer = async function(id) {
 };
 window.meshDenyPeer = async function(id) {
     try {
-        const res = await fetch(`${API_BASE}/pending-joins/${id}/deny`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/pending-joins/${id}/deny`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Mesh Deny Peer', data || `HTTP ${res.status}`);
@@ -1866,7 +1857,7 @@ window.meshDenyPeer = async function(id) {
 };
 window.meshReleasePeer = async function(id) {
     try {
-        const res = await fetch(`${API_BASE}/quarantined-peers/${id}/release`, {
+        const res = await fetchWithRetry(`${API_BASE}/quarantined-peers/${id}/release`, {
             method: 'POST',
             headers: {'x-osoosi-quarantine-key': 'admin'}
         });
@@ -1884,7 +1875,7 @@ window.meshReleasePeer = async function(id) {
 
 window.markPeerFalsePositive = async function(id) {
     try {
-        const res = await fetch(`${API_BASE}/quarantined-peers/${encodeURIComponent(id)}/false-positive`, {
+        const res = await fetchWithRetry(`${API_BASE}/quarantined-peers/${encodeURIComponent(id)}/false-positive`, {
             method: 'POST',
             headers: {'x-osoosi-quarantine-key': 'admin'}
         });
@@ -1902,7 +1893,7 @@ window.markPeerFalsePositive = async function(id) {
 
 window.entanglePeer = async function(peerId) {
     try {
-        const res = await fetch(`${API_BASE}/deception/entangle`, {
+        const res = await fetchWithRetry(`${API_BASE}/deception/entangle`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ peer_id: peerId, process_name: `peer-${peerId}` })
@@ -1938,7 +1929,7 @@ window.deployDeceptionTraps = async function() {
 window.activateMeshHologram = async function(targetIp) {
     try {
         const ip = targetIp || '127.0.0.1';
-        const res = await fetch(`${API_BASE}/deception/activate-hologram`, {
+        const res = await fetchWithRetry(`${API_BASE}/deception/activate-hologram`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ attacker_ip: ip })
@@ -1957,7 +1948,7 @@ window.activateMeshHologram = async function(targetIp) {
 
 async function renderDeceptionCard() {
     try {
-        const res = await fetch(`${API_BASE}/deception/status`);
+        const res = await fetchWithRetry(`${API_BASE}/deception/status`);
         if (!res.ok) return;
         const data = await res.json();
         
@@ -2011,7 +2002,7 @@ async function fetchBootstrapPeers() {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, { signal: controller.signal });
+        const res = await fetchWithRetry(`${API_BASE}/mesh/bootstrap-peers`, { signal: controller.signal });
         clearTimeout(timeoutId);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -2152,7 +2143,7 @@ async function saveBootstrapPeers() {
     const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     try {
-        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, {
+        const res = await fetchWithRetry(`${API_BASE}/mesh/bootstrap-peers`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2223,7 +2214,7 @@ async function saveDuckDnsDomain() {
     if (!domain) domain = 'oshoosi';
 
     try {
-        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, {
+        const res = await fetchWithRetry(`${API_BASE}/mesh/bootstrap-peers`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2404,7 +2395,7 @@ window.triggerMalwareScan = async function(btn) {
     }
     showSkyrlToast('Triggering on-demand malware scan on active endpoints...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/scan-trigger`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/scan-trigger`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Malware Scan', data || `HTTP ${res.status}`);
@@ -2707,7 +2698,7 @@ async function triggerEvaluateConsensus() {
     showSkyrlToast('Evaluating file across multi-model consensus engines...', 'info');
 
     try {
-        const res = await fetch(`${API_BASE}/consensus/evaluate`, {
+        const res = await fetchWithRetry(`${API_BASE}/consensus/evaluate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: filePath, file_path: filePath })
@@ -2742,7 +2733,7 @@ async function triggerAddCleanHash() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/consensus/ignore-hash`, {
+        const res = await fetchWithRetry(`${API_BASE}/consensus/ignore-hash`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ hash: hash, notes: 'Manual UI Whitelist' })
@@ -2765,7 +2756,7 @@ async function triggerAddCleanHash() {
 async function removeCleanHash(hash) {
     if (!hash) return;
     try {
-        const res = await fetch(`${API_BASE}/consensus/ignore-hash/${encodeURIComponent(hash)}`, {
+        const res = await fetchWithRetry(`${API_BASE}/consensus/ignore-hash/${encodeURIComponent(hash)}`, {
             method: 'DELETE'
         });
 
@@ -2835,7 +2826,7 @@ window.markMalwareFP = async function(btn) {
 
     try {
         // POST to /api/false-positive
-        const res1 = await fetch(`${API_BASE}/false-positive`, {
+        const res1 = await fetchWithRetry(`${API_BASE}/false-positive`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ hash: hash || null, process_name: name || null, file_path: path || null })
@@ -2846,7 +2837,7 @@ window.markMalwareFP = async function(btn) {
         }
 
         // POST to /api/behavioral/feedback
-        await fetch(`${API_BASE}/behavioral/feedback`, {
+        await fetchWithRetry(`${API_BASE}/behavioral/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_suspicious: false, process_name: name || null, file_hash: hash || null })
@@ -2875,7 +2866,7 @@ window.quarantineMalware = async function(btn) {
     if (window.lucide) lucide.createIcons();
 
     try {
-        const res = await fetch(`${API_BASE}/quarantine`, {
+        const res = await fetchWithRetry(`${API_BASE}/quarantine`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file_path: path })
@@ -3038,7 +3029,7 @@ window.triggerPatchDiscovery = async function(btn) {
     }
     showSkyrlToast('Triggering autonomous patch discovery cycle...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/agent/trigger-patch`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/agent/trigger-patch`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Patch Discovery', data || `HTTP ${res.status}`);
@@ -3110,7 +3101,7 @@ window.triggerBaselineVerification = async function(btn) {
     }
     showSkyrlToast('Verifying cryptographic system baseline...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/agent/trigger-baseline`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/agent/trigger-baseline`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Baseline Verification', data || `HTTP ${res.status}`);
@@ -4451,7 +4442,7 @@ window.autoRemediateGap = async function(gapId, triggerBtn) {
         if (window.lucide) lucide.createIcons();
     }
     try {
-        const res = await fetch(`${API_BASE}/zone/auto-remediate`, {
+        const res = await fetchWithRetry(`${API_BASE}/zone/auto-remediate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gap_id: gapId })
@@ -4481,7 +4472,7 @@ window.autoRemediateAllGaps = async function(triggerBtn) {
         if (window.lucide) lucide.createIcons();
     }
     try {
-        const res = await fetch(`${API_BASE}/zone/auto-remediate`, {
+        const res = await fetchWithRetry(`${API_BASE}/zone/auto-remediate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gap_id: 'all' })
@@ -4565,7 +4556,7 @@ async function renderApprovalsView() {
 
 window.approveAction = async function(id) {
     try {
-        const res = await fetch(`${API_BASE}/approve-action`, {
+        const res = await fetchWithRetry(`${API_BASE}/approve-action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ threat_id: id })
@@ -4584,7 +4575,7 @@ window.approveAction = async function(id) {
 
 window.rejectAction = async function(id) {
     try {
-        const res = await fetch(`${API_BASE}/reject-action`, {
+        const res = await fetchWithRetry(`${API_BASE}/reject-action`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ threat_id: id })
@@ -4689,7 +4680,7 @@ async function submitBlocklistRule() {
             broadcast
         };
 
-        const res = await fetch(`${API_BASE}/blocking/rules`, {
+        const res = await fetchWithRetry(`${API_BASE}/blocking/rules`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -4729,7 +4720,7 @@ async function submitBlocklistRule() {
 async function unlockRule(encodedPath) {
     const path = decodeURIComponent(encodedPath);
     try {
-        const res = await fetch(`${API_BASE}/blocking/rules/unlock`, {
+        const res = await fetchWithRetry(`${API_BASE}/blocking/rules/unlock`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
@@ -4885,7 +4876,7 @@ window.applyAutonomyPreset = async function(presetName) {
         btn.innerText = 'Activating...';
     }
     try {
-        const res = await fetch(`${API_BASE}/settings/autonomy`, {
+        const res = await fetchWithRetry(`${API_BASE}/settings/autonomy`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mode: presetName })
@@ -4936,7 +4927,7 @@ window.saveCustomAutonomySettings = async function() {
             quarantine_confidence_threshold: quarThreshold
         };
 
-        const res = await fetch(`${API_BASE}/settings/autonomy`, {
+        const res = await fetchWithRetry(`${API_BASE}/settings/autonomy`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -4985,7 +4976,7 @@ window.markFalsePositive = async function(threatId) {
     if (!confirm("Are you sure this is a False Positive? This will stop active responses and un-ghost files.")) return;
     
     try {
-        const res = await fetch(`${API_BASE}/threats/${threatId}/false-positive`, {
+        const res = await fetchWithRetry(`${API_BASE}/threats/${threatId}/false-positive`, {
             method: 'POST'
         });
         const data = await res.json().catch(() => null);
@@ -5007,7 +4998,7 @@ window.markTruePositive = async function(threatId) {
     if (!confirm("Confirm this as a True Positive? This will boost detection confidence across the mesh.")) return;
     
     try {
-        const res = await fetch(`${API_BASE}/threats/${threatId}/true-positive`, {
+        const res = await fetchWithRetry(`${API_BASE}/threats/${threatId}/true-positive`, {
             method: 'POST'
         });
         const data = await res.json().catch(() => null);
@@ -5199,7 +5190,7 @@ window.toggleMalwareDetails = function(id) {
 window.confirmThreat = async function(id) {
     if (!confirm('Are you sure you want to isolate this node and terminate the offending process?')) return;
     try {
-        const res = await fetch(`${API_BASE}/threats/confirm/${id}`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/threats/confirm/${id}`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Threat Response Isolation', data || `HTTP ${res.status}`);
@@ -5223,7 +5214,7 @@ window.submitManualTP = async function() {
     if (!confirm(`Are you sure you want to report ${proc || hash} as a threat? This will trigger autonomous Morphic Entanglement.`)) return;
 
     try {
-        const res = await fetch(`${API_BASE}/behavioral/feedback`, {
+        const res = await fetchWithRetry(`${API_BASE}/behavioral/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -5256,7 +5247,7 @@ window.submitManualFP = async function() {
     }
     
     try {
-        const res = await fetch(`${API_BASE}/behavioral/feedback`, {
+        const res = await fetchWithRetry(`${API_BASE}/behavioral/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -5363,14 +5354,14 @@ window.markGossipFalsePositive = async function(threatId, processName, hash) {
     if (!confirm(`Mark this peer gossip threat as False Positive? This will stop active responses and update the mesh.`)) return;
     try {
         if (threatId) {
-            const res1 = await fetch(`${API_BASE}/threats/${threatId}/false-positive`, { method: 'POST' });
+            const res1 = await fetchWithRetry(`${API_BASE}/threats/${threatId}/false-positive`, { method: 'POST' });
             const d1 = await res1.json().catch(() => null);
             if (!res1.ok || (d1 && d1.status === 'error')) {
                 showUserError('Gossip False Positive', d1 || `HTTP ${res1.status}`);
             }
         }
         if (hash || processName) {
-            const res2 = await fetch(`${API_BASE}/false-positive`, {
+            const res2 = await fetchWithRetry(`${API_BASE}/false-positive`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ hash: hash || null, process_name: processName || null })
@@ -5393,7 +5384,7 @@ window.markGossipRemediated = async function(threatId) {
     if (!confirm(`Confirm and entangle this peer threat across the Morphic Hyper-Web?`)) return;
     try {
         if (threatId) {
-            const res = await fetch(`${API_BASE}/threats/confirm/${threatId}`, { method: 'POST' });
+            const res = await fetchWithRetry(`${API_BASE}/threats/confirm/${threatId}`, { method: 'POST' });
             const data = await res.json().catch(() => null);
             if (!res.ok || (data && data.status === 'error')) {
                 showUserError('Gossip Threat Confirmation', data || `HTTP ${res.status}`);
@@ -5763,7 +5754,7 @@ function updateSkyrlStats(status) {
             loraSelect.addEventListener('change', async (e) => {
                 const selected = e.target.value;
                 try {
-                    const res = await fetch(`${API_BASE}/skyrl/v1/adapter`, {
+                    const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/adapter`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ adapter: selected })
@@ -6243,7 +6234,7 @@ async function updateStixStatusBanner() {
     if (!bannerText) return;
 
     try {
-        const res = await fetch(`${API_BASE}/mitre/stix/status`);
+        const res = await fetchWithRetry(`${API_BASE}/mitre/stix/status`);
         if (res.ok) {
             const data = await res.json();
             if (data.synced && data.manifest) {
@@ -6273,7 +6264,7 @@ window.syncWireStix = async function(btn) {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/mitre/stix/update`, {
+        const res = await fetchWithRetry(`${API_BASE}/mitre/stix/update`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
@@ -6318,7 +6309,7 @@ async function renderMitreView() {
 
     try {
         if (!mitreDataCache) {
-            const res = await fetch(`${API_BASE}/mitre/matrix`);
+            const res = await fetchWithRetry(`${API_BASE}/mitre/matrix`);
             if (res.ok) {
                 mitreDataCache = await res.json();
             } else {
@@ -6548,7 +6539,7 @@ async function openMitreTechniqueModalById(techId) {
     try {
         if (!mitreDataCache) {
         try {
-            const res = await fetch(`${API_BASE}/mitre/matrix`);
+            const res = await fetchWithRetry(`${API_BASE}/mitre/matrix`);
             if (res.ok) {
                 mitreDataCache = await res.json();
             }
@@ -6563,7 +6554,7 @@ async function openMitreTechniqueModalById(techId) {
     
     // Attempt detailed fetch
     try {
-        const res = await fetch(`${API_BASE}/mitre/technique/${techId}`);
+        const res = await fetchWithRetry(`${API_BASE}/mitre/technique/${techId}`);
         if (res.ok) {
             const data = await res.json();
             if (data.technique) {
@@ -6970,7 +6961,7 @@ async function renderHistoryView(page = 1) {
             params.set('search', state.historySearch);
         }
 
-        const res = await fetch(`${API_BASE}/history?${params.toString()}`);
+        const res = await fetchWithRetry(`${API_BASE}/history?${params.toString()}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
 
@@ -7165,7 +7156,7 @@ async function fetchRotatedLogFiles() {
     const selectEl = document.getElementById('log-viewer-file-select');
 
     try {
-        const res = await fetch(`${API_BASE}/logs/files`);
+        const res = await fetchWithRetry(`${API_BASE}/logs/files`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const rawFiles = await res.json();
         const files = Array.isArray(rawFiles) ? rawFiles : [];
@@ -7250,7 +7241,7 @@ async function fetchLogTail() {
             params.set('search', state.logSearchQuery);
         }
 
-        const res = await fetch(`${API_BASE}/logs/view?${params.toString()}`);
+        const res = await fetchWithRetry(`${API_BASE}/logs/view?${params.toString()}`);
         if (!res.ok) {
             const errData = await res.json().catch(() => ({}));
             throw new Error(errData.error || `HTTP ${res.status}`);
@@ -8062,7 +8053,7 @@ async function loadCalibratedModels(forceRefresh = false) {
     }
 
     try {
-        const resp = await fetch(`${API_BASE}/models/calibrated`);
+        const resp = await fetchWithRetry(`${API_BASE}/models/calibrated`);
         const data = await resp.json().catch(() => null);
         if (!resp.ok || (data && data.status === 'error')) {
             showUserError('Host AI Calibration', data || `HTTP ${resp.status}`, { containerId: 'utilities-view' });
@@ -8113,7 +8104,7 @@ async function downloadCalibratedModel(modelName) {
     }
 
     try {
-        const resp = await fetch(`${API_BASE}/models/pull`, {
+        const resp = await fetchWithRetry(`${API_BASE}/models/pull`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: modelName })
@@ -8150,7 +8141,7 @@ async function downloadAllCalibratedModels() {
     }
 
     try {
-        const resp = await fetch(`${API_BASE}/models/pull`, {
+        const resp = await fetchWithRetry(`${API_BASE}/models/pull`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ download_all_calibrated: true })
@@ -8198,7 +8189,7 @@ async function pollModelPullProgress() {
     if (!card || !body) return;
 
     try {
-        const resp = await fetch(`${API_BASE}/models/pull-status`);
+        const resp = await fetchWithRetry(`${API_BASE}/models/pull-status`);
         if (!resp.ok) return;
         const progressMap = await resp.json();
         const entries = Object.values(progressMap);
@@ -8708,3 +8699,14 @@ if (document.readyState === 'loading') {
 } else {
     init();
 }
+
+// Comprehensive Window Exports for Interactive Controls and Navigation
+window.navigateToStory = navigateToStory;
+window.renderOtelMapView = renderOtelMapView;
+window.selectLogFile = selectLogFile;
+window.toggleHistoryDetail = toggleHistoryDetail;
+window.updateDashboard = updateDashboard;
+window.renderHistoryView = renderHistoryView;
+window.fetchRotatedLogFiles = fetchRotatedLogFiles;
+window.fetchLogTail = fetchLogTail;
+window.downloadHistoryExport = downloadHistoryExport;

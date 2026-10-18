@@ -5,7 +5,7 @@ edition = "2021"
 description = "Tiny libp2p relay for OshoosiClaw mesh"
 
 [dependencies]
-libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "relay", "identify", "tokio"] }
+libp2p = { workspace = true, features = ["tcp", "noise", "yamux", "relay", "identify", "tokio", "macros"] }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
