@@ -1,0 +1,42 @@
+services:
+  oshoosi-edr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/oyesanyf/oshoosiclaw:1.2.0
+    container_name: oshoosi-edr
+    restart: unless-stopped
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./docker/seccomp-oshoosi.json
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
+    environment:
+      - OSOOSI_DASHBOARD_HOST=0.0.0.0
+      - OSOOSI_DASHBOARD_PORT=3030
+      - RUST_BACKTRACE=0
+    ports:
+      - "127.0.0.1:3031:3030"
+      - "127.0.0.1:4002:4001"
+    volumes:
+      - oshoosi_db:/app/database
+      - oshoosi_logs:/app/logs
+      - oshoosi_quarantine:/app/quarantine
+    healthcheck:
+      test: ["CMD", "/app/osoosi", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  oshoosi_db:
+  oshoosi_logs:
+  oshoosi_quarantine:
