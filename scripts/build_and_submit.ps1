@@ -244,8 +244,8 @@ if (-not $SkipBuild) {
             try { $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly) } catch {}
         }
 
-        # Pre-sign any existing unsigned build scripts / proc macros with DigiCert RFC 3161 timestamp before launching cargo
-        if ($buildSigntool -and (-not $SkipSigning)) {
+        # Sign build scripts / proc macros with DigiCert RFC 3161 timestamp on retry if cargo failed
+        if ($attempt -gt 1 -and $buildSigntool -and (-not $SkipSigning)) {
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build"), (Join-Path $ProjectRoot "target\release\deps") -Include "*.exe","*.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)

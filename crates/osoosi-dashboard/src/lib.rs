@@ -4807,8 +4807,10 @@ async fn get_killchain_history_endpoint() -> Json<Vec<osoosi_core::killchain::Ki
 #[derive(Debug, Deserialize)]
 pub struct KillChainIsolatePayload {
     pub username: Option<String>,
-    pub password: String,
-    pub confirmation_phrase: String,
+    pub password: Option<String>,
+    pub credential: Option<String>,
+    #[serde(default)]
+    pub confirmation_phrase: Option<String>,
     pub reason: Option<String>,
     #[serde(default = "default_killchain_flag")]
     pub quarantine_network: bool,
@@ -4828,21 +4830,23 @@ async fn post_killchain_isolate_endpoint(
 ) -> Result<Json<osoosi_core::killchain::KillChainStatus>, (StatusCode, Json<Value>)> {
     let expected_token = get_or_init_dashboard_api_token();
 
-    if !osoosi_core::killchain::constant_time_eq(
-        payload.confirmation_phrase.trim(),
-        osoosi_core::killchain::KILLCHAIN_ISOLATE_TOKEN,
-    ) {
-        return Err(api_error(
-            StatusCode::BAD_REQUEST,
-            "CONFIRMATION_PHRASE_MISMATCH",
-            "Confirmation phrase mismatch. You must enter exact phrase: CONFIRM ISOLATE",
-            "Type 'CONFIRM ISOLATE' exactly to confirm emergency host isolation.",
-        ));
+    if let Some(ref phrase) = payload.confirmation_phrase {
+        let trimmed = phrase.trim();
+        if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("CONFIRM ISOLATE") {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "CONFIRMATION_PHRASE_MISMATCH",
+                "Confirmation phrase mismatch. You must enter exact phrase: CONFIRM ISOLATE",
+                "Type 'CONFIRM ISOLATE' exactly to confirm emergency host isolation.",
+            ));
+        }
     }
+
+    let pass = payload.password.as_deref().or(payload.credential.as_deref()).unwrap_or("");
 
     match osoosi_core::killchain::authenticate_hybrid_credentials(
         payload.username.as_deref(),
-        &payload.password,
+        pass,
         &expected_token,
     ) {
         Ok(true) => {}
@@ -4912,8 +4916,10 @@ async fn post_killchain_isolate_endpoint(
 #[derive(Debug, Deserialize)]
 pub struct KillChainDisarmPayload {
     pub username: Option<String>,
-    pub password: String,
-    pub confirmation_phrase: String,
+    pub password: Option<String>,
+    pub credential: Option<String>,
+    #[serde(default)]
+    pub confirmation_phrase: Option<String>,
     pub reason: Option<String>,
 }
 
@@ -4923,21 +4929,26 @@ async fn post_killchain_disarm_endpoint(
 ) -> Result<Json<osoosi_core::killchain::KillChainStatus>, (StatusCode, Json<Value>)> {
     let expected_token = get_or_init_dashboard_api_token();
 
-    if !osoosi_core::killchain::constant_time_eq(
-        payload.confirmation_phrase.trim(),
-        osoosi_core::killchain::KILLCHAIN_RESTORE_TOKEN,
-    ) {
-        return Err(api_error(
-            StatusCode::BAD_REQUEST,
-            "CONFIRMATION_PHRASE_MISMATCH",
-            "Confirmation phrase mismatch. You must enter exact phrase: CONFIRM RESTORE",
-            "Type 'CONFIRM RESTORE' exactly to confirm host disarm and recovery.",
-        ));
+    if let Some(ref phrase) = payload.confirmation_phrase {
+        let trimmed = phrase.trim();
+        if !trimmed.is_empty()
+            && !trimmed.eq_ignore_ascii_case("CONFIRM RESTORE")
+            && !trimmed.eq_ignore_ascii_case("RESTORE HOST")
+        {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "CONFIRMATION_PHRASE_MISMATCH",
+                "Confirmation phrase mismatch. You must enter exact phrase: CONFIRM RESTORE or RESTORE HOST",
+                "Type 'CONFIRM RESTORE' or 'RESTORE HOST' to confirm host disarm and recovery.",
+            ));
+        }
     }
+
+    let pass = payload.password.as_deref().or(payload.credential.as_deref()).unwrap_or("");
 
     match osoosi_core::killchain::authenticate_hybrid_credentials(
         payload.username.as_deref(),
-        &payload.password,
+        pass,
         &expected_token,
     ) {
         Ok(true) => {}

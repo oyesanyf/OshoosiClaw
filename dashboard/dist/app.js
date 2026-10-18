@@ -9394,10 +9394,10 @@ async function submitKillchainAction(e) {
         return;
     }
 
-    if (action === 'disarm' && phrase !== 'RESTORE HOST') {
+    if (action === 'disarm' && phrase.toUpperCase() !== 'RESTORE HOST' && phrase.toUpperCase() !== 'CONFIRM RESTORE') {
         if (errorDiv) {
             errorDiv.style.display = 'block';
-            errorDiv.innerText = 'You must type "RESTORE HOST" exactly to confirm disarm.';
+            errorDiv.innerText = 'You must type "RESTORE HOST" or "CONFIRM RESTORE" to confirm disarm.';
         }
         return;
     }
@@ -9406,11 +9406,21 @@ async function submitKillchainAction(e) {
 
     try {
         let endpoint = `${API_BASE}/killchain/isolate`;
-        let payload = { credential, reason };
+        let payload = {
+            credential,
+            password: credential,
+            confirmation_phrase: phrase || "CONFIRM ISOLATE",
+            reason: reason || "Emergency Host Isolation Protocol"
+        };
 
         if (action === 'disarm') {
             endpoint = `${API_BASE}/killchain/disarm`;
-            payload = { credential, confirmation_phrase: phrase };
+            payload = {
+                credential,
+                password: credential,
+                confirmation_phrase: phrase,
+                reason: reason || "Operator Disarm"
+            };
         }
 
         const res = await fetch(endpoint, {
@@ -9419,15 +9429,22 @@ async function submitKillchainAction(e) {
             body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
-        if (res.ok && data.ok) {
+        let data;
+        const text = await res.text();
+        try {
+            data = JSON.parse(text);
+        } catch (_) {
+            data = { error: text || `HTTP ${res.status}` };
+        }
+
+        if (res.ok && (data.ok || data.status || data.host_isolated !== undefined || data.isolated !== undefined)) {
             closeKillchainModal();
             await fetchKillchainStatus();
             await fetchKillchainHistory();
         } else {
             if (errorDiv) {
                 errorDiv.style.display = 'block';
-                errorDiv.innerText = data.error || data.message || 'Action failed.';
+                errorDiv.innerText = data.error || data.message || data.details || 'Action failed.';
             }
         }
     } catch (err) {

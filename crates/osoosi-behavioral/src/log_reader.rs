@@ -354,6 +354,20 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
     }
     data.insert("Channel".to_string(), serde_json::json!(channel));
 
+    let execution_pid = extract_xml_attr(xml, "Execution", "ProcessID")
+        .or_else(|| extract_xml_attr(xml, "Execution", "ProcessId"))
+        .and_then(|s| {
+            let trimmed = s.trim();
+            if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).ok()
+            } else {
+                trimmed.parse::<u64>().ok()
+            }
+        });
+    if let Some(epid) = execution_pid {
+        data.insert("ExecutionProcessId".to_string(), serde_json::json!(epid));
+    }
+
     for (name, value) in extract_event_data(xml) {
         data.insert(name, serde_json::json!(value));
     }
@@ -361,10 +375,15 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
     // Normalize numeric and hex string fields (ProcessId, Ports, etc.) into integer numbers
     let numeric_keys = [
         "ProcessId",
+        "ProcessID",
+        "process_id",
+        "PID",
+        "pid",
         "SourceProcessId",
         "TargetProcessId",
         "ParentProcessId",
         "NewProcessId",
+        "ExecutionProcessId",
         "DestinationPort",
         "SourcePort",
     ];
@@ -411,15 +430,58 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
         }
     }
 
-    // Sysmon event normalization
-    if !data.contains_key("Image") {
-        if let Some(src_img) = data.get("SourceImage").cloned() {
-            data.insert("Image".to_string(), src_img);
+    // Comprehensive PID Normalization across all telemetry sources
+    if !data.contains_key("ProcessId") {
+        let pid_candidates = [
+            "ProcessID",
+            "process_id",
+            "PID",
+            "pid",
+            "TargetProcessId",
+            "SourceProcessId",
+            "NewProcessId",
+            "ExecutionProcessId",
+        ];
+        for k in pid_candidates {
+            if let Some(v) = data.get(k).cloned() {
+                data.insert("ProcessId".to_string(), v);
+                break;
+            }
         }
     }
     if !data.contains_key("ProcessId") {
-        if let Some(src_pid) = data.get("SourceProcessId").cloned() {
-            data.insert("ProcessId".to_string(), src_pid);
+        if let Some(epid) = execution_pid {
+            data.insert("ProcessId".to_string(), serde_json::json!(epid));
+        }
+    }
+
+    // Comprehensive Image Normalization across all telemetry sources
+    let needs_img = match data.get("Image") {
+        None => true,
+        Some(v) => match v.as_str() {
+            Some(s) => s.trim().is_empty() || s == "unknown",
+            None => false,
+        },
+    };
+    if needs_img {
+        let img_candidates = [
+            "SourceImage",
+            "TargetImage",
+            "ImageName",
+            "ImageFileName",
+            "ProcessName",
+            "NewProcessName",
+        ];
+        for k in img_candidates {
+            if let Some(v) = data.get(k).cloned() {
+                if let Some(s) = v.as_str() {
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() && trimmed != "unknown" {
+                        data.insert("Image".to_string(), serde_json::json!(trimmed));
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -524,23 +586,44 @@ fn extract_event_data(xml: &str) -> Vec<(String, String)> {
                     let abs_data = pos + data_idx;
                     if let Some(bracket) = inner[abs_data..].find('>') {
                         let header = &inner[abs_data..abs_data + bracket + 1];
-                        let val_start = abs_data + bracket + 1;
-                        if let Some(val_end) = inner[val_start..].find("</Data>") {
-                            let val = inner[val_start..val_start + val_end].trim();
-                            let name = if let Some(n_idx) = header.find("Name=\"") {
-                                let n_start = n_idx + 6;
-                                if let Some(n_end) = header[n_start..].find('"') {
-                                    header[n_start..n_start + n_end].to_string()
-                                } else {
-                                    let s = format!("Data_{}", unnamed_idx);
-                                    unnamed_idx += 1;
-                                    s
-                                }
+                        let trimmed_header = header.trim_end();
+                        let is_self_closing = trimmed_header.ends_with("/>");
+
+                        let name = if let Some(n_idx) = header.find("Name=\"") {
+                            let n_start = n_idx + 6;
+                            if let Some(n_end) = header[n_start..].find('"') {
+                                header[n_start..n_start + n_end].to_string()
                             } else {
                                 let s = format!("Data_{}", unnamed_idx);
                                 unnamed_idx += 1;
                                 s
-                            };
+                            }
+                        } else if let Some(n_idx) = header.find("Name='") {
+                            let n_start = n_idx + 6;
+                            if let Some(n_end) = header[n_start..].find('\'') {
+                                header[n_start..n_start + n_end].to_string()
+                            } else {
+                                let s = format!("Data_{}", unnamed_idx);
+                                unnamed_idx += 1;
+                                s
+                            }
+                        } else {
+                            let s = format!("Data_{}", unnamed_idx);
+                            unnamed_idx += 1;
+                            s
+                        };
+
+                        if is_self_closing {
+                            if !name.is_empty() {
+                                out.push((name, String::new()));
+                            }
+                            pos = abs_data + bracket + 1;
+                            continue;
+                        }
+
+                        let val_start = abs_data + bracket + 1;
+                        if let Some(val_end) = inner[val_start..].find("</Data>") {
+                            let val = inner[val_start..val_start + val_end].trim();
                             if !name.is_empty() {
                                 out.push((name, val.to_string()));
                             }
@@ -785,4 +868,44 @@ mod tests {
             Some("Microsoft-Windows-Sysmon/Operational".to_string())
         );
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_event_data_self_closing() {
+        let xml = r#"<Event><EventData>
+          <Data Name="RuleName" />
+          <Data Name="UtcTime">2026-10-18 12:00:00.000</Data>
+          <Data Name="ProcessGuid">{12345678-1234-1234-1234-123456789012}</Data>
+          <Data Name="ProcessId">4096</Data>
+          <Data Name="Image">C:\Windows\System32\cmd.exe</Data>
+        </EventData></Event>"#;
+        let data = extract_event_data(xml);
+        let map: HashMap<String, String> = data.into_iter().collect();
+        assert_eq!(map.get("RuleName"), Some(&"".to_string()));
+        assert_eq!(map.get("ProcessId"), Some(&"4096".to_string()));
+        assert_eq!(map.get("Image"), Some(&r"C:\Windows\System32\cmd.exe".to_string()));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_single_windows_event_pid_fallbacks() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+          <System>
+            <Provider Name="Microsoft-Windows-Sysmon"/>
+            <EventID>5</EventID>
+            <Computer>workstation-01</Computer>
+            <TimeCreated SystemTime="2026-10-18T12:05:00.000000Z"/>
+            <Execution ProcessID="9999" ThreadID="1234"/>
+          </System>
+          <EventData>
+            <Data Name="RuleName"/>
+            <Data Name="TargetProcessId">5555</Data>
+            <Data Name="ImageName">C:\Tools\agent.exe</Data>
+          </EventData>
+        </Event>"#;
+        let ev = parse_single_windows_event(xml, "Microsoft-Windows-Sysmon/Operational").expect("Should parse");
+        assert_eq!(ev.data.get("ProcessId").and_then(|v| v.as_u64()), Some(5555));
+        assert_eq!(ev.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Tools\agent.exe"));
+    }
 }
+

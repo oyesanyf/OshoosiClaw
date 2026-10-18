@@ -1,7 +1,6 @@
+use dashmap::DashMap;
 #[cfg(target_os = "windows")]
 use chrono::Utc;
-#[cfg(target_os = "windows")]
-use dashmap::DashMap;
 #[cfg(target_os = "windows")]
 use ferrisetw::parser::*;
 #[cfg(target_os = "windows")]
@@ -26,6 +25,82 @@ pub struct ProcessMeta {
     pub child_spawn_times: Vec<std::time::Instant>,
 }
 
+/// Pre-populates the system process registry with existing processes at startup
+/// across all operating systems to ensure zero-unknown process invariants.
+pub fn populate_initial_active_processes(map: &DashMap<u32, ProcessMeta>) {
+    let now = std::time::Instant::now();
+    // System processes
+    map.insert(
+        0,
+        ProcessMeta {
+            pid: 0,
+            image_name: "System Idle Process".to_string(),
+            started_at: now,
+            child_spawn_times: Vec::new(),
+        },
+    );
+    map.insert(
+        4,
+        ProcessMeta {
+            pid: 4,
+            image_name: if cfg!(windows) {
+                "C:\\Windows\\System32\\ntoskrnl.exe".to_string()
+            } else {
+                "kthreadd".to_string()
+            },
+            started_at: now,
+            child_spawn_times: Vec::new(),
+        },
+    );
+
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessRefreshKind::new()
+            .with_exe(sysinfo::UpdateKind::OnlyIfNotSet)
+            .with_cmd(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
+
+    for (pid_val, proc_info) in sys.processes() {
+        let pid = pid_val.as_u32();
+        if map.contains_key(&pid) {
+            continue;
+        }
+
+        #[cfg(target_os = "windows")]
+        let (live_img, _) = query_live_process_image_and_cmdline(pid);
+        #[cfg(not(target_os = "windows"))]
+        let live_img: Option<String> = None;
+
+        let image = live_img
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                proc_info
+                    .exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .filter(|s| !s.is_empty())
+            })
+            .unwrap_or_else(|| proc_info.name().to_string());
+
+        let final_image = if image.is_empty() {
+            format!("Process-{}", pid)
+        } else {
+            image
+        };
+
+        map.insert(
+            pid,
+            ProcessMeta {
+                pid,
+                image_name: final_image,
+                started_at: now,
+                child_spawn_times: Vec::new(),
+            },
+        );
+    }
+}
+
+pub type NativeTelemetry = NativeTelemetryEngine;
+
 pub struct NativeTelemetryEngine {
     tx: mpsc::Sender<HostSecurityEvent>,
 }
@@ -33,6 +108,10 @@ pub struct NativeTelemetryEngine {
 impl NativeTelemetryEngine {
     pub fn new(tx: mpsc::Sender<HostSecurityEvent>) -> Self {
         Self { tx }
+    }
+
+    pub fn start(&self) {
+        // Provided for compatibility with caller conventions
     }
 
     /// Starts the native kernel monitoring trace.
@@ -131,6 +210,7 @@ impl NativeTelemetryEngine {
                 let tx_k = tx.clone();
                 let computer_k = computer.clone();
                 let active_processes: Arc<DashMap<u32, ProcessMeta>> = Arc::new(DashMap::new());
+                populate_initial_active_processes(&active_processes);
                 let active_procs_cb = active_processes.clone();
                 let kernel_process_provider =
                     Provider::by_guid("22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716")
@@ -142,8 +222,11 @@ impl NativeTelemetryEngine {
                                 if let Ok(schema) = schema_locator.event_schema(event) {
                                     let parser = Parser::create(event, &schema);
                                     let pid: u32 = parser
-                                        .try_parse("ProcessID")
-                                        .or_else(|_| parser.try_parse("ProcessId"))
+                                        .try_parse::<u32>("ProcessID")
+                                        .or_else(|_| parser.try_parse::<u64>("ProcessID").map(|v| v as u32))
+                                        .or_else(|_| parser.try_parse::<u32>("ProcessId"))
+                                        .or_else(|_| parser.try_parse::<u64>("ProcessId").map(|v| v as u32))
+                                        .or_else(|_| parser.try_parse::<u32>("PID"))
                                         .unwrap_or_else(|_| event.process_id());
                                     let parent_pid: u32 = parser
                                         .try_parse("ParentProcessID")
@@ -261,12 +344,44 @@ impl NativeTelemetryEngine {
                                             let _ = tx_k.try_send(ev);
                                         }
                                     } else {
-                                        let lifetime_ms =
+                                        let (lifetime_ms, cached_img) =
                                             if let Some((_, meta)) = active_procs_cb.remove(&pid) {
-                                                meta.started_at.elapsed().as_millis() as u64
+                                                (
+                                                    meta.started_at.elapsed().as_millis() as u64,
+                                                    meta.image_name,
+                                                )
                                             } else {
-                                                0u64
+                                                (0u64, String::new())
                                             };
+
+                                        if (image.is_empty() || image == "unknown")
+                                            && !cached_img.is_empty()
+                                            && cached_img != "unknown"
+                                        {
+                                            image = cached_img;
+                                        }
+
+                                        if image.is_empty() || image == "unknown" {
+                                            if pid == 4 {
+                                                image = "C:\\Windows\\System32\\ntoskrnl.exe".to_string();
+                                                data.insert("ProcessName".to_string(), serde_json::json!("System"));
+                                            } else if pid == 0 {
+                                                image = "System Idle Process".to_string();
+                                                data.insert("ProcessName".to_string(), serde_json::json!("Idle"));
+                                            } else if pid > 4 {
+                                                let (live_img, _) = query_live_process_image_and_cmdline(pid);
+                                                if let Some(li) = live_img.filter(|s| !s.is_empty() && s != "unknown") {
+                                                    image = li;
+                                                } else {
+                                                    image = format!("Process-{}", pid);
+                                                }
+                                            } else {
+                                                image = format!("Process-{}", pid);
+                                            }
+                                        }
+
+                                        data.insert("ProcessId".to_string(), serde_json::json!(pid));
+                                        data.insert("Image".to_string(), serde_json::json!(image));
                                         data.insert(
                                             "ProcessLifetimeMs".to_string(),
                                             serde_json::json!(lifetime_ms),

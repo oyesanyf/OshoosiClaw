@@ -63,7 +63,10 @@ pub use rl_engine::{
     StateFeaturePipeline, StructuredEdrAction, TelemetryLevel, TelemetryPacket, TelemetryVelocity,
     TemporalMetricsSummary, TemporalMetricsTracker, Transition, UnifiedEdrState,
 };
-pub use sentence::event_to_behavioral_sentence;
+pub use sentence::{
+    event_to_behavioral_sentence, extract_event_pid, extract_sentence_image, extract_sentence_pid,
+    generate_behavioral_sentence,
+};
 pub use skyrl::{OshoosiSecurityGym, SkyAction, StepResult};
 pub use spider_eyes::{GemmaSupervisor, SpiderEyes};
 pub use yara_analyzer::YaraAnalyzer;
