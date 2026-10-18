@@ -59,8 +59,14 @@ if ($uncommitted) {
 Write-Host "Pushing $branchName to origin..." -ForegroundColor Cyan
 git push -u origin $branchName
 
+$pythonExe = if (Test-Path "C:\Users\oyesanyf\AppData\Local\Programs\Python\Python312\py312.exe") {
+    "C:\Users\oyesanyf\AppData\Local\Programs\Python\Python312\py312.exe"
+} else {
+    "python"
+}
+
 Write-Host "[2/5] Opening Pull Request against main..." -ForegroundColor Cyan
-$prNumber = python -c "
+$prNumber = & $pythonExe -c "
 import subprocess, urllib.request, urllib.error, json, sys
 
 p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -84,13 +90,16 @@ except urllib.error.HTTPError as e:
     sys.exit(1)
 " "$Title" "$Body" "$branchName"
 
-$prNumber = $prNumber.Trim()
-Write-Host "[3/5] Opened PR #$prNumber. Waiting for github-actions[bot] Auto-Review..." -ForegroundColor Cyan
+$prNumber = if ($prNumber) { $prNumber.Trim() } else { "" }
+if (-not $prNumber) {
+    Write-Warning "Could not parse PR number. Checking open PRs..."
+}
+Write-Host "[3/5] Opened PR #$prNumber. Waiting for Peer Review / Invariant Bot Approval..." -ForegroundColor Cyan
 
 $approved = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 5
-    $reviewState = python -c "
+    $reviewState = & $pythonExe -c "
 import subprocess, urllib.request, urllib.error, json, sys
 
 p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -115,7 +124,7 @@ except urllib.error.HTTPError as e:
 
     if ($reviewState.Trim() -eq "APPROVED") {
         $approved = $true
-        Write-Host "[4/5] PR #$prNumber APPROVED by github-actions[bot]!" -ForegroundColor Green
+        Write-Host "[4/5] PR #$prNumber APPROVED by peer reviewer or invariant bot!" -ForegroundColor Green
         break
     } else {
         Write-Host "  Waiting for approval review... (attempt $($i + 1)/30)" -ForegroundColor Gray
@@ -127,7 +136,7 @@ if (-not $approved) {
 }
 
 Write-Host "[5/5] Merging PR #$prNumber into main and syncing local branch..." -ForegroundColor Cyan
-python -c "
+& $pythonExe -c "
 import subprocess, urllib.request, urllib.error, json, sys, time
 
 p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
