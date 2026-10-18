@@ -13,7 +13,10 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
 
     let base_url = format!("http://127.0.0.1:{}", bound_port);
     let valid_token = get_or_init_dashboard_api_token();
-    assert!(!valid_token.is_empty(), "Dashboard API token must not be empty");
+    assert!(
+        !valid_token.is_empty(),
+        "Dashboard API token must not be empty"
+    );
 
     let client = reqwest::Client::new();
     let conversation_url = format!("{}/api/traffic/conversation", base_url);
@@ -61,7 +64,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Invalid X-API-Key must return 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Invalid X-API-Key must return 401"
+    );
 
     // Case 1c: Invalid x-api-key (lowercase)
     let resp = client
@@ -72,7 +79,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Invalid x-api-key must return 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Invalid x-api-key must return 401"
+    );
 
     // Case 1d: Invalid Bearer token
     let resp = client
@@ -83,7 +94,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Invalid Bearer token must return 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Invalid Bearer token must return 401"
+    );
 
     // Case 1e: Invalid X-Osoosi-Token
     let resp = client
@@ -94,7 +109,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Invalid X-Osoosi-Token must return 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Invalid X-Osoosi-Token must return 401"
+    );
 
     // =========================================================================
     // 2. POSITIVE TESTS: Requests with valid keys/tokens must authenticate
@@ -188,7 +207,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Empty X-API-Key must be rejected with 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Empty X-API-Key must be rejected with 401"
+    );
 
     // Case 3b: Whitespace-only API key
     let resp = client
@@ -199,7 +222,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Whitespace X-API-Key must be rejected with 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Whitespace X-API-Key must be rejected with 401"
+    );
 
     // Case 3c: Bare "Bearer" without token
     let resp = client
@@ -210,7 +237,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Bare Bearer must be rejected with 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Bare Bearer must be rejected with 401"
+    );
 
     // Case 3d: Non-bearer authorization (e.g. Basic auth)
     let resp = client
@@ -221,7 +252,11 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("Failed to send request");
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "Basic auth must be rejected with 401");
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "Basic auth must be rejected with 401"
+    );
 
     // Case 3e: Trailing slash bypass attempt
     let resp = client
@@ -239,7 +274,10 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
 
     // Case 3f: Query string tampering bypass attempt
     let resp = client
-        .post(format!("{}/api/traffic/conversation?health=true&public=1", base_url))
+        .post(format!(
+            "{}/api/traffic/conversation?health=true&public=1",
+            base_url
+        ))
         .header("x-test-require-auth", "1")
         .json(&sample_traffic_payload)
         .send()
@@ -257,10 +295,22 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
     let state_changing_endpoints = [
         ("POST", "/api/mitre/stix/update", json!({})),
         ("POST", "/api/yara/reload", json!({})),
-        ("POST", "/api/scan-trigger", json!({"path": "C:\\Windows\\Temp"})),
-        ("POST", "/api/quarantine", json!({"path": "C:\\Windows\\Temp\\bad.exe"})),
+        (
+            "POST",
+            "/api/scan-trigger",
+            json!({"path": "C:\\Windows\\Temp"}),
+        ),
+        (
+            "POST",
+            "/api/quarantine",
+            json!({"path": "C:\\Windows\\Temp\\bad.exe"}),
+        ),
         ("POST", "/api/false-positive", json!({"file_hash": "abc"})),
-        ("POST", "/api/triage/decide", json!({"threat_id": "t1", "action": "Alert"})),
+        (
+            "POST",
+            "/api/triage/decide",
+            json!({"threat_id": "t1", "action": "Alert"}),
+        ),
         ("POST", "/api/har/inspect", json!({"entries": []})),
     ];
 

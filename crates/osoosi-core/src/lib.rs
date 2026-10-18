@@ -66,10 +66,10 @@ pub mod blocking_manager;
 pub mod byzantine;
 pub mod causal_ai;
 pub mod correlator;
+pub mod fhe_coordinator;
+pub mod killchain;
 pub mod log_retention;
 pub mod otx_tarpit;
-pub mod killchain;
-pub mod fhe_coordinator;
 pub mod remediation;
 pub mod secured_executor;
 pub mod self_healing;
@@ -581,10 +581,10 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
 
         let mut discovered = false;
         {
+            use windows::core::PCWSTR;
             use windows::Win32::NetworkManagement::NetManagement::{
                 NetApiBufferFree, NetUserEnum, FILTER_NORMAL_ACCOUNT, USER_INFO_0,
             };
-            use windows::core::PCWSTR;
 
             let mut bufptr: *mut u8 = std::ptr::null_mut();
             let mut entries_read = 0u32;
@@ -603,7 +603,10 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
                     Some(&mut resume_handle),
                 );
                 if status == 0 && !bufptr.is_null() {
-                    let slice = std::slice::from_raw_parts(bufptr as *const USER_INFO_0, entries_read as usize);
+                    let slice = std::slice::from_raw_parts(
+                        bufptr as *const USER_INFO_0,
+                        entries_read as usize,
+                    );
                     for info in slice {
                         if !info.usri0_name.is_null() {
                             if let Ok(name) = info.usri0_name.to_string() {
@@ -686,10 +689,8 @@ pub fn get_account_containment_powershell_cmd(username: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn win32_user_exists(username: &str) -> bool {
-    use windows::Win32::NetworkManagement::NetManagement::{
-        NetApiBufferFree, NetUserGetInfo,
-    };
     use windows::core::PCWSTR;
+    use windows::Win32::NetworkManagement::NetManagement::{NetApiBufferFree, NetUserGetInfo};
 
     let wide_user: Vec<u16> = username.encode_utf16().chain(std::iter::once(0)).collect();
     let mut bufptr: *mut u8 = std::ptr::null_mut();
@@ -706,10 +707,10 @@ fn win32_user_exists(username: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn win32_disable_user(username: &str) -> bool {
-    use windows::Win32::NetworkManagement::NetManagement::{
-        NetUserSetInfo, USER_INFO_1008, UF_ACCOUNTDISABLE,
-    };
     use windows::core::PCWSTR;
+    use windows::Win32::NetworkManagement::NetManagement::{
+        NetUserSetInfo, UF_ACCOUNTDISABLE, USER_INFO_1008,
+    };
 
     let wide_user: Vec<u16> = username.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
@@ -1673,7 +1674,9 @@ impl EdrOrchestrator {
                     {
                         if dec.human_escalation_required {
                             human_escalation_required = true;
-                        } else if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        } else if !inj
+                            && (dec.verdict == "benign" || dec.containment_action == "allow")
+                        {
                             is_benign = true;
                         }
                     }
@@ -1789,9 +1792,11 @@ impl EdrOrchestrator {
                     );
                     warn!("{}", reason);
 
-                    let _ = self
-                        .memory
-                        .log_threat_event("SIQUERY_LOCAL_CREDENTIAL_GUARD_ANOMALY", pid, 0);
+                    let _ = self.memory.log_threat_event(
+                        "SIQUERY_LOCAL_CREDENTIAL_GUARD_ANOMALY",
+                        pid,
+                        0,
+                    );
                     self.audit.log(
                         "SIQUERY_LOCAL_CREDENTIAL_GUARD_INTERCEPT",
                         serde_json::json!({
@@ -2252,7 +2257,9 @@ impl EdrOrchestrator {
                     {
                         if dec.human_escalation_required {
                             human_escalation_required = true;
-                        } else if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        } else if !inj
+                            && (dec.verdict == "benign" || dec.containment_action == "allow")
+                        {
                             is_benign = true;
                         }
                     }
@@ -3890,7 +3897,14 @@ impl EdrOrchestrator {
         let mut database_bytes = 0u64;
         let mut scanned_db_files = std::collections::HashSet::new();
         for dir in &candidate_dirs {
-            for db_name in &["database/osoosi.db", "database/osoosi.db-wal", "database/osoosi.db-shm", "osoosi.db", "osoosi.db-wal", "osoosi.db-shm"] {
+            for db_name in &[
+                "database/osoosi.db",
+                "database/osoosi.db-wal",
+                "database/osoosi.db-shm",
+                "osoosi.db",
+                "osoosi.db-wal",
+                "osoosi.db-shm",
+            ] {
                 let db_p = dir.join(db_name);
                 if db_p.is_file() && scanned_db_files.insert(db_p.clone()) {
                     if let Ok(meta) = db_p.metadata() {
@@ -4017,8 +4031,15 @@ impl EdrOrchestrator {
     /// Comprehensive memory and disk cleanup routine with dynamic scaling based on real-time disk pressure.
     pub fn cleanup_memory_and_disk(&self, days_retention: u32) -> serde_json::Value {
         let disk_status = self.get_dynamic_disk_status();
-        let pressure_tier = disk_status.get("pressure_tier").and_then(|v| v.as_str()).unwrap_or("NOMINAL").to_string();
-        let recommended_days = disk_status.get("recommended_retention_days").and_then(|v| v.as_u64()).unwrap_or(30) as u32;
+        let pressure_tier = disk_status
+            .get("pressure_tier")
+            .and_then(|v| v.as_str())
+            .unwrap_or("NOMINAL")
+            .to_string();
+        let recommended_days = disk_status
+            .get("recommended_retention_days")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30) as u32;
 
         let (effective_days, temp_cutoff, cache_ttl) = if days_retention == 0 {
             (0u32, Duration::from_secs(0), Duration::from_secs(60))
@@ -4075,7 +4096,11 @@ impl EdrOrchestrator {
         }
 
         let mut cleared_nsrl = false;
-        let nsrl_cap = if effective_days == 0 || pressure_tier == "CRITICAL" { 5_000 } else { 50_000 };
+        let nsrl_cap = if effective_days == 0 || pressure_tier == "CRITICAL" {
+            5_000
+        } else {
+            50_000
+        };
         if self.nsrl_cache.len() > nsrl_cap {
             self.nsrl_cache.clear();
             self.nsrl_cache.shrink_to_fit();
@@ -4083,14 +4108,22 @@ impl EdrOrchestrator {
         }
 
         let mut cleared_consensus = false;
-        let consensus_cap = if effective_days == 0 || pressure_tier == "CRITICAL" { 500 } else { 2_000 };
+        let consensus_cap = if effective_days == 0 || pressure_tier == "CRITICAL" {
+            500
+        } else {
+            2_000
+        };
         if self.policy_consensus.len() > consensus_cap {
             self.policy_consensus.clear();
             self.policy_consensus.shrink_to_fit();
             cleared_consensus = true;
         }
 
-        let audit_cap = if effective_days == 0 || pressure_tier == "CRITICAL" { 512 } else { 4096 };
+        let audit_cap = if effective_days == 0 || pressure_tier == "CRITICAL" {
+            512
+        } else {
+            4096
+        };
         let compacted_audit_entries = self.audit.compact_memory(audit_cap);
 
         // 2. Disk Artifact & Quarantine Cleanup
@@ -4165,7 +4198,10 @@ impl EdrOrchestrator {
                                 let should_delete = if effective_days == 0 {
                                     true
                                 } else if let Ok(modified) = meta.modified() {
-                                    modified.elapsed().map(|el| el >= quarantine_cutoff).unwrap_or(false)
+                                    modified
+                                        .elapsed()
+                                        .map(|el| el >= quarantine_cutoff)
+                                        .unwrap_or(false)
                                 } else {
                                     false
                                 };
@@ -4196,7 +4232,10 @@ impl EdrOrchestrator {
                         let should_delete = if effective_days == 0 {
                             true
                         } else if let Ok(modified) = meta.modified() {
-                            modified.elapsed().map(|el| el >= temp_cutoff).unwrap_or(false)
+                            modified
+                                .elapsed()
+                                .map(|el| el >= temp_cutoff)
+                                .unwrap_or(false)
                         } else {
                             false
                         };
@@ -4221,13 +4260,23 @@ impl EdrOrchestrator {
         }
 
         // 2d. Run vacuum_and_prune on SQLite database
-        let db_bytes_before = disk_status.get("database_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        let db_bytes_before = disk_status
+            .get("database_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let db_pruned = self.memory.vacuum_and_prune(effective_days.max(1)).is_ok();
         let db_bytes_after = {
             let mut cur_db = 0u64;
             let mut scanned = std::collections::HashSet::new();
             for dir in &candidate_dirs {
-                for db_name in &["database/osoosi.db", "database/osoosi.db-wal", "database/osoosi.db-shm", "osoosi.db", "osoosi.db-wal", "osoosi.db-shm"] {
+                for db_name in &[
+                    "database/osoosi.db",
+                    "database/osoosi.db-wal",
+                    "database/osoosi.db-shm",
+                    "osoosi.db",
+                    "osoosi.db-wal",
+                    "osoosi.db-shm",
+                ] {
                     let db_p = dir.join(db_name);
                     if db_p.is_file() && scanned.insert(db_p.clone()) {
                         if let Ok(meta) = db_p.metadata() {
@@ -4304,8 +4353,14 @@ impl EdrOrchestrator {
         loop {
             interval.tick().await;
             let disk_status = self.get_dynamic_disk_status();
-            let pressure = disk_status.get("pressure_tier").and_then(|v| v.as_str()).unwrap_or("NOMINAL");
-            let rec_days = disk_status.get("recommended_retention_days").and_then(|v| v.as_u64()).unwrap_or(30) as u32;
+            let pressure = disk_status
+                .get("pressure_tier")
+                .and_then(|v| v.as_str())
+                .unwrap_or("NOMINAL");
+            let rec_days = disk_status
+                .get("recommended_retention_days")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30) as u32;
             info!("Running periodic memory and disk maintenance cycle (pressure: {}, rec_days: {})...", pressure, rec_days);
             let summary = self.cleanup_memory_and_disk(rec_days);
             debug!("Periodic maintenance cycle completed: {}", summary);
@@ -5245,7 +5300,8 @@ impl EdrOrchestrator {
 
                 // 5. Disk Space Warning & Automated Dynamic Cleanup
                 let disks = sysinfo::Disks::new_with_refreshed_list();
-                let cur_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let cur_dir =
+                    std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 let matched_disk = disks
                     .iter()
                     .filter(|d| cur_dir.starts_with(d.mount_point()))
@@ -7271,7 +7327,9 @@ impl EdrOrchestrator {
             );
 
             // Closed-Loop RL Feedback & Local YARA Hot-Synthesis
-            if signature.confidence >= 0.85 || (signature.confidence >= 0.80 && signature.detector_count >= 2) {
+            if signature.confidence >= 0.85
+                || (signature.confidence >= 0.80 && signature.detector_count >= 2)
+            {
                 let rl_cmd = event
                     .data
                     .get("CommandLine")
@@ -7611,7 +7669,8 @@ impl EdrOrchestrator {
                             warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
                         }
 
-                        let is_protected = crate::blocking_manager::is_protected_or_benign_system_path(image);
+                        let is_protected =
+                            crate::blocking_manager::is_protected_or_benign_system_path(image);
                         if !is_protected {
                             warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                             let rule = osoosi_types::BlockingRule {
@@ -8426,7 +8485,7 @@ impl EdrOrchestrator {
             let tech_str = signature
                 .mitre_technique
                 .as_deref()
-                .or_else(|| fallback_mitre.as_deref())
+                .or(fallback_mitre.as_deref())
                 .unwrap_or("none");
             let reason_str = signature.reason.as_deref().unwrap_or("none");
             let state_text = format!(
@@ -11646,10 +11705,15 @@ impl EdrOrchestrator {
                 }
 
                 #[cfg(target_os = "macos")]
-                let (lock_bin, lock_args, method_name) = ("pwpolicy", vec!["-a", username.as_str(), "-disableuser"], "pwpolicy_disableuser");
+                let (lock_bin, lock_args, method_name) = (
+                    "pwpolicy",
+                    vec!["-a", username.as_str(), "-disableuser"],
+                    "pwpolicy_disableuser",
+                );
 
                 #[cfg(not(target_os = "macos"))]
-                let (lock_bin, lock_args, method_name) = ("usermod", vec!["-L", username.as_str()], "usermod_lock");
+                let (lock_bin, lock_args, method_name) =
+                    ("usermod", vec!["-L", username.as_str()], "usermod_lock");
 
                 let mut disabled = tokio::process::Command::new(lock_bin)
                     .args(&lock_args)
@@ -12534,7 +12598,9 @@ impl EdrOrchestrator {
             }
 
             // Apply containment
-            if action != "pending_human_escalation" && confidence >= autonomy.action_confidence_threshold {
+            if action != "pending_human_escalation"
+                && confidence >= autonomy.action_confidence_threshold
+            {
                 let rule = osoosi_types::BlockingRule {
                     path: file_path_str.clone(),
                     kind: osoosi_types::BlockingKind::Executable,

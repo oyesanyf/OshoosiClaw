@@ -41,7 +41,9 @@ async fn test_empirical_nostr_privacy_anonymization_and_path_scrubbing() {
             name: "Windows sensitive user path (mimikatz.exe)",
             process_name: Some(r"C:\Users\admin\Downloads\mimikatz.exe".to_string()),
             parent_process: Some(r"C:\Windows\System32\powershell.exe".to_string()),
-            predicted_next: Some(r"Dump LSASS credentials from C:\Windows\Temp\lsass.dmp".to_string()),
+            predicted_next: Some(
+                r"Dump LSASS credentials from C:\Windows\Temp\lsass.dmp".to_string(),
+            ),
             reason: Some(r"Mimikatz execution detected via sekurlsa::logonpasswords".to_string()),
             source_node: "domain-controller-01.finance.internal".to_string(),
             expected_process_exact: "redacted-process.exe",
@@ -117,10 +119,15 @@ async fn test_empirical_nostr_privacy_anonymization_and_path_scrubbing() {
 
         // Serialize to the wire format JSON
         let serialized = serde_json::to_string(&sig).expect("Serialization failed");
-        let v: serde_json::Value = serde_json::from_str(&serialized).expect("Deserialization failed");
+        let v: serde_json::Value =
+            serde_json::from_str(&serialized).expect("Deserialization failed");
 
         // 1. Process Name Privacy Check
-        if let Some(expected) = if tc.expected_process_exact.is_empty() { None } else { Some(tc.expected_process_exact) } {
+        if let Some(expected) = if tc.expected_process_exact.is_empty() {
+            None
+        } else {
+            Some(tc.expected_process_exact)
+        } {
             assert_eq!(
                 sig.process_name.as_deref(),
                 Some(expected),
@@ -146,15 +153,27 @@ async fn test_empirical_nostr_privacy_anonymization_and_path_scrubbing() {
                 raw_proc
             );
         }
-        assert!(!serialized.contains("mimikatz"), "No cleartext mimikatz in payload");
+        assert!(
+            !serialized.contains("mimikatz"),
+            "No cleartext mimikatz in payload"
+        );
         assert!(!serialized.contains("nmap"), "No cleartext nmap in payload");
         assert!(!serialized.contains("admin"), "No username path in payload");
         assert!(!serialized.contains("ceo"), "No username path in payload");
-        assert!(!serialized.contains("Downloads"), "No user directory in payload");
-        assert!(!serialized.contains("private_keys"), "No secret directory in payload");
+        assert!(
+            !serialized.contains("Downloads"),
+            "No user directory in payload"
+        );
+        assert!(
+            !serialized.contains("private_keys"),
+            "No secret directory in payload"
+        );
 
         // 3. Parent Process must unconditionally be None / null
-        assert!(sig.parent_process.is_none(), "sig.parent_process must be None");
+        assert!(
+            sig.parent_process.is_none(),
+            "sig.parent_process must be None"
+        );
         assert!(
             v["parent_process"].is_null(),
             "Serialized parent_process must be null in JSON envelope"
@@ -186,7 +205,11 @@ async fn test_empirical_nostr_privacy_anonymization_and_path_scrubbing() {
         assert!(!serialized.contains(&original_source));
 
         // 6. Reason must be generalized without command line arguments
-        assert!(sig.reason.as_ref().unwrap().starts_with("Anonymized Mesh Telemetry"));
+        assert!(sig
+            .reason
+            .as_ref()
+            .unwrap()
+            .starts_with("Anonymized Mesh Telemetry"));
         assert!(!serialized.contains("-sS -T4"));
         assert!(!serialized.contains("sekurlsa"));
     }
@@ -211,5 +234,8 @@ async fn test_empirical_nostr_orchestrator_relay_and_timestamp_properties() {
     // Verify threat broadcast with 0 relays is a safe no-op that returns Ok(())
     let sig = ThreatSignature::new("test-node-privacy".to_string());
     let res = orch.broadcast_threat(sig).await;
-    assert!(res.is_ok(), "Broadcast without relays must safely return Ok(())");
+    assert!(
+        res.is_ok(),
+        "Broadcast without relays must safely return Ok(())"
+    );
 }

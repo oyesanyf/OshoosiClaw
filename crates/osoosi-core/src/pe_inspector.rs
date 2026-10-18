@@ -104,7 +104,8 @@ pub fn inspect_process(pid: u32) -> Result<InspectionFindings> {
             for line in content.lines() {
                 let is_deleted = line.contains("(deleted)");
                 let is_rwxp = line.contains("rwxp") || line.contains("rwx");
-                let is_libc_or_ld = line.contains("libc.so") || line.contains("ld-linux") || line.contains("libc-");
+                let is_libc_or_ld =
+                    line.contains("libc.so") || line.contains("ld-linux") || line.contains("libc-");
 
                 if is_deleted && (is_libc_or_ld || line.contains(".so")) {
                     findings.hollowing_detected = true;
@@ -115,9 +116,11 @@ pub fn inspect_process(pid: u32) -> Result<InspectionFindings> {
                 }
                 if is_rwxp && (is_libc_or_ld || line.contains(".so")) {
                     findings.hollowing_detected = true;
-                    findings
-                        .suspicious_sections
-                        .push(format!("RWX library segment in {}: {}", pid, line.trim()));
+                    findings.suspicious_sections.push(format!(
+                        "RWX library segment in {}: {}",
+                        pid,
+                        line.trim()
+                    ));
                     findings.composition_score += 0.3;
                 }
             }
@@ -227,7 +230,8 @@ pub fn inspect_remote_dll_patches(pid: u32) -> Result<Vec<String>> {
         for line in content.lines() {
             let is_deleted = line.contains("(deleted)");
             let is_rwxp = line.contains("rwxp") || line.contains("rwx");
-            let is_libc_or_ld = line.contains("libc.so") || line.contains("ld-linux") || line.contains("libc-");
+            let is_libc_or_ld =
+                line.contains("libc.so") || line.contains("ld-linux") || line.contains("libc-");
 
             if is_deleted && (is_libc_or_ld || line.contains(".so")) {
                 patches.push(format!(
@@ -341,15 +345,27 @@ fn inspect_elf64(bytes: &[u8], findings: &mut InspectionFindings) {
 
     let read_u16 = |offset: usize| -> Option<u16> {
         let slice: [u8; 2] = bytes.get(offset..offset + 2)?.try_into().ok()?;
-        Some(if is_le { u16::from_le_bytes(slice) } else { u16::from_be_bytes(slice) })
+        Some(if is_le {
+            u16::from_le_bytes(slice)
+        } else {
+            u16::from_be_bytes(slice)
+        })
     };
     let read_u32 = |offset: usize| -> Option<u32> {
         let slice: [u8; 4] = bytes.get(offset..offset + 4)?.try_into().ok()?;
-        Some(if is_le { u32::from_le_bytes(slice) } else { u32::from_be_bytes(slice) })
+        Some(if is_le {
+            u32::from_le_bytes(slice)
+        } else {
+            u32::from_be_bytes(slice)
+        })
     };
     let read_u64 = |offset: usize| -> Option<u64> {
         let slice: [u8; 8] = bytes.get(offset..offset + 8)?.try_into().ok()?;
-        Some(if is_le { u64::from_le_bytes(slice) } else { u64::from_be_bytes(slice) })
+        Some(if is_le {
+            u64::from_le_bytes(slice)
+        } else {
+            u64::from_be_bytes(slice)
+        })
     };
 
     if let (Some(e_phoff), Some(e_phentsize), Some(e_phnum)) =
@@ -370,7 +386,9 @@ fn inspect_elf64(bytes: &[u8], findings: &mut InspectionFindings) {
 
                 // PT_LOAD = 1, RWX = 0x7 (PF_R | PF_W | PF_X)
                 if p_type == 1 && (p_flags & 0x7) == 0x7 {
-                    findings.suspicious_sections.push("RWX ELF segment".to_string());
+                    findings
+                        .suspicious_sections
+                        .push("RWX ELF segment".to_string());
                     findings.composition_score += 0.3;
                 }
             }
@@ -527,9 +545,15 @@ mod tests {
         let mut findings = InspectionFindings::default();
         inspect_elf64(&elf_bytes, &mut findings);
 
-        assert!(findings.suspicious_sections.contains(&"RWX ELF segment".to_string()));
-        assert!(findings.suspicious_dependencies.contains(&"ptrace".to_string()));
-        assert!(findings.suspicious_dependencies.contains(&"memfd_create".to_string()));
+        assert!(findings
+            .suspicious_sections
+            .contains(&"RWX ELF segment".to_string()));
+        assert!(findings
+            .suspicious_dependencies
+            .contains(&"ptrace".to_string()));
+        assert!(findings
+            .suspicious_dependencies
+            .contains(&"memfd_create".to_string()));
         assert!(findings.composition_score >= 0.7);
     }
 }

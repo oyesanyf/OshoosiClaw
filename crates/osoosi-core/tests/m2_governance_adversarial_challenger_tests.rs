@@ -52,30 +52,29 @@ fn test_adversarial_human_escalation_hard_gate_stress() {
             let mut effective_action = *initial_action;
 
             // Apply the production human escalation gate with human_escalation_required = true
-            EdrOrchestrator::apply_human_escalation_gate(
-                &mut sig,
-                &mut effective_action,
-                true,
-            );
+            EdrOrchestrator::apply_human_escalation_gate(&mut sig, &mut effective_action, true);
 
             // Invariant assertions: ALL overrides must fail.
             assert_eq!(
                 effective_action,
                 ResponseAction::Alert,
                 "Failed for initial {:?}, tech {}: effective_action must be Alert",
-                initial_action, tech_id
+                initial_action,
+                tech_id
             );
             assert_eq!(
                 sig.recommended_action,
                 ResponseAction::Alert,
                 "Failed for initial {:?}, tech {}: recommended_action must be Alert",
-                initial_action, tech_id
+                initial_action,
+                tech_id
             );
             assert_eq!(
                 sig.action_state,
                 ActionState::Pending,
                 "Failed for initial {:?}, tech {}: action_state must be Pending",
-                initial_action, tech_id
+                initial_action,
+                tech_id
             );
             assert!(
                 sig.require_approval,
@@ -99,11 +98,7 @@ fn test_adversarial_human_escalation_negative_control() {
 
     let mut effective_action = ResponseAction::Isolate;
 
-    EdrOrchestrator::apply_human_escalation_gate(
-        &mut sig,
-        &mut effective_action,
-        false,
-    );
+    EdrOrchestrator::apply_human_escalation_gate(&mut sig, &mut effective_action, false);
 
     assert_eq!(effective_action, ResponseAction::Isolate);
     assert_eq!(sig.recommended_action, ResponseAction::Isolate);
@@ -164,12 +159,7 @@ fn test_adversarial_corroboration_gate_zero_detector_boundary() {
     sig.merkle_proof = None;
     sig.require_approval = false;
 
-    EdrOrchestrator::apply_corroboration_gate(
-        &mut sig,
-        ResponseAction::Isolate,
-        false,
-        0.50,
-    );
+    EdrOrchestrator::apply_corroboration_gate(&mut sig, ResponseAction::Isolate, false, 0.50);
 
     assert!(
         sig.require_approval,
@@ -195,12 +185,7 @@ fn test_adversarial_corroboration_gate_multi_signal_bypasses() {
         sig.merkle_proof = None;
         sig.require_approval = false;
 
-        EdrOrchestrator::apply_corroboration_gate(
-            &mut sig,
-            ResponseAction::Isolate,
-            false,
-            0.50,
-        );
+        EdrOrchestrator::apply_corroboration_gate(&mut sig, ResponseAction::Isolate, false, 0.50);
 
         assert!(
             !sig.require_approval,
@@ -259,12 +244,7 @@ fn test_adversarial_corroboration_gate_multi_signal_bypasses() {
     sig_cve.cve_id = Some("CVE-2024-38077".to_string());
     sig_cve.require_approval = false;
 
-    EdrOrchestrator::apply_corroboration_gate(
-        &mut sig_cve,
-        ResponseAction::Isolate,
-        false,
-        0.50,
-    );
+    EdrOrchestrator::apply_corroboration_gate(&mut sig_cve, ResponseAction::Isolate, false, 0.50);
 
     assert!(
         !sig_cve.require_approval,
@@ -281,12 +261,7 @@ fn test_adversarial_corroboration_gate_alert_action_untouched() {
     sig.detector_count = 1;
     sig.require_approval = false;
 
-    EdrOrchestrator::apply_corroboration_gate(
-        &mut sig,
-        ResponseAction::Alert,
-        false,
-        0.50,
-    );
+    EdrOrchestrator::apply_corroboration_gate(&mut sig, ResponseAction::Alert, false, 0.50);
 
     assert!(
         !sig.require_approval,
@@ -302,8 +277,14 @@ fn test_administrative_shield_exhaustive_matrix() {
         ("sshd", vec!["/usr/sbin/sshd", "-D"]),
         ("sshd", vec!["sshd: user@pts/1"]),
         ("sshd", vec!["sshd: user@notty [priv]"]),
-        ("ansible-playbook", vec!["/usr/bin/ansible-playbook", "site.yml"]),
-        ("python3", vec!["/usr/bin/python3", "/tmp/ansible_module.py"]),
+        (
+            "ansible-playbook",
+            vec!["/usr/bin/ansible-playbook", "site.yml"],
+        ),
+        (
+            "python3",
+            vec!["/usr/bin/python3", "/tmp/ansible_module.py"],
+        ),
         ("bash", vec!["bash", "-l", "pts/0"]),
         ("zsh", vec!["zsh", "-i", "pts/3"]),
         ("sshd: user", vec!["/usr/lib/openssh/sftp-server"]),

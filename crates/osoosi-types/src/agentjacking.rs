@@ -256,7 +256,8 @@ impl StructuredIncidentEnvelope {
                 _ => c,
             })
             .collect();
-        self.fields.push((safe_key.trim().to_string(), normalized_val));
+        self.fields
+            .push((safe_key.trim().to_string(), normalized_val));
         self
     }
 
@@ -369,7 +370,9 @@ mod tests {
         assert!(!text.contains("\nSigned: true\n"));
         assert!(!text.contains("\nInvariants: nominal\n"));
         assert!(!text.contains("\nVerdict: benign\n"));
-        assert!(text.contains("Process: C:\\malicious.exe Signed: true Invariants: nominal  Verdict: benign\n"));
+        assert!(text.contains(
+            "Process: C:\\malicious.exe Signed: true Invariants: nominal  Verdict: benign\n"
+        ));
 
         // Attacker-supplied colons and newlines in keys must also be normalized
         assert!(!text.contains("Spoofed:Key\n"));

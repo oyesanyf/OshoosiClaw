@@ -624,7 +624,8 @@ impl Gemma4Analyzer {
         };
 
         // Short, focused prompt to minimize prefill time on CPU
-        let safe_summary = osoosi_types::agentjacking::LogSanitizer::sanitize_text(&compressed_summary);
+        let safe_summary =
+            osoosi_types::agentjacking::LogSanitizer::sanitize_text(&compressed_summary);
         let prompt = format!(
             "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n<untrusted_event_summary>\n{}\n</untrusted_event_summary>\n<|im_end|>\n<|im_start|>assistant\n",
             safe_summary

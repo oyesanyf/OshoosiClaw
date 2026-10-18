@@ -701,7 +701,12 @@ impl MemoryStore {
                 sha256: row.get::<_, Option<String>>(2).ok().flatten(),
                 file_name: row.get::<_, String>(3).unwrap_or_default(),
                 file_size: row.get::<_, i64>(4).unwrap_or(0).max(0) as u64,
-                product_code: row.get::<_, Option<String>>(5).ok().flatten().or_else(|| row.get::<_, Option<i32>>(5).ok().flatten().map(|v| v.to_string())),
+                product_code: row.get::<_, Option<String>>(5).ok().flatten().or_else(|| {
+                    row.get::<_, Option<i32>>(5)
+                        .ok()
+                        .flatten()
+                        .map(|v| v.to_string())
+                }),
                 os_code: row.get::<_, Option<String>>(6).ok().flatten(),
             });
 

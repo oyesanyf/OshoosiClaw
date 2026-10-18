@@ -2677,24 +2677,35 @@
             </div>
 
             <!-- Hybrid Auth Mode Selector Tabs -->
-            <div id="login-mode-tabs" style="display: flex; gap: 6px; margin-bottom: 18px; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 8px; border: 1px solid var(--glass-border);">
+            <div id="login-mode-tabs" style="display: flex; gap: 6px; margin-bottom: 14px; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 8px; border: 1px solid var(--glass-border);">
                 <button type="button" id="tab-auth-windows" class="btn-tab active" onclick="switchLoginAuthMode('windows')" style="flex: 1; padding: 7px 10px; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; background: var(--accent-blue); color: #fff; transition: all 0.2s;">
-                    🪟 OS / Windows Account
+                    🪟 OS / System Password
                 </button>
                 <button type="button" id="tab-auth-token" class="btn-tab" onclick="switchLoginAuthMode('token')" style="flex: 1; padding: 7px 10px; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; background: transparent; color: var(--text-muted); transition: all 0.2s;">
                     🔑 Master Admin Token
                 </button>
             </div>
 
+            <!-- Windows Hello / WebAuthn Platform Authenticator (PIN / Biometrics) -->
+            <div id="hello-auth-container" style="margin-bottom: 14px; text-align: center;">
+                <button type="button" id="btn-windows-hello" onclick="startWindowsHelloAuth()" style="width: 100%; padding: 9px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid rgba(59, 130, 246, 0.4); color: #93c5fd; background: rgba(59, 130, 246, 0.12); display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s;">
+                    <span>🛡️ Sign In with Windows Hello (PIN / Biometrics)</span>
+                </button>
+                <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">
+                    Fast TPM platform authentication for Hello PIN, fingerprint, or facial recognition.
+                </div>
+            </div>
+
             <form id="login-form" class="login-form">
                 <input type="hidden" id="login-auth-mode" value="windows">
                 <div class="form-group" id="login-username-group">
                     <label for="login-username">OS Username</label>
-                    <input type="text" id="login-username" placeholder="e.g. Administrator or user..." required autocomplete="username">
+                    <input type="text" id="login-username" placeholder="e.g. Administrator, root, or username..." required autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="login-password" id="login-password-label">Password</label>
-                    <input type="password" id="login-password" placeholder="Enter password..." required autocomplete="current-password">
+                    <input type="password" id="login-password" placeholder="Enter OS account password (not Hello PIN)..." required autocomplete="current-password">
+                    <div id="login-password-hint" style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">For Windows Hello PINs, click the button above or use the Master Admin Token tab.</div>
                 </div>
                 <div class="form-group" id="login-confirm-group" style="display: none;">
                     <label for="login-confirm-password">Confirm Password</label>
@@ -2705,6 +2716,12 @@
                     <i data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
                 </button>
                 <div id="login-error" class="login-error"></div>
+                <div style="text-align: center; margin-top: 14px;">
+                    <a href="#" id="login-reset-password-link" onclick="openPasswordResetModal(event)" style="color: var(--accent-cyan); font-size: 12px; text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                        <i data-lucide="key" style="width: 13px; height: 13px;"></i>
+                        <span>Set or Reset Password / PIN</span>
+                    </a>
+                </div>
             </form>
         </div>
     </div>
@@ -2761,31 +2778,36 @@
 
     <!-- Password Reset Modal -->
     <div id="password-reset-modal" class="login-overlay" style="display: none; background: rgba(7, 9, 13, 0.85); backdrop-filter: blur(16px); z-index: 10000;">
-        <div class="login-card" style="max-width: 420px;">
-            <div class="login-logo" style="margin-bottom: 20px;">
+        <div class="login-card" style="max-width: 440px;">
+            <div class="login-logo" style="margin-bottom: 16px;">
                 <div class="login-logo-icon">🔑</div>
-                <h1 class="login-logo-text">Admin <span>Security</span></h1>
+                <h1 class="login-logo-text">Set / Reset <span>Password</span></h1>
             </div>
-            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; text-align: center;">Update or reset the dashboard administrator access credentials.</p>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px; text-align: center;">Set or reset the administrative password / PIN for dashboard access.</p>
             <form id="password-reset-form" class="login-form">
-                <div class="form-group">
-                    <label for="new-password">New Password</label>
-                    <input type="password" id="new-password" placeholder="Enter new password (or blank to reset)..." autocomplete="new-password">
+                <div class="form-group" id="reset-token-group">
+                    <label for="reset-auth-verifier">Master Admin Token (or Current Password)</label>
+                    <input type="password" id="reset-auth-verifier" placeholder="Paste Master Admin Token or current password..." autocomplete="off">
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Paste the Master Admin Token or your current password to authorize.</div>
                 </div>
                 <div class="form-group">
-                    <label for="confirm-password">Confirm Password</label>
-                    <input type="password" id="confirm-password" placeholder="Confirm new password..." autocomplete="new-password">
+                    <label for="new-password">New Password or PIN (Min 4 chars)</label>
+                    <input type="password" id="new-password" placeholder="Enter new password or PIN (e.g. 5-digit PIN)..." autocomplete="new-password" required>
                 </div>
-                <div style="display: flex; gap: 12px; margin-top: 8px;">
-                    <button type="submit" class="login-btn" style="flex: 1;">
-                        <span>Save Password</span>
+                <div class="form-group">
+                    <label for="confirm-password">Confirm Password or PIN</label>
+                    <input type="password" id="confirm-password" placeholder="Confirm new password or PIN..." autocomplete="new-password" required>
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 12px;">
+                    <button type="submit" class="login-btn" id="save-password-reset-btn" style="flex: 1;">
+                        <span>Save &amp; Clear Lockout</span>
                         <i data-lucide="check" style="width: 16px; height: 16px;"></i>
                     </button>
-                    <button type="button" id="cancel-password-reset-btn" class="login-btn" style="flex: 1; background: rgba(255, 255, 255, 0.08); border-color: var(--glass-border); color: var(--text-primary);">
+                    <button type="button" id="cancel-password-reset-btn" class="login-btn" onclick="closePasswordResetModal()" style="flex: 1; background: rgba(255, 255, 255, 0.08); border-color: var(--glass-border); color: var(--text-primary);">
                         <span>Cancel</span>
                     </button>
                 </div>
-                <div id="password-reset-msg" class="login-error" style="display: none;"></div>
+                <div id="password-reset-msg" class="login-error" style="display: none; margin-top: 12px;"></div>
             </form>
         </div>
     </div>

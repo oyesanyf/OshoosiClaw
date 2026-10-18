@@ -323,13 +323,25 @@ mod tests {
         let manager = BlockingManager::new(provisioner);
 
         // Verify protected detection
-        assert!(is_protected_or_benign_system_path(r"C:\Windows\System32\cmd.exe"));
-        assert!(is_protected_or_benign_system_path(r"C:\Program Files\PostgreSQL\16\bin\postgres.exe"));
-        assert!(is_protected_or_benign_system_path(r"C:\Python314\python.exe"));
-        assert!(is_protected_or_benign_system_path(r"C:\Program Files\WSL\wsl.exe"));
+        assert!(is_protected_or_benign_system_path(
+            r"C:\Windows\System32\cmd.exe"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            r"C:\Program Files\PostgreSQL\16\bin\postgres.exe"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            r"C:\Python314\python.exe"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            r"C:\Program Files\WSL\wsl.exe"
+        ));
         assert!(is_protected_or_benign_system_path("/usr/bin/bash"));
-        assert!(is_protected_or_benign_system_path(r"C:\app\component.winmd"));
-        assert!(!is_protected_or_benign_system_path(r"C:\malware\bad_trojan.exe"));
+        assert!(is_protected_or_benign_system_path(
+            r"C:\app\component.winmd"
+        ));
+        assert!(!is_protected_or_benign_system_path(
+            r"C:\malware\bad_trojan.exe"
+        ));
 
         // Refuse to add protected rule
         let protected_rule = BlockingRule {
@@ -358,7 +370,9 @@ mod tests {
         assert_eq!(purged.len(), 1);
         assert!(purged[0].contains("Synology"));
         let remaining = manager.get_rules().await;
-        assert!(remaining.iter().any(|r| r.path.contains("actual_malware.exe")));
+        assert!(remaining
+            .iter()
+            .any(|r| r.path.contains("actual_malware.exe")));
         assert!(!remaining.iter().any(|r| r.path.contains("Synology")));
     }
 }

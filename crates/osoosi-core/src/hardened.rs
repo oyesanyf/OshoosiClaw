@@ -51,8 +51,6 @@ struct Win32Tpm {
     manufacturer_id_txt: Option<String>,
 }
 
-
-
 // ============================================================================
 // 1. Confidential Computing (TEE) Detection & Memory Shield
 // ============================================================================
@@ -285,9 +283,10 @@ fn detect_tpm_internal() -> TpmStatus {
         // Windows fallback: check via WMI (Native) only if registry was unreadable
         if !status.available {
             if let Ok(com_lib) = COMLibrary::new() {
-                if let Ok(wmi_con) =
-                    WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib)
-                {
+                if let Ok(wmi_con) = WMIConnection::with_namespace_path(
+                    "root\\cimv2\\security\\microsofttpm",
+                    com_lib,
+                ) {
                     let query = "SELECT SpecVersion, ManufacturerIdTxt FROM Win32_Tpm";
                     let results: Vec<Win32Tpm> = wmi_con.raw_query(query).unwrap_or_default();
                     if let Some(res) = results.first() {
@@ -632,9 +631,9 @@ fn detect_dpu_internal() -> DpuStatus {
     #[cfg(target_os = "windows")]
     {
         // Windows: fast registry check of network adapters (avoids WMI StandardCimv2 hang)
-        if let Ok(hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
-            .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}")
-        {
+        if let Ok(hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE).open_subkey(
+            "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}",
+        ) {
             for sub in hklm.enum_keys().flatten() {
                 if let Ok(sub_key) = hklm.open_subkey(&sub) {
                     if let Ok(desc) = sub_key.get_value::<String, _>("DriverDesc") {

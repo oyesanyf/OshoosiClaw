@@ -214,7 +214,8 @@ fn probe_native_windows_gpu() -> Option<(String, u64, u64)> {
     use winreg::RegKey;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let class_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+    let class_path =
+        r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
     let class_key = hklm.open_subkey_with_flags(class_path, KEY_READ).ok()?;
 
     for sub in 0..16 {
@@ -223,15 +224,17 @@ fn probe_native_windows_gpu() -> Option<(String, u64, u64)> {
             let desc: Result<String, _> = dev_key.get_value("DriverDesc");
             if let Ok(name) = desc {
                 let name_lc = name.to_lowercase();
-                if name_lc.contains("basic display")
-                    || name_lc.contains("remote desktop")
-                {
+                if name_lc.contains("basic display") || name_lc.contains("remote desktop") {
                     continue;
                 }
                 // Try qwMemorySize (u64) first, then MemorySize (u32 or u64)
                 let vram_bytes: u64 = dev_key
                     .get_value::<u64, _>("HardwareInformation.qwMemorySize")
-                    .or_else(|_| dev_key.get_value::<u32, _>("HardwareInformation.MemorySize").map(|v| v as u64))
+                    .or_else(|_| {
+                        dev_key
+                            .get_value::<u32, _>("HardwareInformation.MemorySize")
+                            .map(|v| v as u64)
+                    })
                     .or_else(|_| dev_key.get_value::<u64, _>("HardwareInformation.MemorySize"))
                     .unwrap_or(0);
 

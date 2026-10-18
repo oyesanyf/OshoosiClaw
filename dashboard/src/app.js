@@ -82,8 +82,40 @@ function init() {
     }
     setupHistoryEvents();
     
-    if (localStorage.getItem('oshoosi_logged_in') === 'true') {
+    // Listen for BFCache restoration and browser back/forward navigation
+    window.addEventListener('pageshow', (event) => {
+        const isLoggedOut = localStorage.getItem('oshoosi_logged_out') === 'true' || localStorage.getItem('oshoosi_logged_in') !== 'true';
+        if (event.persisted || isLoggedOut) {
+            enforceLoggedOutState();
+            checkAuthStatus();
+        }
+    });
+
+    window.addEventListener('popstate', () => {
+        const isLoggedOut = localStorage.getItem('oshoosi_logged_out') === 'true' || localStorage.getItem('oshoosi_logged_in') !== 'true';
+        if (isLoggedOut) {
+            enforceLoggedOutState();
+            checkAuthStatus();
+        }
+    });
+
+    if (localStorage.getItem('oshoosi_logged_in') === 'true' && localStorage.getItem('oshoosi_logged_out') !== 'true') {
         startApp();
+    } else {
+        enforceLoggedOutState();
+    }
+}
+
+function enforceLoggedOutState() {
+    state._appStarted = false;
+    state.threats = [];
+    state.activity = [];
+    if (updateInterval) { clearInterval(updateInterval); updateInterval = null; }
+    if (supervisorInterval) { clearInterval(supervisorInterval); supervisorInterval = null; }
+    const overlay = document.getElementById('login-overlay');
+    if (overlay) {
+        overlay.style.display = 'flex';
+        overlay.style.opacity = '1';
     }
 }
 
@@ -216,7 +248,7 @@ function switchLoginAuthMode(mode) {
         if (usernameGroup) usernameGroup.style.display = 'block';
         if (usernameInput) usernameInput.required = true;
         if (passwordLabel) passwordLabel.innerText = 'OS Account Password';
-        if (passwordInput) passwordInput.placeholder = 'Enter Windows account password...';
+        if (passwordInput) passwordInput.placeholder = 'Enter system account password (not Hello PIN)...';
     }
 }
 
@@ -230,9 +262,10 @@ async function checkAuthStatus() {
         const res = await fetch(`${API_BASE}/auth/status`);
         if (res.ok) {
             const data = await res.json();
-            if (data.lockout && data.lockout.locked_out) {
+            const isLocked = data.locked || (data.lockout && data.lockout.locked_out);
+            if (isLocked) {
                 if (lockoutBanner) lockoutBanner.style.display = 'block';
-                let remaining = data.lockout.remaining_seconds || 300;
+                let remaining = data.lockout_remaining_secs || (data.lockout && data.lockout.remaining_seconds) || 300;
                 if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${remaining}s.`;
                 if (submitBtn) submitBtn.disabled = true;
                 if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
@@ -253,15 +286,126 @@ async function checkAuthStatus() {
 
             if (data.authenticated) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
+                localStorage.removeItem('oshoosi_logged_out');
                 if (overlay) overlay.style.display = 'none';
                 startApp();
                 return true;
+            } else {
+                localStorage.setItem('oshoosi_logged_in', 'false');
+                localStorage.setItem('oshoosi_logged_out', 'true');
+                localStorage.removeItem('oshoosi_dashboard_token');
+                enforceLoggedOutState();
+                return false;
             }
         }
     } catch (_) {}
 
     return false;
 }
+
+async function startWindowsHelloAuth() {
+    const errorDiv = document.getElementById('login-error');
+    const helloBtn = document.getElementById('btn-windows-hello');
+    const overlay = document.getElementById('login-overlay');
+    if (errorDiv) errorDiv.style.display = 'none';
+
+    if (!window.PublicKeyCredential) {
+        if (errorDiv) {
+            errorDiv.style.display = 'block';
+            errorDiv.innerText = 'WebAuthn platform authentication is not supported in this browser. Please use OS password or Master Admin Token.';
+        }
+        return;
+    }
+
+    if (helloBtn) {
+        helloBtn.disabled = true;
+        helloBtn.style.opacity = '0.6';
+    }
+
+    try {
+        const chalRes = await fetch(`${API_BASE}/auth/webauthn/challenge`);
+        if (!chalRes.ok) throw new Error('Could not retrieve authentication challenge.');
+        const chalData = await chalRes.json();
+        const challengeBytes = new Uint8Array(
+            chalData.challenge.match(/.{1,2}/g).map(byte => parseInt(byte, 16))
+        );
+
+        // WebAuthn requires rp.id to be an effective domain. Omit id if accessing via raw IP (e.g. 127.0.0.1)
+        const rpConfig = { name: "OpenỌ̀ṣọ́ọ̀sì Security" };
+        if (window.location.hostname && !/^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)) {
+            rpConfig.id = window.location.hostname;
+        }
+
+        const credential = await navigator.credentials.create({
+            publicKey: {
+                challenge: challengeBytes,
+                rp: rpConfig,
+                user: {
+                    id: new TextEncoder().encode("operator"),
+                    name: "operator",
+                    displayName: "Security Operator"
+                },
+                pubKeyCredParams: [
+                    { type: "public-key", alg: -7 },
+                    { type: "public-key", alg: -257 }
+                ],
+                authenticatorSelection: {
+                    authenticatorAttachment: "platform",
+                    userVerification: "required",
+                    residentKey: "preferred"
+                },
+                timeout: 60000
+            }
+        });
+
+        const verifyRes = await fetch(`${API_BASE}/auth/webauthn/verify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                challenge: chalData.challenge,
+                id: credential.id,
+                client_data_json: credential.response ? Array.from(new Uint8Array(credential.response.clientDataJSON)).map(b => b.toString(16).padStart(2, '0')).join('') : null
+            })
+        });
+
+        const verifyData = await verifyRes.json();
+        if (verifyRes.ok && (verifyData.success || verifyData.ok)) {
+            localStorage.setItem('oshoosi_logged_in', 'true');
+            localStorage.removeItem('oshoosi_logged_out');
+            if (verifyData.token) {
+                localStorage.setItem('oshoosi_dashboard_token', verifyData.token);
+            }
+            if (overlay) {
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    overlay.style.opacity = '1';
+                }, 300);
+            }
+            startApp();
+        } else {
+            if (errorDiv) {
+                errorDiv.style.display = 'block';
+                errorDiv.innerText = verifyData.message || verifyData.error || 'Windows Hello verification failed.';
+            }
+        }
+    } catch (err) {
+        if (errorDiv) {
+            errorDiv.style.display = 'block';
+            if (err.name === 'NotAllowedError') {
+                errorDiv.innerText = 'Windows Hello authentication was cancelled or timed out.';
+            } else {
+                errorDiv.innerText = `Windows Hello authentication: ${err.message}`;
+            }
+        }
+    } finally {
+        if (helloBtn) {
+            helloBtn.disabled = false;
+            helloBtn.style.opacity = '1';
+        }
+    }
+}
+window.startWindowsHelloAuth = startWindowsHelloAuth;
 
 function setupLogin() {
     const overlay = document.getElementById('login-overlay');
@@ -301,9 +445,12 @@ function setupLogin() {
                 });
 
                 const data = await res.json();
-                if (res.ok && data.success) {
+                if (res.ok && (data.success || data.ok)) {
                     localStorage.setItem('oshoosi_logged_in', 'true');
                     localStorage.removeItem('oshoosi_logged_out');
+                    if (data.token) {
+                        localStorage.setItem('oshoosi_dashboard_token', data.token);
+                    }
                     if (overlay) {
                         overlay.style.opacity = '0';
                         setTimeout(() => {
@@ -313,11 +460,12 @@ function setupLogin() {
                     }
                     startApp();
                 } else {
-                    if (data.lockout && data.lockout.locked_out) {
+                    const isLocked = data.locked || (data.lockout && data.lockout.locked_out) || res.status === 429;
+                    if (isLocked) {
                         const lockoutBanner = document.getElementById('login-lockout-banner');
                         const lockoutText = document.getElementById('login-lockout-text');
                         if (lockoutBanner) lockoutBanner.style.display = 'block';
-                        let rem = data.lockout.remaining_seconds || 300;
+                        let rem = data.lockout_remaining_secs || (data.lockout && data.lockout.remaining_seconds) || 300;
                         if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${rem}s.`;
                         if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
                         lockoutCountdownInterval = setInterval(() => {
@@ -334,7 +482,7 @@ function setupLogin() {
 
                     if (errorDiv) {
                         errorDiv.style.display = 'block';
-                        errorDiv.innerText = data.error || 'Authentication failed. Please verify credentials.';
+                        errorDiv.innerText = data.message || data.error || 'Authentication failed. Please verify credentials.';
                     }
                     const card = document.querySelector('.login-card');
                     if (card) {
@@ -362,10 +510,58 @@ function setupLogin() {
             } catch (_) {}
             localStorage.setItem('oshoosi_logged_in', 'false');
             localStorage.setItem('oshoosi_logged_out', 'true');
-            window.location.reload();
+            localStorage.removeItem('oshoosi_dashboard_token');
+            sessionStorage.clear();
+            enforceLoggedOutState();
+            if (window.history && window.history.replaceState) {
+                window.history.replaceState(null, '', '/');
+            }
+            window.location.replace('/');
         });
     }
 }
+
+function openPasswordResetModal(e) {
+    if (e && e.preventDefault) e.preventDefault();
+    const modal = document.getElementById('password-reset-modal');
+    const verifierInput = document.getElementById('reset-auth-verifier');
+    const newPassInput = document.getElementById('new-password');
+    const confirmPassInput = document.getElementById('confirm-password');
+    const msgDiv = document.getElementById('password-reset-msg');
+    const tokenInput = document.getElementById('login-token');
+
+    if (modal) {
+        modal.style.display = 'flex';
+        modal.style.opacity = '1';
+    }
+    if (verifierInput) {
+        if (tokenInput && tokenInput.value.trim()) {
+            verifierInput.value = tokenInput.value.trim();
+        } else {
+            verifierInput.value = '';
+        }
+    }
+    if (newPassInput) newPassInput.value = '';
+    if (confirmPassInput) confirmPassInput.value = '';
+    if (msgDiv) {
+        msgDiv.style.display = 'none';
+        msgDiv.innerText = '';
+    }
+    if (verifierInput && !verifierInput.value) {
+        verifierInput.focus();
+    } else if (newPassInput) {
+        newPassInput.focus();
+    }
+}
+
+function closePasswordResetModal() {
+    const modal = document.getElementById('password-reset-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+window.openPasswordResetModal = openPasswordResetModal;
+window.closePasswordResetModal = closePasswordResetModal;
 
 function setupPasswordResetModal() {
     const modal = document.getElementById('password-reset-modal');
@@ -373,52 +569,30 @@ function setupPasswordResetModal() {
     const navBtn = document.getElementById('reset-password-nav-btn');
     const cancelBtn = document.getElementById('cancel-password-reset-btn');
     const form = document.getElementById('password-reset-form');
-    const newPassInput = document.getElementById('new-password');
-    const confirmPassInput = document.getElementById('confirm-password');
-    const msgDiv = document.getElementById('password-reset-msg');
     
-    function openModal(e) {
-        if (e) e.preventDefault();
-        if (modal) {
-            modal.style.display = 'flex';
-            modal.style.opacity = '1';
-        }
-        if (newPassInput) newPassInput.value = '';
-        if (confirmPassInput) confirmPassInput.value = '';
-        if (msgDiv) {
-            msgDiv.style.display = 'none';
-            msgDiv.innerText = '';
-        }
-        if (newPassInput) newPassInput.focus();
-    }
-    
-    function closeModal() {
-        if (modal) {
-            modal.style.display = 'none';
-        }
-        if (newPassInput) newPassInput.value = '';
-        if (confirmPassInput) confirmPassInput.value = '';
-        if (msgDiv) {
-            msgDiv.style.display = 'none';
-        }
-    }
-    
-    if (topBtn) topBtn.addEventListener('click', openModal);
-    if (navBtn) navBtn.addEventListener('click', openModal);
-    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    if (topBtn) topBtn.addEventListener('click', openPasswordResetModal);
+    if (navBtn) navBtn.addEventListener('click', openPasswordResetModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closePasswordResetModal);
     
     if (form) {
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const newPass = newPassInput ? newPassInput.value : '';
-            const confirmPass = confirmPassInput ? confirmPassInput.value : '';
+            const verifierInput = document.getElementById('reset-auth-verifier');
+            const newPassInput = document.getElementById('new-password');
+            const confirmPassInput = document.getElementById('confirm-password');
+            const msgDiv = document.getElementById('password-reset-msg');
+            const saveBtn = document.getElementById('save-password-reset-btn');
+            
+            const verifier = verifierInput ? verifierInput.value.trim() : '';
+            const newPass = newPassInput ? newPassInput.value.trim() : '';
+            const confirmPass = confirmPassInput ? confirmPassInput.value.trim() : '';
             
             if (!msgDiv) return;
             
-            if (!newPass || newPass.length < 6) {
+            if (!newPass || newPass.length < 4) {
                 msgDiv.style.display = 'block';
                 msgDiv.style.color = '#ff4d4d';
-                msgDiv.innerText = 'New password must be at least 6 characters long.';
+                msgDiv.innerText = 'New password or PIN must be at least 4 characters long.';
                 return;
             }
             
@@ -428,14 +602,59 @@ function setupPasswordResetModal() {
                 msgDiv.innerText = 'Passwords do not match.';
                 return;
             }
-            
-            // Save new hashed password
-            const newHash = await hashPassword(newPass);
-            localStorage.setItem('oshoosi_admin_hash', newHash);
-            msgDiv.style.display = 'block';
-            msgDiv.style.color = '#00ff7f';
-            msgDiv.innerText = 'Administrator password updated successfully!';
-            setTimeout(closeModal, 1200);
+
+            if (saveBtn) {
+                saveBtn.disabled = true;
+                saveBtn.style.opacity = '0.6';
+            }
+
+            try {
+                const res = await fetch(`${API_BASE}/auth/set-password`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(verifier ? { 'x-osoosi-token': verifier } : {})
+                    },
+                    body: JSON.stringify({
+                        new_password: newPass,
+                        master_token: verifier || null,
+                        current_password: verifier || null
+                    })
+                });
+
+                const data = await res.json();
+                if (res.ok && (data.success || data.ok)) {
+                    msgDiv.style.display = 'block';
+                    msgDiv.style.color = '#00ff7f';
+                    msgDiv.innerText = data.message || 'Password successfully updated! Lockout cleared.';
+
+                    // If on the login screen, prefill the password field and switch to OS/password mode
+                    const loginPass = document.getElementById('login-password');
+                    if (loginPass) loginPass.value = newPass;
+                    switchLoginAuthMode('windows');
+                    
+                    // Clear lockout banner if present
+                    const lockoutBanner = document.getElementById('login-lockout-banner');
+                    if (lockoutBanner) lockoutBanner.style.display = 'none';
+                    const submitBtn = document.getElementById('login-submit-btn');
+                    if (submitBtn) submitBtn.disabled = false;
+
+                    setTimeout(() => {
+                        closePasswordResetModal();
+                        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+                    }, 1400);
+                } else {
+                    msgDiv.style.display = 'block';
+                    msgDiv.style.color = '#ff4d4d';
+                    msgDiv.innerText = data.error || data.message || 'Failed to update password. Verify your Master Admin Token.';
+                    if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+                }
+            } catch (err) {
+                msgDiv.style.display = 'block';
+                msgDiv.style.color = '#ff4d4d';
+                msgDiv.innerText = 'Network error while updating password: ' + err.message;
+                if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+            }
         });
     }
 }

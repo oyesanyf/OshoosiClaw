@@ -97,7 +97,10 @@ impl BehavioralAnalyzer {
                 .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string())
         };
         let default_fallback = if cloud_llm_opted_in {
-            ai_cfg.cloud_llm_model.clone().unwrap_or_else(|| "gpt-4o".to_string())
+            ai_cfg
+                .cloud_llm_model
+                .clone()
+                .unwrap_or_else(|| "gpt-4o".to_string())
         } else {
             ai_cfg
                 .fallback_models
@@ -141,12 +144,7 @@ impl BehavioralAnalyzer {
     }
 
     pub fn is_configured(&self) -> bool {
-        !self.api_key.is_empty()
-            || self
-                .smollm
-                .try_read()
-                .map(|g| g.is_some())
-                .unwrap_or(false)
+        !self.api_key.is_empty() || self.smollm.try_read().map(|g| g.is_some()).unwrap_or(false)
     }
 
     /// Initialize SmolLM in a background blocking thread.

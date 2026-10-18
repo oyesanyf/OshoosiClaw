@@ -194,7 +194,9 @@ impl MemoryScanner {
                         let mut buf = vec![0u8; to_read];
                         if let Ok(bytes_read) = file.read(&mut buf) {
                             if bytes_read > 0 {
-                                if let Some(detection) = self.analyze_buffer(&buf[..bytes_read]).await {
+                                if let Some(detection) =
+                                    self.analyze_buffer(&buf[..bytes_read]).await
+                                {
                                     results.push(format!(
                                         "Detection at {:#x} (perms={}, path={}): {}",
                                         start, perms, pathname, detection
@@ -206,7 +208,10 @@ impl MemoryScanner {
                 }
 
                 if is_rwx {
-                    results.push(format!("RWX Mapping Detected at {:#x}-{:#x}: {}", start, end, pathname));
+                    results.push(format!(
+                        "RWX Mapping Detected at {:#x}-{:#x}: {}",
+                        start, end, pathname
+                    ));
                 }
             }
         }
@@ -438,10 +443,7 @@ impl MemoryScanner {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn scan_unbacked_threads(
-        &self,
-        pid: u32,
-    ) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
+    pub fn scan_unbacked_threads(&self, pid: u32) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
         let maps_path = format!("/proc/{}/maps", pid);
         let maps_content = match std::fs::read_to_string(&maps_path) {
             Ok(c) => c,
@@ -479,7 +481,10 @@ impl MemoryScanner {
 
             let is_exec = perms.contains('x');
             let is_rwx = perms.starts_with("rwx");
-            let is_anon = pathname.is_empty() || pathname == "[heap]" || pathname == "[stack]" || pathname.contains("memfd:");
+            let is_anon = pathname.is_empty()
+                || pathname == "[heap]"
+                || pathname == "[stack]"
+                || pathname.contains("memfd:");
 
             if is_exec && (is_rwx || is_anon) {
                 findings.push(UnbackedExecutionFinding {
@@ -487,7 +492,11 @@ impl MemoryScanner {
                     thread_id: pid,
                     address: start,
                     memory_type: 0x20000, // MEM_PRIVATE equivalent
-                    protection: if is_rwx { 0x40 /* PAGE_EXECUTE_READWRITE */ } else { 0x20 /* PAGE_EXECUTE_READ */ },
+                    protection: if is_rwx {
+                        0x40 /* PAGE_EXECUTE_READWRITE */
+                    } else {
+                        0x20 /* PAGE_EXECUTE_READ */
+                    },
                     details: format!(
                         "Unbacked executable mapping at {:#x}-{:#x} (perms={}, path={})",
                         start, end, perms, pathname

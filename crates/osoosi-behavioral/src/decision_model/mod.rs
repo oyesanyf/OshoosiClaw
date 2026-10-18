@@ -404,7 +404,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_rl_decision_engine_catches_signed_rundll32_keymgr_credential_dump() {
-        let temp_dir = std::env::temp_dir().join(format!("clef_test_rundll32_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("clef_test_rundll32_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let mut cfg = DecisionModelConfig::default();
         cfg.provider = "hybrid".to_string();
@@ -419,7 +420,10 @@ mod tests {
             .await
             .expect("Signed LOLBin evaluation must succeed");
 
-        assert_ne!(dec.verdict, "benign", "Signed rundll32 keymgr must not be classified as benign");
+        assert_ne!(
+            dec.verdict, "benign",
+            "Signed rundll32 keymgr must not be classified as benign"
+        );
         assert!(
             dec.verdict == "malicious" || dec.verdict == "critical_emergency",
             "Verdict must be malicious or critical_emergency, got: {}",
@@ -438,7 +442,8 @@ mod tests {
 
     #[test]
     fn test_contextual_rl_learns_novel_credential_dump_token() {
-        let temp_dir = std::env::temp_dir().join(format!("clef_test_contextual_rl_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("clef_test_contextual_rl_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let engine = LocalDecisionEngine::new(&temp_dir);
 
@@ -451,14 +456,27 @@ mod tests {
         // Record positive reinforcement for isolating this novel credential dumping behavior
         engine.record_contextual_rl_feedback(dec_id, state_text, 1.0, "isolate");
 
-        let learned = engine.learned_token_weight("vaultcmd.exe").or_else(|| engine.learned_token_weight("vaultcmd"));
-        assert!(learned.is_some(), "Learned token weight for vaultcmd must exist after RL feedback");
-        assert!(learned.unwrap() > prior_weight, "Learned token weight must have increased");
+        let learned = engine
+            .learned_token_weight("vaultcmd.exe")
+            .or_else(|| engine.learned_token_weight("vaultcmd"));
+        assert!(
+            learned.is_some(),
+            "Learned token weight for vaultcmd must exist after RL feedback"
+        );
+        assert!(
+            learned.unwrap() > prior_weight,
+            "Learned token weight must have increased"
+        );
 
         // Verify that evaluating an incident containing the newly reinforced token reflects the learning
         let req = build_security_incident_request("@cf/cloudflare/clef-flash", state_text);
-        let resp = engine.evaluate(&req).expect("Evaluation after contextual RL learning must succeed");
+        let resp = engine
+            .evaluate(&req)
+            .expect("Evaluation after contextual RL learning must succeed");
         let dec = parse_security_incident_response(&resp);
-        assert_ne!(dec.verdict, "benign", "Incident containing learned credential dump token must not be benign");
+        assert_ne!(
+            dec.verdict, "benign",
+            "Incident containing learned credential dump token must not be benign"
+        );
     }
 }

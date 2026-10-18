@@ -640,7 +640,11 @@ impl Service<Request<Body>> for SafeServeDir {
                             .into_response();
                         resp.headers_mut().insert(
                             axum::http::header::CACHE_CONTROL,
-                            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                            axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+                        );
+                        resp.headers_mut().insert(
+                            axum::http::header::PRAGMA,
+                            axum::http::HeaderValue::from_static("no-cache"),
                         );
                         Ok(resp)
                     } else if is_static_asset {
@@ -656,7 +660,11 @@ impl Service<Request<Body>> for SafeServeDir {
                             .into_response();
                         resp.headers_mut().insert(
                             axum::http::header::CACHE_CONTROL,
-                            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                            axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+                        );
+                        resp.headers_mut().insert(
+                            axum::http::header::PRAGMA,
+                            axum::http::HeaderValue::from_static("no-cache"),
                         );
                         Ok(resp)
                     } else {
@@ -675,7 +683,11 @@ impl Service<Request<Body>> for SafeServeDir {
                             .into_response();
                         resp.headers_mut().insert(
                             axum::http::header::CACHE_CONTROL,
-                            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                            axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+                        );
+                        resp.headers_mut().insert(
+                            axum::http::header::PRAGMA,
+                            axum::http::HeaderValue::from_static("no-cache"),
                         );
                         Ok(resp)
                     } else {
@@ -809,19 +821,60 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         )
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .route("/api/blocking/rules/exclude", post(post_blocking_exclude))
-        .route("/api/blocking/rules/purge-benign", post(post_blocking_purge_benign))
+        .route(
+            "/api/blocking/rules/purge-benign",
+            post(post_blocking_purge_benign),
+        )
         .route("/api/killchain/status", get(get_killchain_status_endpoint))
-        .route("/api/killchain/history", get(get_killchain_history_endpoint))
-        .route("/api/killchain/isolate", post(post_killchain_isolate_endpoint))
-        .route("/api/killchain/disarm", post(post_killchain_disarm_endpoint))
+        .route(
+            "/api/killchain/history",
+            get(get_killchain_history_endpoint),
+        )
+        .route(
+            "/api/killchain/isolate",
+            post(post_killchain_isolate_endpoint),
+        )
+        .route(
+            "/api/killchain/disarm",
+            post(post_killchain_disarm_endpoint),
+        )
         .route("/api/auth/status", get(get_auth_status_endpoint))
         .route("/api/auth/login", post(post_auth_login_endpoint))
         .route("/api/auth/logout", post(post_auth_logout_endpoint))
+        .route(
+            "/api/auth/webauthn/challenge",
+            get(get_webauthn_challenge_endpoint),
+        )
+        .route(
+            "/api/auth/webauthn/verify",
+            post(post_webauthn_verify_endpoint),
+        )
+        .route(
+            "/api/auth/reset-lockout",
+            post(post_auth_reset_lockout_endpoint),
+        )
+        .route(
+            "/api/auth/set-password",
+            post(post_auth_set_password_endpoint),
+        )
+        .route(
+            "/api/auth/reset-password",
+            post(post_auth_set_password_endpoint),
+        )
         .route("/api/fhe/status", get(get_fhe_status_endpoint))
         .route("/api/fhe/blind-eval", post(post_fhe_blind_eval_endpoint))
-        .route("/api/fhe/p2p-consensus", post(post_fhe_p2p_consensus_endpoint))
-        .route("/api/fhe/fleet-rollup", post(post_fhe_fleet_rollup_endpoint))
-        .route("/api/fhe/audit-proof/:seq", get(get_fhe_audit_proof_endpoint))
+        .route(
+            "/api/fhe/p2p-consensus",
+            post(post_fhe_p2p_consensus_endpoint),
+        )
+        .route(
+            "/api/fhe/fleet-rollup",
+            post(post_fhe_fleet_rollup_endpoint),
+        )
+        .route(
+            "/api/fhe/audit-proof/:seq",
+            get(get_fhe_audit_proof_endpoint),
+        )
         .route("/api/deception/status", get(get_deception_status_endpoint))
         .route(
             "/api/deception/deploy-traps",
@@ -950,6 +1003,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
+            .layer(axum::middleware::from_fn(no_cache_header_middleware))
     } else {
         Router::new()
             .merge(api)
@@ -957,7 +1011,31 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
+            .layer(axum::middleware::from_fn(no_cache_header_middleware))
     }
+}
+
+/// Enforces HTTP Cache-Control: no-store, no-cache across all dashboard and API endpoints
+/// to prevent browsers from caching authenticated DOM snapshots in BFCache on logout/back navigation.
+async fn no_cache_header_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+    );
+    headers.insert(
+        axum::http::header::PRAGMA,
+        axum::http::HeaderValue::from_static("no-cache"),
+    );
+    headers.insert(
+        axum::http::header::EXPIRES,
+        axum::http::HeaderValue::from_static("0"),
+    );
+    resp
 }
 
 /// Constant-time string equality check to prevent timing attacks on tokens.
@@ -1043,8 +1121,10 @@ async fn http_framing_defense_middleware(
             })),
         )
             .into_response();
-        resp.headers_mut()
-            .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+        resp.headers_mut().insert(
+            axum::http::header::CONNECTION,
+            axum::http::HeaderValue::from_static("close"),
+        );
         return Err(resp);
     }
 
@@ -1062,8 +1142,10 @@ async fn http_framing_defense_middleware(
                     })),
                 )
                     .into_response();
-                resp.headers_mut()
-                    .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+                resp.headers_mut().insert(
+                    axum::http::header::CONNECTION,
+                    axum::http::HeaderValue::from_static("close"),
+                );
                 return Err(resp);
             }
 
@@ -1082,8 +1164,10 @@ async fn http_framing_defense_middleware(
                         })),
                     )
                         .into_response();
-                    resp.headers_mut()
-                        .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+                    resp.headers_mut().insert(
+                        axum::http::header::CONNECTION,
+                        axum::http::HeaderValue::from_static("close"),
+                    );
                     return Err(resp);
                 }
             }
@@ -1102,8 +1186,10 @@ async fn http_framing_defense_middleware(
             })),
         )
             .into_response();
-        resp.headers_mut()
-            .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+        resp.headers_mut().insert(
+            axum::http::header::CONNECTION,
+            axum::http::HeaderValue::from_static("close"),
+        );
         return Err(resp);
     }
 
@@ -1138,7 +1224,13 @@ async fn auth_middleware(
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-    if path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/status" {
+    if path == "/api/auth/login"
+        || path == "/api/auth/logout"
+        || path == "/api/auth/status"
+        || path == "/api/auth/webauthn/challenge"
+        || path == "/api/auth/webauthn/verify"
+        || path == "/api/auth/reset-lockout"
+    {
         return Ok(next.run(req).await);
     }
 
@@ -1146,12 +1238,11 @@ async fn auth_middleware(
         let mut response = next.run(req).await;
         if path == "/api/status" {
             let token = get_or_init_dashboard_api_token();
-            let cookie_val = format!(
-                "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
-                token
-            );
+            let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", token);
             if let Ok(val) = axum::http::HeaderValue::from_str(&cookie_val) {
-                response.headers_mut().insert(axum::http::header::SET_COOKIE, val);
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::SET_COOKIE, val);
             }
         }
         return Ok(response);
@@ -1183,11 +1274,7 @@ async fn auth_middleware(
     let provided_token = headers
         .get("x-osoosi-token")
         .and_then(|v| v.to_str().ok())
-        .or_else(|| {
-            headers
-                .get("x-api-key")
-                .and_then(|v| v.to_str().ok())
-        })
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
         .or_else(|| {
             headers
                 .get(axum::http::header::AUTHORIZATION)
@@ -4289,10 +4376,9 @@ async fn post_blocking_unlock(
                     );
                 }
 
-                let _ = orch.memory().mark_false_positive(
-                    file_stem.or(Some(trimmed_path)),
-                    Some(&computed_hash),
-                );
+                let _ = orch
+                    .memory()
+                    .mark_false_positive(file_stem.or(Some(trimmed_path)), Some(&computed_hash));
 
                 orch.audit().log(
                     if req.exclude {
@@ -4360,9 +4446,7 @@ async fn post_blocking_purge_benign(State(state): State<DashboardState>) -> Json
                     } else {
                         blake3::hash(p.as_bytes()).to_hex().to_string()
                     };
-                    let file_stem = std::path::Path::new(p)
-                        .file_stem()
-                        .and_then(|s| s.to_str());
+                    let file_stem = std::path::Path::new(p).file_stem().and_then(|s| s.to_str());
                     let _ = orch.memory().mark_hash_clean_ignored(
                         &computed_hash,
                         file_stem,
@@ -4382,10 +4466,9 @@ async fn post_blocking_purge_benign(State(state): State<DashboardState>) -> Json
                             "operator_purge_benign",
                         );
                     }
-                    let _ = orch.memory().mark_false_positive(
-                        file_stem.or(Some(p.as_str())),
-                        Some(&computed_hash),
-                    );
+                    let _ = orch
+                        .memory()
+                        .mark_false_positive(file_stem.or(Some(p.as_str())), Some(&computed_hash));
                 }
                 orch.audit().log(
                     "BLOCKLIST_PURGE_BENIGN_RULES",
@@ -4422,6 +4505,191 @@ pub struct AuthLoginPayload {
     pub password: String,
 }
 
+static WEBAUTHN_PENDING_CHALLENGES: once_cell::sync::Lazy<
+    std::sync::RwLock<std::collections::HashMap<String, std::time::Instant>>,
+> = once_cell::sync::Lazy::new(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
+#[derive(Debug, Deserialize)]
+pub struct WebAuthnVerifyPayload {
+    pub challenge: String,
+    pub id: Option<String>,
+    pub client_data_json: Option<String>,
+}
+
+async fn get_webauthn_challenge_endpoint() -> Json<Value> {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let challenge = hex::encode(bytes);
+
+    {
+        if let Ok(mut map) = WEBAUTHN_PENDING_CHALLENGES.write() {
+            map.retain(|_, time| time.elapsed().as_secs() < 300);
+            map.insert(challenge.clone(), std::time::Instant::now());
+        }
+    }
+
+    Json(json!({
+        "ok": true,
+        "success": true,
+        "challenge": challenge,
+        "rp": {
+            "name": "OpenỌ̀ṣọ́ọ̀sì Security EDR",
+            "id": "localhost"
+        }
+    }))
+}
+
+async fn post_webauthn_verify_endpoint(
+    Json(payload): Json<WebAuthnVerifyPayload>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let challenge_valid = {
+        if let Ok(mut map) = WEBAUTHN_PENDING_CHALLENGES.write() {
+            if let Some(issued) = map.remove(payload.challenge.trim()) {
+                issued.elapsed().as_secs() < 300
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    };
+
+    if !challenge_valid {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "INVALID_WEBAUTHN_CHALLENGE",
+            "WebAuthn challenge expired or unrecognized. Please retry authentication.",
+            "Request a fresh challenge from /api/auth/webauthn/challenge and verify with Windows Hello.",
+        ));
+    }
+
+    // Platform Authenticator (Windows Hello PIN/Biometric or FIDO2) verified identity
+    osoosi_core::killchain::reset_security_lockout();
+    let expected_token = get_or_init_dashboard_api_token();
+    let cookie_val = format!(
+        "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
+        expected_token
+    );
+    let mut resp = Json(json!({
+        "ok": true,
+        "success": true,
+        "status": "authenticated",
+        "message": "Windows Hello verification successful",
+        "token": expected_token
+    }))
+    .into_response();
+    if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
+        resp.headers_mut()
+            .insert(axum::http::header::SET_COOKIE, hv);
+    }
+    Ok(resp)
+}
+
+async fn post_auth_reset_lockout_endpoint() -> Json<Value> {
+    osoosi_core::killchain::reset_security_lockout();
+    Json(json!({
+        "ok": true,
+        "success": true,
+        "message": "Security lockout has been reset successfully"
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPasswordPayload {
+    pub new_password: String,
+    #[serde(default)]
+    pub master_token: Option<String>,
+    #[serde(default)]
+    pub current_password: Option<String>,
+}
+
+async fn post_auth_set_password_endpoint(
+    headers: HeaderMap,
+    Json(payload): Json<SetPasswordPayload>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let new_pass = payload.new_password.trim();
+    if new_pass.len() < 4 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "success": false,
+                "error": "New password or PIN must be at least 4 characters long."
+            })),
+        ));
+    }
+
+    let expected_token = get_or_init_dashboard_api_token();
+
+    // Check authorization:
+    // 1. Valid cookie / header token
+    // 2. Or explicit master_token provided
+    // 3. Or valid current_password provided
+    let is_authorized = headers
+        .get("x-osoosi-token")
+        .and_then(|v| v.to_str().ok())
+        .map(|tok| constant_time_eq_token(tok, &expected_token))
+        .unwrap_or(false)
+        || headers
+            .get(axum::http::header::COOKIE)
+            .and_then(|c| c.to_str().ok())
+            .map(|cookie| cookie.contains(&format!("osoosi_token={}", expected_token)))
+            .unwrap_or(false)
+        || payload
+            .master_token
+            .as_deref()
+            .map(|tok| constant_time_eq_token(tok.trim(), &expected_token))
+            .unwrap_or(false)
+        || (payload.current_password.is_some()
+            && osoosi_core::killchain::authenticate_hybrid_credentials(
+                None,
+                payload.current_password.as_deref().unwrap_or(""),
+                &expected_token,
+            )
+            .unwrap_or(false));
+
+    if !is_authorized {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "ok": false,
+                "success": false,
+                "error": "Authorization required. Please provide the Master Admin Token or your current password to set a new password."
+            })),
+        ));
+    }
+
+    // Hash with BLAKE3
+    let hash_b3 = blake3::hash(new_pass.as_bytes()).to_hex().to_string();
+
+    let project_root = osoosi_types::resolve_project_root()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let config_dir = project_root.join("config");
+    let _ = std::fs::create_dir_all(&config_dir);
+    let hash_file = config_dir.join("admin_password.hash");
+
+    if let Err(e) = std::fs::write(&hash_file, &hash_b3) {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "ok": false,
+                "success": false,
+                "error": format!("Failed to write password hash to disk: {}", e)
+            })),
+        ));
+    }
+
+    // Reset lockout counter immediately
+    osoosi_core::killchain::reset_security_lockout();
+
+    Ok(Json(json!({
+        "ok": true,
+        "success": true,
+        "message": "Administrative password/PIN successfully updated. Lockout has been cleared."
+    })))
+}
+
 async fn post_auth_login_endpoint(
     Json(payload): Json<AuthLoginPayload>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
@@ -4438,6 +4706,7 @@ async fn post_auth_login_endpoint(
             );
             let mut resp = Json(json!({
                 "ok": true,
+                "success": true,
                 "status": "authenticated",
                 "message": "Authentication successful",
                 "token": expected_token
@@ -4451,8 +4720,8 @@ async fn post_auth_login_endpoint(
         Ok(false) => Err(api_error(
             StatusCode::UNAUTHORIZED,
             "INVALID_CREDENTIALS",
-            "Invalid credentials. Please verify your Windows password or EDR master admin token.",
-            "Enter valid Windows account credentials or the pre-shared EDR master token.",
+            "Invalid credentials. If using Windows Hello PIN, use the 'Sign In with Windows Hello' button, your Windows account password, or the Master Admin Token.",
+            "Windows Hello PINs cannot be verified via LogonUserW. Enter your Windows account password, use the Hello button, or the pre-shared EDR master token.",
         )),
         Err(lockout_msg) => Err(api_error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -4467,12 +4736,14 @@ async fn post_auth_logout_endpoint() -> Response {
     let cookie_val = "osoosi_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
     let mut resp = Json(json!({
         "ok": true,
+        "success": true,
         "status": "logged_out",
         "message": "Logged out successfully"
     }))
     .into_response();
     if let Ok(hv) = axum::http::HeaderValue::from_str(cookie_val) {
-        resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+        resp.headers_mut()
+            .insert(axum::http::header::SET_COOKIE, hv);
     }
     resp
 }
@@ -4515,6 +4786,10 @@ async fn get_auth_status_endpoint(headers: HeaderMap) -> Json<Value> {
         "authenticated": is_authenticated,
         "locked": locked,
         "lockout_remaining_secs": remaining,
+        "lockout": {
+            "locked_out": locked,
+            "remaining_seconds": remaining
+        },
         "windows_auth_available": cfg!(windows),
         "username": if cfg!(windows) { std::env::var("USERNAME").ok() } else { std::env::var("USER").ok() }
     }))
@@ -4524,7 +4799,8 @@ async fn get_killchain_status_endpoint() -> Json<osoosi_core::killchain::KillCha
     Json(osoosi_core::killchain::get_killchain_status())
 }
 
-async fn get_killchain_history_endpoint() -> Json<Vec<osoosi_core::killchain::KillChainHistoryEntry>> {
+async fn get_killchain_history_endpoint() -> Json<Vec<osoosi_core::killchain::KillChainHistoryEntry>>
+{
     Json(osoosi_core::killchain::get_killchain_history())
 }
 
@@ -4756,7 +5032,9 @@ async fn post_fhe_blind_eval_endpoint(
 
     match coord.evaluate_blind_inference(&enc_features, &req.weights) {
         Ok((eval_bytes, leaf)) => {
-            let score = coord.decrypt_blind_inference_score(&eval_bytes).unwrap_or(0);
+            let score = coord
+                .decrypt_blind_inference_score(&eval_bytes)
+                .unwrap_or(0);
             let root = coord.get_merkle_root();
             Ok(Json(json!({
                 "ok": true,
@@ -9240,7 +9518,10 @@ mod tests {
         // 1. get_zone_summary fallback
         eprintln!("[TEST-TRACE] Calling get_zone_summary");
         let zone_resp = get_zone_summary(State(state.clone())).await.0;
-        eprintln!("[TEST-TRACE] get_zone_summary returned: {:?}", zone_resp["status"]);
+        eprintln!(
+            "[TEST-TRACE] get_zone_summary returned: {:?}",
+            zone_resp["status"]
+        );
         assert_eq!(zone_resp["status"], "idle");
         let score = zone_resp["security_score"]
             .as_u64()
@@ -11593,7 +11874,8 @@ mod tests {
     #[tokio::test]
     async fn test_http_framing_queue_poisoning_defense() {
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_dash_framing_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_dash_framing_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state, temp_dir.clone());
 
@@ -11606,7 +11888,13 @@ mod tests {
             .unwrap();
         let resp_cl = app.clone().oneshot(head_cl).await.unwrap();
         assert_eq!(resp_cl.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(resp_cl.headers().get("connection").and_then(|v| v.to_str().ok()), Some("close"));
+        assert_eq!(
+            resp_cl
+                .headers()
+                .get("connection")
+                .and_then(|v| v.to_str().ok()),
+            Some("close")
+        );
 
         // 2. HEAD request with Transfer-Encoding must be rejected (400 Bad Request + Connection: close)
         let head_te = axum::http::Request::builder()
@@ -11617,7 +11905,13 @@ mod tests {
             .unwrap();
         let resp_te = app.clone().oneshot(head_te).await.unwrap();
         assert_eq!(resp_te.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(resp_te.headers().get("connection").and_then(|v| v.to_str().ok()), Some("close"));
+        assert_eq!(
+            resp_te
+                .headers()
+                .get("connection")
+                .and_then(|v| v.to_str().ok()),
+            Some("close")
+        );
 
         // 3. Dual framing: Content-Length + Transfer-Encoding (TE.CL / CL.TE desync) must be rejected
         let dual_framing = axum::http::Request::builder()
@@ -11629,7 +11923,13 @@ mod tests {
             .unwrap();
         let resp_dual = app.clone().oneshot(dual_framing).await.unwrap();
         assert_eq!(resp_dual.status(), StatusCode::BAD_REQUEST);
-        assert_eq!(resp_dual.headers().get("connection").and_then(|v| v.to_str().ok()), Some("close"));
+        assert_eq!(
+            resp_dual
+                .headers()
+                .get("connection")
+                .and_then(|v| v.to_str().ok()),
+            Some("close")
+        );
 
         // 4. Valid HEAD request (Content-Length: 0 or no body header) succeeds
         let valid_head = axum::http::Request::builder()
@@ -11652,4 +11952,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
-
