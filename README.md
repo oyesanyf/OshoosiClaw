@@ -156,6 +156,21 @@ The OpenỌ̀ṣọ́ọ̀sì runtime orchestrator (`crates/osoosi-runtime/src/k
    - **Active Process Hollowing & Thread Tarpitting**: Microsecond process suspension and memory fence isolation.
    - **Job Object Sandboxing**: Resource and token restrictions.
 
+```mermaid
+flowchart TD
+    A["Process Spawn (e.g. rundll32.exe keymgr,KRShowKeyMgr)"] --> B{"Ring-0 Driver / eBPF LSM Active?"}
+    B -- "Yes (Blocked Path/Hash)" --> C["Pre-Operation Abort (STATUS_ACCESS_DENIED / -EACCES)"]
+    B -- "Signed System LOLBin / User-Mode Fallback" --> D["Kernel-Process ETW (0x10) + 750ms Delta Poller"]
+    D --> E["NtQueryInformationProcess(ProcessCommandLineInformation = 60)"]
+    E --> F{"Credential Harvesting / Breakout CmdLine?"}
+    F -- "Yes (keymgr, comsvcs MiniDump, mimikatz, credwiz)" --> G["Immediate Win32 TerminateProcess (<750ms) + Siquery Sweep 1B"]
+    G --> H["PolicyEngine::scan_event (Signed LOLBin Veto Override)"]
+    H --> I["CredentialGuard-Memory (0.98) Overrides TrustedVendorVoter (-1.0)"]
+    I --> J["ResponseAction::Isolate + P2P Mesh Gossip Broadcast"]
+    F -- "Benign / Signed Toolchain (PostgreSQL, WindowsApps, WSL, VS)" --> K["Blocklist Guard & Operator Exclude / Purge Benign"]
+    K --> L["Protected from IFEO Hijack + Persisted in clean_ignored_hashes"]
+```
+
 ---
 
 ### CLI Management Commands
