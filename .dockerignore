@@ -1,0 +1,52 @@
+# Ignore all files by default (Deny-by-Default Build Context)
+*
+
+# Allow Rust workspace manifests and source code (for full source builds)
+!Cargo.toml
+!Cargo.lock
+!crates/
+!crates/**
+
+# Allow WebUI static distribution and detection rules
+!dashboard/
+!dashboard/dist/
+!dashboard/dist/**
+!rules/
+!rules/**
+
+# Allow pre-built Linux release binaries (when staged by CI or WSL builder)
+!dist/
+!dist/osoosi
+!deploy/
+!deploy/linux/
+!deploy/linux/osoosi-linux-x86_64
+
+# Strictly exclude secrets, certificates, keys, environment files, and host artifacts
+.git
+.github
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+*.cer
+*.asc
+*.sig
+*.intoto.jsonl
+*.msi
+*.exe
+*.dll
+*.pdb
+*.db
+*.db-shm
+*.db-wal
+*.log
+**/target/
+database/
+logs/
+quarantine/
+artifacts/
+node_modules/
+IDE/
