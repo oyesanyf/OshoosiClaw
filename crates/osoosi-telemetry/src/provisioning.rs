@@ -840,6 +840,15 @@ impl AgentProvisioner {
         if lower_path.starts_with("c:\\windows\\system32\\")
             || lower_path.starts_with("c:\\windows\\syswow64\\")
             || lower_path.starts_with("c:\\windows\\winsxs\\")
+            || lower_path.contains("\\program files\\git\\")
+            || lower_path.contains("\\program files\\wsl\\")
+            || lower_path.contains("\\program files\\windows kits\\")
+            || lower_path.contains("\\program files (x86)\\windows kits\\")
+            || lower_path.contains("\\microsoft visual studio\\")
+            || lower_path.contains("\\python")
+            || lower_path.contains("\\docker")
+            || lower_path.contains("\\cargo")
+            || lower_path.contains("\\rustup")
         {
             return false;
         }
@@ -875,6 +884,27 @@ impl AgentProvisioner {
             "net1.exe",
             "netsh.exe",
             "whoami.exe",
+            // Protected developer, compiler, runtime, and shell tools
+            "git.exe",
+            "python.exe",
+            "py.exe",
+            "cargo.exe",
+            "rustc.exe",
+            "rustup.exe",
+            "code.exe",
+            "cl.exe",
+            "link.exe",
+            "msbuild.exe",
+            "signtool.exe",
+            "sqlite3.exe",
+            "sh.exe",
+            "bash.exe",
+            "curl.exe",
+            "tar.exe",
+            "wsl.exe",
+            "docker.exe",
+            "antigravity.exe",
+            "systray.exe",
         ];
         !PROTECTED_SYSTEM_EXES.contains(&lower_name.as_str())
     }

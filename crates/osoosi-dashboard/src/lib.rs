@@ -1099,6 +1099,7 @@ pub fn get_or_init_dashboard_api_token() -> String {
 /// 3. Immediately rejects ambiguous comma-separated `Content-Length` headers.
 /// 4. Explicitly injects `Connection: close` on all framing rejections to tear down the TCP socket
 ///    and prevent queue poisoning in upstream proxy pools.
+#[allow(clippy::result_large_err)]
 async fn http_framing_defense_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
