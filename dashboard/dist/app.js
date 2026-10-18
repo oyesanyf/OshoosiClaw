@@ -9411,8 +9411,12 @@ async function submitKillchainAction(e) {
     if (submitBtn) submitBtn.disabled = true;
 
     try {
+        const storedToken = localStorage.getItem('oshoosi_master_token') || localStorage.getItem('master_token') || '';
+        const savedUsername = localStorage.getItem('oshoosi_username') || '';
+
         let endpoint = `${API_BASE}/killchain/isolate`;
         let payload = {
+            username: savedUsername || undefined,
             credential,
             password: credential,
             confirmation_phrase: phrase || "CONFIRM ISOLATE",
@@ -9422,6 +9426,7 @@ async function submitKillchainAction(e) {
         if (action === 'disarm') {
             endpoint = `${API_BASE}/killchain/disarm`;
             payload = {
+                username: savedUsername || undefined,
                 credential,
                 password: credential,
                 confirmation_phrase: phrase,
@@ -9429,13 +9434,20 @@ async function submitKillchainAction(e) {
             };
         }
 
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (storedToken) {
+            headers['X-Osoosi-Token'] = storedToken;
+            headers['Authorization'] = `Bearer ${storedToken}`;
+        } else if (credential && credential.length === 64 && /^[0-9a-fA-F]+$/.test(credential)) {
+            headers['X-Osoosi-Token'] = credential;
+            headers['Authorization'] = `Bearer ${credential}`;
+        }
+
         const res = await fetch(endpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-Osoosi-Token': credential,
-                'Authorization': `Bearer ${credential}`
-            },
+            headers,
             body: JSON.stringify(payload)
         });
 

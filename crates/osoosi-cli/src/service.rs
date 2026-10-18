@@ -471,12 +471,16 @@ pub fn stop_service() -> anyhow::Result<()> {
         return Ok(());
     }
     info!("Stopping Windows Service '{}'...", SERVICE_NAME);
+    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+    let _ = osoosi_core::firewall::remove_all_autoblock_rules();
     let output = run_sc_cmd(&["stop", SERVICE_NAME])?;
     if !output.status.success() {
         let out = String::from_utf8_lossy(&output.stdout);
         let err = String::from_utf8_lossy(&output.stderr);
         if out.contains("1062") || out.contains("not started") || out.contains("STOPPED") {
-            println!("Service '{}' is already stopped.", SERVICE_NAME);
+            println!("Service '{}' is already stopped. Host network restored.", SERVICE_NAME);
+            let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+            let _ = osoosi_core::firewall::remove_all_autoblock_rules();
             return Ok(());
         }
         anyhow::bail!("Failed to stop service: {} {}", out, err);
@@ -695,8 +699,10 @@ pub fn start_service() -> anyhow::Result<()> {
 
 #[cfg(not(windows))]
 pub fn stop_service() -> anyhow::Result<()> {
+    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+    let _ = osoosi_core::firewall::remove_all_autoblock_rules();
     let _ = run_systemctl(&["stop", "osoosi-edr.service"]);
-    println!("Service 'osoosi-edr' stop signal sent via systemctl.");
+    println!("Service 'osoosi-edr' stop signal sent via systemctl. Host network restored.");
     Ok(())
 }
 
@@ -915,7 +921,12 @@ mod win_scm {
             std::thread::sleep(Duration::from_millis(100));
         }
 
-        // 4. Report SERVICE_STOPPED
+        // 4. Disarm host isolation and unfreeze processes before reporting SERVICE_STOPPED
+        info!("OsoosiEDR Windows Service restoring host network isolation and unfreezing processes...");
+        let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+        let _ = osoosi_core::firewall::remove_all_autoblock_rules();
+
+        // Report SERVICE_STOPPED
         status.dwCurrentState = SERVICE_STOPPED;
         status.dwControlsAccepted = 0;
         status.dwCheckPoint = 0;

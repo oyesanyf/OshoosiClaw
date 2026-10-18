@@ -248,10 +248,8 @@ if (-not $SkipBuild) {
 
     $buildSucceeded = $false
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        # Clear ReadOnly attributes in target\release to prevent autocfg / cargo output path errors
-        Get-ChildItem (Join-Path $ProjectRoot "target\release") -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Attributes -band [System.IO.FileAttributes]::ReadOnly } | ForEach-Object {
-            try { $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly) } catch {}
-        }
+        # Clear ReadOnly attributes on release binaries to prevent autocfg / cargo output path errors
+        & cmd.exe /c "attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul" | Out-Null
 
         # Sign build scripts / proc macros with DigiCert RFC 3161 timestamp on retry if cargo failed
         if ($attempt -gt 1 -and $buildSigntool -and (-not $SkipSigning)) {
