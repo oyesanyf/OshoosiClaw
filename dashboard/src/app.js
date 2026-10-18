@@ -133,17 +133,11 @@ function startApp() {
     renderMalwareView(state.malwareDetections || []);
     renderMeshView(state.mesh || { peer_count: state.peer_count || 0 });
     updateMeshConnectionIndicators(state.peer_count || 0, 0);
-    fetchBootstrapPeers();
-    renderGossipView();
-    renderZoneView();
+
+    // Primary Overview & Status - prioritize immediate load
     renderApprovalsView();
     fetchAutonomySettings();
     fetchBlockingRules();
-    renderStoryView();
-    renderSkyrlView();
-    renderMitreView();
-    renderHistoryView(1);
-    fetchRotatedLogFiles();
     fetchSupervisorStatus();
     if (!supervisorInterval) {
         supervisorInterval = setInterval(fetchSupervisorStatus, 5000);
@@ -153,6 +147,18 @@ function startApp() {
     if (!updateInterval) {
         updateInterval = setInterval(updateDashboard, POLL_INTERVAL);
     }
+
+    // Defer non-critical background views to idle/micro-delay so initial UI renders instantly (< 50ms)
+    setTimeout(() => {
+        fetchBootstrapPeers();
+        renderGossipView();
+        renderZoneView();
+        renderStoryView();
+        renderSkyrlView();
+        renderMitreView();
+        renderHistoryView(1);
+        fetchRotatedLogFiles();
+    }, 400);
 }
 
 async function hashPassword(plainText) {
@@ -9425,7 +9431,11 @@ async function submitKillchainAction(e) {
 
         const res = await fetch(endpoint, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Osoosi-Token': credential,
+                'Authorization': `Bearer ${credential}`
+            },
             body: JSON.stringify(payload)
         });
 

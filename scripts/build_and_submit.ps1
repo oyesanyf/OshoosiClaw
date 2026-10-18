@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
@@ -225,6 +226,14 @@ $TargetExe = Join-Path $ProjectRoot "target\release\osoosi.exe"
 if (-not $SkipBuild) {
     Write-Host "`n>>> [1/8] Building osoosi-cli Release Binary..." -ForegroundColor Yellow
     
+    # If OsoosiEDR service is running, stop it before compiling to release file handles
+    $scQuery = & sc.exe query OsoosiEDR 2>&1 | Out-String
+    if ($scQuery -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
+        Write-Host "       Stopping OsoosiEDR service before release build to release binary locks..." -ForegroundColor Cyan
+        & sc.exe stop OsoosiEDR | Out-Null
+        Start-Sleep -Seconds 1
+    }
+
     # Ensure file handles on target are not locked
     Test-And-Handle-LockedFile -FilePath $TargetExe
     $depsExe = Join-Path $ProjectRoot "target\release\deps\osoosi.exe"
@@ -256,7 +265,7 @@ if (-not $SkipBuild) {
             }
         }
 
-        cargo build --release -p osoosi-cli
+        & cmd.exe /c "cargo build --release -p osoosi-cli"
         if ($LASTEXITCODE -eq 0) {
             $buildSucceeded = $true
             break
