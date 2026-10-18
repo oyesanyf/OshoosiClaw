@@ -60,6 +60,15 @@
                     <span>Malware Scanner</span>
                 </a>
 
+                <div class="nav-section-title" style="color: #ff5252; font-weight: 700; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="shield-alert" style="width: 14px; height: 14px; color: #ff5252;"></i>
+                    <span>Emergency Defense</span>
+                </div>
+                <a href="#killchain" class="nav-item nav-killchain" data-view="killchain" style="background: rgba(255, 82, 82, 0.08); border: 1px solid rgba(255, 82, 82, 0.3); color: #ff5252; font-weight: 600; margin-bottom: 8px;">
+                    <i data-lucide="alert-octagon" style="color: #ff5252;"></i>
+                    <span>🚨 Kill Chain / Isolation</span>
+                </a>
+
                 <div class="nav-section-title">System Analysis</div>
                 <a href="#" class="nav-item" data-view="repair">
                     <i data-lucide="wrench"></i>
@@ -2545,21 +2554,143 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Emergency Kill Chain & Reversible Host Containment View -->
+            <div id="killchain-view" class="view-content">
+                <!-- Status Banner Card -->
+                <div class="card glass shadow-glow mb-4" id="killchain-status-banner" style="border-left: 4px solid #ff4d4d; background: rgba(255, 77, 77, 0.04);">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                <h3 style="font-size: 20px; font-weight: 700; color: #ff6b6b; margin: 0; display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="shield-alert" style="width: 22px; height: 22px; color: #ff4d4d;"></i>
+                                    <span>Emergency Kill Chain &amp; Reversible Host Containment</span>
+                                </h3>
+                                <span id="kc-badge-isolated" class="badge red" style="display: none; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">🚨 HOST ISOLATED</span>
+                                <span id="kc-badge-normal" class="badge green" style="font-size: 12px; font-weight: 700;">🟢 HOST NORMAL / ONLINE</span>
+                            </div>
+                            <p style="font-size: 13px; color: var(--text-muted); margin: 6px 0 0 0;">
+                                Enterprise "Defend-in-Place Killswitch": Hermetic network isolation, non-destructive user process freeze, and kernel lockdown with loopback management preserved.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button id="btn-engage-killchain" onclick="openKillchainModal('isolate')" class="btn-primary" style="background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%); color: #fff; font-weight: 700; border: none; padding: 10px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.4);">
+                                <i data-lucide="zap-off" style="width: 16px; height: 16px;"></i>
+                                <span>ISOLATE HOST</span>
+                            </button>
+                            <button id="btn-disarm-killchain" onclick="openKillchainModal('disarm')" class="btn-secondary" style="background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; font-weight: 700; padding: 10px 18px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="check-circle" style="width: 16px; height: 16px;"></i>
+                                <span>DISARM &amp; RESTORE</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Isolation Metrics & Status Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-bottom: 20px;">
+                    <div class="card glass shadow-glow" style="padding: 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Network Containment</span>
+                            <i data-lucide="wifi-off" style="width: 16px; height: 16px; color: #ff6b6b;"></i>
+                        </div>
+                        <div id="kc-metric-net" style="font-size: 22px; font-weight: 700; color: #10b981; margin: 8px 0 4px;">Unrestricted</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Loopback &amp; Port 3030 Permanently Allowlisted</div>
+                    </div>
+
+                    <div class="card glass shadow-glow" style="padding: 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Suspended Processes</span>
+                            <i data-lucide="pause-circle" style="width: 16px; height: 16px; color: #f59e0b;"></i>
+                        </div>
+                        <div id="kc-metric-pids" style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin: 8px 0 4px;">0 Frozen</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Core OS Infrastructure (PIDs 0, 1, 4) Immune</div>
+                    </div>
+
+                    <div class="card glass shadow-glow" style="padding: 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Kernel Lockdown</span>
+                            <i data-lucide="shield" style="width: 16px; height: 16px; color: var(--accent-purple);"></i>
+                        </div>
+                        <div id="kc-metric-driver" style="font-size: 22px; font-weight: 700; color: var(--text-primary); margin: 8px 0 4px;">Standard / Active</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Ring-0 Process Pre-Execution Enforcement</div>
+                    </div>
+
+                    <div class="card glass shadow-glow" style="padding: 16px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">Cryptographic Audit</span>
+                            <i data-lucide="binary" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                        </div>
+                        <div id="kc-metric-merkle" style="font-size: 22px; font-weight: 700; color: var(--accent-blue); margin: 8px 0 4px;">BLAKE3 Verified</div>
+                        <div style="font-size: 11px; color: var(--text-muted);">Immutable Merkle Tree Hash Ledger</div>
+                    </div>
+                </div>
+
+                <!-- Isolation History & Cryptographic Merkle Ledger -->
+                <div class="card glass shadow-glow" style="padding: 16px;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="history" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                            <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Containment History &amp; Tamper-Evident Merkle Proofs</h4>
+                        </div>
+                        <button onclick="fetchKillchainStatus()" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-secondary); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                            <i data-lucide="refresh-cw" style="width: 12px; height: 12px;"></i>
+                            <span>Refresh</span>
+                        </button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--border-color); text-align: left; color: var(--text-muted);">
+                                    <th style="padding: 8px 12px;">Timestamp</th>
+                                    <th style="padding: 8px 12px;">Action</th>
+                                    <th style="padding: 8px 12px;">Operator</th>
+                                    <th style="padding: 8px 12px;">Reason</th>
+                                    <th style="padding: 8px 12px;">Event Hash</th>
+                                    <th style="padding: 8px 12px; text-align: right;">Integrity</th>
+                                </tr>
+                            </thead>
+                            <tbody id="killchain-history-tbody">
+                                <tr>
+                                    <td colspan="6" style="padding: 24px; text-align: center; color: var(--text-muted);">No containment events recorded. System operating normally.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
     <!-- Login / First-Time Setup Overlay -->
     <div id="login-overlay" class="login-overlay">
-        <div class="login-card">
+        <div class="login-card" style="max-width: 440px;">
             <div class="login-logo">
                 <div class="login-logo-icon">🏹</div>
                 <h1 class="login-logo-text" id="login-card-title">Oshoosi<span>Claw</span></h1>
             </div>
-            <p id="login-card-subtitle" style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; text-align: center; display: none;"></p>
+            <p id="login-card-subtitle" style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px; text-align: center; display: none;"></p>
+
+            <!-- 3-Strike Lockout Alert Banner -->
+            <div id="login-lockout-banner" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid #ef4444; border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; color: #fca5a5; font-size: 12px; line-height: 1.4; text-align: center;">
+                <div style="font-weight: 700; margin-bottom: 2px;">⚠️ Authentication Locked Out</div>
+                <div id="login-lockout-text">Too many failed attempts. Try again in 300s.</div>
+            </div>
+
+            <!-- Hybrid Auth Mode Selector Tabs -->
+            <div id="login-mode-tabs" style="display: flex; gap: 6px; margin-bottom: 18px; background: rgba(0,0,0,0.3); padding: 4px; border-radius: 8px; border: 1px solid var(--glass-border);">
+                <button type="button" id="tab-auth-windows" class="btn-tab active" onclick="switchLoginAuthMode('windows')" style="flex: 1; padding: 7px 10px; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; background: var(--accent-blue); color: #fff; transition: all 0.2s;">
+                    🪟 OS / Windows Account
+                </button>
+                <button type="button" id="tab-auth-token" class="btn-tab" onclick="switchLoginAuthMode('token')" style="flex: 1; padding: 7px 10px; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; background: transparent; color: var(--text-muted); transition: all 0.2s;">
+                    🔑 Master Admin Token
+                </button>
+            </div>
+
             <form id="login-form" class="login-form">
-                <div class="form-group">
-                    <label for="login-username">Username</label>
-                    <input type="text" id="login-username" placeholder="Enter username..." required autocomplete="username">
+                <input type="hidden" id="login-auth-mode" value="windows">
+                <div class="form-group" id="login-username-group">
+                    <label for="login-username">OS Username</label>
+                    <input type="text" id="login-username" placeholder="e.g. Administrator or user..." required autocomplete="username">
                 </div>
                 <div class="form-group">
                     <label for="login-password" id="login-password-label">Password</label>
@@ -2574,6 +2705,56 @@
                     <i data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
                 </button>
                 <div id="login-error" class="login-error"></div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Kill Chain Emergency Host Containment & Disarm Action Modal -->
+    <div id="killchain-action-modal" class="login-overlay" style="display: none; background: rgba(7, 9, 13, 0.92); backdrop-filter: blur(20px); z-index: 10001; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; align-items: center; justify-content: center;">
+        <div class="login-card" style="max-width: 540px; text-align: left; border: 1px solid rgba(239, 68, 68, 0.4); box-shadow: 0 0 50px rgba(239, 68, 68, 0.25); background: rgba(13, 17, 23, 0.96); border-radius: 16px; padding: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span id="kc-modal-icon" style="font-size: 26px;">🚨</span>
+                    <div>
+                        <h2 id="kc-modal-title" style="font-size: 18px; font-weight: 700; color: #ef4444; margin: 0;">Emergency Host Containment</h2>
+                        <span id="kc-modal-subtitle" style="font-size: 11px; color: var(--text-muted);">Reversible Host Isolation Protocol</span>
+                    </div>
+                </div>
+                <button type="button" class="icon-btn glass" onclick="closeKillchainModal()" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-muted); cursor: pointer; border-radius: 8px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
+                    <i data-lucide="x" style="width: 16px; height: 16px;"></i>
+                </button>
+            </div>
+
+            <div id="kc-modal-warning" style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 12px; margin-bottom: 16px; font-size: 12px; line-height: 1.5; color: #fca5a5;">
+                Engaging Kill Chain immediately severs all inbound/outbound IPv4/IPv6 traffic (preserving local loopback 127.0.0.1 and dashboard port 3030), freezes untrusted userland processes, and engages kernel driver lockdown.
+            </div>
+
+            <form id="kc-action-form" onsubmit="submitKillchainAction(event)">
+                <input type="hidden" id="kc-action-type" value="isolate">
+                
+                <div class="form-group" id="kc-reason-group">
+                    <label for="kc-reason" style="font-size: 12px; color: var(--text-secondary); font-weight: 600;">Incident Description / Justification</label>
+                    <input type="text" id="kc-reason" placeholder="e.g., Active ransomware spread detected via lateral movement..." style="width: 100%; padding: 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #fff; font-size: 13px;" required>
+                </div>
+
+                <div class="form-group" id="kc-confirm-phrase-group" style="display: none; margin-bottom: 14px;">
+                    <label for="kc-confirm-phrase" style="font-size: 12px; color: var(--text-secondary); font-weight: 600;">Type <code style="color: #10b981; background: rgba(16, 185, 129, 0.1); padding: 2px 6px; border-radius: 4px;">RESTORE HOST</code> to Confirm</label>
+                    <input type="text" id="kc-confirm-phrase" placeholder="RESTORE HOST" style="width: 100%; padding: 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #fff; font-size: 13px;">
+                </div>
+
+                <div class="form-group" style="margin-top: 14px;">
+                    <label for="kc-auth-credential" style="font-size: 12px; color: var(--text-secondary); font-weight: 600;">Operator Credential (Windows Password or Master Admin Token)</label>
+                    <input type="password" id="kc-auth-credential" placeholder="Enter authorization credential..." style="width: 100%; padding: 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #fff; font-size: 13px;" required autocomplete="current-password">
+                </div>
+
+                <div id="kc-modal-error" style="color: #ef4444; font-size: 12px; margin-top: 8px; display: none;"></div>
+
+                <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+                    <button type="button" onclick="closeKillchainModal()" style="background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 10px 18px; border-radius: 8px; font-size: 13px; cursor: pointer;">Cancel</button>
+                    <button type="submit" id="kc-submit-btn" style="background: #ef4444; border: none; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                        <span id="kc-submit-text">Engage Isolation</span>
+                    </button>
+                </div>
             </form>
         </div>
     </div>

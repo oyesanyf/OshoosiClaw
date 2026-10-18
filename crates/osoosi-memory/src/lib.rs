@@ -42,6 +42,7 @@ impl MemoryStore {
             }
         }
         let conn = Connection::open(path)?;
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(1500));
 
         // SQLCipher: Apply encryption if available and DB is not in-memory
         if path != ":memory:" {

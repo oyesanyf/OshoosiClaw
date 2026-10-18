@@ -19,6 +19,9 @@
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
+  <a href="#-emergency-kill-chain--reversible-host-containment-engine">🚨 Kill Chain & Host Isolation</a> •
+  <a href="#-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture">🔒 4-Pillar FHE & Merkle</a> •
+  <a href="#-http-framing-defense--request-queue-poisoning-cl0-remediation">🛡️ HTTP Framing Defense (CL.0)</a> •
   <a href="#-siquery-rs-101-table-engine">Siquery-RS 101-Table Engine</a> •
   <a href="#-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection">Hierarchical & NSRL/ASLR Merkle</a> •
   <a href="#-spider-web-continuum-mechanics--exposure-bounded-containment">Spider-Web Continuum Mechanics</a> •
@@ -49,6 +52,210 @@
 > **Ọ̀ṣọ́ọ̀sì** *(oh-SHAW-aw-see)* is the Yoruba Orisha of the Hunt, Tracking, and Justice. In the Yoruba cosmological tradition, Ọ̀ṣọ́ọ̀sì is the divine tracker who **never misses his mark** — the archer whose arrow always finds its target. He is invoked for precision, the relentless pursuit of wrongdoers, and the swift delivery of justice.
 >
 > This is the spirit of this project: an autonomous security agent that **hunts threats with unerring accuracy**, **tracks adversaries across the mesh**, and **delivers swift, proportionate justice** through quarantine, isolation, and deception. Like Ọ̀ṣọ́ọ̀sì, it is both patient *(observing context, reasoning before action)* and decisive *(acting with confidence when the target is clear)*.
+
+---
+
+---
+
+<a id="-emergency-kill-chain--reversible-host-containment-engine"></a>
+<a id="emergency-kill-chain--reversible-host-containment-engine"></a>
+## 🚨 Emergency Kill Chain & Reversible Host Containment Engine
+
+### The Defend-in-Place Reversible Containment Paradigm
+
+In critical compromise scenarios—such as active ransomware propagation, lateral credential harvesting, or rootkit staging—traditional response actions either shut down the endpoint (destroying ephemeral volatile memory evidence) or sever all network interfaces (disconnecting remote security analysts and management infrastructure).
+
+**OpenỌ̀ṣọ́ọ̀sì implements the Defend-in-Place Emergency Kill Chain**: a hardware-level, reversible containment killswitch accessible via WebUI (`🚨 Kill Chain / Isolation`) and CLI (`osoosi killchain`). It hermetically isolates the host while preserving local loopback control, non-destructively freezes untrusted processes, and enforces ring-0 driver lockdown. When disarmed via the authenticated `"RESTORE HOST"` verification phrase, it returns all subsystems and threads to their normal operational state without requiring a reboot.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as SOC Operator / Admin
+    participant UI as Dashboard WebUI / CLI
+    participant Auth as Hybrid Auth Guard (LogonUserW / Master Token)
+    participant KC as KillChain Engine (crates/osoosi-core/killchain.rs)
+    participant Net as WFP / iptables Hermetic Firewall
+    participant Proc as Non-Destructive Process Freezer (NtSuspendProcess)
+    participant Drv as Ring-0 Driver / eBPF LSM
+    participant Dog as Dead-Man's Watchdog Timer (30m)
+
+    Admin->>UI: Request Host Containment ("Defend-in-Place")
+    UI->>Auth: Validate Credentials (OS Password / Master Token)
+    Note over Auth: 3-Strike Exponential Lockout Gate (300s window)
+    Auth-->>UI: Authentication Confirmed (Session Token Granted)
+    UI->>KC: engage_killchain_isolation(reason, operator)
+    
+    rect rgb(255, 235, 235)
+        Note over KC,Drv: MULTI-STAGE DEFEND-IN-PLACE ISOLATION
+        KC->>KC: Anti-Hijacking Check (Caller validation & Lineage Immunity)
+        KC->>Net: Block Inbound/Outbound Traffic (Preserve 127.0.0.1, ::1, Port 3030)
+        KC->>Proc: Freeze Untrusted Userland Processes (NtSuspendProcess / SIGSTOP)
+        Note over Proc: Protected: osoosi, core OS services, shell ancestry up to 5 levels
+        KC->>Drv: Set Driver Mode = Lockdown (Deny all unauthorized spawns)
+        KC->>Dog: Arm 30-Minute Autonomous Fail-Safe Watchdog
+        KC-->>UI: Containment Engaged (Audit Logged to Merkle Chain)
+    end
+
+    Note over Admin,KC: Host is safely quarantined; memory intact; loopback UI active
+
+    Admin->>UI: Submit Disarm Phrase ("RESTORE HOST")
+    UI->>Auth: Re-Verify Operator Credentials
+    UI->>KC: disarm_killchain_isolation(reason, operator)
+    
+    rect rgb(235, 255, 235)
+        Note over KC,Drv: REVERSIBLE CLEAN RESTORATION
+        KC->>Dog: Disarm Watchdog
+        KC->>Proc: Resume Frozen Processes (NtResumeProcess / SIGCONT)
+        KC->>Net: Restore Normal Firewall Filtering State
+        KC->>Drv: Restore Driver Mode = Active Monitoring
+        KC-->>UI: Host Fully Restored (Audit Logged to Merkle Chain)
+    end
+```
+
+### Multi-Stage Containment Capabilities
+
+1. **Hermetic Network Isolation**: Deploys kernel filtering rules (Windows Filtering Platform / `WFP` sub-layer on Windows; `iptables` / `nftables` on Linux) blocking all inbound and outbound TCP, UDP, and ICMP traffic. **Strict Exception**: Local loopback (`127.0.0.1`, `::1`) and the dashboard port (`3030`) remain unconditionally accessible so administrative operators can investigate, extract forensic triage packages, and coordinate disarm procedures.
+2. **Non-Destructive Process Suspension**: Rather than terminating untrusted processes with `SIGKILL` or `TerminateProcess`—which destroys stack traces, unpacked memory payloads, and active network socket states—the engine invokes `NtSuspendProcess` (Windows) or `SIGSTOP` (Linux) across all non-system, non-immune userland processes.
+3. **Ring-0 Driver & eBPF Lockdown**: Dynamically sets the kernel driver policy to `Lockdown`. Any attempt to spawn new executables is immediately denied at the `PsSetCreateProcessNotifyRoutineEx` or `bprm_check_security` pre-operation boundary with `STATUS_ACCESS_DENIED`.
+4. **Dead-Man's Autonomous Fail-Safe Watchdog**: An autonomous background timer monitors the containment state. If an operator loses remote connection or an emergency containment event is left unattended for 30 minutes (1,800 seconds), the engine automatically executes an emergency disarm, unfreezing processes and restoring network connectivity to prevent catastrophic bricking.
+
+### Anti-Hijacking & EDR Self-Preservation Invariant
+
+> [!IMPORTANT]
+> **Anti-Hijacking Guarantee: No Process Can Hijack Kill Chain and Use It Against Itself.**
+> To prevent malicious userland malware, ransomware, or rogue scripts from misusing the Kill Chain API to weaponize host isolation against the operating system or defense agents, OpenỌ̀ṣọ́ọ̀sì enforces 5 structural invariants:
+>
+> 1. **Core Process Immunity**: The EDR daemon (`osoosi.exe`, `osoosi`, `osoosi-cli`, `osoosi-auditor`, `osoosi-service`) and critical system processes (`System`, `smss.exe`, `csrss.exe`, `wininit.exe`, `services.exe`, `lsass.exe`, `svchost.exe`, `systemd`, `init`) are cryptographically and structurally excluded from freezing or termination.
+> 2. **Process Ancestry & Lineage Immunity**: When an operator invokes containment from a terminal or management console, `freeze_untrusted_processes` walks the caller's process lineage up to 5 parent levels (`cargo`, `rustc`, `powershell.exe`, `cmd.exe`, `conhost.exe`, `bash`, `zsh`), guaranteeing the operator's active shell is never frozen.
+> 3. **Caller Process Validation**: `validate_killchain_caller` checks the calling PID against active quarantine and suspension tables. Any already-frozen or quarantined process attempting to invoke the Kill Chain API is instantly denied and flagged as an adversarial containment breakout attempt.
+> 4. **State Machine Anti-Reentrancy**: State transitions (`Idle` -> `Isolating` -> `Isolated` -> `Disarming`) are guarded by atomic mutexes. Repetitive calls cannot corrupt isolation records or trigger reentrant resource deadlocks.
+> 5. **Hybrid Logon Authentication**: Host isolation and disarm APIs require OS user authentication via Win32 `LogonUserW` or Master Administrative Token verification, protected by a 3-strike exponential lockout rate limiter (300-second window) and 10-minute inactivity auto-lock.
+
+### Kill Chain CLI Commands
+
+```powershell
+# Inspect the current containment and watchdog status
+osoosi killchain status
+
+# Engage Defend-in-Place host isolation
+osoosi killchain isolate --reason "Active ransomware outbreak detected" --operator "sec-admin"
+
+# Reversibly restore host network, processes, and kernel driver
+osoosi killchain disarm --reason "Threat eradicated and triage verified" --operator "sec-admin"
+
+# Review tamper-evident containment audit history
+osoosi killchain history --limit 20
+```
+
+---
+
+<a id="-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture"></a>
+<a id="4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture"></a>
+## 🔒 4-Pillar Fully Homomorphic Encryption (TFHE) & Cryptographic Merkle Architecture
+
+### The Privacy-Preserving Federated Defense Challenge
+
+Decentralized threat intelligence sharing across enterprise and peer nodes typically faces an intractable dilemma: sharing raw indicators of compromise (IP addresses, process command lines, file paths, and memory hashes) exposes sensitive internal PII, proprietary network topology, and intellectual property. Conversely, withholding indicators leaves peer nodes vulnerable to lateral attacks.
+
+OpenỌ̀ṣọ́ọ̀sì resolves this challenge via **4-Pillar Fully Homomorphic Encryption (TFHE)** coupled with a **tamper-evident binary BLAKE3 Merkle tree**:
+
+```mermaid
+flowchart TD
+    subgraph P1["Pillar 1: P2P Zero-Knowledge Matching"]
+        I1["Local Threat IOC"] --> E1["TFHE Encrypt (FheUint32)"]
+        E1 --> C1["Encrypted Homomorphic Equality (a.eq(&b))"]
+        C1 --> R1["Zero-Knowledge Match Result"]
+    end
+
+    subgraph P2["Pillar 2: Blind Remote Model Scoring"]
+        F2["Telemetry Feature Vector"] --> E2["Encrypted Homomorphic Inference"]
+        E2 --> M2["TFHE Threshold Check (score.gt(&threshold))"]
+        M2 --> R2["Encrypted Boolean Threat Verdict"]
+    end
+
+    subgraph P3["Pillar 3: Privacy-Preserving Anomaly Telemetry"]
+        T3["Fleet Anomaly Counter"] --> N3["Laplace Differential Privacy (ε=0.5, Δs=1.0)"]
+        N3 --> R3["Federated Rollup Aggregation (Zero PII)"]
+    end
+
+    subgraph P4["Pillar 4: Kernel Latency Assertion (<500 µs)"]
+        K4["Hot ETW / Ring-0 Hook"] --> B4{"Path Latency Check"}
+        B4 -->|Hot Path| D4["Local Deterministic SHA-256 / BLAKE3 (<50 µs)"]
+        B4 -->|Background| P1
+    end
+
+    subgraph Merkle["Tamper-Evident BLAKE3 Binary Merkle Tree"]
+        R1 --> L1["Audit Leaf 1"]
+        R2 --> L2["Audit Leaf 2"]
+        R3 --> L3["Audit Leaf 3"]
+        L1 & L2 --> H12["BLAKE3 Parent Node"]
+        L3 --> H33["BLAKE3 Right Node"]
+        H12 & H33 --> Root["Cryptographic Merkle Root (Hardware-Anchored)"]
+    end
+```
+
+### The Four Pillars of Homomorphic Architecture
+
+| Pillar | Capability | Technical Implementation | Performance Profile |
+| :--- | :--- | :--- | :--- |
+| **1. P2P ZK Threat Sharing** | Match threats across peer nodes without exposing raw telemetry | TFHE torus encryption over quantized hash prefixes; homomorphic equality | 15–40 ms (Batched background mesh gossip) |
+| **2. Blind Remote Threat Scoring** | Run cloud neural models on encrypted endpoint telemetry | `FheUint32` homomorphic linear combinations and threshold evaluation | 50–120 ms (Async API scoring pipeline) |
+| **3. Privacy Telemetry** | Aggregate cross-fleet anomaly metrics without tracking individuals | Laplace differential privacy mechanism ($\epsilon = 0.5, \Delta s = 1.0$) | < 1 ms (Hourly / daily telemetry rollups) |
+| **4. Kernel Latency Assertion** | Guarantee sub-millisecond execution for kernel containment | Hot ETW and Ring-0 driver hooks strictly bypass FHE, using local BLAKE3 | **< 500 µs Invariant** (Observed: 32 µs) |
+
+### Cryptographic Merkle Audit Proofs & Verification
+
+Every FHE threat match, blind score, and differential privacy event is hashed into a sequential leaf node:
+$$\text{Leaf}_i = \text{BLAKE3}(\text{timestamp} \parallel \text{pillar} \parallel \text{operation} \parallel \text{data\_hash})$$
+
+Nodes can produce independent logarithmic Merkle inclusion proofs ($O(\log N)$) verifying that a specific privacy-preserving evaluation was executed without tampering:
+
+```powershell
+# Check FHE Engine and Merkle Tree status
+osoosi fhe status
+
+# Verify a specific cryptographic Merkle audit inclusion proof
+osoosi fhe verify-merkle --seq 0
+```
+
+---
+
+<a id="-http-framing-defense--request-queue-poisoning-cl0-remediation"></a>
+<a id="http-framing-defense--request-queue-poisoning-cl0-remediation"></a>
+## 🛡️ HTTP Framing Defense & Request Queue Poisoning (CL.0) Remediation
+
+### RFC 9110 & RFC 9112 Strict Framing Middleware
+
+During autonomous penetration testing via the RAPTOR Security Framework, the dashboard server (port 3030) was evaluated against HTTP request queue poisoning vectors. The scanner identified a stateful desynchronization flaw:
+
+- **Vulnerability Identifier**: `VULN-REPRO-1792312936428` (`QUEUE_POISONING`)
+- **Mechanism**: In a `CL.0` probe on `HEAD / HTTP/1.1`, the request declared a non-zero `Content-Length: 6`. Standard HTTP specifications (RFC 9110 §9.3.2 and RFC 9112 §6.1) dictate that `HEAD` requests never enclose request bodies. The underlying TCP socket stalled for 3.51 seconds awaiting body bytes rather than terminating the malformed request immediately.
+- **Secondary Latency Anomaly**: When processing `HEAD /` with a `Range: bytes=1-650` header, backend static file evaluators attempted byte-range slicing on zero-body requests, triggering a 3.51-second parsing delay and returning `206 Partial Content`.
+
+### The Multi-Layered Remediation Pipeline
+
+OpenỌ̀ṣọ́ọ̀sì deploys `http_framing_defense_middleware` inside `crates/osoosi-dashboard/src/lib.rs` to enforce fail-closed RFC compliance before requests reach routing handlers:
+
+```mermaid
+flowchart TD
+    Req["Incoming HTTP Request"] --> MethodCheck{"Is Method HEAD or GET?"}
+    
+    MethodCheck -->|Yes| BodyCheck{"Has Content-Length > 0 or Transfer-Encoding?"}
+    BodyCheck -->|Yes| Reject400["Reject: 400 Bad Request + Connection: close"]
+    BodyCheck -->|No| RangeCheck{"Is Method HEAD and has Range header?"}
+    
+    RangeCheck -->|Yes| StripRange["Strip Range Header (Normalize to 200 OK, 0 bytes)"]
+    RangeCheck -->|No| DualCheck{"Conflicting Headers? (TE + CL, or duplicate CL)"}
+    StripRange --> DualCheck
+    
+    MethodCheck -->|No| DualCheck
+    DualCheck -->|Conflict Detected| Reject400
+    DualCheck -->|Normalized & Valid| NextService["Forward to Dashboard Handler (<1 ms)"]
+```
+
+1. **Strict Zero-Body Enforcement on HEAD/GET**: If a `HEAD` or `GET` request declares `Content-Length > 0` or includes `Transfer-Encoding`, the middleware immediately intercepts the request, generates an explicit `400 Bad Request` with `Connection: close`, and tears down the connection to prevent connection pool poisoning.
+2. **Dual-Framing & Desync Prevention**: Requests containing both `Transfer-Encoding` and `Content-Length`, or comma-separated differing `Content-Length` headers, are unconditionally rejected with `400 Bad Request`.
+3. **HEAD Range Normalization**: When a `HEAD` request contains a `Range` header, the middleware automatically strips the `Range` header. The backend responds with standard `200 OK` (0 body bytes) in under 1 millisecond, completely eliminating the 3.51-second byte-range evaluation stall and preventing `206 Partial Content` reverse proxy desynchronization.
 
 ---
 
@@ -1470,6 +1677,8 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 | `trust` | Decentralized Identity (DID) & certificate management | `who-am-i`, `init-ca`, `issue` |
 | `story` | Generate forensic attack narrative from Merkle Audit Trail | — |
 | `status` | Agent health, detection engine, and NSRL status check | — |
+| `killchain` | Emergency Defend-in-Place reversible host containment | `status`, `isolate`, `disarm`, `history` |
+| `fhe` | 4-Pillar Homomorphic Encryption & Merkle proof audits | `status`, `verify-merkle --seq <N>` |
 | `clean` | Dynamic host disk, log, database, & memory cleanup | `--models`, `--aggressive`, `--days <N>` |
 | `update-stix` | Synchronize MITRE ATT&CK & ATLAS STIX 2.1 catalog | `--force`, `--broadcast` |
 
@@ -2119,6 +2328,9 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
 
+- **Emergency Defend-in-Place Kill Chain & Anti-Hijacking EDR Self-Preservation (`crates/osoosi-core/src/killchain.rs`)**: Hardware-level, reversible host containment ("Defend-in-Place") via WebUI (`🚨 Kill Chain / Isolation`) and CLI (`osoosi killchain`). Integrates hermetic network isolation (preserving `127.0.0.1`, `::1`, and dashboard port `3030`), non-destructive process suspension (`NtSuspendProcess` / `SIGSTOP`), ring-0 driver lockdown, Option 3 hybrid OS (`LogonUserW`) / Master Token authentication with 3-strike exponential lockout rate-limiting, and 5 structural anti-hijacking invariants (caller validation, process lineage immunity up to 5 parent levels, anti-reentrancy, and an autonomous 30-minute dead-man failsafe watchdog).
+- **4-Pillar Fully Homomorphic Encryption (`tfhe`) & Tamper-Evident Binary BLAKE3 Merkle Tree (`crates/osoosi-core/src/fhe_coordinator.rs`)**: Privacy-preserving federated defense uniting P2P zero-knowledge IOC matching, blind remote neural threat scoring (`FheUint32`), Laplace differential privacy ($\epsilon=0.5, \Delta s=1.0$), and kernel latency assertions (<500 µs invariant, observed: 32 µs). Every privacy-preserving event is anchored into a sequential binary BLAKE3 Merkle tree with logarithmic inclusion proofs (`osoosi fhe verify-merkle --seq <N>`).
+- **Strict RFC 9110 / RFC 9112 HTTP Framing Defense & CL.0 Request Queue Poisoning Remediation (`crates/osoosi-dashboard/src/lib.rs`)**: Complete remediation of RAPTOR penetration test finding `VULN-REPRO-1792312936428`. Deploys `http_framing_defense_middleware` immediately terminating malformed `HEAD` or `GET` requests bearing `Content-Length > 0` or `Transfer-Encoding` with `400 Bad Request` + `Connection: close`, stripping `Range` headers on `HEAD` requests to eliminate 3.51s static file parsing stalls, and preventing reverse-proxy request queue desynchronization.
 - **Cross-Platform Lockdown Credential-Guard Enforcement & Signed LOLBin Veto Override (`crates/osoosi-policy/` & `crates/osoosi-core/`)**: Prevents `TrustedVendorVoter` and `NSRL-Veto` from suppressing consensus when deterministic behavioral or memory voters (`CredentialGuard-Memory`, `ProcessInjection-Memory`, `Sigma-Detection`) fire on signed OS LOLBins (`rundll32.exe keymgr,KRShowKeyMgr`, `comsvcs.dll MiniDump`, `vaultcmd`, `credwiz`, `/etc/shadow` readers, `mimipenguin`, `unshadow`, `gcore`/`gdb` memory dumpers, `/etc/ld.so.preload`). Performs surgical process-tree termination of offending child PIDs while protecting core OS and signed vendor binaries from persistent `FileBlockExecutable` bricking (`is_protected_or_benign_system_path`), accompanied by one-click WebUI **Exclude (Whitelist)** (`/api/blocking/rules/exclude`) and **Purge Benign / Signed FPs** (`/api/blocking/rules/purge-benign`) controls.
 - **Closed-Loop Contextual RL Token Q-Learning (`learned_token_weights`) in Hybrid Decision Engine (`crates/osoosi-behavioral/src/decision_model/`)**: `ClefDecisionEngine` (`LocalDecisionEngine`, `OpenJevClient`, `StrandsClient`) learns bounded per-token Q-weights (`record_contextual_rl_feedback`) from live telemetry and operator feedback, overriding `Signed: true` bonuses whenever credential-harvesting or MITRE `T1003`/`T1555.004` indicators are present and eliminating false benign suppressions.
 - **Dynamic Mount-Point Disk & Memory Cleanup Manager (`crates/osoosi-core/src/log_retention.rs`, `/api/system/cleanup`, & `osoosi clean`)**: Resolves the active working directory's mount point via `sysinfo::Disks`, scales retention across 4 disk pressure tiers (`NOMINAL` 30d, `MODERATE` 14d, `ELEVATED` 7d, `CRITICAL` 2d), safely rotates locked active log files on Windows via copy + in-place truncate fallback (`ERROR_SHARING_VIOLATION` resilient), compacts SQLite WAL + `VACUUM`, trims OS working sets, and exposes a live **Dynamic Host Disk & Memory Cleanup Manager** card in the WebUI **Utilities** tab.

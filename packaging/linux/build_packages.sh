@@ -178,6 +178,9 @@ Summary:        OpenOsoosi Autonomous EDR Daemon
 License:        Apache-2.0 OR MIT
 URL:            https://github.com/oyesanyf/OshoosiClaw
 AutoReqProv:    no
+%define __strip /bin/true
+%define _build_id_links none
+%global __os_install_post %{nil}
 
 %description
 OpenOsoosi is a high-assurance, hardware-speed endpoint detection and

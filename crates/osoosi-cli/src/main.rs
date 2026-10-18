@@ -356,6 +356,56 @@ enum Commands {
         #[arg(long = "pretty")]
         pretty: bool,
     },
+    /// Emergency Host Containment & Kill Chain (Network severance, process freeze, kernel lockdown)
+    #[command(name = "killchain", about = "Emergency Host Containment & Kill Chain")]
+    Killchain {
+        #[command(subcommand)]
+        action: KillchainAction,
+    },
+    /// Fully Homomorphic Encryption (TFHE) Privacy-Preserving Coordinator & Merkle Audit
+    #[command(name = "fhe", about = "Fully Homomorphic Encryption (TFHE) Coordinator & Merkle Audit")]
+    Fhe {
+        #[command(subcommand)]
+        action: FheAction,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum KillchainAction {
+    /// Display current host containment and isolation status
+    Status,
+    /// Engage emergency reversible host isolation (cuts network, freezes processes, locks driver)
+    Isolate {
+        /// Administrator or Windows account password / master token
+        #[arg(short = 'c', long)]
+        credential: Option<String>,
+        /// Incident reason / justification
+        #[arg(short = 'r', long, default_value = "Manual CLI invocation")]
+        reason: String,
+    },
+    /// Disarm and reverse host isolation (restores network and resumes processes)
+    Disarm {
+        /// Administrator or Windows account password / master token
+        #[arg(short = 'c', long)]
+        credential: Option<String>,
+        /// Confirmation phrase (must be 'RESTORE HOST')
+        #[arg(short = 'p', long)]
+        phrase: Option<String>,
+    },
+    /// View the cryptographic isolation history ledger
+    History,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum FheAction {
+    /// Display FHE engine capabilities, polynomial degree, and Merkle root status
+    Status,
+    /// Verify a specific Merkle audit path for an FHE operation sequence
+    VerifyMerkle {
+        /// Sequence number to audit
+        #[arg(short = 's', long)]
+        seq: u64,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1676,6 +1726,181 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Lite) => unreachable!(),
         Some(Commands::Service { ref action }) => {
             service::handle_service_action(action)?;
+        }
+        Some(Commands::Killchain { ref action }) => {
+            match action {
+                KillchainAction::Status => {
+                    let status = osoosi_core::killchain::get_killchain_status();
+                    println!("============================================================");
+                    println!("  OpenỌ̀ṣọ́ọ̀sì Emergency Kill Chain & Host Isolation Status");
+                    println!("============================================================");
+                    println!("Host Isolated:            {}", if status.isolated { "🚨 YES (ISOLATED)" } else { "✅ NO (NORMAL)" });
+                    if let Some(ref at) = status.isolated_at {
+                        println!("Isolated At:              {}", at);
+                    }
+                    if let Some(ref by) = status.isolated_by {
+                        println!("Isolated By:              {}", by);
+                    }
+                    if let Some(ref r) = status.reason {
+                        println!("Reason:                   {}", r);
+                    }
+                    println!("Network Isolated:         {}", status.network_isolated);
+                    println!("Processes Frozen Count:   {}", status.processes_frozen_count);
+                    println!("Kernel Lockdown Active:   {}", status.kernel_lockdown_active);
+                    println!("Allowlisted Ports:        {:?}", status.allowlisted_ports);
+                    println!("Quarantined Interfaces:   {:?}", status.quarantined_interfaces);
+                    println!("Lockout Remaining Secs:   {}", status.lockout_remaining_secs);
+                    println!("============================================================");
+                }
+                KillchainAction::Isolate { credential, reason } => {
+                    let cred = match credential {
+                        Some(c) => c.clone(),
+                        None => {
+                            eprint!("Enter operator credential (password or token): ");
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            input.trim().to_string()
+                        }
+                    };
+                    let token = osoosi_dashboard::get_or_init_dashboard_api_token();
+                    match osoosi_core::killchain::authenticate_hybrid_credentials(None, &cred, &token) {
+                        Ok(true) => {
+                            println!("[*] Initiating emergency reversible host isolation...");
+                            match osoosi_core::killchain::engage_killchain_isolation("cli_operator", reason, true, true, true).await {
+                                Ok(st) => {
+                                    println!("✅ Emergency host isolation ENGAGED successfully.");
+                                    println!("   Network Contained: {}", st.network_isolated);
+                                    println!("   Processes Suspended: {}", st.processes_frozen_count);
+                                    println!("   Kernel Lockdown: {}", st.kernel_lockdown_active);
+                                    println!("   Use 'osoosi killchain disarm' to restore normal host operations.");
+                                }
+                                Err(e) => {
+                                    eprintln!("❌ Host isolation engagement failed: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            eprintln!("❌ Authentication failed: Invalid operator credential.");
+                            std::process::exit(1);
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Authentication error / lockout: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                KillchainAction::Disarm { credential, phrase } => {
+                    let conf = match phrase {
+                        Some(p) => p.clone(),
+                        None => {
+                            eprint!("Type 'RESTORE HOST' to confirm disarm: ");
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            input.trim().to_string()
+                        }
+                    };
+                    if conf != "RESTORE HOST" {
+                        eprintln!("❌ Disarm aborted: Confirmation phrase must match 'RESTORE HOST'.");
+                        std::process::exit(1);
+                    }
+                    let cred = match credential {
+                        Some(c) => c.clone(),
+                        None => {
+                            eprint!("Enter operator credential (password or token): ");
+                            let mut input = String::new();
+                            std::io::stdin().read_line(&mut input)?;
+                            input.trim().to_string()
+                        }
+                    };
+                    let token = osoosi_dashboard::get_or_init_dashboard_api_token();
+                    match osoosi_core::killchain::authenticate_hybrid_credentials(None, &cred, &token) {
+                        Ok(true) => {
+                            println!("[*] Initiating host isolation rollback and restoration...");
+                            match osoosi_core::killchain::disarm_killchain_isolation("cli_operator", "Operator manual disarm").await {
+                                Ok(st) => {
+                                    println!("✅ Host isolation DISARMED and reversed successfully.");
+                                    println!("   Host Isolated: {}", st.isolated);
+                                    println!("   Network restored, suspended processes resumed, kernel lockdown lifted.");
+                                }
+                                Err(e) => {
+                                    eprintln!("❌ Disarm failed: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            eprintln!("❌ Authentication failed: Invalid operator credential.");
+                            std::process::exit(1);
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Authentication error / lockout: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                KillchainAction::History => {
+                    let history = osoosi_core::killchain::get_killchain_history();
+                    println!("============================================================");
+                    println!("  OpenỌ̀ṣọ́ọ̀sì Kill Chain Cryptographic Audit Ledger ({} entries)", history.len());
+                    println!("============================================================");
+                    for (i, entry) in history.iter().enumerate() {
+                        println!("[#{}] Action: {} | Time: {} | Operator: {}", i + 1, entry.action, entry.timestamp, entry.operator);
+                        println!("     Reason: {}", entry.reason);
+                        println!("     Event Hash: {}", entry.event_hash);
+                        println!("------------------------------------------------------------");
+                    }
+                }
+            }
+        }
+        Some(Commands::Fhe { ref action }) => {
+            match action {
+                FheAction::Status => {
+                    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+                    let root = coord.get_merkle_root();
+                    let tree_size = coord.get_tree_size();
+                    println!("============================================================");
+                    println!("  OpenỌ̀ṣọ́ọ̀sì TFHE Fully Homomorphic Encryption & Merkle Ledger");
+                    println!("============================================================");
+                    println!("Engine Backend:           TFHE-rs (v0.7.2 / AVX2 Accelerated)");
+                    println!("Pillar 1:                 P2P Zero-Knowledge Threat Sharing");
+                    println!("Pillar 2:                 Blind Remote Threat Scoring");
+                    println!("Pillar 3:                 Fleet Differential Privacy Telemetry (Laplace)");
+                    println!("Pillar 4:                 Real-Time ETW/Kernel Latency Boundary (<500 µs)");
+                    println!("Merkle Audit Tree Size:   {} operations anchored", tree_size);
+                    println!("Merkle Audit Root (BLAKE3): {}", root);
+                    println!("============================================================");
+                }
+                FheAction::VerifyMerkle { seq } => {
+                    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+                    match coord.get_audit_proof(*seq) {
+                        Ok(proof) => {
+                            let is_valid = osoosi_core::fhe_coordinator::verify_merkle_proof(
+                                &proof.leaf_hash,
+                                &proof.audit_path,
+                                &proof.merkle_root,
+                                proof.leaf_seq as usize,
+                            );
+                            println!("============================================================");
+                            println!("  Merkle Cryptographic Audit Proof for Sequence #{}", seq);
+                            println!("============================================================");
+                            println!("Leaf Hash:    {}", proof.leaf_hash);
+                            println!("Tree Size:    {}", proof.tree_size);
+                            println!("Merkle Root:  {}", proof.merkle_root);
+                            println!("Audit Path:   {} sibling proofs", proof.audit_path.len());
+                            println!("Verification: {}", if is_valid { "✅ VALID (Tamper-evident)" } else { "❌ INVALID (Tampered)" });
+                            println!("============================================================");
+                            if !is_valid {
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ Failed to retrieve audit proof for seq {}: {}", seq, e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
         }
         None => {
             if !cli.grant_access {
@@ -7269,6 +7494,92 @@ mod tests {
                 assert_eq!(days, 7);
             }
             _ => panic!("Expected Commands::Clean"),
+        }
+    }
+
+    #[test]
+    fn test_killchain_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "killchain", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::Status => {}
+                _ => panic!("Expected KillchainAction::Status"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+
+        let cli_isolate = Cli::try_parse_from([
+            "osoosi",
+            "killchain",
+            "isolate",
+            "--credential",
+            "supersecret",
+            "--reason",
+            "active attack",
+        ])
+        .unwrap();
+        match cli_isolate.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::Isolate { credential, reason } => {
+                    assert_eq!(credential.as_deref(), Some("supersecret"));
+                    assert_eq!(reason, "active attack");
+                }
+                _ => panic!("Expected KillchainAction::Isolate"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+
+        let cli_disarm = Cli::try_parse_from([
+            "osoosi",
+            "killchain",
+            "disarm",
+            "--credential",
+            "supersecret",
+            "--phrase",
+            "RESTORE HOST",
+        ])
+        .unwrap();
+        match cli_disarm.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::Disarm { credential, phrase } => {
+                    assert_eq!(credential.as_deref(), Some("supersecret"));
+                    assert_eq!(phrase.as_deref(), Some("RESTORE HOST"));
+                }
+                _ => panic!("Expected KillchainAction::Disarm"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+
+        let cli_history = Cli::try_parse_from(["osoosi", "killchain", "history"]).unwrap();
+        match cli_history.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::History => {}
+                _ => panic!("Expected KillchainAction::History"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+    }
+
+    #[test]
+    fn test_fhe_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "fhe", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Fhe { action }) => match action {
+                FheAction::Status => {}
+                _ => panic!("Expected FheAction::Status"),
+            },
+            _ => panic!("Expected Commands::Fhe"),
+        }
+
+        let cli_verify = Cli::try_parse_from(["osoosi", "fhe", "verify-merkle", "--seq", "42"]).unwrap();
+        match cli_verify.command {
+            Some(Commands::Fhe { action }) => match action {
+                FheAction::VerifyMerkle { seq } => {
+                    assert_eq!(seq, 42);
+                }
+                _ => panic!("Expected FheAction::VerifyMerkle"),
+            },
+            _ => panic!("Expected Commands::Fhe"),
         }
     }
 }

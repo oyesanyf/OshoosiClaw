@@ -51,6 +51,7 @@ Thumbs.db
 *.db-journal
 odidere.db*
 osoosi.db*
+killchain_state.json
 /backups/
 backups/
 

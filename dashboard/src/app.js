@@ -151,126 +151,215 @@ async function hashPassword(plainText) {
         .map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
+let lockoutCountdownInterval = null;
+let inactivityTimer = null;
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes inactivity auto-lock
+
+function resetInactivityTimer() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(async () => {
+        try {
+            await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+        } catch (_) {}
+        localStorage.setItem('oshoosi_logged_in', 'false');
+        const overlay = document.getElementById('login-overlay');
+        if (overlay) {
+            overlay.style.display = 'flex';
+            overlay.style.opacity = '1';
+        }
+    }, INACTIVITY_TIMEOUT_MS);
+}
+
+['mousemove', 'keydown', 'mousedown', 'touchstart', 'scroll'].forEach(evt => {
+    window.addEventListener(evt, resetInactivityTimer, { passive: true });
+});
+
+function switchLoginAuthMode(mode) {
+    const hiddenInput = document.getElementById('login-auth-mode');
+    const tabWindows = document.getElementById('tab-auth-windows');
+    const tabToken = document.getElementById('tab-auth-token');
+    const usernameGroup = document.getElementById('login-username-group');
+    const usernameInput = document.getElementById('login-username');
+    const passwordLabel = document.getElementById('login-password-label');
+    const passwordInput = document.getElementById('login-password');
+    const errorDiv = document.getElementById('login-error');
+    if (errorDiv) errorDiv.style.display = 'none';
+
+    if (hiddenInput) hiddenInput.value = mode;
+
+    if (mode === 'token') {
+        if (tabToken) {
+            tabToken.classList.add('active');
+            tabToken.style.background = 'var(--accent-blue)';
+            tabToken.style.color = '#fff';
+        }
+        if (tabWindows) {
+            tabWindows.classList.remove('active');
+            tabWindows.style.background = 'transparent';
+            tabWindows.style.color = 'var(--text-muted)';
+        }
+        if (usernameGroup) usernameGroup.style.display = 'none';
+        if (usernameInput) usernameInput.required = false;
+        if (passwordLabel) passwordLabel.innerText = 'Master Admin Password / Token';
+        if (passwordInput) passwordInput.placeholder = 'Enter master admin password or token...';
+    } else {
+        if (tabWindows) {
+            tabWindows.classList.add('active');
+            tabWindows.style.background = 'var(--accent-blue)';
+            tabWindows.style.color = '#fff';
+        }
+        if (tabToken) {
+            tabToken.classList.remove('active');
+            tabToken.style.background = 'transparent';
+            tabToken.style.color = 'var(--text-muted)';
+        }
+        if (usernameGroup) usernameGroup.style.display = 'block';
+        if (usernameInput) usernameInput.required = true;
+        if (passwordLabel) passwordLabel.innerText = 'OS Account Password';
+        if (passwordInput) passwordInput.placeholder = 'Enter Windows account password...';
+    }
+}
+
+async function checkAuthStatus() {
+    const overlay = document.getElementById('login-overlay');
+    const lockoutBanner = document.getElementById('login-lockout-banner');
+    const lockoutText = document.getElementById('login-lockout-text');
+    const submitBtn = document.getElementById('login-submit-btn');
+
+    try {
+        const res = await fetch(`${API_BASE}/auth/status`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.lockout && data.lockout.locked_out) {
+                if (lockoutBanner) lockoutBanner.style.display = 'block';
+                let remaining = data.lockout.remaining_seconds || 300;
+                if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${remaining}s.`;
+                if (submitBtn) submitBtn.disabled = true;
+                if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
+                lockoutCountdownInterval = setInterval(() => {
+                    remaining--;
+                    if (remaining <= 0) {
+                        clearInterval(lockoutCountdownInterval);
+                        if (lockoutBanner) lockoutBanner.style.display = 'none';
+                        if (submitBtn) submitBtn.disabled = false;
+                    } else {
+                        if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${remaining}s.`;
+                    }
+                }, 1000);
+            } else {
+                if (lockoutBanner) lockoutBanner.style.display = 'none';
+                if (submitBtn) submitBtn.disabled = false;
+            }
+
+            if (data.authenticated) {
+                localStorage.setItem('oshoosi_logged_in', 'true');
+                if (overlay) overlay.style.display = 'none';
+                startApp();
+                return true;
+            }
+        }
+    } catch (_) {}
+
+    return false;
+}
+
 function setupLogin() {
     const overlay = document.getElementById('login-overlay');
     const form = document.getElementById('login-form');
     const errorDiv = document.getElementById('login-error');
     const logoutBtn = document.getElementById('logout-btn');
-    
-    const cardTitle = document.getElementById('login-card-title');
-    const cardSubtitle = document.getElementById('login-card-subtitle');
-    const passwordLabel = document.getElementById('login-password-label');
-    const confirmGroup = document.getElementById('login-confirm-group');
-    const confirmInput = document.getElementById('login-confirm-password');
     const usernameInput = document.getElementById('login-username');
     const passwordInput = document.getElementById('login-password');
-    const submitBtnText = document.getElementById('login-btn-text');
+    const submitBtn = document.getElementById('login-submit-btn');
 
-    const storedHash = localStorage.getItem('oshoosi_admin_hash');
-    const isFirstTime = !storedHash;
-    const isLocalLoopback = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' || !window.location.hostname;
-    const explicitlyLoggedOut = localStorage.getItem('oshoosi_logged_out') === 'true';
-    
-    const isLoggedIn = localStorage.getItem('oshoosi_logged_in') === 'true';
-    if ((isLoggedIn && storedHash) || (isLocalLoopback && !explicitlyLoggedOut)) {
-        localStorage.setItem('oshoosi_logged_in', 'true');
-        if (overlay) overlay.style.display = 'none';
-    } else {
-        if (overlay) overlay.style.display = 'flex';
-    }
+    // Default to windows mode
+    switchLoginAuthMode('windows');
+    checkAuthStatus();
+    resetInactivityTimer();
 
-    if (isFirstTime) {
-        if (cardTitle) cardTitle.innerHTML = 'Create <span>Admin Password</span>';
-        if (cardSubtitle) {
-            cardSubtitle.style.display = 'block';
-            cardSubtitle.innerText = 'First-time setup: please configure your master administrator credentials.';
-        }
-        if (usernameInput) usernameInput.value = 'admin';
-        if (passwordLabel) passwordLabel.innerText = 'Create Master Password';
-        if (confirmGroup) confirmGroup.style.display = 'block';
-        if (confirmInput) confirmInput.required = true;
-        if (submitBtnText) submitBtnText.innerText = 'Initialize Administrator Account';
-    } else {
-        if (cardTitle) cardTitle.innerHTML = 'Oshoosi<span>Claw</span>';
-        if (cardSubtitle) cardSubtitle.style.display = 'none';
-        if (passwordLabel) passwordLabel.innerText = 'Password';
-        if (confirmGroup) confirmGroup.style.display = 'none';
-        if (confirmInput) confirmInput.required = false;
-        if (submitBtnText) submitBtnText.innerText = 'Access System';
-    }
-    
     if (form) {
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
+            const modeInput = document.getElementById('login-auth-mode');
+            const mode = modeInput ? modeInput.value : 'windows';
             const username = usernameInput ? usernameInput.value.trim() : '';
             const password = passwordInput ? passwordInput.value : '';
-            const confirmPass = confirmInput ? confirmInput.value : '';
-            
-            const currentHash = localStorage.getItem('oshoosi_admin_hash');
 
-            if (!currentHash) {
-                // First-time setup mode
-                if (password.length < 6) {
+            if (errorDiv) errorDiv.style.display = 'none';
+            if (submitBtn) submitBtn.disabled = true;
+
+            try {
+                const payload = {
+                    username: mode === 'windows' ? (username || null) : null,
+                    password: password
+                };
+
+                const res = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    localStorage.setItem('oshoosi_logged_in', 'true');
+                    localStorage.removeItem('oshoosi_logged_out');
+                    if (overlay) {
+                        overlay.style.opacity = '0';
+                        setTimeout(() => {
+                            overlay.style.display = 'none';
+                            overlay.style.opacity = '1';
+                        }, 300);
+                    }
+                    startApp();
+                } else {
+                    if (data.lockout && data.lockout.locked_out) {
+                        const lockoutBanner = document.getElementById('login-lockout-banner');
+                        const lockoutText = document.getElementById('login-lockout-text');
+                        if (lockoutBanner) lockoutBanner.style.display = 'block';
+                        let rem = data.lockout.remaining_seconds || 300;
+                        if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${rem}s.`;
+                        if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
+                        lockoutCountdownInterval = setInterval(() => {
+                            rem--;
+                            if (rem <= 0) {
+                                clearInterval(lockoutCountdownInterval);
+                                if (lockoutBanner) lockoutBanner.style.display = 'none';
+                                if (submitBtn) submitBtn.disabled = false;
+                            } else {
+                                if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${rem}s.`;
+                            }
+                        }, 1000);
+                    }
+
                     if (errorDiv) {
                         errorDiv.style.display = 'block';
-                        errorDiv.innerText = 'Password must be at least 6 characters long.';
+                        errorDiv.innerText = data.error || 'Authentication failed. Please verify credentials.';
                     }
-                    return;
-                }
-                if (password !== confirmPass) {
-                    if (errorDiv) {
-                        errorDiv.style.display = 'block';
-                        errorDiv.innerText = 'Passwords do not match.';
+                    const card = document.querySelector('.login-card');
+                    if (card) {
+                        card.style.animation = 'none';
+                        void card.offsetWidth;
+                        card.style.animation = 'login-shake 0.4s ease';
                     }
-                    return;
                 }
-
-                const hash = await hashPassword(password);
-                localStorage.setItem('oshoosi_admin_hash', hash);
-                localStorage.setItem('oshoosi_admin_user', username || 'admin');
-                localStorage.setItem('oshoosi_logged_in', 'true');
-                localStorage.removeItem('oshoosi_logged_out');
-
-                overlay.style.opacity = '0';
-                setTimeout(() => {
-                    overlay.style.display = 'none';
-                    overlay.style.opacity = '1';
-                }, 300);
-                if (errorDiv) errorDiv.style.display = 'none';
-                startApp();
-                return;
-            }
-
-            // Normal login mode
-            const inputHash = await hashPassword(password);
-            if (inputHash === currentHash) {
-                localStorage.setItem('oshoosi_logged_in', 'true');
-                localStorage.removeItem('oshoosi_logged_out');
-                overlay.style.opacity = '0';
-                setTimeout(() => {
-                    overlay.style.display = 'none';
-                    overlay.style.opacity = '1';
-                }, 300);
-                if (errorDiv) errorDiv.style.display = 'none';
-                startApp();
-            } else {
+            } catch (err) {
                 if (errorDiv) {
                     errorDiv.style.display = 'block';
-                    errorDiv.innerText = 'Invalid username or password.';
+                    errorDiv.innerText = `Login error: ${err.message}`;
                 }
-                const card = document.querySelector('.login-card');
-                if (card) {
-                    card.style.animation = 'none';
-                    void card.offsetWidth;
-                    card.style.animation = 'login-shake 0.4s ease';
-                }
+            } finally {
+                if (submitBtn) submitBtn.disabled = false;
             }
         });
     }
-    
+
     if (logoutBtn) {
-        logoutBtn.addEventListener('click', (e) => {
+        logoutBtn.addEventListener('click', async (e) => {
             e.preventDefault();
+            try {
+                await fetch(`${API_BASE}/auth/logout`, { method: 'POST' });
+            } catch (_) {}
             localStorage.setItem('oshoosi_logged_in', 'false');
             localStorage.setItem('oshoosi_logged_out', 'true');
             window.location.reload();
@@ -449,6 +538,11 @@ function setupNav() {
                     document.getElementById('siquery-view').classList.add('active');
                     viewTitle.innerText = "Siquery-RS Live EDR SQL Console & 98-Table Inspector";
                     renderSiqueryView();
+                } else if (view === 'killchain') {
+                    document.getElementById('killchain-view').classList.add('active');
+                    viewTitle.innerText = "Emergency Kill Chain & Reversible Host Containment";
+                    fetchKillchainStatus();
+                    fetchKillchainHistory();
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
                     if (otherView) {
@@ -484,6 +578,8 @@ function setupNav() {
                 'aad': 'agent-anomalies',
                 'siquery': 'siquery',
                 'sql': 'siquery',
+                'killchain': 'killchain',
+                'isolation': 'killchain',
             };
             const resolvedView = aliasMap[hash] || hash;
             const target = document.querySelector(`.nav-item[data-view="${resolvedView}"]`);
@@ -8883,6 +8979,248 @@ function exportSiqueryResults() {
     URL.revokeObjectURL(url);
 }
 
+// =========================================================================
+// Emergency Kill Chain & Reversible Host Containment Engine
+// =========================================================================
+
+async function fetchKillchainStatus() {
+    try {
+        const res = await fetch(`${API_BASE}/killchain/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const status = data.status || {};
+        
+        const badgeIsolated = document.getElementById('kc-badge-isolated');
+        const badgeNormal = document.getElementById('kc-badge-normal');
+        const btnIsolate = document.getElementById('kc-btn-isolate');
+        const btnRestore = document.getElementById('kc-btn-restore');
+        
+        if (status.host_isolated) {
+            if (badgeIsolated) badgeIsolated.style.display = 'inline-flex';
+            if (badgeNormal) badgeNormal.style.display = 'none';
+            if (btnIsolate) btnIsolate.style.opacity = '0.5';
+            if (btnRestore) {
+                btnRestore.style.display = 'inline-flex';
+                btnRestore.style.opacity = '1';
+            }
+        } else {
+            if (badgeIsolated) badgeIsolated.style.display = 'none';
+            if (badgeNormal) badgeNormal.style.display = 'inline-flex';
+            if (btnIsolate) btnIsolate.style.opacity = '1';
+            if (btnRestore) {
+                btnRestore.style.display = 'none';
+            }
+        }
+
+        const netStatus = document.getElementById('kc-net-status');
+        if (netStatus) {
+            netStatus.innerText = status.network_contained ? 'CONTAINED (Loopback / Port 3030 Preserved)' : 'NORMAL / UNRESTRICTED';
+            netStatus.style.color = status.network_contained ? '#ef4444' : '#10b981';
+        }
+
+        const procCount = document.getElementById('kc-proc-count');
+        if (procCount) {
+            procCount.innerText = status.isolated_processes_count ? `${status.isolated_processes_count} Suspended` : '0 Suspended (Clean)';
+            procCount.style.color = status.isolated_processes_count > 0 ? '#ef4444' : '#10b981';
+        }
+
+        const kernelStatus = document.getElementById('kc-kernel-status');
+        if (kernelStatus) {
+            kernelStatus.innerText = status.kernel_lockdown ? 'ENFORCED (Ring-0 Active)' : 'MONITOR / STANDBY';
+            kernelStatus.style.color = status.kernel_lockdown ? '#ef4444' : '#38bdf8';
+        }
+
+        const merkleStatus = document.getElementById('kc-merkle-status');
+        if (merkleStatus) {
+            merkleStatus.innerText = status.restore_checkpoint ? `ANCHORED (${status.restore_checkpoint.substring(0, 12)}...)` : 'INITIALIZED (BLAKE3)';
+            merkleStatus.style.color = '#10b981';
+        }
+    } catch (err) {
+        console.warn('Failed to fetch killchain status:', err);
+    }
+}
+
+async function fetchKillchainHistory() {
+    try {
+        const res = await fetch(`${API_BASE}/killchain/history`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const history = data.history || [];
+        const tbody = document.getElementById('kc-history-tbody');
+        if (!tbody) return;
+
+        if (history.length === 0) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No Kill Chain isolation actions recorded in cryptographic ledger.</td></tr>`;
+            return;
+        }
+
+        tbody.innerHTML = history.map(item => {
+            const time = item.timestamp ? new Date(item.timestamp * 1000).toLocaleString() : 'N/A';
+            const actionBadge = item.action === 'Isolate' 
+                ? '<span class="badge red" style="font-weight: 700;">🚨 ISOLATED</span>'
+                : '<span class="badge green" style="font-weight: 700;">🛡️ DISARMED</span>';
+            const restoreBadge = item.restored 
+                ? '<span style="color: #10b981;">Restored</span>'
+                : (item.action === 'Isolate' ? '<span style="color: #ef4444; font-weight: 700;">Active</span>' : 'Completed');
+            return `
+                <tr style="border-bottom: 1px solid var(--glass-border);">
+                    <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--text-muted);">${time}</td>
+                    <td style="padding: 10px 14px;">${actionBadge}</td>
+                    <td style="padding: 10px 14px; font-weight: 600;">${escapeHtml(item.operator || 'operator')}</td>
+                    <td style="padding: 10px 14px; font-size: 12px; color: var(--text-secondary);">${escapeHtml(item.reason || 'Manual invocation')}</td>
+                    <td style="padding: 10px 14px; font-size: 12px;">${item.processes_suspended ? item.processes_suspended.length : 0} processes</td>
+                    <td style="padding: 10px 14px; font-size: 12px;">${restoreBadge}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch (err) {
+        console.warn('Failed to fetch killchain history:', err);
+    }
+}
+
+function openKillchainModal(action) {
+    const modal = document.getElementById('killchain-action-modal');
+    if (!modal) return;
+    const typeInput = document.getElementById('kc-action-type');
+    const title = document.getElementById('kc-modal-title');
+    const subtitle = document.getElementById('kc-modal-subtitle');
+    const icon = document.getElementById('kc-modal-icon');
+    const warning = document.getElementById('kc-modal-warning');
+    const reasonGroup = document.getElementById('kc-reason-group');
+    const reasonInput = document.getElementById('kc-reason');
+    const phraseGroup = document.getElementById('kc-confirm-phrase-group');
+    const phraseInput = document.getElementById('kc-confirm-phrase');
+    const credInput = document.getElementById('kc-auth-credential');
+    const submitBtn = document.getElementById('kc-submit-btn');
+    const submitText = document.getElementById('kc-submit-text');
+    const errorDiv = document.getElementById('kc-modal-error');
+
+    if (errorDiv) {
+        errorDiv.style.display = 'none';
+        errorDiv.innerText = '';
+    }
+    if (credInput) credInput.value = '';
+
+    if (action === 'disarm') {
+        if (typeInput) typeInput.value = 'disarm';
+        if (title) title.innerText = 'Disarm & Restore Host';
+        if (title) title.style.color = '#10b981';
+        if (subtitle) subtitle.innerText = 'Reverse Host Isolation & Resume Normal Operations';
+        if (icon) icon.innerText = '🛡️';
+        if (warning) {
+            warning.innerText = 'Disarming Kill Chain restores full network connectivity, resumes suspended userland processes, and unfreezes kernel driver lockdown.';
+            warning.style.background = 'rgba(16, 185, 129, 0.08)';
+            warning.style.borderColor = 'rgba(16, 185, 129, 0.25)';
+            warning.style.color = '#6ee7b7';
+        }
+        if (reasonGroup) reasonGroup.style.display = 'none';
+        if (reasonInput) reasonInput.required = false;
+        if (phraseGroup) phraseGroup.style.display = 'block';
+        if (phraseInput) {
+            phraseInput.value = '';
+            phraseInput.required = true;
+        }
+        if (submitBtn) submitBtn.style.background = '#10b981';
+        if (submitText) submitText.innerText = 'Confirm & Restore Host';
+    } else {
+        if (typeInput) typeInput.value = 'isolate';
+        if (title) title.innerText = 'Emergency Host Containment';
+        if (title) title.style.color = '#ef4444';
+        if (subtitle) subtitle.innerText = 'Reversible Host Isolation Protocol';
+        if (icon) icon.innerText = '🚨';
+        if (warning) {
+            warning.innerText = 'Engaging Kill Chain immediately severs all inbound/outbound IPv4/IPv6 traffic (preserving local loopback 127.0.0.1 and dashboard port 3030), freezes untrusted userland processes, and engages kernel driver lockdown.';
+            warning.style.background = 'rgba(239, 68, 68, 0.08)';
+            warning.style.borderColor = 'rgba(239, 68, 68, 0.25)';
+            warning.style.color = '#fca5a5';
+        }
+        if (reasonGroup) reasonGroup.style.display = 'block';
+        if (reasonInput) {
+            reasonInput.value = '';
+            reasonInput.required = true;
+        }
+        if (phraseGroup) phraseGroup.style.display = 'none';
+        if (phraseInput) phraseInput.required = false;
+        if (submitBtn) submitBtn.style.background = '#ef4444';
+        if (submitText) submitText.innerText = 'Engage Isolation';
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeKillchainModal() {
+    const modal = document.getElementById('killchain-action-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function submitKillchainAction(e) {
+    e.preventDefault();
+    const typeInput = document.getElementById('kc-action-type');
+    const reasonInput = document.getElementById('kc-reason');
+    const phraseInput = document.getElementById('kc-confirm-phrase');
+    const credInput = document.getElementById('kc-auth-credential');
+    const errorDiv = document.getElementById('kc-modal-error');
+    const submitBtn = document.getElementById('kc-submit-btn');
+
+    const action = typeInput ? typeInput.value : 'isolate';
+    const credential = credInput ? credInput.value : '';
+    const reason = reasonInput ? reasonInput.value.trim() : '';
+    const phrase = phraseInput ? phraseInput.value.trim() : '';
+
+    if (!credential) {
+        if (errorDiv) {
+            errorDiv.style.display = 'block';
+            errorDiv.innerText = 'Authorization credential is required.';
+        }
+        return;
+    }
+
+    if (action === 'disarm' && phrase !== 'RESTORE HOST') {
+        if (errorDiv) {
+            errorDiv.style.display = 'block';
+            errorDiv.innerText = 'You must type "RESTORE HOST" exactly to confirm disarm.';
+        }
+        return;
+    }
+
+    if (submitBtn) submitBtn.disabled = true;
+
+    try {
+        let endpoint = `${API_BASE}/killchain/isolate`;
+        let payload = { credential, reason };
+
+        if (action === 'disarm') {
+            endpoint = `${API_BASE}/killchain/disarm`;
+            payload = { credential, confirmation_phrase: phrase };
+        }
+
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            closeKillchainModal();
+            await fetchKillchainStatus();
+            await fetchKillchainHistory();
+        } else {
+            if (errorDiv) {
+                errorDiv.style.display = 'block';
+                errorDiv.innerText = data.error || data.message || 'Action failed.';
+            }
+        }
+    } catch (err) {
+        if (errorDiv) {
+            errorDiv.style.display = 'block';
+            errorDiv.innerText = `Network or API error: ${err.message}`;
+        }
+    } finally {
+        if (submitBtn) submitBtn.disabled = false;
+    }
+}
+
 window.renderSiqueryView = renderSiqueryView;
 window.fetchSiqueryTables = fetchSiqueryTables;
 window.filterSiqueryTables = filterSiqueryTables;
@@ -8894,6 +9232,14 @@ window.executeSiquery = executeSiquery;
 window.copySiqueryResults = copySiqueryResults;
 window.exportSiqueryResults = exportSiqueryResults;
 window.runSiqueryProtectionSweep = runSiqueryProtectionSweep;
+
+window.switchLoginAuthMode = switchLoginAuthMode;
+window.checkAuthStatus = checkAuthStatus;
+window.fetchKillchainStatus = fetchKillchainStatus;
+window.fetchKillchainHistory = fetchKillchainHistory;
+window.openKillchainModal = openKillchainModal;
+window.closeKillchainModal = closeKillchainModal;
+window.submitKillchainAction = submitKillchainAction;
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -8911,3 +9257,4 @@ window.renderHistoryView = renderHistoryView;
 window.fetchRotatedLogFiles = fetchRotatedLogFiles;
 window.fetchLogTail = fetchLogTail;
 window.downloadHistoryExport = downloadHistoryExport;
+
