@@ -51,19 +51,7 @@ struct Win32Tpm {
     manufacturer_id_txt: Option<String>,
 }
 
-#[cfg(target_os = "windows")]
-#[derive(serde::Deserialize, Debug)]
-struct Win32Processor {
-    #[serde(rename = "Caption", default)]
-    caption: Option<String>,
-}
 
-#[cfg(target_os = "windows")]
-#[derive(serde::Deserialize, Debug)]
-struct MsftNetAdapter {
-    #[serde(rename = "InterfaceDescription", default)]
-    interface_description: Option<String>,
-}
 
 // ============================================================================
 // 1. Confidential Computing (TEE) Detection & Memory Shield
@@ -150,18 +138,18 @@ fn detect_sgx() -> bool {
     }
     #[cfg(target_os = "windows")]
     {
-        // Check for SGX driver via registry or device
-        // Rustify: Check for SGX via native WMI query
-        if let Ok(com_lib) = COMLibrary::new() {
-            if let Ok(wmi_con) = WMIConnection::new(com_lib) {
-                let query = "SELECT Caption FROM Win32_Processor";
-                let results: Vec<Win32Processor> = wmi_con.raw_query(query).unwrap_or_default();
-                for res in results {
-                    if let Some(caption) = &res.caption {
-                        if caption.to_lowercase().contains("sgx") {
-                            return true;
-                        }
-                    }
+        // Check for Intel SGX via Windows registry
+        if let Ok(_hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey("SYSTEM\\CurrentControlSet\\Services\\AESMService")
+        {
+            return true;
+        }
+        if let Ok(hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey("HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0")
+        {
+            if let Ok(name) = hklm.get_value::<String, _>("ProcessorNameString") {
+                if name.to_lowercase().contains("sgx") {
+                    return true;
                 }
             }
         }
@@ -238,7 +226,25 @@ pub struct TpmStatus {
 
 /// Detect TPM 2.0 availability on this platform.
 pub fn detect_tpm() -> TpmStatus {
-    CACHED_TPM.get_or_init(detect_tpm_internal).clone()
+    CACHED_TPM
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = std::thread::Builder::new()
+                .name("tpm-detector".into())
+                .spawn(move || {
+                    let res = detect_tpm_internal();
+                    let _ = tx.send(res);
+                });
+            rx.recv_timeout(std::time::Duration::from_millis(800))
+                .unwrap_or_else(|_| TpmStatus {
+                    available: false,
+                    version: None,
+                    manufacturer: None,
+                    device_id: None,
+                    description: "TPM detection timed out (WMI latency guard applied)".into(),
+                })
+        })
+        .clone()
 }
 
 fn detect_tpm_internal() -> TpmStatus {
@@ -252,19 +258,45 @@ fn detect_tpm_internal() -> TpmStatus {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows: check via WMI (Native)
-        if let Ok(com_lib) = COMLibrary::new() {
-            if let Ok(wmi_con) =
-                WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib)
-            {
-                let query = "SELECT SpecVersion, ManufacturerIdTxt FROM Win32_Tpm";
-                let results: Vec<Win32Tpm> = wmi_con.raw_query(query).unwrap_or_default();
-                if let Some(res) = results.first() {
-                    if let Some(version) = &res.spec_version {
-                        status.available = true;
-                        status.version = Some(version.clone());
-                        if let Some(mfg) = &res.manufacturer_id_txt {
-                            status.manufacturer = Some(mfg.clone());
+        // Windows: fast zero-latency registry probe (avoids WMI DCOM/LPC deadlocks)
+        if let Ok(hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI")
+        {
+            status.available = true;
+            if let Ok(fw) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision") {
+                status.version = Some(fw);
+            } else if let Ok(fw) = hklm.get_value::<String, _>("TaskFirmwareVersion") {
+                status.version = Some(fw);
+            } else {
+                status.version = Some("2.0".to_string());
+            }
+            if let Ok(mfg_id) = hklm.get_value::<u32, _>("TaskManufacturerId") {
+                status.manufacturer = Some(format!("{}", mfg_id));
+            }
+            status.description = "TPM 2.0 Root of Trust (Active & Provisioned)".into();
+        } else if let Ok(_hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM")
+        {
+            status.available = true;
+            status.version = Some("2.0".to_string());
+            status.description = "TPM 2.0 Driver Present".into();
+        }
+
+        // Windows fallback: check via WMI (Native) only if registry was unreadable
+        if !status.available {
+            if let Ok(com_lib) = COMLibrary::new() {
+                if let Ok(wmi_con) =
+                    WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib)
+                {
+                    let query = "SELECT SpecVersion, ManufacturerIdTxt FROM Win32_Tpm";
+                    let results: Vec<Win32Tpm> = wmi_con.raw_query(query).unwrap_or_default();
+                    if let Some(res) = results.first() {
+                        if let Some(version) = &res.spec_version {
+                            status.available = true;
+                            status.version = Some(version.clone());
+                            if let Some(mfg) = &res.manufacturer_id_txt {
+                                status.manufacturer = Some(mfg.clone());
+                            }
                         }
                     }
                 }
@@ -527,7 +559,24 @@ pub struct DpuStatus {
 
 /// Detect NVIDIA BlueField DPU or other SmartNICs.
 pub fn detect_dpu() -> DpuStatus {
-    CACHED_DPU.get_or_init(detect_dpu_internal).clone()
+    CACHED_DPU
+        .get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = std::thread::Builder::new()
+                .name("dpu-detector".into())
+                .spawn(move || {
+                    let res = detect_dpu_internal();
+                    let _ = tx.send(res);
+                });
+            rx.recv_timeout(std::time::Duration::from_millis(800))
+                .unwrap_or_else(|_| DpuStatus {
+                    bluefield_detected: false,
+                    smartnic_detected: false,
+                    firmware_version: None,
+                    description: "DPU detection timed out (WMI latency guard applied)".into(),
+                })
+        })
+        .clone()
 }
 
 fn detect_dpu_internal() -> DpuStatus {
@@ -582,19 +631,20 @@ fn detect_dpu_internal() -> DpuStatus {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows: check for Mellanox/BlueField NICs via WMI Native
-        if let Ok(com_lib) = COMLibrary::new() {
-            let query = "SELECT InterfaceDescription FROM MSFT_NetAdapter WHERE InterfaceDescription LIKE '%Mellanox%' OR InterfaceDescription LIKE '%BlueField%'";
-            // MSFT_NetAdapter is in Root/StandardCimv2
-            if let Ok(wmi_con) = WMIConnection::with_namespace_path("Root\\StandardCimv2", com_lib)
-            {
-                let results: Vec<MsftNetAdapter> = wmi_con.raw_query(query).unwrap_or_default();
-                for res in results {
-                    if let Some(desc) = &res.interface_description {
-                        if desc.to_lowercase().contains("bluefield") {
+        // Windows: fast registry check of network adapters (avoids WMI StandardCimv2 hang)
+        if let Ok(hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+            .open_subkey("SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e972-e325-11ce-bfc1-08002be10318}")
+        {
+            for sub in hklm.enum_keys().flatten() {
+                if let Ok(sub_key) = hklm.open_subkey(&sub) {
+                    if let Ok(desc) = sub_key.get_value::<String, _>("DriverDesc") {
+                        let desc_lc = desc.to_lowercase();
+                        if desc_lc.contains("bluefield") {
                             status.bluefield_detected = true;
+                            status.smartnic_detected = true;
+                        } else if desc_lc.contains("mellanox") || desc_lc.contains("connectx") {
+                            status.smartnic_detected = true;
                         }
-                        status.smartnic_detected = true;
                     }
                 }
             }

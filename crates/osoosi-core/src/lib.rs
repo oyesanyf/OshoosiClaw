@@ -68,6 +68,8 @@ pub mod causal_ai;
 pub mod correlator;
 pub mod log_retention;
 pub mod otx_tarpit;
+pub mod killchain;
+pub mod fhe_coordinator;
 pub mod remediation;
 pub mod secured_executor;
 pub mod self_healing;

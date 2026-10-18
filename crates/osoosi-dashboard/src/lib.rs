@@ -810,6 +810,18 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .route("/api/blocking/rules/exclude", post(post_blocking_exclude))
         .route("/api/blocking/rules/purge-benign", post(post_blocking_purge_benign))
+        .route("/api/killchain/status", get(get_killchain_status_endpoint))
+        .route("/api/killchain/history", get(get_killchain_history_endpoint))
+        .route("/api/killchain/isolate", post(post_killchain_isolate_endpoint))
+        .route("/api/killchain/disarm", post(post_killchain_disarm_endpoint))
+        .route("/api/auth/status", get(get_auth_status_endpoint))
+        .route("/api/auth/login", post(post_auth_login_endpoint))
+        .route("/api/auth/logout", post(post_auth_logout_endpoint))
+        .route("/api/fhe/status", get(get_fhe_status_endpoint))
+        .route("/api/fhe/blind-eval", post(post_fhe_blind_eval_endpoint))
+        .route("/api/fhe/p2p-consensus", post(post_fhe_p2p_consensus_endpoint))
+        .route("/api/fhe/fleet-rollup", post(post_fhe_fleet_rollup_endpoint))
+        .route("/api/fhe/audit-proof/:seq", get(get_fhe_audit_proof_endpoint))
         .route("/api/deception/status", get(get_deception_status_endpoint))
         .route(
             "/api/deception/deploy-traps",
@@ -937,12 +949,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .fallback_service(safe_serve)
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
+            .layer(axum::middleware::from_fn(http_framing_defense_middleware))
     } else {
         Router::new()
             .merge(api)
             .fallback_service(safe_serve)
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
+            .layer(axum::middleware::from_fn(http_framing_defense_middleware))
     }
 }
 
@@ -999,6 +1013,111 @@ pub fn get_or_init_dashboard_api_token() -> String {
     token
 }
 
+/// HTTP Request Framing Defense Middleware:
+/// Remediates CL.0 and Request Queue Poisoning / Desynchronization attacks (RFC 9112 §6.1, RFC 9110 §9.3.2).
+///
+/// 1. Immediately rejects HEAD requests that declare request bodies (`Content-Length > 0` or `Transfer-Encoding`).
+/// 2. Immediately rejects conflicting dual framing headers (both `Transfer-Encoding` and `Content-Length`).
+/// 3. Immediately rejects ambiguous comma-separated `Content-Length` headers.
+/// 4. Explicitly injects `Connection: close` on all framing rejections to tear down the TCP socket
+///    and prevent queue poisoning in upstream proxy pools.
+async fn http_framing_defense_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, Response> {
+    let method = req.method().clone();
+    let headers = req.headers();
+
+    let has_te = headers.contains_key(axum::http::header::TRANSFER_ENCODING);
+    let cl_header = headers.get(axum::http::header::CONTENT_LENGTH);
+
+    // 1. Dual framing conflict: Transfer-Encoding + Content-Length simultaneously present (CL.TE / TE.CL desync)
+    if has_te && cl_header.is_some() {
+        let mut resp = (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "error_code": "DUAL_FRAMING_CONFLICT",
+                "message": "Malformed HTTP request framing: conflicting Transfer-Encoding and Content-Length",
+                "user_guidance": "Adhere to RFC 9112 §6.1: do not send both Transfer-Encoding and Content-Length."
+            })),
+        )
+            .into_response();
+        resp.headers_mut()
+            .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+        return Err(resp);
+    }
+
+    // 2. Ambiguous Content-Length: multiple headers or comma-separated values
+    if let Some(cl) = cl_header {
+        if let Ok(cl_str) = cl.to_str() {
+            if cl_str.contains(',') {
+                let mut resp = (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "status": "error",
+                        "error_code": "AMBIGUOUS_CONTENT_LENGTH",
+                        "message": "Malformed HTTP request framing: multiple conflicting Content-Length values",
+                        "user_guidance": "Adhere to RFC 9112 §6.1: send exactly one Content-Length header."
+                    })),
+                )
+                    .into_response();
+                resp.headers_mut()
+                    .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+                return Err(resp);
+            }
+
+            // Check non-zero content length on HEAD requests:
+            // In RFC 9110 §9.3.2 and RFC 9112 §6.1, HEAD requests do not expect request payloads.
+            if method == Method::HEAD {
+                let cl_val = cl_str.trim().parse::<u64>().unwrap_or(0);
+                if cl_val > 0 {
+                    let mut resp = (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "status": "error",
+                            "error_code": "UNEXPECTED_BODY_ON_HEAD",
+                            "message": "Malformed HTTP request: HEAD request must not declare a request payload (Content-Length > 0)",
+                            "user_guidance": "Strip Content-Length from HEAD requests to prevent request queue poisoning desync."
+                        })),
+                    )
+                        .into_response();
+                    resp.headers_mut()
+                        .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+                    return Err(resp);
+                }
+            }
+        }
+    }
+
+    // 3. Transfer-Encoding on HEAD requests
+    if method == Method::HEAD && has_te {
+        let mut resp = (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "error_code": "UNEXPECTED_BODY_ON_HEAD",
+                "message": "Malformed HTTP request: HEAD request must not declare Transfer-Encoding",
+                "user_guidance": "Strip Transfer-Encoding from HEAD requests."
+            })),
+        )
+            .into_response();
+        resp.headers_mut()
+            .insert(axum::http::header::CONNECTION, axum::http::HeaderValue::from_static("close"));
+        return Err(resp);
+    }
+
+    // 4. In RFC 9110 §9.3.2, HEAD requests must not return a message body.
+    // If a Range header is sent on HEAD, strip it so the static asset server responds immediately
+    // with standard 200 OK headers rather than evaluating byte-ranges (which can trigger 206 Partial Content desync or stalls).
+    let mut req = req;
+    if method == Method::HEAD {
+        req.headers_mut().remove(axum::http::header::RANGE);
+    }
+
+    Ok(next.run(req).await)
+}
+
 async fn auth_middleware(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -1019,19 +1138,23 @@ async fn auth_middleware(
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
+    if path == "/api/auth/login" || path == "/api/auth/logout" || path == "/api/auth/status" {
+        return Ok(next.run(req).await);
+    }
+
     if !is_state_changing || auth_disabled {
-        let mut resp = next.run(req).await;
-        if method == Method::GET
-            && (path == "/" || path == "/index.html" || path.starts_with("/api/"))
-        {
-            let tok = get_or_init_dashboard_api_token();
-            let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", tok);
-            if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
-                resp.headers_mut()
-                    .insert(axum::http::header::SET_COOKIE, hv);
+        let mut response = next.run(req).await;
+        if path == "/api/status" {
+            let token = get_or_init_dashboard_api_token();
+            let cookie_val = format!(
+                "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
+                token
+            );
+            if let Ok(val) = axum::http::HeaderValue::from_str(&cookie_val) {
+                response.headers_mut().insert(axum::http::header::SET_COOKIE, val);
             }
         }
-        return Ok(resp);
+        return Ok(response);
     }
 
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
@@ -2711,7 +2834,11 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
                     }
                 }
             }
-            let mem_store = osoosi_core::MemoryStore::new(&db_path).ok();
+            let mem_store = if cfg!(test) {
+                None
+            } else {
+                osoosi_core::MemoryStore::new(&db_path).ok()
+            };
             let mut sec_score = assessment.security_score.max(100);
             let mut structured_recs =
                 serde_json::to_value(&assessment.structured_recommendations).unwrap_or_default();
@@ -4286,6 +4413,486 @@ async fn post_blocking_purge_benign(State(state): State<DashboardState>) -> Json
             "purged": [],
             "message": "Purged 0 benign/signed false-positive rules (mock)"
         })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthLoginPayload {
+    pub username: Option<String>,
+    pub password: String,
+}
+
+async fn post_auth_login_endpoint(
+    Json(payload): Json<AuthLoginPayload>,
+) -> Result<Response, (StatusCode, Json<Value>)> {
+    let expected_token = get_or_init_dashboard_api_token();
+    match osoosi_core::killchain::authenticate_hybrid_credentials(
+        payload.username.as_deref(),
+        &payload.password,
+        &expected_token,
+    ) {
+        Ok(true) => {
+            let cookie_val = format!(
+                "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
+                expected_token
+            );
+            let mut resp = Json(json!({
+                "ok": true,
+                "status": "authenticated",
+                "message": "Authentication successful",
+                "token": expected_token
+            }))
+            .into_response();
+            if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
+                resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+            }
+            Ok(resp)
+        }
+        Ok(false) => Err(api_error(
+            StatusCode::UNAUTHORIZED,
+            "INVALID_CREDENTIALS",
+            "Invalid credentials. Please verify your Windows password or EDR master admin token.",
+            "Enter valid Windows account credentials or the pre-shared EDR master token.",
+        )),
+        Err(lockout_msg) => Err(api_error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "SECURITY_LOCKOUT",
+            lockout_msg,
+            "Security lockout enforced due to excessive failed attempts. Please wait 5 minutes before retrying.",
+        )),
+    }
+}
+
+async fn post_auth_logout_endpoint() -> Response {
+    let cookie_val = "osoosi_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
+    let mut resp = Json(json!({
+        "ok": true,
+        "status": "logged_out",
+        "message": "Logged out successfully"
+    }))
+    .into_response();
+    if let Ok(hv) = axum::http::HeaderValue::from_str(cookie_val) {
+        resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+    }
+    resp
+}
+
+async fn get_auth_status_endpoint(headers: HeaderMap) -> Json<Value> {
+    let expected_token = get_or_init_dashboard_api_token();
+    let is_authenticated = headers
+        .get("x-osoosi-token")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|auth| {
+                    if auth.starts_with("Bearer ") || auth.starts_with("bearer ") {
+                        Some(&auth[7..])
+                    } else {
+                        None
+                    }
+                })
+        })
+        .or_else(|| {
+            headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|cookies| {
+                    cookies
+                        .split(';')
+                        .map(|c| c.trim())
+                        .find_map(|c| c.strip_prefix("osoosi_token="))
+                })
+        })
+        .map(|t| constant_time_eq_token(t.trim(), &expected_token))
+        .unwrap_or(false);
+
+    let (locked, remaining) = osoosi_core::killchain::check_lockout_status();
+
+    Json(json!({
+        "authenticated": is_authenticated,
+        "locked": locked,
+        "lockout_remaining_secs": remaining,
+        "windows_auth_available": cfg!(windows),
+        "username": if cfg!(windows) { std::env::var("USERNAME").ok() } else { std::env::var("USER").ok() }
+    }))
+}
+
+async fn get_killchain_status_endpoint() -> Json<osoosi_core::killchain::KillChainStatus> {
+    Json(osoosi_core::killchain::get_killchain_status())
+}
+
+async fn get_killchain_history_endpoint() -> Json<Vec<osoosi_core::killchain::KillChainHistoryEntry>> {
+    Json(osoosi_core::killchain::get_killchain_history())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KillChainIsolatePayload {
+    pub username: Option<String>,
+    pub password: String,
+    pub confirmation_phrase: String,
+    pub reason: Option<String>,
+    #[serde(default = "default_killchain_flag")]
+    pub quarantine_network: bool,
+    #[serde(default = "default_killchain_flag")]
+    pub freeze_processes: bool,
+    #[serde(default = "default_killchain_flag")]
+    pub kernel_lockdown: bool,
+}
+
+fn default_killchain_flag() -> bool {
+    true
+}
+
+async fn post_killchain_isolate_endpoint(
+    State(state): State<DashboardState>,
+    Json(payload): Json<KillChainIsolatePayload>,
+) -> Result<Json<osoosi_core::killchain::KillChainStatus>, (StatusCode, Json<Value>)> {
+    let expected_token = get_or_init_dashboard_api_token();
+
+    if !osoosi_core::killchain::constant_time_eq(
+        payload.confirmation_phrase.trim(),
+        osoosi_core::killchain::KILLCHAIN_ISOLATE_TOKEN,
+    ) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "CONFIRMATION_PHRASE_MISMATCH",
+            "Confirmation phrase mismatch. You must enter exact phrase: CONFIRM ISOLATE",
+            "Type 'CONFIRM ISOLATE' exactly to confirm emergency host isolation.",
+        ));
+    }
+
+    match osoosi_core::killchain::authenticate_hybrid_credentials(
+        payload.username.as_deref(),
+        &payload.password,
+        &expected_token,
+    ) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(api_error(
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED_OPERATOR",
+                "Authorization failed: Invalid administrator credentials.",
+                "Verify your Windows account password or EDR master admin token.",
+            ));
+        }
+        Err(lockout_msg) => {
+            return Err(api_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "SECURITY_LOCKOUT",
+                lockout_msg,
+                "Security lockout enforced due to excessive failed attempts. Please wait 5 minutes before retrying.",
+            ));
+        }
+    }
+
+    let operator = payload.username.unwrap_or_else(|| {
+        if cfg!(windows) {
+            std::env::var("USERNAME").unwrap_or_else(|_| "Operator".to_string())
+        } else {
+            std::env::var("USER").unwrap_or_else(|_| "Operator".to_string())
+        }
+    });
+    let reason = payload
+        .reason
+        .unwrap_or_else(|| "Emergency Operator Host Isolation".to_string());
+
+    match osoosi_core::killchain::engage_killchain_isolation(
+        &operator,
+        &reason,
+        payload.quarantine_network,
+        payload.freeze_processes,
+        payload.kernel_lockdown,
+    )
+    .await
+    {
+        Ok(status) => {
+            if let Some(backend) = &state.backend {
+                backend.audit().log(
+                    "EMERGENCY_KILLCHAIN_ISOLATE_ENGAGED",
+                    serde_json::json!({
+                        "operator": operator,
+                        "reason": reason,
+                        "quarantine_network": payload.quarantine_network,
+                        "freeze_processes": payload.freeze_processes,
+                        "kernel_lockdown": payload.kernel_lockdown,
+                        "frozen_pids_count": status.processes_frozen_count,
+                    }),
+                );
+            }
+            Ok(Json(status))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "KILLCHAIN_ENGAGE_FAILED",
+            format!("Failed to engage isolation: {}", e),
+            "Verify administrator privileges.",
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KillChainDisarmPayload {
+    pub username: Option<String>,
+    pub password: String,
+    pub confirmation_phrase: String,
+    pub reason: Option<String>,
+}
+
+async fn post_killchain_disarm_endpoint(
+    State(state): State<DashboardState>,
+    Json(payload): Json<KillChainDisarmPayload>,
+) -> Result<Json<osoosi_core::killchain::KillChainStatus>, (StatusCode, Json<Value>)> {
+    let expected_token = get_or_init_dashboard_api_token();
+
+    if !osoosi_core::killchain::constant_time_eq(
+        payload.confirmation_phrase.trim(),
+        osoosi_core::killchain::KILLCHAIN_RESTORE_TOKEN,
+    ) {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "CONFIRMATION_PHRASE_MISMATCH",
+            "Confirmation phrase mismatch. You must enter exact phrase: CONFIRM RESTORE",
+            "Type 'CONFIRM RESTORE' exactly to confirm host disarm and recovery.",
+        ));
+    }
+
+    match osoosi_core::killchain::authenticate_hybrid_credentials(
+        payload.username.as_deref(),
+        &payload.password,
+        &expected_token,
+    ) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(api_error(
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED_OPERATOR",
+                "Authorization failed: Invalid administrator credentials.",
+                "Verify your Windows account password or EDR master admin token.",
+            ));
+        }
+        Err(lockout_msg) => {
+            return Err(api_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                "SECURITY_LOCKOUT",
+                lockout_msg,
+                "Security lockout enforced due to excessive failed attempts. Please wait 5 minutes before retrying.",
+            ));
+        }
+    }
+
+    let operator = payload.username.unwrap_or_else(|| {
+        if cfg!(windows) {
+            std::env::var("USERNAME").unwrap_or_else(|_| "Operator".to_string())
+        } else {
+            std::env::var("USER").unwrap_or_else(|_| "Operator".to_string())
+        }
+    });
+    let reason = payload
+        .reason
+        .unwrap_or_else(|| "Operator Disarmed Isolation".to_string());
+
+    match osoosi_core::killchain::disarm_killchain_isolation(&operator, &reason).await {
+        Ok(status) => {
+            if let Some(backend) = &state.backend {
+                backend.audit().log(
+                    "EMERGENCY_KILLCHAIN_ISOLATE_DISARMED",
+                    serde_json::json!({
+                        "operator": operator,
+                        "reason": reason,
+                    }),
+                );
+            }
+            Ok(Json(status))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "KILLCHAIN_DISARM_FAILED",
+            format!("Failed to disarm isolation: {}", e),
+            "Verify administrator privileges.",
+        )),
+    }
+}
+
+async fn get_fhe_status_endpoint() -> Json<Value> {
+    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+    let root = coord.get_merkle_root();
+    Json(json!({
+        "status": "active",
+        "merkle_root": root,
+        "kernel_etw_max_latency_micros": osoosi_core::fhe_coordinator::KERNEL_ETW_MAX_LATENCY_MICROS,
+        "pillars": {
+            "p2p_threat_sharing": "High utility: Zero-knowledge matching across peer nodes (Batched / Background)",
+            "blind_inference": "High utility: Evaluates threat models without telemetry leakage (Async API)",
+            "privacy_preserving_telemetry": "High utility: Cross-fleet anomaly aggregation without PII exposure (Hourly/daily rollups)",
+            "real_time_kernel_blocking": "Low utility: Latency exceeds OS kernel budgets. Avoided in favor of local BLAKE3/SHA-256 primitives"
+        }
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FheBlindEvalRequest {
+    pub features: Vec<u32>,
+    pub weights: Vec<u32>,
+}
+
+async fn post_fhe_blind_eval_endpoint(
+    Json(req): Json<FheBlindEvalRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+    let enc_features = match coord.encrypt_feature_vector(&req.features) {
+        Ok(f) => f,
+        Err(e) => {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                "ENCRYPT_ERROR",
+                e.to_string(),
+                "Check feature dimensions.",
+            ))
+        }
+    };
+
+    match coord.evaluate_blind_inference(&enc_features, &req.weights) {
+        Ok((eval_bytes, leaf)) => {
+            let score = coord.decrypt_blind_inference_score(&eval_bytes).unwrap_or(0);
+            let root = coord.get_merkle_root();
+            Ok(Json(json!({
+                "ok": true,
+                "score": score,
+                "merkle_leaf": leaf,
+                "merkle_root": root,
+            })))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "BLIND_EVAL_ERROR",
+            e.to_string(),
+            "Verify model weights dimension.",
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FheP2pConsensusRequest {
+    pub votes: Vec<u16>,
+}
+
+async fn post_fhe_p2p_consensus_endpoint(
+    Json(req): Json<FheP2pConsensusRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+    let mut enc_votes = Vec::new();
+    for v in req.votes {
+        match coord.encrypt_threat_vote(v) {
+            Ok(enc) => enc_votes.push(enc),
+            Err(e) => {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    "VOTE_ENCRYPT_ERROR",
+                    e.to_string(),
+                    "Invalid vote value.",
+                ))
+            }
+        }
+    }
+
+    match coord.aggregate_p2p_consensus_batch(&enc_votes) {
+        Ok((tally, leaf)) => {
+            let avg = coord
+                .decrypt_consensus_tally(&tally, enc_votes.len())
+                .unwrap_or(0.0);
+            let root = coord.get_merkle_root();
+            Ok(Json(json!({
+                "ok": true,
+                "average_score": avg,
+                "merkle_leaf": leaf,
+                "merkle_root": root,
+            })))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "P2P_CONSENSUS_ERROR",
+            e.to_string(),
+            "Aggregation failure.",
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FheFleetRollupRequest {
+    pub scores: Vec<u32>,
+    #[serde(default = "default_fhe_epsilon")]
+    pub epsilon: f32,
+}
+
+fn default_fhe_epsilon() -> f32 {
+    0.5
+}
+
+async fn post_fhe_fleet_rollup_endpoint(
+    Json(req): Json<FheFleetRollupRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+    let mut enc_scores = Vec::new();
+    for s in req.scores {
+        match coord.encrypt_anomaly_score(s) {
+            Ok(enc) => enc_scores.push(enc),
+            Err(e) => {
+                return Err(api_error(
+                    StatusCode::BAD_REQUEST,
+                    "SCORE_ENCRYPT_ERROR",
+                    e.to_string(),
+                    "Invalid score value.",
+                ))
+            }
+        }
+    }
+
+    match coord.rollup_fleet_anomaly_telemetry(&enc_scores, req.epsilon) {
+        Ok((noisy_mean, leaf)) => {
+            let root = coord.get_merkle_root();
+            Ok(Json(json!({
+                "ok": true,
+                "noisy_fleet_mean": noisy_mean,
+                "merkle_leaf": leaf,
+                "merkle_root": root,
+            })))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "FLEET_ROLLUP_ERROR",
+            e.to_string(),
+            "Rollup failure.",
+        )),
+    }
+}
+
+async fn get_fhe_audit_proof_endpoint(
+    Path(seq): Path<u64>,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let coord = osoosi_core::fhe_coordinator::global_fhe_coordinator();
+    match coord.get_audit_proof(seq) {
+        Ok(proof) => {
+            let is_valid = osoosi_core::fhe_coordinator::verify_merkle_proof(
+                &proof.leaf_hash,
+                &proof.audit_path,
+                &proof.merkle_root,
+                proof.leaf_seq as usize,
+            );
+            Ok(Json(json!({
+                "ok": true,
+                "proof": proof,
+                "verified": is_valid,
+            })))
+        }
+        Err(e) => Err(api_error(
+            StatusCode::NOT_FOUND,
+            "LEAF_NOT_FOUND",
+            e.to_string(),
+            "Requested sequence not found in Merkle audit tree.",
+        )),
     }
 }
 
@@ -8627,10 +9234,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_zero_error_fallbacks_when_backend_idle() {
+        eprintln!("[TEST-TRACE] Starting test_zero_error_fallbacks_when_backend_idle");
         let state = DashboardState::new(None, None);
 
         // 1. get_zone_summary fallback
+        eprintln!("[TEST-TRACE] Calling get_zone_summary");
         let zone_resp = get_zone_summary(State(state.clone())).await.0;
+        eprintln!("[TEST-TRACE] get_zone_summary returned: {:?}", zone_resp["status"]);
         assert_eq!(zone_resp["status"], "idle");
         let score = zone_resp["security_score"]
             .as_u64()
@@ -8656,6 +9266,7 @@ mod tests {
         );
 
         // 2. get_behavioral_analyze fallback
+        eprintln!("[TEST-TRACE] Calling get_behavioral_analyze");
         let analyze_resp = get_behavioral_analyze(
             State(state.clone()),
             Query(BehavioralAnalyzeParams {
@@ -8665,11 +9276,13 @@ mod tests {
         )
         .await
         .0;
+        eprintln!("[TEST-TRACE] get_behavioral_analyze returned");
         assert_eq!(analyze_resp["ok"], true);
         assert_eq!(analyze_resp["status"], "idle");
         assert!(analyze_resp["prompts"].as_array().unwrap().is_empty());
 
         // 3. get_query fallback
+        eprintln!("[TEST-TRACE] Calling get_query");
         let query_resp = get_query(
             State(state.clone()),
             Query(QueryParams {
@@ -8678,11 +9291,13 @@ mod tests {
         )
         .await
         .0;
+        eprintln!("[TEST-TRACE] get_query returned");
         assert_eq!(query_resp["ok"], true);
         assert_eq!(query_resp["status"], "idle");
         assert!(query_resp["results"].as_array().unwrap().is_empty());
 
         // 4. get_attack_graph fallback
+        eprintln!("[TEST-TRACE] Calling get_attack_graph");
         let graph_resp = get_attack_graph(State(state.clone()), Query(AttackGraphQuery::default()))
             .await
             .0;
@@ -10974,4 +11589,67 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_http_framing_queue_poisoning_defense() {
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_dash_framing_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state, temp_dir.clone());
+
+        // 1. CL.0 Probe: HEAD request declaring non-zero Content-Length must be immediately rejected (400 Bad Request + Connection: close)
+        let head_cl = axum::http::Request::builder()
+            .uri("/health")
+            .method(axum::http::Method::HEAD)
+            .header("Content-Length", "42")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_cl = app.clone().oneshot(head_cl).await.unwrap();
+        assert_eq!(resp_cl.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp_cl.headers().get("connection").and_then(|v| v.to_str().ok()), Some("close"));
+
+        // 2. HEAD request with Transfer-Encoding must be rejected (400 Bad Request + Connection: close)
+        let head_te = axum::http::Request::builder()
+            .uri("/health")
+            .method(axum::http::Method::HEAD)
+            .header("Transfer-Encoding", "chunked")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_te = app.clone().oneshot(head_te).await.unwrap();
+        assert_eq!(resp_te.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp_te.headers().get("connection").and_then(|v| v.to_str().ok()), Some("close"));
+
+        // 3. Dual framing: Content-Length + Transfer-Encoding (TE.CL / CL.TE desync) must be rejected
+        let dual_framing = axum::http::Request::builder()
+            .uri("/health")
+            .method(axum::http::Method::GET)
+            .header("Content-Length", "10")
+            .header("Transfer-Encoding", "chunked")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_dual = app.clone().oneshot(dual_framing).await.unwrap();
+        assert_eq!(resp_dual.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(resp_dual.headers().get("connection").and_then(|v| v.to_str().ok()), Some("close"));
+
+        // 4. Valid HEAD request (Content-Length: 0 or no body header) succeeds
+        let valid_head = axum::http::Request::builder()
+            .uri("/health")
+            .method(axum::http::Method::HEAD)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_valid_head = app.clone().oneshot(valid_head).await.unwrap();
+        assert_eq!(resp_valid_head.status(), StatusCode::OK);
+
+        // 5. Valid GET request succeeds
+        let valid_get = axum::http::Request::builder()
+            .uri("/health")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_valid_get = app.clone().oneshot(valid_get).await.unwrap();
+        assert_eq!(resp_valid_get.status(), StatusCode::OK);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+

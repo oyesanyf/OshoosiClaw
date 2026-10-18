@@ -91,7 +91,7 @@ opentelemetry = { version = "0.33", features = ["trace"] }
 opentelemetry_sdk = { version = "0.33", features = ["trace"] }
 tracing-opentelemetry = "0.34"
 rayon = "1.10"
-tfhe = { version = "0.6", features = ["integer", "boolean", "shortint"] }
+tfhe = { version = "0.6", features = ["integer", "boolean", "shortint", "seeder_x86_64_rdseed"] }
 bincode = "1"
 zip = "2"
 sevenz-rust = { version = "0.6", features = ["aes256"] }
@@ -138,9 +138,16 @@ wasm-bindgen-futures = { path = "crates/wasm-bindgen-futures" }
 [profile.dev]
 debug = 1
 
+[profile.dev.package.tfhe]
+opt-level = 3
+
+[profile.test.package.tfhe]
+opt-level = 3
+
 [profile.release]
 opt-level = 3
 lto = false
 codegen-units = 16
 strip = true
 panic = "abort"
+
