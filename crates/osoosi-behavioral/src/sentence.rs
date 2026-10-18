@@ -5,6 +5,145 @@
 
 use crate::LogEvent;
 
+/// Extract event PID from all possible PID field names and string/hex representations.
+pub fn extract_event_pid(event: &LogEvent) -> Option<u64> {
+    let pid_keys = [
+        "ProcessId",
+        "ProcessID",
+        "process_id",
+        "PID",
+        "pid",
+        "TargetProcessId",
+        "SourceProcessId",
+        "NewProcessId",
+        "ExecutionProcessId",
+    ];
+    for k in pid_keys {
+        if let Some(v) = event.data.get(k) {
+            if let Some(n) = v.as_u64() {
+                return Some(n);
+            }
+            if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                let parsed = if let Some(hex) = trimmed
+                    .strip_prefix("0x")
+                    .or_else(|| trimmed.strip_prefix("0X"))
+                {
+                    u64::from_str_radix(hex, 16).ok()
+                } else {
+                    trimmed.parse::<u64>().ok()
+                };
+                if let Some(n) = parsed {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Helper to extract sentence PID from event fields with extract_event_pid fallback.
+pub fn extract_sentence_pid(event: &LogEvent) -> Option<u64> {
+    let pid_keys = [
+        "ProcessId",
+        "ProcessID",
+        "process_id",
+        "PID",
+        "pid",
+        "TargetProcessId",
+        "SourceProcessId",
+        "NewProcessId",
+    ];
+    for k in pid_keys {
+        if let Some(v) = event.data.get(k) {
+            if let Some(n) = v.as_u64() {
+                return Some(n);
+            }
+            if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                let parsed = if let Some(hex) = trimmed
+                    .strip_prefix("0x")
+                    .or_else(|| trimmed.strip_prefix("0X"))
+                {
+                    u64::from_str_radix(hex, 16).ok()
+                } else {
+                    trimmed.parse::<u64>().ok()
+                };
+                if let Some(n) = parsed {
+                    return Some(n);
+                }
+            }
+        }
+    }
+    extract_event_pid(event)
+}
+
+/// Helper to extract sentence image from event fields, falling back to PID/System/Process-{pid} invariants.
+pub fn extract_sentence_image(event: &LogEvent) -> String {
+    let image_keys = [
+        "Image",
+        "SourceImage",
+        "TargetImage",
+        "ImageName",
+        "ImageFileName",
+        "ProcessName",
+        "process_name",
+        "NewProcessName",
+        "ParentImage",
+    ];
+    let mut resolved = String::new();
+    for k in image_keys {
+        if let Some(v) = event.data.get(k) {
+            if let Some(s) = v.as_str() {
+                let trimmed = s.trim();
+                if !trimmed.is_empty() && trimmed != "unknown" {
+                    let file_name = std::path::Path::new(trimmed)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(trimmed);
+                    let (sanitized, _) = osoosi_types::sanitize_untrusted_log_field(file_name, 128);
+                    if !sanitized.is_empty() && sanitized != "unknown" {
+                        resolved = sanitized;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if resolved.is_empty() || resolved == "unknown" {
+        if let Some(pid) = extract_sentence_pid(event) {
+            if pid == 4 {
+                return "System".to_string();
+            } else if pid == 0 {
+                return "System Idle Process".to_string();
+            } else {
+                return format!("Process-{}", pid);
+            }
+        }
+    }
+
+    if resolved.is_empty() || resolved == "unknown" {
+        if let Some(msg) = event.data.get("Message").and_then(|v| v.as_str()) {
+            let trimmed = msg.trim();
+            if !trimmed.is_empty() {
+                return trimmed.chars().take(64).collect();
+            }
+        }
+        if !event.source.is_empty() && event.source != "unknown" {
+            return event.source.clone();
+        }
+        if !event.computer.is_empty() && event.computer != "unknown" {
+            return format!("Host-{}", event.computer);
+        }
+        return "HostProcess".to_string();
+    }
+
+    resolved
+}
+
+pub use event_to_behavioral_sentence as generate_behavioral_sentence;
+
 /// Convert a log event to a behavioral sentence suitable for transformer inference.
 pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     let mut parts = Vec::new();
@@ -90,7 +229,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .unwrap_or(false)
         || (event.event_id >= 1
             && event.event_id <= 29
-            && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid")));
+            && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid") || event.data.contains_key("ProcessLifetimeMs")));
 
     if is_sysmon {
         let event_id = event
@@ -100,17 +239,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .and_then(|v| v.as_i64())
             .unwrap_or(event.event_id as i64);
 
-        let raw_img = event
-            .data
-            .get("Image")
-            .or(event.data.get("SourceImage"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
-        let raw_exe = std::path::Path::new(raw_img)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(raw_img);
-        let (exe, _) = osoosi_types::sanitize_untrusted_log_field(raw_exe, 128);
+        let exe = extract_sentence_image(event);
 
         match event_id {
             1 => {
@@ -183,16 +312,11 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             5 => {
                 // Process Terminated
-                let pid = event
-                    .data
-                    .get("ProcessId")
-                    .and_then(|v| {
-                        v.as_u64()
-                            .map(|n| n.to_string())
-                            .or_else(|| v.as_str().map(String::from))
-                    })
-                    .unwrap_or_else(|| "unknown".to_string());
-                parts.push(format!("Process {} (PID {}) terminated.", exe, pid));
+                let pid_str = extract_sentence_pid(event)
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "0".to_string());
+                let exe_str = extract_sentence_image(event);
+                parts.push(format!("Process {} (PID {}) terminated.", exe_str, pid_str));
             }
             6 => {
                 // Driver Loaded (Kernel Rootkit / BYOVD)
@@ -440,6 +564,15 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                 }
             }
         }
+    }
+
+    // Generic Process Terminate (Non-Sysmon Event ID 5)
+    if !is_sysmon && event.event_id == 5 {
+        let pid_str = extract_sentence_pid(event)
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "0".to_string());
+        let exe_str = extract_sentence_image(event);
+        parts.push(format!("Process {} (PID {}) terminated.", exe_str, pid_str));
     }
 
     // Network / DNS (Generic, only if not already handled by Sysmon)
@@ -881,4 +1014,47 @@ mod tests {
         assert!(s.contains("was executed by user SYSTEM from parent cmd.exe"));
         assert_eq!(s.matches("executed").count(), 1);
     }
+
+    #[test]
+    fn test_event_5_sysmon_process_terminate_with_image_and_pid() {
+        let ev = make_sysmon_event(
+            5,
+            vec![
+                ("Image", serde_json::json!(r"C:\Windows\System32\notepad.exe")),
+                ("ProcessId", serde_json::json!(1234)),
+            ],
+        );
+        let s = event_to_behavioral_sentence(&ev);
+        assert_eq!(s, "Process notepad.exe (PID 1234) terminated.");
+    }
+
+    #[test]
+    fn test_event_5_system_pid_4_resolves_system() {
+        let ev = make_sysmon_event(5, vec![("ProcessId", serde_json::json!(4))]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert_eq!(s, "Process System (PID 4) terminated.");
+    }
+
+    #[test]
+    fn test_event_5_idle_pid_0_resolves_idle() {
+        let ev = make_sysmon_event(5, vec![("ProcessId", serde_json::json!(0))]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert_eq!(s, "Process System Idle Process (PID 0) terminated.");
+    }
+
+    #[test]
+    fn test_event_5_numeric_pid_without_image_resolves_process_pid() {
+        let ev = make_sysmon_event(5, vec![("ProcessId", serde_json::json!(8820))]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert_eq!(s, "Process Process-8820 (PID 8820) terminated.");
+    }
+
+    #[test]
+    fn test_event_5_zero_unknown_invariant_never_unknown() {
+        let ev = make_sysmon_event(5, vec![]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(!s.contains("Process unknown (PID unknown) terminated."));
+        assert!(s.contains("terminated."));
+    }
 }
+
