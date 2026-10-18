@@ -639,6 +639,38 @@ impl OpenJevClient {
             ("t1055", 4.5),
             ("t1486", 6.0),
             ("t1059", 2.5),
+            ("keymgr", 5.2),
+            ("krshowkeymgr", 5.5),
+            ("credwiz", 5.0),
+            ("vaultcmd", 5.0),
+            ("cmdkey", 4.2),
+            ("comsvcs", 5.2),
+            ("minidump", 5.2),
+            ("hklm\\sam", 5.5),
+            ("hklm\\security", 5.5),
+            ("ntds.dit", 5.5),
+            ("ntdsutil", 5.0),
+            ("gsecdump", 5.2),
+            ("lazagne", 5.2),
+            ("dpapi", 4.8),
+            ("mimipenguin", 5.2),
+            ("unshadow", 5.2),
+            ("/etc/shadow", 5.2),
+            ("/etc/gshadow", 5.2),
+            ("/etc/master.passwd", 5.2),
+            ("ld.so.preload", 5.2),
+            ("gcore", 4.8),
+            ("credentialguard", 5.0),
+            ("processinjection", 5.0),
+            ("hollowshunter", 5.0),
+            ("t1555", 4.8),
+            ("t1552", 4.5),
+            ("t1003.002", 5.2),
+            ("t1003.003", 5.2),
+            ("t1003.007", 5.2),
+            ("t1003.008", 5.2),
+            ("t1555.004", 5.0),
+            ("rundll32", 2.0),
         ];
 
         let ben_tokens = [
@@ -673,6 +705,9 @@ impl OpenJevClient {
             }
         }
         for (t, w) in &ben_tokens {
+            if mal >= 3.5 && (*t == "issigned: true" || *t == "signed: true") {
+                continue;
+            }
             if state.contains(t) {
                 ben += w;
             }

@@ -155,7 +155,82 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn analyze_process_sandbox(_pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
+mod libc {
+    extern "C" {
+        pub fn kill(pid: i32, sig: i32) -> i32;
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
+    if pid == 0 || pid == u32::MAX {
+        anyhow::bail!("Invalid PID: {}", pid);
+    }
+
+    let status_path = format!("/proc/{}/status", pid);
+    if let Ok(content) = std::fs::read_to_string(&status_path) {
+        let mut is_elevated = false;
+        let mut integrity_level = "Medium".to_string();
+        let mut is_app_container = false;
+        let mut privileges = Vec::new();
+
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("Uid:") {
+                let uids: Vec<&str> = rest.split_whitespace().collect();
+                if let Some(euid_str) = uids.get(1).or_else(|| uids.first()) {
+                    if let Ok(euid) = euid_str.parse::<u32>() {
+                        if euid == 0 {
+                            is_elevated = true;
+                            integrity_level = "System".to_string();
+                        } else {
+                            integrity_level = "Medium".to_string();
+                        }
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("Seccomp:") {
+                if let Ok(mode) = rest.trim().parse::<u32>() {
+                    if mode == 1 || mode == 2 {
+                        is_app_container = true;
+                        if !is_elevated {
+                            integrity_level = "Low".to_string();
+                        }
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("CapEff:") {
+                if let Ok(mask) = u64::from_str_radix(rest.trim(), 16) {
+                    if (mask & (1 << 21)) != 0 {
+                        privileges.push("CAP_SYS_ADMIN".to_string());
+                    }
+                    if (mask & (1 << 19)) != 0 {
+                        privileges.push("CAP_SYS_PTRACE".to_string());
+                    }
+                    if (mask & (1 << 16)) != 0 {
+                        privileges.push("CAP_SYS_MODULE".to_string());
+                    }
+                    if (mask & (1 << 1)) != 0 {
+                        privileges.push("CAP_DAC_OVERRIDE".to_string());
+                    }
+                    if (mask & (1 << 12)) != 0 {
+                        privileges.push("CAP_NET_ADMIN".to_string());
+                    }
+                }
+            }
+        }
+
+        return Ok(SandboxSurfaceInfo {
+            integrity_level,
+            is_app_container,
+            is_elevated,
+            privileges,
+        });
+    }
+
+    let exists = unsafe { libc::kill(pid as i32, 0) == 0 };
+    if !exists {
+        anyhow::bail!("Process {} does not exist", pid);
+    }
+
     Ok(SandboxSurfaceInfo {
         integrity_level: "Medium".to_string(),
         is_app_container: false,
@@ -195,7 +270,11 @@ mod tests {
 
         #[cfg(not(target_os = "windows"))]
         {
-            assert_eq!(info.integrity_level, "Medium");
+            assert!(
+                ["Low", "Medium", "High", "System"].contains(&info.integrity_level.as_str()),
+                "Unexpected integrity level: {}",
+                info.integrity_level
+            );
         }
     }
 

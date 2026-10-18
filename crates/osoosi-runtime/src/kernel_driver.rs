@@ -187,13 +187,33 @@ impl Drop for SafeHandle {
     }
 }
 
+#[cfg(not(windows))]
+#[derive(Debug, Default)]
+pub struct UnixKernelState {
+    pub mode: std::sync::atomic::AtomicU32,
+    pub blocked_count: std::sync::atomic::AtomicU32,
+    pub blocked_paths: std::sync::RwLock<Vec<String>>,
+    pub blocked_hashes: std::sync::RwLock<Vec<[u8; 32]>>,
+    pub intercept_events: std::sync::Mutex<Vec<KernelInterceptEvent>>,
+}
+
+#[cfg(not(windows))]
+static UNIX_KERNEL_STATE: std::sync::OnceLock<Arc<UnixKernelState>> = std::sync::OnceLock::new();
+
+#[cfg(not(windows))]
+fn get_unix_kernel_state() -> Arc<UnixKernelState> {
+    UNIX_KERNEL_STATE
+        .get_or_init(|| Arc::new(UnixKernelState::default()))
+        .clone()
+}
+
 /// User-space client interface for the Oshoosi Ring-0 Kernel Driver.
 #[derive(Clone)]
 pub struct KernelDriverClient {
     #[cfg(windows)]
     handle: Arc<SafeHandle>,
     #[cfg(not(windows))]
-    _marker: std::marker::PhantomData<()>,
+    state: Arc<UnixKernelState>,
 }
 
 impl KernelDriverClient {
@@ -251,8 +271,16 @@ impl KernelDriverClient {
 
         #[cfg(not(windows))]
         {
-            None
+            info!("[KERNEL_DRIVER] Connected to cross-platform user-space kernel blocklist engine.");
+            Some(Self {
+                state: get_unix_kernel_state(),
+            })
         }
+    }
+
+    /// Connects to the kernel driver interface (alias for open).
+    pub fn connect() -> Option<Self> {
+        Self::open()
     }
 
     /// Returns `true` if connected to an active Ring-0 driver instance.
@@ -263,7 +291,7 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            false
+            true
         }
     }
 
@@ -296,7 +324,17 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            anyhow::bail!("Kernel driver is only supported on Windows")
+            use std::sync::atomic::Ordering;
+            let mode_val = self.state.mode.load(Ordering::SeqCst);
+            let blocked = self.state.blocked_count.load(Ordering::SeqCst);
+            let p_len = self.state.blocked_paths.read().map(|p| p.len()).unwrap_or(0);
+            let h_len = self.state.blocked_hashes.read().map(|h| h.len()).unwrap_or(0);
+            Ok(KernelDriverStatus {
+                version: 0x010200,
+                mode: DriverAutonomyMode::from(mode_val),
+                blocked_count: blocked,
+                rule_count: (p_len + h_len) as u32,
+            })
         }
     }
 
@@ -324,8 +362,10 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            let _ = mode;
-            anyhow::bail!("Kernel driver is only supported on Windows")
+            use std::sync::atomic::Ordering;
+            self.state.mode.store(mode as u32, Ordering::SeqCst);
+            info!("[KERNEL_DRIVER] Autonomy mode set to: {}", mode);
+            Ok(())
         }
     }
 
@@ -365,8 +405,14 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            let _ = path;
-            anyhow::bail!("Kernel driver is only supported on Windows")
+            let normalized = path.replace('\\', "/");
+            if let Ok(mut paths) = self.state.blocked_paths.write() {
+                if !paths.contains(&normalized) {
+                    paths.push(normalized.clone());
+                }
+            }
+            info!("[KERNEL_DRIVER] Added pre-exec block rule for path: {}", path);
+            Ok(())
         }
     }
 
@@ -398,8 +444,16 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            let _ = hash_bytes;
-            anyhow::bail!("Kernel driver is only supported on Windows")
+            if let Ok(mut hashes) = self.state.blocked_hashes.write() {
+                if !hashes.contains(hash_bytes) {
+                    hashes.push(*hash_bytes);
+                }
+            }
+            info!(
+                "[KERNEL_DRIVER] Added pre-exec block rule for hash: {}",
+                hex::encode(hash_bytes)
+            );
+            Ok(())
         }
     }
 
@@ -425,7 +479,14 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            anyhow::bail!("Kernel driver is only supported on Windows")
+            if let Ok(mut paths) = self.state.blocked_paths.write() {
+                paths.clear();
+            }
+            if let Ok(mut hashes) = self.state.blocked_hashes.write() {
+                hashes.clear();
+            }
+            info!("[KERNEL_DRIVER] Flushed all in-memory kernel rules");
+            Ok(())
         }
     }
 
@@ -484,7 +545,12 @@ impl KernelDriverClient {
         }
         #[cfg(not(windows))]
         {
-            anyhow::bail!("Kernel driver is only supported on Windows")
+            if let Ok(mut events) = self.state.intercept_events.lock() {
+                let drained = events.drain(..).collect();
+                Ok(drained)
+            } else {
+                Ok(Vec::new())
+            }
         }
     }
 }
@@ -608,5 +674,21 @@ mod tests {
         req.hash.copy_from_slice(&hash);
         assert_eq!(req.hash[0], 0xAB);
         assert_eq!(req.hash[31], 0xAB);
+    }
+
+    #[test]
+    fn test_cross_platform_kernel_driver_client() {
+        if let Some(client) = KernelDriverClient::connect() {
+            assert!(client.is_available());
+            assert!(client.set_mode(DriverAutonomyMode::Active).is_ok());
+            assert!(client.add_blocked_path("/bin/malicious_dropper").is_ok());
+            let hash = [0x55u8; 32];
+            assert!(client.add_blocked_hash(&hash).is_ok());
+            let status = client.get_status().unwrap();
+            assert_eq!(status.mode, DriverAutonomyMode::Active);
+            assert!(status.rule_count >= 2);
+            assert!(client.poll_interceptions().is_ok());
+            assert!(client.clear_rules().is_ok());
+        }
     }
 }

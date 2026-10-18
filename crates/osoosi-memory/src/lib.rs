@@ -385,6 +385,11 @@ impl MemoryStore {
         )?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_nsrl_sha1 ON nsrl(sha1)", [])?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_nsrl_sha256 ON nsrl(sha256)",
+            [],
+        )?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_nsrl_md5 ON nsrl(md5)", [])?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_otx_lookup ON otx_indicators(indicator_type, value)",

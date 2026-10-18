@@ -23,6 +23,12 @@ pub fn get_current_process_handle_count() -> u32 {
 
 #[cfg(not(target_os = "windows"))]
 pub fn get_current_process_handle_count() -> u32 {
+    if let Ok(entries) = std::fs::read_dir("/proc/self/fd") {
+        return entries.filter_map(|e| e.ok()).count() as u32;
+    }
+    if let Ok(entries) = std::fs::read_dir("/dev/fd") {
+        return entries.filter_map(|e| e.ok()).count() as u32;
+    }
     180
 }
 

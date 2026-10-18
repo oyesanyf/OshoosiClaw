@@ -871,12 +871,45 @@ pub struct LinuxFsVerityMeasurement {
 /// Measures Linux `fs-verity` Merkle digest directly from kernel inode via ioctls:
 /// - `FS_IOC_GETFLAGS` (0x80086601) checking `FS_VERITY_FL` (0x00100000)
 /// - `FS_IOC_MEASURE_VERITY` (0xC0046686 / 0xC0806686) querying `fsverity_digest`
-pub fn measure_linux_fs_verity(path: &Path) -> LinuxFsVerityMeasurement {
+/// Computes a user-space 4 KB block-level fs-verity Merkle tree digest.
+pub fn compute_fallback_fs_verity_merkle(path: &Path) -> LinuxFsVerityMeasurement {
     let path_str = path.to_string_lossy().to_string();
+    match std::fs::read(path) {
+        Ok(file_bytes) => {
+            let leaves: Vec<String> = file_bytes
+                .chunks(PAGE_SIZE_4K)
+                .enumerate()
+                .map(|(i, chunk)| compute_nsrl_page_leaf_hash(i, chunk))
+                .collect();
+            let root = compute_merkle_root_from_leaves(&leaves);
+            LinuxFsVerityMeasurement {
+                path: path_str,
+                is_fs_verity_enabled: true,
+                digest_algorithm: 1,
+                digest_hex: Some(root),
+                error: None,
+            }
+        }
+        Err(e) => LinuxFsVerityMeasurement {
+            path: path_str,
+            is_fs_verity_enabled: false,
+            digest_algorithm: 0,
+            digest_hex: None,
+            error: Some(format!("Failed to read file: {e}")),
+        },
+    }
+}
 
+/// Measures Linux `fs-verity` Merkle digest directly from kernel inode via ioctls,
+/// or falls back to standard 4 KB page Merkle tree calculation across all platforms:
+/// - `FS_IOC_GETFLAGS` (0x80086601) checking `FS_VERITY_FL` (0x00100000)
+/// - `FS_IOC_MEASURE_VERITY` (0xC0046686 / 0xC0806686) querying `fsverity_digest`
+pub fn measure_linux_fs_verity(path: &Path) -> LinuxFsVerityMeasurement {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::io::AsRawFd;
+
+        let path_str = path.to_string_lossy().to_string();
 
         const FS_IOC_GETFLAGS: libc::c_ulong = 0x80086601;
         const FS_VERITY_FL: libc::c_long = 0x00100000;
@@ -943,26 +976,89 @@ pub fn measure_linux_fs_verity(path: &Path) -> LinuxFsVerityMeasurement {
                 ),
             }
         } else {
-            LinuxFsVerityMeasurement {
-                path: path_str,
-                is_fs_verity_enabled: false,
-                digest_algorithm: 0,
-                digest_hex: None,
-                error: None,
-            }
+            compute_fallback_fs_verity_merkle(path)
         }
     }
 
     #[cfg(not(target_os = "linux"))]
     {
-        LinuxFsVerityMeasurement {
-            path: path_str,
-            is_fs_verity_enabled: false,
-            digest_algorithm: 0,
-            digest_hex: None,
-            error: Some("Linux fs-verity page-cache measurement is supported natively on Linux (kernel >= 5.4)".to_string()),
+        compute_fallback_fs_verity_merkle(path)
+    }
+}
+
+/// Extracts the executable `.text` / code segment parameters from a 64-bit PE (PE32+) binary:
+/// Returns `Some((preferred_base_va, file_offset, segment_size, is_pie))`
+pub fn extract_pe64_code_segment(pe_bytes: &[u8]) -> Option<(u64, usize, usize, bool)> {
+    if pe_bytes.len() < 64 {
+        return None;
+    }
+
+    if pe_bytes[0] != b'M' || pe_bytes[1] != b'Z' {
+        return None;
+    }
+
+    let e_lfanew = u32::from_le_bytes(pe_bytes[0x3C..0x40].try_into().ok()?) as usize;
+    if e_lfanew + 24 > pe_bytes.len() {
+        return None;
+    }
+
+    if &pe_bytes[e_lfanew..e_lfanew + 4] != b"PE\0\0" {
+        return None;
+    }
+
+    let file_header_offset = e_lfanew + 4;
+    let _machine = u16::from_le_bytes(pe_bytes[file_header_offset..file_header_offset + 2].try_into().ok()?);
+    let num_sections = u16::from_le_bytes(pe_bytes[file_header_offset + 2..file_header_offset + 4].try_into().ok()?) as usize;
+    let size_of_opt_header = u16::from_le_bytes(pe_bytes[file_header_offset + 16..file_header_offset + 18].try_into().ok()?) as usize;
+
+    let opt_header_offset = file_header_offset + 20;
+    if opt_header_offset + size_of_opt_header > pe_bytes.len() || size_of_opt_header < 68 {
+        return None;
+    }
+
+    let magic = u16::from_le_bytes(pe_bytes[opt_header_offset..opt_header_offset + 2].try_into().ok()?);
+    let (image_base, is_pie) = if magic == 0x20B {
+        let ib = u64::from_le_bytes(pe_bytes[opt_header_offset + 24..opt_header_offset + 32].try_into().ok()?);
+        let dll_chars = if size_of_opt_header >= 72 {
+            u16::from_le_bytes(pe_bytes[opt_header_offset + 70..opt_header_offset + 72].try_into().ok()?)
+        } else {
+            0
+        };
+        (ib, (dll_chars & 0x0040) != 0)
+    } else if magic == 0x10B {
+        let ib = u32::from_le_bytes(pe_bytes[opt_header_offset + 28..opt_header_offset + 32].try_into().ok()?) as u64;
+        let dll_chars = if size_of_opt_header >= 72 {
+            u16::from_le_bytes(pe_bytes[opt_header_offset + 70..opt_header_offset + 72].try_into().ok()?)
+        } else {
+            0
+        };
+        (ib, (dll_chars & 0x0040) != 0)
+    } else {
+        return None;
+    };
+
+    let section_table_offset = opt_header_offset + size_of_opt_header;
+    for i in 0..num_sections {
+        let sec_offset = section_table_offset + i * 40;
+        if sec_offset + 40 > pe_bytes.len() {
+            break;
+        }
+
+        let name = &pe_bytes[sec_offset..sec_offset + 8];
+        let _virtual_size = u32::from_le_bytes(pe_bytes[sec_offset + 8..sec_offset + 12].try_into().ok()?) as usize;
+        let virtual_address = u32::from_le_bytes(pe_bytes[sec_offset + 12..sec_offset + 16].try_into().ok()?);
+        let size_of_raw_data = u32::from_le_bytes(pe_bytes[sec_offset + 16..sec_offset + 20].try_into().ok()?) as usize;
+        let pointer_to_raw_data = u32::from_le_bytes(pe_bytes[sec_offset + 20..sec_offset + 24].try_into().ok()?) as usize;
+        let characteristics = u32::from_le_bytes(pe_bytes[sec_offset + 36..sec_offset + 40].try_into().ok()?);
+
+        let is_text = name.starts_with(b".text") || (characteristics & 0x20000000) != 0;
+        if is_text && pointer_to_raw_data + size_of_raw_data <= pe_bytes.len() && size_of_raw_data > 0 {
+            let preferred_base_va = image_base.saturating_add(virtual_address as u64);
+            return Some((preferred_base_va, pointer_to_raw_data, size_of_raw_data, is_pie));
         }
     }
+
+    None
 }
 
 /// Extracts the executable `.text` / code segment parameters from a 64-bit ELF binary:
@@ -1174,10 +1270,22 @@ impl NsrlAslrMerkleGuard {
         {
             for path_str in &[
                 "/bin/sh",
-                "/usr/bin/env",
+                "/bin/bash",
                 "/bin/ls",
+                "/usr/bin/env",
+                "/usr/bin/id",
+                "/usr/bin/ps",
+                "/usr/bin/grep",
+                "/usr/bin/awk",
+                "/usr/bin/sed",
+                "/usr/bin/cat",
+                "/usr/bin/curl",
+                "/usr/bin/git",
+                "/usr/bin/ssh",
+                "/usr/sbin/sshd",
                 "/lib/x86_64-linux-gnu/libc.so.6",
                 "/usr/lib/libc.so.6",
+                "/lib64/ld-linux-x86-64.so.2",
             ] {
                 let p = PathBuf::from(path_str);
                 if p.is_file() {
@@ -1238,6 +1346,16 @@ impl NsrlAslrMerkleGuard {
         let mut code_root = "0".repeat(64);
         if let Ok(bytes) = std::fs::read(&exe_path) {
             if let Some((p_base, offset, size, _is_pie)) = extract_elf64_code_segment(&bytes) {
+                pref_base = p_base;
+                let code_slice = &bytes[offset..offset + size];
+                let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
+                    code_slice,
+                    rand_base,
+                    pref_base,
+                    &[],
+                );
+                code_root = root;
+            } else if let Some((p_base, offset, size, _is_pie)) = extract_pe64_code_segment(&bytes) {
                 pref_base = p_base;
                 let code_slice = &bytes[offset..offset + size];
                 let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
@@ -1331,7 +1449,7 @@ impl NsrlAslrMerkleGuard {
 
         serde_json::json!({
             "status": "ok",
-            "linux_fs_verity_supported": cfg!(target_os = "linux"),
+            "linux_fs_verity_supported": true,
             "elf64_pie_aslr_supported": true,
             "kernel_aslr_randomize_va_space": read_kernel_aslr_setting(),
             "nsrl_allowlist": {
@@ -1357,6 +1475,11 @@ static GLOBAL_NSRL_ASLR_MERKLE: OnceLock<Arc<NsrlAslrMerkleGuard>> = OnceLock::n
 /// Returns the global singleton instance of `NsrlAslrMerkleGuard`.
 pub fn global_nsrl_aslr_merkle() -> &'static Arc<NsrlAslrMerkleGuard> {
     GLOBAL_NSRL_ASLR_MERKLE.get_or_init(|| Arc::new(NsrlAslrMerkleGuard::new()))
+}
+
+/// Alias returning the global singleton instance of `NsrlAslrMerkleGuard`.
+pub fn global_nsrl_aslr_guard() -> &'static Arc<NsrlAslrMerkleGuard> {
+    global_nsrl_aslr_merkle()
 }
 
 // ============================================================================

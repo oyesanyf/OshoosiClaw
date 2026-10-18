@@ -1,29 +1,89 @@
-#[cfg(target_os = "windows")]
-use anyhow::anyhow;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 #[cfg(target_os = "windows")]
 use std::process::Command;
-#[cfg(target_os = "windows")]
 use tracing::{info, warn};
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
 #[cfg(target_os = "windows")]
 use winreg::RegKey;
 
-/// Registry persistence remediator.
-/// Targeted at common 'Run' keys and 'Services' created by malware.
+/// Registry and cross-platform persistence remediator.
+/// Targeted at common 'Run' keys, 'Services', and Unix persistence paths created by malware.
 pub struct RegistryRemediator;
 
 impl RegistryRemediator {
     /// Attempt to roll back registry persistence for a specific process image.
-    /// Scans Run, RunOnce, and Services for the given image path.
+    /// Scans Run, RunOnce, and Services (Windows) or ld.so.preload, cron, systemd, and launchd (Linux/macOS).
     pub fn remediate_process_persistence(image_path: &str) -> Result<Vec<String>> {
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = image_path;
-            return Ok(vec![
-                "Registry remediation only supported on Windows".to_string()
-            ]);
+            let mut changes = Vec::new();
+            let basename = std::path::Path::new(image_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
+            if basename.is_empty() {
+                return Err(anyhow!("Invalid image path for persistence remediation"));
+            }
+
+            // 1. Scan and clean /etc/ld.so.preload
+            let ld_preload = std::path::Path::new("/etc/ld.so.preload");
+            if ld_preload.exists() {
+                if let Ok(content) = std::fs::read_to_string(ld_preload) {
+                    if content.contains(image_path) || content.contains(basename) {
+                        let filtered: Vec<&str> = content
+                            .lines()
+                            .filter(|line| !line.contains(image_path) && !line.contains(basename))
+                            .collect();
+                        let new_content = filtered.join("\n");
+                        if std::fs::write(ld_preload, new_content).is_ok() {
+                            changes.push(format!("Removed {} from /etc/ld.so.preload", image_path));
+                        }
+                    }
+                }
+            }
+
+            // 2. Scan persistence directories
+            let dirs = [
+                "/etc/cron.d",
+                "/var/spool/cron/crontabs",
+                "/etc/systemd/system",
+                "/etc/xdg/autostart",
+                "/Library/LaunchAgents",
+                "/Library/LaunchDaemons",
+            ];
+
+            for dir in dirs {
+                let dir_path = std::path::Path::new(dir);
+                if dir_path.is_dir() {
+                    if let Ok(entries) = std::fs::read_dir(dir_path) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let path = entry.path();
+                            if path.is_file() {
+                                if let Ok(content) = std::fs::read_to_string(&path) {
+                                    if content.contains(image_path) || content.contains(basename) {
+                                        if std::fs::remove_file(&path).is_ok() {
+                                            changes.push(format!("Removed malicious persistence file: {:?}", path));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if changes.is_empty() {
+                info!("No Linux/macOS persistence found for {}", image_path);
+            } else {
+                info!(
+                    "Persistence remediation complete for {}: {:?}",
+                    image_path, changes
+                );
+            }
+
+            Ok(changes)
         }
 
         #[cfg(target_os = "windows")]

@@ -226,12 +226,12 @@ enum Commands {
     },
     /// Clean up logs, temporary files, and large model caches to free up disk space
     Clean {
-        /// Also delete downloaded AI model weights (will be re-downloaded on next start)
         #[arg(long)]
         models: bool,
-        /// Force clean without confirmation
-        #[arg(short, long)]
-        force: bool,
+        #[arg(long)]
+        aggressive: bool,
+        #[arg(long, default_value_t = 0)]
+        days: u32,
     },
     /// Audit a CVE or product against the local threat model
     Audit {
@@ -1554,8 +1554,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
-        Some(Commands::Clean { models, force }) => {
-            handle_clean(models, force).await?;
+        Some(Commands::Clean {
+            models,
+            aggressive,
+            days,
+        }) => {
+            handle_clean(models, aggressive, days).await?;
         }
         Some(Commands::UpdateStix { force, broadcast }) => {
             handle_update_stix(force, broadcast).await?;
@@ -2376,53 +2380,355 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn calc_dir_bytes(dir: &Path) -> u64 {
+    let mut total = 0;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_file() {
+                total += fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            } else if p.is_dir() {
+                total += calc_dir_bytes(&p);
+            }
+        }
+    }
+    total
+}
+
+fn clean_incomplete_downloads_recursive(dir: &Path, count: &mut usize, freed: &mut u64) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                let fname = match path.file_name().and_then(|f| f.to_str()) {
+                    Some(f) => f.to_ascii_lowercase(),
+                    None => continue,
+                };
+                if fname.ends_with(".part")
+                    || fname.ends_with(".tmp")
+                    || fname.ends_with(".download")
+                    || fname.ends_with(".crdownload")
+                {
+                    let sz = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    if fs::remove_file(&path).is_ok() {
+                        *count += 1;
+                        *freed += sz;
+                    }
+                }
+            } else if path.is_dir() {
+                clean_incomplete_downloads_recursive(&path, count, freed);
+            }
+        }
+    }
+}
+
 /// Stable log directory: `OSOOSI_LOG_DIR`, else repo root `logs/` (walk up from exe for `Cargo.toml`/`.git`),
 /// else `logs/` next to the binary, else cwd `logs/`, else `%TEMP%/osoosi/logs`.
-async fn handle_clean(models: bool, force: bool) -> anyhow::Result<()> {
-    if !force {
-        println!("⚠️ This will delete log files and temporary artifacts.");
-        if models {
-            println!(
-                "🔥 WARNING: This will also delete ALL downloaded AI model weights (several GBs)."
-            );
-        }
-        println!("Proceed? [y/N]");
-        let mut input = String::new();
-        std::io::stdin().read_line(&mut input)?;
-        if !input.trim().eq_ignore_ascii_case("y") {
-            println!("Clean aborted.");
-            return Ok(());
+async fn handle_clean(models: bool, aggressive: bool, days: u32) -> anyhow::Result<()> {
+    println!("\n======================================================================");
+    println!("          OpenỌ̀ṣọ́ọ̀sì Disk Maintenance & Dynamic Log Pruning");
+    println!("======================================================================\n");
+
+    // 1. Probe active disk mount
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut matching_disk: Option<&sysinfo::Disk> = None;
+    let mut max_prefix_len = 0;
+    for disk in disks.iter() {
+        let mp = disk.mount_point();
+        if cwd.starts_with(mp) && mp.as_os_str().len() >= max_prefix_len {
+            max_prefix_len = mp.as_os_str().len();
+            matching_disk = Some(disk);
         }
     }
+    let target_disk = matching_disk.or_else(|| disks.iter().next());
+    let initial_available_bytes = target_disk.map(|d| d.available_space()).unwrap_or(0);
+    let total_bytes = target_disk.map(|d| d.total_space()).unwrap_or(0);
+    let free_gb = initial_available_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
-    // 1. Clean Logs
+    // 2. Compute dynamic retention days
+    let effective_days = if aggressive {
+        0
+    } else if days > 0 {
+        days
+    } else if free_gb < 10.0 {
+        2
+    } else if free_gb < 25.0 {
+        7
+    } else if free_gb < 50.0 {
+        14
+    } else {
+        30
+    };
+
+    let pressure_tier = if free_gb < 10.0
+        || (total_bytes > 0 && (initial_available_bytes as f64 / total_bytes as f64) < 0.05)
+    {
+        "Critical (<10GB / <5%)"
+    } else if free_gb < 25.0
+        || (total_bytes > 0 && (initial_available_bytes as f64 / total_bytes as f64) < 0.12)
+    {
+        "Elevated (<25GB / <12%)"
+    } else if free_gb < 50.0
+        || (total_bytes > 0 && (initial_available_bytes as f64 / total_bytes as f64) < 0.20)
+    {
+        "Moderate (<50GB / <20%)"
+    } else {
+        "Nominal"
+    };
+
+    let base_config = osoosi_types::load_log_retention_config();
+    let mut dynamic_config = osoosi_core::log_retention::compute_dynamic_log_config(
+        &base_config,
+        initial_available_bytes,
+        total_bytes,
+    );
+    if aggressive {
+        dynamic_config.max_log_days = 0;
+        dynamic_config.max_total_size_mb = 0;
+        dynamic_config.max_single_file_size_mb = 0;
+    } else if days > 0 {
+        dynamic_config.max_log_days = days;
+    } else {
+        dynamic_config.max_log_days = effective_days;
+    }
+
+    // 3. Maintain logs
     let log_dir = resolve_log_directory();
-    if log_dir.exists() {
-        info!("Cleaning log directory: {:?}", log_dir);
-        let _ = fs::remove_dir_all(&log_dir);
-        let _ = fs::create_dir_all(&log_dir);
-    }
+    let log_summary =
+        osoosi_core::log_retention::LogRetentionManager::maintain_logs(&log_dir, &dynamic_config)?;
 
-    // 2. Clean Models if requested
-    if models {
-        let models_dir = osoosi_types::resolve_models_dir();
-        if models_dir.exists() {
-            info!(
-                "Cleaning models directory (blobs and snapshots): {:?}",
-                models_dir
-            );
-            // We keep the directory but wipe contents to avoid permission issues with parent
-            for entry in fs::read_dir(&models_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_dir() {
-                    let _ = fs::remove_dir_all(&path);
-                } else {
-                    let _ = fs::remove_file(&path);
+    // 4. Clean stale files in temp_dir, cwd, and quarantine
+    let mut stale_files_count = 0;
+    let mut stale_freed_bytes = 0;
+
+    // A. Temp dir
+    let temp_dir = std::env::temp_dir();
+    if let Ok(entries) = fs::read_dir(&temp_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = match path.file_name().and_then(|f| f.to_str()) {
+                Some(f) => f.to_string(),
+                None => continue,
+            };
+            let lower = fname.to_ascii_lowercase();
+            let is_stale_temp = (lower.starts_with("osoosi")
+                || lower.starts_with("test_osoosi")
+                || lower.contains(".locked."))
+                && (lower.ends_with(".tmp")
+                    || lower.ends_with(".part")
+                    || lower.contains(".locked")
+                    || lower.ends_with(".bak")
+                    || lower.starts_with("test_osoosi_logs_"));
+            if is_stale_temp {
+                if path.is_file() {
+                    let sz = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                    if fs::remove_file(&path).is_ok() {
+                        stale_files_count += 1;
+                        stale_freed_bytes += sz;
+                    }
+                } else if path.is_dir()
+                    && (lower.starts_with("test_osoosi")
+                        || lower.starts_with("osoosi_state_test"))
+                {
+                    let sz = calc_dir_bytes(&path);
+                    if fs::remove_dir_all(&path).is_ok() {
+                        stale_files_count += 1;
+                        stale_freed_bytes += sz;
+                    }
                 }
             }
         }
     }
+
+    // B. CWD stale files
+    if let Ok(entries) = fs::read_dir(&cwd) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let fname = match path.file_name().and_then(|f| f.to_str()) {
+                Some(f) => f.to_string(),
+                None => continue,
+            };
+            let lower = fname.to_ascii_lowercase();
+            let is_stale_cwd = (lower.starts_with("osoosi")
+                && (lower.ends_with(".tmp")
+                    || lower.ends_with(".part")
+                    || lower.ends_with(".log.bak")
+                    || lower.ends_with(".rotated")))
+                || lower.starts_with(".locked.")
+                || (lower.starts_with('.') && lower.ends_with(".tmp"));
+            if is_stale_cwd {
+                let sz = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                if fs::remove_file(&path).is_ok() {
+                    stale_files_count += 1;
+                    stale_freed_bytes += sz;
+                }
+            }
+        }
+    }
+
+    // C. Quarantine directory stale files
+    let quarantine_candidates = [
+        cwd.join("quarantine"),
+        osoosi_types::resolve_base_dir().join("quarantine"),
+    ];
+    for qdir in quarantine_candidates {
+        if qdir.is_dir() {
+            if let Ok(entries) = fs::read_dir(&qdir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let fname = match path.file_name().and_then(|f| f.to_str()) {
+                        Some(f) => f.to_string(),
+                        None => continue,
+                    };
+                    let lower = fname.to_ascii_lowercase();
+                    if lower.ends_with(".tmp")
+                        || lower.ends_with(".part")
+                        || lower.contains(".locked.")
+                        || (aggressive && lower.ends_with(".quarantine"))
+                    {
+                        let sz = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+                        if fs::remove_file(&path).is_ok() {
+                            stale_files_count += 1;
+                            stale_freed_bytes += sz;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 5. Database vacuum and prune
+    let db_path = {
+        let candidate = osoosi_types::resolve_database_dir().join("osoosi.db");
+        if candidate.exists() {
+            candidate
+        } else if Path::new("database/osoosi.db").exists() {
+            PathBuf::from("database/osoosi.db")
+        } else if Path::new("osoosi.db").exists() {
+            PathBuf::from("osoosi.db")
+        } else {
+            candidate
+        }
+    };
+    let mut db_pruned = false;
+    if db_path.exists() {
+        match osoosi_memory::MemoryStore::new(&db_path.to_string_lossy()) {
+            Ok(mem) => {
+                if let Err(e) = mem.vacuum_and_prune(effective_days) {
+                    warn!(
+                        "Failed to vacuum and prune database {}: {}",
+                        db_path.display(),
+                        e
+                    );
+                } else {
+                    db_pruned = true;
+                }
+            }
+            Err(e) => {
+                debug!(
+                    "Database {} not opened for prune: {}",
+                    db_path.display(),
+                    e
+                );
+            }
+        }
+    }
+
+    // 6. Clean incomplete downloads in models/ and data/feeds/ if models == true
+    let mut model_freed_bytes = 0;
+    let mut model_files_cleaned = 0;
+    if models {
+        let model_search_dirs = [
+            osoosi_types::resolve_models_dir(),
+            cwd.join("models"),
+            cwd.join("data").join("feeds"),
+            osoosi_types::resolve_base_dir().join("data").join("feeds"),
+        ];
+        for dir in model_search_dirs {
+            if dir.is_dir() {
+                clean_incomplete_downloads_recursive(
+                    &dir,
+                    &mut model_files_cleaned,
+                    &mut model_freed_bytes,
+                );
+            }
+        }
+    }
+
+    // 7. Calculate totals and refresh disk info
+    let total_freed_bytes = log_summary.bytes_freed + stale_freed_bytes + model_freed_bytes;
+    let disks_after = sysinfo::Disks::new_with_refreshed_list();
+    let matching_disk_after = disks_after
+        .iter()
+        .find(|d| cwd.starts_with(d.mount_point()))
+        .or_else(|| disks_after.iter().next());
+    let final_available_bytes = matching_disk_after
+        .map(|d| d.available_space())
+        .unwrap_or(initial_available_bytes);
+
+    let format_bytes = osoosi_core::log_retention::LogRetentionManager::format_bytes;
+
+    println!("+--------------------------------------------------------------------+");
+    println!("| Disk Pressure Level     : {:<40} |", pressure_tier);
+    println!(
+        "| Dynamic Retention Target: {:<40} |",
+        format!("{} days (effective)", effective_days)
+    );
+    println!(
+        "| Log Files Pruned        : {:<40} |",
+        format!(
+            "{} files ({})",
+            log_summary.files_pruned,
+            format_bytes(log_summary.bytes_freed)
+        )
+    );
+    println!(
+        "| Stale Temp Files Freed  : {:<40} |",
+        format!(
+            "{} files ({})",
+            stale_files_count,
+            format_bytes(stale_freed_bytes)
+        )
+    );
+    println!(
+        "| Database Retention      : {:<40} |",
+        if db_pruned {
+            format!("Vaccumed & pruned <= {} days", effective_days)
+        } else {
+            "Skipped (no active DB)".to_string()
+        }
+    );
+    if models {
+        println!(
+            "| Model Feeds Incomplete  : {:<40} |",
+            format!(
+                "{} files ({})",
+                model_files_cleaned,
+                format_bytes(model_freed_bytes)
+            )
+        );
+    }
+    println!("+--------------------------------------------------------------------+");
+    println!(
+        "| Total Space Reclaimed   : {:<40} |",
+        format_bytes(total_freed_bytes)
+    );
+    println!(
+        "| Available Disk Space    : {:<40} |",
+        format!(
+            "{} / {}",
+            format_bytes(final_available_bytes),
+            format_bytes(total_bytes)
+        )
+    );
+    println!("+--------------------------------------------------------------------+\n");
 
     println!("✨ Cleanup complete.");
     Ok(())
@@ -6932,6 +7238,37 @@ mod tests {
                 }
                 _ => panic!("Expected Commands::Service for {}", cmd_str),
             }
+        }
+    }
+
+    #[test]
+    fn test_clean_cli_parsing() {
+        let cli = Cli::try_parse_from(["osoosi", "clean", "--models", "--aggressive"]).unwrap();
+        match cli.command {
+            Some(Commands::Clean {
+                models,
+                aggressive,
+                days,
+            }) => {
+                assert!(models);
+                assert!(aggressive);
+                assert_eq!(days, 0);
+            }
+            _ => panic!("Expected Commands::Clean"),
+        }
+
+        let cli_days = Cli::try_parse_from(["osoosi", "clean", "--days", "7"]).unwrap();
+        match cli_days.command {
+            Some(Commands::Clean {
+                models,
+                aggressive,
+                days,
+            }) => {
+                assert!(!models);
+                assert!(!aggressive);
+                assert_eq!(days, 7);
+            }
+            _ => panic!("Expected Commands::Clean"),
         }
     }
 }

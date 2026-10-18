@@ -266,7 +266,11 @@ mod tests {
         }
 
         let dec = parse_security_incident_response(&resp);
-        assert_eq!(dec.verdict, "malicious");
+        assert!(
+            dec.verdict == "malicious" || dec.verdict == "critical_emergency",
+            "Verdict should be malicious or critical_emergency, got: {}",
+            dec.verdict
+        );
         assert!(dec.containment_action == "tarpit" || dec.containment_action == "isolate");
     }
 
@@ -396,5 +400,65 @@ mod tests {
 
         assert_eq!(dec.verdict, "benign");
         assert_eq!(dec.containment_action, "allow");
+    }
+
+    #[tokio::test]
+    async fn test_rl_decision_engine_catches_signed_rundll32_keymgr_credential_dump() {
+        let temp_dir = std::env::temp_dir().join(format!("clef_test_rundll32_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "hybrid".to_string();
+        cfg.hybrid_strategy = "consensus".to_string();
+        cfg.strands_endpoint = Some("http://127.0.0.1:4003".to_string());
+        cfg.openjev_endpoint = Some("http://127.0.0.1:8000".to_string());
+
+        let engine = ClefDecisionEngine::new(cfg);
+        let incident = "Process Image: C:\\Windows\\System32\\rundll32.exe | CommandLine: rundll32.exe keymgr,KRShowKeyMgr | IsSigned: true | MITRE: T1555 | Consensus Confidence: 0.95";
+        let dec = engine
+            .evaluate_security_incident(incident)
+            .await
+            .expect("Signed LOLBin evaluation must succeed");
+
+        assert_ne!(dec.verdict, "benign", "Signed rundll32 keymgr must not be classified as benign");
+        assert!(
+            dec.verdict == "malicious" || dec.verdict == "critical_emergency",
+            "Verdict must be malicious or critical_emergency, got: {}",
+            dec.verdict
+        );
+        assert!(
+            dec.containment_action == "isolate" || dec.containment_action == "tarpit",
+            "Containment action must be isolate or tarpit, got: {}",
+            dec.containment_action
+        );
+        assert!(
+            !dec.human_escalation_required,
+            "High confidence automated credential theft attack must not stall for human escalation"
+        );
+    }
+
+    #[test]
+    fn test_contextual_rl_learns_novel_credential_dump_token() {
+        let temp_dir = std::env::temp_dir().join(format!("clef_test_contextual_rl_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let engine = LocalDecisionEngine::new(&temp_dir);
+
+        let dec_id = "test-novel-token-1";
+        let state_text = "Process Image: C:\\Windows\\System32\\cmd.exe\nCommandLine: vaultcmd.exe /listcreds:all\nMITRE: T1555.004\nIsSigned: true";
+
+        // Prior to contextual feedback, learned token weight should be default or absent
+        let prior_weight = engine.learned_token_weight("vaultcmd.exe").unwrap_or(0.0);
+
+        // Record positive reinforcement for isolating this novel credential dumping behavior
+        engine.record_contextual_rl_feedback(dec_id, state_text, 1.0, "isolate");
+
+        let learned = engine.learned_token_weight("vaultcmd.exe").or_else(|| engine.learned_token_weight("vaultcmd"));
+        assert!(learned.is_some(), "Learned token weight for vaultcmd must exist after RL feedback");
+        assert!(learned.unwrap() > prior_weight, "Learned token weight must have increased");
+
+        // Verify that evaluating an incident containing the newly reinforced token reflects the learning
+        let req = build_security_incident_request("@cf/cloudflare/clef-flash", state_text);
+        let resp = engine.evaluate(&req).expect("Evaluation after contextual RL learning must succeed");
+        let dec = parse_security_incident_response(&resp);
+        assert_ne!(dec.verdict, "benign", "Incident containing learned credential dump token must not be benign");
     }
 }

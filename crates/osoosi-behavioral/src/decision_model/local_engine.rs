@@ -49,6 +49,32 @@ impl Default for LocalClefWeights {
         malicious.insert("regsvr32 /s /u".to_string(), 3.5);
         malicious.insert("ransom".to_string(), 5.0);
         malicious.insert("encrypt".to_string(), 3.0);
+        malicious.insert("keymgr".to_string(), 5.2);
+        malicious.insert("krshowkeymgr".to_string(), 5.5);
+        malicious.insert("credwiz".to_string(), 5.0);
+        malicious.insert("vaultcmd".to_string(), 5.0);
+        malicious.insert("cmdkey".to_string(), 4.2);
+        malicious.insert("comsvcs".to_string(), 5.2);
+        malicious.insert("minidump".to_string(), 5.2);
+        malicious.insert("hklm\\sam".to_string(), 5.5);
+        malicious.insert("hklm\\security".to_string(), 5.5);
+        malicious.insert("ntds.dit".to_string(), 5.5);
+        malicious.insert("ntdsutil".to_string(), 5.0);
+        malicious.insert("gsecdump".to_string(), 5.2);
+        malicious.insert("lazagne".to_string(), 5.2);
+        malicious.insert("dpapi".to_string(), 4.8);
+        malicious.insert("mimipenguin".to_string(), 5.2);
+        malicious.insert("unshadow".to_string(), 5.2);
+        malicious.insert("/etc/shadow".to_string(), 5.2);
+        malicious.insert("/etc/gshadow".to_string(), 5.2);
+        malicious.insert("/etc/master.passwd".to_string(), 5.2);
+        malicious.insert("ld.so.preload".to_string(), 5.2);
+        malicious.insert("gcore".to_string(), 4.8);
+        malicious.insert("credentialguard".to_string(), 5.0);
+        malicious.insert("processinjection".to_string(), 5.0);
+        malicious.insert("hollowshunter".to_string(), 5.0);
+        malicious.insert("t1555".to_string(), 4.8);
+        malicious.insert("t1552".to_string(), 4.5);
         malicious.insert("t1003".to_string(), 4.0);
         malicious.insert("t1055".to_string(), 4.0);
         malicious.insert("t1486".to_string(), 5.5);
@@ -81,12 +107,19 @@ impl Default for LocalClefWeights {
         let mut mitre = HashMap::new();
         mitre.insert("t1003".to_string(), 4.2);
         mitre.insert("t1003.001".to_string(), 4.5);
+        mitre.insert("t1003.002".to_string(), 5.0);
+        mitre.insert("t1003.003".to_string(), 5.0);
+        mitre.insert("t1003.007".to_string(), 5.0);
+        mitre.insert("t1003.008".to_string(), 5.0);
         mitre.insert("t1055".to_string(), 4.2);
         mitre.insert("t1055.012".to_string(), 4.5);
         mitre.insert("t1486".to_string(), 5.8);
         mitre.insert("t1014".to_string(), 4.8);
         mitre.insert("t1547".to_string(), 3.2);
         mitre.insert("t1059".to_string(), 2.5);
+        mitre.insert("t1555".to_string(), 4.8);
+        mitre.insert("t1555.004".to_string(), 5.0);
+        mitre.insert("t1552".to_string(), 4.5);
 
         Self {
             malicious_token_weights: malicious,
@@ -104,6 +137,8 @@ pub struct RlFeedbackState {
     pub temperature_delta: i64,
     pub logit_biases: HashMap<String, f64>,
     pub feedback_count: u64,
+    #[serde(default)]
+    pub learned_token_weights: HashMap<String, f64>,
 }
 
 /// Hermetic, sub-5ms local non-autoregressive Clef decision engine with RLCD feedback.
@@ -116,6 +151,7 @@ pub struct LocalDecisionEngine {
     cumulative_rl_reward_fixed: Arc<AtomicI64>,
     logit_biases: Arc<dashmap::DashMap<String, f64>>,
     temperature_delta: Arc<AtomicI64>,
+    learned_token_weights: Arc<dashmap::DashMap<String, f64>>,
 }
 
 impl LocalDecisionEngine {
@@ -126,6 +162,7 @@ impl LocalDecisionEngine {
         let logit_biases = Arc::new(dashmap::DashMap::new());
         let rl_feedback_count = Arc::new(AtomicU64::new(0));
         let temperature_delta = Arc::new(AtomicI64::new(0));
+        let learned_token_weights = Arc::new(dashmap::DashMap::new());
 
         if let Some(state) = feedback_state {
             temperature_delta.store(state.temperature_delta, Ordering::Relaxed);
@@ -133,9 +170,12 @@ impl LocalDecisionEngine {
             for (k, v) in state.logit_biases {
                 logit_biases.insert(k, v);
             }
+            for (k, v) in state.learned_token_weights {
+                learned_token_weights.insert(k, v);
+            }
             tracing::info!(
-                "[DECISION] Restored RL feedback state from disk (feedback_count={}, temperature_delta={})",
-                state.feedback_count, state.temperature_delta
+                "[DECISION] Restored RL feedback state from disk (feedback_count={}, temperature_delta={}, learned_tokens={})",
+                state.feedback_count, state.temperature_delta, learned_token_weights.len()
             );
         }
 
@@ -147,6 +187,7 @@ impl LocalDecisionEngine {
             cumulative_rl_reward_fixed: Arc::new(AtomicI64::new(0)),
             logit_biases,
             temperature_delta,
+            learned_token_weights,
         }
     }
 
@@ -279,6 +320,10 @@ impl LocalDecisionEngine {
         );
 
         // Persist RL feedback state to survive restarts
+        self.persist_rl_feedback_state();
+    }
+
+    pub fn persist_rl_feedback_state(&self) {
         let state = RlFeedbackState {
             temperature_delta: self.temperature_delta.load(Ordering::Relaxed),
             logit_biases: self
@@ -287,6 +332,11 @@ impl LocalDecisionEngine {
                 .map(|kv| (kv.key().clone(), *kv.value()))
                 .collect(),
             feedback_count: self.rl_feedback_count.load(Ordering::Relaxed),
+            learned_token_weights: self
+                .learned_token_weights
+                .iter()
+                .map(|kv| (kv.key().clone(), *kv.value()))
+                .collect(),
         };
         let target_path = if self.model_dir.exists() {
             self.model_dir.join("rl_feedback_state.json")
@@ -299,6 +349,109 @@ impl LocalDecisionEngine {
         if let Ok(json_str) = serde_json::to_string_pretty(&state) {
             let _ = std::fs::write(&target_path, json_str);
         }
+    }
+
+    /// Record contextual token Q-learning feedback from real security incidents.
+    pub fn record_contextual_rl_feedback(
+        &self,
+        decision_id: &str,
+        state_text: &str,
+        reward: f64,
+        actual_outcome: &str,
+    ) {
+        self.record_rl_feedback(decision_id, reward, actual_outcome);
+
+        let mut tokens_to_update = Vec::new();
+        for line in state_text.lines() {
+            let line_trim = line.trim();
+            if let Some(stripped) = line_trim
+                .strip_prefix("CmdLine:")
+                .or_else(|| line_trim.strip_prefix("cmdline:"))
+                .or_else(|| line_trim.strip_prefix("CommandLine:"))
+                .or_else(|| line_trim.strip_prefix("command_line:"))
+                .or_else(|| line_trim.strip_prefix("MITRE:"))
+                .or_else(|| line_trim.strip_prefix("mitre:"))
+                .or_else(|| line_trim.strip_prefix("Reason:"))
+                .or_else(|| line_trim.strip_prefix("reason:"))
+            {
+                for raw_tok in stripped.split(|c: char| {
+                    c.is_whitespace()
+                        || c == ','
+                        || c == ':'
+                        || c == '"'
+                        || c == '\''
+                        || c == '/'
+                        || c == '\\'
+                        || c == ';'
+                        || c == '|'
+                }) {
+                    let tok = raw_tok.trim().to_lowercase();
+                    let is_noise = matches!(
+                        tok.as_str(),
+                        "windows"
+                            | "system32"
+                            | "syswow64"
+                            | "program"
+                            | "files"
+                            | "rundll32"
+                            | "rundll32.exe"
+                            | "cmd.exe"
+                            | "powershell"
+                            | "powershell.exe"
+                            | "target"
+                            | "incident"
+                            | "process"
+                            | "cmdline"
+                            | "signed"
+                            | "true"
+                            | "false"
+                            | "none"
+                            | "nominal"
+                            | "null"
+                            | "undefined"
+                    );
+                    if tok.len() >= 4 && !is_noise && !tokens_to_update.contains(&tok) {
+                        tokens_to_update.push(tok);
+                    }
+                }
+            }
+        }
+
+        let delta = if reward >= 0.0
+            && matches!(
+                actual_outcome.to_ascii_lowercase().as_str(),
+                "malicious"
+                    | "critical_emergency"
+                    | "isolate"
+                    | "quarantine"
+                    | "tarpit"
+                    | "ghost_tarpit"
+            ) {
+            reward.abs() * 0.85
+        } else if reward < 0.0
+            || matches!(
+                actual_outcome.to_ascii_lowercase().as_str(),
+                "benign" | "allow"
+            ) {
+            -reward.abs().max(0.5) * 0.65
+        } else {
+            0.0
+        };
+
+        if delta.abs() > 0.0 {
+            for tok in tokens_to_update {
+                let mut entry = self.learned_token_weights.entry(tok).or_insert(0.0);
+                *entry = (*entry + delta).clamp(-4.0, 6.5);
+            }
+        }
+
+        self.persist_rl_feedback_state();
+    }
+
+    /// Retrieve learned contextual RL token weight if present.
+    pub fn learned_token_weight(&self, token: &str) -> Option<f64> {
+        let tok_lower = token.trim().to_lowercase();
+        self.learned_token_weights.get(&tok_lower).map(|v| *v)
     }
 
     pub fn rl_feedback_count(&self) -> u64 {
@@ -393,8 +546,19 @@ impl LocalDecisionEngine {
             }
         }
 
+        let mut consensus_confidence = 0.0f64;
+        for line in request.state.lines() {
+            let line_trim = line.trim();
+            if let Some(stripped) = line_trim.strip_prefix("Confidence:") {
+                if let Ok(c) = stripped.trim().parse::<f64>() {
+                    consensus_confidence = c;
+                }
+            }
+        }
+
         // 1. Compute composite feature evidence
         let mut mal_score = 0.0f64;
+        let mut ben_score = 0.0f64;
         for (token, &weight) in &self.weights.malicious_token_weights {
             if token == "inject" {
                 let has_inj = state_lower.contains("inject.exe")
@@ -413,7 +577,26 @@ impl LocalDecisionEngine {
             }
         }
 
-        let mut ben_score = 0.0f64;
+        for entry in self.learned_token_weights.iter() {
+            if state_lower.contains(entry.key().as_str()) {
+                if *entry.value() > 0.0 {
+                    mal_score += *entry.value();
+                } else {
+                    ben_score += entry.value().abs();
+                }
+            }
+        }
+
+        let mut mitre_boost = 0.0f64;
+        for (tech, &weight) in &self.weights.mitre_technique_weights {
+            if state_lower.contains(tech) {
+                mitre_boost = mitre_boost.max(weight);
+            }
+        }
+        mal_score += mitre_boost;
+
+        let is_lolbin_attack = mal_score >= 3.5 || mitre_boost >= 3.5;
+
         if !injection_detected {
             for (token, &weight) in &self.weights.benign_token_weights {
                 let is_binary_token = token.ends_with(".exe")
@@ -437,7 +620,7 @@ impl LocalDecisionEngine {
                         ben_score += weight;
                     }
                 } else if token == "signed: true" || token == "issigned: true" {
-                    if is_signed {
+                    if is_signed && !is_lolbin_attack {
                         ben_score += weight;
                     }
                 } else if token == "invariants: nominal" {
@@ -454,19 +637,14 @@ impl LocalDecisionEngine {
             }
         }
 
-        let mut mitre_boost = 0.0f64;
-        for (tech, &weight) in &self.weights.mitre_technique_weights {
-            if state_lower.contains(tech) {
-                mitre_boost = mitre_boost.max(weight);
-            }
-        }
-        mal_score += mitre_boost;
-
         if is_unsigned {
             mal_score += 1.5;
         }
-        if is_signed && !injection_detected {
+        if is_signed && !injection_detected && !is_lolbin_attack {
             ben_score += 2.0;
+        }
+        if consensus_confidence >= 0.90 && is_lolbin_attack {
+            mal_score += 1.5;
         }
 
         if injection_detected {
@@ -678,13 +856,13 @@ impl LocalDecisionEngine {
         let prob: f64 = if q_name == "human_escalation" {
             if injection_detected {
                 1.0
+            } else if mal_score >= 5.0 {
+                // High confidence automated attack containment does not stall for human
+                0.08
             } else if state_lower.contains("defer")
                 || (mal_score > 2.0 && mal_score < 4.0 && ben_score > 1.5)
             {
                 0.85
-            } else if mal_score >= 6.0 {
-                // High confidence automated attack containment does not stall for human
-                0.08
             } else {
                 0.15
             }

@@ -59,6 +59,11 @@ impl MemoryScanner {
         None
     }
 
+    /// Analyze buffer using Goblin and Magika (alias for scan_buffer).
+    pub async fn analyze_buffer(&self, buffer: &[u8]) -> Option<String> {
+        self.scan_buffer(buffer).await
+    }
+
     /// Scan a process's memory regions (Platform specific).
     #[cfg(target_os = "windows")]
     pub async fn scan_process_memory(&self, pid: u32) -> anyhow::Result<Vec<String>> {
@@ -130,11 +135,83 @@ impl MemoryScanner {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub async fn scan_process_memory(&self, _pid: u32) -> anyhow::Result<Vec<String>> {
-        // Linux/macOS memory scanning would involve /proc/pid/maps or vm_read
-        Ok(vec![
-            "Memory scanning for this OS is not yet implemented".to_string()
-        ])
+    pub async fn scan_process_memory(&self, pid: u32) -> anyhow::Result<Vec<String>> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let maps_path = format!("/proc/{}/maps", pid);
+        let mem_path = format!("/proc/{}/mem", pid);
+
+        let maps_content = match std::fs::read_to_string(&maps_path) {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut mem_file = match std::fs::File::open(&mem_path) {
+            Ok(f) => Some(f),
+            Err(_) => None,
+        };
+
+        let mut results = Vec::new();
+
+        for line in maps_content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue;
+            }
+
+            let range_parts: Vec<&str> = parts[0].split('-').collect();
+            if range_parts.len() != 2 {
+                continue;
+            }
+
+            let start = match usize::from_str_radix(range_parts[0], 16) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let end = match usize::from_str_radix(range_parts[1], 16) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let perms = parts[1];
+            let pathname = if parts.len() >= 6 {
+                parts[5..].join(" ")
+            } else {
+                String::new()
+            };
+
+            let is_rwx = perms.starts_with("rwx");
+            let is_memfd = pathname.contains("memfd:");
+            let is_deleted = pathname.contains("(deleted)");
+            let is_exec = perms.contains('x');
+
+            if is_rwx || is_memfd || is_deleted || is_exec {
+                let region_size = end.saturating_sub(start);
+                let to_read = region_size.min(2 * 1024 * 1024); // up to 2MB
+
+                if let Some(ref mut file) = mem_file {
+                    if file.seek(SeekFrom::Start(start as u64)).is_ok() {
+                        let mut buf = vec![0u8; to_read];
+                        if let Ok(bytes_read) = file.read(&mut buf) {
+                            if bytes_read > 0 {
+                                if let Some(detection) = self.analyze_buffer(&buf[..bytes_read]).await {
+                                    results.push(format!(
+                                        "Detection at {:#x} (perms={}, path={}): {}",
+                                        start, perms, pathname, detection
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if is_rwx {
+                    results.push(format!("RWX Mapping Detected at {:#x}-{:#x}: {}", start, end, pathname));
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     /// Scans a process's threads for unbacked execution (threads starting in MEM_PRIVATE/MEM_MAPPED)
@@ -363,9 +440,63 @@ impl MemoryScanner {
     #[cfg(not(target_os = "windows"))]
     pub fn scan_unbacked_threads(
         &self,
-        _pid: u32,
+        pid: u32,
     ) -> anyhow::Result<Vec<UnbackedExecutionFinding>> {
-        Ok(Vec::new())
+        let maps_path = format!("/proc/{}/maps", pid);
+        let maps_content = match std::fs::read_to_string(&maps_path) {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut findings = Vec::new();
+
+        for line in maps_content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 2 {
+                continue;
+            }
+
+            let range_parts: Vec<&str> = parts[0].split('-').collect();
+            if range_parts.len() != 2 {
+                continue;
+            }
+
+            let start = match usize::from_str_radix(range_parts[0], 16) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let end = match usize::from_str_radix(range_parts[1], 16) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            let perms = parts[1];
+            let pathname = if parts.len() >= 6 {
+                parts[5..].join(" ")
+            } else {
+                String::new()
+            };
+
+            let is_exec = perms.contains('x');
+            let is_rwx = perms.starts_with("rwx");
+            let is_anon = pathname.is_empty() || pathname == "[heap]" || pathname == "[stack]" || pathname.contains("memfd:");
+
+            if is_exec && (is_rwx || is_anon) {
+                findings.push(UnbackedExecutionFinding {
+                    pid,
+                    thread_id: pid,
+                    address: start,
+                    memory_type: 0x20000, // MEM_PRIVATE equivalent
+                    protection: if is_rwx { 0x40 /* PAGE_EXECUTE_READWRITE */ } else { 0x20 /* PAGE_EXECUTE_READ */ },
+                    details: format!(
+                        "Unbacked executable mapping at {:#x}-{:#x} (perms={}, path={})",
+                        start, end, perms, pathname
+                    ),
+                });
+            }
+        }
+
+        Ok(findings)
     }
 }
 
