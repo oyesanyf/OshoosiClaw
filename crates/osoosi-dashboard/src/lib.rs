@@ -1017,7 +1017,8 @@ async fn auth_middleware(
 
     if !is_state_changing || auth_disabled {
         let mut resp = next.run(req).await;
-        if method == Method::GET && (path == "/" || path == "/index.html" || path == "/api/status")
+        if method == Method::GET
+            && (path == "/" || path == "/index.html" || path.starts_with("/api/"))
         {
             let tok = get_or_init_dashboard_api_token();
             let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", tok);

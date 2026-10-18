@@ -1,3 +1,5 @@
+#![allow(linker_messages)]
+
 use libp2p::{
     identify, relay, PeerId, SwarmBuilder,
 };
@@ -45,8 +47,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             libp2p::swarm::SwarmEvent::NewListenAddr { address, .. } => {
                 info!("Local node is listening on {}", address);
             }
-            libp2p::swarm::SwarmEvent::Behaviour(event) => {
-                info!("Behaviour Event: {:?}", event);
+            libp2p::swarm::SwarmEvent::Behaviour(BehaviourEvent::Relay(relay_event)) => {
+                info!("Relay Event: {:?}", relay_event);
+            }
+            libp2p::swarm::SwarmEvent::Behaviour(BehaviourEvent::Identify(identify_event)) => {
+                info!("Identify Event: {:?}", identify_event);
             }
             _ => {}
         }
