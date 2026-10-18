@@ -271,7 +271,9 @@ impl KernelDriverClient {
 
         #[cfg(not(windows))]
         {
-            info!("[KERNEL_DRIVER] Connected to cross-platform user-space kernel blocklist engine.");
+            info!(
+                "[KERNEL_DRIVER] Connected to cross-platform user-space kernel blocklist engine."
+            );
             Some(Self {
                 state: get_unix_kernel_state(),
             })
@@ -327,8 +329,18 @@ impl KernelDriverClient {
             use std::sync::atomic::Ordering;
             let mode_val = self.state.mode.load(Ordering::SeqCst);
             let blocked = self.state.blocked_count.load(Ordering::SeqCst);
-            let p_len = self.state.blocked_paths.read().map(|p| p.len()).unwrap_or(0);
-            let h_len = self.state.blocked_hashes.read().map(|h| h.len()).unwrap_or(0);
+            let p_len = self
+                .state
+                .blocked_paths
+                .read()
+                .map(|p| p.len())
+                .unwrap_or(0);
+            let h_len = self
+                .state
+                .blocked_hashes
+                .read()
+                .map(|h| h.len())
+                .unwrap_or(0);
             Ok(KernelDriverStatus {
                 version: 0x010200,
                 mode: DriverAutonomyMode::from(mode_val),
@@ -411,7 +423,10 @@ impl KernelDriverClient {
                     paths.push(normalized.clone());
                 }
             }
-            info!("[KERNEL_DRIVER] Added pre-exec block rule for path: {}", path);
+            info!(
+                "[KERNEL_DRIVER] Added pre-exec block rule for path: {}",
+                path
+            );
             Ok(())
         }
     }

@@ -868,9 +868,6 @@ pub struct LinuxFsVerityMeasurement {
     pub error: Option<String>,
 }
 
-/// Measures Linux `fs-verity` Merkle digest directly from kernel inode via ioctls:
-/// - `FS_IOC_GETFLAGS` (0x80086601) checking `FS_VERITY_FL` (0x00100000)
-/// - `FS_IOC_MEASURE_VERITY` (0xC0046686 / 0xC0806686) querying `fsverity_digest`
 /// Computes a user-space 4 KB block-level fs-verity Merkle tree digest.
 pub fn compute_fallback_fs_verity_merkle(path: &Path) -> LinuxFsVerityMeasurement {
     let path_str = path.to_string_lossy().to_string();
@@ -1007,28 +1004,60 @@ pub fn extract_pe64_code_segment(pe_bytes: &[u8]) -> Option<(u64, usize, usize, 
     }
 
     let file_header_offset = e_lfanew + 4;
-    let _machine = u16::from_le_bytes(pe_bytes[file_header_offset..file_header_offset + 2].try_into().ok()?);
-    let num_sections = u16::from_le_bytes(pe_bytes[file_header_offset + 2..file_header_offset + 4].try_into().ok()?) as usize;
-    let size_of_opt_header = u16::from_le_bytes(pe_bytes[file_header_offset + 16..file_header_offset + 18].try_into().ok()?) as usize;
+    let _machine = u16::from_le_bytes(
+        pe_bytes[file_header_offset..file_header_offset + 2]
+            .try_into()
+            .ok()?,
+    );
+    let num_sections = u16::from_le_bytes(
+        pe_bytes[file_header_offset + 2..file_header_offset + 4]
+            .try_into()
+            .ok()?,
+    ) as usize;
+    let size_of_opt_header = u16::from_le_bytes(
+        pe_bytes[file_header_offset + 16..file_header_offset + 18]
+            .try_into()
+            .ok()?,
+    ) as usize;
 
     let opt_header_offset = file_header_offset + 20;
     if opt_header_offset + size_of_opt_header > pe_bytes.len() || size_of_opt_header < 68 {
         return None;
     }
 
-    let magic = u16::from_le_bytes(pe_bytes[opt_header_offset..opt_header_offset + 2].try_into().ok()?);
+    let magic = u16::from_le_bytes(
+        pe_bytes[opt_header_offset..opt_header_offset + 2]
+            .try_into()
+            .ok()?,
+    );
     let (image_base, is_pie) = if magic == 0x20B {
-        let ib = u64::from_le_bytes(pe_bytes[opt_header_offset + 24..opt_header_offset + 32].try_into().ok()?);
+        let ib = u64::from_le_bytes(
+            pe_bytes[opt_header_offset + 24..opt_header_offset + 32]
+                .try_into()
+                .ok()?,
+        );
         let dll_chars = if size_of_opt_header >= 72 {
-            u16::from_le_bytes(pe_bytes[opt_header_offset + 70..opt_header_offset + 72].try_into().ok()?)
+            u16::from_le_bytes(
+                pe_bytes[opt_header_offset + 70..opt_header_offset + 72]
+                    .try_into()
+                    .ok()?,
+            )
         } else {
             0
         };
         (ib, (dll_chars & 0x0040) != 0)
     } else if magic == 0x10B {
-        let ib = u32::from_le_bytes(pe_bytes[opt_header_offset + 28..opt_header_offset + 32].try_into().ok()?) as u64;
+        let ib = u32::from_le_bytes(
+            pe_bytes[opt_header_offset + 28..opt_header_offset + 32]
+                .try_into()
+                .ok()?,
+        ) as u64;
         let dll_chars = if size_of_opt_header >= 72 {
-            u16::from_le_bytes(pe_bytes[opt_header_offset + 70..opt_header_offset + 72].try_into().ok()?)
+            u16::from_le_bytes(
+                pe_bytes[opt_header_offset + 70..opt_header_offset + 72]
+                    .try_into()
+                    .ok()?,
+            )
         } else {
             0
         };
@@ -1045,16 +1074,31 @@ pub fn extract_pe64_code_segment(pe_bytes: &[u8]) -> Option<(u64, usize, usize, 
         }
 
         let name = &pe_bytes[sec_offset..sec_offset + 8];
-        let _virtual_size = u32::from_le_bytes(pe_bytes[sec_offset + 8..sec_offset + 12].try_into().ok()?) as usize;
-        let virtual_address = u32::from_le_bytes(pe_bytes[sec_offset + 12..sec_offset + 16].try_into().ok()?);
-        let size_of_raw_data = u32::from_le_bytes(pe_bytes[sec_offset + 16..sec_offset + 20].try_into().ok()?) as usize;
-        let pointer_to_raw_data = u32::from_le_bytes(pe_bytes[sec_offset + 20..sec_offset + 24].try_into().ok()?) as usize;
-        let characteristics = u32::from_le_bytes(pe_bytes[sec_offset + 36..sec_offset + 40].try_into().ok()?);
+        let _virtual_size =
+            u32::from_le_bytes(pe_bytes[sec_offset + 8..sec_offset + 12].try_into().ok()?) as usize;
+        let virtual_address =
+            u32::from_le_bytes(pe_bytes[sec_offset + 12..sec_offset + 16].try_into().ok()?);
+        let size_of_raw_data =
+            u32::from_le_bytes(pe_bytes[sec_offset + 16..sec_offset + 20].try_into().ok()?)
+                as usize;
+        let pointer_to_raw_data =
+            u32::from_le_bytes(pe_bytes[sec_offset + 20..sec_offset + 24].try_into().ok()?)
+                as usize;
+        let characteristics =
+            u32::from_le_bytes(pe_bytes[sec_offset + 36..sec_offset + 40].try_into().ok()?);
 
         let is_text = name.starts_with(b".text") || (characteristics & 0x20000000) != 0;
-        if is_text && pointer_to_raw_data + size_of_raw_data <= pe_bytes.len() && size_of_raw_data > 0 {
+        if is_text
+            && pointer_to_raw_data + size_of_raw_data <= pe_bytes.len()
+            && size_of_raw_data > 0
+        {
             let preferred_base_va = image_base.saturating_add(virtual_address as u64);
-            return Some((preferred_base_va, pointer_to_raw_data, size_of_raw_data, is_pie));
+            return Some((
+                preferred_base_va,
+                pointer_to_raw_data,
+                size_of_raw_data,
+                is_pie,
+            ));
         }
     }
 
@@ -1355,7 +1399,8 @@ impl NsrlAslrMerkleGuard {
                     &[],
                 );
                 code_root = root;
-            } else if let Some((p_base, offset, size, _is_pie)) = extract_pe64_code_segment(&bytes) {
+            } else if let Some((p_base, offset, size, _is_pie)) = extract_pe64_code_segment(&bytes)
+            {
                 pref_base = p_base;
                 let code_slice = &bytes[offset..offset + size];
                 let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(

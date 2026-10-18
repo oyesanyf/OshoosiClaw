@@ -25,7 +25,10 @@ fn test_stress_empty_tokens_zero_panic() {
         loop_count += 1;
         let _ = last;
     }
-    assert_eq!(loop_count, 0, "Loop must immediately break when tokens empty");
+    assert_eq!(
+        loop_count, 0,
+        "Loop must immediately break when tokens empty"
+    );
 
     // Stress test with tokens that get drained to empty
     all_tokens.push(101);
@@ -40,7 +43,10 @@ fn test_stress_empty_tokens_zero_panic() {
         let _ = last;
         all_tokens.pop();
     }
-    assert_eq!(drained_count, 2, "Must process 2 tokens and cleanly break on empty");
+    assert_eq!(
+        drained_count, 2,
+        "Must process 2 tokens and cleanly break on empty"
+    );
     assert!(all_tokens.is_empty());
 }
 
@@ -81,20 +87,20 @@ fn test_stress_incomplete_xml_and_token_delimiters_zero_panic() {
     // Stress test cases targeting iterator exhaustion and zero-panic behavior:
     let bracket_flood = "[".repeat(50_000);
     let malformed_inputs = vec![
-        "",                                         // Empty input
-        "[",                                        // Single unclosed bracket at EOF
-        "[[",                                       // Consecutive unclosed brackets
-        "[[[[[[[[[[",                              // Deeply nested unclosed brackets
-        "[unclosed tag at end of string",          // Unclosed tag with text
-        "prefix text without tags",                 // No brackets
-        "[]",                                       // Empty bracket
-        "[   ]",                                    // Whitespace bracket
-        "[Veto: Malicious Activity]",               // Filtered Veto prefix
-        "[Tags: MITRE T1059]",                      // Filtered Tags prefix
-        "[voter_a] [voter_b] [voter_a]",            // Valid tags with duplicate
-        "[voter_c] trailing text without closing [",// Valid tag followed by unclosed bracket at EOF
+        "",                                                       // Empty input
+        "[",                                                      // Single unclosed bracket at EOF
+        "[[",                                                     // Consecutive unclosed brackets
+        "[[[[[[[[[[",                                             // Deeply nested unclosed brackets
+        "[unclosed tag at end of string",                         // Unclosed tag with text
+        "prefix text without tags",                               // No brackets
+        "[]",                                                     // Empty bracket
+        "[   ]",                                                  // Whitespace bracket
+        "[Veto: Malicious Activity]",                             // Filtered Veto prefix
+        "[Tags: MITRE T1059]",                                    // Filtered Tags prefix
+        "[voter_a] [voter_b] [voter_a]",                          // Valid tags with duplicate
+        "[voter_c] trailing text without closing [", // Valid tag followed by unclosed bracket at EOF
         "corrupted stream [valid1] and [valid2] with unclosed [", // Corrupted stream ending with EOF
-        bracket_flood.as_str(),                     // Massive adversarial unclosed bracket flood (50,000 brackets)
+        bracket_flood.as_str(), // Massive adversarial unclosed bracket flood (50,000 brackets)
     ];
 
     for input in malformed_inputs {
@@ -108,7 +114,10 @@ fn test_stress_incomplete_xml_and_token_delimiters_zero_panic() {
             assert_eq!(voters.len(), 2, "Duplicate voter_a must be deduplicated");
         }
         if input == "[Veto: Malicious Activity]" || input == "[Tags: MITRE T1059]" {
-            assert!(voters.is_empty(), "Veto and Tags prefixes must be filtered out");
+            assert!(
+                voters.is_empty(),
+                "Veto and Tags prefixes must be filtered out"
+            );
         }
     }
 }
@@ -125,8 +134,8 @@ fn test_stress_empty_candidate_vectors_agentic_zero_panic() {
         serde_json::json!({ "command": "" }),
         serde_json::json!({ "command": "   ", "path": "" }),
         serde_json::json!({ "arg1": "", "arg2": "", "nested": { "empty": "" } }),
-        serde_json::json!({ "b64": "====" }),       // Invalid padding only base64
-        serde_json::json!({ "b64": "A==" }),       // Incomplete base64
+        serde_json::json!({ "b64": "====" }), // Invalid padding only base64
+        serde_json::json!({ "b64": "A==" }),  // Incomplete base64
         serde_json::json!({ "b64": "not_base64!!" }),
         serde_json::json!({ "null_field": null, "numeric": 12345, "bool": false }),
         serde_json::json!({ "list": ["", "   ", "valid_benign_arg"] }),
@@ -155,7 +164,8 @@ fn test_stress_arc_get_mut_contention_zero_panic() {
     // Tests crates/osoosi-core/src/lib.rs:3081
     // Previously: Arc::get_mut(&mut policy).expect("policy must have unique ownership")
     // Now: if let Some(p) = Arc::get_mut(&mut policy) { ... }
-    let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("valid sqlite in-memory"));
+    let memory =
+        Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("valid sqlite in-memory"));
     let config = osoosi_types::PolicyConfig::default();
     let mut policy = Arc::new(PolicyEngine::new(memory, config));
 
@@ -168,21 +178,30 @@ fn test_stress_arc_get_mut_contention_zero_panic() {
     if let Some(_p) = Arc::get_mut(&mut policy) {
         modified = true;
     }
-    assert!(!modified, "Arc::get_mut must return None when multiple references exist");
+    assert!(
+        !modified,
+        "Arc::get_mut must return None when multiple references exist"
+    );
 
     // Drop first clone; second clone still held
     drop(clone_1);
     if let Some(_p) = Arc::get_mut(&mut policy) {
         modified = true;
     }
-    assert!(!modified, "Arc::get_mut must return None when one external clone still held");
+    assert!(
+        !modified,
+        "Arc::get_mut must return None when one external clone still held"
+    );
 
     // Drop second clone; now sole owner
     drop(clone_2);
     if let Some(_p) = Arc::get_mut(&mut policy) {
         modified = true;
     }
-    assert!(modified, "Arc::get_mut must succeed when sole ownership is restored");
+    assert!(
+        modified,
+        "Arc::get_mut must succeed when sole ownership is restored"
+    );
 }
 
 /// 5. Empirically verify None cf_client handling in ClefDecisionEngine.
@@ -198,7 +217,7 @@ async fn test_stress_none_cf_client_zero_panic() {
     let mut config = DecisionModelConfig::default();
     config.enabled = true;
     config.provider = "cloudflare".to_string(); // Request cloudflare provider
-    config.cloudflare_account_id = None;        // No credentials provided -> cf_client is None
+    config.cloudflare_account_id = None; // No credentials provided -> cf_client is None
     config.cloudflare_api_token = None;
     config.fallback_to_local = true;
     config.model_dir = temp_dir.to_string_lossy().to_string();
@@ -210,7 +229,10 @@ async fn test_stress_none_cf_client_zero_panic() {
     let result = engine.evaluate_security_incident(incident).await;
 
     // Must return an Ok decision via local engine fallback with ZERO panics
-    assert!(result.is_ok(), "Engine must cleanly fall back to local engine without panic");
+    assert!(
+        result.is_ok(),
+        "Engine must cleanly fall back to local engine without panic"
+    );
     let decision = result.unwrap();
     assert_eq!(decision.verdict, "benign");
     assert_eq!(decision.containment_action, "allow");
@@ -233,14 +255,22 @@ fn test_stress_anonymize_reason_concurrency_and_performance() {
 
     // 1. Correctness on diverse path formats
     let test_cases = vec![
-        ("Detected ransomware at C:\\Users\\Administrator\\Desktop\\ransom.exe; in memory",
-         "Detected ransomware at <PATH>; in memory"),
-        ("Script execution /var/tmp/reverse_shell.sh via cron",
-         "Script execution <PATH> via cron"),
-        ("Dual execution: C:\\tools\\nc.exe, and /usr/local/bin/backdoor",
-         "Dual execution: <PATH>, and <PATH>"),
-        ("Clean message with no paths: suspicious behavior observed on port 4444",
-         "Clean message with no paths: suspicious behavior observed on port 4444"),
+        (
+            "Detected ransomware at C:\\Users\\Administrator\\Desktop\\ransom.exe; in memory",
+            "Detected ransomware at <PATH>; in memory",
+        ),
+        (
+            "Script execution /var/tmp/reverse_shell.sh via cron",
+            "Script execution <PATH> via cron",
+        ),
+        (
+            "Dual execution: C:\\tools\\nc.exe, and /usr/local/bin/backdoor",
+            "Dual execution: <PATH>, and <PATH>",
+        ),
+        (
+            "Clean message with no paths: suspicious behavior observed on port 4444",
+            "Clean message with no paths: suspicious behavior observed on port 4444",
+        ),
         ("", ""),
     ];
 

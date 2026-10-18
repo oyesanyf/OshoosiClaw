@@ -222,7 +222,8 @@ impl AgentProvisioner {
                     let _ = std::fs::remove_file(&zip_path);
                     return Err(anyhow::anyhow!(
                         "Sysmon.zip hash verification failed: expected {}, found {}",
-                        expected, zip_sha256
+                        expected,
+                        zip_sha256
                     ));
                 }
             }
@@ -261,7 +262,9 @@ impl AgentProvisioner {
                         bin_hash
                     );
                 } else {
-                    return Err(anyhow::anyhow!("Sysmon executable not found after extraction"));
+                    return Err(anyhow::anyhow!(
+                        "Sysmon executable not found after extraction"
+                    ));
                 }
             }
         } else {
@@ -1007,7 +1010,10 @@ impl AgentProvisioner {
             let zip_bytes = std::fs::read(&zip_path)?;
             use sha2::{Digest, Sha256};
             let actual_hash = hex::encode(Sha256::digest(&zip_bytes));
-            info!("Downloaded YARA rules archive for '{}' SHA-256: {}", name, actual_hash);
+            info!(
+                "Downloaded YARA rules archive for '{}' SHA-256: {}",
+                name, actual_hash
+            );
             let env_var_name = format!("OSOOSI_YARA_{}_SHA256", name.to_uppercase());
             if let Ok(expected) = std::env::var(&env_var_name) {
                 if !actual_hash.eq_ignore_ascii_case(&expected) {
@@ -1470,17 +1476,23 @@ impl AgentProvisioner {
         if m_bytes.len() < 1024 {
             warn!("Downloaded MalConv weights are suspiciously small ({} bytes). Check HF_TOKEN or repository existence.", m_bytes.len());
             let _ = std::fs::remove_file(&weight_path);
-            return Err(anyhow::anyhow!("MalConv weights download failed: file too small"));
+            return Err(anyhow::anyhow!(
+                "MalConv weights download failed: file too small"
+            ));
         }
         use sha2::{Digest, Sha256};
         let actual_hash = hex::encode(Sha256::digest(&m_bytes));
-        info!("MalConv weights provisioned and verified (SHA-256: {}).", actual_hash);
+        info!(
+            "MalConv weights provisioned and verified (SHA-256: {}).",
+            actual_hash
+        );
         if let Ok(expected) = std::env::var("OSOOSI_MALCONV_SHA256") {
             if !actual_hash.eq_ignore_ascii_case(&expected) {
                 let _ = std::fs::remove_file(&weight_path);
                 return Err(anyhow::anyhow!(
                     "MalConv weights cryptographic verification failed: expected {}, found {}",
-                    expected, actual_hash
+                    expected,
+                    actual_hash
                 ));
             }
         }
@@ -1524,7 +1536,8 @@ impl AgentProvisioner {
                     let _ = std::fs::remove_file(&model_path);
                     return Err(anyhow::anyhow!(
                         "SmolLM2 model weights hash mismatch: expected {}, found {}",
-                        expected, actual_hash
+                        expected,
+                        actual_hash
                     ));
                 }
             }
@@ -1544,7 +1557,8 @@ impl AgentProvisioner {
                     let _ = std::fs::remove_file(&tokenizer_path);
                     return Err(anyhow::anyhow!(
                         "SmolLM2 tokenizer hash mismatch: expected {}, found {}",
-                        expected, actual_hash
+                        expected,
+                        actual_hash
                     ));
                 }
             }

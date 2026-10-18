@@ -954,7 +954,10 @@ impl ThreatFeedFetcher {
             // Cryptographic SHA-256 verification
             use sha2::{Digest, Sha256};
             let actual_sha256 = hex::encode(Sha256::digest(&bytes));
-            info!("Computed SHA-256 for downloaded NSRL archive {}: {}", url, actual_sha256);
+            info!(
+                "Computed SHA-256 for downloaded NSRL archive {}: {}",
+                url, actual_sha256
+            );
 
             let expected_hash = std::env::var("OSOOSI_NSRL_SHA256").ok();
             let mut verified = false;
@@ -971,7 +974,10 @@ impl ThreatFeedFetcher {
                     ));
                     continue;
                 }
-                info!("Verified NSRL archive against configured SHA-256: {}", expected);
+                info!(
+                    "Verified NSRL archive against configured SHA-256: {}",
+                    expected
+                );
                 verified = true;
             } else {
                 let sha_url = format!("{}.sha256", url);
@@ -992,7 +998,10 @@ impl ThreatFeedFetcher {
                                     ));
                                     continue;
                                 }
-                                info!("Verified NSRL archive against published manifest: {}", expected);
+                                info!(
+                                    "Verified NSRL archive against published manifest: {}",
+                                    expected
+                                );
                                 verified = true;
                             }
                         }
@@ -1018,7 +1027,12 @@ impl ThreatFeedFetcher {
                 let mut file = std::fs::File::create(&zip_path)?;
                 file.write_all(&bytes)?;
             }
-            info!("Download complete and verified ({} bytes, SHA-256={}) from {}.", bytes.len(), actual_sha256, url);
+            info!(
+                "Download complete and verified ({} bytes, SHA-256={}) from {}.",
+                bytes.len(),
+                actual_sha256,
+                url
+            );
 
             info!("Step 2: Extracting database...");
             let file = std::fs::File::open(&zip_path)?;
@@ -1479,14 +1493,20 @@ impl ThreatFeedFetcher {
                         }
                     }
                     if let Some(e) = hash_err {
-                        error!("[NSRL Background] Failed streaming SHA-256 on {:?}: {}", zip_path, e);
+                        error!(
+                            "[NSRL Background] Failed streaming SHA-256 on {:?}: {}",
+                            zip_path, e
+                        );
                         last_error = Some(e.into());
                         continue;
                     }
                     hex::encode(hasher.finalize())
                 };
 
-                info!("[NSRL Background] Computed SHA-256 for {:?}: {}", zip_path, actual_sha256);
+                info!(
+                    "[NSRL Background] Computed SHA-256 for {:?}: {}",
+                    zip_path, actual_sha256
+                );
 
                 let expected_hash = std::env::var("OSOOSI_NSRL_SHA256").ok();
                 let mut verified = false;
@@ -1501,18 +1521,23 @@ impl ThreatFeedFetcher {
                         let _ = std::fs::remove_file(&state_path);
                         last_error = Some(anyhow::anyhow!(
                             "NSRL cryptographic verification failed: expected {}, found {}",
-                            expected, actual_sha256
+                            expected,
+                            actual_sha256
                         ));
                         continue;
                     }
-                    info!("[NSRL Background] Verified NSRL archive against configured SHA-256: {}", expected);
+                    info!(
+                        "[NSRL Background] Verified NSRL archive against configured SHA-256: {}",
+                        expected
+                    );
                     verified = true;
                 } else {
                     let sha_url = format!("{}.sha256", url);
                     if let Ok(sha_resp) = download_client.get(&sha_url).send().await {
                         if sha_resp.status().is_success() {
                             if let Ok(sha_text) = sha_resp.text().await {
-                                let expected = sha_text.split_whitespace().next().unwrap_or("").trim();
+                                let expected =
+                                    sha_text.split_whitespace().next().unwrap_or("").trim();
                                 if !expected.is_empty() {
                                     if !actual_sha256.eq_ignore_ascii_case(expected) {
                                         error!(

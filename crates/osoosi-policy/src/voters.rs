@@ -784,7 +784,9 @@ pub(crate) fn extract_all_candidate_hashes(event: &HostSecurityEvent) -> Vec<Str
             }
         }
     }
-    for field in &["SHA1", "sha1", "SHA256", "sha256", "MD5", "md5", "Hash", "hash", "blake3"] {
+    for field in &[
+        "SHA1", "sha1", "SHA256", "sha256", "MD5", "md5", "Hash", "hash", "blake3",
+    ] {
         if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
             let trimmed = val.trim().to_ascii_lowercase();
             if !trimmed.is_empty() && !hashes.contains(&trimmed) {
@@ -2234,7 +2236,8 @@ impl ThreatVoter for CredentialGuardVoter {
         // Vector 2: Windows Credential Manager, Vault, DPAPI & GUI/DLL Applets (T1003 / T1555.004)
         if cmdline.contains("keymgr.dll")
             || cmdline.contains("krshowkeymgr")
-            || ((image.contains("rundll32") || cmdline.contains("rundll32")) && cmdline.contains("keymgr"))
+            || ((image.contains("rundll32") || cmdline.contains("rundll32"))
+                && cmdline.contains("keymgr"))
         {
             return Some(VoteResult {
                 confidence: 0.98,
@@ -2484,9 +2487,18 @@ impl ThreatVoter for CredentialGuardVoter {
         // Vector 7: Linux & Cross-Platform Local Credential Dumping & Post-Compromise Extraction (T1003.007 / T1003.008 / T1552)
         // 7a. Dedicated Linux credential dumpers
         let linux_dumpers = [
-            "mimipenguin", "lazagne", "unshadow", "linpeas", "linuxprivchecker", "sudokill", "3snake",
+            "mimipenguin",
+            "lazagne",
+            "unshadow",
+            "linpeas",
+            "linuxprivchecker",
+            "sudokill",
+            "3snake",
         ];
-        if linux_dumpers.iter().any(|d| image.contains(d) || cmdline.contains(d)) {
+        if linux_dumpers
+            .iter()
+            .any(|d| image.contains(d) || cmdline.contains(d))
+        {
             return Some(VoteResult {
                 confidence: 0.98,
                 reason: format!(
@@ -2498,19 +2510,41 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         // 7b. Unauthorized /etc/shadow, /etc/gshadow, /etc/security/opasswd, /etc/master.passwd dumping
-        let shadow_targets = ["/etc/shadow", "/etc/gshadow", "/etc/security/opasswd", "/etc/master.passwd"];
+        let shadow_targets = [
+            "/etc/shadow",
+            "/etc/gshadow",
+            "/etc/security/opasswd",
+            "/etc/master.passwd",
+        ];
         if shadow_targets.iter().any(|t| cmdline.contains(t)) {
             let reader_tools = [
-                "cat ", "grep ", "awk ", "sed ", "cp ", "tar ", "base64", "head ", "tail ", "less ",
-                "more ", "strings ", "xxd", "od ", "dd ", "python", "perl", "ruby", "php", "node",
-                "curl", "wget",
+                "cat ", "grep ", "awk ", "sed ", "cp ", "tar ", "base64", "head ", "tail ",
+                "less ", "more ", "strings ", "xxd", "od ", "dd ", "python", "perl", "ruby", "php",
+                "node", "curl", "wget",
             ];
             let legit_auth = [
-                "sshd", "passwd", "unix_chkpwd", "useradd", "usermod", "userdel", "chage", "gpasswd",
-                "newusers", "chpasswd", "login", "su", "sudo", "systemd", "pam",
+                "sshd",
+                "passwd",
+                "unix_chkpwd",
+                "useradd",
+                "usermod",
+                "userdel",
+                "chage",
+                "gpasswd",
+                "newusers",
+                "chpasswd",
+                "login",
+                "su",
+                "sudo",
+                "systemd",
+                "pam",
             ];
-            let is_legit_auth = legit_auth.iter().any(|b| image.ends_with(b) || image.contains(&format!("/{b}")));
-            let is_reader = reader_tools.iter().any(|r| cmdline.contains(r) || image.contains(r.trim()));
+            let is_legit_auth = legit_auth
+                .iter()
+                .any(|b| image.ends_with(b) || image.contains(&format!("/{b}")));
+            let is_reader = reader_tools
+                .iter()
+                .any(|r| cmdline.contains(r) || image.contains(r.trim()));
             if is_reader && !is_legit_auth {
                 return Some(VoteResult {
                     confidence: 0.98,
@@ -2526,14 +2560,36 @@ impl ThreatVoter for CredentialGuardVoter {
         // 7c. Linux process memory dumping targeting credential processes or /proc memory scraping
         let is_gdb_or_gcore = (image.contains("gcore") || cmdline.contains("gcore"))
             || ((image.contains("gdb") || cmdline.contains("gdb"))
-                && (cmdline.contains("-p") || cmdline.contains("--pid") || cmdline.contains("attach") || cmdline.contains("dump memory")));
-        let is_proc_mem_scrape = cmdline.contains("/mem") && (cmdline.contains("/proc/") || image.contains("dd") || image.contains("cat") || image.contains("python") || cmdline.contains("dd ") || cmdline.contains("cat "));
-        
+                && (cmdline.contains("-p")
+                    || cmdline.contains("--pid")
+                    || cmdline.contains("attach")
+                    || cmdline.contains("dump memory")));
+        let is_proc_mem_scrape = cmdline.contains("/mem")
+            && (cmdline.contains("/proc/")
+                || image.contains("dd")
+                || image.contains("cat")
+                || image.contains("python")
+                || cmdline.contains("dd ")
+                || cmdline.contains("cat "));
+
         let cred_procs = [
-            "sshd", "sudo", "su", "gpg-agent", "ssh-agent", "gnome-keyring", "kwalletd", "vsftpd", "postgres", "mysqld",
+            "sshd",
+            "sudo",
+            "su",
+            "gpg-agent",
+            "ssh-agent",
+            "gnome-keyring",
+            "kwalletd",
+            "vsftpd",
+            "postgres",
+            "mysqld",
         ];
-        let targets_cred_proc = cred_procs.iter().any(|p| cmdline.contains(p) || target_image.contains(p));
-        if (is_gdb_or_gcore && (targets_cred_proc || cmdline.contains("dump"))) || (is_proc_mem_scrape && (targets_cred_proc || cmdline.contains("/proc/self/mem"))) {
+        let targets_cred_proc = cred_procs
+            .iter()
+            .any(|p| cmdline.contains(p) || target_image.contains(p));
+        if (is_gdb_or_gcore && (targets_cred_proc || cmdline.contains("dump")))
+            || (is_proc_mem_scrape && (targets_cred_proc || cmdline.contains("/proc/self/mem")))
+        {
             return Some(VoteResult {
                 confidence: 0.98,
                 reason: format!(
@@ -2545,7 +2601,14 @@ impl ThreatVoter for CredentialGuardVoter {
         }
 
         // 7d. /etc/ld.so.preload rootkit tampering
-        if cmdline.contains("/etc/ld.so.preload") || event.data.get("TargetFilename").and_then(|v| v.as_str()).map(|f| f.contains("/etc/ld.so.preload")).unwrap_or(false) {
+        if cmdline.contains("/etc/ld.so.preload")
+            || event
+                .data
+                .get("TargetFilename")
+                .and_then(|v| v.as_str())
+                .map(|f| f.contains("/etc/ld.so.preload"))
+                .unwrap_or(false)
+        {
             return Some(VoteResult {
                 confidence: 0.98,
                 reason: format!(

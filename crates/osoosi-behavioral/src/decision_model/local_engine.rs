@@ -432,7 +432,8 @@ impl LocalDecisionEngine {
             || matches!(
                 actual_outcome.to_ascii_lowercase().as_str(),
                 "benign" | "allow"
-            ) {
+            )
+        {
             -reward.abs().max(0.5) * 0.65
         } else {
             0.0

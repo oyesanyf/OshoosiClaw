@@ -64,7 +64,10 @@ impl RegistryRemediator {
                                 if let Ok(content) = std::fs::read_to_string(&path) {
                                     if content.contains(image_path) || content.contains(basename) {
                                         if std::fs::remove_file(&path).is_ok() {
-                                            changes.push(format!("Removed malicious persistence file: {:?}", path));
+                                            changes.push(format!(
+                                                "Removed malicious persistence file: {:?}",
+                                                path
+                                            ));
                                         }
                                     }
                                 }

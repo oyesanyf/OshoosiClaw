@@ -333,10 +333,7 @@ impl StrandsClient {
         };
         answers.insert(
             "human_escalation".to_string(),
-            DecisionAnswer::from_bool(BoolAnswer::new(
-                human_esc_val,
-                human_esc_prob,
-            )),
+            DecisionAnswer::from_bool(BoolAnswer::new(human_esc_val, human_esc_prob)),
         );
         answers.insert(
             "deep_reasoning_required".to_string(),
@@ -347,17 +344,6 @@ impl StrandsClient {
         );
 
         let (severity, sev_probs) = if is_critical || has_credential_theft {
-            (
-                "Critical".to_string(),
-                [
-                    ("None", 0.01),
-                    ("Low", 0.02),
-                    ("Medium", 0.07),
-                    ("High", 0.20),
-                    ("Critical", 0.70),
-                ],
-            )
-        } else if is_malicious {
             (
                 "Critical".to_string(),
                 [

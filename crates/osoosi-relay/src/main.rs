@@ -1,17 +1,13 @@
 #![allow(linker_messages)]
 
-use libp2p::{
-    identify, relay, PeerId, SwarmBuilder,
-};
-use std::error::Error;
 use futures::StreamExt;
+use libp2p::{identify, relay, PeerId, SwarmBuilder};
+use std::error::Error;
 use tracing::{info, Level};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     // 1. Generate keys
     let local_key = libp2p::identity::Keypair::generate_ed25519();
@@ -26,14 +22,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             libp2p::noise::Config::new,
             libp2p::yamux::Config::default,
         )?
-        .with_behaviour(|key| {
-            Behaviour {
-                relay: relay::Behaviour::new(local_peer_id, Default::default()),
-                identify: identify::Behaviour::new(identify::Config::new(
-                    "/osoosi/relay/1.0.0".to_string(),
-                    key.public(),
-                )),
-            }
+        .with_behaviour(|key| Behaviour {
+            relay: relay::Behaviour::new(local_peer_id, Default::default()),
+            identify: identify::Behaviour::new(identify::Config::new(
+                "/osoosi/relay/1.0.0".to_string(),
+                key.public(),
+            )),
         })?
         .build();
 

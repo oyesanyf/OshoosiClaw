@@ -72,7 +72,7 @@ sequenceDiagram
     autonumber
     actor Admin as SOC Operator / Admin
     participant UI as Dashboard WebUI / CLI
-    participant Auth as Hybrid Auth Guard (LogonUserW / Master Token)
+    participant Auth as Multi-Modal Auth Guard (Windows Hello / LogonUserW / Linux PAM / Master Token)
     participant KC as KillChain Engine (crates/osoosi-core/killchain.rs)
     participant Net as WFP / iptables Hermetic Firewall
     participant Proc as Non-Destructive Process Freezer (NtSuspendProcess)
@@ -80,8 +80,8 @@ sequenceDiagram
     participant Dog as Dead-Man's Watchdog Timer (30m)
 
     Admin->>UI: Request Host Containment ("Defend-in-Place")
-    UI->>Auth: Validate Credentials (OS Password / Master Token)
-    Note over Auth: 3-Strike Exponential Lockout Gate (300s window)
+    UI->>Auth: Validate Credentials (Windows Hello PIN, OS Password, or Master Token)
+    Note over Auth: Master Token bypasses lockout; OS / PIN rate-limited (3-strike 300s window)
     Auth-->>UI: Authentication Confirmed (Session Token Granted)
     UI->>KC: engage_killchain_isolation(reason, operator)
     
@@ -99,7 +99,7 @@ sequenceDiagram
     Note over Admin,KC: Host is safely quarantined; memory intact; loopback UI active
 
     Admin->>UI: Submit Disarm Phrase ("RESTORE HOST")
-    UI->>Auth: Re-Verify Operator Credentials
+    UI->>Auth: Re-Verify Operator Credentials (Hello PIN / OS Pass / Master Token)
     UI->>KC: disarm_killchain_isolation(reason, operator)
     
     rect rgb(235, 255, 235)
@@ -129,7 +129,7 @@ sequenceDiagram
 > 2. **Process Ancestry & Lineage Immunity**: When an operator invokes containment from a terminal or management console, `freeze_untrusted_processes` walks the caller's process lineage up to 5 parent levels (`cargo`, `rustc`, `powershell.exe`, `cmd.exe`, `conhost.exe`, `bash`, `zsh`), guaranteeing the operator's active shell is never frozen.
 > 3. **Caller Process Validation**: `validate_killchain_caller` checks the calling PID against active quarantine and suspension tables. Any already-frozen or quarantined process attempting to invoke the Kill Chain API is instantly denied and flagged as an adversarial containment breakout attempt.
 > 4. **State Machine Anti-Reentrancy**: State transitions (`Idle` -> `Isolating` -> `Isolated` -> `Disarming`) are guarded by atomic mutexes. Repetitive calls cannot corrupt isolation records or trigger reentrant resource deadlocks.
-> 5. **Hybrid Logon Authentication**: Host isolation and disarm APIs require OS user authentication via Win32 `LogonUserW` or Master Administrative Token verification, protected by a 3-strike exponential lockout rate limiter (300-second window) and 10-minute inactivity auto-lock.
+> 5. **Multi-Modal Cross-Platform Authentication**: Host isolation and disarm APIs support Windows Hello PIN / Biometrics (TPM Platform Authenticator via WebAuthn), OS credentials (Win32 `LogonUserW` with candidate domain resolution on Windows, PAM/shadow on Linux, `dscl` on macOS), and Master Administrative Token verification with automatic lockout bypass and strike counter reset.
 
 ### Kill Chain CLI Commands
 
@@ -1669,6 +1669,8 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 | `start` | Launch the autonomous EDR security loop | `--debug`, `--no-dashboard`, `--sandbox`, `--wsl` |
 | `service` | Native Windows Service (SCM) lifecycle management | `install`, `start`, `stop`, `restart`, `status`, `delete` |
 | `driver` | Ring-0 Windows driver management & rule synchronization | `status`, `install`, `uninstall`, `add-rule`, `set-mode`, `clear-rules` |
+| `auth` | Authentication, Master Token, password, & lockout management | `reset-lockout`, `token`, `set-password <pass>`, `status` |
+| `harness` | Google-Research Harness² recursive agent harnessing & sweeps | `demo`, `run`, `status` |
 | `check-resources` | Audit host CPU, RAM, GPU, and assign hardware tier | *Aliases: `doctor`, `resources`* |
 | `pull-model` | Provision calibrated local AI models with IPv6 resilience | `[model]`, `--force` |
 | `grant-access` | One-time automated endpoint provisioning pipeline | — |
@@ -1677,7 +1679,7 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 | `trust` | Decentralized Identity (DID) & certificate management | `who-am-i`, `init-ca`, `issue` |
 | `story` | Generate forensic attack narrative from Merkle Audit Trail | — |
 | `status` | Agent health, detection engine, and NSRL status check | — |
-| `killchain` | Emergency Defend-in-Place reversible host containment | `status`, `isolate`, `disarm`, `history` |
+| `killchain` | Emergency Defend-in-Place reversible host containment | `status`, `isolate`, `disarm`, `history`, `reset-lockout` |
 | `fhe` | 4-Pillar Homomorphic Encryption & Merkle proof audits | `status`, `verify-merkle --seq <N>` |
 | `clean` | Dynamic host disk, log, database, & memory cleanup | `--models`, `--aggressive`, `--days <N>` |
 | `update-stix` | Synchronize MITRE ATT&CK & ATLAS STIX 2.1 catalog | `--force`, `--broadcast` |
@@ -1696,6 +1698,46 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 ```
 
 Inspects real-time free disk space on the active mount point (`NOMINAL`, `MODERATE`, `ELEVATED`, `CRITICAL`), rotates active logs safely even when held open by background processes (fallback copy + in-place truncate on Windows `ERROR_SHARING_VIOLATION`), prunes aged quarantine/temp/audit artifacts, compacts SQLite (`PRAGMA wal_checkpoint(TRUNCATE)` + `VACUUM`), and trims OS working sets. Also accessible in the WebUI **Utilities** tab (`GET /api/system/disk-status` and `POST /api/system/cleanup`).
+
+### `auth` — Authentication, Password, Token, & Lockout Administration
+
+```powershell
+# Reset and immediately clear any active security lockout
+.\osoosi.exe auth reset-lockout
+
+# Display or initialize the pre-shared Master Admin Token
+.\osoosi.exe auth token
+
+# Set a custom administrator password (hashed with BLAKE3 in config/admin_password.hash)
+.\osoosi.exe auth set-password "MySecretPassword123!"
+
+# Query current authentication, lockout countdown, and token status
+.\osoosi.exe auth status
+```
+
+Supports multi-modal, cross-platform operator authentication:
+- **Windows Hello PIN / Biometrics (WebAuthn)**: Fast TPM-backed authentication directly in the WebUI using the Platform Authenticator.
+- **OS / System Account**: Win32 `LogonUserW` with automatic local SAM (`.`), domain controller, and computer name fallback on Windows; standard PAM / `unix_chkpwd` / `/etc/shadow` on Linux; Directory Services (`dscl`) on macOS.
+- **Master Admin Token & Custom Password**: Cryptographic constant-time comparison against `config/dashboard_token.key` or `config/admin_password.hash`. Master credentials automatically bypass security lockout to prevent permanent administrator lockouts.
+
+### `harness` — Google-Research Harness² Integration (Recursive Agent Harnessing)
+
+```powershell
+# Run local deterministic Harness² demo (k=1 recursion budget, parallel mode)
+.\osoosi.exe harness demo --k 1 --mode parallel
+
+# Preview autonomous EDR defense benchmark sweep with Oshoosi substrate
+.\osoosi.exe harness run --bench edr --substrate oshoosi --k 1 --mode parallel --dry-run
+
+# Inspect Harness² framework capabilities, substrates, and benchmarks
+.\osoosi.exe harness status
+```
+
+Integrates the official `google-research/harness2` framework with OpenỌ̀ṣọ́ọ̀sì, enabling:
+- **Task-Level Recursion (Propose–Probe–Compose)**: Refines detection rules, system prompts, skills, and guardrails across contrastive execution traces without ground-truth feedback.
+- **Harnessing-Level Recursion**: Updates persistent memory with adopted harnesses and evidence-backed lessons.
+- **Native `OshoosiSubstrate`**: Manages OshoosiClaw's 8 components (`AGENTS.md`, `rules/governance.md`, `rules/environment_safety.md`, `rules/production_code_no_mocks.md`, skills, hooks, and scripts).
+- **Autonomous EDR Defense Benchmark (`edr`)**: 5 realistic defense tasks spanning Credential Access (T1003), Host Containment (T1562), FHE Merkle Federation (T1565), Agent Breakout Defense, and Network Protocol Poisoning (CL.0).
 
 ### `start` — Launch the Autonomous Security Loop
 

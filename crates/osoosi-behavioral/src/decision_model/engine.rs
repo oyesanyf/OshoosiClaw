@@ -739,8 +739,12 @@ impl ClefDecisionEngine {
         reward: f64,
         actual_outcome: &str,
     ) {
-        self.local_engine
-            .record_contextual_rl_feedback(decision_id, state_text, reward, actual_outcome);
+        self.local_engine.record_contextual_rl_feedback(
+            decision_id,
+            state_text,
+            reward,
+            actual_outcome,
+        );
     }
 
     /// Retrieve dynamically learned RL token weight.

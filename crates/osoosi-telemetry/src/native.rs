@@ -155,26 +155,27 @@ impl NativeTelemetryEngine {
                                         .unwrap_or_else(|_| {
                                             parser.try_parse("CommandLine").unwrap_or_default()
                                         });
-                                    let mut cmdline: String =
-                                        parser.try_parse::<String>("CommandLine").unwrap_or_default();
+                                    let mut cmdline: String = parser
+                                        .try_parse::<String>("CommandLine")
+                                        .unwrap_or_default();
 
-                                    if event_id == 1 && pid > 4 {
-                                        if image.is_empty()
+                                    if event_id == 1
+                                        && pid > 4
+                                        && (image.is_empty()
                                             || image.starts_with("\\Device\\")
-                                            || cmdline.trim().is_empty()
-                                        {
-                                            let (live_img, live_cmd) =
-                                                query_live_process_image_and_cmdline(pid);
-                                            if let Some(li) = live_img {
-                                                if !li.is_empty() {
-                                                    image = li;
-                                                }
+                                            || cmdline.trim().is_empty())
+                                    {
+                                        let (live_img, live_cmd) =
+                                            query_live_process_image_and_cmdline(pid);
+                                        if let Some(li) = live_img {
+                                            if !li.is_empty() {
+                                                image = li;
                                             }
-                                            if cmdline.trim().is_empty() {
-                                                if let Some(lc) = live_cmd {
-                                                    if !lc.is_empty() {
-                                                        cmdline = lc;
-                                                    }
+                                        }
+                                        if cmdline.trim().is_empty() {
+                                            if let Some(lc) = live_cmd {
+                                                if !lc.is_empty() {
+                                                    cmdline = lc;
                                                 }
                                             }
                                         }
@@ -192,8 +193,12 @@ impl NativeTelemetryEngine {
                                     } else {
                                         image.clone()
                                     };
-                                    if event_id == 1 && is_suspicious_initial_process(&image, &final_cmd) {
-                                        terminate_suspicious_process_immediately(pid, &image, &final_cmd);
+                                    if event_id == 1
+                                        && is_suspicious_initial_process(&image, &final_cmd)
+                                    {
+                                        terminate_suspicious_process_immediately(
+                                            pid, &image, &final_cmd,
+                                        );
                                     }
                                     data.insert(
                                         "CommandLine".to_string(),
@@ -510,7 +515,8 @@ impl NativeTelemetryEngine {
                     }
 
                     // Prune terminated PIDs from active_processes map
-                    active_processes.retain(|pid, _| sys.process(sysinfo::Pid::from(*pid as usize)).is_some());
+                    active_processes
+                        .retain(|pid, _| sys.process(sysinfo::Pid::from(*pid as usize)).is_some());
                     is_initial_pass = false;
                     std::thread::sleep(std::time::Duration::from_millis(750));
                 }

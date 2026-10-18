@@ -922,7 +922,10 @@ impl PolicyEngine {
                     res.weight *= mult;
                 }
                 if res.weight < 0.0 {
-                    if vname == "NSRL-Veto" || vname == "Trusted-Vendor" || vname == "Git-Noise-Filter" {
+                    if vname == "NSRL-Veto"
+                        || vname == "Trusted-Vendor"
+                        || vname == "Git-Noise-Filter"
+                    {
                         nsrl_vetoed = true;
                     } else {
                         vetoed = true;
@@ -1068,9 +1071,8 @@ impl PolicyEngine {
         if signature.mitre_technique.is_none() {
             if let Some(ref reason_str) = signature.reason {
                 static MITRE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-                let re = MITRE_RE.get_or_init(|| {
-                    regex::Regex::new(r"\b(T1\d{3}(?:\.\d{1,4})?)\b").unwrap()
-                });
+                let re = MITRE_RE
+                    .get_or_init(|| regex::Regex::new(r"\b(T1\d{3}(?:\.\d{1,4})?)\b").unwrap());
                 if let Some(caps) = re.captures(reason_str) {
                     if let Some(m) = caps.get(1) {
                         let tech_id = m.as_str().to_string();
@@ -1709,8 +1711,12 @@ mod tests {
         let config = osoosi_types::PolicyConfig::default();
         let engine = PolicyEngine::new(memory, config);
 
-        engine.add_voter(Box::new(crate::voters::TrustedVendorVoter)).await;
-        engine.add_voter(Box::new(crate::voters::CredentialGuardVoter)).await;
+        engine
+            .add_voter(Box::new(crate::voters::TrustedVendorVoter))
+            .await;
+        engine
+            .add_voter(Box::new(crate::voters::CredentialGuardVoter))
+            .await;
 
         let event = HostSecurityEvent {
             source: osoosi_types::HostEventSource::WindowsEventLog,
@@ -1725,7 +1731,10 @@ mod tests {
         };
 
         let sig_opt = engine.scan_event(&event).await;
-        assert!(sig_opt.is_some(), "Expected threat signature for rundll32 keymgr");
+        assert!(
+            sig_opt.is_some(),
+            "Expected threat signature for rundll32 keymgr"
+        );
         let sig = sig_opt.unwrap();
         assert!(
             sig.confidence >= 0.90,

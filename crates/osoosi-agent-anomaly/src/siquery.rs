@@ -1777,8 +1777,8 @@ impl SiqueryEngine {
 
             // 2. Parse /proc/net/tcp, /proc/net/tcp6, /proc/net/udp, /proc/net/udp6
             let socket_sources = [
-                ("/proc/net/tcp", 2i64, 6i64, false, true),   // AF_INET, IPPROTO_TCP
-                ("/proc/net/tcp6", 10i64, 6i64, true, true),  // AF_INET6, IPPROTO_TCP
+                ("/proc/net/tcp", 2i64, 6i64, false, true), // AF_INET, IPPROTO_TCP
+                ("/proc/net/tcp6", 10i64, 6i64, true, true), // AF_INET6, IPPROTO_TCP
                 ("/proc/net/udp", 2i64, 17i64, false, false), // AF_INET, IPPROTO_UDP
                 ("/proc/net/udp6", 10i64, 17i64, true, false), // AF_INET6, IPPROTO_UDP
             ];
@@ -1788,28 +1788,54 @@ impl SiqueryEngine {
                     for line in content.lines().skip(1) {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         if parts.len() > 9 {
-                            let (local_ip, local_port) = if let Some((ip_hex, port_hex)) = parts[1].split_once(':') {
+                            let (local_ip, local_port) = if let Some((ip_hex, port_hex)) =
+                                parts[1].split_once(':')
+                            {
                                 let port = u16::from_str_radix(port_hex, 16).unwrap_or(0) as i64;
                                 let ip = if is_v6 {
-                                    parse_linux_ipv6_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "::".to_string())
+                                    parse_linux_ipv6_hex(ip_hex)
+                                        .map(|ip| ip.to_string())
+                                        .unwrap_or_else(|| "::".to_string())
                                 } else {
-                                    parse_linux_ipv4_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string())
+                                    parse_linux_ipv4_hex(ip_hex)
+                                        .map(|ip| ip.to_string())
+                                        .unwrap_or_else(|| "0.0.0.0".to_string())
                                 };
                                 (ip, port)
                             } else {
-                                (if is_v6 { "::".to_string() } else { "0.0.0.0".to_string() }, 0i64)
+                                (
+                                    if is_v6 {
+                                        "::".to_string()
+                                    } else {
+                                        "0.0.0.0".to_string()
+                                    },
+                                    0i64,
+                                )
                             };
 
-                            let (remote_ip, remote_port) = if let Some((ip_hex, port_hex)) = parts[2].split_once(':') {
+                            let (remote_ip, remote_port) = if let Some((ip_hex, port_hex)) =
+                                parts[2].split_once(':')
+                            {
                                 let port = u16::from_str_radix(port_hex, 16).unwrap_or(0) as i64;
                                 let ip = if is_v6 {
-                                    parse_linux_ipv6_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "::".to_string())
+                                    parse_linux_ipv6_hex(ip_hex)
+                                        .map(|ip| ip.to_string())
+                                        .unwrap_or_else(|| "::".to_string())
                                 } else {
-                                    parse_linux_ipv4_hex(ip_hex).map(|ip| ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string())
+                                    parse_linux_ipv4_hex(ip_hex)
+                                        .map(|ip| ip.to_string())
+                                        .unwrap_or_else(|| "0.0.0.0".to_string())
                                 };
                                 (ip, port)
                             } else {
-                                (if is_v6 { "::".to_string() } else { "0.0.0.0".to_string() }, 0i64)
+                                (
+                                    if is_v6 {
+                                        "::".to_string()
+                                    } else {
+                                        "0.0.0.0".to_string()
+                                    },
+                                    0i64,
+                                )
                             };
 
                             let state = if is_tcp {
@@ -1986,7 +2012,9 @@ impl SiqueryEngine {
                             } else {
                                 String::new()
                             };
-                            let pseudo = if path.starts_with('[') && path.ends_with(']') || path.is_empty() {
+                            let pseudo = if path.starts_with('[') && path.ends_with(']')
+                                || path.is_empty()
+                            {
                                 1i64
                             } else {
                                 0i64
@@ -2061,19 +2089,17 @@ impl SiqueryEngine {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 6 {
                         let ref_cnt = parts[1].parse::<i64>().unwrap_or(1);
-                        let inode = parts.get(6).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+                        let inode = parts
+                            .get(6)
+                            .and_then(|s| s.parse::<u64>().ok())
+                            .unwrap_or(0);
                         let path = if parts.len() >= 8 {
                             parts[7].to_string()
                         } else {
                             format!("unix_socket_{}", inode)
                         };
-                        let _ = stmt.execute(rusqlite::params![
-                            0i64,
-                            path,
-                            ref_cnt,
-                            -1i64,
-                            "AF_UNIX",
-                        ]);
+                        let _ =
+                            stmt.execute(rusqlite::params![0i64, path, ref_cnt, -1i64, "AF_UNIX",]);
                     }
                 }
             }
@@ -3004,7 +3030,11 @@ impl SiqueryEngine {
 
         #[cfg(not(target_os = "windows"))]
         {
-            let service_dirs = ["/etc/systemd/system", "/lib/systemd/system", "/usr/lib/systemd/system"];
+            let service_dirs = [
+                "/etc/systemd/system",
+                "/lib/systemd/system",
+                "/usr/lib/systemd/system",
+            ];
             for sdir in &service_dirs {
                 if let Ok(entries) = std::fs::read_dir(sdir) {
                     for entry in entries.filter_map(|e| e.ok()) {
@@ -3033,22 +3063,8 @@ impl SiqueryEngine {
                             }
 
                             let _ = stmt.execute(rusqlite::params![
-                                "FALSE",
-                                "TRUE",
-                                fname,
-                                desc,
-                                fname,
-                                "Normal",
-                                0i64,
-                                fname,
-                                exec_start,
-                                0i64,
-                                svc_type,
-                                "TRUE",
-                                "Auto",
-                                user,
-                                "Running",
-                                "OK"
+                                "FALSE", "TRUE", fname, desc, fname, "Normal", 0i64, fname,
+                                exec_start, 0i64, svc_type, "TRUE", "Auto", user, "Running", "OK"
                             ]);
                         }
                     }
@@ -3119,9 +3135,7 @@ impl SiqueryEngine {
                         count += 1;
                         let _ = stmt.execute(rusqlite::params![
                             "", // install_date
-                            name,
-                            maintainer,
-                            version
+                            name, maintainer, version
                         ]);
                     }
                 }
@@ -4295,12 +4309,24 @@ impl SiqueryEngine {
                 // Linux paths
                 ("Chrome", base_dir.join(".config/google-chrome")),
                 ("Chromium", base_dir.join(".config/chromium")),
-                ("Brave", base_dir.join(".config/BraveSoftware/Brave-Browser")),
+                (
+                    "Brave",
+                    base_dir.join(".config/BraveSoftware/Brave-Browser"),
+                ),
                 ("Edge", base_dir.join(".config/microsoft-edge")),
                 // macOS paths
-                ("Chrome", base_dir.join("Library/Application Support/Google/Chrome")),
-                ("Brave", base_dir.join("Library/Application Support/BraveSoftware/Brave-Browser")),
-                ("Edge", base_dir.join("Library/Application Support/Microsoft Edge")),
+                (
+                    "Chrome",
+                    base_dir.join("Library/Application Support/Google/Chrome"),
+                ),
+                (
+                    "Brave",
+                    base_dir.join("Library/Application Support/BraveSoftware/Brave-Browser"),
+                ),
+                (
+                    "Edge",
+                    base_dir.join("Library/Application Support/Microsoft Edge"),
+                ),
             ];
 
             for (browser, user_data_dir) in browser_roots {
@@ -6047,12 +6073,18 @@ impl SiqueryEngine {
                         let addr = ns.trim();
                         if !addr.is_empty() {
                             let family = if addr.contains(':') { "IPv6" } else { "IPv4" };
-                            let _ = stmt.execute(rusqlite::params![addr, "resolv.conf", family, 1i64]);
+                            let _ =
+                                stmt.execute(rusqlite::params![addr, "resolv.conf", family, 1i64]);
                         }
                     } else if let Some(search) = trimmed.strip_prefix("search") {
                         for domain in search.split_whitespace() {
                             if !domain.is_empty() {
-                                let _ = stmt.execute(rusqlite::params![domain, "search", "DNS_SEARCH", 1i64]);
+                                let _ = stmt.execute(rusqlite::params![
+                                    domain,
+                                    "search",
+                                    "DNS_SEARCH",
+                                    1i64
+                                ]);
                             }
                         }
                     }

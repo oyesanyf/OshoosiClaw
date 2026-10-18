@@ -56,7 +56,7 @@ pub fn compute_merkle_root(leaf_hashes: &[String]) -> String {
 
     let mut current_level = leaf_hashes.to_vec();
     while current_level.len() > 1 {
-        let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+        let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
         for chunk in current_level.chunks(2) {
             if chunk.len() == 2 {
                 let mut hasher = blake3::Hasher::new();
@@ -85,7 +85,7 @@ pub fn generate_merkle_proof(leaf_hashes: &[String], target_idx: usize) -> Optio
     let mut current_level = leaf_hashes.to_vec();
 
     while current_level.len() > 1 {
-        let sibling_idx = if current_idx % 2 == 0 {
+        let sibling_idx = if current_idx.is_multiple_of(2) {
             if current_idx + 1 < current_level.len() {
                 Some(current_idx + 1)
             } else {
@@ -99,7 +99,7 @@ pub fn generate_merkle_proof(leaf_hashes: &[String], target_idx: usize) -> Optio
             path.push(current_level[s_idx].clone());
         }
 
-        let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+        let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
         for chunk in current_level.chunks(2) {
             if chunk.len() == 2 {
                 let mut hasher = blake3::Hasher::new();
@@ -124,7 +124,7 @@ pub fn verify_merkle_proof(leaf_hash: &str, path: &[String], root: &str, mut idx
     for sibling in path {
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"INTERNAL_NODE:");
-        if idx % 2 == 0 {
+        if idx.is_multiple_of(2) {
             hasher.update(current.as_bytes());
             hasher.update(sibling.as_bytes());
         } else {
@@ -137,14 +137,21 @@ pub fn verify_merkle_proof(leaf_hash: &str, path: &[String], root: &str, mut idx
     current == root
 }
 
-/// ──────────────────────────────────────────────────────────────
-/// FHE Coordinator Engine
-/// ──────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
+// FHE Coordinator Engine
+// ──────────────────────────────────────────────────────────────
 
+/// FHE Coordinator Engine managing homomorphic evaluation and BLAKE3 Merkle tree audit logging.
 pub struct FheCoordinator {
     client_key: ClientKey,
     server_key: ServerKey,
     audit_leaves: RwLock<Vec<FheMerkleLeaf>>,
+}
+
+impl Default for FheCoordinator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FheCoordinator {
@@ -236,7 +243,10 @@ impl FheCoordinator {
     /// without decrypting or leaking individual peer votes.
     ///
     /// Anchors the resulting encrypted tally into the BLAKE3 Merkle tree.
-    pub fn aggregate_p2p_consensus_batch(&self, encrypted_votes: &[Vec<u8>]) -> Result<(Vec<u8>, FheMerkleLeaf)> {
+    pub fn aggregate_p2p_consensus_batch(
+        &self,
+        encrypted_votes: &[Vec<u8>],
+    ) -> Result<(Vec<u8>, FheMerkleLeaf)> {
         if encrypted_votes.is_empty() {
             return Err(anyhow!("Cannot aggregate empty encrypted vote batch"));
         }
@@ -482,7 +492,9 @@ mod tests {
         let weights = vec![10u32, 20u32, 30u32];
 
         let enc_features = coord.encrypt_feature_vector(&features).unwrap();
-        let (eval_result, leaf) = coord.evaluate_blind_inference(&enc_features, &weights).unwrap();
+        let (eval_result, leaf) = coord
+            .evaluate_blind_inference(&enc_features, &weights)
+            .unwrap();
         assert_eq!(leaf.operation_type, "BLIND_INFERENCE");
 
         let decrypted_score = coord.decrypt_blind_inference_score(&eval_result).unwrap();
@@ -507,7 +519,9 @@ mod tests {
         let a2 = coord.encrypt_anomaly_score(50).unwrap();
         let a3 = coord.encrypt_anomaly_score(60).unwrap();
 
-        let (noisy_mean, leaf) = coord.rollup_fleet_anomaly_telemetry(&[a1, a2, a3], 1.0).unwrap();
+        let (noisy_mean, leaf) = coord
+            .rollup_fleet_anomaly_telemetry(&[a1, a2, a3], 1.0)
+            .unwrap();
         assert_eq!(leaf.operation_type, "FLEET_ANOMALY_ROLLUP");
         // With Laplace DP noise, noisy_mean should be around 50 +/- 30
         assert!(noisy_mean > 0.0 && noisy_mean < 150.0);

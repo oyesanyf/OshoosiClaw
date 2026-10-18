@@ -127,13 +127,20 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
         let ps_cmd_target = format!("service {}", action_arg);
         use windows::core::PCWSTR;
         use windows::Win32::Foundation::CloseHandle;
-        use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
-        use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+        use windows::Win32::System::Threading::{
+            GetExitCodeProcess, WaitForSingleObject, INFINITE,
+        };
+        use windows::Win32::UI::Shell::{
+            ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+        };
         use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
 
         let wide_verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
         let wide_file: Vec<u16> = exe_str.encode_utf16().chain(std::iter::once(0)).collect();
-        let wide_params: Vec<u16> = ps_cmd_target.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_params: Vec<u16> = ps_cmd_target
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
 
         let mut info = SHELLEXECUTEINFOW {
             cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
@@ -230,7 +237,12 @@ pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
         .arg("start")
         .arg("--no-browser")
         .current_dir(&app_root)
-        .creation_flags(CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .creation_flags(
+            CREATE_BREAKAWAY_FROM_JOB
+                | CREATE_NEW_PROCESS_GROUP
+                | DETACHED_PROCESS
+                | CREATE_NO_WINDOW,
+        )
         .spawn()
         .or_else(|_| {
             Command::new(&exe)

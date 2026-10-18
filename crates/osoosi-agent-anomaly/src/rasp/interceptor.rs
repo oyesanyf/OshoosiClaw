@@ -277,7 +277,8 @@ static CMD_INJECTION_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|
     Regex::new(r#"(?i)(;|&&|\|\||`|\$\(|\bpowershell(\.exe)?\b|\bcmd(\.exe)?\b|\bbash\b|\bwscript(\.exe)?\b)"#).expect("valid regex")
 });
 static PATH_TRAVERSAL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r#"(?i)(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32|%2e%2e)"#).expect("valid regex")
+    Regex::new(r#"(?i)(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32|%2e%2e)"#)
+        .expect("valid regex")
 });
 
 impl ToolActuatorInterceptor {

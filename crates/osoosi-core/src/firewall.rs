@@ -977,9 +977,34 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
         // Idempotent: Check prior existence (-C) to prevent duplicate rule accumulation across calls.
         let exemption_rules: &[&[&str]] = &[
             &["-o", "lo", "-j", "ACCEPT"],
-            &["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-            &["-p", "tcp", "-m", "multiport", "--sports", "22,4001,8080", "-j", "ACCEPT"],
-            &["-p", "tcp", "-m", "multiport", "--dports", "22,4001,8080", "-j", "ACCEPT"],
+            &[
+                "-m",
+                "conntrack",
+                "--ctstate",
+                "ESTABLISHED,RELATED",
+                "-j",
+                "ACCEPT",
+            ],
+            &[
+                "-p",
+                "tcp",
+                "-m",
+                "multiport",
+                "--sports",
+                "22,4001,8080",
+                "-j",
+                "ACCEPT",
+            ],
+            &[
+                "-p",
+                "tcp",
+                "-m",
+                "multiport",
+                "--dports",
+                "22,4001,8080",
+                "-j",
+                "ACCEPT",
+            ],
         ];
         for rule in exemption_rules {
             let mut check_args = vec!["-C", "OUTPUT"];
@@ -992,9 +1017,7 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
             if !exists {
                 let mut insert_args = vec!["-I", "OUTPUT", "1"];
                 insert_args.extend_from_slice(rule);
-                let _ = Command::new("iptables")
-                    .args(&insert_args)
-                    .status();
+                let _ = Command::new("iptables").args(&insert_args).status();
             }
         }
 
@@ -1047,11 +1070,20 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
             .status();
         // Exceptions for loopback, conntrack, and SSH
         let _ = Command::new("nft")
-            .args(["add", "rule", "inet", "osoosi", "output", "oif", "lo", "accept"])
+            .args([
+                "add", "rule", "inet", "osoosi", "output", "oif", "lo", "accept",
+            ])
             .status();
         let _ = Command::new("nft")
             .args([
-                "add", "rule", "inet", "osoosi", "output", "ct", "state", "established,related",
+                "add",
+                "rule",
+                "inet",
+                "osoosi",
+                "output",
+                "ct",
+                "state",
+                "established,related",
                 "accept",
             ])
             .status();

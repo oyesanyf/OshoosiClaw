@@ -254,7 +254,9 @@ impl RemediationController {
                     let count = KILL_COUNT.fetch_add(1, Ordering::Relaxed);
                     if count >= 5 {
                         warn!("AUTONOMOUS RESPONSE: Process tree termination rate limit exceeded (max 5 per 60s). Throttling.");
-                        return Err(anyhow::anyhow!("Rate limit exceeded for process tree termination: max 5 kills per 60s"));
+                        return Err(anyhow::anyhow!(
+                            "Rate limit exceeded for process tree termination: max 5 kills per 60s"
+                        ));
                     }
                 } else {
                     KILL_COUNT.store(1, Ordering::Relaxed);

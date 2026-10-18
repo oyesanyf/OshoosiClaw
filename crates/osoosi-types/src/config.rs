@@ -3819,7 +3819,10 @@ nsrl_cache_limit = 50000
     fn test_ai_config_cloud_llm_opt_in() {
         // Test default: cloud LLM must be strictly disabled
         let ai_default = AiConfig::default();
-        assert!(!ai_default.enable_cloud_llm, "enable_cloud_llm must default to false");
+        assert!(
+            !ai_default.enable_cloud_llm,
+            "enable_cloud_llm must default to false"
+        );
         assert_eq!(ai_default.cloud_llm_model.as_deref(), None);
 
         // Test TOML deserialization with explicit opt-in
@@ -3834,7 +3837,9 @@ nsrl_cache_limit = 50000
         // Test TOML deserialization with default omission
         let toml_empty = "";
         let parsed_empty: AiConfig = toml::from_str(toml_empty).expect("Valid empty AiConfig TOML");
-        assert!(!parsed_empty.enable_cloud_llm, "Omitted enable_cloud_llm must deserialize as false");
+        assert!(
+            !parsed_empty.enable_cloud_llm,
+            "Omitted enable_cloud_llm must deserialize as false"
+        );
     }
 }
-
