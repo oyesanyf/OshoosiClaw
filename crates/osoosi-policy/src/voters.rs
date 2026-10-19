@@ -2979,6 +2979,159 @@ impl ThreatVoter for ProcessInjectionVoter {
     }
 }
 
+/// Phase-Space Attractor & Zero-Genesis Invariant Voter (`edr-phaselock` + `zero-genesis-capacity` + `zero-algebraic-kernel`).
+///
+/// Tracks per-PID Takens delay-coordinate manifolds, Rosenstein maximal Lyapunov exponents ($\lambda_{\max}$),
+/// pre-visible embryonic wavefunction energy ($\langle \psi \mid \hat{H}_{\text{threat}} \mid \psi \rangle$),
+/// and Givens-rotated algebraic kernel null-space leakage.
+pub struct PhaseLockAttractorVoter {
+    pid_manifolds: dashmap::DashMap<u32, (std::time::Instant, edr_phaselock::PhaseSpaceMonitor)>,
+    genesis_vessel: std::sync::Mutex<zero_genesis_capacity::GenesisVessel>,
+    algebraic_kernel: std::sync::Mutex<zero_algebraic_kernel::AlgebraicKernelMonitor>,
+}
+
+impl Default for PhaseLockAttractorVoter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PhaseLockAttractorVoter {
+    pub fn new() -> Self {
+        Self {
+            pid_manifolds: dashmap::DashMap::new(),
+            genesis_vessel: std::sync::Mutex::new(
+                zero_genesis_capacity::GenesisVessel::default_edr_vessel(
+                    b"osoosi-zero-genesis-policy-origin-v1",
+                ),
+            ),
+            algebraic_kernel: std::sync::Mutex::new(
+                zero_algebraic_kernel::AlgebraicKernelMonitor::default_edr_monitor(),
+            ),
+        }
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for PhaseLockAttractorVoter {
+    fn name(&self) -> String {
+        "EDR-PhaseLock-Attractor".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let pid = event
+            .data
+            .get("ProcessId")
+            .or_else(|| event.data.get("ProcessID"))
+            .or_else(|| event.data.get("process_id"))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
+            .unwrap_or(0) as u32;
+
+        if pid <= 4 {
+            return None;
+        }
+
+        let cmdline = event
+            .data
+            .get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // Compute Shannon byte entropy of command line / payload
+        let cmd_entropy = if cmdline.is_empty() {
+            0.0
+        } else {
+            let mut counts = [0usize; 256];
+            for &b in cmdline.as_bytes() {
+                counts[b as usize] += 1;
+            }
+            let len = cmdline.len() as f64;
+            counts
+                .iter()
+                .filter(|&&c| c > 0)
+                .map(|&c| {
+                    let p = (c as f64) / len;
+                    -p * p.log2()
+                })
+                .sum::<f64>()
+        };
+
+        let now = std::time::Instant::now();
+        let mut entry = self
+            .pid_manifolds
+            .entry(pid)
+            .or_insert_with(|| (now, edr_phaselock::PhaseSpaceMonitor::default_edr_monitor()));
+        let delta_ms = now.duration_since(entry.0).as_secs_f64() * 1000.0;
+        entry.0 = now;
+
+        let metric = edr_phaselock::PhaseSpaceMonitor::compute_syscall_phase_metric(
+            event.event_id,
+            delta_ms,
+            cmd_entropy,
+        );
+        let verdict_opt = entry.1.observe_event(metric).ok();
+        drop(entry);
+
+        // Evaluate Zero Before Visible Form & Radix-Weighted Origin Displacement on high-risk events
+        let is_high_risk_event = matches!(event.event_id, 8 | 10 | 25);
+        let (embryo_energy, origin_displacement) = if is_high_risk_event {
+            if let Ok(mut gv) = self.genesis_vessel.lock() {
+                let ga = gv.observe_transition(
+                    &[1.0, cmd_entropy.max(0.5)],
+                    &[1.5, 2.0],
+                    0.5,
+                    &[0.1, 0.2, cmd_entropy * 0.5, 1.0],
+                    1,
+                    3,
+                );
+                (ga.pre_form_energy, ga.origin_displacement)
+            } else {
+                (0.0, 0.0)
+            }
+        } else {
+            (0.0, 0.0)
+        };
+
+        if let Some(verdict) = verdict_opt {
+            if verdict.is_chaotic_breakout {
+                let null_leakage = if let Ok(mut ak) = self.algebraic_kernel.lock() {
+                    ak.inspect_and_rotate_kernel(
+                        &[
+                            verdict.lyapunov_exponent,
+                            verdict.mahalanobis_drift,
+                            cmd_entropy,
+                            embryo_energy,
+                        ],
+                        0.15,
+                    )
+                } else {
+                    0.0
+                };
+
+                return Some(VoteResult {
+                    confidence: 0.94,
+                    reason: format!(
+                        "[EDR-PhaseLock-Attractor]: Chaotic phase-space trajectory breakout on PID {} (Lyapunov λ_max={:.3}, Mahalanobis drift={:.2}, Null-space leakage={:.2}, Embryo energy={:.2}, Origin D0={:.2})",
+                        pid,
+                        verdict.lyapunov_exponent,
+                        verdict.mahalanobis_drift,
+                        null_leakage,
+                        embryo_energy,
+                        origin_displacement
+                    ),
+                    weight: 1.35,
+                });
+            }
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

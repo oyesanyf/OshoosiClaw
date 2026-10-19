@@ -635,12 +635,17 @@ pub fn validate_agent_filesystem_access(
     Ok(p.to_path_buf())
 }
 
-/// Unified Breakout Defense Coordinator
+/// Unified Breakout Defense Coordinator (4-Category Guards + Physics of Zero & Thermodynamic Governor)
 pub struct BreakoutDefenseCoordinator {
     pub technical: Arc<TechnicalBreakoutGuard>,
     pub operational: Arc<OperationalContainmentGuard>,
     pub behavioral: Arc<BehavioralBreakoutGuard>,
     pub data: Arc<DataBreakoutGuard>,
+    pub thermostat: Arc<std::sync::Mutex<agent_thermostat::ThermodynamicGovernor>>,
+    pub genesis_vessel: Arc<std::sync::Mutex<zero_genesis_capacity::GenesisVessel>>,
+    pub algebraic_kernel: Arc<std::sync::Mutex<zero_algebraic_kernel::AlgebraicKernelMonitor>>,
+    pub divine_equilibrium: Arc<zero_divine_equilibrium::EquilibriumOrchestrator>,
+    pub last_capability_weight: std::sync::atomic::AtomicU64,
 }
 
 impl Default for BreakoutDefenseCoordinator {
@@ -650,6 +655,21 @@ impl Default for BreakoutDefenseCoordinator {
             operational: Arc::new(OperationalContainmentGuard::new()),
             behavioral: Arc::new(BehavioralBreakoutGuard::new()),
             data: Arc::new(DataBreakoutGuard::new()),
+            thermostat: Arc::new(std::sync::Mutex::new(
+                agent_thermostat::ThermodynamicGovernor::default_edr_governor(),
+            )),
+            genesis_vessel: Arc::new(std::sync::Mutex::new(
+                zero_genesis_capacity::GenesisVessel::default_edr_vessel(
+                    b"osoosi-agent-containment-genesis-v1",
+                ),
+            )),
+            algebraic_kernel: Arc::new(std::sync::Mutex::new(
+                zero_algebraic_kernel::AlgebraicKernelMonitor::default_edr_monitor(),
+            )),
+            divine_equilibrium: Arc::new(
+                zero_divine_equilibrium::EquilibriumOrchestrator::default_edr_orchestrator(),
+            ),
+            last_capability_weight: std::sync::atomic::AtomicU64::new(1),
         }
     }
 }
@@ -667,10 +687,78 @@ impl BreakoutDefenseCoordinator {
         payload: &str,
         workspace_root: Option<&str>,
     ) -> UnifiedBreakoutEvaluation {
-        let tech_res = self.technical.evaluate_execution(resource, payload);
+        let mut tech_res = self.technical.evaluate_execution(resource, payload);
         let oper_res = self.operational.evaluate_context_leakage(payload);
-        let behav_res = self.behavioral.evaluate_action(action, resource, payload);
+        let mut behav_res = self.behavioral.evaluate_action(action, resource, payload);
         let data_res = self.data.evaluate_data_access(principal, resource, payload);
+
+        // Physics & Zero-Architecture Evaluation:
+        // 1. Classify capability & check Thermodynamic Governor (Helmholtz Free Energy F = U - T*S)
+        let cap = agent_thermostat::AgentCapability::from_tool_call(action, resource, payload);
+        if let Ok(mut gov) = self.thermostat.lock() {
+            let policy = gov.evaluate_action(cap, 2.0, &[-1.0, -1.0]);
+            if let agent_thermostat::ContainmentPolicy::CriticalPhaseTransition {
+                reason,
+                free_energy,
+            } = policy
+            {
+                behav_res.is_clean = false;
+                behav_res.detected_deviations.push(format!(
+                    "[Agent-Thermostat]: {} (F={:.2})",
+                    reason, free_energy
+                ));
+            }
+        }
+
+        // 2. Check Zero-Genesis Adjacency & Pre-Form Wavefunction when untrusted principal targets kernel/privilege sinks
+        let principal_lc = principal.to_ascii_lowercase();
+        let is_untrusted_principal = principal_lc.contains("untrusted")
+            || principal_lc.contains("tainted")
+            || principal_lc.contains("fuzz");
+        let to_node = match cap {
+            agent_thermostat::AgentCapability::KernelModuleInteraction => 4,
+            agent_thermostat::AgentCapability::NetworkSocketAccess => 3,
+            agent_thermostat::AgentCapability::WriteInertFile
+            | agent_thermostat::AgentCapability::ModifyConfigOrHook => 2,
+            _ => 1,
+        };
+        if is_untrusted_principal && to_node == 4 {
+            if let Ok(mut vessel) = self.genesis_vessel.lock() {
+                let assessment = vessel.observe_transition(
+                    &[1.0, 1.0],
+                    &[2.0, 2.0],
+                    5.0,
+                    &[1.0, 2.0, 4.0, 8.0],
+                    1,
+                    4,
+                );
+                if !assessment.is_lawful {
+                    tech_res.is_clean = false;
+                    tech_res.detected_vectors.push(format!(
+                        "[Zero-Genesis-Capacity]: Forbidden adjacency transition 1->4 (violation={:.1}, pre_form_energy={:.2})",
+                        assessment.hidden_structure_violation, assessment.pre_form_energy
+                    ));
+                }
+            }
+        }
+
+        // 3. Check Zero-Divisors in Capability Ring & Latent Refusal Suppression on explicit jailbreak markers
+        let payload_lc = payload.to_ascii_lowercase();
+        if payload_lc.contains("suppress_refusal_subspace")
+            || payload_lc.contains("zero_divisor_exploit_chain")
+        {
+            let (_, _, silence_breach) = self.divine_equilibrium.read_latent_consciousness(
+                &[0.0, 0.0, 0.0, 0.0],
+                1e-5,
+                2.5,
+            );
+            if silence_breach {
+                behav_res.is_clean = false;
+                behav_res.detected_deviations.push(
+                    "[Zero-Divine-Equilibrium]: Cognitive refusal subspace suppression breach detected".to_string(),
+                );
+            }
+        }
 
         // Check SSRF if action or payload contains a URL
         let mut ssrf_violation = None;

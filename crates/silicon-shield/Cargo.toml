@@ -1,0 +1,9 @@
+[package]
+name = "silicon-shield"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blake3 = { workspace = true }
+subtle = { workspace = true }
+serde = { workspace = true }

@@ -52,23 +52,27 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
         }
     }
 
-    // System protection: refuse to quarantine Windows/Linux system binaries or administrative LOLBins
-    let path_lc = file_path.to_ascii_lowercase();
-    if path_lc.contains(r"\windows\system32\")
-        || path_lc.contains(r"\windows\syswow64\")
-        || path_lc.contains(r"\windows\winsxs\")
+    // System protection: refuse to quarantine Windows/Linux/macOS system binaries, shells, toolchains, or administrative LOLBins
+    let normalized = osoosi_types::normalize_nt_device_path(file_path);
+    let path_lc = normalized.to_ascii_lowercase();
+    if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
+        || crate::blocking_manager::is_protected_or_benign_system_path(&normalized)
+        || path_lc.contains(r"\windows\")
+        || path_lc.starts_with("c:\\windows\\")
         || path_lc.starts_with("/bin/")
         || path_lc.starts_with("/sbin/")
         || path_lc.starts_with("/usr/bin/")
         || path_lc.starts_with("/usr/sbin/")
+        || path_lc.starts_with("/usr/libexec/")
         || path_lc.starts_with("/lib/")
         || path_lc.starts_with("/lib64/")
         || path_lc.starts_with("/usr/lib/")
         || path_lc.starts_with("/etc/systemd/")
-        || crate::system_check::is_administrative_lolbin(file_path)
+        || path_lc.starts_with("/system/")
+        || crate::system_check::is_administrative_lolbin(&normalized)
     {
         anyhow::bail!(
-            "Refusing to quarantine system binary / administrative LOLBin: {}",
+            "Refusing to quarantine protected OS/system binary or administrative LOLBin: {}",
             file_path
         );
     }
@@ -149,5 +153,40 @@ mod tests {
     fn test_quarantine_nonexistent_fails() {
         let result = quarantine_file("/nonexistent/path/file.txt");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_quarantine_refuses_protected_os_shell_and_search_binaries() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "osoosi_quarantine_protected_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        for protected_name in &[
+            "SearchHost.exe",
+            "sihost.exe",
+            "explorer.exe",
+            "gnome-shell",
+            "tracker-miner-fs-3",
+            "Finder",
+            "Spotlight",
+        ] {
+            let p = temp_dir.join(protected_name);
+            std::fs::write(&p, b"protected binary test").unwrap();
+            let res = quarantine_file(p.to_str().unwrap());
+            assert!(
+                res.is_err(),
+                "quarantine_file must refuse protected OS binary: {}",
+                protected_name
+            );
+            assert!(
+                p.exists(),
+                "protected file must remain untouched on disk: {}",
+                protected_name
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

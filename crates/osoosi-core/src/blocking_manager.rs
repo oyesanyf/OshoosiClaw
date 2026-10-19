@@ -12,19 +12,49 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return false;
     }
 
-    if crate::system_check::is_administrative_lolbin(trimmed) {
+    // Bare filenames without directory separators (e.g. "git.exe", "systray.exe", "chrome.exe")
+    // must never be added to persistent IFEO or Sysmon blocklists.
+    if !trimmed.contains('\\') && !trimmed.contains('/') {
         return true;
     }
 
-    let p_norm = trimmed.replace('/', "\\").to_lowercase();
-    let p_fwd = trimmed.replace('\\', "/").to_lowercase();
+    let normalized = osoosi_types::normalize_nt_device_path(trimmed);
+
+    if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
+        || crate::system_check::is_administrative_lolbin(&normalized)
+        || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &normalized)
+    {
+        return true;
+    }
+
+    #[cfg(target_os = "windows")]
+    if normalized.to_ascii_lowercase().ends_with(".exe")
+        && !AgentProvisioner::is_safe_for_ifeo_block(&normalized)
+    {
+        return true;
+    }
+
+    let p_norm = normalized.replace('/', "\\").to_lowercase();
+    let p_fwd = normalized.replace('\\', "/").to_lowercase();
 
     let win_protected = [
         r"c:\windows\",
+        r"\windows\",
         r"\windows\system32\",
         r"\windows\syswow64\",
         r"\windows\winsxs\",
+        r"\windows\systemapps\",
+        r"\windows\immersivecontrolpanel\",
+        r"\program files\google\chrome\",
+        r"\program files (x86)\google\chrome\",
+        r"\program files\microsoft\edge\",
+        r"\program files (x86)\microsoft\edge\",
+        r"\program files\mozilla firefox\",
+        r"\program files\bravesoftware\",
         r"\program files\windowsapps\",
+        r"\program files\git\",
+        r"\program files\nodejs\",
+        r"\program files\docker\",
         r"\program files\wsl\",
         r"\program files (x86)\windows kits\",
         r"\program files\windows kits\",
@@ -33,6 +63,10 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         r"\program files\postgresql\",
         r"\program files (x86)\synology\",
         r"c:\python",
+        r"\python",
+        r"\site-packages\",
+        r"\.rustup\",
+        r"\.cargo\",
         r"c:\strawberry\",
         r"\wix_tools\",
         r"\edb_mtk.exe",
@@ -44,7 +78,7 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return true;
     }
 
-    let linux_protected = [
+    let unix_protected = [
         "/bin/",
         "/sbin/",
         "/usr/bin/",
@@ -54,21 +88,30 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         "/lib/",
         "/lib64/",
         "/etc/",
+        "/system/library/",
+        "/system/applications/",
+        "/library/apple/",
+        "/applications/",
+        "/.rustup/",
+        "/.cargo/",
+        "/site-packages/",
     ];
 
-    if linux_protected
+    if unix_protected
         .iter()
         .any(|pattern| p_fwd.starts_with(pattern) || p_fwd.contains(pattern))
     {
         return true;
     }
 
-    let non_executable_exts = [".winmd", ".so", ".pyd", ".xs.dll"];
+    let non_executable_exts = [
+        ".dll", ".winmd", ".so", ".dylib", ".pyd", ".xs.dll", ".cpl", ".msc", ".sys", ".drv",
+    ];
     if non_executable_exts.iter().any(|ext| p_fwd.ends_with(ext)) {
         return true;
     }
 
-    let p = std::path::Path::new(trimmed);
+    let p = std::path::Path::new(&normalized);
     if p.exists() && crate::win_trust::is_trusted_signed_binary(p) {
         return true;
     }
@@ -91,6 +134,13 @@ impl BlockingManager {
     }
 
     fn load_rules_sync() -> anyhow::Result<Vec<BlockingRule>> {
+        let purged_ifeo = osoosi_types::purge_ifeo_systray_debugger_hooks_native();
+        if purged_ifeo > 0 {
+            info!(
+                "BlockingManager: Purged {} legacy IFEO Debugger=systray.exe registry hooks during startup.",
+                purged_ifeo
+            );
+        }
         let path = osoosi_types::resolve_base_dir().join("blocking_rules.json");
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
@@ -154,7 +204,9 @@ impl BlockingManager {
         {
             rules.push(rule);
             let _ = Self::save_rules_internal(&rules);
-            self.update_sysmon(&rules).await?;
+            let rules_snapshot = rules.clone();
+            drop(rules);
+            self.update_sysmon(&rules_snapshot).await?;
         }
         Ok(())
     }
@@ -193,6 +245,17 @@ impl BlockingManager {
         }
 
         *rules = retained;
+        let _ = Self::save_rules_internal(&rules);
+        let rules_snapshot = rules.clone();
+        drop(rules);
+
+        #[cfg(target_os = "windows")]
+        {
+            for p in &purged {
+                let _ = self.provisioner.remove_blocking_rule_registry(p).await;
+            }
+            let _ = self.provisioner.purge_all_ifeo_debugger_hooks().await;
+        }
 
         if !purged.is_empty() {
             info!(
@@ -200,13 +263,6 @@ impl BlockingManager {
                 purged.len(),
                 purged
             );
-            let _ = Self::save_rules_internal(&rules);
-            let rules_snapshot = rules.clone();
-            drop(rules);
-            #[cfg(target_os = "windows")]
-            for p in &purged {
-                let _ = self.provisioner.remove_blocking_rule_registry(p).await;
-            }
             self.update_sysmon(&rules_snapshot).await?;
         }
 
@@ -222,9 +278,19 @@ impl BlockingManager {
         if pid <= 4 || pid == std::process::id() {
             return Ok(());
         }
+        let proc_name = osoosi_runtime::tarpit::get_process_name(pid);
+        if osoosi_runtime::tarpit::is_protected_system_or_security_process(pid, &proc_name)
+            || osoosi_types::is_protected_os_shell_or_desktop_binary(&proc_name)
+        {
+            info!(
+                "BlockingManager: Refusing autonomous termination of protected process PID {} ({})",
+                pid, proc_name
+            );
+            return Ok(());
+        }
         info!(
-            "BlockingManager: Autonomous termination triggered for PID {}",
-            pid
+            "BlockingManager: Autonomous termination triggered for PID {} ({})",
+            pid, proc_name
         );
 
         #[cfg(target_os = "windows")]
@@ -248,7 +314,7 @@ impl BlockingManager {
                 .status();
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             let _ = std::process::Command::new("kill")
                 .args(["-9", &pid.to_string()])
@@ -322,9 +388,15 @@ mod tests {
         let provisioner = Arc::new(AgentProvisioner::new(executor));
         let manager = BlockingManager::new(provisioner);
 
-        // Verify protected detection
+        // Verify protected detection across Windows, Linux, and macOS
         assert!(is_protected_or_benign_system_path(
             r"C:\Windows\System32\cmd.exe"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            r"\Device\HarddiskVolume4\Windows\System32\sihost.exe"
         ));
         assert!(is_protected_or_benign_system_path(
             r"C:\Program Files\PostgreSQL\16\bin\postgres.exe"
@@ -336,11 +408,27 @@ mod tests {
             r"C:\Program Files\WSL\wsl.exe"
         ));
         assert!(is_protected_or_benign_system_path("/usr/bin/bash"));
+        assert!(is_protected_or_benign_system_path("/usr/bin/gnome-shell"));
+        assert!(is_protected_or_benign_system_path(
+            "/usr/libexec/tracker-miner-fs-3"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter"
+        ));
+        assert!(is_protected_or_benign_system_path(
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight"
+        ));
         assert!(is_protected_or_benign_system_path(
             r"C:\app\component.winmd"
         ));
         assert!(!is_protected_or_benign_system_path(
             r"C:\malware\bad_trojan.exe"
+        ));
+        assert!(!is_protected_or_benign_system_path(
+            "/tmp/evil_miner_payload"
         ));
 
         // Refuse to add protected rule

@@ -646,6 +646,25 @@ impl NativeTelemetryEngine {
 }
 
 #[cfg(target_os = "windows")]
+fn is_monitor_mode_active() -> bool {
+    if std::env::var("OSOOSI_MONITOR_ONLY")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    for candidate in ["config/autonomy_mode.json", "../config/autonomy_mode.json"] {
+        if let Ok(raw) = std::fs::read_to_string(candidate) {
+            let lower = raw.to_ascii_lowercase();
+            if lower.contains("\"audit\"") || lower.contains("\"monitor\"") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
 fn is_suspicious_initial_process(image: &str, cmdline: &str) -> bool {
     let img_l = image.to_ascii_lowercase();
     let cmd_l = cmdline.to_ascii_lowercase();
@@ -657,19 +676,31 @@ fn is_suspicious_initial_process(image: &str, cmdline: &str) -> bool {
         || cmd_l.contains("git ")
         || cmd_l.contains("rg ")
         || cmd_l.contains("select-string")
+        || cmd_l.contains("control_rundll")
+        || cmd_l.contains(".cpl")
+        || cmd_l.contains("editenvironmentvariables")
+        || img_l.ends_with("python.exe")
+        || img_l.ends_with("py.exe")
+        || img_l.ends_with("node.exe")
+        || img_l.ends_with("code.exe")
+        || img_l.ends_with("antigravity.exe")
     {
         return false;
     }
-    cmd_l.contains("keymgr")
-        || cmd_l.contains("krshowkeymgr")
-        || cmd_l.contains("credwiz")
-        || (cmd_l.contains("vaultcmd") && (cmd_l.contains("/list") || cmd_l.contains("-list")))
-        || cmd_l.contains("comsvcs")
+    let is_rundll = img_l.ends_with("rundll32.exe");
+    (is_rundll
+        && (cmd_l.contains("keymgr")
+            || cmd_l.contains("krshowkeymgr")
+            || (cmd_l.contains("comsvcs") && cmd_l.contains("minidump"))))
+        || img_l.ends_with("credwiz.exe")
+        || (img_l.ends_with("vaultcmd.exe")
+            && (cmd_l.contains("/list") || cmd_l.contains("-list")))
         || cmd_l.contains("sekurlsa")
         || cmd_l.contains("lsadump")
-        || cmd_l.contains("mimikatz")
-        || (cmd_l.contains("procdump") && cmd_l.contains("lsass"))
-        || cmd_l.contains("ntdsutil")
+        || img_l.ends_with("mimikatz.exe")
+        || (img_l.ends_with("procdump.exe") && cmd_l.contains("lsass"))
+        || (img_l.ends_with("ntdsutil.exe")
+            && (cmd_l.contains("ifm") || cmd_l.contains("ntds")))
         || (img_l.ends_with("cmdkey.exe") && (cmd_l.contains("/list") || cmd_l.contains("-l")))
 }
 
@@ -679,6 +710,15 @@ fn terminate_suspicious_process_immediately(pid: u32, image: &str, cmdline: &str
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
     if pid <= 4 || pid == std::process::id() {
+        return;
+    }
+    if is_monitor_mode_active() {
+        tracing::info!(
+            "Native Kernel Guard [MONITOR MODE]: Observed credential-harvesting process PID {} ({}) cmd: {} (not terminating in Monitor Mode)",
+            pid,
+            image,
+            cmdline
+        );
         return;
     }
     unsafe {

@@ -142,14 +142,53 @@ pub fn get_process_name(pid: u32) -> String {
     "unknown".to_string()
 }
 
+#[cfg(all(target_os = "windows", not(test)))]
+fn is_child_of_current_process(pid: u32) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
+    };
+    let my_pid = std::process::id();
+    unsafe {
+        if let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) {
+            let mut entry = PROCESSENTRY32 {
+                dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
+                ..Default::default()
+            };
+            let mut is_child = false;
+            if Process32First(snapshot, &mut entry).is_ok() {
+                loop {
+                    if entry.th32ProcessID == pid {
+                        is_child = entry.th32ParentProcessID == my_pid;
+                        break;
+                    }
+                    if Process32Next(snapshot, &mut entry).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snapshot);
+            return is_child;
+        }
+    }
+    false
+}
+
 pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> bool {
     if pid <= 4 || pid == std::process::id() {
         return true;
     }
-    let lower = proc_name.to_lowercase();
-    let fn_only = std::path::Path::new(&lower)
-        .file_name()
-        .and_then(|n| n.to_str())
+    #[cfg(all(target_os = "windows", not(test)))]
+    if is_child_of_current_process(pid) {
+        return true;
+    }
+    if osoosi_types::is_protected_os_shell_or_desktop_binary(proc_name) {
+        return true;
+    }
+    let lower = proc_name.trim().trim_matches('"').to_lowercase();
+    let fn_only = lower
+        .rsplit(['\\', '/'])
+        .next()
         .unwrap_or(lower.as_str());
 
     matches!(
@@ -158,8 +197,13 @@ pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> boo
             | "sysmon64.exe"
             | "osoosi.exe"
             | "oshoosi.exe"
+            | "osoosi-auditor.exe"
+            | "velociraptor.exe"
+            | "osqueryi.exe"
             | "msmpeng.exe"
             | "securityhealthservice.exe"
+            | "securityhealthsystray.exe"
+            | "securityhealthhost.exe"
             | "nissrv.exe"
             | "senseir.exe"
             | "sensendr.exe"
@@ -170,8 +214,70 @@ pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> boo
             | "smss.exe"
             | "wininit.exe"
             | "winlogon.exe"
+            | "userinit.exe"
+            | "logonui.exe"
             | "dwm.exe"
             | "svchost.exe"
+            | "explorer.exe"
+            | "sihost.exe"
+            | "searchhost.exe"
+            | "searchapp.exe"
+            | "searchindexer.exe"
+            | "searchprotocolhost.exe"
+            | "searchfilterhost.exe"
+            | "searchui.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
+            | "shellhost.exe"
+            | "textinputhost.exe"
+            | "runtimebroker.exe"
+            | "ctfmon.exe"
+            | "taskhostw.exe"
+            | "dllhost.exe"
+            | "backgroundtaskhost.exe"
+            | "applicationframehost.exe"
+            | "systemsettings.exe"
+            | "widgets.exe"
+            | "widgetservice.exe"
+            | "widgetboard.exe"
+            | "msedgewebview2.exe"
+            | "smartscreen.exe"
+            | "wmiprvse.exe"
+            | "wmiapsrv.exe"
+            | "tiworker.exe"
+            | "trustedinstaller.exe"
+            | "vssvc.exe"
+            | "spoolsv.exe"
+            | "fontdrvhost.exe"
+            | "audiodg.exe"
+            | "taskmgr.exe"
+            | "conhost.exe"
+            | "systray.exe"
+            | "netsh.exe"
+            | "sc.exe"
+            | "reg.exe"
+            | "taskkill.exe"
+            | "wevtutil.exe"
+            | "fltmc.exe"
+            | "pnputil.exe"
+            | "chrome.exe"
+            | "chrome_proxy.exe"
+            | "googleupdate.exe"
+            | "elevation_service.exe"
+            | "software_reporter_tool.exe"
+            | "msedge.exe"
+            | "firefox.exe"
+            | "brave.exe"
+            | "git.exe"
+            | "git-remote-https.exe"
+            | "ssh.exe"
+            | "cargo.exe"
+            | "rustc.exe"
+            | "rustup.exe"
+            | "code.exe"
+            | "antigravity.exe"
+            | "ollama.exe"
+            | "ollama_llama_server.exe"
             | "system"
             | "ntoskrnl.exe"
     )
@@ -657,6 +763,13 @@ impl TarpitManager {
     /// Linux: Use `renice` to set the process to lowest priority.
     #[cfg(target_os = "linux")]
     async fn linux_throttle(pid: u32, throttle: bool, proc_name: &str) -> anyhow::Result<()> {
+        if pid <= 4 || pid == std::process::id() || is_protected_system_or_security_process(pid, proc_name) {
+            warn!(
+                "[SECURITY SAFEGUARD] Linux Tarpit refused for PID {} ({}): Protected OS or security binary.",
+                pid, proc_name
+            );
+            return Ok(());
+        }
         use tokio::process::Command;
         use tokio::time::{timeout, Duration};
 
@@ -887,6 +1000,23 @@ mod tests {
         assert!(is_protected_system_or_security_process(1235, "Sysmon.exe"));
         assert!(is_protected_system_or_security_process(1236, "msmpeng.exe"));
         assert!(is_protected_system_or_security_process(1237, "osoosi.exe"));
+        // Windows Search, Shell & System Tray
+        assert!(is_protected_system_or_security_process(1238, "SearchHost.exe"));
+        assert!(is_protected_system_or_security_process(1239, "sihost.exe"));
+        assert!(is_protected_system_or_security_process(1240, "explorer.exe"));
+        assert!(is_protected_system_or_security_process(1241, "SecurityHealthSystray.exe"));
+        assert!(is_protected_system_or_security_process(1242, "ctfmon.exe"));
+        // Linux Desktop Shell, Search & Systemd
+        assert!(is_protected_system_or_security_process(1243, "gnome-shell"));
+        assert!(is_protected_system_or_security_process(1244, "plasmashell"));
+        assert!(is_protected_system_or_security_process(1245, "tracker-miner-fs-3"));
+        assert!(is_protected_system_or_security_process(1246, "systemd"));
+        // macOS Desktop Shell, Spotlight & ControlCenter
+        assert!(is_protected_system_or_security_process(1247, "WindowServer"));
+        assert!(is_protected_system_or_security_process(1248, "Finder"));
+        assert!(is_protected_system_or_security_process(1249, "Dock"));
+        assert!(is_protected_system_or_security_process(1250, "ControlCenter"));
+        assert!(is_protected_system_or_security_process(1251, "Spotlight"));
         assert!(is_protected_system_or_security_process(
             std::process::id(),
             "anything.exe"

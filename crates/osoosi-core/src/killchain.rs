@@ -428,13 +428,40 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
 /// Unconditional host restoration for service shutdown and emergency recovery.
 /// Bypasses authentication and lockout checks to guarantee the host is never locked out on daemon exit.
 pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
+    // Always release any in-memory ActiveProcessTarpit thread traps and IFEO hooks immediately
+    let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
+    let trapped_pids: Vec<u32> = active_tarpit
+        .active_traps
+        .iter()
+        .map(|entry| *entry.key())
+        .collect();
+    for pid in trapped_pids {
+        active_tarpit.release_pid(pid);
+    }
+    let _ = osoosi_types::purge_ifeo_systray_debugger_hooks_native();
+
+    let (was_isolated, frozen_pids_snapshot) = {
+        let guard = KILLCHAIN_STORAGE.read().unwrap();
+        (
+            guard.status.isolated || guard.status.network_isolated,
+            guard.status.frozen_pids.clone(),
+        )
+    };
+
+    if !was_isolated && frozen_pids_snapshot.is_empty() {
+        let guard = KILLCHAIN_STORAGE.read().unwrap();
+        return Ok(guard.status.clone());
+    }
+
     info!("🟢 [KILLCHAIN] Unconditional Host Restoration initiated during service shutdown/stop.");
 
-    // 1. Remove network quarantine rules
-    if let Err(e) = remove_network_hermetic_quarantine() {
-        error!("❌ [KILLCHAIN] Error removing network quarantine rules: {}", e);
-    } else {
-        info!("🟢 [KILLCHAIN] Network quarantine rules flushed.");
+    // 1. Remove network quarantine rules only if network isolation was engaged
+    if was_isolated {
+        if let Err(e) = remove_network_hermetic_quarantine() {
+            error!("❌ [KILLCHAIN] Error removing network quarantine rules: {}", e);
+        } else {
+            info!("🟢 [KILLCHAIN] Network quarantine rules flushed.");
+        }
     }
 
     let mut guard = KILLCHAIN_STORAGE.write().unwrap();
@@ -512,9 +539,11 @@ fn run_firewall_cmd(cmd: &str, args: &[&str]) {
 fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
     #[cfg(target_os = "windows")]
     {
+        let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
+        let netsh_str = netsh_bin.to_string_lossy();
         // 1. Ensure loopback and port 3030 allow rules exist first with highest priority
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -529,7 +558,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -544,7 +573,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -560,7 +589,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -576,7 +605,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -593,7 +622,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
 
         // 2. Block all non-loopback inbound and outbound network traffic
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -608,7 +637,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -623,7 +652,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -638,7 +667,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         );
 
         run_firewall_cmd(
-            "netsh",
+            &netsh_str,
             &[
                 "advfirewall",
                 "firewall",
@@ -713,6 +742,8 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
 fn remove_network_hermetic_quarantine() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
+        let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
+        let netsh_str = netsh_bin.to_string_lossy();
         let rules = [
             "Osoosi-KillChain-Block-Inbound-Low",
             "Osoosi-KillChain-Block-Inbound-High",
@@ -726,7 +757,7 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
         ];
         for r in rules {
             run_firewall_cmd(
-                "netsh",
+                &netsh_str,
                 &[
                     "advfirewall",
                     "firewall",
@@ -1321,6 +1352,7 @@ mod unix_auth {
                             let pass_c = std::ffi::CString::new(password).ok();
                             let salt_c = std::ffi::CString::new(stored_hash).ok();
                             if let (Some(pass), Some(salt)) = (pass_c, salt_c) {
+                                #[link(name = "crypt")]
                                 extern "C" {
                                     fn crypt(
                                         key: *const libc::c_char,

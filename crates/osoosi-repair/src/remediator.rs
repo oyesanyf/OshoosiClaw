@@ -51,6 +51,24 @@ impl StandaloneRemediator {
             target_path, download_url
         );
 
+        let normalized = osoosi_types::normalize_nt_device_path(target_path);
+        let lower = normalized.to_ascii_lowercase().replace('/', "\\");
+        if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
+            || lower.starts_with("c:\\windows\\")
+            || lower.starts_with("\\windows\\")
+            || normalized.starts_with("/usr/")
+            || normalized.starts_with("/bin/")
+            || normalized.starts_with("/sbin/")
+            || normalized.starts_with("/lib/")
+            || normalized.starts_with("/lib64/")
+            || normalized.starts_with("/System/")
+        {
+            return Err(anyhow!(
+                "Host Safety Guard: Refusing to overwrite protected OS system binary: {}",
+                target_path
+            ));
+        }
+
         let target = Path::new(target_path);
         if target
             .components()

@@ -357,7 +357,11 @@ enum Commands {
         pretty: bool,
     },
     /// Emergency Host Containment & Kill Chain (Network severance, process freeze, kernel lockdown)
-    #[command(name = "killchain", about = "Emergency Host Containment & Kill Chain")]
+    #[command(
+        name = "killchain",
+        alias = "killswitch",
+        about = "Emergency Host Containment & Kill Chain"
+    )]
     Killchain {
         #[command(subcommand)]
         action: KillchainAction,
@@ -388,6 +392,15 @@ enum Commands {
     Harness {
         #[command(subcommand)]
         action: HarnessAction,
+    },
+    /// REA: Reverse Engineer Anything (autonomous & multi-target binary/bytecode/protocol reverse engineering)
+    #[command(
+        name = "rea",
+        about = "REA: Reverse Engineer Anything (PE/ELF/Mach-O, Rust, Go, WASM, EVM, .NET, ASAR, SQLite, HAR/PCAP, Firmware)"
+    )]
+    Rea {
+        #[command(subcommand)]
+        action: ReaAction,
     },
 }
 
@@ -708,6 +721,41 @@ pub enum SandboxAction {
     Logs { name: String },
 }
 
+#[derive(Subcommand, Clone, Debug)]
+pub enum ReaAction {
+    /// Reverse engineer any target artifact (PE/ELF/Mach-O, Rust, Go, WASM, EVM, .NET, ASAR, SQLite, HAR/PCAP, Firmware)
+    Analyze {
+        /// Path to target artifact (or `self` for current binary)
+        path: String,
+        /// Target type hint (`auto`, `native_binary`, `rust_binary`, `go_binary`, `wasm_artifact`, `evm_bytecode`, `dotnet_assembly`, `javascript_electron`, `sqlite_database`, `network_capture`, `android_flutter`, `firmware_image`)
+        #[arg(long, default_value = "auto")]
+        target: String,
+        /// Output full JSON investigation report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Discover installed and built-in REA reverse engineering providers
+    Providers {
+        /// Output provider discovery matrix as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reverse engineer raw EVM smart contract bytecode hex
+    Evm {
+        /// Hex-encoded EVM bytecode (with or without `0x` prefix)
+        bytecode_hex: String,
+        /// Output full JSON investigation report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run an autonomous REA reverse-engineering sweep across quarantine, active processes, and staged directories
+    Autonomous {
+        /// Output autonomous sweep reports as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     osoosi_types::persist_environment_paths();
 
@@ -821,6 +869,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     if matches!(cli.command, Some(Commands::SetupDefender)) {
+        std::env::set_var("OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL", "1");
         println!("[*] Configuring Windows Defender exclusions and Firewall rules for installation directory...");
         match osoosi_core::firewall::configure_install_folder_exclusions_and_firewall().await {
             Ok(_) => println!("[+] Successfully configured Windows Defender exclusions and Windows Firewall rules."),
@@ -1239,10 +1288,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
             wait_for_shutdown().await;
             info!("Shutting down OpenỌ̀ṣọ́ọ̀sì Agent: restoring host network isolation and unfreezing processes...");
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                std::process::exit(0);
+            });
             let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
             crate::service::notify_service_shutdown_complete();
-            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            #[cfg(windows)]
+            {
+                if crate::service::is_running_under_service_control() {
+                    // Allow service_main thread to report SERVICE_STOPPED to Windows SCM and exit cleanly
+                    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                    std::process::exit(0);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             std::process::exit(0);
         }
         Some(Commands::Status) => {
@@ -1509,7 +1570,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
                 let models_dir = osoosi_types::resolve_models_dir();
                 let out_path = models_dir.join("malware").join("sorel_ffnn.pt");
-                fs::create_dir_all(out_path.parent().unwrap())?;
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
 
                 trainer.save(&out_path)?;
                 info!("✅ SOREL-20M model built and saved to {:?}", out_path);
@@ -2200,6 +2263,151 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        Some(Commands::Rea { action }) => {
+            use osoosi_core::rea::{
+                analyze_target_bytes, analyze_target_path, discover_rea_providers,
+                global_rea_engine, ReaTargetKind,
+            };
+            match action {
+                ReaAction::Analyze { path, target, json } => {
+                    let target_path = if path.eq_ignore_ascii_case("self")
+                        || path.eq_ignore_ascii_case("osoosi")
+                        || path.eq_ignore_ascii_case("osoosi.exe")
+                    {
+                        std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&path))
+                    } else {
+                        PathBuf::from(&path)
+                    };
+                    let requested_kind = ReaTargetKind::from_str_lossy(&target);
+                    match analyze_target_path(
+                        &target_path.to_string_lossy(),
+                        requested_kind,
+                        Some("cli_analyze".to_string()),
+                    ) {
+                        Ok(report) => {
+                            global_rea_engine().record_report(report.clone());
+                            if json {
+                                println!(
+                                    "{}",
+                                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                                );
+                            } else {
+                                println!("============================================================");
+                                println!("  OpenỌ̀ṣọ́ọ̀sì REA — Reverse Engineer Anything Report");
+                                println!("============================================================");
+                                println!("Target:         {}", report.target_path);
+                                println!("Detected Kind:  {}", report.detected_kind);
+                                println!("Size:           {} bytes", report.size_bytes);
+                                println!("Threat Score:   {:.2}", report.threat_score);
+                                println!("SHA-256:        {}", report.sha256);
+                                println!("BLAKE3:         {}", report.blake3);
+                                println!("Providers:      {}", report.providers_used.join(", "));
+                                println!("Findings:       {}", report.findings.len());
+                                for (idx, f) in report.findings.iter().enumerate() {
+                                    let sev = f.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
+                                    let title = f.get("title").and_then(|v| v.as_str()).unwrap_or("finding");
+                                    let detail = f.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                                    println!("  {}. [{}] {} — {}", idx + 1, sev.to_uppercase(), title, detail);
+                                }
+                                if let Some(ref src) = report.reconstructed_code {
+                                    println!("\n--- Reconstructed Artifact Skeleton ---");
+                                    for line in src.lines().take(35) {
+                                        println!("{}", line);
+                                    }
+                                }
+                                if let Some(ref yara) = report.auto_yara_rule {
+                                    println!("\n--- Auto-Synthesized Multi-Token YARA Rule ---");
+                                    println!("{}", yara.trim());
+                                }
+                                println!("============================================================");
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("❌ REA analysis failed for {}: {}", target_path.display(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                ReaAction::Providers { json } => {
+                    let providers = discover_rea_providers();
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&providers).unwrap_or_default()
+                        );
+                    } else {
+                        println!("============================================================");
+                        println!("  OpenỌ̀ṣọ́ọ̀sì REA Provider Discovery Matrix");
+                        println!("============================================================");
+                        for p in &providers {
+                            let status_icon = if p.available { "✅ READY" } else { "⚪ OPTIONAL" };
+                            println!(
+                                "{:<12} {:<52} {}",
+                                status_icon,
+                                p.name,
+                                p.path.as_deref().unwrap_or("(not in PATH)")
+                            );
+                        }
+                        println!("============================================================");
+                    }
+                }
+                ReaAction::Evm { bytecode_hex, json } => {
+                    let trimmed = bytecode_hex.trim();
+                    let raw_hex = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
+                    let decoded = hex::decode(raw_hex).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
+                    let report = analyze_target_bytes(
+                        "cli_evm_bytecode",
+                        None,
+                        &decoded,
+                        ReaTargetKind::EvmBytecode,
+                        Some("cli_evm".to_string()),
+                    );
+                    global_rea_engine().record_report(report.clone());
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).unwrap_or_default()
+                        );
+                    } else {
+                        println!("============================================================");
+                        println!("  OpenỌ̀ṣọ́ọ̀sì REA — EVM Bytecode Deconstruction");
+                        println!("============================================================");
+                        println!("Bytecode Size:  {} bytes", report.size_bytes);
+                        println!("SHA-256:        {}", report.sha256);
+                        println!("Metadata:       {}", serde_json::to_string_pretty(&report.metadata).unwrap_or_default());
+                        if let Some(ref src) = report.reconstructed_code {
+                            println!("\n--- Reconstructed Solidity Interface ---");
+                            println!("{}", src);
+                        }
+                        println!("============================================================");
+                    }
+                }
+                ReaAction::Autonomous { json } => {
+                    let engine = global_rea_engine();
+                    let reports = engine.run_autonomous_sweep();
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&reports).unwrap_or_default()
+                        );
+                    } else {
+                        println!("============================================================");
+                        println!("  OpenỌ̀ṣọ́ọ̀sì Autonomous REA Sweep Complete");
+                        println!("============================================================");
+                        println!("New Artifacts Reverse Engineered: {}", reports.len());
+                        for r in &reports {
+                            println!(
+                                "  • [{}] {} (SHA-256: {}..)",
+                                r.detected_kind,
+                                r.target_path,
+                                &r.sha256[..r.sha256.len().min(16)]
+                            );
+                        }
+                        println!("============================================================");
+                    }
+                }
+            }
+        }
         None => {
             if !cli.grant_access {
                 println!("No command specified. Use --help for usage.");
@@ -2764,7 +2972,26 @@ fn ort_dynamic_library_path() -> PathBuf {
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            return dir.join("onnxruntime.dll");
+            let candidate = dir.join("onnxruntime.dll");
+            if candidate.exists() {
+                return candidate;
+            }
+            let probe = dir.join(".ort_write_probe");
+            if std::fs::OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(&probe)
+                .is_ok()
+            {
+                let _ = std::fs::remove_file(&probe);
+                return candidate;
+            }
+            let fallback_dir = dirs::data_local_dir()
+                .unwrap_or_else(std::env::temp_dir)
+                .join("OshoosiClaw")
+                .join("ort");
+            let _ = std::fs::create_dir_all(&fallback_dir);
+            return fallback_dir.join("onnxruntime.dll");
         }
     }
     PathBuf::from("onnxruntime.dll")
@@ -3697,10 +3924,60 @@ impl<W: std::io::Write> std::io::Write for FlushOnWarnErrorAppender<W> {
 }
 
 fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
-    let log_dir = resolve_log_directory();
-    fs::create_dir_all(&log_dir)
-        .map_err(|e| anyhow::anyhow!("Cannot create log directory {}: {}", log_dir.display(), e))?;
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
+    let mut log_dir = resolve_log_directory();
+    let is_writable = |dir: &Path| -> bool {
+        if fs::create_dir_all(dir).is_err() {
+            return false;
+        }
+        let probe = dir.join(".osoosi_log_write_probe");
+        if fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(&probe)
+            .is_ok()
+        {
+            let _ = fs::remove_file(&probe);
+            true
+        } else {
+            false
+        }
+    };
+
+    if !is_writable(&log_dir) {
+        let fallback = dirs::data_local_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("OshoosiClaw")
+            .join("logs");
+        if is_writable(&fallback) {
+            log_dir = fallback;
+        } else {
+            log_dir = std::env::temp_dir().join("osoosi-logs");
+            let _ = fs::create_dir_all(&log_dir);
+        }
+    }
+
+    let file_appender = match tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix("osoosi.log")
+        .build(&log_dir)
+    {
+        Ok(app) => app,
+        Err(_) => {
+            log_dir = std::env::temp_dir().join("osoosi-logs");
+            let _ = fs::create_dir_all(&log_dir);
+            tracing_appender::rolling::Builder::new()
+                .rotation(tracing_appender::rolling::Rotation::DAILY)
+                .filename_prefix("osoosi.log")
+                .build(&log_dir)
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "Cannot initialize log file appender in {}: {}",
+                        log_dir.display(),
+                        e
+                    )
+                })?
+        }
+    };
     let flushing_appender = FlushOnWarnErrorAppender::new(file_appender);
     let (non_blocking, guard) = tracing_appender::non_blocking(flushing_appender);
 
@@ -7913,6 +8190,39 @@ mod tests {
             Some(Commands::Killchain { action }) => match action {
                 KillchainAction::ResetLockout => {}
                 _ => panic!("Expected KillchainAction::ResetLockout"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+    }
+
+    #[test]
+    fn test_killswitch_alias_parsing() {
+        let cli_ks_status = Cli::try_parse_from(["osoosi", "killswitch", "status"]).unwrap();
+        match cli_ks_status.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::Status => {}
+                _ => panic!("Expected KillchainAction::Status"),
+            },
+            _ => panic!("Expected Commands::Killchain"),
+        }
+
+        let cli_ks_disarm = Cli::try_parse_from([
+            "osoosi",
+            "killswitch",
+            "disarm",
+            "--credential",
+            "secret",
+            "--phrase",
+            "RESTORE HOST",
+        ])
+        .unwrap();
+        match cli_ks_disarm.command {
+            Some(Commands::Killchain { action }) => match action {
+                KillchainAction::Disarm { credential, phrase } => {
+                    assert_eq!(credential.as_deref(), Some("secret"));
+                    assert_eq!(phrase.as_deref(), Some("RESTORE HOST"));
+                }
+                _ => panic!("Expected KillchainAction::Disarm"),
             },
             _ => panic!("Expected Commands::Killchain"),
         }

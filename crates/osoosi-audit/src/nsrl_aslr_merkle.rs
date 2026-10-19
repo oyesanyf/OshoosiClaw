@@ -112,7 +112,7 @@ pub fn generate_merkle_audit_path(levels: &[Vec<String>], mut idx: usize) -> Vec
     path
 }
 
-/// Verifies a leaf against a Merkle root using an audit path.
+/// Verifies a leaf against a Merkle root using an audit path and `silicon-shield` constant-time attestation.
 pub fn verify_merkle_audit_path(
     leaf_hash: &str,
     audit_path: &[(String, bool)],
@@ -128,7 +128,15 @@ pub fn verify_merkle_audit_path(
         };
     }
 
-    current == expected_root
+    let expected_lower = expected_root.to_ascii_lowercase();
+    let current_lower = current.to_ascii_lowercase();
+    let expected_token = *blake3::hash(expected_lower.as_bytes()).as_bytes();
+    let current_token = *blake3::hash(current_lower.as_bytes()).as_bytes();
+    let guard = silicon_shield::SiliconIntegrityGuard::initialize(
+        expected_lower.as_bytes(),
+        expected_token,
+    );
+    guard.attest_runtime_state(current_lower.as_bytes(), &current_token)
 }
 
 // ============================================================================

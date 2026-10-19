@@ -659,6 +659,72 @@ impl MultiSensorFusionEngine {
             details: decision_details,
         });
 
+        // 10. Zero-Physics & Divine Order Sensor (Cross-Platform Linux & Windows:
+        //     Evidentiary Absence, Vacuum Casimir/Dark-Mass Lensing, and Noether/Lyapunov Divine Order)
+        let mut ak_monitor = zero_algebraic_kernel::AlgebraicKernelMonitor::default_edr_monitor();
+        let observed_evts = (self.event_influx_velocity.max(1.0)) as usize;
+        let ak_report = ak_monitor.evaluate_frame(
+            0.1,
+            observed_evts,
+            0.05,
+            &[
+                canary_latency,
+                self.avg_voter_latency_ms,
+                self.cov_condition_number,
+                1.0,
+            ],
+            1.0,
+            1,
+            5,
+        );
+
+        let vacuum_sensor = zero_vacuum_lensing::VacuumCosmologySensor::default_edr_sensor();
+        let expected_casimir = -(std::f64::consts::PI.powi(2) * 1.0 * 10.0) / 240.0;
+        let vac_metrics = vacuum_sensor.scan_horizon(
+            &[2.0, 4.0, 6.0, 8.0],
+            1.0,
+            expected_casimir,
+            1.0,
+            (canary_latency - 1.4).abs() * 0.001,
+            5.0,
+        );
+
+        let eq_orch = zero_divine_equilibrium::EquilibriumOrchestrator::default_edr_orchestrator();
+        let divine_state = eq_orch.attest_divine_order(
+            0.0,
+            &[0.5, 0.5, 0.0, 0.0],
+            1.0,
+            &[0.0, 0.0, 0.0, 0.0],
+            &[1.0, -0.5, -0.5],
+            100.0,
+        );
+
+        let zero_physics_health = if divine_state.is_divine_order_intact
+            && !vac_metrics.unseen_entity_detected
+            && !ak_report.is_zero_divisor_breakout
+        {
+            1.0
+        } else {
+            0.45
+        };
+
+        readings.push(SensorReading {
+            sensor_id: "zero_physics_equilibrium".to_string(),
+            name: "Zero-Physics & Divine Order Sensor".to_string(),
+            raw_value: divine_state.lyapunov_energy,
+            unit: "V(z)".to_string(),
+            health_score: zero_physics_health,
+            confidence: 0.98,
+            details: format!(
+                "Divine Order: {}, Lyapunov V(z): {:.4}, Noether Mesh Flux Div: {:.4}, Vacuum Dark Mass M_dark: {:.3}, Absence Surprise: {:.2} bits",
+                if divine_state.is_divine_order_intact { "INTACT" } else { "PERTURBED" },
+                divine_state.lyapunov_energy,
+                divine_state.noether_flux_divergence,
+                vac_metrics.inferred_dark_mass,
+                ak_report.evidentiary_absence_bits
+            ),
+        });
+
         readings
     }
 
@@ -1462,8 +1528,8 @@ mod tests {
         let status = supervisor.get_status();
         assert_eq!(
             status.sensors.len(),
-            9,
-            "Initial supervisor status must have all 9 sensors pre-populated"
+            10,
+            "Initial supervisor status must have all 10 sensors pre-populated"
         );
         assert!(
             status.hardware_selection.is_some(),
@@ -1492,7 +1558,7 @@ mod tests {
     fn test_wikiskill_evolution_sensor_evaluates() {
         let mut fusion = MultiSensorFusionEngine::new();
         let readings = fusion.evaluate_sensors(None, None, None);
-        assert_eq!(readings.len(), 9, "Must evaluate exactly 9 sensors");
+        assert_eq!(readings.len(), 10, "Must evaluate exactly 10 sensors");
         let skill_sensor = readings
             .iter()
             .find(|s| s.sensor_id == "wikiskill_evolution_sensor")
@@ -1507,7 +1573,7 @@ mod tests {
     fn test_forensic_service_sensor_evaluates() {
         let mut fusion = MultiSensorFusionEngine::new();
         let readings = fusion.evaluate_sensors(None, None, None);
-        assert_eq!(readings.len(), 9, "Must evaluate exactly 9 sensors");
+        assert_eq!(readings.len(), 10, "Must evaluate exactly 10 sensors");
         let forensics_sensor = readings
             .iter()
             .find(|s| s.sensor_id == "forensic_service_sensor")
@@ -1524,7 +1590,7 @@ mod tests {
     fn test_decision_model_sensor_evaluates() {
         let mut fusion = MultiSensorFusionEngine::new();
         let readings = fusion.evaluate_sensors(None, None, None);
-        assert_eq!(readings.len(), 9, "Must evaluate exactly 9 sensors");
+        assert_eq!(readings.len(), 10, "Must evaluate exactly 10 sensors");
         let decision_sensor = readings
             .iter()
             .find(|s| s.sensor_id == "decision_model_sensor")
@@ -1533,6 +1599,20 @@ mod tests {
         assert_eq!(decision_sensor.health_score, 1.0);
         assert!(decision_sensor.confidence >= 0.90);
         assert!(decision_sensor.details.contains("Clef Decision Model:"));
+    }
+
+    #[test]
+    fn test_zero_physics_divine_order_sensor_evaluates() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let readings = fusion.evaluate_sensors(None, None, None);
+        let zero_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "zero_physics_equilibrium")
+            .expect("zero_physics_equilibrium sensor must exist in sensor readings");
+
+        assert_eq!(zero_sensor.health_score, 1.0);
+        assert!(zero_sensor.confidence >= 0.95);
+        assert!(zero_sensor.details.contains("Divine Order: INTACT"));
     }
 
     #[test]

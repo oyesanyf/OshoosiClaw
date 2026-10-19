@@ -15,6 +15,9 @@ osoosi-audit = { path = "../osoosi-audit" }
 osoosi-dp = { path = "../osoosi-dp" }
 osoosi-dns = { path = "../osoosi-dns" }
 osoosi-model = { path = "../osoosi-model" }
+edr-phaselock = { workspace = true }
+zero-genesis-capacity = { workspace = true }
+zero-algebraic-kernel = { workspace = true }
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true }
 serde = { workspace = true }

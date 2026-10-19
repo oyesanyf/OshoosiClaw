@@ -161,9 +161,8 @@ function Invoke-AuthenticodeSigning {
 
     foreach ($file in $Files) {
         if (Test-Path $file) {
-            $isTarget = $TargetBinaries -contains $file
             $existingSig = Get-AuthenticodeSignature $file -ErrorAction SilentlyContinue
-            if (-not $isTarget -and $existingSig -and $existingSig.SignerCertificate -and ($existingSig.SignerCertificate.Thumbprint -eq $Thumbprint)) {
+            if ($existingSig -and $existingSig.SignerCertificate -and ($existingSig.SignerCertificate.Thumbprint -eq $Thumbprint)) {
                 Write-Host "       -> Already signed by $($existingSig.SignerCertificate.Subject): $file" -ForegroundColor Green
                 continue
             }
@@ -251,9 +250,9 @@ if (-not $SkipBuild) {
         # Clear ReadOnly attributes on release binaries to prevent autocfg / cargo output path errors
         & cmd.exe /c "attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul" | Out-Null
 
-        # Sign build scripts / proc macros with DigiCert RFC 3161 timestamp on retry if cargo failed
+        # Sign build scripts with DigiCert RFC 3161 timestamp on retry if cargo failed
         if ($attempt -gt 1 -and $buildSigntool -and (-not $SkipSigning)) {
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build"), (Join-Path $ProjectRoot "target\release\deps") -Include "*.exe","*.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Include "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
             } | ForEach-Object {
@@ -269,8 +268,8 @@ if (-not $SkipBuild) {
             break
         }
         if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
-            Write-Host "       [WDAC] Signing newly compiled build scripts / proc-macros with RFC 3161 timestamp before retry ($attempt/10)..." -ForegroundColor Cyan
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build"), (Join-Path $ProjectRoot "target\release\deps") -Include "*.exe","*.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            Write-Host "       [WDAC] Signing newly compiled build scripts with RFC 3161 timestamp before retry ($attempt/10)..." -ForegroundColor Cyan
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Include "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
             } | ForEach-Object {
@@ -401,9 +400,15 @@ $AuxBinaries = @(
     (Join-Path $ReleaseDir "test-peer.exe")
 ) | Where-Object { Test-Path $_ }
 
+# Remove any accidental 0-byte placeholder binaries in target\release
+Get-ChildItem -Path (Join-Path $ReleaseDir "*.exe"), (Join-Path $ReleaseDir "*.dll") -ErrorAction SilentlyContinue |
+    Where-Object { $_.Length -eq 0 } |
+    ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+
 # Also find any remaining unsigned top-level .exe or .dll in target\release
 $AnyUnsigned = Get-ChildItem -Path (Join-Path $ReleaseDir "*.exe"), (Join-Path $ReleaseDir "*.dll") -ErrorAction SilentlyContinue |
     Where-Object {
+        if ($_.Length -le 4096) { return $false }
         $sig = Get-AuthenticodeSignature $_.FullName
         $sig.SignerCertificate -eq $null
     } | Select-Object -ExpandProperty FullName

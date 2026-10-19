@@ -77,6 +77,8 @@ impl AgentProvisioner {
 
     /// Provision the agent's telemetry dependencies based on the host OS.
     pub async fn provision_telemetry(&self) -> anyhow::Result<()> {
+        #[cfg(target_os = "windows")]
+        let _ = self.purge_all_ifeo_debugger_hooks().await;
         self.provision_firewall().await?;
         self.provision_malconv_weights().await?;
         self.provision_behavioral_model().await?;
@@ -828,7 +830,11 @@ impl AgentProvisioner {
 
     #[cfg(target_os = "windows")]
     pub fn is_safe_for_ifeo_block(path_str: &str) -> bool {
-        let path = std::path::Path::new(path_str);
+        let trimmed = path_str.trim().trim_matches('"');
+        if !trimmed.contains('\\') && !trimmed.contains('/') {
+            return false;
+        }
+        let path = std::path::Path::new(trimmed);
         let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) else {
             return false;
         };
@@ -836,10 +842,16 @@ impl AgentProvisioner {
         if !lower_name.ends_with(".exe") {
             return false;
         }
-        let lower_path = path_str.to_ascii_lowercase().replace('/', "\\");
+        let lower_path = trimmed.to_ascii_lowercase().replace('/', "\\");
         if lower_path.starts_with("c:\\windows\\system32\\")
             || lower_path.starts_with("c:\\windows\\syswow64\\")
             || lower_path.starts_with("c:\\windows\\winsxs\\")
+            || lower_path.contains("\\program files\\google\\chrome\\")
+            || lower_path.contains("\\program files (x86)\\google\\chrome\\")
+            || lower_path.contains("\\program files\\microsoft\\edge\\")
+            || lower_path.contains("\\program files (x86)\\microsoft\\edge\\")
+            || lower_path.contains("\\program files\\mozilla firefox\\")
+            || lower_path.contains("\\program files\\bravesoftware\\")
             || lower_path.contains("\\program files\\git\\")
             || lower_path.contains("\\program files\\wsl\\")
             || lower_path.contains("\\program files\\windows kits\\")
@@ -884,6 +896,11 @@ impl AgentProvisioner {
             "net1.exe",
             "netsh.exe",
             "whoami.exe",
+            // Browsers
+            "chrome.exe",
+            "msedge.exe",
+            "firefox.exe",
+            "brave.exe",
             // Protected developer, compiler, runtime, and shell tools
             "git.exe",
             "python.exe",
@@ -905,6 +922,28 @@ impl AgentProvisioner {
             "docker.exe",
             "antigravity.exe",
             "systray.exe",
+            "sihost.exe",
+            "searchhost.exe",
+            "searchapp.exe",
+            "searchindexer.exe",
+            "searchprotocolhost.exe",
+            "searchfilterhost.exe",
+            "searchui.exe",
+            "startmenuexperiencehost.exe",
+            "shellexperiencehost.exe",
+            "shellhost.exe",
+            "textinputhost.exe",
+            "runtimebroker.exe",
+            "ctfmon.exe",
+            "taskhostw.exe",
+            "securityhealthsystray.exe",
+            "securityhealthservice.exe",
+            "applicationframehost.exe",
+            "widgets.exe",
+            "widgetservice.exe",
+            "widgetboard.exe",
+            "msedgewebview2.exe",
+            "smartscreen.exe",
         ];
         !PROTECTED_SYSTEM_EXES.contains(&lower_name.as_str())
     }
@@ -914,66 +953,33 @@ impl AgentProvisioner {
         &self,
         rules: &[osoosi_types::BlockingRule],
     ) -> anyhow::Result<()> {
-        info!(
-            "Provisioner: Applying {} persistent blocking rules to Windows Registry...",
-            rules.len()
-        );
-
-        for rule in rules {
-            if rule.kind == osoosi_types::BlockingKind::Executable {
-                if !Self::is_safe_for_ifeo_block(&rule.path) {
-                    continue;
-                }
-                let path = std::path::Path::new(&rule.path);
-                if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
-                    info!(
-                        "Enforcing Hard-Block for {}: IFEO Debugger -> systray.exe",
-                        exe_name
-                    );
-
-                    let mut cmd = Command::new(osoosi_types::resolve_system_binary("reg.exe"));
-                    cmd.args([
-                        "add",
-                        &format!(
-                            r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}",
-                            exe_name
-                        ),
-                        "/v",
-                        "Debugger",
-                        "/t",
-                        "REG_SZ",
-                        "/d",
-                        "systray.exe",
-                        "/f",
-                    ]);
-
-                    if let Err(e) = self.executor.execute(cmd).await {
-                        warn!("Failed to apply IFEO block for {}: {}", exe_name, e);
-                    }
-                }
-            }
+        // Never write Image File Execution Options (IFEO) Debugger=systray.exe registry keys,
+        // as filename-scoped IFEO hooks break OS shell, search, system tray, and developer tools.
+        // Proactively purge any legacy IFEO systray.exe hooks via native registry access.
+        let purged = osoosi_types::purge_ifeo_systray_debugger_hooks_native();
+        if purged > 0 {
+            info!(
+                "Provisioner: Purged {} legacy IFEO Debugger=systray.exe registry entries.",
+                purged
+            );
         }
+        let _ = rules;
         Ok(())
     }
 
     #[cfg(target_os = "windows")]
     pub async fn remove_blocking_rule_registry(&self, path_str: &str) -> anyhow::Result<()> {
-        let path = std::path::Path::new(path_str);
+        let normalized = osoosi_types::normalize_nt_device_path(path_str);
+        let path = std::path::Path::new(&normalized);
         if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
-            let mut cmd = Command::new(osoosi_types::resolve_system_binary("reg.exe"));
-            cmd.args([
-                "delete",
-                &format!(
-                    r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}",
-                    exe_name
-                ),
-                "/v",
-                "Debugger",
-                "/f",
-            ]);
-            let _ = self.executor.execute(cmd).await;
+            let _ = osoosi_types::remove_ifeo_debugger_hook_native(exe_name);
         }
         Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    pub async fn purge_all_ifeo_debugger_hooks(&self) -> anyhow::Result<usize> {
+        Ok(osoosi_types::purge_ifeo_systray_debugger_hooks_native())
     }
 
     pub async fn provision_yara_rules(&self) -> anyhow::Result<()> {

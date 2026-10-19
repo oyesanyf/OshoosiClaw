@@ -30,13 +30,13 @@ watch_paths      = ["all"]
 
 [autonomy]
 # Reputation threshold (0.0–1.0). Peers ≥ this are auto-approved.
-auto_approve_reputation_threshold = 0.40
+auto_approve_reputation_threshold = 1.00
 # Auto-quarantine detected malware files
-auto_quarantine_malware = true
+auto_quarantine_malware = false
 # Minimum confidence (0.0–1.0) to quarantine
-quarantine_confidence_threshold = 0.60
+quarantine_confidence_threshold = 1.00
 # Minimum confidence for active response (Tarpit, Deception)
-action_confidence_threshold = 0.35
+action_confidence_threshold = 1.00
 # Try to replace compromised binaries with clean versions
 auto_replace_malware_binaries = false
 # Quarantine directory

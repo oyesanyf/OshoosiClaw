@@ -49,6 +49,7 @@ osoosi-exporter = { path = "../osoosi-exporter" }
 walkdir = { workspace = true }
 regex = { workspace = true }
 sysinfo = { workspace = true }
+dirs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

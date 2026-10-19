@@ -34,12 +34,17 @@ pub async fn detect_public_ip() -> String {
     }
 
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(800))
+        .timeout(std::time::Duration::from_millis(350))
         .build();
 
     let fetched = if let Ok(client) = client {
-        match client.get("https://api.ipify.org").send().await {
-            Ok(resp) if resp.status().is_success() => resp
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(350),
+            client.get("https://api.ipify.org").send(),
+        )
+        .await
+        {
+            Ok(Ok(resp)) if resp.status().is_success() => resp
                 .text()
                 .await
                 .ok()
@@ -51,12 +56,9 @@ pub async fn detect_public_ip() -> String {
         None
     };
 
-    if let Some(resolved) = fetched {
-        let _ = CACHED_PUBLIC_IP.set(resolved.clone());
-        resolved
-    } else {
-        "71.194.142.20".to_string()
-    }
+    let final_ip = fetched.unwrap_or_else(|| "71.194.142.20".to_string());
+    let _ = CACHED_PUBLIC_IP.set(final_ip.clone());
+    final_ip
 }
 
 /// Custom network behavior for OpenỌ̀ṣọ́ọ̀sì Mesh.

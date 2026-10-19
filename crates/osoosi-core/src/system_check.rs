@@ -79,11 +79,11 @@ pub fn get_os_info() -> (String, String, bool) {
 /// These binaries are signed by Microsoft and valid, but are routinely abused to execute threats
 /// (e.g. net.exe creating rogue accounts, powershell.exe downloading beacons, vssadmin deleting shadows).
 pub fn is_administrative_lolbin(path: &str) -> bool {
-    let path_lc = path.to_ascii_lowercase();
-    let filename = std::path::Path::new(&path_lc)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&path_lc);
+    let path_lc = path.trim().trim_matches('"').to_ascii_lowercase();
+    let filename = path_lc
+        .rsplit(['\\', '/'])
+        .next()
+        .unwrap_or(path_lc.as_str());
     matches!(
         filename,
         "net.exe"

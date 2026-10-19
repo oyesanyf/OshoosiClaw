@@ -584,6 +584,8 @@ impl Service<Request<Body>> for SafeServeDir {
                 || lower_path.starts_with("/api/")
                 || lower_path == "/skyrl"
                 || lower_path.starts_with("/skyrl/")
+                || lower_path == "/rea"
+                || lower_path.starts_with("/rea/")
                 || lower_path == "/health"
                 || lower_path.starts_with("/health/")
             {
@@ -987,6 +989,17 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         )
         .route("/api/system/disk-status", get(get_system_disk_status))
         .route("/api/system/cleanup", post(post_system_disk_cleanup))
+        .route("/api/rea/v1/status", get(get_rea_status))
+        .route("/rea/v1/status", get(get_rea_status))
+        .route("/api/rea/v1/providers", get(get_rea_providers))
+        .route("/rea/v1/providers", get(get_rea_providers))
+        .route("/api/rea/v1/analyze", post(post_rea_analyze))
+        .route("/rea/v1/analyze", post(post_rea_analyze))
+        .route(
+            "/api/rea/v1/autonomous-sweep",
+            post(post_rea_autonomous_sweep),
+        )
+        .route("/rea/v1/autonomous-sweep", post(post_rea_autonomous_sweep))
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -1239,7 +1252,11 @@ async fn auth_middleware(
 
     if !is_state_changing || auth_disabled {
         let mut response = next.run(req).await;
-        if path == "/api/status" {
+        if path == "/api/status"
+            || path == "/api/skyrl/v1/status"
+            || path == "/skyrl/v1/status"
+            || path == "/"
+        {
             let token = get_or_init_dashboard_api_token();
             let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", token);
             if let Ok(val) = axum::http::HeaderValue::from_str(&cookie_val) {
@@ -1261,10 +1278,16 @@ async fn auth_middleware(
         path == "/health"
             || path == "/api/health"
             || path == "/"
+            || path == "/api/mesh/bootstrap-peers"
+            || path == "/mesh/bootstrap-peers"
             || path == "/api/siquery/query"
             || path == "/siquery/query"
             || path == "/api/siquery/protection-sweep"
             || path == "/siquery/protection-sweep"
+            || path.starts_with("/api/skyrl/v1/")
+            || path.starts_with("/skyrl/v1/")
+            || path.starts_with("/api/rea/v1/")
+            || path.starts_with("/rea/v1/")
     };
 
     if !test_force_auth && is_public_bypass {
@@ -5498,9 +5521,20 @@ async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
             let chain_verified = orch.audit().verify();
+            let topo = orch.mesh_topology();
+            let topo_peer_count = topo
+                .get("peer_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let effective_peer_count = orch.mesh_peer_count().max(topo_peer_count);
+            let nodes = topo
+                .get("nodes")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
             Json(json!({
-                "peer_count": orch.mesh_peer_count(),
+                "peer_count": effective_peer_count,
                 "gossip_count": orch.mesh_gossip_count(),
+                "nodes": nodes,
                 "pending_joins": pending_joins,
                 "quarantined_peers": quarantined_peers,
                 "trust_verified": chain_verified,
@@ -5510,6 +5544,7 @@ async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
         None => Json(json!({
             "peer_count": 0,
             "gossip_count": 0,
+            "nodes": [],
             "pending_joins": pending_joins,
             "quarantined_peers": quarantined_peers,
             "trust_verified": false,
@@ -5556,7 +5591,39 @@ pub struct UpdateBootstrapPeersRequest {
 static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub async fn detect_public_ip() -> String {
-    osoosi_wire::detect_public_ip().await
+    if let Ok(env_ip) = std::env::var("OSOOSI_PUBLIC_IP") {
+        let trimmed = env_ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    static PUBLIC_IP_CACHE: std::sync::OnceLock<
+        std::sync::Mutex<Option<(std::time::Instant, String)>>,
+    > = std::sync::OnceLock::new();
+    let cache = PUBLIC_IP_CACHE.get_or_init(|| std::sync::Mutex::new(None));
+    if let Ok(guard) = cache.lock() {
+        if let Some((ts, ref ip)) = *guard {
+            if ts.elapsed() < std::time::Duration::from_secs(300) {
+                return ip.clone();
+            }
+        }
+    }
+
+    let ip = match tokio::time::timeout(
+        std::time::Duration::from_millis(350),
+        osoosi_wire::detect_public_ip(),
+    )
+    .await
+    {
+        Ok(detected) => detected,
+        Err(_) => "127.0.0.1".to_string(),
+    };
+
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some((std::time::Instant::now(), ip.clone()));
+    }
+    ip
 }
 
 pub fn update_wire_config_content(
@@ -5814,15 +5881,6 @@ pub async fn get_bootstrap_peers(
         })
         .unwrap_or(4001);
 
-    let public_ip = detect_public_ip().await;
-    let proto = if public_ip.contains(':') {
-        "ip6"
-    } else {
-        "ip4"
-    };
-    let recommended_multiaddr = format!("/{}/{}/tcp/{}", proto, public_ip, mesh_port);
-    let duckdns_template = format!("/dns4/<your-domain>.duckdns.org/tcp/{}", mesh_port);
-
     let duckdns_domain = mesh_config
         .duckdns_domain
         .clone()
@@ -5843,16 +5901,48 @@ pub async fn get_bootstrap_peers(
     };
     let upstream_peer = format!("/dns4/{}.duckdns.org/tcp/{}", clean_domain, duckdns_port);
 
+    static DUCKDNS_CACHE: std::sync::OnceLock<
+        std::sync::RwLock<std::collections::HashMap<String, Option<String>>>,
+    > = std::sync::OnceLock::new();
+    let cache = DUCKDNS_CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+
     let host = format!("{}.duckdns.org", clean_domain);
-    let resolved_ip_opt = match tokio::time::timeout(
-        std::time::Duration::from_millis(1500),
-        tokio::net::lookup_host(format!("{}:{}", host, duckdns_port)),
-    )
-    .await
-    {
-        Ok(Ok(mut addrs)) => addrs.next().map(|sa| sa.ip().to_string()),
-        _ => None,
+    let cached_entry = cache
+        .read()
+        .ok()
+        .and_then(|guard| guard.get(&host).cloned());
+
+    let dns_fut = async {
+        match cached_entry {
+            Some(val) => val,
+            None => {
+                let looked_up = match tokio::time::timeout(
+                    std::time::Duration::from_millis(150),
+                    tokio::net::lookup_host(format!("{}:{}", host, duckdns_port)),
+                )
+                .await
+                {
+                    Ok(Ok(mut addrs)) => addrs.next().map(|sa| sa.ip().to_string()),
+                    _ => None,
+                };
+                if let Ok(mut guard) = cache.write() {
+                    guard.insert(host.clone(), looked_up.clone());
+                }
+                looked_up
+            }
+        }
     };
+
+    let (public_ip, resolved_ip_opt) = tokio::join!(detect_public_ip(), dns_fut);
+
+    let proto = if public_ip.contains(':') {
+        "ip6"
+    } else {
+        "ip4"
+    };
+    let recommended_multiaddr = format!("/{}/{}/tcp/{}", proto, public_ip, mesh_port);
+    let duckdns_template = format!("/dns4/<your-domain>.duckdns.org/tcp/{}", mesh_port);
+
     let is_duckdns_host = if let Some(ref rip) = resolved_ip_opt {
         rip == &public_ip
     } else {
@@ -6999,7 +7089,7 @@ async fn post_skyrl_generate(
         pid,
         ppid: req.ppid.unwrap_or(0),
         binary_path: binary_path.clone(),
-        command_line,
+        command_line: command_line.clone(),
         is_kernel_thread,
         username: if is_kernel_thread {
             "SYSTEM".to_string()
@@ -7008,7 +7098,7 @@ async fn post_skyrl_generate(
         },
     };
 
-    let skyrl = state.skyrl.read().await;
+    let mut skyrl = state.skyrl.write().await;
     let lora = req
         .lora_adapter
         .unwrap_or_else(|| skyrl.active_lora.clone());
@@ -7016,6 +7106,20 @@ async fn post_skyrl_generate(
     // Check SafetyGuardrail
     let base_mask = skyrl.safety.generate_action_mask(&ctx);
     let is_protected = base_mask == [1.0, 0.0, 0.0, 0.0];
+
+    let cmd_lc = command_line.to_ascii_lowercase();
+    let path_lc = binary_path.to_ascii_lowercase();
+    let is_suspicious = !is_protected
+        && (cmd_lc.contains("whoami")
+            || cmd_lc.contains("-enc")
+            || cmd_lc.contains("mimikatz")
+            || cmd_lc.contains("sekurlsa")
+            || cmd_lc.contains("keymgr")
+            || cmd_lc.contains("comsvcs")
+            || cmd_lc.contains("procdump")
+            || path_lc.contains("\\temp\\")
+            || path_lc.contains("payload")
+            || path_lc.contains("beacon"));
 
     // SkyAction discrete mask:
     // 0: Allow, 1..3: Queries, 4..8: Containment
@@ -7040,6 +7144,11 @@ async fn post_skyrl_generate(
         if is_protected {
             def_obs[12] = 0.1;
             def_obs[15] = 0.01;
+        } else if is_suspicious {
+            def_obs[0] = 0.85;
+            def_obs[3] = 0.90;
+            def_obs[7] = 0.80;
+            def_obs[15] = 0.92;
         } else {
             def_obs[0] = 0.4;
             def_obs[3] = 0.6;
@@ -7050,7 +7159,7 @@ async fn post_skyrl_generate(
 
     let epsilon = req.epsilon.unwrap_or(skyrl.epsilon);
 
-    let chosen_action = if rand::random::<f32>() < epsilon {
+    let mut chosen_action = if rand::random::<f32>() < epsilon {
         let valid_indices: Vec<usize> = mask
             .iter()
             .enumerate()
@@ -7078,6 +7187,25 @@ async fn post_skyrl_generate(
         SkyAction::from_index(best_idx)
     };
 
+    if is_protected {
+        chosen_action = SkyAction::Allow;
+    } else if is_suspicious && matches!(chosen_action, SkyAction::Allow) {
+        chosen_action = if lora.contains("investigator") {
+            SkyAction::QueryMemorySignatures
+        } else if cmd_lc.contains("mimikatz")
+            || cmd_lc.contains("sekurlsa")
+            || cmd_lc.contains("keymgr")
+            || path_lc.contains("payload")
+        {
+            SkyAction::Terminate
+        } else {
+            SkyAction::QueryProcessTree
+        };
+    }
+
+    skyrl.total_steps += 1;
+    let total_steps = skyrl.total_steps;
+
     let explanation = if is_protected {
         format!(
             "Protected system process PID {} ({}) detected. SafetyGuardrail enforced invariant mask to prevent destabilization.",
@@ -7085,14 +7213,27 @@ async fn post_skyrl_generate(
         )
     } else {
         format!(
-            "Evaluated telemetry for PID {} under LoRA adapter '{}'. Guarded action {:?} selected.",
-            pid, lora, chosen_action
+            "Evaluated telemetry for PID {} ({}) under LoRA adapter '{}'. Guarded action {:?} selected.",
+            pid,
+            if command_line.is_empty() {
+                binary_path.as_str()
+            } else {
+                command_line.as_str()
+            },
+            lora,
+            chosen_action
         )
     };
 
     let thought_trace = format!(
-        "<thought>Evaluating telemetry for PID {} ({}). Active LoRA adapter: [{}]. Guardrail invariant: {}. Selected policy action: {:?}.</thought><action>{:?}</action>",
-        pid, binary_path, lora, if is_protected { "PROTECTED" } else { "STANDARD" }, chosen_action, chosen_action
+        "<thought>Evaluating telemetry for PID {} ({} {}). Active LoRA adapter: [{}]. Guardrail invariant: {}. Selected policy action: {:?}.</thought><action>{:?}</action>",
+        pid,
+        binary_path,
+        command_line,
+        lora,
+        if is_protected { "PROTECTED" } else { "STANDARD" },
+        chosen_action,
+        chosen_action
     );
 
     Json(json!({
@@ -7102,6 +7243,10 @@ async fn post_skyrl_generate(
         "explanation": explanation,
         "lora_adapter": lora,
         "guarded": is_protected,
+        "pid": pid,
+        "binary_path": binary_path,
+        "command_line": command_line,
+        "total_steps": total_steps,
     }))
 }
 
@@ -7111,42 +7256,83 @@ async fn post_skyrl_step(
 ) -> Json<Value> {
     let session_id = req
         .session_id
-        .unwrap_or_else(|| format!("session-{:016x}", rand::random::<u64>()));
+        .unwrap_or_else(|| "webui-interactive-gym".to_string());
+
+    let mut skyrl = state.skyrl.write().await;
+    let active_lora = skyrl.active_lora.clone();
+
+    if !skyrl.active_sessions.contains_key(&session_id) {
+        let pid = req.pid.unwrap_or(8124);
+        let binary_path = req
+            .binary_path
+            .clone()
+            .unwrap_or_else(|| r"C:\Windows\Temp\payload.exe".to_string());
+        let is_kernel_thread = pid == 0 || pid == 4;
+        let ctx = ProcessContext {
+            pid,
+            ppid: 1000,
+            binary_path,
+            command_line: "".to_string(),
+            is_kernel_thread,
+            username: "Administrator".to_string(),
+        };
+        skyrl.active_sessions.insert(
+            session_id.clone(),
+            OshoosiSecurityGym::new(ctx, req.is_malicious.unwrap_or(true)),
+        );
+    }
+
+    let (current_step, is_malicious, pre_obs, is_protected) = {
+        let gym = skyrl.active_sessions.get(&session_id).unwrap();
+        let base_mask = skyrl.safety.generate_action_mask(&gym.target_process);
+        (
+            gym.current_step,
+            gym.is_malicious,
+            gym.observation.clone(),
+            base_mask == [1.0, 0.0, 0.0, 0.0],
+        )
+    };
+
     let action = if let Some(id) = req.action_id {
         SkyAction::from_index(id)
     } else if let Some(ref name) = req.action {
         SkyAction::from_str_name(name).unwrap_or(SkyAction::Allow)
-    } else {
+    } else if is_protected {
         SkyAction::Allow
+    } else {
+        match current_step {
+            0 => SkyAction::QueryProcessTree,
+            1 => SkyAction::QueryNetworkConnections,
+            2 => SkyAction::QueryMemorySignatures,
+            _ => {
+                if is_malicious {
+                    let q_vals = skyrl.dqn.forward(&pre_obs);
+                    let containment_candidates = [
+                        (4usize, SkyAction::Suspend),
+                        (5usize, SkyAction::IsolateNetwork),
+                        (6usize, SkyAction::Terminate),
+                    ];
+                    containment_candidates
+                        .into_iter()
+                        .max_by(|(idx_a, _), (idx_b, _)| {
+                            let qa = q_vals.get(*idx_a).copied().unwrap_or(0.0);
+                            let qb = q_vals.get(*idx_b).copied().unwrap_or(0.0);
+                            qa.partial_cmp(&qb).unwrap_or(std::cmp::Ordering::Equal)
+                        })
+                        .map(|(_, act)| act)
+                        .unwrap_or(SkyAction::Terminate)
+                } else {
+                    SkyAction::Allow
+                }
+            }
+        }
     };
 
-    let mut skyrl = state.skyrl.write().await;
-
-    // Retrieve or create gymnasium session
-    let gym = skyrl
-        .active_sessions
-        .entry(session_id.clone())
-        .or_insert_with(|| {
-            let pid = req.pid.unwrap_or(8124);
-            let binary_path = req
-                .binary_path
-                .clone()
-                .unwrap_or_else(|| r"C:\Windows\Temp\payload.exe".to_string());
-            let is_kernel_thread = pid == 0 || pid == 4;
-            let ctx = ProcessContext {
-                pid,
-                ppid: 1000,
-                binary_path,
-                command_line: "".to_string(),
-                is_kernel_thread,
-                username: "Administrator".to_string(),
-            };
-            OshoosiSecurityGym::new(ctx, req.is_malicious.unwrap_or(true))
-        });
-
-    let pre_obs = gym.observation.clone();
-    let result = gym.step(action);
-    let step_num = gym.current_step;
+    let (result, step_num) = {
+        let gym = skyrl.active_sessions.get_mut(&session_id).unwrap();
+        let res = gym.step(action);
+        (res, gym.current_step)
+    };
 
     // Record transition into replay buffer
     let transition = Transition::new_with_index(
@@ -7166,6 +7352,10 @@ async fn post_skyrl_step(
     }
 
     Json(json!({
+        "action": action.as_str(),
+        "action_id": action.to_index(),
+        "guarded": is_protected,
+        "lora_adapter": active_lora,
         "observation": result.observation,
         "reward": result.reward,
         "done": result.done,
@@ -7306,18 +7496,27 @@ async fn post_skyrl_adapter(
     Json(req): Json<SkyrlAdapterRequest>,
 ) -> Json<Value> {
     let trimmed = req.adapter.trim();
-    if trimmed.is_empty() {
+    if trimmed.is_empty()
+        || trimmed.len() > 64
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+    {
         return api_error_json(
             "INVALID_ADAPTER",
-            "Adapter name cannot be empty",
+            "Adapter name cannot be empty or contain invalid characters",
             "Provide a valid LoRA adapter name (e.g., edr-reasoning-lora-v1).",
         );
     }
     let mut skyrl = state.skyrl.write().await;
     skyrl.active_lora = trimmed.to_string();
+    if !skyrl.available_loras.iter().any(|a| a == trimmed) {
+        skyrl.available_loras.push(trimmed.to_string());
+    }
     Json(json!({
         "status": "success",
         "active_lora_adapter": skyrl.active_lora,
+        "available_lora_adapters": skyrl.available_loras,
     }))
 }
 
@@ -9415,6 +9614,193 @@ pub async fn get_audit_nsrl_aslr_merkle() -> impl IntoResponse {
     handle_audit_nsrl_aslr_merkle().await
 }
 
+pub async fn get_rea_status() -> impl IntoResponse {
+    let engine = osoosi_core::rea::global_rea_engine();
+    (StatusCode::OK, Json(engine.status_snapshot()))
+}
+
+pub async fn get_rea_providers() -> impl IntoResponse {
+    let providers = osoosi_core::rea::discover_rea_providers();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "count": providers.len(),
+            "providers": providers,
+        })),
+    )
+}
+
+pub async fn post_rea_analyze(
+    Json(req): Json<osoosi_core::rea::ReaAnalyzeRequest>,
+) -> impl IntoResponse {
+    let engine = osoosi_core::rea::global_rea_engine();
+    let requested_kind = req
+        .target
+        .as_deref()
+        .map(osoosi_core::rea::ReaTargetKind::from_str_lossy)
+        .unwrap_or(osoosi_core::rea::ReaTargetKind::Auto);
+    let trigger = req
+        .trigger
+        .clone()
+        .or_else(|| Some("dashboard_analyze".to_string()));
+
+    if let Some(ref preset) = req.preset {
+        match preset.trim().to_ascii_lowercase().as_str() {
+            "self_binary" | "self" => {
+                let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("Cargo.toml"));
+                match osoosi_core::rea::analyze_target_path(
+                    &exe.to_string_lossy(),
+                    requested_kind,
+                    trigger,
+                ) {
+                    Ok(report) => {
+                        engine.record_report(report.clone());
+                        return (
+                            StatusCode::OK,
+                            Json(json!({ "ok": true, "report": report })),
+                        );
+                    }
+                    Err(e) => {
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(json!({ "ok": false, "error": e.to_string() })),
+                        );
+                    }
+                }
+            }
+            "sample_evm" | "evm" => {
+                if let Ok(report) = osoosi_core::rea::analyze_target_path(
+                    osoosi_core::rea::SAMPLE_EVM_CONTRACT_HEX,
+                    osoosi_core::rea::ReaTargetKind::EvmBytecode,
+                    trigger.clone(),
+                ) {
+                    engine.record_report(report.clone());
+                    return (
+                        StatusCode::OK,
+                        Json(json!({ "ok": true, "report": report })),
+                    );
+                }
+            }
+            "sample_wasm" | "wasm" => {
+                if let Ok(report) = osoosi_core::rea::analyze_target_path(
+                    osoosi_core::rea::SAMPLE_WASM_MODULE_HEX,
+                    osoosi_core::rea::ReaTargetKind::WasmArtifact,
+                    trigger.clone(),
+                ) {
+                    engine.record_report(report.clone());
+                    return (
+                        StatusCode::OK,
+                        Json(json!({ "ok": true, "report": report })),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if let Some(ref hex_str) = req.bytecode_hex {
+        let trimmed = hex_str.trim();
+        if !trimmed.is_empty() {
+            let kind = if requested_kind == osoosi_core::rea::ReaTargetKind::Auto {
+                osoosi_core::rea::ReaTargetKind::EvmBytecode
+            } else {
+                requested_kind
+            };
+            let raw_hex = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+                .unwrap_or(trimmed);
+            let decoded = hex::decode(raw_hex).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
+            let report = osoosi_core::rea::analyze_target_bytes(
+                "inline://bytecode_hex",
+                None,
+                &decoded,
+                kind,
+                trigger,
+            );
+            engine.record_report(report.clone());
+            return (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "report": report })),
+            );
+        }
+    }
+
+    if let Some(ref path_str) = req.path {
+        let trimmed = path_str.trim();
+        if !trimmed.is_empty() {
+            if trimmed.starts_with("0x")
+                && trimmed.len() >= 10
+                && trimmed[2..].chars().all(|c| c.is_ascii_hexdigit())
+            {
+                let decoded = hex::decode(&trimmed[2..]).unwrap_or_default();
+                let report = osoosi_core::rea::analyze_target_bytes(
+                    "evm://inline_hex",
+                    None,
+                    &decoded,
+                    osoosi_core::rea::ReaTargetKind::EvmBytecode,
+                    trigger,
+                );
+                engine.record_report(report.clone());
+                return (
+                    StatusCode::OK,
+                    Json(json!({ "ok": true, "report": report })),
+                );
+            }
+            let target_path = if trimmed.eq_ignore_ascii_case("self")
+                || trimmed.eq_ignore_ascii_case("osoosi")
+                || trimmed.eq_ignore_ascii_case("osoosi.exe")
+            {
+                std::env::current_exe().unwrap_or_else(|_| PathBuf::from(trimmed))
+            } else {
+                PathBuf::from(trimmed)
+            };
+            match osoosi_core::rea::analyze_target_path(
+                &target_path.to_string_lossy(),
+                requested_kind,
+                trigger,
+            ) {
+                Ok(report) => {
+                    engine.record_report(report.clone());
+                    return (
+                        StatusCode::OK,
+                        Json(json!({ "ok": true, "report": report })),
+                    );
+                }
+                Err(e) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "ok": false, "error": e.to_string() })),
+                    );
+                }
+            }
+        }
+    }
+
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "ok": false,
+            "error": "Provide a target file path, bytecode_hex, or preset ('self_binary', 'sample_evm', 'sample_wasm')."
+        })),
+    )
+}
+
+pub async fn post_rea_autonomous_sweep() -> impl IntoResponse {
+    let engine = osoosi_core::rea::global_rea_engine();
+    let reports = engine.run_autonomous_sweep();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "swept_count": reports.len(),
+            "reports": reports,
+            "status": engine.status_snapshot(),
+        })),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -10381,7 +10767,7 @@ mod tests {
         let sensors = json_val["sensors"]
             .as_array()
             .expect("sensors must be an array");
-        assert_eq!(sensors.len(), 9);
+        assert_eq!(sensors.len(), 10);
         assert!(json_val.get("hardware_selection").is_some());
         for s in sensors {
             assert!(s.get("sensor_id").is_some());
@@ -11962,6 +12348,101 @@ mod tests {
             .unwrap();
         let resp_valid_get = app.clone().oneshot(valid_get).await.unwrap();
         assert_eq!(resp_valid_get.status(), StatusCode::OK);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_mesh_bootstrap_peers_and_webui_parity() {
+        let _env_guard = TEST_CONFIG_MUTEX.lock().await;
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!(
+            "osoosi_dashboard_mesh_parity_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state, temp_dir.clone());
+
+        // 1. Verify /api/mesh/bootstrap-peers responds with 200 OK and valid JSON
+        let req1 = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp1 = app.clone().oneshot(req1).await.unwrap();
+        assert_eq!(resp1.status(), StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp1.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(parsed.get("peers").and_then(|v| v.as_array()).is_some());
+        assert!(parsed
+            .get("recommended_multiaddr")
+            .and_then(|v| v.as_str())
+            .is_some());
+
+        // 2. Verify second call hits cache and completes rapidly (< 50ms)
+        let t0 = std::time::Instant::now();
+        let req2 = axum::http::Request::builder()
+            .uri("/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp2 = app.clone().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+        assert!(
+            t0.elapsed() < std::time::Duration::from_millis(50),
+            "Cached /mesh/bootstrap-peers took {:?}",
+            t0.elapsed()
+        );
+
+        // 3. Verify 0-diff parity between dashboard/src and dashboard/dist & UI invariants
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir.parent().unwrap().parent().unwrap();
+        for file_name in ["index.html", "app.js", "style.css"] {
+            let src_path = repo_root.join("dashboard").join("src").join(file_name);
+            let dist_path = repo_root.join("dashboard").join("dist").join(file_name);
+            let src_content = std::fs::read_to_string(&src_path)
+                .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", src_path, e));
+            let dist_content = std::fs::read_to_string(&dist_path)
+                .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", dist_path, e));
+            assert_eq!(
+                src_content, dist_content,
+                "0-diff parity violation between dashboard/src/{0} and dashboard/dist/{0}",
+                file_name
+            );
+        }
+
+        let index_html =
+            std::fs::read_to_string(repo_root.join("dashboard/src/index.html")).unwrap();
+        assert!(
+            !index_html.contains("href=\"#\" class=\"nav-item\""),
+            "All .nav-item links in index.html must use href=\"#<data-view>\" instead of href=\"#\""
+        );
+        assert!(index_html.contains("href=\"#mesh\" class=\"nav-item\" data-view=\"mesh\""));
+
+        let app_js = std::fs::read_to_string(repo_root.join("dashboard/src/app.js")).unwrap();
+        assert!(
+            app_js.contains("via <code>peers</code> in <code>osoosi.toml</code>"),
+            "app.js must preserve spacing around <code>peers</code> in <code>osoosi.toml</code>"
+        );
+        assert!(
+            app_js.contains("window.loadBootstrapPeers = fetchBootstrapPeers;"),
+            "app.js must alias window.loadBootstrapPeers = fetchBootstrapPeers"
+        );
+        assert!(
+            app_js.contains("'graph': 'process-map'"),
+            "app.js must alias #graph to process-map"
+        );
+        assert!(
+            app_js.contains("(n.group === 'peer' || n.group === 'threat')"),
+            "app.js must filter remotePeers strictly to peer/threat nodes"
+        );
+        assert_eq!(
+            app_js.matches("addEventListener('DOMContentLoaded', init)").count(),
+            1,
+            "app.js must register DOMContentLoaded listener for init() exactly once"
+        );
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

@@ -23,25 +23,25 @@
             </div>
             <nav class="nav-menu">
                 <div class="nav-section-title">Overview</div>
-                <a href="#" class="nav-item active" data-view="dashboard">
+                <a href="#dashboard" class="nav-item active" data-view="dashboard">
                     <i data-lucide="layout-dashboard"></i>
                     <span>Dashboard</span>
                 </a>
-                <a href="#" class="nav-item" data-view="zone">
+                <a href="#zone" class="nav-item" data-view="zone">
                     <i data-lucide="globe"></i>
                     <span>Zone Overview</span>
                 </a>
-                <a href="#" class="nav-item" data-view="approvals">
+                <a href="#approvals" class="nav-item" data-view="approvals">
                     <i data-lucide="check-square"></i>
                     <span>Approval Queue</span>
                 </a>
 
                 <div class="nav-section-title">Mesh Intelligence</div>
-                <a href="#" class="nav-item" data-view="otel-map">
+                <a href="#otel-map" class="nav-item" data-view="otel-map">
                     <i data-lucide="map"></i>
                     <span>Telemetry Map</span>
                 </a>
-                <a href="#" class="nav-item" data-view="threats">
+                <a href="#threats" class="nav-item" data-view="threats">
                     <i data-lucide="shield-alert"></i>
                     <span>Threat Intelligence</span>
                 </a>
@@ -49,15 +49,15 @@
                     <i data-lucide="shield-alert"></i>
                     <span>ATT&CK Matrix</span>
                 </a>
-                <a href="#" class="nav-item" data-view="mesh">
+                <a href="#mesh" class="nav-item" data-view="mesh">
                     <i data-lucide="share-2"></i>
                     <span>Mesh Network</span>
                 </a>
-                <a href="#" class="nav-item" data-view="gossip">
+                <a href="#gossip" class="nav-item" data-view="gossip">
                     <i data-lucide="messages-square"></i>
                     <span>Gossip Feed</span>
                 </a>
-                <a href="#" class="nav-item" data-view="malware">
+                <a href="#malware" class="nav-item" data-view="malware">
                     <i data-lucide="scan"></i>
                     <span>Malware Scanner</span>
                 </a>
@@ -72,19 +72,19 @@
                 </a>
 
                 <div class="nav-section-title">System Analysis</div>
-                <a href="#" class="nav-item" data-view="repair">
+                <a href="#repair" class="nav-item" data-view="repair">
                     <i data-lucide="wrench"></i>
                     <span>Repair Engine</span>
                 </a>
-                <a href="#" class="nav-item" data-view="utilities">
+                <a href="#utilities" class="nav-item" data-view="utilities">
                     <i data-lucide="sliders"></i>
                     <span>Utilities &amp; Models</span>
                 </a>
-                <a href="#" class="nav-item" data-view="process-map">
+                <a href="#graph" class="nav-item" data-view="process-map">
                     <i data-lucide="network"></i>
                     <span>Attack Graph</span>
                 </a>
-                <a href="#" class="nav-item" data-view="story">
+                <a href="#story" class="nav-item" data-view="story">
                     <i data-lucide="book-open"></i>
                     <span>Forensic Story</span>
                 </a>
@@ -92,17 +92,21 @@
                     <i data-lucide="history"></i>
                     <span>Forensic History</span>
                 </a>
-                <a href="#" class="nav-item" data-view="skyrl">
+                <a href="#skyrl" class="nav-item" data-view="skyrl">
                     <i data-lucide="brain-circuit"></i>
                     <span>RL Policy Training</span>
                 </a>
-                <a href="#" class="nav-item" data-view="agent-anomalies">
+                <a href="#agent-anomalies" class="nav-item" data-view="agent-anomalies">
                     <i data-lucide="bot"></i>
                     <span>AI Agents &amp; Containment</span>
                 </a>
                 <a href="#siquery" class="nav-item" data-view="siquery">
                     <i data-lucide="database"></i>
                     <span>Siquery SQL Console</span>
+                </a>
+                <a href="#rea" class="nav-item" data-view="rea">
+                    <i data-lucide="microscope"></i>
+                    <span>REA Reverse Engineer</span>
                 </a>
             </nav>
             <div class="sidebar-footer">
@@ -115,11 +119,11 @@
                     <span id="sidebar-mesh-text" style="font-size: 12px; color: var(--text-muted);">P2P Swarm: Standalone</span>
                 </div>
                 <div class="node-id-label">Node ID: <span id="node-id-short">...</span></div>
-                <a href="#" id="reset-password-nav-btn" class="nav-item" style="margin-top: 6px; border: 1px solid var(--glass-border); color: var(--text-primary); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
+                <a href="#admin-settings" id="reset-password-nav-btn" class="nav-item" style="margin-top: 6px; border: 1px solid var(--glass-border); color: var(--text-primary); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
                     <i data-lucide="key-round" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                     <span>Admin Settings</span>
                 </a>
-                <a href="#" id="logout-btn" class="nav-item" style="margin-top: 4px; border: 1px solid rgba(255, 77, 77, 0.2); color: rgba(255, 77, 77, 0.7); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
+                <a href="#logout" id="logout-btn" class="nav-item" style="margin-top: 4px; border: 1px solid rgba(255, 77, 77, 0.2); color: rgba(255, 77, 77, 0.7); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
                     <i data-lucide="log-out" style="width: 16px; height: 16px;"></i>
                     <span>Log Out</span>
                 </a>
@@ -1539,7 +1543,7 @@
                         <div class="header-actions" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                             <div style="display:flex; align-items:center; gap:8px;">
                                 <label for="skyrl-lora-select" style="font-size:12px; color:var(--text-muted); font-weight:600;">LoRA Adapter:</label>
-                                <select id="skyrl-lora-select" class="glass-select" style="background:rgba(13,17,23,0.85); border:1px solid var(--glass-border); color:var(--text-primary); border-radius:8px; padding:6px 12px; font-size:12px; outline:none; cursor:pointer;">
+                                <select id="skyrl-lora-select" class="glass-select" onchange="changeSkyrlLoraAdapter(this.value)" style="background:rgba(13,17,23,0.85); border:1px solid var(--glass-border); color:var(--text-primary); border-radius:8px; padding:6px 12px; font-size:12px; outline:none; cursor:pointer;">
                                     <option value="edr-reasoning-lora-v1">edr-reasoning-lora-v1</option>
                                     <option value="tinker-investigator-v2">tinker-investigator-v2</option>
                                     <option value="base-policy">base-policy</option>
@@ -1549,7 +1553,7 @@
                                 <i data-lucide="play" style="width:14px;height:14px;"></i>
                                 <span>Simulate Gym Step</span>
                             </button>
-                            <button id="skyrl-gen-btn" class="btn-primary btn-sm flex items-center gap-1" style="background:rgba(188, 140, 242, 0.15); border:1px solid rgba(188, 140, 242, 0.3); color:var(--accent-purple);" onclick="simulateSkyrlGenerate()">
+                            <button id="skyrl-gen-btn" class="btn-primary btn-sm flex items-center gap-1" style="background:rgba(188, 140, 242, 0.15); border:1px solid rgba(188, 140, 242, 0.3); color:var(--accent-purple);" onclick="simulateSkyrlGenerate(false)">
                                 <i data-lucide="brain-circuit" style="width:14px;height:14px;"></i>
                                 <span>Run Inference</span>
                             </button>
@@ -1655,7 +1659,7 @@
                         </div>
                         <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
                             <span id="skyrl-agent-mode-badge" class="badge blue">Inference Ready</span>
-                            <button class="btn-text" onclick="simulateSkyrlGenerate()" style="font-size:12px;">
+                            <button id="skyrl-guarded-gen-btn" class="btn-text" onclick="simulateSkyrlGenerate(true)" style="font-size:12px;">
                                 <i data-lucide="refresh-cw" style="width:12px;height:12px;margin-right:4px;"></i> Run Guarded Inference
                             </button>
                         </div>
@@ -2658,6 +2662,66 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+            </div>
+
+            <!-- REA: Reverse Engineer Anything View -->
+            <div id="rea-view" class="view-content">
+                <div class="card glass" style="margin-bottom: 18px; border-left: 4px solid var(--accent-blue); padding: 18px 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <h3 style="margin: 0; font-size: 16px; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
+                                <span>🔬 REA: Reverse Engineer Anything (Autonomous Binary, Bytecode &amp; Protocol Inspector)</span>
+                            </h3>
+                            <p style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-muted);">
+                                Autonomous evidence-backed reverse engineering across PE/ELF/Mach-O, Rust (<code>.dep-v0</code>), Go (<code>buildinf</code>), WASM, EVM bytecode, .NET CIL (<code>BSJB</code>), Electron ASAR, SQLite, HAR/PCAP, and Firmware/APK.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <span id="rea-patrol-badge" class="badge green" style="font-size: 11px;">AUTONOMOUS PATROL ACTIVE</span>
+                            <button type="button" class="btn-secondary" onclick="runReaAutonomousSweep()" style="font-size: 12px; padding: 6px 12px; border-radius: 6px; cursor: pointer;">
+                                🤖 Run Autonomous Sweep
+                            </button>
+                        </div>
+                    </div>
+                    <div id="rea-providers-bar" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px;"></div>
+                </div>
+
+                <div class="card glass" style="margin-bottom: 18px; padding: 18px 20px;">
+                    <div style="display: grid; grid-template-columns: 2fr 1fr auto; gap: 12px; align-items: end;">
+                        <div>
+                            <label for="rea-target-input" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Target Artifact Path or EVM/WASM Hex (`0x...`)</label>
+                            <input type="text" id="rea-target-input" value="self" placeholder="e.g. self, C:\Windows\System32\notepad.exe, database/osoosi.db, or 0x6080604052..." style="width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.35); color: var(--text-primary); font-family: monospace; font-size: 12px;">
+                        </div>
+                        <div>
+                            <label for="rea-kind-select" style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Target Format Hint</label>
+                            <select id="rea-kind-select" style="width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.35); color: var(--text-primary); font-size: 12px;">
+                                <option value="auto">Auto-Detect (Magic + Section Heuristics)</option>
+                                <option value="rust_binary">Rust Binary (.dep-v0 / cargo-auditable)</option>
+                                <option value="go_binary">Go Binary (Go buildinf)</option>
+                                <option value="native_binary">Native Binary (PE / ELF64 / Mach-O)</option>
+                                <option value="wasm_artifact">WebAssembly (.wasm)</option>
+                                <option value="evm_bytecode">EVM Smart Contract Bytecode (0x...)</option>
+                                <option value="dotnet_assembly">.NET CIL Assembly (BSJB)</option>
+                                <option value="javascript_electron">JavaScript / Electron (.asar)</option>
+                                <option value="sqlite_database">SQLite Database (.db / .sqlite)</option>
+                                <option value="network_capture">Network Capture (.har / .pcap)</option>
+                                <option value="firmware_image">Firmware / Android APK</option>
+                            </select>
+                        </div>
+                        <button type="button" id="rea-analyze-btn" class="btn-primary" onclick="runReaAnalysis()" style="padding: 9px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">
+                            🔬 Analyze Target
+                        </button>
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;">
+                        <button type="button" class="btn-secondary" onclick="runReaPreset('self_binary')" style="font-size: 11px; padding: 5px 10px; border-radius: 6px; cursor: pointer;">🦀 Self-Inspect Osoosi Binary</button>
+                        <button type="button" class="btn-secondary" onclick="runReaPreset('sample_evm')" style="font-size: 11px; padding: 5px 10px; border-radius: 6px; cursor: pointer;">⛓️ Analyze Sample EVM Contract</button>
+                        <button type="button" class="btn-secondary" onclick="runReaPreset('sample_wasm')" style="font-size: 11px; padding: 5px 10px; border-radius: 6px; cursor: pointer;">🕸️ Analyze Sample WASM Module</button>
+                    </div>
+                </div>
+
+                <div id="rea-report-container" class="card glass" style="padding: 18px 20px;">
+                    <div style="color: var(--text-muted); font-size: 13px;">Select a target or click a preset above to run an evidence-backed REA reverse-engineering investigation.</div>
                 </div>
             </div>
         </main>
