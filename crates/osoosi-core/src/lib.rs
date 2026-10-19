@@ -355,6 +355,7 @@ pub fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
         || path_lc.contains("\\windows\\winsxs\\")
         || path_lc.contains("\\windows\\systemapps\\")
         || path_lc.contains("\\windows\\immersivecontrolpanel\\")
+        || path_lc.contains("\\program files\\windowsapps\\microsoft.")
         || path_lc.ends_with("\\windows\\explorer.exe")
         || path_unix.starts_with("/bin/")
         || path_unix.starts_with("/sbin/")
@@ -417,6 +418,9 @@ pub fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
                 | "audiodg.exe"
                 | "taskmgr.exe"
                 | "conhost.exe"
+                | "openconsole.exe"
+                | "windowsterminal.exe"
+                | "wt.exe"
                 | "sysmon.exe"
                 | "sysmon64.exe"
                 | "osoosi.exe"
@@ -1018,9 +1022,10 @@ fn is_destructive_mutation(
 
 pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool {
     let name_lc = name.to_ascii_lowercase();
-    let filename_lc = std::path::Path::new(&name_lc)
-        .file_name()
-        .and_then(|n| n.to_str())
+    let filename_lc = name_lc
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|s| !s.is_empty())
         .unwrap_or(&name_lc);
     let base_name = filename_lc.strip_suffix(".exe").unwrap_or(filename_lc);
 

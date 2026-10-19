@@ -68,6 +68,13 @@ fn save_blocked_rule(target: BlockedTarget) {
 }
 
 pub fn restore_autoblock_rules() -> Result<usize> {
+    let purged_native = purge_windows_firewall_autoblock_rules_native(false);
+    if purged_native > 0 {
+        tracing::info!(
+            "Purged {} protected or duplicate Windows Firewall auto-block registry rule(s) during startup.",
+            purged_native
+        );
+    }
     let path = firewall_persistence_path();
     let rules: Vec<BlockedTarget> = match std::fs::read_to_string(&path) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
@@ -792,11 +799,145 @@ fn schedule_dns_unblock(targets: Vec<String>, ttl_secs: u64) {
 }
 
 #[cfg(target_os = "windows")]
+fn windows_firewall_rule_exists_native(rule_name: &str) -> bool {
+    use winreg::enums::*;
+    use winreg::types::FromRegValue;
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let fw_path = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+    let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ) else {
+        return false;
+    };
+    let needle = format!("Name={}|", rule_name);
+    for item in fw_key.enum_values().flatten() {
+        if let Ok(val_str) = String::from_reg_value(&item.1) {
+            if val_str.contains(&needle) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Natively purges `OpenOsoosi-Block-*`, `OpenOsoosi-DNS-Block-*`, `OshoosiClaw_AutoBlock_*`,
+/// and `Osoosi_AutoBlock_*` rules from `HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules`
+/// and `Osoosi-Tarpit-*` QoS subkeys without spawning slow `netsh.exe` subprocesses.
+/// When `purge_all` is `false`, only rules targeting protected OS/shell/search/developer binaries,
+/// raw `\Device\HarddiskVolume*` paths, or duplicate `(Name, Dir)` entries are removed.
+pub fn purge_windows_firewall_autoblock_rules_native(purge_all: bool) -> usize {
+    #[cfg(target_os = "windows")]
+    {
+        use std::collections::HashSet;
+        use winreg::enums::*;
+        use winreg::types::FromRegValue;
+        use winreg::RegKey;
+
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let mut removed = 0usize;
+
+        let fw_path = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+        if let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ | KEY_WRITE) {
+            let mut to_delete = Vec::<String>::new();
+            let mut seen_rules = HashSet::<(String, String)>::new();
+
+            for (val_name, reg_val) in fw_key.enum_values().flatten() {
+                let Ok(val_str) = String::from_reg_value(&reg_val) else {
+                    continue;
+                };
+                let is_osoosi_rule = val_str.contains("Name=OpenOsoosi-Block-")
+                    || val_str.contains("Name=OpenOsoosi-DNS-Block-")
+                    || val_str.contains("Name=OshoosiClaw_AutoBlock_")
+                    || val_str.contains("Name=Osoosi_AutoBlock_")
+                    || val_str.contains("Name=Oshoosi-Isolation-");
+                if !is_osoosi_rule {
+                    continue;
+                }
+
+                if purge_all {
+                    to_delete.push(val_name);
+                    continue;
+                }
+
+                let mut rule_name = String::new();
+                let mut dir = String::new();
+                let mut app = String::new();
+                for part in val_str.split('|') {
+                    if let Some(n) = part.strip_prefix("Name=") {
+                        rule_name = n.to_string();
+                    } else if let Some(d) = part.strip_prefix("Dir=") {
+                        dir = d.to_string();
+                    } else if let Some(a) = part.strip_prefix("App=") {
+                        app = a.to_string();
+                    }
+                }
+
+                let is_duplicate = !rule_name.is_empty()
+                    && !seen_rules.insert((rule_name.to_ascii_lowercase(), dir.to_ascii_lowercase()));
+                let is_protected_app = if !app.is_empty() {
+                    let norm = osoosi_types::normalize_nt_device_path(&app);
+                    app.to_ascii_lowercase().starts_with(r"\device\harddiskvolume")
+                        || crate::blocking_manager::is_protected_or_benign_system_path(&norm)
+                        || osoosi_types::is_protected_os_shell_or_desktop_binary(&norm)
+                        || crate::system_check::is_administrative_lolbin(&norm)
+                } else {
+                    false
+                };
+
+                if is_duplicate || is_protected_app {
+                    to_delete.push(val_name);
+                }
+            }
+
+            for val_name in to_delete {
+                if fw_key.delete_value(&val_name).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+
+        let qos_path = r"Software\Policies\Microsoft\Windows\QoS";
+        if let Ok(qos_key) = hklm.open_subkey_with_flags(qos_path, KEY_READ | KEY_WRITE) {
+            let subkeys: Vec<String> = qos_key.enum_keys().filter_map(|k| k.ok()).collect();
+            for sk in subkeys {
+                if sk.starts_with("Osoosi-Tarpit-") {
+                    let should_remove = if purge_all {
+                        true
+                    } else if let Ok(sub) = qos_key.open_subkey_with_flags(&sk, KEY_READ) {
+                        sub.get_value::<String, _>("Application Name")
+                            .map(|app| {
+                                let norm = osoosi_types::normalize_nt_device_path(&app);
+                                crate::blocking_manager::is_protected_or_benign_system_path(&norm)
+                                    || osoosi_types::is_protected_os_shell_or_desktop_binary(&norm)
+                            })
+                            .unwrap_or(true)
+                    } else {
+                        true
+                    };
+                    if should_remove && qos_key.delete_subkey_all(&sk).is_ok() {
+                        removed += 1;
+                    }
+                }
+            }
+        }
+
+        removed
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = purge_all;
+        0
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn block_windows_program(image_path: Option<&str>) -> Result<String> {
-    let image = image_path
+    let raw_image = image_path
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| anyhow!("Windows firewall block requires process Image path"))?;
+    let normalized = osoosi_types::normalize_nt_device_path(raw_image);
+    let image = normalized.as_str();
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     std::hash::Hash::hash(&image.to_ascii_lowercase(), &mut hasher);
@@ -806,6 +947,9 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
     let in_rule = format!("{}-In", rule_base);
 
     let add_rule = |name: &str, dir: &str| -> Result<()> {
+        if windows_firewall_rule_exists_native(name) {
+            return Ok(());
+        }
         let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
         #[cfg(windows)]
         {
@@ -960,74 +1104,8 @@ fn dns_rule_name(prefix: &str, payload: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn remove_windows_autoblock_rules() -> Result<usize> {
-    use std::collections::HashSet;
-    #[allow(unused_imports)]
-    use std::os::windows::process::CommandExt;
-
-    let mut to_delete = HashSet::<String>::new();
-
-    let path = firewall_persistence_path();
-    if let Ok(s) = std::fs::read_to_string(&path) {
-        if let Ok(rules) = serde_json::from_str::<Vec<BlockedTarget>>(&s) {
-            for r in rules {
-                match r {
-                    BlockedTarget::Program { path } => {
-                        let filename = std::path::Path::new(&path)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or(&path);
-                        to_delete.insert(format!("OpenOsoosi-Block-{}", filename));
-
-                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                        std::hash::Hash::hash(&path.to_ascii_lowercase(), &mut hasher);
-                        let id = std::hash::Hasher::finish(&hasher);
-                        let rule_base = format!("OpenOsoosi-Block-{:x}", id);
-                        to_delete.insert(rule_base.clone());
-                        to_delete.insert(format!("{}-Out", rule_base));
-                        to_delete.insert(format!("{}-In", rule_base));
-                    }
-                    BlockedTarget::DnsIps { prefix, ips } => {
-                        to_delete.insert(format!("OpenOsoosi-DNS-Block-{}", prefix));
-                        let payload = ips.join(",");
-                        to_delete.insert(dns_rule_name(&prefix, &payload));
-                    }
-                }
-            }
-        }
-    }
-
+    let removed = purge_windows_firewall_autoblock_rules_native(true);
     let _ = clear_firewall_persistence();
-    if to_delete.is_empty() {
-        return Ok(0);
-    }
-
-    let deadline = std::time::Instant::now() + Duration::from_millis(800);
-    let mut removed = 0usize;
-    for name in to_delete {
-        if std::time::Instant::now() >= deadline {
-            break;
-        }
-        let mut del_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
-        del_cmd
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        #[cfg(windows)]
-        del_cmd.creation_flags(0x08000000);
-        if let Ok(status) = del_cmd
-            .args([
-                "advfirewall",
-                "firewall",
-                "delete",
-                "rule",
-                &format!("name={}", name),
-            ])
-            .status()
-        {
-            if status.success() {
-                removed += 1;
-            }
-        }
-    }
     Ok(removed)
 }
 

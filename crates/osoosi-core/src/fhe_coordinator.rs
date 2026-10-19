@@ -378,7 +378,7 @@ impl FheCoordinator {
             sensitivity: 100.0 / (total_samples as f32).max(1.0),
         };
         let dp = osoosi_dp::DifferentialPrivacy::new(dp_config);
-        let noisy_mean = dp.add_noise(mean);
+        let noisy_mean = dp.add_noise(mean).clamp(0.0, 100.0);
 
         let rollup_bytes = format!("{}:{}:{}", total_samples, mean, noisy_mean);
         let leaf = self.record_merkle_leaf("FLEET_ANOMALY_ROLLUP", rollup_bytes.as_bytes());
@@ -523,8 +523,8 @@ mod tests {
             .rollup_fleet_anomaly_telemetry(&[a1, a2, a3], 1.0)
             .unwrap();
         assert_eq!(leaf.operation_type, "FLEET_ANOMALY_ROLLUP");
-        // With Laplace DP noise, noisy_mean should be around 50 +/- 30
-        assert!(noisy_mean > 0.0 && noisy_mean < 150.0);
+        // With Laplace DP noise clamped to [0.0, 100.0]
+        assert!((0.0..=100.0).contains(&noisy_mean));
 
         let proof = coord.get_audit_proof(leaf.seq).unwrap();
         assert!(verify_merkle_proof(

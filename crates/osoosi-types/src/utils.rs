@@ -172,7 +172,8 @@ pub fn remove_ifeo_debugger_hook_native(exe_name: &str) -> bool {
 }
 
 /// Purges all `Image File Execution Options\*\Debugger` values pointing to `systray.exe`
-/// natively via `winreg` in < 5ms without spawning `reg.exe` subprocesses.
+/// or hijacking protected OS shell/search/tray/accessibility binaries natively via `winreg`
+/// in < 5ms without spawning `reg.exe` subprocesses.
 pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
     #[cfg(target_os = "windows")]
     {
@@ -196,9 +197,30 @@ pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
                 }
                 continue;
             }
+            let is_protected_or_accessibility = is_protected_os_shell_or_desktop_binary(&lower_name)
+                || matches!(
+                    lower_name.as_str(),
+                    "magnify.exe"
+                        | "narrator.exe"
+                        | "sethc.exe"
+                        | "utilman.exe"
+                        | "osk.exe"
+                        | "displayswitch.exe"
+                        | "atbroker.exe"
+                        | "git.exe"
+                        | "chrome.exe"
+                        | "msedge.exe"
+                        | "firefox.exe"
+                        | "brave.exe"
+                        | "code.exe"
+                        | "cargo.exe"
+                        | "rustc.exe"
+                );
             if let Ok(subkey) = ifeo_root.open_subkey_with_flags(&name, KEY_READ | KEY_WRITE) {
                 if let Ok(debugger_val) = subkey.get_value::<String, _>("Debugger") {
-                    if debugger_val.to_ascii_lowercase().contains("systray.exe") {
+                    if debugger_val.to_ascii_lowercase().contains("systray.exe")
+                        || is_protected_or_accessibility
+                    {
                         if subkey.delete_value("Debugger").is_ok() {
                             removed += 1;
                         }
@@ -213,15 +235,66 @@ pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
         0
     }
 }
-/// Normalizes Windows NT kernel device paths (e.g., `\Device\HarddiskVolume4\Windows\System32\conhost.exe`)
-/// and extended-length prefixes (`\\?\`, `\??\`) into standard Win32 DOS drive paths (`C:\Windows\System32\conhost.exe`).
+
+#[cfg(target_os = "windows")]
+fn resolve_nt_volume_drive_letter(nt_device_prefix: &str) -> Option<char> {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn QueryDosDeviceW(
+            lpDeviceName: *const u16,
+            lpTargetPath: *mut u16,
+            ucchMax: u32,
+        ) -> u32;
+    }
+
+    for drive in b'A'..=b'Z' {
+        let dos_dev: [u16; 3] = [drive as u16, b':' as u16, 0];
+        let mut buf = [0u16; 260];
+        let len = unsafe { QueryDosDeviceW(dos_dev.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+        if len > 0 {
+            let nul_pos = buf.iter().position(|&c| c == 0).unwrap_or(len as usize);
+            let target = String::from_utf16_lossy(&buf[..nul_pos]);
+            if target.trim().eq_ignore_ascii_case(nt_device_prefix) {
+                return Some(drive as char);
+            }
+        }
+    }
+    None
+}
+
+/// Normalizes Windows NT kernel device paths (e.g., `\Device\HarddiskVolume4\Windows\System32\conhost.exe`,
+/// `\Device\Mup\server\share\file.exe`) and extended-length prefixes (`\\?\`, `\??\`) into standard
+/// Win32 DOS/UNC paths (`C:\Windows\System32\conhost.exe`, `\\server\share\file.exe`), while preserving
+/// POSIX paths (`/usr/...`, `/System/Library/...`) unmodified across Linux and macOS.
 pub fn normalize_nt_device_path(raw_path: &str) -> String {
     let trimmed = raw_path.trim().trim_matches('"');
     if trimmed.is_empty() {
         return String::new();
     }
 
+    let lower_raw = trimmed.to_ascii_lowercase();
+    // Preserve POSIX paths on Linux/macOS (starting with '/' and not an NT/verbatim prefix)
+    if trimmed.starts_with('/')
+        && !lower_raw.starts_with("/device/harddiskvolume")
+        && !lower_raw.starts_with("/device/mup/")
+        && !lower_raw.starts_with("//?/")
+        && !lower_raw.starts_with("/??/")
+    {
+        return trimmed.to_string();
+    }
+
     let normalized_slashes = trimmed.replace('/', "\\");
+    let lower_norm = normalized_slashes.to_ascii_lowercase();
+
+    if lower_norm.starts_with(r"\\?\unc\") || lower_norm.starts_with(r"\??\unc\") {
+        let rest = &normalized_slashes[8..].trim_start_matches('\\');
+        return format!(r"\\{}", rest);
+    }
+    if lower_norm.starts_with(r"\device\mup\") {
+        let rest = &normalized_slashes[12..].trim_start_matches('\\');
+        return format!(r"\\{}", rest);
+    }
+
     let stripped = if let Some(rest) = normalized_slashes.strip_prefix(r"\\?\") {
         rest
     } else if let Some(rest) = normalized_slashes.strip_prefix(r"\??\") {
@@ -238,11 +311,31 @@ pub fn normalize_nt_device_path(raw_path: &str) -> String {
             let vol_digits = &after_prefix[..slash_idx];
             if !vol_digits.is_empty() && vol_digits.chars().all(|c| c.is_ascii_digit()) {
                 let rel_path = after_prefix[slash_idx + 1..].trim_start_matches('\\');
+
+                #[cfg(target_os = "windows")]
+                let mapped_drive = {
+                    let nt_dev = &stripped[..NT_VOL_PREFIX.len() + slash_idx];
+                    resolve_nt_volume_drive_letter(nt_dev)
+                };
+                #[cfg(not(target_os = "windows"))]
+                let mapped_drive: Option<char> = None;
+
+                if let Some(d) = mapped_drive {
+                    let primary = format!("{}:\\{}", d, rel_path);
+                    if Path::new(&primary).exists() {
+                        return primary;
+                    }
+                }
+
                 for drive in ['C', 'D', 'E', 'F', 'G'] {
                     let candidate = format!("{}:\\{}", drive, rel_path);
                     if Path::new(&candidate).exists() {
                         return candidate;
                     }
+                }
+
+                if let Some(d) = mapped_drive {
+                    return format!("{}:\\{}", d, rel_path);
                 }
                 return format!("C:\\{}", rel_path);
             }
@@ -1147,6 +1240,8 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
     // Dedicated OS shell / app bundle paths across Windows, Linux, and macOS
     if lower_win.contains("\\windows\\systemapps\\")
         || lower_win.contains("\\windows\\immersivecontrolpanel\\")
+        || lower_win.contains("\\windowsapps\\microsoft.windowsterminal")
+        || lower_win.contains("\\windowsapps\\microsoft.startexperiencesapp")
         || lower_unix.starts_with("/lib/systemd/")
         || lower_unix.starts_with("/usr/lib/systemd/")
         || lower_unix.starts_with("/system/library/coreservices/")
@@ -1190,6 +1285,8 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
             | "lsass"
             | "lsm"
             | "winlogon"
+            | "userinit"
+            | "logonui"
             | "svchost"
             | "fontdrvhost"
             | "dwm"
@@ -1197,6 +1294,9 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
             | "taskhostw"
             | "dllhost"
             | "conhost"
+            | "openconsole"
+            | "windowsterminal"
+            | "wt"
             | "explorer"
             | "shellhost"
             | "shellexperiencehost"
@@ -1211,19 +1311,26 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
             | "securityhealthhost"
             | "searchhost"
             | "searchapp"
+            | "searchui"
             | "searchindexer"
             | "searchprotocolhost"
             | "searchfilterhost"
+            | "microsoftstartfeedprovider"
+            | "crossdeviceresume"
+            | "useroobebroker"
+            | "dxgiadaptercache"
             | "runtimebroker"
             | "backgroundtaskhost"
             | "smartscreen"
             | "widgets"
             | "widgetservice"
+            | "widgetboard"
             | "lockapp"
             | "spoolsv"
             | "audiodg"
             | "dashost"
             | "wmiprvse"
+            | "wmiapsrv"
             | "unsecapp"
             | "vssvc"
             | "vds"
@@ -1379,6 +1486,7 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
             | "mds_stores"
             | "mdsync"
             | "spotlight"
+            | "corespotlightd"
             | "coreservicesd"
             | "coreservicesuiagent"
             | "lsd"
@@ -1555,6 +1663,25 @@ mod tests {
                 .to_lowercase(),
             r"c:\windows\system32\searchfilterhost.exe"
         );
+        assert_eq!(
+            normalize_nt_device_path(r"\Device\Mup\fileserver\share\app.exe"),
+            r"\\fileserver\share\app.exe"
+        );
+        assert_eq!(
+            normalize_nt_device_path(r"\\?\UNC\fileserver\share\app.exe"),
+            r"\\fileserver\share\app.exe"
+        );
+        // POSIX paths on Linux and macOS must retain forward slashes unmodified
+        assert_eq!(
+            normalize_nt_device_path("/usr/lib/systemd/systemd-resolved"),
+            "/usr/lib/systemd/systemd-resolved"
+        );
+        assert_eq!(
+            normalize_nt_device_path(
+                "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+            ),
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+        );
         #[cfg(target_os = "windows")]
         {
             let nt_kernel32 = Path::new(r"\Device\HarddiskVolume4\Windows\System32\kernel32.dll");
@@ -1566,55 +1693,142 @@ mod tests {
 
     #[test]
     fn test_is_protected_os_shell_or_desktop_binary_cross_platform() {
-        // Windows Search, Shell & System Tray
-        assert!(is_protected_os_shell_or_desktop_binary(
-            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            r"C:\Windows\System32\sihost.exe"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            r"C:\Windows\explorer.exe"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            r"C:\Windows\System32\SecurityHealthSystray.exe"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            r"C:\Windows\System32\ctfmon.exe"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            r"C:\Windows\System32\SearchFilterHost.exe"
-        ));
+        // 1. Windows Core OS, Search, Desktop Shell, Terminal & System Tray
+        for win_proc in &[
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe",
+            r"C:\Windows\System32\sihost.exe",
+            r"C:\Windows\explorer.exe",
+            r"C:\Windows\System32\SearchIndexer.exe",
+            r"C:\Windows\System32\SearchFilterHost.exe",
+            r"C:\Windows\System32\SearchProtocolHost.exe",
+            r"C:\Windows\System32\ShellHost.exe",
+            r"C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe",
+            r"C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe",
+            r"C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\TextInputHost.exe",
+            r"C:\Windows\ImmersiveControlPanel\SystemSettings.exe",
+            r"C:\Windows\System32\SecurityHealthSystray.exe",
+            r"C:\Windows\System32\ApplicationFrameHost.exe",
+            r"C:\Windows\System32\RuntimeBroker.exe",
+            r"C:\Windows\System32\taskhostw.exe",
+            r"C:\Windows\System32\ctfmon.exe",
+            r"C:\Windows\System32\dwm.exe",
+            r"C:\Windows\System32\csrss.exe",
+            r"C:\Windows\System32\winlogon.exe",
+            r"C:\Windows\System32\lsass.exe",
+            r"C:\Windows\System32\services.exe",
+            r"C:\Windows\System32\svchost.exe",
+            r"C:\Windows\System32\wbem\WmiPrvSE.exe",
+            r"C:\Windows\System32\dllhost.exe",
+            r"C:\Windows\System32\conhost.exe",
+            r"C:\Windows\System32\OpenConsole.exe",
+            r"C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.21\WindowsTerminal.exe",
+            r"C:\Windows\System32\fontdrvhost.exe",
+            r"C:\Windows\System32\audiodg.exe",
+            r"C:\Windows\System32\spoolsv.exe",
+        ] {
+            assert!(
+                is_protected_os_shell_or_desktop_binary(win_proc),
+                "Windows binary must be protected: {}",
+                win_proc
+            );
+        }
 
-        // Linux Init, Desktop Shell, Compositor, Tray & Indexers
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/lib/systemd/systemd-resolved"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/gnome-shell"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/plasmashell"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/kwin_wayland"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/libexec/tracker-miner-fs-3"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/libexec/xdg-desktop-portal-gtk"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/pipewire"));
-        assert!(is_protected_os_shell_or_desktop_binary("/usr/sbin/NetworkManager"));
+        // 2. Linux Init, Systemd, DBus, Desktop Shell, Compositors, Audio, Search & Containers
+        for linux_proc in &[
+            "/sbin/init",
+            "/lib/systemd/systemd",
+            "/usr/lib/systemd/systemd-journald",
+            "/usr/lib/systemd/systemd-logind",
+            "/usr/lib/systemd/systemd-udevd",
+            "/usr/lib/systemd/systemd-resolved",
+            "/usr/lib/systemd/systemd-networkd",
+            "/usr/lib/systemd/systemd-timesyncd",
+            "/usr/bin/dbus-daemon",
+            "/usr/bin/dbus-broker",
+            "/usr/lib/polkit-1/polkitd",
+            "/usr/sbin/NetworkManager",
+            "/usr/sbin/wpa_supplicant",
+            "/usr/sbin/sshd",
+            "/usr/bin/gnome-shell",
+            "/usr/bin/plasmashell",
+            "/usr/bin/kwin_x11",
+            "/usr/bin/kwin_wayland",
+            "/usr/lib/xorg/Xorg",
+            "/usr/bin/Xwayland",
+            "/usr/bin/sway",
+            "/usr/bin/Hyprland",
+            "/usr/bin/waybar",
+            "/usr/bin/mutter",
+            "/usr/sbin/gdm",
+            "/usr/bin/sddm",
+            "/usr/sbin/lightdm",
+            "/usr/bin/pipewire",
+            "/usr/bin/wireplumber",
+            "/usr/bin/pulseaudio",
+            "/usr/libexec/tracker-miner-fs-3",
+            "/usr/libexec/localsearch-3",
+            "/usr/bin/baloo_file",
+            "/usr/libexec/xdg-desktop-portal",
+            "/usr/libexec/xdg-document-portal",
+            "/usr/libexec/gvfsd",
+            "/usr/libexec/udisksd",
+            "/usr/libexec/upowerd",
+            "/usr/libexec/accounts-daemon",
+            "/usr/libexec/rtkit-daemon",
+            "/usr/libexec/colord",
+            "/usr/sbin/avahi-daemon",
+            "/usr/sbin/cron",
+            "/usr/sbin/rsyslogd",
+            "/sbin/auditd",
+            "/usr/bin/dockerd",
+            "/usr/bin/containerd",
+            "/usr/bin/runc",
+        ] {
+            assert!(
+                is_protected_os_shell_or_desktop_binary(linux_proc),
+                "Linux binary must be protected: {}",
+                linux_proc
+            );
+        }
 
-        // macOS Launchd, WindowServer, Dock, Finder, ControlCenter & Spotlight
-        assert!(is_protected_os_shell_or_desktop_binary("/sbin/launchd"));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary(
-            "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Support/mds"
-        ));
-        assert!(is_protected_os_shell_or_desktop_binary("WindowServer"));
-        assert!(is_protected_os_shell_or_desktop_binary("SystemUIServer"));
+        // 3. macOS Launchd, WindowServer, Dock, Finder, SystemUIServer/ControlCenter & Spotlight
+        for mac_proc in &[
+            "/sbin/launchd",
+            "/System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+            "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock",
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
+            "/System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer",
+            "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter",
+            "/System/Library/CoreServices/NotificationCenter.app/Contents/MacOS/NotificationCenter",
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight",
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Support/mds",
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Versions/A/Support/mdworker",
+            "mdworker_shared",
+            "mds_stores",
+            "corespotlightd",
+            "coreservicesd",
+            "loginwindow",
+            "UserEventAgent",
+            "cfprefsd",
+            "distnoted",
+            "trustd",
+            "securityd",
+            "syspolicyd",
+            "coreaudiod",
+            "bluetoothd",
+            "configd",
+            "mDNSResponder",
+            "symptomsd",
+            "logd",
+            "fseventsd",
+            "powerd",
+        ] {
+            assert!(
+                is_protected_os_shell_or_desktop_binary(mac_proc),
+                "macOS binary must be protected: {}",
+                mac_proc
+            );
+        }
 
         // Script interpreters / LOLBins / unknown binaries must NOT be protected by this guard
         assert!(!is_protected_os_shell_or_desktop_binary(

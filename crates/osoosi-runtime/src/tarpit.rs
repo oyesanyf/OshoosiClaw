@@ -252,6 +252,9 @@ pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> boo
             | "audiodg.exe"
             | "taskmgr.exe"
             | "conhost.exe"
+            | "openconsole.exe"
+            | "windowsterminal.exe"
+            | "wt.exe"
             | "systray.exe"
             | "netsh.exe"
             | "sc.exe"
@@ -1000,23 +1003,41 @@ mod tests {
         assert!(is_protected_system_or_security_process(1235, "Sysmon.exe"));
         assert!(is_protected_system_or_security_process(1236, "msmpeng.exe"));
         assert!(is_protected_system_or_security_process(1237, "osoosi.exe"));
-        // Windows Search, Shell & System Tray
+        // Windows Search, Shell, Terminal & System Tray (including NT device paths)
         assert!(is_protected_system_or_security_process(1238, "SearchHost.exe"));
+        assert!(is_protected_system_or_security_process(
+            1238,
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
+        ));
         assert!(is_protected_system_or_security_process(1239, "sihost.exe"));
         assert!(is_protected_system_or_security_process(1240, "explorer.exe"));
         assert!(is_protected_system_or_security_process(1241, "SecurityHealthSystray.exe"));
         assert!(is_protected_system_or_security_process(1242, "ctfmon.exe"));
+        assert!(is_protected_system_or_security_process(1242, "OpenConsole.exe"));
+        assert!(is_protected_system_or_security_process(1242, "WindowsTerminal.exe"));
         // Linux Desktop Shell, Search & Systemd
         assert!(is_protected_system_or_security_process(1243, "gnome-shell"));
         assert!(is_protected_system_or_security_process(1244, "plasmashell"));
         assert!(is_protected_system_or_security_process(1245, "tracker-miner-fs-3"));
         assert!(is_protected_system_or_security_process(1246, "systemd"));
+        assert!(is_protected_system_or_security_process(
+            1246,
+            "/usr/lib/systemd/systemd-logind"
+        ));
+        assert!(is_protected_system_or_security_process(
+            1246,
+            "/usr/libexec/xdg-desktop-portal"
+        ));
         // macOS Desktop Shell, Spotlight & ControlCenter
         assert!(is_protected_system_or_security_process(1247, "WindowServer"));
         assert!(is_protected_system_or_security_process(1248, "Finder"));
         assert!(is_protected_system_or_security_process(1249, "Dock"));
         assert!(is_protected_system_or_security_process(1250, "ControlCenter"));
         assert!(is_protected_system_or_security_process(1251, "Spotlight"));
+        assert!(is_protected_system_or_security_process(
+            1252,
+            "/System/Library/CoreServices/SystemUIServer.app/Contents/MacOS/SystemUIServer"
+        ));
         assert!(is_protected_system_or_security_process(
             std::process::id(),
             "anything.exe"

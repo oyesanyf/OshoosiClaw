@@ -112,9 +112,10 @@ pub fn build_attack_graph(
         }));
 
         if let Some(fp) = file_path {
-            let fname = std::path::Path::new(fp)
-                .file_name()
-                .and_then(|n| n.to_str())
+            let fname = fp
+                .rsplit(['\\', '/'])
+                .next()
+                .filter(|s| !s.is_empty())
                 .unwrap_or(fp);
             let target_node = format!("file:{}", fname);
             nodes.insert(target_node.clone());
@@ -167,9 +168,10 @@ pub fn build_attack_graph(
                     let proc_name = if image.is_empty() {
                         "unknown".to_string()
                     } else {
-                        std::path::Path::new(&image)
-                            .file_name()
-                            .and_then(|n| n.to_str())
+                        image
+                            .rsplit(['\\', '/'])
+                            .next()
+                            .filter(|s| !s.is_empty())
                             .unwrap_or(&image)
                             .to_string()
                     };

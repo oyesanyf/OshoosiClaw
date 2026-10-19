@@ -301,26 +301,62 @@ pub fn is_administrative_lolbin(path: &str) -> bool {
 /// Double-veto check: returns true ONLY if the file is genuinely clean and safe to exempt from remediation.
 /// If the file is an administrative LOLBin and an active threat is detected (e.g. T1136, T1003),
 /// or if True Zero-Trust Lockdown Mode is active with an active threat,
-/// returns false so SFC cannot veto or downgrade the autonomous response.
+/// returns false so SFC cannot veto or downgrade the autonomous response — EXCEPT for protected
+/// OS shell, desktop, search, system tray, compositor, and init daemons across Windows, Linux, and macOS,
+/// which must NEVER be remediated even under Lockdown Mode.
 pub async fn validate_file_safety_with_veto(path: &str, has_active_threat: bool) -> bool {
+    let normalized = osoosi_types::normalize_nt_device_path(path);
+    if !is_administrative_lolbin(&normalized)
+        && osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
+    {
+        return true;
+    }
     let autonomy = osoosi_types::load_autonomy_config();
     let is_lockdown_mode =
         autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
-    if (is_administrative_lolbin(path) && has_active_threat)
+    if (is_administrative_lolbin(&normalized) && has_active_threat)
         || (is_lockdown_mode && has_active_threat)
     {
         warn!(
             "SFC DOUBLE-VETO: Binary {} is an administrative LOLBin or Lockdown Mode is active with threat. SFC safety override disallowed.",
-            path
+            normalized
         );
         return false;
     }
-    validate_windows_file_integrity(path).await
+    validate_windows_file_integrity(&normalized).await
 }
 
 /// Runs SFC /SCANFILE on Windows (or dpkg/rpm/ELF trust verification on Linux) to verify if a file is an untampered system file.
 /// Returns true if the file is verified clean by the OS store.
 pub async fn validate_windows_file_integrity(path: &str) -> bool {
+    let normalized = osoosi_types::normalize_nt_device_path(path);
+    let path = normalized.as_str();
+
+    if !is_administrative_lolbin(path)
+        && osoosi_types::is_protected_os_shell_or_desktop_binary(path)
+    {
+        let lower_win = path.to_ascii_lowercase().replace('/', "\\");
+        let lower_unix = path.to_ascii_lowercase().replace('\\', "/");
+        if lower_win.starts_with("c:\\windows\\")
+            || lower_win.contains("\\windows\\system32\\")
+            || lower_win.contains("\\windows\\systemapps\\")
+            || lower_win.contains("\\windows\\immersivecontrolpanel\\")
+            || lower_win.contains("\\windowsapps\\microsoft.windowsterminal")
+            || lower_unix.starts_with("/bin/")
+            || lower_unix.starts_with("/sbin/")
+            || lower_unix.starts_with("/usr/bin/")
+            || lower_unix.starts_with("/usr/sbin/")
+            || lower_unix.starts_with("/usr/lib/")
+            || lower_unix.starts_with("/usr/libexec/")
+            || lower_unix.starts_with("/lib/")
+            || lower_unix.starts_with("/lib64/")
+            || lower_unix.starts_with("/system/library/")
+            || lower_unix.starts_with("/system/applications/")
+        {
+            return true;
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         use std::path::Path;
@@ -419,9 +455,12 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
             || path.starts_with("/sbin/")
             || path.starts_with("/usr/bin/")
             || path.starts_with("/usr/sbin/")
+            || path.starts_with("/usr/libexec/")
             || path.starts_with("/lib/")
             || path.starts_with("/lib64/")
-            || path.starts_with("/usr/lib/");
+            || path.starts_with("/usr/lib/")
+            || path.starts_with("/System/Library/")
+            || path.starts_with("/System/Applications/");
         if !is_linux_sys_path {
             return false;
         }
@@ -908,5 +947,52 @@ mod tests {
         assert!(profile.can_load_model("foundation_sec", &cfg));
         assert!(profile.can_launch_browser(&cfg));
         assert_eq!(profile.recommended_nsrl_cache_limit(), 2_500_000);
+    }
+
+    #[tokio::test]
+    async fn test_protected_os_shell_and_search_binaries_exempt_from_lockdown_veto() {
+        for protected_path in &[
+            r"\Device\HarddiskVolume4\Windows\System32\sihost.exe",
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe",
+            r"C:\Windows\explorer.exe",
+            r"C:\Windows\System32\SecurityHealthSystray.exe",
+            r"C:\Windows\System32\OpenConsole.exe",
+            r"C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.21\WindowsTerminal.exe",
+            "/usr/lib/systemd/systemd-resolved",
+            "/usr/libexec/tracker-miner-fs-3",
+            "/usr/libexec/xdg-desktop-portal",
+            "/usr/bin/gnome-shell",
+            "/usr/bin/plasmashell",
+            "/sbin/launchd",
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
+            "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock",
+            "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter",
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight",
+        ] {
+            assert!(
+                validate_file_safety_with_veto(protected_path, true).await,
+                "Protected OS binary must be safe/exempt even with active threat flag: {}",
+                protected_path
+            );
+            assert!(
+                validate_windows_file_integrity(protected_path).await,
+                "Protected OS binary must pass integrity check: {}",
+                protected_path
+            );
+        }
+
+        // Administrative LOLBins with an active threat must NOT be exempt
+        for lolbin in &[
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            r"C:\Windows\System32\cmd.exe",
+            "/usr/bin/bash",
+            "/usr/bin/python3",
+        ] {
+            assert!(
+                !validate_file_safety_with_veto(lolbin, true).await,
+                "Administrative LOLBin with active threat must be vetoed: {}",
+                lolbin
+            );
+        }
     }
 }
