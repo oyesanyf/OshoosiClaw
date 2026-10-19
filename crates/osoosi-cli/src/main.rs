@@ -1289,11 +1289,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             wait_for_shutdown().await;
             info!("Shutting down OpenỌ̀ṣọ́ọ̀sì Agent: restoring host network isolation and unfreezing processes...");
             std::thread::spawn(|| {
-                std::thread::sleep(std::time::Duration::from_millis(1500));
+                std::thread::sleep(std::time::Duration::from_millis(2000));
                 std::process::exit(0);
             });
             let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
-            let _ = osoosi_core::firewall::remove_all_autoblock_rules();
             crate::service::notify_service_shutdown_complete();
             #[cfg(windows)]
             {
