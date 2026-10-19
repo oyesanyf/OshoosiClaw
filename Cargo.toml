@@ -93,7 +93,7 @@ libp2p = "0.57"
 futures = "0.3"
 quick-xml = { version = "0.28.2", features = ["serialize"] }
 sysinfo = "0.30"
-goblin = "0.9"
+goblin = "0.10"
 magika = "1"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "download-binaries", "copy-dylibs"] }
 axum = { version = "0.7", features = ["macros"] }

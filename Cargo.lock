@@ -1927,7 +1927,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2207,7 +2207,7 @@ dependencies = [
  "boxcar",
  "crossbeam-skiplist",
  "dashmap",
- "goblin 0.10.5",
+ "goblin",
  "md-5",
  "memmap2",
  "ouroboros",
@@ -3088,24 +3088,13 @@ dependencies = [
 
 [[package]]
 name = "goblin"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "daa0a64d21a7eb230583b4c5f4e23b7e4e57974f96620f42a7e75e08ae66d745"
-dependencies = [
- "log",
- "plain",
- "scroll 0.12.0",
-]
-
-[[package]]
-name = "goblin"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "983a6aafb3b12d4c41ea78d39e189af4298ce747353945ff5105b54a056e5cd9"
 dependencies = [
  "log",
  "plain",
- "scroll 0.13.0",
+ "scroll",
 ]
 
 [[package]]
@@ -5815,7 +5804,7 @@ dependencies = [
  "edr-phaselock",
  "flate2",
  "futures",
- "goblin 0.9.3",
+ "goblin",
  "hex",
  "hf-hub",
  "hmac 0.12.1",
@@ -5999,7 +5988,7 @@ dependencies = [
  "bloomfilter",
  "chrono",
  "dirs",
- "goblin 0.9.3",
+ "goblin",
  "hex",
  "hostname",
  "magika",
@@ -6025,7 +6014,7 @@ dependencies = [
  "candle-nn",
  "chrono",
  "dashmap",
- "goblin 0.9.3",
+ "goblin",
  "hex",
  "magika",
  "ndarray",
@@ -6254,7 +6243,7 @@ dependencies = [
  "chrono",
  "dirs",
  "ed25519-dalek 2.2.0",
- "goblin 0.9.3",
+ "goblin",
  "hex",
  "hostname",
  "libc",
@@ -7658,31 +7647,11 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scroll"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ab8598aa408498679922eff7fa985c25d58a90771bd6be794434c5277eab1a6"
-dependencies = [
- "scroll_derive 0.12.1",
-]
-
-[[package]]
-name = "scroll"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1257cd4248b4132760d6524d6dda4e053bc648c9070b960929bf50cfb1e7add"
 dependencies = [
- "scroll_derive 0.13.1",
-]
-
-[[package]]
-name = "scroll_derive"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1783eabc414609e28a5ba76aee5ddd52199f7107a0b24c2e9746a1ecc34a683d"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
+ "scroll_derive",
 ]
 
 [[package]]
