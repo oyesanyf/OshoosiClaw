@@ -92,7 +92,7 @@ notify = "6"
 libp2p = "0.57"
 futures = "0.3"
 quick-xml = { version = "0.28.2", features = ["serialize"] }
-sysinfo = "0.30"
+sysinfo = "0.39"
 goblin = "0.9"
 magika = "1"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "download-binaries", "copy-dylibs"] }
