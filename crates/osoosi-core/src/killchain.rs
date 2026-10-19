@@ -439,6 +439,7 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
         active_tarpit.release_pid(pid);
     }
     let _ = osoosi_types::purge_ifeo_systray_debugger_hooks_native();
+    let _ = crate::firewall::remove_all_autoblock_rules();
 
     let (was_isolated, frozen_pids_snapshot) = {
         let guard = KILLCHAIN_STORAGE.read().unwrap();

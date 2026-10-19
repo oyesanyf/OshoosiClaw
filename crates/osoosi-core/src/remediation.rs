@@ -300,16 +300,23 @@ impl RemediationController {
 
         let target_pid = Pid::from(pid as usize);
 
-        // Pre-kill Administrative / SSH Session Shield check on target
+        // Pre-kill Administrative / SSH / OS Shell Session Shield check on target
         if let Some(proc) = sys.process(target_pid) {
-            if is_administrative_or_ssh_session(proc.name(), proc.cmd()) {
+            let exe_str = proc
+                .exe()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if is_administrative_or_ssh_session(proc.name(), proc.cmd())
+                || (!exe_str.is_empty()
+                    && osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str))
+            {
                 warn!(
-                    "AUTONOMOUS RESPONSE: Refusing to kill administrative or SSH session PID {} ({})",
+                    "AUTONOMOUS RESPONSE: Refusing to kill administrative, SSH, or protected OS session PID {} ({})",
                     pid,
                     proc.name()
                 );
                 return Err(anyhow::anyhow!(
-                    "Cannot kill administrative or SSH session PID {} ({})",
+                    "Cannot kill administrative or protected OS session PID {} ({})",
                     pid,
                     proc.name()
                 ));
@@ -323,14 +330,21 @@ impl RemediationController {
             let parent_pid = to_kill[i];
             for (p, proc) in sys.processes() {
                 if proc.parent() == Some(parent_pid) && !to_kill.contains(p) {
-                    if is_administrative_or_ssh_session(proc.name(), proc.cmd()) {
+                    let exe_str = proc
+                        .exe()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    if is_administrative_or_ssh_session(proc.name(), proc.cmd())
+                        || (!exe_str.is_empty()
+                            && osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str))
+                    {
                         warn!(
-                            "AUTONOMOUS RESPONSE: Process tree descendant PID {} ({}) is an administrative / SSH session. Aborting kill tree.",
+                            "AUTONOMOUS RESPONSE: Process tree descendant PID {} ({}) is an administrative / SSH / protected OS session. Aborting kill tree.",
                             p,
                             proc.name()
                         );
                         return Err(anyhow::anyhow!(
-                            "Cannot kill process tree containing administrative or SSH session PID {}",
+                            "Cannot kill process tree containing administrative or protected OS session PID {}",
                             p
                         ));
                     }
@@ -384,5 +398,68 @@ impl RemediationController {
             path
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remediation_protects_windows_linux_macos_shell_search_and_init_processes() {
+        for protected in &[
+            "sihost.exe",
+            "explorer.exe",
+            "SearchHost.exe",
+            "SearchIndexer.exe",
+            "SearchFilterHost.exe",
+            "SearchProtocolHost.exe",
+            "ShellHost.exe",
+            "ShellExperienceHost.exe",
+            "StartMenuExperienceHost.exe",
+            "SecurityHealthSystray.exe",
+            "ctfmon.exe",
+            "OpenConsole.exe",
+            "WindowsTerminal.exe",
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe",
+            "systemd",
+            "/usr/lib/systemd/systemd-resolved",
+            "/usr/libexec/tracker-miner-fs-3",
+            "/usr/libexec/xdg-desktop-portal",
+            "gnome-shell",
+            "plasmashell",
+            "kwin_wayland",
+            "sshd",
+            "launchd",
+            "WindowServer",
+            "Finder",
+            "Dock",
+            "SystemUIServer",
+            "ControlCenter",
+            "Spotlight",
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
+        ] {
+            assert!(
+                is_administrative_or_ssh_session(protected, &[]),
+                "Process/path must be shielded from RemediationController kill: {}",
+                protected
+            );
+        }
+
+        // Command-line argument shield check
+        assert!(is_administrative_or_ssh_session(
+            "unknown_wrapper",
+            &["/usr/lib/systemd/systemd-logind".to_string()]
+        ));
+
+        // Non-protected arbitrary binaries and script interpreters without SSH/protected args must NOT be shielded
+        assert!(!is_administrative_or_ssh_session(
+            "evil_payload.exe",
+            &["--beacon".to_string()]
+        ));
+        assert!(!is_administrative_or_ssh_session(
+            "powershell.exe",
+            &["-enc".to_string(), "AAAA".to_string()]
+        ));
     }
 }

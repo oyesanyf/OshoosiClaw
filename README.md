@@ -499,20 +499,20 @@ flowchart TD
     subgraph STOP["Sub-2-Second Deterministic Service Stop (Windows SCM & Linux systemd)"]
         S1["osoosi service stop / sc stop OsoosiEDR / systemctl stop osoosi-edr"] --> S2["Clear SCM Failure Auto-Respawn\n(sc failure OsoosiEDR reset= 0 actions= \"\")"]
         S2 --> S3["SERVICE_STOP_PENDING (dwWaitHint: 2000ms)\n+ 1.5s Dedicated Shutdown Watchdog Thread"]
-        S3 --> S4["Fast In-Memory Tarpit Release & Native winreg IFEO Purge (< 5ms)\n(Skip 36x netsh spawns unless host was actively isolated)"]
+        S3 --> S4["Fast In-Memory Tarpit Release + Native winreg IFEO & FirewallRules Purge (< 20ms)\n(Purges OpenOsoosi-Block-* registry keys without spawning slow netsh loops)"]
         S4 --> S5["SERVICE_STOPPED (PID : 0 in < 1.5s, Zero Auto-Respawn)"]
     end
 
     subgraph IMMUNITY["5-Layer Cross-Platform Host OS Shell, Search & System Tray Immunity"]
-        P0["normalize_nt_device_path() + is_protected_os_shell_or_desktop_binary()"]
-        P1["Windows 10/11: sishost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,\nShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,\nSecurityHealthSystray.exe, ctfmon.exe, dwm.exe, lsass.exe, services.exe"]
+        P0["normalize_nt_device_path() (QueryDosDeviceW + POSIX-safe)\n+ is_protected_os_shell_or_desktop_binary()"]
+        P1["Windows 10/11: sihost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,\nShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,\nSecurityHealthSystray.exe, ctfmon.exe, OpenConsole.exe, WindowsTerminal.exe, dwm.exe"]
         P2["Linux: systemd*, dbus-daemon, gnome-shell, plasmashell, kwin_*, Xorg, Xwayland,\nsway, Hyprland, pipewire, wireplumber, tracker-miner-fs*, localsearch*, baloo_file*,\nxdg-desktop-portal*, NetworkManager, sshd"]
-        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,\nNotificationCenter, Spotlight, mds, mdworker*, coreservicesd, loginwindow"]
-        L1["Layer 1: is_system_critical() & Monitor-Mode Hard Gate"]
+        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,\nNotificationCenter, Spotlight, corespotlightd, mds, mdworker*, coreservicesd, loginwindow"]
+        L1["Layer 1: is_system_critical(), system_check.rs & Monitor-Mode Hard Gate"]
         L2["Layer 2: ActiveProcessTarpit & Child-PID Immunity"]
-        L3["Layer 3: BlockingManager & Native winreg IFEO Sanitizer"]
-        L4["Layer 4: Firewall Autoblock & QoS Tarpit Guard (Win32 & Linux UID)"]
-        L5["Layer 5: RemediationController Process-Tree Shield"]
+        L3["Layer 3: BlockingManager, AgentProvisioner & Native winreg IFEO Sanitizer"]
+        L4["Layer 4: Firewall Autoblock Deduplication & Native Registry Sanitizer"]
+        L5["Layer 5: RemediationController Process-Tree Shield (Name + Exe Path)"]
 
         P1 & P2 & P3 --> P0
         P0 --> L1 & L2 & L3 & L4 & L5
@@ -524,12 +524,12 @@ flowchart TD
 1. **Sub-2-Second Deterministic Service Shutdown & Zero Auto-Respawn**:
    - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW` and registers `RegisterServiceCtrlHandlerExW` for `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
    - On `stop`, `service_control_handler` immediately reports `SERVICE_STOP_PENDING` (`dwWaitHint: 2000`) and spawns a **1.5-second hardware/OS watchdog thread** (`crates/osoosi-cli/src/service.rs` and `crates/osoosi-cli/src/main.rs`) that guarantees the daemon releases in-memory tarpits, reports `SERVICE_STOPPED`, and exits cleanly within 1.5 seconds even if external firewall utilities stall.
-   - `execute_host_disarm_unauthenticated()` only spawns `netsh.exe` quarantine-rule cleanup commands if the host was actually placed into `HOST_ISOLATED_STATE`, and `remove_windows_autoblock_rules()` is bounded to an 800ms budget.
+   - `execute_host_disarm_unauthenticated()` only spawns `netsh.exe` quarantine-rule cleanup commands if the host was actually placed into `HOST_ISOLATED_STATE`, and invokes `remove_all_autoblock_rules()` (`purge_windows_firewall_autoblock_rules_native`) to delete all `OpenOsoosi-Block-*` values directly from `HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules` via `winreg` in `< 20ms`.
    - Service installation and startup explicitly clear SCM forced failure auto-restart actions (`sc.exe failure OsoosiEDR reset= 0 actions= ""`), and Linux `osoosi-edr.service` enforces `Restart=on-failure` with `TimeoutStopSec=5s`, ensuring an operator-requested stop never auto-respawns the daemon.
 2. **Cross-Platform Host OS Shell, Search, System Tray & Init Immunity (`Windows`, `Linux`, `macOS`)**:
-   - Kernel ETW device paths (`\Device\HarddiskVolume<N>\...`, `\\?\`, `\??\`) are normalized via `osoosi_types::normalize_nt_device_path` before WinVerifyTrust, Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`), or path policy evaluation so catalog-signed `SystemApps` binaries (such as `SearchHost.exe`) are never misclassified as unsigned.
-   - `osoosi_types::is_protected_os_shell_or_desktop_binary` enforces an immutable cross-platform protection list across **Windows** (`sihost.exe`, `explorer.exe`, `SearchHost.exe`, `SearchFilterHost.exe`, `SearchProtocolHost.exe`, `ShellHost.exe`, `ShellExperienceHost.exe`, `StartMenuExperienceHost.exe`, `SecurityHealthSystray.exe`, `ctfmon.exe`), **Linux** (`systemd*`, `dbus-daemon`, `gnome-shell`, `plasmashell`, `kwin_*`, `Xorg`, `Xwayland`, `sway`, `Hyprland`, `pipewire`, `tracker-miner-fs*`, `localsearch*`, `baloo_file*`, `xdg-desktop-portal*`), and **macOS** (`launchd`, `WindowServer`, `Finder`, `Dock`, `SystemUIServer`, `ControlCenter`, `NotificationCenter`, `Spotlight`, `mds`, `mdworker*`)—while explicitly excluding script interpreters and LOLBins (`powershell.exe`, `cmd.exe`, `bash`, `python`, `nc`, `curl`).
-   - Startup automatically purges any legacy `HKLM\...\Image File Execution Options\<exe>\Debugger = systray.exe` hijacks in `< 5ms` via native `winreg` (`purge_ifeo_systray_debugger_hooks_native`) and sanitizes `config/firewall_rules.json` and `blocking_rules.json`.
+   - Kernel ETW device paths (`\Device\HarddiskVolume<N>\...`, `\Device\Mup\...`, `\\?\`, `\??\`) are normalized via `osoosi_types::normalize_nt_device_path` (using Win32 `QueryDosDeviceW` volume resolution while preserving POSIX `/` paths on Linux and macOS) before WinVerifyTrust, Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`), ELF/Mach-O inspection, or path policy evaluation so catalog-signed `SystemApps` binaries (such as `SearchHost.exe`) are never misclassified as unsigned.
+   - `osoosi_types::is_protected_os_shell_or_desktop_binary` enforces an immutable cross-platform protection list across **Windows** (`sihost.exe`, `explorer.exe`, `SearchHost.exe`, `SearchFilterHost.exe`, `SearchProtocolHost.exe`, `ShellHost.exe`, `ShellExperienceHost.exe`, `StartMenuExperienceHost.exe`, `SecurityHealthSystray.exe`, `ctfmon.exe`, `OpenConsole.exe`, `WindowsTerminal.exe`), **Linux** (`systemd*`, `dbus-daemon`, `gnome-shell`, `plasmashell`, `kwin_*`, `Xorg`, `Xwayland`, `sway`, `Hyprland`, `pipewire`, `tracker-miner-fs*`, `localsearch*`, `baloo_file*`, `xdg-desktop-portal*`), and **macOS** (`launchd`, `WindowServer`, `Finder`, `Dock`, `SystemUIServer`, `ControlCenter`, `NotificationCenter`, `Spotlight`, `corespotlightd`, `mds`, `mdworker*`)—while explicitly excluding script interpreters and LOLBins (`powershell.exe`, `cmd.exe`, `bash`, `python`, `nc`, `curl`).
+   - Startup automatically purges any legacy `HKLM\...\Image File Execution Options\<exe>\Debugger` hijacks (`systray.exe` and any hijacks targeting protected OS shell, search, tray, or accessibility binaries) via native `winreg` (`purge_ifeo_systray_debugger_hooks_native`), purges `OpenOsoosi-Block-*` registry firewall rules (`purge_windows_firewall_autoblock_rules_native`), prevents duplicate firewall rule creation (`windows_firewall_rule_exists_native`), and sanitizes `config/firewall_rules.json` and `blocking_rules.json`.
 3. **Clone-Path-Agnostic Working-Directory Resolution**:
    - The Windows SCM always executes background services with the working directory set to `C:\Windows\System32`.
    - `osoosi` inspects `std::env::current_exe()` at startup and walks up to 5 parent directories (`find_project_root_from(&exe)`) to locate `osoosi.toml`, `models/`, `rules/`, and `dashboard/dist/`.

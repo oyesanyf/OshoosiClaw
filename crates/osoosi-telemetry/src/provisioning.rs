@@ -828,30 +828,37 @@ impl AgentProvisioner {
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
     pub fn is_safe_for_ifeo_block(path_str: &str) -> bool {
         let trimmed = path_str.trim().trim_matches('"');
         if !trimmed.contains('\\') && !trimmed.contains('/') {
             return false;
         }
-        let path = std::path::Path::new(trimmed);
-        let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) else {
+        let normalized = osoosi_types::normalize_nt_device_path(trimmed);
+        if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized) {
             return false;
-        };
+        }
+        let exe_name = normalized
+            .rsplit(['\\', '/'])
+            .next()
+            .unwrap_or(normalized.as_str())
+            .trim();
+        if exe_name.is_empty() {
+            return false;
+        }
         let lower_name = exe_name.to_ascii_lowercase();
         if !lower_name.ends_with(".exe") {
             return false;
         }
-        let lower_path = trimmed.to_ascii_lowercase().replace('/', "\\");
-        if lower_path.starts_with("c:\\windows\\system32\\")
-            || lower_path.starts_with("c:\\windows\\syswow64\\")
-            || lower_path.starts_with("c:\\windows\\winsxs\\")
+        let lower_path = normalized.to_ascii_lowercase().replace('/', "\\");
+        if lower_path.starts_with("c:\\windows\\")
+            || lower_path.contains("\\windows\\")
             || lower_path.contains("\\program files\\google\\chrome\\")
             || lower_path.contains("\\program files (x86)\\google\\chrome\\")
             || lower_path.contains("\\program files\\microsoft\\edge\\")
             || lower_path.contains("\\program files (x86)\\microsoft\\edge\\")
             || lower_path.contains("\\program files\\mozilla firefox\\")
             || lower_path.contains("\\program files\\bravesoftware\\")
+            || lower_path.contains("\\program files\\windowsapps\\")
             || lower_path.contains("\\program files\\git\\")
             || lower_path.contains("\\program files\\wsl\\")
             || lower_path.contains("\\program files\\windows kits\\")
@@ -870,6 +877,9 @@ impl AgentProvisioner {
             "powershell.exe",
             "pwsh.exe",
             "conhost.exe",
+            "openconsole.exe",
+            "windowsterminal.exe",
+            "wt.exe",
             "svchost.exe",
             "explorer.exe",
             "reg.exe",
@@ -944,6 +954,11 @@ impl AgentProvisioner {
             "widgetboard.exe",
             "msedgewebview2.exe",
             "smartscreen.exe",
+            "magnify.exe",
+            "narrator.exe",
+            "sethc.exe",
+            "utilman.exe",
+            "osk.exe",
         ];
         !PROTECTED_SYSTEM_EXES.contains(&lower_name.as_str())
     }
@@ -2070,5 +2085,50 @@ mod tests {
             "Expected \\\\server\\share prefix, got: {}",
             s
         );
+    }
+}
+
+#[cfg(test)]
+mod cross_platform_tests {
+    use super::*;
+
+    #[test]
+    fn test_is_safe_for_ifeo_block_rejects_all_protected_os_shell_search_and_nt_device_paths() {
+        for protected in &[
+            r"\Device\HarddiskVolume4\Windows\System32\sihost.exe",
+            r"\Device\HarddiskVolume4\Windows\System32\dwm.exe",
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe",
+            r"C:\Windows\explorer.exe",
+            r"C:\Windows\System32\SearchIndexer.exe",
+            r"C:\Windows\System32\SearchFilterHost.exe",
+            r"C:\Windows\System32\SearchProtocolHost.exe",
+            r"C:\Windows\System32\ShellHost.exe",
+            r"C:\Windows\SystemApps\ShellExperienceHost_cw5n1h2txyewy\ShellExperienceHost.exe",
+            r"C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\StartMenuExperienceHost.exe",
+            r"C:\Windows\System32\SecurityHealthSystray.exe",
+            r"C:\Windows\System32\ctfmon.exe",
+            r"C:\Windows\System32\OpenConsole.exe",
+            r"C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.21\WindowsTerminal.exe",
+            r"C:\Windows\System32\magnify.exe",
+            r"C:\Windows\System32\narrator.exe",
+            "/usr/lib/systemd/systemd",
+            "/usr/libexec/tracker-miner-fs-3",
+            "/usr/bin/gnome-shell",
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight",
+            "sihost.exe",
+            "git.exe",
+        ] {
+            assert!(
+                !AgentProvisioner::is_safe_for_ifeo_block(protected),
+                "Protected binary/path must never be eligible for IFEO block: {}",
+                protected
+            );
+        }
+
+        // Unverified third-party executable in a temp folder remains eligible in isolation (though IFEO writes are disabled)
+        assert!(AgentProvisioner::is_safe_for_ifeo_block(
+            r"C:\Temp\untrusted_dropper_payload.exe"
+        ));
     }
 }
