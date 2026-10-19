@@ -64,7 +64,7 @@ struct Behaviour {
 #[derive(Debug)]
 enum BehaviourEvent {
     Relay(relay::Event),
-    Identify(identify::Event),
+    Identify(Box<identify::Event>),
 }
 
 impl From<relay::Event> for BehaviourEvent {
@@ -75,6 +75,6 @@ impl From<relay::Event> for BehaviourEvent {
 
 impl From<identify::Event> for BehaviourEvent {
     fn from(event: identify::Event) -> Self {
-        BehaviourEvent::Identify(event)
+        BehaviourEvent::Identify(Box::new(event))
     }
 }

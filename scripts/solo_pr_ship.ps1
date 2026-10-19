@@ -183,4 +183,9 @@ try {
     # Ignore if already deleted
 }
 
+if (Test-Path "scripts/resolve_open_prs.py") {
+    Write-Host "[+] Resolving any remaining open Pull Requests..." -ForegroundColor Cyan
+    & $pythonExe "scripts/resolve_open_prs.py"
+}
+
 Write-Host "Successfully shipped PR #$prNumber with full Bot Code-Review!" -ForegroundColor Green

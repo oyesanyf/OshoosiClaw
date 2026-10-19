@@ -482,6 +482,7 @@ impl AgenticToolValidator {
 }
 
 /// Interface for Layer 2 Critic arbitration when Layer 1 flags ambiguous or high-risk activity.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait Layer2Critic: Send + Sync {
     async fn judge(

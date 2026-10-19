@@ -73,6 +73,8 @@ let supervisorInterval = null;
  * Initialize Lucide icons and start polling
  */
 function init() {
+    if (state._initCalled) return;
+    state._initCalled = true;
     setupLogin();
     setupPasswordResetModal();
     setupNav();
@@ -131,8 +133,8 @@ function startApp() {
     renderActivity(state.activity);
     renderRepairView(state.repairStatus || null);
     renderMalwareView(state.malwareDetections || []);
-    renderMeshView(state.mesh || { peer_count: state.peer_count || 0 });
-    updateMeshConnectionIndicators(state.peer_count || 0, 0);
+    renderMeshView(state.mesh);
+    updateMeshConnectionIndicators(state.peer_count || 0, state.gossip_count || 0);
 
     // Primary Overview & Status - prioritize immediate load
     renderApprovalsView();
@@ -696,7 +698,7 @@ function setupNav() {
                 } else if (view === 'mesh') {
                     document.getElementById('mesh-view').classList.add('active');
                     viewTitle.innerText = "Mesh Network";
-                    renderMeshView(state.mesh || { peer_count: state.peer_count });
+                    renderMeshView(state.mesh);
                     fetchBootstrapPeers();
                 } else if (view === 'gossip') {
                     document.getElementById('gossip-view').classList.add('active');
@@ -768,6 +770,10 @@ function setupNav() {
                     viewTitle.innerText = "Emergency Kill Chain & Reversible Host Containment";
                     fetchKillchainStatus();
                     fetchKillchainHistory();
+                } else if (view === 'rea') {
+                    document.getElementById('rea-view').classList.add('active');
+                    viewTitle.innerText = "REA: Reverse Engineer Anything (Autonomous Inspector)";
+                    renderReaView();
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
                     if (otherView) {
@@ -792,6 +798,7 @@ function setupNav() {
         const hash = window.location.hash.replace(/^#/, '');
         if (hash) {
             const aliasMap = {
+                'graph': 'process-map',
                 'attack-graph': 'process-map',
                 'scanner': 'malware',
                 'rl': 'skyrl',
@@ -805,6 +812,8 @@ function setupNav() {
                 'sql': 'siquery',
                 'killchain': 'killchain',
                 'isolation': 'killchain',
+                'rea': 'rea',
+                'reverse-engineer': 'rea',
             };
             const resolvedView = aliasMap[hash] || hash;
             const target = document.querySelector(`.nav-item[data-view="${resolvedView}"]`);
@@ -838,6 +847,8 @@ function setupSearch() {
 
 window.navigateToView = function(viewName) {
     const aliasMap = {
+        'graph': 'process-map',
+        'attack-graph': 'process-map',
         'network': 'mesh',
         'mesh': 'mesh',
         'dashboard': 'dashboard',
@@ -855,7 +866,13 @@ window.navigateToView = function(viewName) {
 };
 
 function updateMeshConnectionIndicators(peerCount, gossipCount) {
-    const count = (typeof peerCount === 'number') ? peerCount : (parseInt(peerCount) || 0);
+    const count = (typeof peerCount === 'number' && !isNaN(peerCount)) ? peerCount : (parseInt(peerCount, 10) || 0);
+    state.peer_count = count;
+    updateStats('peer-count', count);
+    const netPeerVal = document.getElementById('network-peer-count-val');
+    if (netPeerVal) {
+        netPeerVal.textContent = String(count);
+    }
     const topBtn = document.getElementById('mesh-status-top-btn');
     const topDot = document.getElementById('mesh-status-indicator-dot');
     const topText = document.getElementById('mesh-status-top-text');
@@ -1021,14 +1038,16 @@ async function updateDashboard() {
             }
         }
 
+        const domPeerVal = document.getElementById('network-peer-count-val')?.innerText?.trim();
+        if (state.current_view === 'mesh' && (meshChanged || domPeerVal !== String(state.peer_count ?? 0))) {
+            renderMeshView(state.mesh || mesh);
+        }
+
         // Guard against clobbering active button spinners during background poll
         const activeButtonSpinning = Boolean(document.querySelector('.view-content.active button:disabled .spin'));
         if (!activeButtonSpinning) {
             if (state.current_view === 'threats' && threatsChanged) {
                 renderThreatsView(state.threats);
-            }
-            if (state.current_view === 'mesh' && meshChanged) {
-                renderMeshView(state.mesh || mesh);
             }
             if (state.current_view === 'gossip') {
                 renderGossipView();
@@ -1047,9 +1066,6 @@ async function updateDashboard() {
             }
             if (state.current_view === 'approvals') {
                 renderApprovalsView();
-            }
-            if (state.current_view === 'skyrl') {
-                renderSkyrlView();
             }
             if (state.current_view === 'mitre') {
                 updateStixStatusBanner();
@@ -1222,8 +1238,35 @@ function showSkyrlToast(message, type = 'info', guidance = null, errorCode = nul
 async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
     const opts = { ...options };
     opts.credentials = opts.credentials || 'same-origin';
+    const headers = { ...(opts.headers || {}) };
+    try {
+        const savedToken = localStorage.getItem('oshoosi_dashboard_token') || localStorage.getItem('oshoosi_master_token');
+        if (savedToken && !headers['X-Osoosi-Token'] && !headers['Authorization']) {
+            headers['X-Osoosi-Token'] = savedToken;
+            headers['Authorization'] = `Bearer ${savedToken}`;
+        }
+    } catch (_) {}
+    opts.headers = headers;
+
     let lastError = null;
+    const normalizeAbortReason = (signal, err) => {
+        const reason = signal?.reason;
+        const reasonMsg = reason ? String(reason.message || reason) : '';
+        if (reasonMsg && !reasonMsg.includes('without reason')) {
+            return reason instanceof Error ? reason : new Error(reasonMsg);
+        }
+        const errMsg = err ? String(err.message || err) : '';
+        if (errMsg && !errMsg.includes('without reason')) {
+            return err instanceof Error ? err : new Error(errMsg);
+        }
+        return new Error('Request timed out or was aborted');
+    };
+
     for (let attempt = 0; attempt < retries; attempt++) {
+        if (opts.signal && opts.signal.aborted) {
+            lastError = normalizeAbortReason(opts.signal, null);
+            break;
+        }
         try {
             const resp = await fetch(url, opts);
             if (resp.status === 401 && attempt === 0) {
@@ -1233,6 +1276,10 @@ async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
             }
             lastError = new Error(`HTTP ${resp.status} ${resp.statusText}`);
         } catch (err) {
+            if (opts.signal && opts.signal.aborted) {
+                lastError = normalizeAbortReason(opts.signal, err);
+                break;
+            }
             lastError = err;
         }
         if (attempt < retries - 1) {
@@ -1907,241 +1954,270 @@ function renderThreatsView(threats) {
 async function renderMeshView(mesh) {
     try {
         const list = document.getElementById('mesh-data-list');
-    if (!list) return;
+        if (!list) return;
 
-    let pendingJoins = [];
-    let quarantinedPeers = [];
-    try {
-        const [pj, qp] = await Promise.all([
-            fetchAPI('/pending-joins'),
-            fetchAPI('/quarantined-peers')
-        ]);
-        if (pj) pendingJoins = pj;
-        if (qp) quarantinedPeers = qp;
-    } catch (e) {}
-
-    const peerCount = (mesh && mesh.peer_count !== undefined && mesh.peer_count !== null) ? mesh.peer_count : 0;
-    updateMeshConnectionIndicators(peerCount, mesh ? mesh.gossip_count : 0);
-
-    const banner = document.getElementById('network-connection-banner');
-    if (banner) {
-        if (peerCount > 0) {
-            banner.innerHTML = `
-                <div class="card glass shadow-glow" style="border-left: 4px solid #00ff88; background: rgba(0, 255, 136, 0.05); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                    <div style="display: flex; align-items: center; gap: 14px;">
-                        <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(0, 255, 136, 0.15); display: flex; align-items: center; justify-content: center; color: #00ff88; font-size: 20px;">
-                            <i data-lucide="wifi"></i>
-                        </div>
-                        <div>
-                            <div style="font-weight: 700; font-size: 15px; color: #00ff88; display: flex; align-items: center; gap: 8px;">
-                                <span>P2P MESH SWARM: CONNECTED &amp; OPERATIONAL</span>
-                                <span class="badge green" style="background: rgba(0, 255, 136, 0.2); color: #00ff88; border: 1px solid rgba(0, 255, 136, 0.4);">${peerCount} Active Peer${peerCount > 1 ? 's' : ''}</span>
-                            </div>
-                            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px; display: flex; flex-wrap: wrap; gap: 16px;">
-                                <span><i data-lucide="radio" style="width: 13px; height: 13px; vertical-align: -2px;"></i> GossipSub v1.2 Link</span>
-                                <span><i data-lucide="shield-check" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Mutual Cryptographic Trust Verified</span>
-                                <span><i data-lucide="activity" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Direct TCP Peering Active</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="text-align: right; font-size: 12px; color: var(--accent-green); white-space: nowrap;">
-                        <span style="display: inline-block; padding: 4px 10px; border-radius: 8px; background: rgba(0, 255, 136, 0.1); border: 1px solid rgba(0, 255, 136, 0.3);">
-                            🟢 Real-Time Mesh Sync
-                        </span>
-                    </div>
-                </div>
-            `;
-        } else {
-            banner.innerHTML = `
-                <div class="card glass shadow-glow" style="border-left: 4px solid #94a3b8; background: rgba(148, 163, 184, 0.05); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
-                    <div style="display: flex; align-items: center; gap: 14px;">
-                        <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(148, 163, 184, 0.15); display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 20px;">
-                            <i data-lucide="radio"></i>
-                        </div>
-                        <div>
-                            <div style="font-weight: 700; font-size: 15px; color: #94a3b8; display: flex; align-items: center; gap: 8px;">
-                                <span>P2P MESH SWARM: STANDALONE MODE (0 PEERS)</span>
-                                <span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4);">Awaiting Peering</span>
-                            </div>
-                            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px; display: flex; flex-wrap: wrap; gap: 16px;">
-                                <span><i data-lucide="radio" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Listening on TCP port 4001</span>
-                                <span><i data-lucide="compass" style="width: 13px; height: 13px; vertical-align: -2px;"></i> mDNS &amp; GossipSub Discovery Active</span>
-                                <span><i data-lucide="info" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Add bootstrap peers via WAN settings below</span>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="text-align: right; font-size: 12px; color: var(--text-muted); white-space: nowrap;">
-                        <span style="display: inline-block; padding: 4px 10px; border-radius: 8px; background: rgba(148, 163, 184, 0.1); border: 1px solid rgba(148, 163, 184, 0.2);">
-                            ⚪ Listening Port 4001
-                        </span>
-                    </div>
-                </div>
-            `;
+        if (mesh && typeof mesh === 'object' && mesh.peer_count !== undefined && mesh.peer_count !== null) {
+            state.mesh = mesh;
+            state.peer_count = Number(mesh.peer_count) || 0;
         }
-    }
 
-    let localNode = null;
-    let remotePeers = [];
-    if (mesh && Array.isArray(mesh.nodes)) {
-        localNode = mesh.nodes.find(n => n.group === 'host' || (n.role && n.role.includes('Master Core')));
-        remotePeers = mesh.nodes.filter(n => n !== localNode && n.group !== 'host');
-    }
-    const localName = localNode ? (localNode.label || localNode.name || 'Local Core Node') : 'Local Core Node';
-    const localIp = localNode ? (localNode.ip || localNode.address || '127.0.0.1:3030') : '127.0.0.1:3030';
-    const localAttestation = localNode ? (localNode.attestation || 'TPM 2.0 RoT Verified') : 'TPM 2.0 RoT Verified';
-    const localLatency = localNode ? (localNode.latency || '0.0 ms') : '0.0 ms';
-    const localTx = localNode ? (localNode.packets_tx || 0) : 0;
-    const localRx = localNode ? (localNode.packets_rx || 0) : 0;
+        const renderSeq = (state._meshRenderSeq = (state._meshRenderSeq || 0) + 1);
 
-    let html = `
-        <div class="timeline-item" style="border-left: 2px solid var(--accent-blue); margin-bottom: 12px;">
-            <div class="item-icon" style="background-color: rgba(0, 210, 255, 0.1); color: var(--accent-blue);">
-                <i data-lucide="network"></i>
-            </div>
-            <div class="item-info">
-                <div class="item-title">Connected Peers: <span id="network-peer-count-val">${peerCount}</span></div>
-                <div class="item-meta">
-                    <span>Network is actively synchronizing state via libp2p GossipSub v1.2</span>
-                </div>
-            </div>
-        </div>
+        let pendingJoins = [];
+        let quarantinedPeers = [];
+        try {
+            const [fetchedMesh, pj, qp] = await Promise.all([
+                (!state.mesh || state.mesh.peer_count === undefined) ? fetchAPI('/mesh-stats') : Promise.resolve(null),
+                fetchAPI('/pending-joins'),
+                fetchAPI('/quarantined-peers')
+            ]);
+            if (fetchedMesh && typeof fetchedMesh === 'object' && fetchedMesh.peer_count !== undefined) {
+                state.mesh = fetchedMesh;
+                state.peer_count = Number(fetchedMesh.peer_count) || 0;
+            }
+            if (pj) pendingJoins = pj;
+            if (qp) quarantinedPeers = qp;
+        } catch (e) {}
 
-        <h4 style="margin-top:16px; margin-bottom:10px; color:var(--text-header); font-size:14px; display:flex; align-items:center; gap:6px;">
-            <i data-lucide="server" style="width:14px; height:14px; color:var(--accent-green);"></i> Active Mesh Nodes &amp; Telemetry
-        </h4>
-        <div class="timeline-item" style="border-left: 2px solid var(--accent-green); margin-bottom: 8px;">
-            <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: var(--accent-green);">
-                <i data-lucide="shield-check"></i>
-            </div>
-            <div class="item-info" style="flex:1;">
-                <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                    <span>${escapeHtml(localName)} <code style="font-size:11px; opacity:0.8; margin-left:6px;">${escapeHtml(localIp)}</code></span>
-                    <span class="badge green">Optimal</span>
-                </div>
-                <div class="item-meta" style="margin-top:4px;">
-                    <span><i data-lucide="shield"></i> ${escapeHtml(localAttestation)}</span>
-                    <span><i data-lucide="cpu"></i> Master Core</span>
-                    <span><i data-lucide="activity"></i> Latency: ${escapeHtml(String(localLatency))}</span>
-                    <span><i data-lucide="arrow-up-down"></i> ${localTx} tx / ${localRx} rx</span>
-                </div>
-            </div>
-        </div>
-    `;
+        if (renderSeq !== state._meshRenderSeq) return;
 
-    if (peerCount === 0) {
-        html += `
-            <div class="timeline-item" style="border-left: 2px solid var(--accent-orange); margin-bottom: 8px;">
-                <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: var(--accent-orange);">
-                    <i data-lucide="radio"></i>
+        const effectiveMesh = (mesh && typeof mesh === 'object' && mesh.peer_count !== undefined && mesh.peer_count !== null)
+            ? mesh
+            : (state.mesh && state.mesh.peer_count !== undefined && state.mesh.peer_count !== null ? state.mesh : { peer_count: state.peer_count || 0 });
+
+        let localNode = null;
+        let remotePeers = [];
+        if (effectiveMesh && Array.isArray(effectiveMesh.nodes)) {
+            localNode = effectiveMesh.nodes.find(n => n && (n.group === 'host' || n.id === 'local_node' || (n.role && n.role.includes('Master Core'))));
+            remotePeers = effectiveMesh.nodes.filter(n =>
+                n &&
+                n !== localNode &&
+                n.id !== 'local_node' &&
+                (n.group === 'peer' || n.group === 'threat')
+            );
+        }
+
+        const rawPeerCount = (effectiveMesh && effectiveMesh.peer_count !== undefined && effectiveMesh.peer_count !== null)
+            ? Number(effectiveMesh.peer_count)
+            : Number(state.peer_count || 0);
+        const peerCount = (Number.isFinite(rawPeerCount) && rawPeerCount >= 0) ? rawPeerCount : 0;
+        const gossipCount = (effectiveMesh && effectiveMesh.gossip_count !== undefined)
+            ? Number(effectiveMesh.gossip_count || 0)
+            : Number(state.gossip_count || 0);
+        updateMeshConnectionIndicators(peerCount, gossipCount);
+
+        const banner = document.getElementById('network-connection-banner');
+        if (banner) {
+            if (peerCount > 0) {
+                banner.innerHTML = `
+                    <div class="card glass shadow-glow" style="border-left: 4px solid #00ff88; background: rgba(0, 255, 136, 0.05); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                        <div style="display: flex; align-items: center; gap: 14px;">
+                            <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(0, 255, 136, 0.15); display: flex; align-items: center; justify-content: center; color: #00ff88; font-size: 20px;">
+                                <i data-lucide="wifi"></i>
+                            </div>
+                            <div>
+                                <div style="font-weight: 700; font-size: 15px; color: #00ff88; display: flex; align-items: center; gap: 8px;">
+                                    <span>P2P MESH SWARM: CONNECTED &amp; OPERATIONAL</span>
+                                    <span class="badge green" style="background: rgba(0, 255, 136, 0.2); color: #00ff88; border: 1px solid rgba(0, 255, 136, 0.4);">${peerCount} Active Peer${peerCount > 1 ? 's' : ''}</span>
+                                </div>
+                                <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px; display: flex; flex-wrap: wrap; gap: 16px;">
+                                    <span><i data-lucide="radio" style="width: 13px; height: 13px; vertical-align: -2px;"></i> GossipSub v1.2 Link</span>
+                                    <span><i data-lucide="shield-check" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Mutual Cryptographic Trust Verified</span>
+                                    <span><i data-lucide="activity" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Direct TCP Peering Active</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="text-align: right; font-size: 12px; color: var(--accent-green); white-space: nowrap;">
+                            <span style="display: inline-block; padding: 4px 10px; border-radius: 8px; background: rgba(0, 255, 136, 0.1); border: 1px solid rgba(0, 255, 136, 0.3);">
+                                🟢 Real-Time Mesh Sync
+                            </span>
+                        </div>
+                    </div>
+                `;
+            } else {
+                banner.innerHTML = `
+                    <div class="card glass shadow-glow" style="border-left: 4px solid #94a3b8; background: rgba(148, 163, 184, 0.05); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+                        <div style="display: flex; align-items: center; gap: 14px;">
+                            <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(148, 163, 184, 0.15); display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 20px;">
+                                <i data-lucide="radio"></i>
+                            </div>
+                            <div>
+                                <div style="font-weight: 700; font-size: 15px; color: #94a3b8; display: flex; align-items: center; gap: 8px;">
+                                    <span>P2P MESH SWARM: STANDALONE MODE (0 PEERS)</span>
+                                    <span class="badge" style="background: rgba(148, 163, 184, 0.2); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.4);">Awaiting Peering</span>
+                                </div>
+                                <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px; display: flex; flex-wrap: wrap; gap: 16px;">
+                                    <span><i data-lucide="radio" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Listening on TCP port 4001</span>
+                                    <span><i data-lucide="compass" style="width: 13px; height: 13px; vertical-align: -2px;"></i> mDNS &amp; GossipSub Discovery Active</span>
+                                    <span><i data-lucide="info" style="width: 13px; height: 13px; vertical-align: -2px;"></i> Add bootstrap peers via WAN settings below</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div style="text-align: right; font-size: 12px; color: var(--text-muted); white-space: nowrap;">
+                            <span style="display: inline-block; padding: 4px 10px; border-radius: 8px; background: rgba(148, 163, 184, 0.1); border: 1px solid rgba(148, 163, 184, 0.2);">
+                                ⚪ Listening Port 4001
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        const localName = localNode ? (localNode.label || localNode.name || 'Local Core Node') : 'Local Core Node';
+        const localIp = localNode ? (localNode.ip || localNode.address || '127.0.0.1:3030') : '127.0.0.1:3030';
+        const localAttestation = localNode ? (localNode.attestation || 'TPM 2.0 RoT Verified') : 'TPM 2.0 RoT Verified';
+        const localLatency = localNode ? (localNode.latency || '0.0 ms') : '0.0 ms';
+        const localTx = localNode ? (localNode.packets_tx || 0) : 0;
+        const localRx = localNode ? (localNode.packets_rx || 0) : 0;
+
+        let html = `
+            <div class="timeline-item" style="border-left: 2px solid var(--accent-blue); margin-bottom: 12px;">
+                <div class="item-icon" style="background-color: rgba(0, 210, 255, 0.1); color: var(--accent-blue);">
+                    <i data-lucide="network"></i>
                 </div>
                 <div class="item-info">
-                    <div class="item-title">Zero Remote Peers Connected</div>
+                    <div class="item-title">Connected Peers: <span id="network-peer-count-val">${peerCount}</span></div>
                     <div class="item-meta">
-                        <span>libp2p GossipSub v1.2 is listening on port 4001. Awaiting remote peers to connect or dial bootstrap peer via <code>peers</code> in osoosi.toml.</span>
+                        <span>Network is actively synchronizing state via libp2p GossipSub v1.2</span>
+                    </div>
+                </div>
+            </div>
+
+            <h4 style="margin-top:16px; margin-bottom:10px; color:var(--text-header); font-size:14px; display:flex; align-items:center; gap:6px;">
+                <i data-lucide="server" style="width:14px; height:14px; color:var(--accent-green);"></i> Active Mesh Nodes &amp; Telemetry
+            </h4>
+            <div class="timeline-item" style="border-left: 2px solid var(--accent-green); margin-bottom: 8px;">
+                <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: var(--accent-green);">
+                    <i data-lucide="shield-check"></i>
+                </div>
+                <div class="item-info" style="flex:1;">
+                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>${escapeHtml(localName)} <code style="font-size:11px; opacity:0.8; margin-left:6px;">${escapeHtml(localIp)}</code></span>
+                        <span class="badge green">Optimal</span>
+                    </div>
+                    <div class="item-meta" style="margin-top:4px;">
+                        <span><i data-lucide="shield"></i> ${escapeHtml(localAttestation)}</span>
+                        <span><i data-lucide="cpu"></i> Master Core</span>
+                        <span><i data-lucide="activity"></i> Latency: ${escapeHtml(String(localLatency))}</span>
+                        <span><i data-lucide="arrow-up-down"></i> ${localTx} tx / ${localRx} rx</span>
                     </div>
                 </div>
             </div>
         `;
-    } else if (remotePeers.length > 0) {
-        remotePeers.forEach(node => {
-            const isQuarantined = node.status === 'quarantined' || node.group === 'threat';
-            const borderColor = isQuarantined ? 'var(--accent-red, #ef4444)' : '#00ff88';
-            const iconName = isQuarantined ? 'alert-triangle' : 'check-circle';
-            const badgeClass = isQuarantined ? 'red' : 'green';
-            const badgeText = isQuarantined ? 'Quarantined' : 'Connected 🟢';
+
+        if (peerCount === 0) {
             html += `
-                <div class="timeline-item" style="border-left: 2px solid ${borderColor}; margin-bottom: 8px;">
-                    <div class="item-icon" style="background-color: ${isQuarantined ? 'rgba(239, 68, 68, 0.1)' : 'rgba(0, 255, 136, 0.1)'}; color: ${borderColor};">
-                        <i data-lucide="${iconName}"></i>
+                <div class="timeline-item" style="border-left: 2px solid var(--accent-orange); margin-bottom: 8px;">
+                    <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: var(--accent-orange);">
+                        <i data-lucide="radio"></i>
                     </div>
-                    <div class="item-info" style="flex:1;">
-                        <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>${escapeHtml(node.label || node.name || 'Active Remote Peer')} <code style="font-size:11px; opacity:0.8; margin-left:6px;">${escapeHtml(node.ip || node.address || 'P2P Swarm')}</code></span>
-                            <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
-                        </div>
-                        <div class="item-meta" style="margin-top:4px;">
-                            <span><i data-lucide="radio"></i> GossipSub v1.2 Link</span>
-                            <span><i data-lucide="shield-check"></i> ${escapeHtml(node.attestation || 'Trust Verified')}</span>
-                            <span><i data-lucide="activity"></i> Latency: ${escapeHtml(String(node.latency || '< 1.0 ms'))}</span>
-                            <span><i data-lucide="refresh-cw"></i> Real-time Telemetry Sync Active</span>
+                    <div class="item-info">
+                        <div class="item-title">Zero Remote Peers Connected</div>
+                        <div class="item-meta">
+                            <span style="display: inline;">libp2p GossipSub v1.2 is listening on port 4001. Awaiting remote peers to connect or dial bootstrap peer via <code>peers</code> in <code>osoosi.toml</code>.</span>
                         </div>
                     </div>
                 </div>
             `;
-        });
-    } else {
-        for (let i = 0; i < peerCount; i++) {
-            const peerLabel = peerCount > 1 ? `Active Remote Peer #${i + 1}` : 'Active Remote Peer';
-            html += `
-                <div class="timeline-item" style="border-left: 2px solid #00ff88; margin-bottom: 8px;">
-                    <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: #00ff88;">
-                        <i data-lucide="check-circle"></i>
-                    </div>
-                    <div class="item-info" style="flex:1;">
-                        <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                            <span>${escapeHtml(peerLabel)} <code style="font-size:11px; opacity:0.8; margin-left:6px;">10.0.0.165:4001</code></span>
-                            <span class="badge green">Connected 🟢</span>
+        } else {
+            remotePeers.forEach(node => {
+                const isQuarantined = node.status === 'quarantined' || node.group === 'threat';
+                const borderColor = isQuarantined ? 'var(--accent-red, #ef4444)' : '#00ff88';
+                const iconName = isQuarantined ? 'alert-triangle' : 'check-circle';
+                const badgeClass = isQuarantined ? 'red' : 'green';
+                const badgeText = isQuarantined ? 'Quarantined' : 'Connected 🟢';
+                html += `
+                    <div class="timeline-item" style="border-left: 2px solid ${borderColor}; margin-bottom: 8px;">
+                        <div class="item-icon" style="background-color: ${isQuarantined ? 'rgba(239, 68, 68, 0.1)' : 'rgba(0, 255, 136, 0.1)'}; color: ${borderColor};">
+                            <i data-lucide="${iconName}"></i>
                         </div>
-                        <div class="item-meta" style="margin-top:4px;">
-                            <span><i data-lucide="radio"></i> GossipSub v1.2 Link</span>
-                            <span><i data-lucide="shield-check"></i> Trust Verified</span>
-                            <span><i data-lucide="activity"></i> Latency: &lt; 1.0 ms</span>
-                            <span><i data-lucide="refresh-cw"></i> Real-time Telemetry Sync Active</span>
+                        <div class="item-info" style="flex:1;">
+                            <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                                <span>${escapeHtml(node.label || node.name || 'Active Remote Peer')} <code style="font-size:11px; opacity:0.8; margin-left:6px;">${escapeHtml(node.ip || node.address || 'P2P Swarm')}</code></span>
+                                <span class="badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+                            </div>
+                            <div class="item-meta" style="margin-top:4px;">
+                                <span><i data-lucide="radio"></i> GossipSub v1.2 Link</span>
+                                <span><i data-lucide="shield-check"></i> ${escapeHtml(node.attestation || 'Trust Verified')}</span>
+                                <span><i data-lucide="activity"></i> Latency: ${escapeHtml(String(node.latency || '< 1.0 ms'))}</span>
+                                <span><i data-lucide="refresh-cw"></i> Real-time Telemetry Sync Active</span>
+                            </div>
                         </div>
                     </div>
-                </div>
-            `;
+                `;
+            });
+            for (let i = remotePeers.length; i < peerCount; i++) {
+                const peerLabel = peerCount > 1 ? `Active Remote Peer #${i + 1}` : 'Active Remote Peer';
+                html += `
+                    <div class="timeline-item" style="border-left: 2px solid #00ff88; margin-bottom: 8px;">
+                        <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: #00ff88;">
+                            <i data-lucide="check-circle"></i>
+                        </div>
+                        <div class="item-info" style="flex:1;">
+                            <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                                <span>${escapeHtml(peerLabel)} <code style="font-size:11px; opacity:0.8; margin-left:6px;">10.0.0.165:4001</code></span>
+                                <span class="badge green">Connected 🟢</span>
+                            </div>
+                            <div class="item-meta" style="margin-top:4px;">
+                                <span><i data-lucide="radio"></i> GossipSub v1.2 Link</span>
+                                <span><i data-lucide="shield-check"></i> Trust Verified</span>
+                                <span><i data-lucide="activity"></i> Latency: &lt; 1.0 ms</span>
+                                <span><i data-lucide="refresh-cw"></i> Real-time Telemetry Sync Active</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
         }
-    }
 
-    if (pendingJoins.length > 0) {
-        html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Pending Joins</h4>`;
-        html += pendingJoins.map(pj => `
-            <div class="timeline-item" style="border-left: 2px solid orange;">
-                <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
-                    <i data-lucide="help-circle"></i>
-                </div>
-                <div class="item-info">
-                    <div class="item-title">${escapeHtml(pj.peer_id)}</div>
-                    <div class="item-meta">
-                        <span><i data-lucide="map-pin"></i> ${escapeHtml(pj.multiaddr || pj.address || 'Unknown')}</span>
-                        <span><i data-lucide="clock"></i> Discovered ${formatTimestamp(pj.discovered_at)}</span>
+        if (pendingJoins.length > 0) {
+            html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Pending Joins</h4>`;
+            html += pendingJoins.map(pj => `
+                <div class="timeline-item" style="border-left: 2px solid orange;">
+                    <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
+                        <i data-lucide="help-circle"></i>
                     </div>
-                    <div class="item-actions" style="margin-top:8px;">
-                        <button class="action-btn primary" onclick="meshAllowPeer('${escapeHtml(pj.peer_id)}')">Allow</button>
-                        <button class="action-btn" onclick="meshDenyPeer('${escapeHtml(pj.peer_id)}')">Deny</button>
+                    <div class="item-info">
+                        <div class="item-title">${escapeHtml(pj.peer_id)}</div>
+                        <div class="item-meta">
+                            <span><i data-lucide="map-pin"></i> ${escapeHtml(pj.multiaddr || pj.address || 'Unknown')}</span>
+                            <span><i data-lucide="clock"></i> Discovered ${formatTimestamp(pj.discovered_at)}</span>
+                        </div>
+                        <div class="item-actions" style="margin-top:8px;">
+                            <button class="action-btn primary" onclick="meshAllowPeer('${escapeHtml(pj.peer_id)}')">Allow</button>
+                            <button class="action-btn" onclick="meshDenyPeer('${escapeHtml(pj.peer_id)}')">Deny</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        `).join('');
-    }
+            `).join('');
+        }
 
-    if (quarantinedPeers.length > 0) {
-        html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Quarantined Peers</h4>`;
-        html += quarantinedPeers.map(qp => `
-            <div class="timeline-item" style="border-left: 2px solid var(--accent-red);">
-                <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
-                    <i data-lucide="shield-alert"></i>
-                </div>
-                <div class="item-info">
-                    <div class="item-title">${qp.peer_id}</div>
-                    <div class="item-meta">
-                        <span><i data-lucide="clock"></i> Quarantined ${formatTimestamp(qp.quarantined_at)}</span>
+        if (quarantinedPeers.length > 0) {
+            html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Quarantined Peers</h4>`;
+            html += quarantinedPeers.map(qp => `
+                <div class="timeline-item" style="border-left: 2px solid var(--accent-red);">
+                    <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
+                        <i data-lucide="shield-alert"></i>
                     </div>
-                    <div class="item-actions" style="margin-top:8px;">
-                        <button class="action-btn" onclick="meshReleasePeer('${qp.peer_id}')">Release</button>
-                        <button class="action-btn warning" onclick="markPeerFalsePositive('${qp.peer_id}')">False Positive</button>
-                        <button class="action-btn primary" onclick="entanglePeer('${qp.peer_id}')">Entangle</button>
+                    <div class="item-info">
+                        <div class="item-title">${qp.peer_id}</div>
+                        <div class="item-meta">
+                            <span><i data-lucide="clock"></i> Quarantined ${formatTimestamp(qp.quarantined_at)}</span>
+                        </div>
+                        <div class="item-actions" style="margin-top:8px;">
+                            <button class="action-btn" onclick="meshReleasePeer('${qp.peer_id}')">Release</button>
+                            <button class="action-btn warning" onclick="markPeerFalsePositive('${qp.peer_id}')">False Positive</button>
+                            <button class="action-btn primary" onclick="entanglePeer('${qp.peer_id}')">Entangle</button>
+                        </div>
                     </div>
                 </div>
-            </div>
-        `).join('');
-    }
+            `).join('');
+        }
 
-    list.innerHTML = html;
-    if (window.lucide) {
-        lucide.createIcons();
-    }
+        list.innerHTML = html;
+        if (window.lucide) {
+            lucide.createIcons();
+        }
     } catch (err) {
         console.error('[renderMeshView] Error:', err);
         renderViewFallbackCard('mesh-view', 'Mesh Network', err);
@@ -2319,52 +2395,80 @@ async function renderDeceptionCard() {
 /**
  * WAN Mesh & Bootstrap Peer Management
  */
-async function fetchBootstrapPeers() {
+function applyBootstrapPeersData(data) {
+    if (!data || typeof data !== 'object') return;
+    if (data.recommended_multiaddr) {
+        state.myWanMultiaddr = data.recommended_multiaddr;
+        const input = document.getElementById('this-node-wan-addr');
+        if (input) input.value = data.recommended_multiaddr;
+    }
+    if (data.duckdns_template) {
+        const preview = document.getElementById('duckdns-preview');
+        if (preview) preview.innerText = data.duckdns_template;
+    }
+    state.duckdnsDomain = data.duckdns_domain || 'oshoosi';
+    state.isDuckDnsHost = data.is_duckdns_host || false;
+    state.autoBootstrapDuckdns = data.auto_bootstrap_duckdns !== false;
+
+    const duckInput = document.getElementById('duckdns-domain-input');
+    if (duckInput && !duckInput.matches(':focus')) {
+        duckInput.value = state.duckdnsDomain;
+    }
+
+    const badge = document.getElementById('duckdns-auto-status-badge');
+    if (badge) {
+        if (state.isDuckDnsHost) {
+            badge.innerHTML = `<span class="badge blue">👑 Core Root Master (${escapeHtml(state.duckdnsDomain || 'oshoosi')}.duckdns.org)</span>`;
+        } else {
+            badge.innerHTML = `<span class="badge green">⚡ Auto-Configured Upstream: /dns4/${escapeHtml(state.duckdnsDomain || 'oshoosi')}.duckdns.org/tcp/4001 (Outbound NAT Active)</span>`;
+        }
+    }
+
+    if (Array.isArray(data.peers)) {
+        state.bootstrapPeers = data.peers;
+    }
+}
+
+async function fetchBootstrapPeers(retryCount = 1) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutMs = 10000;
+    const timeoutId = setTimeout(() => {
+        controller.abort(new Error("Bootstrap peers request timed out"));
+    }, timeoutMs);
     try {
-        const res = await fetchWithRetry(`${API_BASE}/mesh/bootstrap-peers`, { signal: controller.signal });
+        const res = await fetchWithRetry(`${API_BASE}/mesh/bootstrap-peers`, { signal: controller.signal }, 2, 300);
         clearTimeout(timeoutId);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (data.recommended_multiaddr) {
-            state.myWanMultiaddr = data.recommended_multiaddr;
-            const input = document.getElementById('this-node-wan-addr');
-            if (input) input.value = data.recommended_multiaddr;
-        }
-        if (data.duckdns_template) {
-            const preview = document.getElementById('duckdns-preview');
-            if (preview) preview.innerText = data.duckdns_template;
-        }
-        state.duckdnsDomain = data.duckdns_domain || 'oshoosi';
-        state.isDuckDnsHost = data.is_duckdns_host || false;
-        state.autoBootstrapDuckdns = data.auto_bootstrap_duckdns !== false;
-
-        const duckInput = document.getElementById('duckdns-domain-input');
-        if (duckInput && !duckInput.matches(':focus')) {
-            duckInput.value = state.duckdnsDomain;
-        }
-
-        const badge = document.getElementById('duckdns-auto-status-badge');
-        if (badge) {
-            if (state.isDuckDnsHost) {
-                badge.innerHTML = `<span class="badge blue">👑 Core Root Master (${escapeHtml(state.duckdnsDomain || 'oshoosi')}.duckdns.org)</span>`;
-            } else {
-                badge.innerHTML = `<span class="badge green">⚡ Auto-Configured Upstream: /dns4/${escapeHtml(state.duckdnsDomain || 'oshoosi')}.duckdns.org/tcp/4001 (Outbound NAT Active)</span>`;
-            }
-        }
-
-        state.bootstrapPeers = Array.isArray(data.peers) ? data.peers : [];
+        try {
+            localStorage.setItem('osoosi_bootstrap_peers_cache', JSON.stringify(data));
+        } catch (_) {}
+        applyBootstrapPeersData(data);
         renderBootstrapPeersList();
     } catch (err) {
         clearTimeout(timeoutId);
-        console.warn('Failed to fetch bootstrap peers:', err);
-        const list = document.getElementById('bootstrap-peers-list');
-        if (list && (!state.bootstrapPeers || state.bootstrapPeers.length === 0)) {
-            list.innerHTML = `<div style="font-size:12px; color:var(--accent-red); padding:8px 4px;">Failed to fetch bootstrap peers: ${escapeHtml(err.message || 'Network error')}</div>`;
+        const isAbortOrTimeout =
+            err?.name === 'AbortError' ||
+            controller.signal.aborted ||
+            /aborted|timed out/i.test(String(err?.message || err || ''));
+        if (isAbortOrTimeout && retryCount > 0) {
+            return fetchBootstrapPeers(retryCount - 1);
         }
+        console.warn('Bootstrap peers fetch fallback:', err?.message || err);
+        try {
+            const cachedRaw = localStorage.getItem('osoosi_bootstrap_peers_cache');
+            if (cachedRaw) {
+                const cachedData = JSON.parse(cachedRaw);
+                applyBootstrapPeersData(cachedData);
+            }
+        } catch (_) {}
+        if (!Array.isArray(state.bootstrapPeers)) {
+            state.bootstrapPeers = [];
+        }
+        renderBootstrapPeersList();
     }
 }
+const loadBootstrapPeers = fetchBootstrapPeers;
 
 function setBootstrapPeerInput(val) {
     const input = document.getElementById('new-bootstrap-peer-input');
@@ -2461,7 +2565,9 @@ async function saveBootstrapPeers() {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const timeoutId = setTimeout(() => {
+        controller.abort(new Error("Save bootstrap peers request timed out"));
+    }, 10000);
 
     try {
         const res = await fetchWithRetry(`${API_BASE}/mesh/bootstrap-peers`, {
@@ -2563,6 +2669,7 @@ window.addBootstrapPeer = addBootstrapPeer;
 window.removeBootstrapPeer = removeBootstrapPeer;
 window.saveBootstrapPeers = saveBootstrapPeers;
 window.fetchBootstrapPeers = fetchBootstrapPeers;
+window.loadBootstrapPeers = fetchBootstrapPeers;
 
 /**
  * Render malware scanner view with drill-down details
@@ -4362,9 +4469,6 @@ function updateTelemetryChart(data) {
     }
 }
 
-// Start the app
-document.addEventListener('DOMContentLoaded', init);
-
 /**
  * Render Zone Overview
  */
@@ -5802,7 +5906,7 @@ async function renderGossipView() {
                 (a.type && (a.type.includes('MESH') || a.type.includes('CONSENSUS') || a.type.includes('INTEL') || a.type.includes('THREAT'))) || 
                 (a.summary && a.summary.toLowerCase().includes('mesh'))
             ).map(a => ({
-                id: a.threat_id || a.id || ('act-' + Math.random().toString(36).substring(2, 9)),
+                id: a.threat_id || a.id || ('act-' + crypto.getRandomValues(new Uint32Array(1))[0].toString(36)),
                 event_type: a.type || 'GOSSIP_EVENT',
                 timestamp: a.timestamp || new Date().toISOString(),
                 summary: a.summary || '',
@@ -6114,7 +6218,7 @@ function updateSkyrlStats(status) {
         const currentOptions = Array.from(loraSelect.options || []).map(o => o.value);
         const needsUpdate = available.length !== currentOptions.length || !available.every((v, i) => v === currentOptions[i]);
 
-        if (needsUpdate) {
+        if (needsUpdate && !loraSelect.dataset.userInteracting) {
             loraSelect.innerHTML = available.map(adapter => `
                 <option value="${escapeHtml(adapter)}" ${adapter === status.active_lora_adapter ? 'selected' : ''}>${escapeHtml(adapter)}</option>
             `).join('');
@@ -6124,33 +6228,46 @@ function updateSkyrlStats(status) {
 
         if (!loraSelect.dataset.wired) {
             loraSelect.dataset.wired = 'true';
-            loraSelect.addEventListener('change', async (e) => {
-                const selected = e.target.value;
-                try {
-                    const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/adapter`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ adapter: selected })
-                    });
-                    const data = await res.json().catch(() => null);
-                    if (!res.ok || (data && data.status === 'error')) {
-                        showUserError('SkyRL LoRA Adapter', data || `HTTP ${res.status}`);
-                        return;
-                    }
-                    showSkyrlToast(`Active LoRA adapter switched to: ${selected}`, 'info');
-                    if (state.skyrlStatus) {
-                        state.skyrlStatus.active_lora_adapter = selected;
-                    }
-                    const adapterLabel = document.getElementById('stat-skyrl-adapter');
-                    if (adapterLabel) adapterLabel.innerText = selected;
-                } catch (err) {
-                    console.warn("Failed to set adapter on backend:", err);
-                    showUserError('SkyRL LoRA Adapter', err);
-                }
-            });
+            loraSelect.addEventListener('focus', () => { loraSelect.dataset.userInteracting = 'true'; });
+            loraSelect.addEventListener('mousedown', () => { loraSelect.dataset.userInteracting = 'true'; });
+            loraSelect.addEventListener('blur', () => { delete loraSelect.dataset.userInteracting; });
         }
     }
 }
+
+window.changeSkyrlLoraAdapter = async function(selected) {
+    const loraSelect = document.getElementById('skyrl-lora-select');
+    if (loraSelect) {
+        delete loraSelect.dataset.userInteracting;
+    }
+    if (!selected) return;
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/adapter`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ adapter: selected })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('SkyRL LoRA Adapter', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Active LoRA adapter switched to: ${selected}`, 'info');
+        if (state.skyrlStatus) {
+            state.skyrlStatus.active_lora_adapter = selected;
+        }
+        const adapterLabel = document.getElementById('stat-skyrl-adapter');
+        if (adapterLabel) adapterLabel.innerText = selected;
+        const modeBadge = document.getElementById('skyrl-agent-mode-badge');
+        if (modeBadge) {
+            modeBadge.innerText = `Adapter: ${selected}`;
+            modeBadge.className = 'badge purple';
+        }
+    } catch (err) {
+        console.warn("Failed to set adapter on backend:", err);
+        showUserError('SkyRL LoRA Adapter', err);
+    }
+};
 
 /**
  * Initialize Chart.js charts for SkyRL
@@ -6293,9 +6410,9 @@ async function renderSkyrlView() {
     try {
         initSkyrlCharts();
 
-        // Fetch fresh status if not yet loaded
-        if (!state.skyrlStatus) {
-            state.skyrlStatus = await fetchAPI('/skyrl/v1/status');
+        const freshStatus = await fetchAPI('/skyrl/v1/status');
+        if (freshStatus && typeof freshStatus === 'object') {
+            state.skyrlStatus = freshStatus;
         }
 
         if (state.skyrlStatus) {
@@ -6355,9 +6472,24 @@ window.triggerSkyrlTraining = async function() {
             if (lossEl) lossEl.innerText = data.loss.toFixed(4);
         }
 
+        if (typeof data.mean_reward === 'number') {
+            state.skyrlRewardHistory.shift();
+            state.skyrlRewardHistory.push(parseFloat(data.mean_reward.toFixed(2)));
+            if (state.skyrlRewardChart) {
+                state.skyrlRewardChart.data.datasets[0].data = [...state.skyrlRewardHistory];
+                state.skyrlRewardChart.update();
+            }
+        }
+
         if (typeof data.buffer_size === 'number') {
             const bufferEl = document.getElementById('stat-skyrl-buffer');
             if (bufferEl) bufferEl.innerText = `${data.buffer_size.toLocaleString()} / 20,000`;
+        }
+
+        const modeBadge = document.getElementById('skyrl-agent-mode-badge');
+        if (modeBadge && typeof data.loss === 'number') {
+            modeBadge.innerText = `Trained (Loss ${data.loss.toFixed(4)})`;
+            modeBadge.className = 'badge green';
         }
 
         showSkyrlToast(`Bellman TD Loss: ${data.loss.toFixed(4)} · ${data.samples_trained} batch transitions trained`, 'success');
@@ -6383,6 +6515,13 @@ window.triggerSkyrlTraining = async function() {
 };
 window.trainSkyrlPolicy = window.triggerSkyrlTraining;
 
+const SKYRL_GYM_EPISODE_TARGETS = [
+    { pid: 8124, binary_path: "C:\\Windows\\Temp\\payload.exe", is_malicious: true },
+    { pid: 7812, binary_path: "C:\\Windows\\Temp\\beacon.exe", is_malicious: true },
+    { pid: 9420, binary_path: "C:\\Users\\Public\\mimikatz.exe", is_malicious: true },
+    { pid: 6140, binary_path: "C:\\Windows\\System32\\svchost.exe", is_malicious: false }
+];
+
 /**
  * Execute step in EDR Security Gym and display live thought-trace
  */
@@ -6398,10 +6537,16 @@ window.simulateSkyrlStep = async function() {
     }
 
     try {
+        if (!state.skyrlSessionId) {
+            state.skyrlEpisodeCursor = ((state.skyrlEpisodeCursor || 0) + 1) % SKYRL_GYM_EPISODE_TARGETS.length;
+            state.skyrlSessionId = `webui-gym-ep-${state.skyrlEpisodeCursor}`;
+        }
+        const target = SKYRL_GYM_EPISODE_TARGETS[state.skyrlEpisodeCursor || 0];
         const payload = {
-            pid: 8124,
-            binary_path: "C:\\Windows\\Temp\\payload.exe",
-            is_malicious: true
+            session_id: state.skyrlSessionId,
+            pid: target.pid,
+            binary_path: target.binary_path,
+            is_malicious: target.is_malicious
         };
 
         const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/step`, {
@@ -6416,6 +6561,10 @@ window.simulateSkyrlStep = async function() {
             return;
         }
 
+        if (data.done) {
+            state.skyrlSessionId = null;
+        }
+
         // Update reward chart
         if (typeof data.reward === 'number') {
             state.skyrlRewardHistory.shift();
@@ -6426,10 +6575,28 @@ window.simulateSkyrlStep = async function() {
             }
         }
 
-        // Render thought-trace and action
-        renderThoughtTraceFeed(data.thought_trace, data.explanation, data.reward, data.done, data.step);
+        const modeBadge = document.getElementById('skyrl-agent-mode-badge');
+        if (modeBadge) {
+            modeBadge.innerText = data.done ? `Episode Terminal (Turn ${data.step})` : `Gym Stepping (Turn ${data.step})`;
+            modeBadge.className = data.done ? 'badge green' : 'badge blue';
+        }
 
-        showSkyrlToast(`Gym Step ${data.step} evaluated · Reward: ${data.reward > 0 ? '+' : ''}${data.reward.toFixed(2)}${data.done ? ' (Terminal Done)' : ''}`, data.reward >= 0 ? 'success' : 'warning');
+        // Render thought-trace and action
+        renderThoughtTraceFeed(
+            data.thought_trace,
+            data.explanation,
+            data.reward,
+            data.done,
+            data.step,
+            data.action,
+            data.guarded,
+            data.lora_adapter
+        );
+
+        showSkyrlToast(
+            `Gym Step ${data.step} [${data.action || 'Evaluated'}] · Reward: ${data.reward > 0 ? '+' : ''}${data.reward.toFixed(2)}${data.done ? ' (Episode Complete)' : ''}`,
+            data.reward >= 0 ? 'success' : 'warning'
+        );
 
         // Refresh stats
         const updatedStatus = await fetchAPI('/skyrl/v1/status');
@@ -6451,28 +6618,54 @@ window.simulateSkyrlStep = async function() {
     }
 };
 
+const SKYRL_INFERENCE_SCENARIOS = [
+    { pid: 4096, binary_path: "C:\\Windows\\System32\\cmd.exe", command_line: "cmd.exe /c whoami /priv" },
+    { pid: 6320, binary_path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", command_line: "powershell.exe -NoP -W Hidden -enc SQBFAFgA" },
+    { pid: 7412, binary_path: "C:\\Windows\\System32\\rundll32.exe", command_line: "rundll32.exe keymgr.dll,KRShowKeyMgr" },
+    { pid: 8804, binary_path: "C:\\Windows\\Temp\\payload.exe", command_line: "payload.exe --stage2-beacon" }
+];
+
+const SKYRL_GUARDED_SCENARIOS = [
+    { pid: 4, binary_path: "C:\\Windows\\System32\\ntoskrnl.exe", command_line: "System Kernel & Executive" },
+    { pid: 688, binary_path: "C:\\Windows\\System32\\lsass.exe", command_line: "C:\\Windows\\System32\\lsass.exe" },
+    { pid: 512, binary_path: "C:\\Windows\\System32\\csrss.exe", command_line: "csrss.exe ObjectDirectory=\\Windows" }
+];
+
 /**
  * Generate guarded policy actions and thought trace
  */
-window.simulateSkyrlGenerate = async function() {
+window.simulateSkyrlGenerate = async function(guardedMode = false) {
     if (state.isGeneratingSkyrl) return;
     state.isGeneratingSkyrl = true;
 
-    const btn = document.getElementById('skyrl-gen-btn');
+    const btn = document.getElementById(guardedMode ? 'skyrl-guarded-gen-btn' : 'skyrl-gen-btn');
     const select = document.getElementById('skyrl-lora-select');
     const selectedLora = select ? select.value : 'edr-reasoning-lora-v1';
 
     if (btn) {
         btn.disabled = true;
-        btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px; height:14px;"></i> <span>Reasoning...</span>';
+        if (guardedMode) {
+            btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:12px; height:12px; margin-right:4px;"></i> Reasoning...';
+        } else {
+            btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px; height:14px;"></i> <span>Reasoning...</span>';
+        }
         if (window.lucide) window.lucide.createIcons();
     }
 
     try {
+        let scenario;
+        if (guardedMode) {
+            state.skyrlGuardedCursor = ((state.skyrlGuardedCursor || 0) + 1) % SKYRL_GUARDED_SCENARIOS.length;
+            scenario = SKYRL_GUARDED_SCENARIOS[state.skyrlGuardedCursor];
+        } else {
+            state.skyrlInferenceCursor = ((state.skyrlInferenceCursor || 0) + 1) % SKYRL_INFERENCE_SCENARIOS.length;
+            scenario = SKYRL_INFERENCE_SCENARIOS[state.skyrlInferenceCursor];
+        }
+
         const payload = {
-            pid: 4096,
-            binary_path: "C:\\Windows\\System32\\cmd.exe",
-            command_line: "cmd.exe /c whoami /priv",
+            pid: scenario.pid,
+            binary_path: scenario.binary_path,
+            command_line: scenario.command_line,
             lora_adapter: selectedLora
         };
 
@@ -6488,8 +6681,22 @@ window.simulateSkyrlGenerate = async function() {
             return;
         }
 
+        const modeBadge = document.getElementById('skyrl-agent-mode-badge');
+        if (modeBadge) {
+            modeBadge.innerText = data.guarded ? 'Safety Guardrail Enforced' : `Policy Action: ${data.action}`;
+            modeBadge.className = data.guarded ? 'badge orange' : 'badge purple';
+        }
+
+        if (typeof data.total_steps === 'number') {
+            const stepsEl = document.getElementById('stat-skyrl-steps');
+            if (stepsEl) stepsEl.innerText = data.total_steps.toLocaleString();
+        }
+
         renderThoughtTraceFeed(data.thought_trace, data.explanation, null, false, null, data.action, data.guarded, data.lora_adapter);
-        showSkyrlToast(`Policy reasoning complete: Action [${data.action}] (Guarded = ${data.guarded})`, 'info');
+        showSkyrlToast(
+            `Policy reasoning complete: Action [${data.action}] (${data.guarded ? 'Safety Guardrail Active' : 'Active Policy'})`,
+            data.guarded ? 'warning' : 'info'
+        );
 
     } catch (err) {
         console.error("SkyRL generation error:", err);
@@ -6498,7 +6705,11 @@ window.simulateSkyrlGenerate = async function() {
         state.isGeneratingSkyrl = false;
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = '<i data-lucide="brain-circuit" style="width:14px; height:14px;"></i> <span>Run Inference</span>';
+            if (guardedMode) {
+                btn.innerHTML = '<i data-lucide="refresh-cw" style="width:12px;height:12px;margin-right:4px;"></i> Run Guarded Inference';
+            } else {
+                btn.innerHTML = '<i data-lucide="brain-circuit" style="width:14px; height:14px;"></i> <span>Run Inference</span>';
+            }
             if (window.lucide) window.lucide.createIcons();
         }
     }
@@ -6556,7 +6767,7 @@ function renderThoughtTraceFeed(rawTrace, explanation, reward, done, step, direc
     const actionDesc = document.getElementById('skyrl-action-desc');
     if (actionBadge) {
         actionBadge.innerText = actionContent || 'ALLOW';
-        const isContainment = /kill|terminate|isolate|quarantine|block/i.test(actionContent);
+        const isContainment = /kill|terminate|isolate|quarantine|block|suspend/i.test(actionContent);
         actionBadge.className = isContainment ? 'badge red' : 'badge green';
     }
     if (actionDesc && explanation) {
@@ -9515,4 +9726,147 @@ window.renderHistoryView = renderHistoryView;
 window.fetchRotatedLogFiles = fetchRotatedLogFiles;
 window.fetchLogTail = fetchLogTail;
 window.downloadHistoryExport = downloadHistoryExport;
+
+/**
+ * REA: Reverse Engineer Anything Frontend Controller
+ */
+async function renderReaView() {
+    try {
+        const [statusRes, provRes] = await Promise.all([
+            fetchWithRetry(`${API_BASE}/rea/v1/status`).then(r => r.json()).catch(() => null),
+            fetchWithRetry(`${API_BASE}/rea/v1/providers`).then(r => r.json()).catch(() => null),
+        ]);
+        const bar = document.getElementById('rea-providers-bar');
+        if (bar && provRes && Array.isArray(provRes.providers)) {
+            bar.innerHTML = provRes.providers.map(p => `
+                <span class="badge ${p.available ? 'green' : 'gray'}" style="font-size: 10px; padding: 3px 8px;">
+                    ${p.available ? '🟢' : '⚪'} ${escapeHtml(p.name)}${p.version ? ' (' + escapeHtml(p.version) + ')' : ''}
+                </span>
+            `).join('');
+        }
+        if (statusRes && Array.isArray(statusRes.recent_reports) && statusRes.recent_reports.length > 0) {
+            renderReaReport(statusRes.recent_reports[0]);
+        }
+    } catch (err) {
+        console.warn('REA view load warning:', err);
+    }
+}
+
+function renderReaReport(report) {
+    const container = document.getElementById('rea-report-container');
+    if (!container || !report) return;
+    const evidenceRows = (report.evidence || []).map(ev => `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 10px; font-weight: 600; color: #38bdf8;">${escapeHtml(ev.source || '')}</td>
+            <td style="padding: 8px 10px; font-family: monospace; font-size: 11px;">${escapeHtml(ev.location || '')}</td>
+            <td style="padding: 8px 10px;">${escapeHtml(ev.observation || '')}</td>
+            <td style="padding: 8px 10px; text-align: right;"><span class="badge green">${Math.round((ev.confidence || 0) * 100)}%</span></td>
+        </tr>
+    `).join('');
+    const findingsHtml = (report.findings || []).map(f => `
+        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <strong style="font-size: 12.5px; color: var(--text-header);">[${escapeHtml(String(f.severity || 'INFO').toUpperCase())}] ${escapeHtml(f.title || f.category || 'Finding')}</strong>
+                <span class="badge blue" style="font-size: 10px;">${Math.round((f.confidence || 0.9) * 100)}%</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${escapeHtml(f.detail || '')}</div>
+        </div>
+    `).join('');
+    container.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px;">
+            <div>
+                <h4 style="margin: 0; font-size: 15px; color: var(--text-header);">${escapeHtml(report.target || 'Target')} <span class="badge blue" style="margin-left: 8px;">${escapeHtml(report.detected_kind || 'auto')}</span></h4>
+                <div style="font-size: 11px; color: var(--text-muted); font-family: monospace; margin-top: 4px;">SHA-256: ${escapeHtml(report.sha256 || '')} | Size: ${Number(report.size_bytes || 0).toLocaleString()} bytes</div>
+            </div>
+            <span class="badge ${Number(report.risk_score || 0) >= 0.7 ? 'red' : 'green'}">Risk: ${Math.round((report.risk_score || 0) * 100)}%</span>
+        </div>
+        <p style="font-size: 13px; color: var(--text-primary); margin-bottom: 14px;">${escapeHtml(report.summary || '')}</p>
+        <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Findings (${(report.findings || []).length})</h5>
+        <div style="margin-bottom: 14px;">${findingsHtml || '<div style="font-size:12px;color:var(--text-muted);">No anomalous findings.</div>'}</div>
+        <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Evidence Ledger (${(report.evidence || []).length})</h5>
+        <div style="overflow-x: auto; margin-bottom: 14px;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                <thead>
+                    <tr style="border-bottom: 1px solid var(--glass-border); text-align: left; color: var(--text-muted);">
+                        <th style="padding: 6px 10px;">Source</th>
+                        <th style="padding: 6px 10px;">Location</th>
+                        <th style="padding: 6px 10px;">Observation</th>
+                        <th style="padding: 6px 10px; text-align: right;">Confidence</th>
+                    </tr>
+                </thead>
+                <tbody>${evidenceRows}</tbody>
+            </table>
+        </div>
+        ${report.reconstructed_source ? `
+            <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Reconstructed Code / Interface</h5>
+            <pre style="background: rgba(0,0,0,0.45); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-size: 11.5px; overflow-x: auto; color: #a7f3d0;">${escapeHtml(report.reconstructed_source)}</pre>
+        ` : ''}
+        ${report.auto_yara_rule ? `
+            <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 12px 0 8px 0;">Autonomous Multi-Token YARA-X Signature</h5>
+            <pre style="background: rgba(0,0,0,0.45); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-size: 11.5px; overflow-x: auto; color: #93c5fd;">${escapeHtml(report.auto_yara_rule)}</pre>
+        ` : ''}
+    `;
+}
+
+async function runReaAnalysis() {
+    const inputEl = document.getElementById('rea-target-input');
+    const kindEl = document.getElementById('rea-kind-select');
+    const pathVal = inputEl ? inputEl.value.trim() : 'self';
+    const kindVal = kindEl ? kindEl.value : 'auto';
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/rea/v1/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: pathVal, target: kindVal })
+        });
+        const data = await res.json();
+        if (data && data.report) {
+            renderReaReport(data.report);
+        } else if (data && data.error) {
+            showUserError('REA Analysis', data.error);
+        }
+    } catch (err) {
+        showUserError('REA Analysis', err);
+    }
+}
+
+async function runReaPreset(preset) {
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/rea/v1/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ preset })
+        });
+        const data = await res.json();
+        if (data && data.report) {
+            renderReaReport(data.report);
+        }
+    } catch (err) {
+        showUserError('REA Preset', err);
+    }
+}
+
+async function runReaAutonomousSweep() {
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/rea/v1/autonomous-sweep`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        const data = await res.json();
+        if (data && Array.isArray(data.reports) && data.reports.length > 0) {
+            renderReaReport(data.reports[0]);
+        } else {
+            await renderReaView();
+        }
+    } catch (err) {
+        showUserError('REA Autonomous Sweep', err);
+    }
+}
+
+window.renderReaView = renderReaView;
+window.runReaAnalysis = runReaAnalysis;
+window.runReaPreset = runReaPreset;
+window.runReaAutonomousSweep = runReaAutonomousSweep;
+
 

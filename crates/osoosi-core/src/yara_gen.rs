@@ -81,6 +81,18 @@ pub fn is_common_system_or_dev_binary(name: &str) -> bool {
             | "grep.exe"
             | "sh.exe"
             | "wmiprvse.exe"
+            | "sc.exe"
+            | "taskkill.exe"
+            | "velociraptor.exe"
+            | "firefox.exe"
+            | "brave.exe"
+            | "chrome_proxy.exe"
+            | "googleupdate.exe"
+            | "sppsvc.exe"
+            | "onedrive.exe"
+            | "systray.exe"
+            | "elevation_service.exe"
+            | "software_reporter_tool.exe"
     )
 }
 
@@ -89,6 +101,13 @@ pub fn is_common_system_or_dev_binary(name: &str) -> bool {
 pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
     if !yara_gen_enabled() {
         return None;
+    }
+    // Never generate file-level YARA rules on protected OS/browser/SDK directory paths
+    if let Some(ref proc) = sig.process_name {
+        let has_dir_sep = proc.contains('\\') || proc.contains('/');
+        if has_dir_sep && crate::blocking_manager::is_protected_or_benign_system_path(proc) {
+            return None;
+        }
     }
     let rule_name = format!(
         "OsoosiGen_{}",

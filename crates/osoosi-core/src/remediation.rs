@@ -17,19 +17,35 @@ static KILL_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
     let lower_name = name.to_lowercase();
-    if lower_name == "sshd"
+    if osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_name)
+        || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_name)
+        || lower_name == "sshd"
         || lower_name.starts_with("sshd:")
         || lower_name == "ansible"
         || lower_name.starts_with("ansible-")
         || lower_name.starts_with("ansible_module")
+        || matches!(
+            lower_name.as_str(),
+            "chrome.exe"
+                | "chrome"
+                | "chrome_proxy.exe"
+                | "googleupdate.exe"
+                | "msedge.exe"
+                | "firefox.exe"
+                | "brave.exe"
+                | "explorer.exe"
+                | "systray.exe"
+        )
     {
         return true;
     }
     for arg in cmd {
         let lower_arg = arg.to_lowercase();
-        if lower_arg.contains("ansible")
+        if osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_arg)
+            || lower_arg.contains("ansible")
             || lower_arg.contains("sshd:")
             || lower_arg.contains("pts/")
+            || lower_arg.contains("\\google\\chrome\\")
         {
             return true;
         }

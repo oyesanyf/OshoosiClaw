@@ -11,6 +11,8 @@ osoosi-types = { path = "../osoosi-types" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-dp = { path = "../osoosi-dp" }
 compression-prompt = { path = "../compression-prompt" }
+edr-phaselock = { workspace = true }
+zero-algebraic-kernel = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

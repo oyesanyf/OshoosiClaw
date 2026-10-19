@@ -19,6 +19,8 @@
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
+  <a href="#-twelve-part-architecture-of-zero--7-crate-physics-defense-engine">⚛️ Physics of Zero (7 Crates)</a> •
+  <a href="#-autonomous-rea-reverse-engineer-anything-forensic-engine">🔬 Autonomous REA</a> •
   <a href="#-emergency-kill-chain--reversible-host-containment-engine">🚨 Kill Chain & Host Isolation</a> •
   <a href="#-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture">🔒 4-Pillar FHE & Merkle</a> •
   <a href="#-http-framing-defense--request-queue-poisoning-cl0-remediation">🛡️ HTTP Framing Defense (CL.0)</a> •
@@ -54,6 +56,72 @@
 > This is the spirit of this project: an autonomous security agent that **hunts threats with unerring accuracy**, **tracks adversaries across the mesh**, and **delivers swift, proportionate justice** through quarantine, isolation, and deception. Like Ọ̀ṣọ́ọ̀sì, it is both patient *(observing context, reasoning before action)* and decisive *(acting with confidence when the target is clear)*.
 
 ---
+
+<a id="-twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
+<a id="twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
+## ⚛️ Twelve-Part Architecture of Zero & 7-Crate Physics Defense Engine (Cross-Platform Linux & Windows)
+
+Rather than treating runtime security solely as a heuristic search for static strings, **OpenỌ̀ṣọ́ọ̀sì** embeds a **7-crate mathematical and physical defense workspace** that operationalizes nonlinear dynamics, statistical mechanics, constant-time solid-state cryptography, and the **Twelve-Part Architecture of Zero** across both **Linux** (`/proc` kernel socket/memory introspection, eBPF ring buffers) and **Windows** (ETW, Win32 process/conduit telemetry, WDAC):
+
+```mermaid
+flowchart TD
+    subgraph Telemetry["Cross-Platform Kernel & Agent Telemetry (Linux & Windows)"]
+        L["Linux: /proc/net/tcp, /proc/net/unix, eBPF Ring Buffer"]
+        W["Windows: ETW, Sysmon, Win32 Process & Socket Deltas"]
+        A["Autonomous AI Agent Tool & Syscall Streams"]
+    end
+
+    subgraph ZeroCrates["Twelve-Part Architecture of Zero (4 Crates)"]
+        Z1["zero-genesis-capacity\n• Pre-Exec Wavefunction ⟨ψ|Ĥ|ψ⟩ = 0\n• Euler-Lagrange Void Ω(t) = C_max - ∫r(τ)dτ\n• Radix Mahalanobis D_0(x)\n• Forbidden Adjacency ‖T ∘ Ā‖_F = 0"]
+        Z2["zero-algebraic-kernel\n• Poisson Silence Surprise I(Δt) = λΔt/ln2\n• Helmholtz IPC Lumen Harmonics R_lumen\n• Dynamic Givens Rotation R(θ) on ker(M)\n• Z_N Capability Zero Divisors (a·b) mod N = 0"]
+        Z3["zero-vacuum-lensing\n• Zero-Point Energy E_ZPE = ½ℏΣω_k\n• Casimir Confinement Pressure P(a) = -π²ℏc/(240a⁴)\n• Gravitational Lensing Dark-Mass Triangulation M_dark"]
+        Z4["zero-divine-equilibrium\n• Ornstein-Uhlenbeck Reflex J = -γx(t)\n• Latent Refusal Subspace ⟨h_t, u_refusal⟩ → 0\n• Quadratic Lyapunov Energy V(z) → 0\n• Noether Mesh Flux ∮ J_mesh · dS = 0"]
+    end
+
+    subgraph PhysicsCrates["Nonlinear Dynamics, Statistical Mechanics & Silicon Shield (3 Crates)"]
+        P1["edr-phaselock\n• Takens Delay Embedding X(t)\n• Rosenstein Maximal Lyapunov Exponent λ_max"]
+        P2["agent-thermostat\n• Hamiltonian E_i & Ising Spin Lattice J_ij\n• Helmholtz Free Energy F = U - T·S\n• Langevin Damping γ & Phase Transition"]
+        P3["silicon-shield\n• SeqCst Hardware Memory Fences\n• Constant-Time BLAKE3 Text & Token Verification\n• Volatile Memory Scrubbing (write_volatile)"]
+    end
+
+    subgraph CoreEDR["OpenỌ̀ṣọ́ọ̀sì Core Orchestration & Enforcement"]
+        V["PhaseLockAttractorVoter\n(crates/osoosi-policy)"]
+        E["Cross-Platform EbpfMonitor\n(crates/osoosi-behavioral)"]
+        B["BreakoutDefenseCoordinator & AgentContainmentRing\n(crates/osoosi-agent-anomaly)"]
+        S["Supervisor Sensor 10: Zero-Physics & Divine Order\n(crates/osoosi-core/src/supervisor.rs)"]
+        M["NSRL/ASLR Merkle Audit Verification\n(crates/osoosi-audit)"]
+    end
+
+    L & W --> Z1 & Z2 & Z3 & P1
+    A --> Z1 & Z2 & Z4 & P2 & P3
+    Z1 & Z2 & P1 --> V
+    Z2 & P1 --> E
+    Z1 & Z2 & Z4 & P2 & P3 --> B
+    Z3 & Z4 --> S
+    P3 --> M
+```
+
+| Crate | Mathematical & Physical Laws | EDR & Containment Integration (Linux & Windows) |
+| :--- | :--- | :--- |
+| **`crates/zero-genesis-capacity`** | Pre-Execution Wavefunction $\langle \psi_{\text{embryo}} \mid \hat{H}_{\text{threat}} \mid \psi_{\text{embryo}} \rangle = 0$, Euler-Lagrange Void Capacity $\Omega(t) = C_{\max} - \int_0^t r(\tau)\,d\tau$, Radix-Weighted Mahalanobis Displacement $D_0(\mathbf{x})$, Forbidden Adjacency $\Vert T \circ \bar{A} \Vert_F = 0$ | Wired into [`PhaseLockAttractorVoter`](crates/osoosi-policy/src/voters.rs) and [`BreakoutDefenseCoordinator`](crates/osoosi-agent-anomaly/src/breakout_defense.rs) to block nascent process/agent breakouts before execution materializes. |
+| **`crates/zero-algebraic-kernel`** | Poisson Silence Surprise $I_{\text{absence}}(\Delta t) = \frac{\lambda \Delta t}{\ln 2}$, Helmholtz IPC Lumen Harmonics $\mathcal{R}_{\text{lumen}}$, Dynamic Givens Rotation $R(\theta)$ against $\ker(M)$ nullspace evasion, Fractional Zero Crossing $\alpha$, $\mathbb{Z}_N$ Zero Divisors $(a \cdot b) \bmod N = 0$ | Wired into [`EbpfMonitor`](crates/osoosi-behavioral/src/ebpf_monitor.rs) (Linux `/proc/net` + Windows `sysinfo` conduit deltas), [`PhaseLockAttractorVoter`](crates/osoosi-policy/src/voters.rs), and [`BreakoutDefenseCoordinator`](crates/osoosi-agent-anomaly/src/breakout_defense.rs). |
+| **`crates/zero-vacuum-lensing`** | Zero-Point Energy $E_{\text{ZPE}} = \frac{1}{2}\hbar \sum \omega_k$ (anti-cryogenic freeze), Casimir Pressure $P_{\text{Casimir}}(a) = -\frac{\pi^2 \hbar c}{240 a^4}$, Gravitational Lensing Dark-Mass Triangulation $M_{\text{dark}} = \frac{c^2 b \hat{\alpha}}{4G}$ | Wired into **Sensor 10 (`zero_physics_equilibrium`)** in [`MultiSensorFusionEngine`](crates/osoosi-core/src/supervisor.rs) to detect hypervisor time-stop attacks and hidden rootkits via scheduler/IPC deflection. |
+| **`crates/zero-divine-equilibrium`** | Ornstein-Uhlenbeck Reflex $J_{\text{reflex}}(t) = -\gamma x(t)$, Latent Refusal Subspace $\langle \mathbf{h}_t, \mathbf{u}_{\text{refusal}} \rangle \to 0$ & $\ell_0$ Sparsity, Quadratic Lyapunov Energy $V(\mathbf{z}) = \mathbf{z}^T P \mathbf{z} \to 0$, Noether Mesh Flux $\oint_{\partial \Omega} \mathbf{J}_{\text{mesh}} \cdot d\mathbf{S} = 0$ | Wired into [`AgentContainmentRing`](crates/osoosi-agent-anomaly/src/containment_ring.rs) and [`MultiSensorFusionEngine`](crates/osoosi-core/src/supervisor.rs) for pre-cognitive drift neutralization and distributed mesh conservation. |
+| **`crates/edr-phaselock`** | Takens' Delay Embedding $\mathbf{X}(t) = [\tau_t, \tau_{t-d}, \dots]$ & Rosenstein's Maximal Lyapunov Exponent $\lambda_{\max}$ | Detects exponential phase-space trajectory divergence ($\lambda_{\max} > 0$) across spaced-out LOLBin and syscall streams on both Linux and Windows. |
+| **`crates/agent-thermostat`** | Hamiltonian $E_i$, Ising Spin Lattice Coupling $J_{ij}$, Helmholtz Free Energy $F = U - T S$, Langevin Damping $\gamma$, Critical Phase Transition | Governs multi-agent capability invocation temperature and enforces `Throttle(γ)` or `FreezePhaseTransition` before cascading agent contagion occurs. |
+| **`crates/silicon-shield`** | `Ordering::SeqCst` hardware memory fences, `subtle::ConstantTimeEq` BLAKE3 code/token verification, `std::ptr::write_volatile` scrubbing | Enforces timing-attack-immune attestation in [`verify_merkle_audit_path`](crates/osoosi-audit/src/nsrl_aslr_merkle.rs) and volatile key scrubbing on agent quarantine. |
+
+---
+
+<a id="-autonomous-rea-reverse-engineer-anything-forensic-engine"></a>
+<a id="autonomous-rea-reverse-engineer-anything-forensic-engine"></a>
+## 🔬 Autonomous REA (`Reverse Engineer Anything`) Forensic Engine
+
+OpenỌ̀ṣọ́ọ̀sì includes a built-in **Autonomous Reverse Engineer Anything (`REA`)** subsystem ([`crates/osoosi-core/src/rea.rs`](crates/osoosi-core/src/rea.rs)) inspired by [`morluto/rea`](https://github.com/morluto/rea):
+
+- **13+ Binary & Artifact Formats**: Native PE32/PE64 (`.exe`, `.dll`, `.sys`), ELF64, Mach-O, Rust `cargo-auditable` dependency graphs, Go `BuildInfo`, WebAssembly (`.wasm`), EVM bytecode, `.NET` CIL assemblies, JavaScript/Electron/ASAR bundles, SQLite databases, HAR/PCAP network captures, and Android/Flutter APKs.
+- **Zero-Touch Autonomous Daemon & Telemetry Watchdog**: Automatically triggers background static/structural reverse engineering whenever high-confidence threats are intercepted (`spawn_autonomous_rea_for_threat`) or when new artifacts arrive in watched directories (`spawn_autonomous_rea_daemon`), persisting findings, reconstructed pseudo-code, and auto-synthesized YARA rules directly into SQLite (`rea_analyses`).
+- **CLI & WebUI Integration**: Run `osoosi rea <target> --format markdown --emit-yara` from the terminal or inspect artifacts interactively in the WebUI (`#rea`).
 
 ---
 
@@ -422,54 +490,59 @@ OpenỌ̀ṣọ́ọ̀sì exposes a dedicated `osoosi driver` subcommand suite f
 
 <a id="-native-windows-service-lifecycle-osoosiedr"></a>
 <a id="native-windows-service-lifecycle-osoosiedr"></a>
-## ⚙️ Native Windows Service Lifecycle (OsoosiEDR)
+## ⚙️ Native Cross-Platform Service Lifecycle (`OsoosiEDR`) & Host OS Desktop/Search Immunity
 
-OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background execution via native **Win32 Service Control Manager (SCM)** integration implemented in `crates/osoosi-cli/src/service.rs`. Unlike legacy agents that rely on third-party service wrappers (e.g., NSSM, WinSW), OpenỌ̀ṣọ́ọ̀sì communicates directly with the Windows kernel and SCM via the official Windows API (`StartServiceCtrlDispatcherW`, `RegisterServiceCtrlHandlerExW`, `SetServiceStatus`).
+OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background service execution via native **Win32 Service Control Manager (SCM)** integration (`crates/osoosi-cli/src/service.rs`) and **Linux `systemd`** (`osoosi-edr.service`), paired with a **5-Layer Cross-Platform Host OS Desktop, Search & System Tray Immunity Gate** across **Windows, Linux, and macOS**.
 
-```
-                    WINDOWS SERVICE CONTROL MANAGER (SCM)
-                                      │
-                   ┌──────────────────┴──────────────────┐
-                   ▼                                     ▼
-      sc.exe / Start-Service              osoosi.exe service <action>
-                   │                                     │
-                   └──────────────────┬──────────────────┘
-                                      ▼
-                        OpenỌ̀ṣọ́ọ̀sì SCM Dispatcher
-                     (StartServiceCtrlDispatcherW)
-                                      │
-                   ┌──────────────────┼──────────────────┐
-                   ▼                  ▼                  ▼
-          SERVICE_START_PENDING  SERVICE_RUNNING    SERVICE_STOP_PENDING
-          • Auto CWD Resolution  • EDR Orchestrator • 15s Graceful Drain
-          • Working-Dir Align    • Ring-0 / ETW / RL• DB WAL Flush
-          • --no-browser Flag    • WebUI Port 3030  • notify_service_stop()
+```mermaid
+flowchart TD
+    subgraph STOP["Sub-2-Second Deterministic Service Stop (Windows SCM & Linux systemd)"]
+        S1["osoosi service stop / sc stop OsoosiEDR / systemctl stop osoosi-edr"] --> S2["Clear SCM Failure Auto-Respawn\n(sc failure OsoosiEDR reset= 0 actions= \"\")"]
+        S2 --> S3["SERVICE_STOP_PENDING (dwWaitHint: 2000ms)\n+ 1.5s Dedicated Shutdown Watchdog Thread"]
+        S3 --> S4["Fast In-Memory Tarpit Release & Native winreg IFEO Purge (< 5ms)\n(Skip 36x netsh spawns unless host was actively isolated)"]
+        S4 --> S5["SERVICE_STOPPED (PID : 0 in < 1.5s, Zero Auto-Respawn)"]
+    end
+
+    subgraph IMMUNITY["5-Layer Cross-Platform Host OS Shell, Search & System Tray Immunity"]
+        P0["normalize_nt_device_path() + is_protected_os_shell_or_desktop_binary()"]
+        P1["Windows 10/11: sishost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,\nShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,\nSecurityHealthSystray.exe, ctfmon.exe, dwm.exe, lsass.exe, services.exe"]
+        P2["Linux: systemd*, dbus-daemon, gnome-shell, plasmashell, kwin_*, Xorg, Xwayland,\nsway, Hyprland, pipewire, wireplumber, tracker-miner-fs*, localsearch*, baloo_file*,\nxdg-desktop-portal*, NetworkManager, sshd"]
+        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,\nNotificationCenter, Spotlight, mds, mdworker*, coreservicesd, loginwindow"]
+        L1["Layer 1: is_system_critical() & Monitor-Mode Hard Gate"]
+        L2["Layer 2: ActiveProcessTarpit & Child-PID Immunity"]
+        L3["Layer 3: BlockingManager & Native winreg IFEO Sanitizer"]
+        L4["Layer 4: Firewall Autoblock & QoS Tarpit Guard (Win32 & Linux UID)"]
+        L5["Layer 5: RemediationController Process-Tree Shield"]
+
+        P1 & P2 & P3 --> P0
+        P0 --> L1 & L2 & L3 & L4 & L5
+    end
 ```
 
 ### Core Architecture & Operating Invariants
 
-1. **Direct Win32 SCM Dispatcher Loop**:
-   - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW`.
-   - The SCM control handler (`RegisterServiceCtrlHandlerExW`) intercepts `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
-   - On shutdown, `SetServiceStatus` reports `SERVICE_STOP_PENDING` with a 15-second grace period (`dwWaitHint: 15000`), cleanly flushing SQLite WAL caches, notifying P2P peers, and unwinding active tarpits.
-2. **Clone-Path-Agnostic Working-Directory Resolution**:
+1. **Sub-2-Second Deterministic Service Shutdown & Zero Auto-Respawn**:
+   - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW` and registers `RegisterServiceCtrlHandlerExW` for `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
+   - On `stop`, `service_control_handler` immediately reports `SERVICE_STOP_PENDING` (`dwWaitHint: 2000`) and spawns a **1.5-second hardware/OS watchdog thread** (`crates/osoosi-cli/src/service.rs` and `crates/osoosi-cli/src/main.rs`) that guarantees the daemon releases in-memory tarpits, reports `SERVICE_STOPPED`, and exits cleanly within 1.5 seconds even if external firewall utilities stall.
+   - `execute_host_disarm_unauthenticated()` only spawns `netsh.exe` quarantine-rule cleanup commands if the host was actually placed into `HOST_ISOLATED_STATE`, and `remove_windows_autoblock_rules()` is bounded to an 800ms budget.
+   - Service installation and startup explicitly clear SCM forced failure auto-restart actions (`sc.exe failure OsoosiEDR reset= 0 actions= ""`), and Linux `osoosi-edr.service` enforces `Restart=on-failure` with `TimeoutStopSec=5s`, ensuring an operator-requested stop never auto-respawns the daemon.
+2. **Cross-Platform Host OS Shell, Search, System Tray & Init Immunity (`Windows`, `Linux`, `macOS`)**:
+   - Kernel ETW device paths (`\Device\HarddiskVolume<N>\...`, `\\?\`, `\??\`) are normalized via `osoosi_types::normalize_nt_device_path` before WinVerifyTrust, Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`), or path policy evaluation so catalog-signed `SystemApps` binaries (such as `SearchHost.exe`) are never misclassified as unsigned.
+   - `osoosi_types::is_protected_os_shell_or_desktop_binary` enforces an immutable cross-platform protection list across **Windows** (`sihost.exe`, `explorer.exe`, `SearchHost.exe`, `SearchFilterHost.exe`, `SearchProtocolHost.exe`, `ShellHost.exe`, `ShellExperienceHost.exe`, `StartMenuExperienceHost.exe`, `SecurityHealthSystray.exe`, `ctfmon.exe`), **Linux** (`systemd*`, `dbus-daemon`, `gnome-shell`, `plasmashell`, `kwin_*`, `Xorg`, `Xwayland`, `sway`, `Hyprland`, `pipewire`, `tracker-miner-fs*`, `localsearch*`, `baloo_file*`, `xdg-desktop-portal*`), and **macOS** (`launchd`, `WindowServer`, `Finder`, `Dock`, `SystemUIServer`, `ControlCenter`, `NotificationCenter`, `Spotlight`, `mds`, `mdworker*`)—while explicitly excluding script interpreters and LOLBins (`powershell.exe`, `cmd.exe`, `bash`, `python`, `nc`, `curl`).
+   - Startup automatically purges any legacy `HKLM\...\Image File Execution Options\<exe>\Debugger = systray.exe` hijacks in `< 5ms` via native `winreg` (`purge_ifeo_systray_debugger_hooks_native`) and sanitizes `config/firewall_rules.json` and `blocking_rules.json`.
+3. **Clone-Path-Agnostic Working-Directory Resolution**:
    - The Windows SCM always executes background services with the working directory set to `C:\Windows\System32`.
-   - `osoosi` inspects `std::env::current_exe()` at startup and walks up up to 5 parent directories (`find_project_root_from(&exe)`) to locate `osoosi.toml`, `models/`, `rules/`, and `dashboard/dist/`, ensuring `database/osoosi.db`, `models/`, `rules/sigma/`, and WebUI assets resolve with 100% path accuracy regardless of where the repository was cloned or installed.
-3. **Automatic UAC Elevation & WMI Detached Daemon Fallback**:
-   - Invoking `osoosi service install|start|stop|restart|delete` from an unprivileged shell automatically triggers a Windows UAC elevation prompt (`Start-Process -Verb RunAs`), or seamlessly falls back to spawning a WMI-detached background daemon (`Win32_Process.Create`) outside the parent terminal's Job Object when UAC is unavailable.
+   - `osoosi` inspects `std::env::current_exe()` at startup and walks up to 5 parent directories (`find_project_root_from(&exe)`) to locate `osoosi.toml`, `models/`, `rules/`, and `dashboard/dist/`.
 4. **Dedicated WebUI Tokio Runtime & Auto-Launch (`http://127.0.0.1:3030/`)**:
-   - Starting the service (`osoosi service install` or `osoosi service start`) automatically binds the WebUI on a dedicated 4-worker multi-thread Tokio runtime (`osoosi-dashboard-rt`) at `http://127.0.0.1:3030/`—isolated from file-scanner and baseline-hashing workloads—and opens the user's default browser from their interactive session while the service runs in Session 0.
-5. **Dual-Channel Shutdown Multiplexing & Auto-Recovery Policy**:
-   - The runtime multiplexes interactive console interrupts (`tokio::signal::ctrl_c()`) with Windows SCM stop notifications (`notify_service_stop()`) via `tokio::select!`.
-   - Registration configures native SCM crash recovery (`reset= 86400`, `actions= restart/5000/restart/5000/restart/5000`): in the event of an unhandled host fault, Windows automatically restarts the EDR daemon after 5 seconds.
+   - Starting the service (`osoosi service install` or `osoosi service start`) binds the WebUI on a dedicated 4-worker multi-thread Tokio runtime (`osoosi-dashboard-rt`) at `http://127.0.0.1:3030/`—isolated from file-scanner and baseline-hashing workloads.
 
 ### Windows & Linux Service Management Commands (`OsoosiEDR` / `osoosi-edr.service`)
 
 | Management Action | OpenỌ̀ṣọ́ọ̀sì CLI (Windows & Linux) | Windows PowerShell / `sc.exe` | Linux `systemd` (`systemctl`) | Description |
 |:---|:---|:---|:---|:---|
-| **Install Service** | `osoosi service install` | `sc.exe create OsoosiEDR ...` | Installs `/usr/lib/systemd/system/osoosi-edr.service` + `systemctl enable --now osoosi-edr` | Registers automatic startup and crash recovery on both Windows SCM and Linux `systemd`. |
+| **Install Service** | `osoosi service install` | `sc.exe create OsoosiEDR ...` | Installs `/usr/lib/systemd/system/osoosi-edr.service` + `systemctl enable --now osoosi-edr` | Registers automatic startup on both Windows SCM and Linux `systemd`. |
 | **Start Service** | `osoosi service start` | `Start-Service OsoosiEDR` | `systemctl start osoosi-edr.service` | Transitions service to `RUNNING` / `active (running)` (or detaches via `setsid()` when `systemd` is absent). |
-| **Stop Service** | `osoosi service stop` | `Stop-Service OsoosiEDR` | `systemctl stop osoosi-edr.service` | Dispatches graceful stop signal and flushes SQLite WAL. |
+| **Stop Service** | `osoosi service stop` | `Stop-Service OsoosiEDR` | `systemctl stop osoosi-edr.service` | Dispatches deterministic `< 1.5s` stop signal, releases tarpits, and flushes SQLite WAL. |
 | **Restart Service** | `osoosi service restart` | `Restart-Service OsoosiEDR` | `systemctl restart osoosi-edr.service` | Safely cycles the daemon, reloading rules, configs, and models. |
 | **Query Status** | `osoosi service status` | `Get-Service OsoosiEDR` | `systemctl status osoosi-edr.service` | Displays PID, current state, and memory usage. |
 | **Delete / Remove** | `osoosi service delete` | `sc.exe delete OsoosiEDR` | `systemctl disable --now osoosi-edr && rm /etc/systemd/system/osoosi-edr.service` | Stops the daemon and unregisters the service definition. |
@@ -485,6 +558,9 @@ osoosi service start
 
 # 3. Verify operational status and running PID
 osoosi service status
+
+# 4. Stop the service cleanly in < 1.5 seconds
+osoosi service stop
 ```
 
 ---
@@ -2368,8 +2444,10 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 ## 🏗️ Production Stability & Hardening (v1.2.0)
 
-Recent hardening efforts have focused on hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
+Recent hardening efforts have focused on the 7-crate Physics of Zero multi-OS architecture, autonomous reverse engineering (REA), hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
 
+- **7-Crate Physics & Twelve-Part Architecture of Zero (`crates/zero-genesis-capacity`, `crates/zero-algebraic-kernel`, `crates/zero-vacuum-lensing`, `crates/zero-divine-equilibrium`, `crates/edr-phaselock`, `crates/agent-thermostat`, `crates/silicon-shield`)**: Full cross-platform (Linux & Windows) mathematical and physical security enforcement uniting Pre-Execution Wavefunction $\langle \psi_{\text{embryo}} \mid \hat{H}_{\text{threat}} \mid \psi_{\text{embryo}} \rangle = 0$, Euler-Lagrange Void Capacity $\Omega(t)$, Radix-Weighted Mahalanobis Displacement $D_0(\mathbf{x})$, Forbidden Adjacency $\Vert T \circ \bar{A} \Vert_F = 0$, Poisson Silence Surprise $I_{\text{absence}}(\Delta t)$, Helmholtz IPC Lumen Harmonics $\mathcal{R}_{\text{lumen}}$, Dynamic Givens Rotation $R(\theta)$ on $\ker(M)$, $\mathbb{Z}_N$ Zero Divisors, Zero-Point Energy $E_{\text{ZPE}}$, Casimir Confinement Pressure $P_{\text{Casimir}}(a)$, Gravitational Lensing Dark-Mass Triangulation $M_{\text{dark}}$, Ornstein-Uhlenbeck Reflex $J_{\text{reflex}}$, Latent Refusal Subspace $\langle \mathbf{h}_t, \mathbf{u}_{\text{refusal}} \rangle \to 0$, Quadratic Lyapunov Energy $V(\mathbf{z}) \to 0$, Noether Mesh Flux $\oint_{\partial \Omega} \mathbf{J}_{\text{mesh}} \cdot d\mathbf{S} = 0$, Takens' Delay Embedding & Rosenstein's $\lambda_{\max}$, Statistical Mechanics `ThermodynamicGovernor`, and `SiliconIntegrityGuard` (`Ordering::SeqCst` + constant-time BLAKE3 verification + volatile memory scrubbing). Wired across `PhaseLockAttractorVoter`, `EbpfMonitor`, `BreakoutDefenseCoordinator`, `AgentContainmentRing`, `verify_merkle_audit_path`, and **Sensor 10 (`zero_physics_equilibrium`: "Zero-Physics & Divine Order Sensor")** in `MultiSensorFusionEngine`.
+- **Autonomous REA (`Reverse Engineer Anything`) Forensic Subsystem (`crates/osoosi-core/src/rea.rs`, `/api/rea/*`, `osoosi rea`, & WebUI `#rea`)**: Native static and structural reverse engineering across 13+ binary and artifact formats (PE32/PE64, ELF64, Mach-O, Rust `cargo-auditable`, Go `BuildInfo`, WASM, EVM bytecode, `.NET` CIL, JavaScript/Electron/ASAR, SQLite, HAR/PCAP, Android/Flutter APKs) with zero-touch background daemon watching (`spawn_autonomous_rea_daemon`), automatic threat triage (`spawn_autonomous_rea_for_threat`), pseudo-code reconstruction, and auto-synthesized YARA signatures.
 - **Emergency Defend-in-Place Kill Chain & Anti-Hijacking EDR Self-Preservation (`crates/osoosi-core/src/killchain.rs`)**: Hardware-level, reversible host containment ("Defend-in-Place") via WebUI (`🚨 Kill Chain / Isolation`) and CLI (`osoosi killchain`). Integrates hermetic network isolation (preserving `127.0.0.1`, `::1`, and dashboard port `3030`), non-destructive process suspension (`NtSuspendProcess` / `SIGSTOP`), ring-0 driver lockdown, Option 3 hybrid OS (`LogonUserW`) / Master Token authentication with 3-strike exponential lockout rate-limiting, and 5 structural anti-hijacking invariants (caller validation, process lineage immunity up to 5 parent levels, anti-reentrancy, and an autonomous 30-minute dead-man failsafe watchdog).
 - **4-Pillar Fully Homomorphic Encryption (`tfhe`) & Tamper-Evident Binary BLAKE3 Merkle Tree (`crates/osoosi-core/src/fhe_coordinator.rs`)**: Privacy-preserving federated defense uniting P2P zero-knowledge IOC matching, blind remote neural threat scoring (`FheUint32`), Laplace differential privacy ($\epsilon=0.5, \Delta s=1.0$), and kernel latency assertions (<500 µs invariant, observed: 32 µs). Every privacy-preserving event is anchored into a sequential binary BLAKE3 Merkle tree with logarithmic inclusion proofs (`osoosi fhe verify-merkle --seq <N>`).
 - **Strict RFC 9110 / RFC 9112 HTTP Framing Defense & CL.0 Request Queue Poisoning Remediation (`crates/osoosi-dashboard/src/lib.rs`)**: Complete remediation of RAPTOR penetration test finding `VULN-REPRO-1792312936428`. Deploys `http_framing_defense_middleware` immediately terminating malformed `HEAD` or `GET` requests bearing `Content-Length > 0` or `Transfer-Encoding` with `400 Bad Request` + `Connection: close`, stripping `Range` headers on `HEAD` requests to eliminate 3.51s static file parsing stalls, and preventing reverse-proxy request queue desynchronization.
@@ -2397,7 +2475,37 @@ Recent hardening efforts have focused on hierarchical Merkle integrity, demand-p
 - **Authoritative MITRE ATT&CK + ATLAS STIX 2.1 Integration**: Complete 26,381-object STIX bundle uniting Enterprise ATT&CK (v19.2) and MITRE ATLAS (v2026.09) with 854 unified techniques and 4,334 correlated Sigma rules.
 - **P2P Wire Mesh STIX Synchronization (`osoosi-wire`)**: Distributed GossipSub topic `osoosi-stix-sync-v1` with Blake3 hash validation and zero-downtime hot-reloading.
 - **AI Threat Detectors & Autonomous Consensus Defenses**: Multi-voter consensus integration for `AiSecurityAuditVoter` and `AgenticVoter` detecting tool injection, runtime memory tampering, jailbreaks, and prompt exfiltration.
+- **SkyRL Self-Improvement & Policy Control Panel (`#skyrl`)**: Interactive multi-turn `OshoosiSecurityGym` episode stepping (`QueryProcessTree` -> `QueryNetworkConnections` -> `QueryMemorySignatures` -> `Terminate`/`Allow`), live LoRA adapter hot-swapping (`edr-reasoning-lora-v1`, `tinker-investigator-v2`, `base-policy`), Bellman TD batch backpropagation, and `SafetyGuardrail` kernel invariance verification (`Run Guarded Inference`).
+- **Remote MSI Installation & `OsoosiEDR` Service Resilience**: Asynchronous non-blocking startup firewall rule cleanup, native Windows Security Catalog signature verification (`CryptCATAdminEnumCatalogFromHash`), browser/Chrome process immunity across all enforcement engines, and WiX v5 `ServiceControl` + custom action lifecycle orchestration.
+- **RAPTOR Security Audit & Hardening**: Strict HTTPS host/scheme validation across release and PR automation scripts, `HttpOnly; SameSite=Strict` dashboard session cookie initialization on `/api/status` and `/api/skyrl/v1/status`, and input validation on LoRA adapter endpoints.
 - **Deduplication Cache Hardening**: Expanded consensus cache keys to include command line and target filename, preventing cross-command verdict collisions.
+
+```mermaid
+flowchart TD
+    subgraph UI["SkyRL Policy Control Panel (http://127.0.0.1:3030/#skyrl)"]
+        LORA["LoRA Adapter Selector<br/>(edr-reasoning-lora-v1 / tinker-investigator-v2 / base-policy)"]
+        STEP["Simulate Gym Step<br/>(Multi-Turn OshoosiSecurityGym)"]
+        GEN["Run Inference<br/>(Live Telemetry Policy Evaluation)"]
+        GUARD["Run Guarded Inference<br/>(Kernel & Critical Process Invariance)"]
+        TRAIN["Run Training Batch<br/>(Bellman TD Backpropagation)"]
+    end
+
+    subgraph Engine["SkyRL DeepQ & Safety Supervisor (osoosi-rl / osoosi-dashboard)"]
+        ADAPT["POST /api/skyrl/v1/adapter<br/>Validated LoRA Hot-Swap"]
+        GYM["POST /api/skyrl/v1/step<br/>Turn 1: QueryProcessTree<br/>Turn 2: QueryNetworkConnections<br/>Turn 3: QueryMemorySignatures<br/>Turn 4: Terminate / Allow"]
+        INF["POST /api/skyrl/v1/generate<br/>16-Dim Observation + SafetyGuardrail Mask"]
+        DQN["POST /api/skyrl/v1/train<br/>Prioritized Replay Buffer + TD Loss Update"]
+    end
+
+    LORA --> ADAPT
+    STEP --> GYM
+    GEN --> INF
+    GUARD --> INF
+    TRAIN --> DQN
+    GYM -->|"Transition Recorded"| DQN
+    INF -->|"Thought-Trace & Action Badge"| UI
+```
+
 - **High-Performance STIX Streaming & Zero-Allocation Parsing**: `StixBundleFastCounter` and sub-millisecond mtime caching in `osoosi-dashboard`.
 - **Expanded WiX v5 Packaging**: `OshoosiClaw.msi` installer (32.88 MB) bundled with release binary, signed configs, ONNX runtime, and full STIX 2.1 payload.
 - **P2P Gossip Deduplication & Noise Suppression**: Dynamic Merkle root caching with `InsufficientPeers` recovery and subscriber-level `libp2p_gossipsub=error` log filtering.

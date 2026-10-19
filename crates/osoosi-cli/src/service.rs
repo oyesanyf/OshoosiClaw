@@ -68,6 +68,47 @@ fn run_sc_cmd(args: &[&str]) -> anyhow::Result<std::process::Output> {
     Ok(output)
 }
 
+#[cfg(windows)]
+pub fn force_terminate_service_pid() -> anyhow::Result<()> {
+    if let Ok(output) = run_sc_cmd(&["queryex", SERVICE_NAME]) {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            if let Some(rest) = line.trim().strip_prefix("PID") {
+                if let Some(pid_str) = rest.trim().strip_prefix(':') {
+                    if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                        if pid > 4 {
+                            info!("Force terminating stuck service PID {}", pid);
+                            let _ = Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
+                                .args(["/F", "/T", "/PID", &pid.to_string()])
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .status();
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+pub fn force_terminate_service_pid() -> anyhow::Result<()> {
+    Ok(())
+}
+
+pub fn is_running_under_service_control() -> bool {
+    #[cfg(windows)]
+    {
+        win_scm::is_service_dispatcher_active()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// Resolve the application root directory from the current executable path.
 /// Walks up to 5 levels looking for workspace/installation indicators (`osoosi.toml`, `config/`, `yara/`, `Cargo.toml`).
 pub fn resolve_app_root_from_exe(exe: &std::path::Path) -> std::path::PathBuf {
@@ -194,12 +235,29 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
 }
 
 pub fn is_dashboard_port_listening(port: u16) -> bool {
+    use std::io::{Read, Write};
     use std::net::{SocketAddr, TcpStream};
-    TcpStream::connect_timeout(
-        &SocketAddr::from(([127, 0, 0, 1], port)),
-        Duration::from_millis(300),
-    )
-    .is_ok()
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let mut stream = match TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(400)));
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+    if stream
+        .write_all(b"GET /health HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut buf = [0u8; 64];
+    match stream.read(&mut buf) {
+        Ok(n) if n > 0 => {
+            let resp = String::from_utf8_lossy(&buf[..n]);
+            resp.starts_with("HTTP/1.")
+        }
+        _ => false,
+    }
 }
 
 pub fn wait_for_dashboard_ready(port: u16, timeout_secs: u64) -> bool {
@@ -356,14 +414,14 @@ pub fn install_service() -> anyhow::Result<()> {
     // Set service description
     let _ = run_sc_cmd(&["description", SERVICE_NAME, SERVICE_DESCRIPTION]);
 
-    // Set recovery failure actions (restart after 5s on failure, reset failure counter after 1 day)
+    // Clear forced failure auto-restart actions so stopping or terminating the service never auto-respawns it
     let _ = run_sc_cmd(&[
         "failure",
         SERVICE_NAME,
         "reset=",
-        "86400",
+        "0",
         "actions=",
-        "restart/5000/restart/5000/restart/5000",
+        "",
     ]);
 
     // Grant Interactive Users (IU) and Authenticated Users (AU) service restart privileges without UAC errors
@@ -403,29 +461,120 @@ pub fn start_service() -> anyhow::Result<()> {
             }
         }
     }
+    if let Ok(state) = query_service_state() {
+        if state.contains("STOP_PENDING") {
+            warn!("Service '{}' is stuck in STOP_PENDING. Clearing stale process...", SERVICE_NAME);
+            cleanup_stale_service_processes();
+            let _ = force_terminate_service_pid();
+            let wait_stop = std::time::Instant::now();
+            while wait_stop.elapsed() < Duration::from_secs(5) {
+                if let Ok(s) = query_service_state() {
+                    if s.contains("STOPPED") {
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(300));
+            }
+        }
+    }
     info!("Starting Windows Service '{}'...", SERVICE_NAME);
-    let output = run_sc_cmd(&["start", SERVICE_NAME])?;
+    let mut output = run_sc_cmd(&["start", SERVICE_NAME])?;
     if !output.status.success() {
-        let out = String::from_utf8_lossy(&output.stdout);
-        let err = String::from_utf8_lossy(&output.stderr);
-        if out.contains("already running") || out.contains("1056") {
-            println!("Service '{}' is already running.", SERVICE_NAME);
-        } else if out.contains("Access is denied")
-            || err.contains("Access is denied")
-            || out.contains("FAILED 5")
+        let out = String::from_utf8_lossy(&output.stdout).to_string();
+        let _err = String::from_utf8_lossy(&output.stderr).to_string();
+        if out.contains("1060")
+            || out.contains("does not exist")
+            || out.contains("FAILED 2")
+            || out.contains("FAILED 3")
+            || out.contains("1058")
+            || out.contains("cannot find the file")
         {
-            warn!("SCM start access denied. Falling back to detached background daemon...");
-            if !is_dashboard_port_listening(3030) {
-                let _ = spawn_detached_background_daemon()?;
+            info!(
+                "Service '{}' missing or misconfigured on host ({}). Auto-registering service...",
+                SERVICE_NAME,
+                out.trim()
+            );
+            if let Ok(exe) = std::env::current_exe() {
+                let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
+                let bin_path = format!("\"{}\" service run --no-browser", exe_str);
+                let _ = run_sc_cmd(&[
+                    "create",
+                    SERVICE_NAME,
+                    "binPath=",
+                    &bin_path,
+                    "start=",
+                    "auto",
+                    "DisplayName=",
+                    SERVICE_DISPLAY_NAME,
+                ]);
+                let _ = run_sc_cmd(&[
+                    "config",
+                    SERVICE_NAME,
+                    "binPath=",
+                    &bin_path,
+                    "start=",
+                    "auto",
+                    "DisplayName=",
+                    SERVICE_DISPLAY_NAME,
+                ]);
+                let _ = run_sc_cmd(&["description", SERVICE_NAME, SERVICE_DESCRIPTION]);
+                let _ = run_sc_cmd(&[
+                    "failure",
+                    SERVICE_NAME,
+                    "reset=",
+                    "0",
+                    "actions=",
+                    "",
+                ]);
+                let _ = run_sc_cmd(&[
+                    "sdset",
+                    SERVICE_NAME,
+                    "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+                ]);
+                output = run_sc_cmd(&["start", SERVICE_NAME])?;
             }
-            if wait_for_dashboard_ready(3030, 30) {
-                println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                return Ok(());
+        }
+
+        if !output.status.success() {
+            let out = String::from_utf8_lossy(&output.stdout);
+            let err = String::from_utf8_lossy(&output.stderr);
+            if out.contains("already running") || out.contains("1056") {
+                if let Ok(state) = query_service_state() {
+                    if state.contains("STOP_PENDING") {
+                        warn!(
+                            "Service '{}' is stuck in STOP_PENDING on error 1056. Forcing termination...",
+                            SERVICE_NAME
+                        );
+                        let _ = force_terminate_service_pid();
+                        std::thread::sleep(Duration::from_secs(1));
+                        output = run_sc_cmd(&["start", SERVICE_NAME])?;
+                    }
+                }
+                if output.status.success() {
+                    println!(
+                        "Service '{}' started successfully after clearing STOP_PENDING.",
+                        SERVICE_NAME
+                    );
+                } else {
+                    println!("Service '{}' is already running.", SERVICE_NAME);
+                }
+            } else if out.contains("Access is denied")
+                || err.contains("Access is denied")
+                || out.contains("FAILED 5")
+            {
+                warn!("SCM start access denied. Falling back to detached background daemon...");
+                if !is_dashboard_port_listening(3030) {
+                    let _ = spawn_detached_background_daemon()?;
+                }
+                if wait_for_dashboard_ready(3030, 30) {
+                    println!("[+] WebUI active at: http://127.0.0.1:3030/");
+                    return Ok(());
+                } else {
+                    anyhow::bail!("Detached daemon started but WebUI port 3030 failed to respond.");
+                }
             } else {
-                anyhow::bail!("Detached daemon started but WebUI port 3030 failed to respond.");
+                anyhow::bail!("Failed to start service: {} {}", out, err);
             }
-        } else {
-            anyhow::bail!("Failed to start service: {} {}", out, err);
         }
     }
 
@@ -467,40 +616,76 @@ pub fn start_service() -> anyhow::Result<()> {
 
 #[cfg(windows)]
 pub fn stop_service() -> anyhow::Result<()> {
-    if ensure_elevated_for_service_action("stop")? {
-        return Ok(());
-    }
     info!("Stopping Windows Service '{}'...", SERVICE_NAME);
-    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
-    let _ = osoosi_core::firewall::remove_all_autoblock_rules();
+
+    // Clear any SCM failure auto-restart actions so stopping or terminating never respawns the daemon
+    let _ = run_sc_cmd(&["failure", SERVICE_NAME, "reset=", "0", "actions=", ""]);
+
+    // Attempt direct stop first (Interactive Users have SERVICE_STOP permission via service DACL)
     let output = run_sc_cmd(&["stop", SERVICE_NAME])?;
     if !output.status.success() {
         let out = String::from_utf8_lossy(&output.stdout);
         let err = String::from_utf8_lossy(&output.stderr);
-        if out.contains("1062") || out.contains("not started") || out.contains("STOPPED") {
-            println!("Service '{}' is already stopped. Host network restored.", SERVICE_NAME);
+        if out.contains("1062")
+            || out.contains("not started")
+            || out.contains("STOPPED")
+            || out.contains("1060")
+            || out.contains("does not exist")
+        {
+            cleanup_stale_service_processes();
             let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
+            println!(
+                "Service '{}' is already stopped. Host network restored.",
+                SERVICE_NAME
+            );
             return Ok(());
         }
-        anyhow::bail!("Failed to stop service: {} {}", out, err);
+        if (out.contains("Access is denied")
+            || err.contains("Access is denied")
+            || out.contains("FAILED 5"))
+            && !osoosi_types::is_elevated()
+        {
+            if ensure_elevated_for_service_action("stop")? {
+                return Ok(());
+            }
+        }
     }
 
-    // Wait up to 8s for service to reach STOPPED state and PID : 0
+    // Wait up to 3s for service to reach STOPPED state and PID : 0
     let start_time = std::time::Instant::now();
-    while start_time.elapsed() < Duration::from_secs(8) {
+    while start_time.elapsed() < Duration::from_secs(3) {
         if let Ok(status) = query_service_state() {
             if status.contains("STOPPED")
                 && (status.contains("PID                : 0") || !status.contains("PID"))
             {
+                cleanup_stale_service_processes();
+                let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+                let _ = osoosi_core::firewall::remove_all_autoblock_rules();
                 println!("Service '{}' is now STOPPED.", SERVICE_NAME);
                 return Ok(());
             }
         }
-        std::thread::sleep(Duration::from_millis(300));
+        std::thread::sleep(Duration::from_millis(200));
     }
+
+    if let Ok(status) = query_service_state() {
+        if status.contains("STOP_PENDING") || status.contains("RUNNING") {
+            warn!(
+                "Service '{}' still active after 3s; force terminating PID...",
+                SERVICE_NAME
+            );
+            let _ = force_terminate_service_pid();
+            std::thread::sleep(Duration::from_millis(400));
+        }
+    }
+
+    cleanup_stale_service_processes();
+    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+    let _ = osoosi_core::firewall::remove_all_autoblock_rules();
     println!(
-        "Service stop signal sent. Current status:\n{}",
+        "Service '{}' is now STOPPED.\n{}",
+        SERVICE_NAME,
         query_service_state().unwrap_or_default()
     );
     Ok(())
@@ -627,8 +812,9 @@ After=network.target
 Type=simple
 ExecStart={} service run --no-browser
 WorkingDirectory={}
-Restart=always
+Restart=on-failure
 RestartSec=5s
+TimeoutStopSec=5s
 KillMode=process
 
 [Install]
@@ -702,7 +888,8 @@ pub fn stop_service() -> anyhow::Result<()> {
     let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
     let _ = osoosi_core::firewall::remove_all_autoblock_rules();
     let _ = run_systemctl(&["stop", "osoosi-edr.service"]);
-    println!("Service 'osoosi-edr' stop signal sent via systemctl. Host network restored.");
+    cleanup_stale_service_processes();
+    println!("Service 'osoosi-edr' stopped. Host network restored.");
     Ok(())
 }
 
@@ -824,10 +1011,29 @@ mod win_scm {
                     dwWin32ExitCode: NO_ERROR.0,
                     dwServiceSpecificExitCode: 0,
                     dwCheckPoint: 1,
-                    dwWaitHint: 15000,
+                    dwWaitHint: 2000,
                 };
                 let _ = SetServiceStatus(handle, &status);
                 notify_service_stop();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+                    let h_raw = GLOBAL_SERVICE_HANDLE_RAW.load(Ordering::SeqCst);
+                    if h_raw != 0 {
+                        let h = SERVICE_STATUS_HANDLE(h_raw as *mut std::ffi::c_void);
+                        let stopped = SERVICE_STATUS {
+                            dwServiceType: SERVICE_WIN32_OWN_PROCESS,
+                            dwCurrentState: SERVICE_STOPPED,
+                            dwControlsAccepted: 0,
+                            dwWin32ExitCode: NO_ERROR.0,
+                            dwServiceSpecificExitCode: 0,
+                            dwCheckPoint: 0,
+                            dwWaitHint: 0,
+                        };
+                        let _ = SetServiceStatus(h, &stopped);
+                    }
+                    std::process::exit(0);
+                });
                 NO_ERROR.0
             }
             SERVICE_CONTROL_INTERROGATE => {
@@ -850,6 +1056,10 @@ mod win_scm {
             }
             _ => NO_ERROR.0,
         }
+    }
+
+    pub fn is_service_dispatcher_active() -> bool {
+        GLOBAL_SERVICE_HANDLE_RAW.load(Ordering::SeqCst) != 0
     }
 
     unsafe extern "system" fn service_main(
@@ -892,7 +1102,10 @@ mod win_scm {
 
         info!("OsoosiEDR Windows Service is now running under SCM control.");
 
-        // Ensure Interactive Users (IU) and Authenticated Users (AU) can query and restart service
+        // Ensure Interactive Users (IU) and Authenticated Users (AU) can query/stop/start service and clear forced restart actions
+        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
+            .args(["failure", "OsoosiEDR", "reset=", "0", "actions=", ""])
+            .output();
         let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
             .args([
                 "sdset",
@@ -903,28 +1116,30 @@ mod win_scm {
 
         // Wait until service stop is triggered
         while !SERVICE_STOP_FLAG.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(100));
         }
 
         // 3. Report SERVICE_STOP_PENDING
         status.dwCurrentState = SERVICE_STOP_PENDING;
         status.dwControlsAccepted = 0;
         status.dwCheckPoint = 1;
-        status.dwWaitHint = 15000;
+        status.dwWaitHint = 2000;
         let _ = SetServiceStatus(handle, &status);
 
-        // Wait up to 8 seconds for daemon async cleanup and socket shutdown to complete
+        // Wait up to 800ms for daemon async cleanup to signal completion
         let shutdown_start = std::time::Instant::now();
+        let mut checkpoint = 1;
         while !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst)
-            && shutdown_start.elapsed() < Duration::from_secs(8)
+            && shutdown_start.elapsed() < Duration::from_millis(800)
         {
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(200));
+            checkpoint += 1;
+            status.dwCheckPoint = checkpoint;
+            let _ = SetServiceStatus(handle, &status);
         }
 
         // 4. Disarm host isolation and unfreeze processes before reporting SERVICE_STOPPED
-        info!("OsoosiEDR Windows Service restoring host network isolation and unfreezing processes...");
         let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
-        let _ = osoosi_core::firewall::remove_all_autoblock_rules();
 
         // Report SERVICE_STOPPED
         status.dwCurrentState = SERVICE_STOPPED;
@@ -934,11 +1149,10 @@ mod win_scm {
         let _ = SetServiceStatus(handle, &status);
 
         info!("OsoosiEDR Windows Service has stopped.");
-        std::thread::sleep(Duration::from_millis(250));
         std::process::exit(0);
     }
 
-    fn cleanup_stale_service_processes() {
+    pub fn cleanup_stale_service_processes() {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
@@ -1031,11 +1245,44 @@ mod win_scm {
 }
 
 #[cfg(windows)]
-pub use win_scm::try_start_service_dispatcher;
+pub use win_scm::{cleanup_stale_service_processes, try_start_service_dispatcher};
 
 #[cfg(not(windows))]
 pub fn try_start_service_dispatcher() -> anyhow::Result<bool> {
     Ok(false)
+}
+
+#[cfg(not(windows))]
+pub fn cleanup_stale_service_processes() {
+    let my_pid = std::process::id();
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes();
+    let mut terminated_pids = Vec::new();
+    for (pid, proc_info) in sys.processes() {
+        let p = pid.as_u32();
+        if p == my_pid || p <= 4 {
+            continue;
+        }
+        let name = proc_info.name().to_ascii_lowercase();
+        if name == "osoosi" || name == "osoosi-edr" {
+            let cmd_joined = proc_info.cmd().join(" ").to_ascii_lowercase();
+            let is_cli_ctl = cmd_joined.contains("service start")
+                || cmd_joined.contains("service restart")
+                || cmd_joined.contains("service stop")
+                || cmd_joined.contains("service status")
+                || cmd_joined.contains("service install");
+            if !is_cli_ctl {
+                let _ = Command::new("kill").args(["-15", &p.to_string()]).status();
+                terminated_pids.push(p);
+            }
+        }
+    }
+    if !terminated_pids.is_empty() {
+        std::thread::sleep(Duration::from_millis(400));
+        for p in terminated_pids {
+            let _ = Command::new("kill").args(["-9", &p.to_string()]).status();
+        }
+    }
 }
 
 #[cfg(test)]

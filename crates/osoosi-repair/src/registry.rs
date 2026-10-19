@@ -15,17 +15,36 @@ impl RegistryRemediator {
     /// Attempt to roll back registry persistence for a specific process image.
     /// Scans Run, RunOnce, and Services (Windows) or ld.so.preload, cron, systemd, and launchd (Linux/macOS).
     pub fn remediate_process_persistence(image_path: &str) -> Result<Vec<String>> {
+        let normalized = osoosi_types::normalize_nt_device_path(image_path);
+        let lower = normalized.to_ascii_lowercase().replace('/', "\\");
+        let basename = std::path::Path::new(&normalized)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if basename.is_empty() {
+            return Err(anyhow!("Invalid image path for persistence remediation"));
+        }
+        if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
+            || osoosi_types::is_protected_os_shell_or_desktop_binary(basename)
+            || lower.starts_with("c:\\windows\\")
+            || lower.starts_with("\\windows\\")
+            || normalized.starts_with("/usr/")
+            || normalized.starts_with("/bin/")
+            || normalized.starts_with("/sbin/")
+            || normalized.starts_with("/lib/")
+            || normalized.starts_with("/lib64/")
+            || normalized.starts_with("/System/")
+        {
+            info!(
+                "Host Safety Guard: Refusing to remediate persistence or disable services for protected OS binary: {}",
+                image_path
+            );
+            return Ok(Vec::new());
+        }
+
         #[cfg(not(target_os = "windows"))]
         {
             let mut changes = Vec::new();
-            let basename = std::path::Path::new(image_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-
-            if basename.is_empty() {
-                return Err(anyhow!("Invalid image path for persistence remediation"));
-            }
 
             // 1. Scan and clean /etc/ld.so.preload
             let ld_preload = std::path::Path::new("/etc/ld.so.preload");

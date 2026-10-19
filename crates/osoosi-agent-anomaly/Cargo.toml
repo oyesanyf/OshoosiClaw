@@ -21,6 +21,11 @@ osoosi-types = { path = "../osoosi-types" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-policy = { path = "../osoosi-policy" }
 osoosi-audit = { path = "../osoosi-audit" }
+agent-thermostat = { workspace = true }
+silicon-shield = { workspace = true }
+zero-genesis-capacity = { workspace = true }
+zero-algebraic-kernel = { workspace = true }
+zero-divine-equilibrium = { workspace = true }
 sha2 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }

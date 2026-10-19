@@ -24,6 +24,13 @@ members = [
     "crates/osoosi-forensics",
     "crates/osoosi-agent-anomaly",
     "crates/osoosi-relay",
+    "crates/edr-phaselock",
+    "crates/agent-thermostat",
+    "crates/silicon-shield",
+    "crates/zero-genesis-capacity",
+    "crates/zero-algebraic-kernel",
+    "crates/zero-vacuum-lensing",
+    "crates/zero-divine-equilibrium",
 ]
 
 [workspace.package]
@@ -33,6 +40,13 @@ license = "Apache-2.0 OR MIT"
 rust-version = "1.75"
 
 [workspace.dependencies]
+edr-phaselock = { path = "crates/edr-phaselock" }
+agent-thermostat = { path = "crates/agent-thermostat" }
+silicon-shield = { path = "crates/silicon-shield" }
+zero-genesis-capacity = { path = "crates/zero-genesis-capacity" }
+zero-algebraic-kernel = { path = "crates/zero-algebraic-kernel" }
+zero-vacuum-lensing = { path = "crates/zero-vacuum-lensing" }
+zero-divine-equilibrium = { path = "crates/zero-divine-equilibrium" }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 serde = { version = "1", features = ["derive"] }

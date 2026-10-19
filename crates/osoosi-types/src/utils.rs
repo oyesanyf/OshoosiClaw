@@ -139,6 +139,119 @@ pub fn add_defender_exclusion(path: &str) -> anyhow::Result<()> {
         Ok(())
     }
 }
+
+/// Removes an `Image File Execution Options\<exe_name>\Debugger` registry value natively via `winreg`
+/// without spawning external `reg.exe` processes.
+pub fn remove_ifeo_debugger_hook_native(exe_name: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let trimmed = exe_name.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let subkey_path = format!(
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}",
+            trimmed
+        );
+        if let Ok(subkey) = hklm.open_subkey_with_flags(&subkey_path, KEY_READ | KEY_WRITE) {
+            if subkey.delete_value("Debugger").is_ok() {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = exe_name;
+        false
+    }
+}
+
+/// Purges all `Image File Execution Options\*\Debugger` values pointing to `systray.exe`
+/// natively via `winreg` in < 5ms without spawning `reg.exe` subprocesses.
+pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let ifeo_path =
+            r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options";
+        let Ok(ifeo_root) = hklm.open_subkey_with_flags(ifeo_path, KEY_READ | KEY_WRITE) else {
+            return 0;
+        };
+
+        let mut removed = 0usize;
+        let subkey_names: Vec<String> = ifeo_root.enum_keys().filter_map(|k| k.ok()).collect();
+        for name in subkey_names {
+            let lower_name = name.to_ascii_lowercase();
+            if lower_name.ends_with(".pyd") {
+                if ifeo_root.delete_subkey_all(&name).is_ok() {
+                    removed += 1;
+                }
+                continue;
+            }
+            if let Ok(subkey) = ifeo_root.open_subkey_with_flags(&name, KEY_READ | KEY_WRITE) {
+                if let Ok(debugger_val) = subkey.get_value::<String, _>("Debugger") {
+                    if debugger_val.to_ascii_lowercase().contains("systray.exe") {
+                        if subkey.delete_value("Debugger").is_ok() {
+                            removed += 1;
+                        }
+                    }
+                }
+            }
+        }
+        removed
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        0
+    }
+}
+/// Normalizes Windows NT kernel device paths (e.g., `\Device\HarddiskVolume4\Windows\System32\conhost.exe`)
+/// and extended-length prefixes (`\\?\`, `\??\`) into standard Win32 DOS drive paths (`C:\Windows\System32\conhost.exe`).
+pub fn normalize_nt_device_path(raw_path: &str) -> String {
+    let trimmed = raw_path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let normalized_slashes = trimmed.replace('/', "\\");
+    let stripped = if let Some(rest) = normalized_slashes.strip_prefix(r"\\?\") {
+        rest
+    } else if let Some(rest) = normalized_slashes.strip_prefix(r"\??\") {
+        rest
+    } else {
+        normalized_slashes.as_str()
+    };
+
+    let lower = stripped.to_ascii_lowercase();
+    const NT_VOL_PREFIX: &str = r"\device\harddiskvolume";
+    if lower.starts_with(NT_VOL_PREFIX) {
+        let after_prefix = &stripped[NT_VOL_PREFIX.len()..];
+        if let Some(slash_idx) = after_prefix.find('\\') {
+            let vol_digits = &after_prefix[..slash_idx];
+            if !vol_digits.is_empty() && vol_digits.chars().all(|c| c.is_ascii_digit()) {
+                let rel_path = after_prefix[slash_idx + 1..].trim_start_matches('\\');
+                for drive in ['C', 'D', 'E', 'F', 'G'] {
+                    let candidate = format!("{}:\\{}", drive, rel_path);
+                    if Path::new(&candidate).exists() {
+                        return candidate;
+                    }
+                }
+                return format!("C:\\{}", rel_path);
+            }
+        }
+    }
+
+    stripped.to_string()
+}
+
 /// Metadata and version info for a Windows PE file.
 pub struct BinaryMetadata {
     pub product_name: String,
@@ -151,11 +264,14 @@ pub struct BinaryMetadata {
 pub fn is_trusted_vendor(name: &str) -> bool {
     let p = name.to_lowercase();
     p.contains("microsoft")
+        || p.contains("windows")
         || p.contains("khronos group")
         || p.contains("khronos")
         || p.contains("hugos ide")
         || p.contains("hugos")
         || p.contains("github")
+        || p.contains("git for windows")
+        || p.contains("johannes schindelin")
         || p.contains("google")
         || p.contains("openai")
         || p.contains("anysphere")
@@ -165,14 +281,23 @@ pub fn is_trusted_vendor(name: &str) -> bool {
         || p.contains("rust")
         || p.contains("python")
         || p.contains("node.js")
+        || p.contains("openjs")
         || p.contains("vulkan")
         || p.contains("docker")
         || p.contains("mozilla")
+        || p.contains("jetbrains")
+        || p.contains("nvidia")
+        || p.contains("intel")
+        || p.contains("advanced micro devices")
+        || p.contains("cloudflare")
+        || p.contains("apple")
 }
 
 #[cfg(target_os = "windows")]
 pub fn get_pe_metadata(path: &Path) -> Option<BinaryMetadata> {
-    let map = std::fs::read(path).ok()?;
+    let normalized = normalize_nt_device_path(&path.to_string_lossy());
+    let norm_path = Path::new(&normalized);
+    let map = std::fs::read(norm_path).ok()?;
 
     let mut product_name = "Unknown".to_string();
     let mut version = "0.0.0".to_string();
@@ -214,13 +339,12 @@ pub fn get_pe_metadata(path: &Path) -> Option<BinaryMetadata> {
     }
 
     // Native Signature Verification (Win32 WinVerifyTrust)
-    let path_str = path.to_string_lossy();
-    let is_signed = verify_file_signature(&path_str);
+    let is_signed = verify_file_signature(&normalized);
 
     // Advanced Pure Rust Cryptographic Verification (Goblin + X509 + ring) with fallback to raw certificate extraction
-    let publisher = verify_and_extract_publisher_native(&path_str)
+    let publisher = verify_and_extract_publisher_native(&normalized)
         .ok()
-        .or_else(|| extract_publisher_from_pe(&path_str));
+        .or_else(|| extract_publisher_from_pe(&normalized));
 
     Some(BinaryMetadata {
         product_name,
@@ -442,7 +566,85 @@ pub fn is_pinned_thumbprint_allowed(thumbprints: &[String]) -> bool {
     false
 }
 
-/// Verify file signature using Windows WinVerifyTrust API with revocation check and graceful offline fallback.
+/// Verify whether a binary is cryptographically signed via the Windows Security Catalog
+/// (`CryptCATAdminAcquireContext` + `CryptCATAdminCalcHashFromFileHandle` + `CryptCATAdminEnumCatalogFromHash`).
+#[cfg(target_os = "windows")]
+pub fn verify_windows_catalog_signature(path: &str) -> bool {
+    use std::ffi::c_void;
+    use std::fs::File;
+    use std::os::windows::io::AsRawHandle;
+
+    #[link(name = "wintrust")]
+    extern "system" {
+        fn CryptCATAdminAcquireContext(
+            phCatAdmin: *mut isize,
+            pgSubsystem: *const c_void,
+            dwFlags: u32,
+        ) -> i32;
+        fn CryptCATAdminCalcHashFromFileHandle(
+            hFile: *mut c_void,
+            pcbHash: *mut u32,
+            pbHash: *mut u8,
+            dwFlags: u32,
+        ) -> i32;
+        fn CryptCATAdminEnumCatalogFromHash(
+            hCatAdmin: isize,
+            pbHash: *const u8,
+            cbHash: u32,
+            dwFlags: u32,
+            phPrevCatInfo: *mut isize,
+        ) -> isize;
+        fn CryptCATAdminReleaseCatalogContext(
+            hCatAdmin: isize,
+            hCatInfo: isize,
+            dwFlags: u32,
+        ) -> i32;
+        fn CryptCATAdminReleaseContext(hCatAdmin: isize, dwFlags: u32) -> i32;
+    }
+
+    let normalized = normalize_nt_device_path(path);
+    let Ok(file) = File::open(&normalized) else {
+        return false;
+    };
+    let handle = file.as_raw_handle();
+
+    unsafe {
+        let mut h_cat_admin: isize = 0;
+        if CryptCATAdminAcquireContext(&mut h_cat_admin, std::ptr::null(), 0) == 0
+            || h_cat_admin == 0
+        {
+            return false;
+        }
+
+        let mut hash_len: u32 = 64;
+        let mut hash_buf = vec![0u8; 64];
+        if CryptCATAdminCalcHashFromFileHandle(handle, &mut hash_len, hash_buf.as_mut_ptr(), 0)
+            == 0
+            || hash_len == 0
+        {
+            let _ = CryptCATAdminReleaseContext(h_cat_admin, 0);
+            return false;
+        }
+
+        let h_cat_info = CryptCATAdminEnumCatalogFromHash(
+            h_cat_admin,
+            hash_buf.as_ptr(),
+            hash_len,
+            0,
+            std::ptr::null_mut(),
+        );
+
+        let is_catalog_signed = h_cat_info != 0;
+        if is_catalog_signed {
+            let _ = CryptCATAdminReleaseCatalogContext(h_cat_admin, h_cat_info, 0);
+        }
+        let _ = CryptCATAdminReleaseContext(h_cat_admin, 0);
+        is_catalog_signed
+    }
+}
+
+/// Verify file signature using Windows WinVerifyTrust API with revocation check, graceful offline fallback,
+/// and Windows Security Catalog (`CryptCATAdmin*`) fallback for catalog-signed OS binaries.
 #[cfg(target_os = "windows")]
 pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
     use std::os::windows::ffi::OsStrExt;
@@ -450,7 +652,8 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
     use windows::Win32::Foundation::{HANDLE, HWND};
     use windows::Win32::Security::WinTrust::*;
 
-    let path_wide: Vec<u16> = std::ffi::OsStr::new(path)
+    let normalized = normalize_nt_device_path(path);
+    let path_wide: Vec<u16> = std::ffi::OsStr::new(&normalized)
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
@@ -527,14 +730,27 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
                     0 => AuthenticodeStatus::ValidTrusted,
                     -2146762487 => AuthenticodeStatus::UntrustedRoot,
                     -2146869232 => AuthenticodeStatus::TamperedBadDigest,
-                    -2146762496 => AuthenticodeStatus::NotSigned,
+                    -2146762496 => {
+                        if verify_windows_catalog_signature(&normalized) {
+                            AuthenticodeStatus::ValidTrusted
+                        } else {
+                            AuthenticodeStatus::NotSigned
+                        }
+                    }
                     -2146762479 => AuthenticodeStatus::ExplicitDistrust,
                     err => AuthenticodeStatus::OtherError(err),
                 }
             }
             -2146762487 => AuthenticodeStatus::UntrustedRoot, // 0x800B0109
             -2146869232 => AuthenticodeStatus::TamperedBadDigest, // 0x80096010
-            -2146762496 => AuthenticodeStatus::NotSigned,     // 0x800B0100
+            -2146762496 => {
+                // 0x800B0100 (TRUST_E_NOSIGNATURE): Check Windows Security Catalog for OS binaries
+                if verify_windows_catalog_signature(&normalized) {
+                    AuthenticodeStatus::ValidTrusted
+                } else {
+                    AuthenticodeStatus::NotSigned
+                }
+            }
             -2146762479 => AuthenticodeStatus::ExplicitDistrust, // 0x800B0111
             err => AuthenticodeStatus::OtherError(err),
         }
@@ -548,7 +764,9 @@ pub fn extract_signer_subject(path: &Path) -> Option<String> {
     use std::os::windows::ffi::OsStrExt;
     use windows::Win32::Security::Cryptography::*;
 
-    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    let normalized = normalize_nt_device_path(&path.to_string_lossy());
+    let norm_path = Path::new(&normalized);
+    let mut wide_path: Vec<u16> = norm_path.as_os_str().encode_wide().collect();
     wide_path.push(0);
 
     let mut msg: *mut c_void = std::ptr::null_mut();
@@ -570,6 +788,9 @@ pub fn extract_signer_subject(path: &Path) -> Option<String> {
         );
 
         if res.is_err() || msg.is_null() || store.is_invalid() {
+            if verify_windows_catalog_signature(&normalized) {
+                return Some("Microsoft Windows Security Catalog".to_string());
+            }
             return None;
         }
 
@@ -652,11 +873,12 @@ pub fn extract_signer_subject(path: &Path) -> Option<String> {
 
 /// Inspects the Authenticode signature of a binary, extracting validity status and signer subject.
 pub fn inspect_binary_authenticode(path: &Path) -> AuthenticodeSignatureInfo {
-    let path_str = path.to_string_lossy();
-    let status = check_authenticode_status(&path_str);
+    let normalized = normalize_nt_device_path(&path.to_string_lossy());
+    let norm_path = Path::new(&normalized);
+    let status = check_authenticode_status(&normalized);
     let is_valid = matches!(status, AuthenticodeStatus::ValidTrusted);
     let signer_subject = if is_valid {
-        extract_signer_subject(path)
+        extract_signer_subject(norm_path)
     } else {
         None
     };
@@ -671,21 +893,22 @@ pub fn inspect_binary_authenticode(path: &Path) -> AuthenticodeSignatureInfo {
 /// Check if a binary has a valid digital signature or belongs to a known trusted vendor.
 #[cfg(target_os = "windows")]
 pub fn is_trusted_signed_binary(path: &Path) -> bool {
-    if !path.exists() {
+    let normalized = normalize_nt_device_path(&path.to_string_lossy());
+    let norm_path = Path::new(&normalized);
+    if !norm_path.exists() {
         return false;
     }
-    let path_str = path.to_string_lossy();
-    let status = check_authenticode_status(&path_str);
+    let status = check_authenticode_status(&normalized);
     match status {
         AuthenticodeStatus::ValidTrusted => {
             // 1. Try native Crypt32 subject extraction first
-            if let Some(subject) = extract_signer_subject(path) {
+            if let Some(subject) = extract_signer_subject(norm_path) {
                 if is_trusted_vendor(&subject) {
                     return true;
                 }
             }
             // 2. Check PE metadata / publisher
-            if let Some(meta) = get_pe_metadata(path) {
+            if let Some(meta) = get_pe_metadata(norm_path) {
                 if let Some(ref pub_name) = meta.publisher {
                     if is_trusted_vendor(pub_name) {
                         return true;
@@ -696,7 +919,7 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
                 }
             }
             // 3. If ValidTrusted and located in protected OS/Program Files folders, trust it
-            let lower = path_str.to_lowercase().replace('/', "\\");
+            let lower = normalized.to_lowercase().replace('/', "\\");
             if lower.starts_with("c:\\program files\\")
                 || lower.starts_with("c:\\program files (x86)\\")
                 || lower.starts_with("c:\\windows\\")
@@ -706,7 +929,7 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
             false
         }
         AuthenticodeStatus::UntrustedRoot => {
-            let cert_thumbprints = extract_certificate_thumbprints(&path_str);
+            let cert_thumbprints = extract_certificate_thumbprints(&normalized);
             is_pinned_thumbprint_allowed(&cert_thumbprints)
         }
         _ => false,
@@ -775,19 +998,29 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
         }
     }
 
-    // 4. Verify ELF binary header and protected system directory residency
+    // 4. Verify ELF or Mach-O binary header and protected system directory residency
     let mut header = [0u8; 64];
     if let Ok(mut f) = File::open(p) {
         if let Ok(n) = f.read(&mut header) {
-            if n >= 16 && header.starts_with(b"\x7fELF") {
+            let is_elf = n >= 16 && header.starts_with(b"\x7fELF");
+            let is_macho = n >= 4
+                && (header.starts_with(&[0xFE, 0xED, 0xFA, 0xCE])
+                    || header.starts_with(&[0xFE, 0xED, 0xFA, 0xCF])
+                    || header.starts_with(&[0xCE, 0xFA, 0xED, 0xFE])
+                    || header.starts_with(&[0xCF, 0xFA, 0xED, 0xFE])
+                    || header.starts_with(&[0xCA, 0xFE, 0xBA, 0xBE]));
+            if is_elf || is_macho {
                 let path_lower = path.to_lowercase();
                 if path_lower.starts_with("/bin/")
                     || path_lower.starts_with("/sbin/")
                     || path_lower.starts_with("/usr/bin/")
                     || path_lower.starts_with("/usr/sbin/")
+                    || path_lower.starts_with("/usr/libexec/")
                     || path_lower.starts_with("/lib/")
                     || path_lower.starts_with("/lib64/")
                     || path_lower.starts_with("/usr/lib/")
+                    || path_lower.starts_with("/system/library/")
+                    || path_lower.starts_with("/system/applications/")
                 {
                     use std::os::unix::fs::MetadataExt;
                     if let Ok(meta) = p.metadata() {
@@ -842,6 +1075,354 @@ pub fn verify_file_signature(path: &str) -> bool {
 #[cfg(not(target_os = "windows"))]
 pub fn is_trusted_signed_binary(path: &Path) -> bool {
     verify_file_signature(&path.to_string_lossy())
+}
+
+/// Cross-platform invariant guard: returns `true` if `path_or_name` is a critical
+/// operating system kernel/init daemon, desktop shell, window server/compositor,
+/// system tray / menu bar host, or local desktop search/indexer service across
+/// Windows, Linux, and macOS.
+///
+/// Processes matching this guard must NEVER be killed, suspended/tarpitted,
+/// network-blocked via host firewall, or hijacked via IFEO.
+pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
+    let trimmed = path_or_name.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let normalized = normalize_nt_device_path(trimmed);
+    let lower_win = normalized.to_ascii_lowercase().replace('/', "\\");
+    let lower_unix = normalized.to_ascii_lowercase().replace('\\', "/");
+
+    // Extract base executable filename
+    let file_name = lower_unix
+        .rsplit('/')
+        .next()
+        .unwrap_or(lower_unix.as_str())
+        .trim();
+    if file_name.is_empty() {
+        return false;
+    }
+
+    // Never classify script interpreters or LOLBins as protected OS desktop/shell binaries
+    const NEVER_PROTECTED_INTERPRETERS: &[&str] = &[
+        "powershell.exe",
+        "powershell",
+        "pwsh.exe",
+        "pwsh",
+        "cmd.exe",
+        "cmd",
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe",
+        "rundll32.exe",
+        "regsvr32.exe",
+        "certutil.exe",
+        "bitsadmin.exe",
+        "bash",
+        "sh",
+        "zsh",
+        "dash",
+        "ksh",
+        "python",
+        "python.exe",
+        "python3",
+        "python3.exe",
+        "perl",
+        "ruby",
+        "node",
+        "node.exe",
+        "nc",
+        "ncat",
+        "netcat",
+        "socat",
+        "curl",
+        "curl.exe",
+        "wget",
+    ];
+    if NEVER_PROTECTED_INTERPRETERS.contains(&file_name) {
+        return false;
+    }
+
+    // Dedicated OS shell / app bundle paths across Windows, Linux, and macOS
+    if lower_win.contains("\\windows\\systemapps\\")
+        || lower_win.contains("\\windows\\immersivecontrolpanel\\")
+        || lower_unix.starts_with("/lib/systemd/")
+        || lower_unix.starts_with("/usr/lib/systemd/")
+        || lower_unix.starts_with("/system/library/coreservices/")
+    {
+        return true;
+    }
+
+    // Prefix patterns for Linux/Unix modular desktop & init daemons
+    if file_name.starts_with("systemd-")
+        || file_name.starts_with("xdg-desktop-portal")
+        || file_name.starts_with("xdg-document-portal")
+        || file_name.starts_with("xdg-permission-store")
+        || file_name.starts_with("gsd-")
+        || file_name.starts_with("gvfsd")
+        || file_name.starts_with("gvfs-")
+        || file_name.starts_with("tracker-miner")
+        || file_name.starts_with("tracker-extract")
+        || file_name.starts_with("tracker-xdg-portal")
+        || file_name.starts_with("localsearch")
+        || file_name.starts_with("baloo_file")
+        || file_name.starts_with("kwin_")
+        || file_name.starts_with("ibus-")
+        || file_name.starts_with("pipewire")
+        || file_name.starts_with("containerd-shim")
+    {
+        return true;
+    }
+
+    let stem = file_name.strip_suffix(".exe").unwrap_or(file_name);
+
+    matches!(
+        stem,
+        // --- Windows Core OS, Session, Desktop Shell, System Tray & Search ---
+        "system"
+            | "registry"
+            | "memcompression"
+            | "smss"
+            | "csrss"
+            | "wininit"
+            | "services"
+            | "lsass"
+            | "lsm"
+            | "winlogon"
+            | "svchost"
+            | "fontdrvhost"
+            | "dwm"
+            | "sihost"
+            | "taskhostw"
+            | "dllhost"
+            | "conhost"
+            | "explorer"
+            | "shellhost"
+            | "shellexperiencehost"
+            | "startmenuexperiencehost"
+            | "applicationframehost"
+            | "systemsettings"
+            | "systemsettingsbroker"
+            | "textinputhost"
+            | "ctfmon"
+            | "securityhealthsystray"
+            | "securityhealthservice"
+            | "securityhealthhost"
+            | "searchhost"
+            | "searchapp"
+            | "searchindexer"
+            | "searchprotocolhost"
+            | "searchfilterhost"
+            | "runtimebroker"
+            | "backgroundtaskhost"
+            | "smartscreen"
+            | "widgets"
+            | "widgetservice"
+            | "lockapp"
+            | "spoolsv"
+            | "audiodg"
+            | "dashost"
+            | "wmiprvse"
+            | "unsecapp"
+            | "vssvc"
+            | "vds"
+            | "tiworker"
+            | "trustedinstaller"
+            | "msmpeng"
+            | "mpdefendercoreservice"
+            | "nissrv"
+            | "mpcmdrun"
+            | "senseir"
+            | "mssense"
+            | "osqueryd"
+            | "osqueryi"
+            | "sysmon"
+            | "sysmon64"
+            | "osoosi"
+            | "osoosi-cli"
+            | "osoosi-auditor"
+            | "netsh"
+            | "sc"
+            | "reg"
+            | "route"
+            | "ipconfig"
+            | "arp"
+            | "taskmgr"
+            | "mmc"
+            | "consent"
+            | "werfault"
+            | "control"
+            | "systempropertiesadvanced"
+            | "systempropertiescomputername"
+            | "systempropertieshardware"
+            | "systempropertiesperformance"
+            | "systempropertiesprotection"
+            | "systempropertiesremote"
+            | "systempropertiesdataexecutionprevention"
+            | "runlegacycplelevated"
+            // --- Linux Init, Systemd, DBus, Desktop Shell, Wayland/X11, Tray & Search ---
+            | "init"
+            | "systemd"
+            | "systemctl"
+            | "journalctl"
+            | "loginctl"
+            | "udevadm"
+            | "dbus-daemon"
+            | "dbus-broker"
+            | "dbus-broker-launch"
+            | "polkitd"
+            | "accounts-daemon"
+            | "rtkit-daemon"
+            | "udisksd"
+            | "upowerd"
+            | "colord"
+            | "avahi-daemon"
+            | "rsyslogd"
+            | "syslog-ng"
+            | "auditd"
+            | "cron"
+            | "crond"
+            | "NetworkManager"
+            | "networkmanager"
+            | "nm-dispatcher"
+            | "nm-applet"
+            | "wpa_supplicant"
+            | "iwd"
+            | "dhclient"
+            | "dhcpcd"
+            | "dnsmasq"
+            | "sshd"
+            | "ssh-agent"
+            | "iptables"
+            | "ip6tables"
+            | "nft"
+            | "xorg"
+            | "xwayland"
+            | "wayland"
+            | "gnome-shell"
+            | "gnome-session"
+            | "gnome-session-binary"
+            | "gnome-settings-daemon"
+            | "gnome-keyring-daemon"
+            | "mutter"
+            | "plasmashell"
+            | "kded5"
+            | "kded6"
+            | "ksmserver"
+            | "krunner"
+            | "xembedsniproxy"
+            | "gmenudbusmenuproxy"
+            | "kwalletd5"
+            | "kwalletd6"
+            | "xfce4-session"
+            | "xfce4-panel"
+            | "xfwm4"
+            | "xfdesktop"
+            | "cinnamon"
+            | "mate-session"
+            | "mate-panel"
+            | "marco"
+            | "sway"
+            | "hyprland"
+            | "waybar"
+            | "i3"
+            | "polybar"
+            | "dunst"
+            | "mako"
+            | "gdm"
+            | "gdm3"
+            | "gdm-session-worker"
+            | "gdm-wayland-session"
+            | "gdm-x-session"
+            | "sddm"
+            | "sddm-helper"
+            | "lightdm"
+            | "dconf-service"
+            | "at-spi-bus-launcher"
+            | "at-spi2-registryd"
+            | "fcitx"
+            | "fcitx5"
+            | "wireplumber"
+            | "pulseaudio"
+            | "nautilus"
+            | "dolphin"
+            | "thunar"
+            | "nemo"
+            | "pcmanfm"
+            | "updatedb"
+            | "plocate"
+            | "dockerd"
+            | "containerd"
+            | "runc"
+            | "crun"
+            | "podman"
+            | "conmon"
+            | "libvirtd"
+            // --- macOS Launchd, WindowServer, Dock, Finder, SystemUIServer/ControlCenter & Spotlight ---
+            | "kernel_task"
+            | "launchd"
+            | "usereventagent"
+            | "cfprefsd"
+            | "distnoted"
+            | "notifyd"
+            | "logd"
+            | "fseventsd"
+            | "powerd"
+            | "thermald"
+            | "configd"
+            | "syslogd"
+            | "opendirectoryd"
+            | "mds"
+            | "mdworker"
+            | "mdworker_shared"
+            | "mds_stores"
+            | "mdsync"
+            | "spotlight"
+            | "coreservicesd"
+            | "coreservicesuiagent"
+            | "lsd"
+            | "iconservicesagent"
+            | "iconservicesd"
+            | "tccd"
+            | "trustd"
+            | "securityd"
+            | "syspolicyd"
+            | "amfid"
+            | "endpointsecurityd"
+            | "nesessionmanager"
+            | "nehelper"
+            | "mdnsresponder"
+            | "mdnsresponderhelper"
+            | "symptomsd"
+            | "networkserviceproxy"
+            | "wifiagent"
+            | "airportd"
+            | "bluetoothd"
+            | "coreaudiod"
+            | "audiomxd"
+            | "corebrightnessd"
+            | "hidd"
+            | "windowserver"
+            | "loginwindow"
+            | "dock"
+            | "finder"
+            | "systemuiserver"
+            | "controlcenter"
+            | "notificationcenter"
+            | "wallpaperagent"
+            | "windowmanager"
+            | "talagent"
+            | "universalaccessd"
+            | "pboard"
+            | "sharingd"
+            | "rapportd"
+            | "cloudd"
+            | "bird"
+            | "fileproviderd"
+            | "textinputmenuagent"
+            | "textinputswitcher"
+    )
 }
 
 #[cfg(test)]
@@ -954,4 +1535,97 @@ mod tests {
         assert!(!non_info.is_valid);
         assert_eq!(non_info.signer_subject, None);
     }
+
+    #[test]
+    fn test_normalize_nt_device_path() {
+        assert_eq!(
+            normalize_nt_device_path(r"\Device\HarddiskVolume4\Windows\System32\conhost.exe")
+                .to_lowercase(),
+            r"c:\windows\system32\conhost.exe"
+        );
+        assert_eq!(
+            normalize_nt_device_path(
+                r"\Device\HarddiskVolume12\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
+            )
+            .to_lowercase(),
+            r"c:\windows\systemapps\microsoftwindows.client.cbs_cw5n1h2txyewy\searchhost.exe"
+        );
+        assert_eq!(
+            normalize_nt_device_path(r"\\?\C:\Windows\System32\SearchFilterHost.exe")
+                .to_lowercase(),
+            r"c:\windows\system32\searchfilterhost.exe"
+        );
+        #[cfg(target_os = "windows")]
+        {
+            let nt_kernel32 = Path::new(r"\Device\HarddiskVolume4\Windows\System32\kernel32.dll");
+            if Path::new(r"C:\Windows\System32\kernel32.dll").exists() {
+                assert!(is_trusted_signed_binary(nt_kernel32));
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_protected_os_shell_or_desktop_binary_cross_platform() {
+        // Windows Search, Shell & System Tray
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\sihost.exe"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\explorer.exe"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\SecurityHealthSystray.exe"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\ctfmon.exe"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\SearchFilterHost.exe"
+        ));
+
+        // Linux Init, Desktop Shell, Compositor, Tray & Indexers
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/lib/systemd/systemd-resolved"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/gnome-shell"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/plasmashell"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/kwin_wayland"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/libexec/tracker-miner-fs-3"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/libexec/xdg-desktop-portal-gtk"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/pipewire"));
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/sbin/NetworkManager"));
+
+        // macOS Launchd, WindowServer, Dock, Finder, ControlCenter & Spotlight
+        assert!(is_protected_os_shell_or_desktop_binary("/sbin/launchd"));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "/System/Library/CoreServices/Dock.app/Contents/MacOS/Dock"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "/System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "/System/Library/Frameworks/CoreServices.framework/Frameworks/Metadata.framework/Support/mds"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary("WindowServer"));
+        assert!(is_protected_os_shell_or_desktop_binary("SystemUIServer"));
+
+        // Script interpreters / LOLBins / unknown binaries must NOT be protected by this guard
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\cmd.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary("/usr/bin/bash"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/usr/bin/python3"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/tmp/evil_beacon"));
+    }
 }
+

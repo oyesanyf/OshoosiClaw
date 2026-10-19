@@ -18,6 +18,8 @@ blake3 = { workspace = true }
 dashmap = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
+silicon-shield = { workspace = true }
+zero-genesis-capacity = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }

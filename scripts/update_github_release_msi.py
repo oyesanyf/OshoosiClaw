@@ -210,6 +210,14 @@ def get_git_credentials() -> str:
         return ""
 
 
+def safe_github_urlopen(req: urllib.request.Request, timeout: int = 30):
+    """Validate that the request targets an official HTTPS GitHub API/upload endpoint before opening."""
+    target_url = req.full_url if hasattr(req, "full_url") else str(req)
+    if not target_url.startswith(("https://api.github.com/", "https://uploads.github.com/")):
+        raise ValueError(f"Disallowed URL target in release script: {target_url}")
+    return urllib.request.urlopen(req, timeout=timeout)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
+
+
 def upload_release_assets(headers: dict, upload_url_base: str, existing_assets: dict, assets: list):
     """Upload or overwrite assets in a target GitHub release."""
     for name, data_bytes, ctype in assets:
@@ -220,7 +228,7 @@ def upload_release_assets(headers: dict, upload_url_base: str, existing_assets: 
                 headers=headers,
             )
             try:
-                urllib.request.urlopen(del_req, timeout=30)
+                safe_github_urlopen(del_req, timeout=30)
             except Exception as e:
                 print(f"       [!] Warning: Failed to delete prior asset {name}: {e}")
 
@@ -233,7 +241,7 @@ def upload_release_assets(headers: dict, upload_url_base: str, existing_assets: 
             headers=up_h
         )
         try:
-            r = json.loads(urllib.request.urlopen(up_req, timeout=180).read().decode())
+            r = json.loads(safe_github_urlopen(up_req, timeout=180).read().decode())
             print(f"       -> Uploaded {name} ({r.get('size', len(data_bytes)):,} bytes)")
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
@@ -249,7 +257,7 @@ def sync_legacy_release_v011(gpg_path: str, key_fingerprint: str, headers: dict,
             f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/v0.1.1",
             headers=headers
         )
-        rel = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+        rel = json.loads(safe_github_urlopen(req, timeout=30).read().decode())
     except urllib.error.HTTPError as e:
         if e.code == 404:
             print("       [*] Release v0.1.1 does not exist, skipping.")
@@ -269,7 +277,7 @@ def sync_legacy_release_v011(gpg_path: str, key_fingerprint: str, headers: dict,
         f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/assets/{msi_asset['id']}",
         headers=dl_headers
     )
-    v011_msi_bytes = urllib.request.urlopen(dl_req, timeout=120).read()
+    v011_msi_bytes = safe_github_urlopen(dl_req, timeout=120).read()
     v011_sha256 = hashlib.sha256(v011_msi_bytes).hexdigest()
     print(f"       [+] Downloaded v0.1.1 MSI (SHA-256: {v011_sha256})")
 
@@ -480,7 +488,7 @@ def main():
             f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}",
             headers=headers
         )
-        rel = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+        rel = json.loads(safe_github_urlopen(req, timeout=30).read().decode())
     except urllib.error.HTTPError as e:
         if e.code == 404:
             print(f"[*] Release {tag} not found. Creating release {tag} on GitHub...")
@@ -504,7 +512,7 @@ def main():
                 headers={**headers, "Content-Type": "application/json"},
                 method="POST"
             )
-            rel = json.loads(urllib.request.urlopen(create_req, timeout=30).read().decode())
+            rel = json.loads(safe_github_urlopen(create_req, timeout=30).read().decode())
             print(f"[+] Created GitHub Release {tag} (ID: {rel.get('id')})")
         else:
             raise

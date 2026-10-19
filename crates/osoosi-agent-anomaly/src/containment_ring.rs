@@ -155,11 +155,15 @@ impl AgentContainmentRing {
             ));
         }
 
-        // Case-insensitive lateral sink isolation
+        // Case-insensitive lateral sink isolation (catches exact and composite untrusted/worker/fuzz/quarantine roles)
         let lower_role = role.to_ascii_lowercase();
         let lower_sink = target_sink.to_ascii_lowercase();
 
-        if (lower_role == "untrusted" || lower_role == "worker" || lower_role == "tainted")
+        if (lower_role.contains("untrusted")
+            || lower_role.contains("worker")
+            || lower_role.contains("tainted")
+            || lower_role.contains("fuzz")
+            || lower_role.contains("quarantine"))
             && (lower_sink.contains("ledger")
                 || lower_sink.contains("policy")
                 || lower_sink.contains("admin"))
@@ -227,6 +231,11 @@ impl AgentContainmentRing {
 
         // Monotonic epoch advancement
         self.agent_epochs.insert(agent_id.to_string(), new_epoch);
+
+        // Constant-time volatile scrub of compromised signing key via silicon-shield before rotation
+        if let Some(mut old_key_entry) = self.agent_keys.get_mut(agent_id) {
+            silicon_shield::SiliconIntegrityGuard::constant_time_scrub(&mut *old_key_entry);
+        }
 
         // Rotate signing key so compromised handles can no longer sign
         let mut new_key = [0u8; 32];

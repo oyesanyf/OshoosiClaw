@@ -74,31 +74,46 @@ pub fn restore_autoblock_rules() -> Result<usize> {
         Err(_) => return Ok(0),
     };
 
+    let original_len = rules.len();
+    let mut sanitized_rules = Vec::new();
     let mut count = 0;
     for rule in rules {
         match rule {
-            BlockedTarget::Program { path } => {
-                if block_process_network(None, Some(&path)).is_ok() {
+            BlockedTarget::Program { path: prog_path } => {
+                let norm = osoosi_types::normalize_nt_device_path(&prog_path);
+                if crate::blocking_manager::is_protected_or_benign_system_path(&norm) {
+                    continue;
+                }
+                sanitized_rules.push(BlockedTarget::Program {
+                    path: norm.clone(),
+                });
+                if block_process_network(None, Some(&norm)).is_ok() {
                     count += 1;
                 }
             }
-            BlockedTarget::DnsIps { prefix: _, ips } => {
-                // For DNS, the prefix is mostly used for naming. Re-applying as standard DNS block.
-                // Note: block_dns_destinations takes query_name/query_results, not raw IPs directly.
-                // We'll use a platform-specific raw IP block here to restore.
+            BlockedTarget::DnsIps { prefix, ips } => {
+                sanitized_rules.push(BlockedTarget::DnsIps {
+                    prefix: prefix.clone(),
+                    ips: ips.clone(),
+                });
                 #[cfg(target_os = "windows")]
                 {
-                    if let Ok(_) = block_windows_remote_ips("OpenOsoosi-DNS-Block", &ips) {
+                    if block_windows_remote_ips("OpenOsoosi-DNS-Block", &ips).is_ok() {
                         count += 1;
                     }
                 }
                 #[cfg(target_os = "linux")]
                 {
-                    if let Ok(_) = block_linux_remote_ips(&ips) {
+                    if block_linux_remote_ips(&ips).is_ok() {
                         count += 1;
                     }
                 }
             }
+        }
+    }
+    if sanitized_rules.len() != original_len {
+        if let Ok(json) = serde_json::to_string_pretty(&sanitized_rules) {
+            let _ = std::fs::write(&path, json);
         }
     }
     if count > 0 {
@@ -261,6 +276,86 @@ pub fn clear_firewall_persistence() -> Result<()> {
 
 /// Dynamically configure Windows Defender folder/process exclusions and Firewall rules for the installation directory.
 pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
+
+        let current_exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("osoosi.exe"));
+        let install_dir = current_exe
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        let clean_install_dir = install_dir
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_string();
+
+        // 0. Always pre-create required data directories in install_dir and grant permissions to Users
+        let subfolders = [
+            "database",
+            "logs",
+            "quarantine",
+            "runs",
+            "yara",
+            "models",
+            "config",
+        ];
+        for sub in &subfolders {
+            let sub_path = install_dir.join(sub);
+            let _ = std::fs::create_dir_all(&sub_path);
+        }
+        let icacls_exe = osoosi_types::resolve_system_binary("icacls.exe");
+        if icacls_exe.is_file() {
+            let mut perm_cmd = Command::new(&icacls_exe);
+            perm_cmd.stdout(std::process::Stdio::null());
+            perm_cmd.stderr(std::process::Stdio::null());
+            perm_cmd.creation_flags(0x08000000);
+            perm_cmd.args([
+                &clean_install_dir,
+                "/grant",
+                "*S-1-5-32-545:(OI)(CI)M",
+                "/T",
+                "/C",
+                "/Q",
+            ]);
+            let _ = timeout(Duration::from_secs(10), perm_cmd.status()).await;
+        }
+
+        // Ensure OsoosiEDR service interactive user start/stop ACLs are configured without forced auto-restart loops
+        let sc_exe = osoosi_types::resolve_system_binary("sc.exe");
+        if sc_exe.is_file() {
+            let mut fail_cmd = Command::new(&sc_exe);
+            fail_cmd.stdout(std::process::Stdio::null());
+            fail_cmd.stderr(std::process::Stdio::null());
+            fail_cmd.creation_flags(0x08000000);
+            fail_cmd.args([
+                "failure",
+                "OsoosiEDR",
+                "reset=",
+                "0",
+                "actions=",
+                "",
+            ]);
+            let _ = timeout(Duration::from_secs(5), fail_cmd.status()).await;
+
+            let mut sd_cmd = Command::new(&sc_exe);
+            sd_cmd.stdout(std::process::Stdio::null());
+            sd_cmd.stderr(std::process::Stdio::null());
+            sd_cmd.creation_flags(0x08000000);
+            sd_cmd.args([
+                "sdset",
+                "OsoosiEDR",
+                "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+            ]);
+            let _ = timeout(Duration::from_secs(5), sd_cmd.status()).await;
+        }
+    }
+
     let auto_fw = std::env::var("OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
@@ -297,38 +392,6 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             exe_path = %clean_exe_path,
             "Configuring Windows Firewall rules for mesh networking"
         );
-
-        // 0. Pre-create required data directories in install_dir and grant permissions to Users
-        let subfolders = [
-            "database",
-            "logs",
-            "quarantine",
-            "runs",
-            "yara",
-            "models",
-            "config",
-        ];
-        for sub in &subfolders {
-            let sub_path = install_dir.join(sub);
-            let _ = std::fs::create_dir_all(&sub_path);
-        }
-        let icacls_exe = osoosi_types::resolve_system_binary("icacls.exe");
-        if icacls_exe.is_file() {
-            let mut perm_cmd = Command::new(&icacls_exe);
-            perm_cmd.stdout(std::process::Stdio::null());
-            perm_cmd.stderr(std::process::Stdio::null());
-            #[cfg(windows)]
-            perm_cmd.creation_flags(0x08000000);
-            perm_cmd.args([
-                &clean_install_dir,
-                "/grant",
-                "*S-1-5-32-545:(OI)(CI)M",
-                "/T",
-                "/C",
-                "/Q",
-            ]);
-            let _ = timeout(Duration::from_secs(10), perm_cmd.status()).await;
-        }
 
         let netsh_exe = osoosi_types::resolve_system_binary("netsh.exe");
 
@@ -496,16 +559,25 @@ pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) 
         return Ok("Simulated network block (dry-run)".to_string());
     }
 
-    if is_program_in_allowlist(image_path) {
+    let normalized_img = image_path.map(osoosi_types::normalize_nt_device_path);
+    let norm_ref = normalized_img.as_deref();
+
+    if is_program_in_allowlist(norm_ref) {
         return Err(anyhow!(
             "Program in firewall allowlist, skipping block: {:?}",
-            image_path
+            norm_ref
         ));
     }
-    if let Some(img) = image_path {
-        if crate::system_check::is_administrative_lolbin(img) {
+    if let Some(img) = norm_ref {
+        if crate::system_check::is_administrative_lolbin(img)
+            || crate::blocking_manager::is_protected_or_benign_system_path(img)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(
+                process_id.unwrap_or(999_999),
+                img,
+            )
+        {
             return Err(anyhow!(
-                "Program is an administrative LOLBin or system utility, skipping permanent firewall block: {:?}",
+                "Program is a protected OS, shell, search, or trusted vendor binary, skipping permanent firewall block: {:?}",
                 img
             ));
         }
@@ -513,7 +585,7 @@ pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) 
     #[cfg(target_os = "windows")]
     {
         let _ = process_id;
-        block_windows_program(image_path)
+        block_windows_program(norm_ref)
     }
     #[cfg(target_os = "linux")]
     {
@@ -521,7 +593,7 @@ pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) 
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = (process_id, image_path);
+        let _ = (process_id, norm_ref);
         Err(anyhow!(
             "macOS process-scoped firewall auto-block is not implemented yet"
         ))
@@ -530,13 +602,22 @@ pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) 
 
 /// Applies a 'Ghost Tarpit' to a process, throttling its network to 8 bits/second.
 pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>) -> Result<String> {
-    if is_program_in_allowlist(image_path) {
+    let normalized_img = image_path.map(osoosi_types::normalize_nt_device_path);
+    let norm_ref = normalized_img.as_deref();
+
+    if is_program_in_allowlist(norm_ref) {
         return Err(anyhow!("Program in allowlist, cannot tarpit."));
     }
-    if let Some(img) = image_path {
-        if crate::system_check::is_administrative_lolbin(img) {
+    if let Some(img) = norm_ref {
+        if crate::system_check::is_administrative_lolbin(img)
+            || crate::blocking_manager::is_protected_or_benign_system_path(img)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(
+                process_id.unwrap_or(999_999),
+                img,
+            )
+        {
             return Err(anyhow!(
-                "Program is an administrative LOLBin or system utility, skipping image-based QoS tarpit: {:?}",
+                "Program is a protected OS, shell, search, or trusted vendor binary, skipping image-based QoS tarpit: {:?}",
                 img
             ));
         }
@@ -547,7 +628,7 @@ pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>)
         use winreg::enums::*;
         use winreg::RegKey;
 
-        let image = image_path.ok_or_else(|| anyhow!("Tarpit requires image path on Windows"))?;
+        let image = norm_ref.ok_or_else(|| anyhow!("Tarpit requires image path on Windows"))?;
         let name = format!("Osoosi-Tarpit-{:x}", process_id.unwrap_or(0));
 
         // Rustify: Use native registry QoS policy instead of powershell.exe
@@ -882,31 +963,57 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
     use std::collections::HashSet;
     #[allow(unused_imports)]
     use std::os::windows::process::CommandExt;
-    let mut show_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
-    #[cfg(windows)]
-    show_cmd.creation_flags(0x08000000);
-    let output = show_cmd
-        .args(["advfirewall", "firewall", "show", "rule", "name=all"])
-        .output()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
+
     let mut to_delete = HashSet::<String>::new();
-    for line in stdout.lines() {
-        if let Some(rest) = line.trim().strip_prefix("Rule Name:") {
-            let name = rest.trim();
-            if name.starts_with("OpenOsoosi-Block") || name.starts_with("OpenOsoosi-DNS-Block") {
-                to_delete.insert(name.to_string());
+
+    let path = firewall_persistence_path();
+    if let Ok(s) = std::fs::read_to_string(&path) {
+        if let Ok(rules) = serde_json::from_str::<Vec<BlockedTarget>>(&s) {
+            for r in rules {
+                match r {
+                    BlockedTarget::Program { path } => {
+                        let filename = std::path::Path::new(&path)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&path);
+                        to_delete.insert(format!("OpenOsoosi-Block-{}", filename));
+
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        std::hash::Hash::hash(&path.to_ascii_lowercase(), &mut hasher);
+                        let id = std::hash::Hasher::finish(&hasher);
+                        let rule_base = format!("OpenOsoosi-Block-{:x}", id);
+                        to_delete.insert(rule_base.clone());
+                        to_delete.insert(format!("{}-Out", rule_base));
+                        to_delete.insert(format!("{}-In", rule_base));
+                    }
+                    BlockedTarget::DnsIps { prefix, ips } => {
+                        to_delete.insert(format!("OpenOsoosi-DNS-Block-{}", prefix));
+                        let payload = ips.join(",");
+                        to_delete.insert(dns_rule_name(&prefix, &payload));
+                    }
+                }
             }
         }
     }
+
+    let _ = clear_firewall_persistence();
+    if to_delete.is_empty() {
+        return Ok(0);
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_millis(800);
     let mut removed = 0usize;
     for name in to_delete {
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
         let mut del_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
         del_cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         #[cfg(windows)]
         del_cmd.creation_flags(0x08000000);
-        let status = del_cmd
+        if let Ok(status) = del_cmd
             .args([
                 "advfirewall",
                 "firewall",
@@ -914,9 +1021,11 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
                 "rule",
                 &format!("name={}", name),
             ])
-            .status()?;
-        if status.success() {
-            removed += 1;
+            .status()
+        {
+            if status.success() {
+                removed += 1;
+            }
         }
     }
     Ok(removed)
@@ -960,12 +1069,41 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
         ));
     }
 
-    // Administrative session shield: If the PID is associated with sshd or ansible, refuse UID block.
-    if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
-        let cl_lower = cmdline.to_lowercase();
-        if cl_lower.contains("sshd") || cl_lower.contains("ansible") || cl_lower.contains("pts/") {
+    // Administrative & Desktop Shell shield: If the PID is associated with sshd, ansible, or a desktop/shell/search service, refuse UID block.
+    if let Ok(comm) = std::fs::read_to_string(format!("/proc/{}/comm", pid)) {
+        if osoosi_types::is_protected_os_shell_or_desktop_binary(comm.trim())
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(pid, comm.trim())
+        {
             return Err(anyhow!(
-                "Refusing to block UID {} for PID {} - administrative / SSH / Ansible session shield",
+                "Refusing to block UID {} for protected OS/desktop/search process PID {} ({})",
+                uid,
+                pid,
+                comm.trim()
+            ));
+        }
+    }
+    if let Ok(exe_path) = std::fs::read_link(format!("/proc/{}/exe", pid)) {
+        let exe_str = exe_path.to_string_lossy();
+        if osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
+            || crate::blocking_manager::is_protected_or_benign_system_path(&exe_str)
+        {
+            return Err(anyhow!(
+                "Refusing to block UID {} for protected binary PID {} ({})",
+                uid,
+                pid,
+                exe_str
+            ));
+        }
+    }
+    if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
+        let cl_lower = cmdline.replace('\0', " ").to_lowercase();
+        if cl_lower.contains("sshd")
+            || cl_lower.contains("ansible")
+            || cl_lower.contains("pts/")
+            || osoosi_types::is_protected_os_shell_or_desktop_binary(&cl_lower)
+        {
+            return Err(anyhow!(
+                "Refusing to block UID {} for PID {} - administrative / SSH / desktop session shield",
                 uid,
                 pid
             ));
@@ -1294,5 +1432,31 @@ mod tests {
     async fn test_open_mesh_ports() {
         let res = open_mesh_ports().await;
         assert!(res.is_ok(), "open_mesh_ports should succeed without error");
+    }
+
+    #[test]
+    fn test_block_and_tarpit_process_network_refuses_protected_os_shell_and_search_binaries() {
+        let protected_paths = [
+            r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe",
+            r"C:\Windows\System32\sihost.exe",
+            r"C:\Windows\explorer.exe",
+            r"C:\Windows\System32\SecurityHealthSystray.exe",
+            "/usr/bin/gnome-shell",
+            "/usr/libexec/tracker-miner-fs-3",
+            "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder",
+            "/System/Library/CoreServices/Spotlight.app/Contents/MacOS/Spotlight",
+        ];
+        for path in &protected_paths {
+            assert!(
+                block_process_network(Some(1234), Some(path)).is_err(),
+                "block_process_network must refuse protected OS/shell/search binary: {}",
+                path
+            );
+            assert!(
+                tarpit_process_network(Some(1234), Some(path)).is_err(),
+                "tarpit_process_network must refuse protected OS/shell/search binary: {}",
+                path
+            );
+        }
     }
 }
