@@ -84,7 +84,7 @@ jobs:
           }
 
       - name: Upload Windows Artifacts
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: osoosi-windows-x64
           path: |
@@ -133,14 +133,14 @@ jobs:
           bash packaging/linux/build_packages.sh target/release/osoosi "${VERSION}" amd64 dist-linux-x64
 
       - name: Upload Linux Binary
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: osoosi-linux-x64-binary
           path: target/release/osoosi
           if-no-files-found: error
 
       - name: Upload Linux x64 packages
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: osoosi-linux-x64-packages
           path: dist-linux-x64/*
@@ -184,7 +184,7 @@ jobs:
           bash packaging/linux/build_packages.sh target/aarch64-unknown-linux-musl/release/osoosi "${VERSION}" arm64 dist-linux-arm64
 
       - name: Upload Linux ARM64 packages
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: osoosi-linux-arm64-packages
           path: dist-linux-arm64/*
