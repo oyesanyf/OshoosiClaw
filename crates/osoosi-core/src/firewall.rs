@@ -361,6 +361,19 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             ]);
             let _ = timeout(Duration::from_secs(5), sd_cmd.status()).await;
         }
+
+        // Proactively purge any lingering IFEO Debugger hijacks and protected/duplicate/orphaned
+        // Windows Firewall auto-block registry entries in the background on service startup.
+        std::thread::spawn(|| {
+            let _ = osoosi_types::purge_ifeo_systray_debugger_hooks_native();
+            let purged = purge_windows_firewall_autoblock_rules_native(false);
+            if purged > 0 {
+                tracing::info!(
+                    "Background startup sweep purged {} Windows Firewall auto-block rule(s).",
+                    purged
+                );
+            }
+        });
     }
 
     let auto_fw = std::env::var("OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL")
@@ -840,6 +853,16 @@ pub fn purge_windows_firewall_autoblock_rules_native(purge_all: bool) -> usize {
         if let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ | KEY_WRITE) {
             let mut to_delete = Vec::<String>::new();
             let mut seen_rules = HashSet::<(String, String)>::new();
+            let persisted_empty = if !purge_all {
+                let path = firewall_persistence_path();
+                std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<Vec<BlockedTarget>>(&s).ok())
+                    .map(|v| v.is_empty())
+                    .unwrap_or(true)
+            } else {
+                true
+            };
 
             for (val_name, reg_val) in fw_key.enum_values().flatten() {
                 let Ok(val_str) = String::from_reg_value(&reg_val) else {
@@ -854,7 +877,7 @@ pub fn purge_windows_firewall_autoblock_rules_native(purge_all: bool) -> usize {
                     continue;
                 }
 
-                if purge_all {
+                if purge_all || persisted_empty {
                     to_delete.push(val_name);
                     continue;
                 }
@@ -889,7 +912,11 @@ pub fn purge_windows_firewall_autoblock_rules_native(purge_all: bool) -> usize {
                 }
             }
 
-            for val_name in to_delete {
+            let start = std::time::Instant::now();
+            for val_name in to_delete.into_iter().rev() {
+                if purge_all && start.elapsed() > std::time::Duration::from_millis(500) {
+                    break;
+                }
                 if fw_key.delete_value(&val_name).is_ok() {
                     removed += 1;
                 }

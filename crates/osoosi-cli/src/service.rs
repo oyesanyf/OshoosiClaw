@@ -659,14 +659,14 @@ pub fn stop_service() -> anyhow::Result<()> {
             if status.contains("STOPPED")
                 && (status.contains("PID                : 0") || !status.contains("PID"))
             {
-                cleanup_stale_service_processes();
-                let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
-                let _ = osoosi_core::firewall::remove_all_autoblock_rules();
+                if osoosi_types::is_elevated() {
+                    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+                }
                 println!("Service '{}' is now STOPPED.", SERVICE_NAME);
                 return Ok(());
             }
         }
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(80));
     }
 
     if let Ok(status) = query_service_state() {
@@ -1016,8 +1016,10 @@ mod win_scm {
                 let _ = SetServiceStatus(handle, &status);
                 notify_service_stop();
                 std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(1500));
-                    let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+                    std::thread::sleep(Duration::from_millis(1200));
+                    if !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst) {
+                        let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+                    }
                     let h_raw = GLOBAL_SERVICE_HANDLE_RAW.load(Ordering::SeqCst);
                     if h_raw != 0 {
                         let h = SERVICE_STATUS_HANDLE(h_raw as *mut std::ffi::c_void);
@@ -1032,6 +1034,7 @@ mod win_scm {
                         };
                         let _ = SetServiceStatus(h, &stopped);
                     }
+                    std::thread::sleep(Duration::from_millis(50));
                     std::process::exit(0);
                 });
                 NO_ERROR.0
@@ -1116,7 +1119,7 @@ mod win_scm {
 
         // Wait until service stop is triggered
         while !SERVICE_STOP_FLAG.load(Ordering::SeqCst) {
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(Duration::from_millis(50));
         }
 
         // 3. Report SERVICE_STOP_PENDING
@@ -1126,20 +1129,23 @@ mod win_scm {
         status.dwWaitHint = 2000;
         let _ = SetServiceStatus(handle, &status);
 
-        // Wait up to 800ms for daemon async cleanup to signal completion
+        // Wait up to 400ms for daemon async cleanup to signal completion
         let shutdown_start = std::time::Instant::now();
         let mut checkpoint = 1;
         while !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst)
-            && shutdown_start.elapsed() < Duration::from_millis(800)
+            && shutdown_start.elapsed() < Duration::from_millis(400)
         {
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(50));
             checkpoint += 1;
             status.dwCheckPoint = checkpoint;
             let _ = SetServiceStatus(handle, &status);
         }
 
         // 4. Disarm host isolation and unfreeze processes before reporting SERVICE_STOPPED
-        let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+        if !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst) {
+            let _ = osoosi_core::killchain::execute_host_disarm_unauthenticated();
+            SERVICE_SHUTDOWN_DONE.store(true, Ordering::SeqCst);
+        }
 
         // Report SERVICE_STOPPED
         status.dwCurrentState = SERVICE_STOPPED;
@@ -1149,6 +1155,7 @@ mod win_scm {
         let _ = SetServiceStatus(handle, &status);
 
         info!("OsoosiEDR Windows Service has stopped.");
+        std::thread::sleep(Duration::from_millis(50));
         std::process::exit(0);
     }
 
