@@ -16,6 +16,8 @@
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::manual_flatten)]
 
+pub use osoosi_audit;
+
 pub mod attack_graph;
 pub mod backup;
 pub mod baseline;
@@ -3388,11 +3390,10 @@ impl EdrOrchestrator {
         let has_smollm = smollm_dir.join("config.json").exists()
             && smollm_dir.join("model.safetensors").exists()
             && smollm_dir.join("tokenizer.json").exists();
-        let behavioral_engine = if has_smollm
-            || std::env::var("OSOOSI_ENABLE_SMOLLM")
-                .map(|v| v == "1")
-                .unwrap_or(false)
-        {
+        let enable_smollm = std::env::var("OSOOSI_ENABLE_SMOLLM")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let behavioral_engine = if enable_smollm && has_smollm {
             match osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir) {
                 Ok(a) => {
                     info!("Native SmolLM analyzer loaded from {:?}.", smollm_dir);
@@ -3916,6 +3917,8 @@ impl EdrOrchestrator {
         tokio::spawn(
             crate::log_retention::LogRetentionManager::start_retention_loop(log_dir, log_cfg),
         );
+
+        osoosi_model::malware::trim_working_set_after_init();
 
         Ok(orch)
     }
@@ -7004,6 +7007,93 @@ impl EdrOrchestrator {
         if osoosi_telemetry::canary::is_canary_event(&event) {
             let mut correlator = self.canary_correlator.lock().await;
             osoosi_telemetry::canary::inspect_event_for_canary(&mut correlator, &event);
+            return Ok(());
+        }
+
+        // Dual-Stage 5-Sigma Frozen Process Forensic Snapshot (Event ID 9995):
+        // Synthesize multi-token YARA-X signature from extracted in-memory payload
+        // and broadcast signed IOC to the P2P/Nostr mesh.
+        if event.event_id == 9995
+            || event
+                .data
+                .get("EventName")
+                .and_then(|v| v.as_str())
+                == Some("Frozen5SigmaForensicSnapshot")
+        {
+            let snap_pid = event
+                .data
+                .get("ProcessId")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            let comm = event
+                .data
+                .get("CommandLine")
+                .or_else(|| event.data.get("Image"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            let rip_hex = event
+                .data
+                .get("RipHex")
+                .and_then(|v| v.as_str())
+                .unwrap_or("0x0");
+            let payload_sha256 = event
+                .data
+                .get("PayloadSha256")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sigma_score = event
+                .data
+                .get("SigmaScore")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(5.0);
+            let payload_hex = event
+                .data
+                .get("PayloadHex")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+
+            let mut synthesized_yara = None;
+            if !payload_hex.is_empty() {
+                if let Ok(payload_bytes) = hex::decode(payload_hex) {
+                    synthesized_yara = crate::rea::synthesize_yara_from_raw_payload(
+                        &format!("frozen_pid_{}_{}", snap_pid, comm),
+                        &payload_bytes,
+                        format!("five_sigma_kernel_quarantine:z={:.2}:rip={}", sigma_score, rip_hex),
+                    );
+                    std::mem::drop(payload_bytes);
+                }
+            }
+
+            let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+            sig.confidence = 0.99;
+            sig.process_name = Some(comm.to_string());
+            sig.mitre_technique = Some("T1055".to_string());
+            sig.mitre_technique_name = Some("Process Injection / 5-Sigma Memory Anomaly".to_string());
+            sig.mitre_tactic = Some("Defense Evasion".to_string());
+            sig.recommended_action = ResponseAction::Isolate;
+            sig.action_state = osoosi_types::ActionState::Executed;
+            if !payload_sha256.is_empty() {
+                sig.hash_blake3 = Some(payload_sha256.to_string());
+                self.memory.mark_hash_known_malicious(payload_sha256);
+            }
+            sig.add_reason(format!(
+                "Dual-Stage 5-Sigma Kernel Quarantine + Cgroup v2 Freeze (PID={}, comm={}, RIP={}, z={:.2}σ, sha256={})",
+                snap_pid, comm, rip_hex, sigma_score, payload_sha256
+            ));
+            self.privacy.protect_signature(&mut sig);
+            let _ = self.memory.log_threat(&sig);
+            self.audit.log(
+                "FIVE_SIGMA_FORENSIC_SNAPSHOT",
+                serde_json::json!({
+                    "pid": snap_pid,
+                    "comm": comm,
+                    "rip_hex": rip_hex,
+                    "payload_sha256": payload_sha256,
+                    "sigma_score": sigma_score,
+                    "yara_synthesized": synthesized_yara.is_some(),
+                }),
+            );
+            self.broadcast_threat_to_mesh(sig).await;
             return Ok(());
         }
 

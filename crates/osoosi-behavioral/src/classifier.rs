@@ -118,23 +118,23 @@ impl BehavioralClassifier {
                     }
                 }
 
-                // 2. SmolLM
-                let smollm_dir = Path::new(&models_dir_clone).join("smollm");
-                let has_smollm = smollm_dir.join("config.json").exists()
-                    && smollm_dir.join("model.safetensors").exists()
-                    && smollm_dir.join("tokenizer.json").exists();
-                if has_smollm {
-                    if let Ok(s) = SmolLMAnalyzer::new(&smollm_dir) {
-                        let mut guard = smollm_clone.write().await;
-                        *guard = Some(Arc::new(s));
-                        info!("BehavioralClassifier: SmolLM tier active.");
-                        ai_loaded = true;
-                    }
-                } else if std::env::var("OSOOSI_ENABLE_SMOLLM")
-                    .map(|v| v == "1")
-                    .unwrap_or(false)
-                {
-                    if osoosi_types::is_model_provisioning() {
+                // 2. SmolLM (540MB FP32 safetensors — opt-in via OSOOSI_ENABLE_SMOLLM=1)
+                let enable_smollm = std::env::var("OSOOSI_ENABLE_SMOLLM")
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                if enable_smollm {
+                    let smollm_dir = Path::new(&models_dir_clone).join("smollm");
+                    let has_smollm = smollm_dir.join("config.json").exists()
+                        && smollm_dir.join("model.safetensors").exists()
+                        && smollm_dir.join("tokenizer.json").exists();
+                    if has_smollm {
+                        if let Ok(s) = SmolLMAnalyzer::new(&smollm_dir) {
+                            let mut guard = smollm_clone.write().await;
+                            *guard = Some(Arc::new(s));
+                            info!("BehavioralClassifier: SmolLM tier active.");
+                            ai_loaded = true;
+                        }
+                    } else if osoosi_types::is_model_provisioning() {
                         info!("BehavioralClassifier: SmolLM model files are currently downloading in background.");
                     } else {
                         debug!(

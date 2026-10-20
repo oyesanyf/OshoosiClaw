@@ -1,7 +1,7 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 use candle_transformers::generation::LogitsProcessor;
-use candle_transformers::models::bert::{BertModel, Config as BertConfig};
+use candle_transformers::models::bert::BertModel;
 use candle_transformers::models::llama::{
     Cache, Config as LlamaConfig, Llama as Model, LlamaEosToks,
 };
@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Strip DeepSeek R1 thinking traces from LLM output.
 /// Handles both formats:
@@ -337,11 +337,52 @@ impl Clone for Gemma4Analyzer {
     }
 }
 
+static GLOBAL_GEMMA4_ANALYZER: std::sync::OnceLock<Gemma4Analyzer> = std::sync::OnceLock::new();
+
 impl Gemma4Analyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing LLM Cortex from {:?}...", model_dir);
-        // We only consider the local directory 'resolved' if the main model AND shards are present.
-        // Gemma-4 typically uses 'model.onnx' or 'decoder_model_merged.onnx' as a manifest.
+        if let Some(existing) = GLOBAL_GEMMA4_ANALYZER.get() {
+            return Ok(existing.clone());
+        }
+
+        let eager_in_process = std::env::var("OSOOSI_EAGER_GEMMA_ONNX")
+            .or_else(|_| std::env::var("OSOOSI_FORCE_GEMMA_ONNX"))
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        let ai_cfg = osoosi_types::config::load_ai_config();
+
+        // By default, route LLM Cortex reasoning through the out-of-process Ollama / OpenJEV HTTP
+        // engine rather than mapping 13.32 GB of multi-shard ONNX/GGUF weights into osoosi.exe RAM.
+        if !eager_in_process {
+            let res = crate::hardware_selection::get_system_resources();
+            let installed =
+                crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+            let opt = crate::hardware_selection::select_optimal_models(
+                &res,
+                &installed,
+                &ai_cfg.reasoning_model,
+                &ai_cfg.foundation_sec_model,
+            );
+            let selected_fast_model = if !opt.fast_model.is_empty() {
+                opt.fast_model
+            } else {
+                ai_cfg.reasoning_model.clone()
+            };
+            info!(
+                "LLM Cortex initialized in low-memory Ollama mode ({} -> {}) [set OSOOSI_EAGER_GEMMA_ONNX=1 for in-process 13GB ONNX].",
+                ai_cfg.reasoning_url, selected_fast_model
+            );
+            let analyzer = Self::Ollama {
+                client: reqwest::Client::new(),
+                model: selected_fast_model,
+                endpoint: ai_cfg.reasoning_url,
+            };
+            let _ = GLOBAL_GEMMA4_ANALYZER.set(analyzer.clone());
+            return Ok(analyzer);
+        }
+
+        info!("Initializing in-process LLM Cortex from {:?}...", model_dir);
         let has_model = model_dir.join("model.onnx").exists()
             || model_dir.join("decoder_model_merged.onnx").exists();
         let has_shards = model_dir.join("decoder_model_merged.onnx_data_1").exists();
@@ -352,7 +393,6 @@ impl Gemma4Analyzer {
         {
             model_dir.to_path_buf()
         } else {
-            // HF Snapshot Discovery for Gemma-4
             let parent = model_dir.parent().unwrap_or(model_dir);
             let hf_dir = parent
                 .join("models--onnx-community--gemma-4-E4B-it-ONNX")
@@ -390,46 +430,19 @@ impl Gemma4Analyzer {
             resolved_dir.join("tokenizer.json")
         };
 
-        // Deploy Shards and Data Files (Ensures ONNX External Data references are maintained)
-        let _ = std::fs::create_dir_all(model_dir);
-        let mut shards_deployed = 0;
-
-        for i in 1..20 {
-            let shard_name = format!("decoder_model_merged.onnx_data_{}", i);
-            let src = resolved_dir.join(&shard_name);
-            let dst = model_dir.join(&shard_name);
-            if src.exists() && !dst.exists() {
-                if std::fs::copy(&src, &dst).is_ok() {
-                    shards_deployed += 1;
-                }
-            } else if dst.exists() {
-                shards_deployed += 1;
-            }
-        }
-
-        if shards_deployed > 0 {
-            info!(
-                "Deployed {} ONNX shards to {:?}",
-                shards_deployed, model_dir
-            );
-        }
-
-        let main_data_src = resolved_dir.join("decoder_model_merged.onnx_data");
-        let main_data_dst = model_dir.join("decoder_model_merged.onnx_data");
-        if main_data_src.exists() && !main_data_dst.exists() {
-            let _ = std::fs::copy(&main_data_src, &main_data_dst);
-        }
-
-        // Co-locate ONNX manifest with data
-        let target_onnx = model_dir.join(onnx_src.file_name().unwrap_or_default());
-        if !target_onnx.exists() && onnx_src.exists() {
-            let _ = std::fs::copy(&onnx_src, &target_onnx);
-        }
+        let target_onnx = if model_dir.join(onnx_src.file_name().unwrap_or_default()).exists() {
+            model_dir.join(onnx_src.file_name().unwrap_or_default())
+        } else {
+            onnx_src.clone()
+        };
 
         let mut all_shards_present = true;
         for i in 1..=8 {
-            let shard = model_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
-            if !shard.exists() || std::fs::metadata(&shard).map(|m| m.len()).unwrap_or(0) == 0 {
+            let shard_m = model_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
+            let shard_r = resolved_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
+            let ok_m = shard_m.exists() && std::fs::metadata(&shard_m).map(|m| m.len()).unwrap_or(0) > 0;
+            let ok_r = shard_r.exists() && std::fs::metadata(&shard_r).map(|m| m.len()).unwrap_or(0) > 0;
+            if !ok_m && !ok_r {
                 all_shards_present = false;
                 break;
             }
@@ -463,29 +476,13 @@ impl Gemma4Analyzer {
             && weights_ready
             && tokenizer_exists;
 
-        if !onnx_viable {
-            if is_decoder_merged && !weights_ready {
-                if osoosi_types::is_model_provisioning() || target_onnx.exists() {
-                    info!(
-                        "Gemma 4 ONNX shards are still provisioning/downloading in background. Engaging reasoning fallback."
-                    );
-                } else {
-                    info!(
-                        "Gemma 4 ONNX external weights not yet available in {:?}.",
-                        model_dir
-                    );
-                }
-            } else if !tokenizer_exists {
-                info!("Gemma 4 tokenizer.json not found in {:?}.", model_dir);
-            }
-        }
-
         if onnx_viable {
             match (|| -> Result<Self> {
                 let tokenizer = Tokenizer::from_file(&tokenizer_src).map_err(anyhow::Error::msg)?;
                 let session = Session::builder()?
-                    .with_optimization_level(GraphOptimizationLevel::Level3)?
+                    .with_optimization_level(GraphOptimizationLevel::Level1)?
                     .with_intra_threads(1)?
+                    .with_inter_threads(1)?
                     .commit_from_file(&target_onnx)?;
 
                 Ok(Self::Onnx {
@@ -494,81 +491,16 @@ impl Gemma4Analyzer {
                     device: Device::Cpu,
                 })
             })() {
-                Ok(s) => return Ok(s),
-                Err(e) => {
-                    if osoosi_types::is_model_provisioning() {
-                        info!(
-                            "Gemma ONNX load pending: {}. Waiting for provisioning to complete.",
-                            e
-                        );
-                    } else {
-                        warn!("Gemma ONNX init failed: {}. Falling back.", e);
-                    }
-                }
-            }
-        }
-
-        let ai_cfg = osoosi_types::config::load_ai_config();
-        let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
-        let has_gpu = device.is_cuda();
-        info!("AI device detection: {:?} (GPU: {})", device, has_gpu);
-
-        // Priority 1: Native GGUF via Candle — ONLY if GPU available (CPU is too slow)
-        if has_gpu {
-            if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
-                info!("CUDA GPU detected! Loading GGUF model natively via Candle...");
-                match load_native_gguf(&gguf_path) {
-                    Ok((model, tokenizer)) => {
-                        info!("Native GGUF model loaded on GPU. Ollama is NOT required.");
-                        return Ok(Self::NativeGGUF {
-                            model: Arc::new(Mutex::new(model)),
-                            tokenizer,
-                            device,
-                        });
-                    }
-                    Err(e) => {
-                        warn!("Native GGUF GPU loading failed: {}. Trying Ollama.", e);
-                    }
-                }
-            }
-        }
-
-        // Priority 2: Native GGUF on CPU (last resort, slow but functional)
-        if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
-            warn!("No GPU. Loading GGUF natively on CPU (will be slow)...");
-            match load_native_gguf(&gguf_path) {
-                Ok((model, tokenizer)) => {
-                    return Ok(Self::NativeGGUF {
-                        model: Arc::new(Mutex::new(model)),
-                        tokenizer,
-                        device: Device::Cpu,
-                    });
+                Ok(s) => {
+                    let _ = GLOBAL_GEMMA4_ANALYZER.set(s.clone());
+                    return Ok(s);
                 }
                 Err(e) => {
-                    warn!("Native GGUF loading failed: {}.", e);
+                    warn!("Gemma ONNX init failed: {}. Falling back.", e);
                 }
             }
         }
 
-        // Priority 3: Candle/Transformer safetensors fallback
-        let has_safetensors = model_dir.join("model.safetensors").exists()
-            || resolved_dir.join("model.safetensors").exists()
-            || model_dir.join("onnx").join("model.safetensors").exists();
-        if has_safetensors {
-            info!("Attempting native transformer fallback (Candle)...");
-            match SecurityJudge::new(model_dir) {
-                Ok(judge) => return Ok(Self::Candle(judge)),
-                Err(e) => {
-                    if osoosi_types::is_model_provisioning() {
-                        debug!("Candle fallback skipped: {}", e);
-                    } else {
-                        warn!("Candle fallback failed: {}", e);
-                    }
-                }
-            }
-        }
-
-        // Priority 4: Ollama API (The "add back Ollama" request)
         let res = crate::hardware_selection::get_system_resources();
         let installed =
             crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
@@ -587,11 +519,13 @@ impl Gemma4Analyzer {
             "Engaging Ollama reasoning fallback at {} with hardware-selected fast model {}...",
             ai_cfg.reasoning_url, selected_fast_model
         );
-        Ok(Self::Ollama {
+        let analyzer = Self::Ollama {
             client: reqwest::Client::new(),
             model: selected_fast_model,
             endpoint: ai_cfg.reasoning_url,
-        })
+        };
+        let _ = GLOBAL_GEMMA4_ANALYZER.set(analyzer.clone());
+        Ok(analyzer)
     }
 
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
@@ -993,7 +927,7 @@ fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
 }
 
 /// SecureBERT Analyzer — security-domain encoder for log classification.
-/// Primary: ONNX Runtime (model.onnx). Fallback: Candle safetensors.
+/// Primary: Low-memory Tokenized Subword Security Encoder (or full ONNX Runtime when `OSOOSI_EAGER_SECUREBERT_ONNX=1`).
 pub enum SecureBertAnalyzer {
     Onnx {
         session: Mutex<Session>,
@@ -1004,6 +938,9 @@ pub enum SecureBertAnalyzer {
         tokenizer: Tokenizer,
         device: Device,
     },
+    TokenizedEncoder {
+        tokenizer: Tokenizer,
+    },
 }
 
 impl SecureBertAnalyzer {
@@ -1013,7 +950,6 @@ impl SecureBertAnalyzer {
         let resolved_dir = if model_dir.exists() && model_dir.join("tokenizer.json").exists() {
             model_dir.to_path_buf()
         } else {
-            // HF Snapshot Discovery for SecureBERT
             let parent = model_dir.parent().unwrap_or(model_dir);
             let hf_dir = parent
                 .join("models--MarsSecurity--securebert-onnx")
@@ -1039,19 +975,10 @@ impl SecureBertAnalyzer {
 
         let onnx_src = resolved_dir.join("model.onnx");
         let tokenizer_src = resolved_dir.join("tokenizer.json");
-        let _config_src = resolved_dir.join("config.json");
-
-        // Co-locate if necessary
         let target_onnx = model_dir.join("model.onnx");
         let target_tokenizer = model_dir.join("tokenizer.json");
-        let _target_config = model_dir.join("config.json");
 
-        for f in [
-            "model.onnx",
-            "tokenizer.json",
-            "config.json",
-            "model.safetensors",
-        ] {
+        for f in ["tokenizer.json", "config.json"] {
             let src = resolved_dir.join(f);
             let dst = model_dir.join(f);
             if src.exists() && !dst.exists() {
@@ -1074,7 +1001,18 @@ impl SecureBertAnalyzer {
         let _ = sanitize_tokenizer_json(&final_tokenizer_path);
         let tokenizer = Tokenizer::from_file(&final_tokenizer_path).map_err(anyhow::Error::msg)?;
 
-        // Try ONNX first
+        let eager_onnx = std::env::var("OSOOSI_EAGER_SECUREBERT_ONNX")
+            .or_else(|_| std::env::var("OSOOSI_FORCE_GEMMA_ONNX"))
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if !eager_onnx {
+            info!(
+                "SecureBERT initialized in low-memory TokenizedEncoder mode [set OSOOSI_EAGER_SECUREBERT_ONNX=1 for 500MB FP32 ONNX]."
+            );
+            return Ok(Self::TokenizedEncoder { tokenizer });
+        }
+
         let final_onnx_path = if target_onnx.exists() {
             target_onnx
         } else {
@@ -1085,41 +1023,10 @@ impl SecureBertAnalyzer {
                 .map(|m| m.len())
                 .unwrap_or(0);
             if sz > 10_000_000 {
-                let mut sys = sysinfo::System::new();
-                sys.refresh_memory();
-                let avail_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-                if avail_gb < 3.5
-                    && !std::env::var("OSOOSI_FORCE_GEMMA_ONNX")
-                        .map(|v| v == "1")
-                        .unwrap_or(false)
-                {
-                    anyhow::bail!("Available RAM ({:.1} GB) below 3.5 GB threshold. Skipping SecureBERT ONNX session to prevent memory exhaustion.", avail_gb);
-                }
-
-                // Verify file can be opened with read sharing
-                let mut retries = 0;
-                let mut opened = false;
-                while retries < 3 {
-                    match std::fs::File::open(&final_onnx_path) {
-                        Ok(_) => {
-                            opened = true;
-                            break;
-                        }
-                        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-                            warn!("SecureBERT file lock / sharing contention on {:?} (attempt {}/3): {}. Retrying in 500ms...", final_onnx_path, retries + 1, e);
-                            std::thread::sleep(std::time::Duration::from_millis(500));
-                            retries += 1;
-                        }
-                        Err(e) => anyhow::bail!("Failed to access SecureBERT ONNX file: {}", e),
-                    }
-                }
-                if !opened {
-                    anyhow::bail!("SecureBERT ONNX file locked after 3 attempts (sharing violation / Error 13): {:?}", final_onnx_path);
-                }
-
                 let session = Session::builder()?
-                    .with_optimization_level(GraphOptimizationLevel::Level3)?
+                    .with_optimization_level(GraphOptimizationLevel::Level1)?
                     .with_intra_threads(1)?
+                    .with_inter_threads(1)?
                     .commit_from_file(&final_onnx_path);
 
                 match session {
@@ -1134,50 +1041,13 @@ impl SecureBertAnalyzer {
                         });
                     }
                     Err(e) => {
-                        let err_str = e.to_string();
-                        if err_str.contains("13")
-                            || err_str.contains("AccessDenied")
-                            || err_str.to_lowercase().contains("sharing violation")
-                        {
-                            warn!("SecureBERT ONNX file lock / permission error 13: {}. Falling back gracefully.", err_str);
-                        } else {
-                            error!(
-                                "SecureBERT ONNX init failed: {}. Path: {:?}",
-                                err_str, final_onnx_path
-                            );
-                            warn!("SecureBERT ONNX init failed: {}. Trying Candle.", err_str);
-                        }
+                        warn!("SecureBERT ONNX init failed: {}. Falling back to TokenizedEncoder.", e);
                     }
                 }
             }
         }
 
-        // Fallback: Candle safetensors
-        let config_path = resolved_dir.join("config.json");
-        let weights_path = resolved_dir.join("model.safetensors");
-        if config_path.exists() && weights_path.exists() {
-            let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
-            let config: BertConfig = serde_json::from_reader(std::fs::File::open(&config_path)?)?;
-            let vb = unsafe {
-                candle_nn::VarBuilder::from_mmaped_safetensors(
-                    &[&weights_path],
-                    candle_core::DType::F32,
-                    &device,
-                )?
-            };
-            let model = BertModel::load(vb, &config)?;
-            info!("SecureBERT Candle loaded successfully.");
-            return Ok(Self::Candle {
-                model,
-                tokenizer,
-                device,
-            });
-        }
-
-        anyhow::bail!(
-            "SecureBERT not found. Need model.onnx or (model.safetensors + config.json) in {:?}",
-            model_dir
-        )
+        Ok(Self::TokenizedEncoder { tokenizer })
     }
 
     /// Score the relationship between a query and context.
@@ -1224,6 +1094,46 @@ impl SecureBertAnalyzer {
                 let score = logits.flatten_all()?.to_vec1::<f32>()?[0];
                 let probability = 1.0 / (1.0 + (-score).exp());
                 Ok(probability)
+            }
+            Self::TokenizedEncoder { tokenizer } => {
+                let q_enc = tokenizer.encode(query, false).map_err(anyhow::Error::msg)?;
+                let c_enc = tokenizer
+                    .encode(context, false)
+                    .map_err(anyhow::Error::msg)?;
+                let q_ids = q_enc.get_ids();
+                let c_ids = c_enc.get_ids();
+                if q_ids.is_empty() || c_ids.is_empty() {
+                    return Ok(0.05);
+                }
+                let mut q_counts = std::collections::HashMap::with_capacity(q_ids.len());
+                for &id in q_ids {
+                    if id > 3 {
+                        *q_counts.entry(id).or_insert(0.0f32) += 1.0;
+                    }
+                }
+                let mut c_counts = std::collections::HashMap::with_capacity(c_ids.len());
+                for &id in c_ids {
+                    if id > 3 {
+                        *c_counts.entry(id).or_insert(0.0f32) += 1.0;
+                    }
+                }
+                let mut dot = 0.0f32;
+                let mut norm_q = 0.0f32;
+                let mut norm_c = 0.0f32;
+                for (&id, &qv) in &q_counts {
+                    norm_q += qv * qv;
+                    if let Some(&cv) = c_counts.get(&id) {
+                        dot += qv * cv;
+                    }
+                }
+                for &cv in c_counts.values() {
+                    norm_c += cv * cv;
+                }
+                std::mem::drop(q_counts);
+                std::mem::drop(c_counts);
+                let denom = (norm_q.sqrt() * norm_c.sqrt()).max(1e-6);
+                let cosine = (dot / denom).clamp(0.0, 1.0);
+                Ok((0.10 + 0.85 * cosine).clamp(0.0, 1.0))
             }
         }
     }
@@ -1465,7 +1375,9 @@ impl FoundationSecAnalyzer {
         if onnx_src.exists() && tokenizer_src.exists() {
             let tokenizer = Tokenizer::from_file(&tokenizer_src).map_err(anyhow::Error::msg)?;
             let session = Session::builder()?
-                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_optimization_level(GraphOptimizationLevel::Level1)?
+                .with_intra_threads(1)?
+                .with_inter_threads(1)?
                 .commit_from_file(&onnx_src)?;
 
             return Ok(Self::Onnx {

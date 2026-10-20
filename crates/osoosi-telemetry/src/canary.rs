@@ -746,11 +746,18 @@ pub struct AxionCanaryTripVerdict {
 /// Event-driven registry of synthetic credentials, ghost nodes, and unreferenced shadow pages.
 ///
 /// Consumes zero CPU cycles while at rest; evaluates only when invoked by an eBPF / kernel / file / memory callback.
+/// Uses an explicit 4096-byte hardware page-aligned allocation (`std::alloc::Layout::from_size_align(4096, 4096)`)
+/// and a custom `Drop` implementation that volatile-zeroes the canary marker before calling `std::alloc::dealloc`.
 pub struct AxionCanaryTrapRegistry {
     traps: std::sync::RwLock<Vec<AxionDecoyTrap>>,
-    /// Backing allocation for the unreferenced shadow page so its virtual address remains valid for process lifetime.
-    _shadow_allocation: Box<[u8; 4096]>,
+    /// Hardware page-aligned (4096-byte boundary) backing allocation for the unreferenced shadow page.
+    shadow_ptr: std::ptr::NonNull<u8>,
 }
+
+// SAFETY: `shadow_ptr` points to an immutable 4096-byte page-aligned heap region owned exclusively by
+// `AxionCanaryTrapRegistry` for its lifetime and only deallocated inside `Drop::drop(&mut self)`.
+unsafe impl Send for AxionCanaryTrapRegistry {}
+unsafe impl Sync for AxionCanaryTrapRegistry {}
 
 impl Default for AxionCanaryTrapRegistry {
     fn default() -> Self {
@@ -759,14 +766,29 @@ impl Default for AxionCanaryTrapRegistry {
 }
 
 impl AxionCanaryTrapRegistry {
-    pub fn new() -> Self {
-        let mut shadow_box = Box::new([0u8; 4096]);
-        // Seed deterministic BLAKE3 marker inside the unreferenced shadow page
-        let marker = blake3::hash(b"OSOOSI_AXION_UNREFERENCED_SHADOW_PAGE_V1");
-        shadow_box[..32].copy_from_slice(marker.as_bytes());
-        let shadow_base = shadow_box.as_ptr() as usize;
+    pub const SHADOW_PAGE_SIZE: usize = 4096;
+    pub const SHADOW_PAGE_ALIGN: usize = 4096;
 
-        let initial_traps = vec![
+    pub fn new() -> Self {
+        let layout =
+            std::alloc::Layout::from_size_align(Self::SHADOW_PAGE_SIZE, Self::SHADOW_PAGE_ALIGN)
+                .expect("valid 4096-byte page-aligned layout");
+        // SAFETY: `layout` has non-zero size (4096) and power-of-two alignment (4096).
+        let raw_ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        let shadow_ptr = match std::ptr::NonNull::new(raw_ptr) {
+            Some(p) => p,
+            None => std::alloc::handle_alloc_error(layout),
+        };
+
+        // Seed deterministic BLAKE3 marker inside the 4096-byte page-aligned unreferenced shadow page
+        let marker = blake3::hash(b"OSOOSI_AXION_UNREFERENCED_SHADOW_PAGE_V1");
+        unsafe {
+            std::ptr::copy_nonoverlapping(marker.as_bytes().as_ptr(), shadow_ptr.as_ptr(), 32);
+        }
+        let shadow_base = shadow_ptr.as_ptr() as usize;
+
+        let mut initial_traps = Vec::with_capacity(8);
+        initial_traps.extend([
             AxionDecoyTrap {
                 trap_id: "axion-cred-aws-honey-01".to_string(),
                 kind: AxionDecoyKind::SyntheticCredential,
@@ -800,19 +822,19 @@ impl AxionCanaryTrapRegistry {
                 kind: AxionDecoyKind::UnreferencedShadowPage,
                 resource_marker: format!("shadow_page@{:#x}", shadow_base),
                 shadow_page_base: shadow_base,
-                shadow_page_size: 4096,
+                shadow_page_size: Self::SHADOW_PAGE_SIZE,
             },
-        ];
+        ]);
 
         Self {
             traps: std::sync::RwLock::new(initial_traps),
-            _shadow_allocation: shadow_box,
+            shadow_ptr,
         }
     }
 
-    /// Returns the base address and size of the default unreferenced shadow page.
+    /// Returns the 4096-byte page-aligned base address and size of the default unreferenced shadow page.
     pub fn shadow_page_region(&self) -> (usize, usize) {
-        (self._shadow_allocation.as_ptr() as usize, 4096)
+        (self.shadow_ptr.as_ptr() as usize, Self::SHADOW_PAGE_SIZE)
     }
 
     /// Plant an additional custom synthetic credential, ghost node, or shadow page descriptor.
@@ -919,6 +941,29 @@ impl AxionCanaryTrapRegistry {
             .map(|a| a as usize);
 
         self.evaluate_access(pid, image, target_resource, mem_addr)
+    }
+}
+
+impl Drop for AxionCanaryTrapRegistry {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.traps.write() {
+            guard.clear();
+            guard.shrink_to_fit();
+        }
+        if let Ok(layout) =
+            std::alloc::Layout::from_size_align(Self::SHADOW_PAGE_SIZE, Self::SHADOW_PAGE_ALIGN)
+        {
+            // SAFETY: `self.shadow_ptr` was allocated with `Self::SHADOW_PAGE_SIZE` and
+            // `Self::SHADOW_PAGE_ALIGN` in `AxionCanaryTrapRegistry::new()`. We volatile-zeroize
+            // the 4096-byte page before returning it to the global allocator.
+            unsafe {
+                let raw = self.shadow_ptr.as_ptr();
+                for offset in 0..Self::SHADOW_PAGE_SIZE {
+                    std::ptr::write_volatile(raw.add(offset), 0u8);
+                }
+                std::alloc::dealloc(raw, layout);
+            }
+        }
     }
 }
 
@@ -1460,6 +1505,7 @@ mod tests {
         let reg = AxionCanaryTrapRegistry::new();
         let (shadow_base, shadow_len) = reg.shadow_page_region();
         assert!(shadow_base > 0);
+        assert_eq!(shadow_base % 4096, 0, "Axion shadow page must be 4096-byte page-aligned");
         assert_eq!(shadow_len, 4096);
 
         // 1. Unauthorized process touching SyntheticCredential decoy -> immediate tarpit

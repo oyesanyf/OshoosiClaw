@@ -1976,6 +1976,7 @@ pub fn inspect_wasm_artifact(
     let mut sections = Vec::new();
     let mut func_types: Vec<String> = Vec::new();
     let mut imports: Vec<Value> = Vec::new();
+    let mut defined_func_type_indices: Vec<u32> = Vec::new();
     let mut exports: Vec<Value> = Vec::new();
     let mut custom_sections: Vec<String> = Vec::new();
     let mut function_body_count = 0u32;
@@ -2079,9 +2080,10 @@ pub fn inspect_wasm_artifact(
                         }
                         let kind_byte = bytes[cur];
                         cur += 1;
+                        let mut type_index_opt: Option<u32> = None;
                         let kind = match kind_byte {
                             0x00 => {
-                                let _ = read_leb128_u32(bytes, &mut cur);
+                                type_index_opt = Some(read_leb128_u32(bytes, &mut cur).unwrap_or(0));
                                 "func"
                             }
                             0x01 => {
@@ -2105,11 +2107,30 @@ pub fn inspect_wasm_artifact(
                             }
                             _ => "unknown",
                         };
-                        imports.push(json!({
+                        let mut imp_obj = json!({
                             "module": module,
                             "name": field,
                             "kind": kind,
-                        }));
+                        });
+                        if let Some(t_idx) = type_index_opt {
+                            imp_obj["type_index"] = json!(t_idx);
+                        }
+                        imports.push(imp_obj);
+                    }
+                }
+            }
+            3 => {
+                // Function section (maps defined functions to their Type section indices)
+                if let Some(count) = read_leb128_u32(bytes, &mut cur) {
+                    for _ in 0..count {
+                        if cur >= sec_end {
+                            break;
+                        }
+                        if let Some(t_idx) = read_leb128_u32(bytes, &mut cur) {
+                            defined_func_type_indices.push(t_idx);
+                        } else {
+                            break;
+                        }
                     }
                 }
             }
@@ -2178,11 +2199,35 @@ pub fn inspect_wasm_artifact(
     for (idx, t) in func_types.iter().enumerate() {
         wat.push_str(&format!("  (type $t{} {})\n", idx, t));
     }
+    let mut imported_func_count = 0usize;
     for imp in &imports {
         let m = imp.get("module").and_then(|v| v.as_str()).unwrap_or("env");
         let n = imp.get("name").and_then(|v| v.as_str()).unwrap_or("fn");
         let k = imp.get("kind").and_then(|v| v.as_str()).unwrap_or("func");
-        wat.push_str(&format!("  (import \"{}\" \"{}\" ({}))\n", m, n, k));
+        if k == "func" {
+            let t_idx = imp.get("type_index").and_then(|v| v.as_u64()).unwrap_or(0);
+            wat.push_str(&format!(
+                "  (import \"{}\" \"{}\" (func $f{} (type $t{})))\n",
+                m, n, imported_func_count, t_idx
+            ));
+            imported_func_count += 1;
+        } else {
+            wat.push_str(&format!("  (import \"{}\" \"{}\" ({}))\n", m, n, k));
+        }
+    }
+    let defined_total = defined_func_type_indices
+        .len()
+        .max(function_body_count as usize);
+    for def_i in 0..defined_total {
+        let func_idx = imported_func_count + def_i;
+        let t_idx = defined_func_type_indices
+            .get(def_i)
+            .copied()
+            .unwrap_or(0);
+        wat.push_str(&format!(
+            "  (func $f{} (type $t{}) ;; defined function body #{}\n    unreachable\n  )\n",
+            func_idx, t_idx, def_i
+        ));
     }
     for exp in &exports {
         let n = exp.get("name").and_then(|v| v.as_str()).unwrap_or("export");
@@ -2198,6 +2243,7 @@ pub fn inspect_wasm_artifact(
         "sections": sections,
         "type_signatures": func_types,
         "imports": imports,
+        "defined_function_types": defined_func_type_indices,
         "exports": exports,
         "custom_sections": custom_sections,
         "function_body_count": function_body_count,
@@ -3424,6 +3470,11 @@ pub fn synthesize_rea_yara_rule(
             "    condition:\n        filesize >= {} and filesize <= {} and $magic_hdr at 0 and 2 of ($tok_*)\n}}\n",
             min_size, max_size
         ));
+    } else if selected_tokens.len() == 1 {
+        rule.push_str(&format!(
+            "    condition:\n        filesize >= {} and filesize <= {} and $magic_hdr at 0 and $tok_1\n}}\n",
+            min_size, max_size
+        ));
     } else {
         rule.push_str(&format!(
             "    condition:\n        filesize >= {} and filesize <= {} and $magic_hdr at 0\n}}\n",
@@ -3824,6 +3875,11 @@ pub fn analyze_target_path(
             requested_kind,
             autonomous_trigger,
         );
+        // Explicitly release the multi-megabyte file buffer before post-processing
+        std::mem::drop(buf);
+        if file_len > 16 * 1024 * 1024 {
+            osoosi_model::malware::trim_working_set_after_init();
+        }
         if file_len > REA_MAX_FILE_READ_BYTES {
             report.limitations.push(ReaLimitation {
                 code: "LARGE_FILE_BOUNDED_READ".to_string(),
@@ -3860,13 +3916,15 @@ pub fn analyze_target_path(
         } else {
             requested_kind
         };
-        return Ok(analyze_target_bytes(
+        let report = analyze_target_bytes(
             &format!("inline_hex:0x{}...", &hex_clean[..hex_clean.len().min(16)]),
             None,
             &raw,
             effective_kind,
             autonomous_trigger,
-        ));
+        );
+        std::mem::drop(raw);
+        return Ok(report);
     }
 
     Err(anyhow!(
@@ -3905,8 +3963,8 @@ impl AutonomousReaEngine {
         let engine = Self {
             autonomous_enabled: AtomicBool::new(true),
             total_autonomous_sweeps: AtomicU64::new(0),
-            investigations: RwLock::new(VecDeque::with_capacity(REA_MAX_INVESTIGATION_HISTORY)),
-            analyzed_hashes: RwLock::new(HashSet::new()),
+            investigations: RwLock::new(VecDeque::with_capacity(64)),
+            analyzed_hashes: RwLock::new(HashSet::with_capacity(64)),
         };
         let _ = engine.run_autonomous_sweep();
         engine
@@ -3925,13 +3983,25 @@ impl AutonomousReaEngine {
     }
 
     pub fn record_report(&self, report: ReaInvestigationReport) {
-        self.analyzed_hashes.write().insert(report.blake3.clone());
+        {
+            let mut hashes = self.analyzed_hashes.write();
+            if hashes.len() >= 256 {
+                hashes.clear();
+                hashes.shrink_to(64);
+            }
+            hashes.insert(report.blake3.clone());
+        }
         let mut guard = self.investigations.write();
-        guard.retain(|r| r.blake3 != report.blake3 || r.target_path != report.target_path);
+        guard.retain(|r| {
+            r.sha256 != report.sha256
+                && r.blake3 != report.blake3
+                && r.target_path != report.target_path
+        });
         guard.push_front(report);
-        while guard.len() > REA_MAX_INVESTIGATION_HISTORY {
+        while guard.len() > 64 {
             guard.pop_back();
         }
+        guard.shrink_to(64);
     }
 
     pub fn get_recent_investigations(&self, limit: usize) -> Vec<ReaInvestigationReport> {
@@ -3964,36 +4034,38 @@ impl AutonomousReaEngine {
         let sweep_num = self.total_autonomous_sweeps.fetch_add(1, Ordering::Relaxed) + 1;
         let mut generated = Vec::new();
 
-        // 1. Self-inspect current executable (`std::env::current_exe()`)
-        if let Ok(exe_path) = std::env::current_exe() {
-            if exe_path.is_file() {
-                if let Ok(report) = analyze_target_path(
-                    &exe_path.to_string_lossy(),
-                    ReaTargetKind::Auto,
-                    Some(format!("autonomous_sweep_#{}:self_binary", sweep_num)),
-                ) {
-                    self.record_report(report.clone());
-                    generated.push(report);
+        // 1. Self-inspect current executable and companions once on initial sweep
+        if sweep_num == 1 {
+            if let Ok(exe_path) = std::env::current_exe() {
+                if exe_path.is_file() {
+                    if let Ok(report) = analyze_target_path(
+                        &exe_path.to_string_lossy(),
+                        ReaTargetKind::Auto,
+                        Some(format!("autonomous_sweep_#{}:self_binary", sweep_num)),
+                    ) {
+                        self.record_report(report.clone());
+                        generated.push(report);
+                    }
                 }
-            }
-            // Check companion binaries in the same directory
-            if let Some(parent) = exe_path.parent() {
-                for companion in [
-                    "osoosi_inject.dll",
-                    "osoosi-auditor.exe",
-                    "otx-taxii-rs.exe",
-                    "test-peer.exe",
-                ] {
-                    let cand = parent.join(companion);
-                    if cand.is_file() {
-                        if let Ok(report) = analyze_target_path(
-                            &cand.to_string_lossy(),
-                            ReaTargetKind::Auto,
-                            Some(format!("autonomous_sweep_#{}:companion_binary", sweep_num)),
-                        ) {
-                            self.record_report(report.clone());
-                            generated.push(report);
-                            break;
+                // Check companion binaries in the same directory
+                if let Some(parent) = exe_path.parent() {
+                    for companion in [
+                        "osoosi_inject.dll",
+                        "osoosi-auditor.exe",
+                        "otx-taxii-rs.exe",
+                        "test-peer.exe",
+                    ] {
+                        let cand = parent.join(companion);
+                        if cand.is_file() {
+                            if let Ok(report) = analyze_target_path(
+                                &cand.to_string_lossy(),
+                                ReaTargetKind::Auto,
+                                Some(format!("autonomous_sweep_#{}:companion_binary", sweep_num)),
+                            ) {
+                                self.record_report(report.clone());
+                                generated.push(report);
+                                break;
+                            }
                         }
                     }
                 }
@@ -4040,6 +4112,7 @@ impl AutonomousReaEngine {
                         }
                     }
                 }
+                break;
             }
         }
 
@@ -4067,6 +4140,7 @@ impl AutonomousReaEngine {
             sweep_num,
             generated.len()
         );
+        osoosi_model::malware::trim_working_set_after_init();
         generated
     }
 
@@ -4155,6 +4229,30 @@ pub fn spawn_autonomous_rea_for_threat(path: PathBuf, trigger_reason: String) {
     });
 }
 
+/// Synthesizes a multi-token YARA rule from raw unbacked executable memory bytes extracted
+/// by `FrozenProcessForensicCollector` from a frozen 5-sigma process.
+pub fn synthesize_yara_from_raw_payload(
+    target_label: &str,
+    payload_bytes: &[u8],
+    trigger_reason: String,
+) -> Option<String> {
+    if payload_bytes.is_empty() {
+        return None;
+    }
+    let engine = global_rea_engine();
+    let report = analyze_target_bytes(
+        target_label,
+        None,
+        payload_bytes,
+        ReaTargetKind::Auto,
+        Some(trigger_reason),
+    );
+    let yara = report.auto_yara_rule.clone();
+    persist_auto_yara_rule(&report);
+    engine.record_report(report);
+    yara
+}
+
 // ============================================================================
 // Unit Tests
 // ============================================================================
@@ -4185,11 +4283,16 @@ mod tests {
         assert_eq!(imports.len(), 1);
         assert_eq!(imports[0]["module"], "env");
         assert_eq!(imports[0]["name"], "log_event");
+        assert_eq!(imports[0]["type_index"], 0);
         let wat = report.reconstructed_code.unwrap();
         assert!(wat.contains("(module"));
-        assert!(wat.contains("(export \"add\""));
-        assert!(wat.contains("(import \"env\" \"log_event\""));
-        assert!(report.auto_yara_rule.unwrap().contains("REA_Auto_"));
+        assert!(wat.contains("(import \"env\" \"log_event\" (func $f0 (type $t0)))"));
+        assert!(wat.contains("(func $f1 (type $t1)"));
+        assert!(wat.contains("(export \"add\" (func 1))"));
+        let yara_rule = report.auto_yara_rule.unwrap();
+        assert!(yara_rule.contains("REA_Auto_"));
+        assert!(yara_rule.contains("$tok_1 = \"log_event\""));
+        assert!(yara_rule.contains("and $tok_1"));
     }
 
     #[test]
