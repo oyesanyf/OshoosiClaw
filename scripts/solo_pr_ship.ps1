@@ -112,17 +112,19 @@ req = urllib.request.Request(
 )
 
 try:
-    reviews = json.loads(urllib.request.urlopen(req).read().decode())
-    if any(r.get('state') == 'APPROVED' for r in reviews):
+    data_bytes = urllib.request.urlopen(req).read().decode('utf-8', errors='replace')
+    reviews = json.loads(data_bytes)
+    if isinstance(reviews, list) and any(r and isinstance(r, dict) and r.get('state') == 'APPROVED' for r in reviews):
         print('APPROVED')
     else:
         print('WAITING')
-except urllib.error.HTTPError as e:
-    sys.stderr.write('HTTP Error ' + str(e.code) + ': ' + e.read().decode('utf-8', errors='replace') + '\n')
-    print('ERROR')
+except Exception as e:
+    sys.stderr.write('Review check error: ' + str(e) + '\n')
+    print('WAITING')
 " "$prNumber"
 
-    if ($reviewState.Trim() -eq "APPROVED") {
+    $trimmed = if ($reviewState) { $reviewState.ToString().Trim() } else { "" }
+    if ($trimmed -eq "APPROVED") {
         $approved = $true
         Write-Host "[4/5] PR #$prNumber APPROVED by peer reviewer or invariant bot!" -ForegroundColor Green
         break
