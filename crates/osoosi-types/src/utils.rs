@@ -219,12 +219,11 @@ pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
                     );
             if let Ok(subkey) = ifeo_root.open_subkey_with_flags(&name, KEY_READ | KEY_WRITE) {
                 if let Ok(debugger_val) = subkey.get_value::<String, _>("Debugger") {
-                    if debugger_val.to_ascii_lowercase().contains("systray.exe")
-                        || is_protected_or_accessibility
+                    if (debugger_val.to_ascii_lowercase().contains("systray.exe")
+                        || is_protected_or_accessibility)
+                        && subkey.delete_value("Debugger").is_ok()
                     {
-                        if subkey.delete_value("Debugger").is_ok() {
-                            removed += 1;
-                        }
+                        removed += 1;
                     }
                 }
             }
@@ -1174,16 +1173,16 @@ pub fn extract_exe_and_args(input: &str) -> (&str, &str) {
         return ("", "");
     }
 
-    if trimmed.starts_with('"') {
-        if let Some(end_idx) = trimmed[1..].find('"') {
-            let exe = &trimmed[1..=end_idx];
-            let rest = trimmed[end_idx + 2..].trim();
+    if let Some(after_quote) = trimmed.strip_prefix('"') {
+        if let Some(end_idx) = after_quote.find('"') {
+            let exe = &after_quote[..end_idx];
+            let rest = after_quote[end_idx + 1..].trim();
             return (exe, rest);
         }
-    } else if trimmed.starts_with('\'') {
-        if let Some(end_idx) = trimmed[1..].find('\'') {
-            let exe = &trimmed[1..=end_idx];
-            let rest = trimmed[end_idx + 2..].trim();
+    } else if let Some(after_quote) = trimmed.strip_prefix('\'') {
+        if let Some(end_idx) = after_quote.find('\'') {
+            let exe = &after_quote[..end_idx];
+            let rest = after_quote[end_idx + 1..].trim();
             return (exe, rest);
         }
     }

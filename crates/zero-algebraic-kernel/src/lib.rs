@@ -149,9 +149,10 @@ impl AlgebraicKernelMonitor {
         if a == 0 || b == 0 {
             return false;
         }
-        (a.wrapping_mul(b)) % self.boundary_modulus == 0
+        (a.wrapping_mul(b)).is_multiple_of(self.boundary_modulus)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn evaluate_frame(
         &mut self,
         silence_dt: f64,

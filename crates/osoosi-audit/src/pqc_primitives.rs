@@ -11,6 +11,12 @@
 //!    hybrid signature envelope (`HybridSignatureEnvelope`).
 //! 4. **Explicit `impl Drop` `write_volatile` Zeroization** of all secret seeds and private keys.
 
+#![allow(
+    clippy::needless_range_loop,
+    clippy::needless_borrows_for_generic_args,
+    clippy::wrong_self_convention
+)]
+
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1401,7 +1407,7 @@ mod tests {
 
         // 3. Modulus-boundary attack on ML-DSA-65 public key coefficient (q = 8380417):
         let mut boundary_env = hybrid_sign_envelope(msg, &sk_seed);
-        boundary_env.mldsa_t[0].coeffs[0] = (MLDSA_Q / 2) + 1;
+        boundary_env.mldsa_t[0].coeffs[0] = ((MLDSA_Q / 2) + 1) as i32;
         assert!(
             !hybrid_verify_envelope(msg, &boundary_env, &vk),
             "Out-of-range ML-DSA-65 public key coefficient at modulus boundary q=8380417 must be rejected"

@@ -257,7 +257,7 @@ fn buffer_set(buffer: &mut PatchBuffer, offset: i64, byte: i64) -> Result<(), Bo
         .data
         .lock()
         .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
-    if offset >= 0 && (offset as usize) < data.len() && byte >= 0 && byte <= 255 {
+    if offset >= 0 && (offset as usize) < data.len() && (0..=255).contains(&byte) {
         data[offset as usize] = byte as u8;
         Ok(())
     } else {
@@ -333,8 +333,8 @@ fn buffer_patch(
 }
 
 fn parse_hex(s: &str) -> Result<Vec<u8>> {
-    let s = s.replace(' ', "").replace('\n', "").replace('\r', "");
-    if s.len() % 2 != 0 {
+    let s = s.replace([' ', '\n', '\r'], "");
+    if !s.len().is_multiple_of(2) {
         anyhow::bail!("hex string must have even length");
     }
     (0..s.len())

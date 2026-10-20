@@ -144,8 +144,8 @@ impl PhaseSpaceMonitor {
         let alpha = 0.05; // Exponential moving average decay for attractor manifold
         let mut squared_mahalanobis = 0.0;
 
-        for i in 0..self.embedding_dim {
-            let diff = current[i] - self.attractor_centroid[i];
+        for (i, &cur_val) in current.iter().enumerate().take(self.embedding_dim) {
+            let diff = cur_val - self.attractor_centroid[i];
             let safe_var = self.attractor_variance[i].max(1e-6);
             squared_mahalanobis += (diff * diff) / safe_var;
 

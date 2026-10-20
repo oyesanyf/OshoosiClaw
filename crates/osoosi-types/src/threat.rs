@@ -507,14 +507,10 @@ impl GossipFeedItem {
             confidence: sig.confidence,
             severity,
             action: Some(action_str),
-            status: if sig.action_state == ActionState::Executed
-                || sig.recommended_action == ResponseAction::Isolate
-            {
-                "REMEDIATED".to_string()
-            } else if sig.action_state == ActionState::Rejected {
-                "FALSE_POSITIVE".to_string()
-            } else {
-                "ACTIVE".to_string()
+            status: match sig.action_state {
+                ActionState::Executed => "REMEDIATED".to_string(),
+                ActionState::Rejected => "FALSE_POSITIVE".to_string(),
+                _ => "ACTIVE".to_string(),
             },
             hash_blake3: sig.hash_blake3.clone(),
             is_threat: true,

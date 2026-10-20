@@ -3582,7 +3582,8 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
                             return Some(VoteResult {
                                 confidence: 0.0,
                                 reason: format!(
-                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (gen={}, root={}..); vetoing self-lockout.",
+                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (gen={}, epoch={}, root={}..); vetoing self-lockout.",
+                                    build_generation,
                                     build_generation,
                                     &page_merkle_root[..12.min(page_merkle_root.len())]
                                 ),
@@ -3597,7 +3598,8 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
                             return Some(VoteResult {
                                 confidence: 0.0,
                                 reason: format!(
-                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (gen={}, new_root={}..); TPM 2.0 Merkle root rotated.",
+                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (gen={}, epoch={}, new_root={}..); TPM 2.0 Merkle root rotated.",
+                                    build_generation,
                                     build_generation,
                                     &new_page_merkle_root[..12.min(new_page_merkle_root.len())]
                                 ),
@@ -3886,7 +3888,37 @@ mod tests {
             .join("release");
         let _ = std::fs::create_dir_all(&temp_ws);
         let ws_bin = temp_ws.join("osoosi_custom_bin.exe");
-        std::fs::write(&ws_bin, b"MZ\x90\x00WORKSPACE_BUILD_EPOCH_1").unwrap();
+        let make_valid_rust_bin = |marker: &[u8]| -> Vec<u8> {
+            let mut elf = vec![0u8; 8192];
+            elf[0..4].copy_from_slice(b"\x7FELF");
+            elf[4] = 2;
+            elf[5] = 1;
+            elf[6] = 1;
+            elf[16..18].copy_from_slice(&3u16.to_le_bytes());
+            elf[18..20].copy_from_slice(&0x3Eu16.to_le_bytes());
+            elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+            elf[24..32].copy_from_slice(&0x1000u64.to_le_bytes());
+            elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+            elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+            elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+            elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+            let ph = 64;
+            elf[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes());
+            elf[ph + 4..ph + 8].copy_from_slice(&5u32.to_le_bytes());
+            elf[ph + 8..ph + 16].copy_from_slice(&4096u64.to_le_bytes());
+            elf[ph + 16..ph + 24].copy_from_slice(&0x1000u64.to_le_bytes());
+            elf[ph + 24..ph + 32].copy_from_slice(&0x1000u64.to_le_bytes());
+            elf[ph + 32..ph + 40].copy_from_slice(&4096u64.to_le_bytes());
+            elf[ph + 40..ph + 48].copy_from_slice(&4096u64.to_le_bytes());
+            elf[ph + 48..ph + 56].copy_from_slice(&4096u64.to_le_bytes());
+            elf[4096..4096 + marker.len()].copy_from_slice(marker);
+            elf
+        };
+        std::fs::write(
+            &ws_bin,
+            make_valid_rust_bin(b"rustc 1.85.0 .dep-v0 WORKSPACE_BUILD_EPOCH_1"),
+        )
+        .unwrap();
         let ws_bin_str = ws_bin.to_string_lossy().to_string();
 
         let ev_ws_v1 = HostSecurityEvent {
@@ -3909,8 +3941,12 @@ mod tests {
         assert!(res_ws_v1.weight <= -1.30);
         assert!(res_ws_v1.reason.contains("[Adaptive-Merkle-Guard]"));
 
-        // Recompile the binary in place and verify automatic Merkle root rotation (Epoch 2)
-        std::fs::write(&ws_bin, b"MZ\x90\x00WORKSPACE_BUILD_EPOCH_2_RECOMPILED").unwrap();
+        // Recompile the binary in place with valid compiler provenance and verify automatic Merkle root rotation (Epoch 2)
+        std::fs::write(
+            &ws_bin,
+            make_valid_rust_bin(b"rustc 1.85.0 .dep-v0 WORKSPACE_BUILD_EPOCH_2_RECOMPILED"),
+        )
+        .unwrap();
         let res_ws_v2 = voter
             .vote(&ev_ws_v1)
             .await
@@ -3918,6 +3954,17 @@ mod tests {
         assert_eq!(res_ws_v2.confidence, 0.0);
         assert!(res_ws_v2.weight <= -1.30);
         assert!(res_ws_v2.reason.contains("epoch=2"));
+
+        // Overwrite with unauthorized non-compiler payload -> must emit high-confidence tamper alert (0.96)
+        std::fs::write(&ws_bin, b"MZ\x90\x00UNAUTHORIZED_SHELLCODE_TAMPER").unwrap();
+        let res_ws_tampered = voter
+            .vote(&ev_ws_v1)
+            .await
+            .expect("Unauthorized binary tampering must emit high-confidence alert");
+        assert_eq!(res_ws_tampered.confidence, 0.96);
+        assert!(res_ws_tampered
+            .reason
+            .contains("[Adaptive-Merkle-Tamper-Alert]"));
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join("osoosi_voter_ws_test"));
 
         // 2. Developer tool abused with inline code (`python -c "..."`) + runtime RWX memory transition

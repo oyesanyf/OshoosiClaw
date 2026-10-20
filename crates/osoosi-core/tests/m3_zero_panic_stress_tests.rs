@@ -1,6 +1,8 @@
 // Empirical Adversarial Challenger Test Suite
 // Milestone M3: Zero-Panic Hot Paths, Delimiter Robustness & Shell-Free Execution
 
+#![allow(clippy::field_reassign_with_default)]
+
 use osoosi_behavioral::decision_model::ClefDecisionEngine;
 use osoosi_behavioral::{AgenticArbitrator, AgenticToolValidator};
 use osoosi_policy::PolicyEngine;

@@ -10,6 +10,8 @@
 //! 4. Netsh firewall quarantine rules are 100% cleanly reverted upon disarm without residual rules.
 //! 5. PATH and Windows Registry environment hives (HKCU/HKLM) remain 100% bit-for-bit unaltered.
 
+#![allow(clippy::manual_flatten)]
+
 use osoosi_core::blocking_manager::is_protected_or_benign_system_path;
 use osoosi_core::firewall::{block_process_network, tarpit_process_network};
 use osoosi_core::killchain::{

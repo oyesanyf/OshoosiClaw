@@ -15,6 +15,11 @@
 #![allow(clippy::redundant_closure)]
 #![allow(clippy::match_like_matches_macro)]
 #![allow(clippy::manual_flatten)]
+#![allow(
+    clippy::manual_is_multiple_of,
+    clippy::await_holding_lock,
+    clippy::assertions_on_constants
+)]
 
 pub use osoosi_audit;
 

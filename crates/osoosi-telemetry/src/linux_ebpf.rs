@@ -230,13 +230,11 @@ impl QuarantineResponder {
 
         let open_rw = |p: &std::path::Path| -> Option<std::fs::File> {
             std::fs::OpenOptions::new()
-                .write(true)
                 .append(true)
                 .open(p)
                 .or_else(|_| {
                     std::fs::OpenOptions::new()
                         .create(true)
-                        .write(true)
                         .append(true)
                         .open(p)
                 })
@@ -889,9 +887,9 @@ impl FrozenProcessForensicCollector {
         };
 
         let mut args = [0u64; 6];
-        for i in 0..6 {
+        for (i, slot) in args.iter_mut().enumerate() {
             if let Some(tok) = tokens.get(1 + i) {
-                args[i] = parse_hex_u64(tok);
+                *slot = parse_hex_u64(tok);
             }
         }
         let rsp = tokens.get(7).map(|t| parse_hex_u64(t)).unwrap_or(0);

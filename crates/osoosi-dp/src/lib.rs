@@ -2,6 +2,8 @@
 //!
 //! Provides Laplacian noise generation and privacy budget management.
 
+#![allow(clippy::needless_borrows_for_generic_args, clippy::collapsible_if)]
+
 pub mod homomorphic;
 pub mod psi;
 pub mod tfhe_mesh;
