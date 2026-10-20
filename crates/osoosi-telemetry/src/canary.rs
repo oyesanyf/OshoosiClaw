@@ -1505,7 +1505,11 @@ mod tests {
         let reg = AxionCanaryTrapRegistry::new();
         let (shadow_base, shadow_len) = reg.shadow_page_region();
         assert!(shadow_base > 0);
-        assert_eq!(shadow_base % 4096, 0, "Axion shadow page must be 4096-byte page-aligned");
+        assert_eq!(
+            shadow_base % 4096,
+            0,
+            "Axion shadow page must be 4096-byte page-aligned"
+        );
         assert_eq!(shadow_len, 4096);
 
         // 1. Unauthorized process touching SyntheticCredential decoy -> immediate tarpit
@@ -1670,5 +1674,3 @@ impl AxionCanaryTrapRegistry {
         }
     }
 }
-
-

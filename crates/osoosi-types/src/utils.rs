@@ -197,25 +197,26 @@ pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
                 }
                 continue;
             }
-            let is_protected_or_accessibility = is_protected_os_shell_or_desktop_binary(&lower_name)
-                || matches!(
-                    lower_name.as_str(),
-                    "magnify.exe"
-                        | "narrator.exe"
-                        | "sethc.exe"
-                        | "utilman.exe"
-                        | "osk.exe"
-                        | "displayswitch.exe"
-                        | "atbroker.exe"
-                        | "git.exe"
-                        | "chrome.exe"
-                        | "msedge.exe"
-                        | "firefox.exe"
-                        | "brave.exe"
-                        | "code.exe"
-                        | "cargo.exe"
-                        | "rustc.exe"
-                );
+            let is_protected_or_accessibility =
+                is_protected_os_shell_or_desktop_binary(&lower_name)
+                    || matches!(
+                        lower_name.as_str(),
+                        "magnify.exe"
+                            | "narrator.exe"
+                            | "sethc.exe"
+                            | "utilman.exe"
+                            | "osk.exe"
+                            | "displayswitch.exe"
+                            | "atbroker.exe"
+                            | "git.exe"
+                            | "chrome.exe"
+                            | "msedge.exe"
+                            | "firefox.exe"
+                            | "brave.exe"
+                            | "code.exe"
+                            | "cargo.exe"
+                            | "rustc.exe"
+                    );
             if let Ok(subkey) = ifeo_root.open_subkey_with_flags(&name, KEY_READ | KEY_WRITE) {
                 if let Ok(debugger_val) = subkey.get_value::<String, _>("Debugger") {
                     if debugger_val.to_ascii_lowercase().contains("systray.exe")
@@ -240,11 +241,7 @@ pub fn purge_ifeo_systray_debugger_hooks_native() -> usize {
 fn resolve_nt_volume_drive_letter(nt_device_prefix: &str) -> Option<char> {
     #[link(name = "kernel32")]
     extern "system" {
-        fn QueryDosDeviceW(
-            lpDeviceName: *const u16,
-            lpTargetPath: *mut u16,
-            ucchMax: u32,
-        ) -> u32;
+        fn QueryDosDeviceW(lpDeviceName: *const u16, lpTargetPath: *mut u16, ucchMax: u32) -> u32;
     }
 
     for drive in b'A'..=b'Z' {
@@ -711,8 +708,7 @@ pub fn verify_windows_catalog_signature(path: &str) -> bool {
 
         let mut hash_len: u32 = 64;
         let mut hash_buf = vec![0u8; 64];
-        if CryptCATAdminCalcHashFromFileHandle(handle, &mut hash_len, hash_buf.as_mut_ptr(), 0)
-            == 0
+        if CryptCATAdminCalcHashFromFileHandle(handle, &mut hash_len, hash_buf.as_mut_ptr(), 0) == 0
             || hash_len == 0
         {
             let _ = CryptCATAdminReleaseContext(h_cat_admin, 0);
@@ -1195,7 +1191,9 @@ pub fn extract_exe_and_args(input: &str) -> (&str, &str) {
     // Check for standard executable/script extensions (.exe, .cmd, .bat, .com, .py, .js, etc.)
     // to correctly support unquoted paths with spaces (e.g. `C:\Program Files\...`).
     let lower = trimmed.to_ascii_lowercase();
-    for ext in &[".exe", ".cmd", ".bat", ".com", ".py", ".pyw", ".js", ".mjs", ".ts"] {
+    for ext in &[
+        ".exe", ".cmd", ".bat", ".com", ".py", ".pyw", ".js", ".mjs", ".ts",
+    ] {
         let mut search_start = 0;
         while let Some(pos) = lower[search_start..].find(ext) {
             let ext_idx = search_start + pos;
@@ -1400,11 +1398,7 @@ pub fn is_developer_interpreter(name_or_path: &str) -> bool {
     let normalized = normalize_nt_device_path(clean_exe);
     let lower_unix = normalized.to_ascii_lowercase().replace('\\', "/");
 
-    let file_name = lower_unix
-        .rsplit('/')
-        .next()
-        .unwrap_or(&lower_unix)
-        .trim();
+    let file_name = lower_unix.rsplit('/').next().unwrap_or(&lower_unix).trim();
     if file_name.is_empty() {
         return false;
     }
@@ -1413,21 +1407,11 @@ pub fn is_developer_interpreter(name_or_path: &str) -> bool {
 
     matches!(
         stem,
-        "python"
-            | "python3"
-            | "python2"
-            | "pythonw"
-            | "py"
-            | "node"
-            | "nodejs"
+        "python" | "python3" | "python2" | "pythonw" | "py" | "node" | "nodejs"
     ) || (stem.starts_with("python3.")
-        && stem["python3.".len()..]
-            .chars()
-            .all(|c| c.is_ascii_digit()))
-      || (stem.starts_with("python2.")
-        && stem["python2.".len()..]
-            .chars()
-            .all(|c| c.is_ascii_digit()))
+        && stem["python3.".len()..].chars().all(|c| c.is_ascii_digit()))
+        || (stem.starts_with("python2.")
+            && stem["python2.".len()..].chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Alias for `is_protected_os_shell_or_desktop_binary` used across REA, static analyzers, and autonomous response pipelines.
@@ -2191,11 +2175,15 @@ mod tests {
         assert!(is_developer_interpreter("node"));
         assert!(is_developer_interpreter("node.exe"));
         assert!(is_developer_interpreter("nodejs"));
-        assert!(is_developer_interpreter(r"C:\Program Files\Python312\python.exe"));
+        assert!(is_developer_interpreter(
+            r"C:\Program Files\Python312\python.exe"
+        ));
         assert!(is_developer_interpreter("/usr/bin/python3"));
         assert!(is_developer_interpreter("/usr/local/bin/node"));
         assert!(is_developer_interpreter("python.exe -c \"import os\""));
-        assert!(is_developer_interpreter("\"C:\\Program Files\\Python312\\python.exe\" -v"));
+        assert!(is_developer_interpreter(
+            "\"C:\\Program Files\\Python312\\python.exe\" -v"
+        ));
 
         // Negative non-interpreter cases
         assert!(!is_developer_interpreter("cargo.exe"));
@@ -2211,66 +2199,140 @@ mod tests {
     #[test]
     fn test_inline_script_flag_parsing_and_bypass_prevention() {
         // Python inline flags: all variations must be rejected
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -c \"import os\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -c\"import os\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -c'import os'"));
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe\t-c\t\"import os\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("python3 -c \"import socket\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -u -c \"import os\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -cimport(os)"));
-        assert!(!is_protected_os_shell_or_desktop_binary("PYTHON.EXE -C \"IMPORT OS\""));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe -c \"import os\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe -c\"import os\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe -c'import os'"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe\t-c\t\"import os\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python3 -c \"import socket\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe -u -c \"import os\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe -cimport(os)"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "PYTHON.EXE -C \"IMPORT OS\""
+        ));
 
         // Node.js inline flags: all variations must be rejected
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -e \"process.exit(1)\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -e\"process.exit(1)\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -e'process.exit(1)'"));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe --eval=\"process.exit(1)\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe --eval \"process.exit(1)\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -p \"process.arch\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -p\"1+1\""));
-        assert!(!is_protected_os_shell_or_desktop_binary("node.exe --print=\"1+1\""));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe -e \"process.exit(1)\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe -e\"process.exit(1)\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe -e'process.exit(1)'"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe --eval=\"process.exit(1)\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe --eval \"process.exit(1)\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe -p \"process.arch\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe -p\"1+1\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "node.exe --print=\"1+1\""
+        ));
     }
 
     #[test]
     fn test_legitimate_developer_scripts_and_tools_retained_immunity() {
         // Python running script files (even with -c or other options passed to the script)
-        assert!(is_protected_os_shell_or_desktop_binary("python.exe run_tests.py -c config.yaml"));
-        assert!(is_protected_os_shell_or_desktop_binary("python.exe test_beacon.py"));
-        assert!(is_protected_os_shell_or_desktop_binary("python.exe simulate_evil.py"));
-        assert!(is_protected_os_shell_or_desktop_binary("python.exe iex_parser.py"));
-        assert!(is_protected_os_shell_or_desktop_binary("python.exe downloadstring_tester.py"));
-        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Dev\beacon_analysis.py"));
-        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Dev\detect_evil.py"));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "python.exe run_tests.py -c config.yaml"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "python.exe test_beacon.py"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "python.exe simulate_evil.py"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "python.exe iex_parser.py"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "python.exe downloadstring_tester.py"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Dev\beacon_analysis.py"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Dev\detect_evil.py"
+        ));
 
         // Node running script files
-        assert!(is_protected_os_shell_or_desktop_binary("node.exe build.js -p 8080"));
-        assert!(is_protected_os_shell_or_desktop_binary("node.exe server.js -e production"));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "node.exe build.js -p 8080"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "node.exe server.js -e production"
+        ));
 
         // Clean toolchain binaries with commandline arguments
         assert!(is_protected_os_shell_or_desktop_binary("cargo.exe build"));
-        assert!(is_protected_os_shell_or_desktop_binary("cargo.exe test --release"));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "cargo.exe test --release"
+        ));
         assert!(is_protected_os_shell_or_desktop_binary("git.exe status"));
-        assert!(is_protected_os_shell_or_desktop_binary("git.exe commit -m \"update\""));
-        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Windows\explorer.exe /n"));
-        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Windows\System32\svchost.exe -k netsvcs"));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            "git.exe commit -m \"update\""
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\explorer.exe /n"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\svchost.exe -k netsvcs"
+        ));
         assert!(is_protected_os_shell_or_desktop_binary("code.exe ."));
     }
 
     #[test]
     fn test_staging_directory_denial_exhaustive() {
-        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Windows\Temp\python.exe"));
-        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Users\user\AppData\Local\Temp\python.exe"));
-        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Temp\python.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\Temp\python.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Users\user\AppData\Local\Temp\python.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Temp\python.exe"
+        ));
         assert!(!is_protected_os_shell_or_desktop_binary("/tmp/python3"));
         assert!(!is_protected_os_shell_or_desktop_binary("/var/tmp/python3"));
         assert!(!is_protected_os_shell_or_desktop_binary("/dev/shm/python3"));
-        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Users\Public\python.exe"));
-        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\ProgramData\python.exe"));
-        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Users\Public\explorer.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Users\Public\python.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\ProgramData\python.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Users\Public\explorer.exe"
+        ));
         assert!(!is_protected_os_shell_or_desktop_binary("/tmp/cargo"));
         assert!(!is_protected_os_shell_or_desktop_binary("/dev/shm/git"));
-        assert!(!is_protected_os_shell_or_desktop_binary("python.exe /tmp/malware.py"));
-        assert!(!is_protected_os_shell_or_desktop_binary(r"python.exe C:\Users\Public\payload.py"));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python.exe /tmp/malware.py"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"python.exe C:\Users\Public\payload.py"
+        ));
     }
 
     #[test]
@@ -2310,8 +2372,12 @@ mod tests {
         assert!(is_critical_system_process("git.exe"));
         assert!(is_critical_system_process("python.exe"));
         assert!(is_critical_system_process("node.exe"));
-        assert!(is_critical_system_process(r"C:\Program Files\Python312\python.exe"));
-        assert!(is_critical_system_process("python.exe run_tests.py -c config.yaml"));
+        assert!(is_critical_system_process(
+            r"C:\Program Files\Python312\python.exe"
+        ));
+        assert!(is_critical_system_process(
+            "python.exe run_tests.py -c config.yaml"
+        ));
 
         // 4. Verify is_critical_system_process rejects interactive shells, LOLBins, and inline attacks
         assert!(!is_critical_system_process("powershell.exe"));
@@ -2324,5 +2390,3 @@ mod tests {
         assert!(!is_critical_system_process(r"C:\Users\Public\payload.exe"));
     }
 }
-
-

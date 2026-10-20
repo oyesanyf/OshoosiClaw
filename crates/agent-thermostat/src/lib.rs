@@ -70,7 +70,9 @@ impl AgentCapability {
             || combined.contains("autorun")
         {
             Self::ModifyConfigOrHook
-        } else if combined.contains("write") || combined.contains("edit") || combined.contains("save")
+        } else if combined.contains("write")
+            || combined.contains("edit")
+            || combined.contains("save")
         {
             Self::WriteInertFile
         } else {

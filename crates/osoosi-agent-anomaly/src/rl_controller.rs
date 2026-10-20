@@ -28,9 +28,7 @@ impl CyberBattleBackendKind {
             Self::LocalSyntheticCyberBattleTopologyV1 => {
                 "local_synthetic_cyberbattlesim_topology_v1"
             }
-            Self::OfficialMicrosoftCyberBattleSimGym => {
-                "official_microsoft_cyberbattlesim_gym"
-            }
+            Self::OfficialMicrosoftCyberBattleSimGym => "official_microsoft_cyberbattlesim_gym",
         }
     }
 }
@@ -429,8 +427,7 @@ mod tests {
         assert!(
             report.learned_rl_exceeds_heuristic,
             "Calibrated LearnedRL ({:.2}) must outperform Fixed Heuristic ({:.2})",
-            report.policies[0].cumulative_reward.mean,
-            report.policies[1].cumulative_reward.mean
+            report.policies[0].cumulative_reward.mean, report.policies[1].cumulative_reward.mean
         );
         // LearnedRL should also beat NoLearning, Random, and Disabled
         let rl_reward = report.policies[0].cumulative_reward.mean;

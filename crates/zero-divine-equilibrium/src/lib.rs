@@ -44,11 +44,7 @@ impl EquilibriumOrchestrator {
 
     /// Creates a pre-calibrated EDR & Mesh `EquilibriumOrchestrator`.
     pub fn default_edr_orchestrator() -> Self {
-        Self::new(
-            2.5,
-            vec![0.5, 0.5, 0.5, 0.5],
-            vec![1.0, 1.0, 1.0, 1.0],
-        )
+        Self::new(2.5, vec![0.5, 0.5, 0.5, 0.5], vec![1.0, 1.0, 1.0, 1.0])
     }
 
     /// 1. Zero as What Life Knew Before It Knew:

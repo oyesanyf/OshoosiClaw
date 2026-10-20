@@ -3942,7 +3942,9 @@ impl EdrOrchestrator {
             .add_voter(Box::new(osoosi_policy::voters::SpiderWebPhysicsVoter))
             .await;
         self.policy
-            .add_voter(Box::new(osoosi_policy::voters::PhaseLockAttractorVoter::new()))
+            .add_voter(Box::new(
+                osoosi_policy::voters::PhaseLockAttractorVoter::new(),
+            ))
             .await;
         self.policy
             .add_voter(Box::new(
@@ -7015,10 +7017,7 @@ impl EdrOrchestrator {
         // Synthesize multi-token YARA-X signature from extracted in-memory payload
         // and broadcast signed IOC to the P2P/Nostr mesh.
         if event.event_id == 9995
-            || event
-                .data
-                .get("EventName")
-                .and_then(|v| v.as_str())
+            || event.data.get("EventName").and_then(|v| v.as_str())
                 == Some("Frozen5SigmaForensicSnapshot")
         {
             let snap_pid = event
@@ -7059,7 +7058,10 @@ impl EdrOrchestrator {
                     synthesized_yara = crate::rea::synthesize_yara_from_raw_payload(
                         &format!("frozen_pid_{}_{}", snap_pid, comm),
                         &payload_bytes,
-                        format!("five_sigma_kernel_quarantine:z={:.2}:rip={}", sigma_score, rip_hex),
+                        format!(
+                            "five_sigma_kernel_quarantine:z={:.2}:rip={}",
+                            sigma_score, rip_hex
+                        ),
                     );
                     std::mem::drop(payload_bytes);
                 }
@@ -7069,7 +7071,8 @@ impl EdrOrchestrator {
             sig.confidence = 0.99;
             sig.process_name = Some(comm.to_string());
             sig.mitre_technique = Some("T1055".to_string());
-            sig.mitre_technique_name = Some("Process Injection / 5-Sigma Memory Anomaly".to_string());
+            sig.mitre_technique_name =
+                Some("Process Injection / 5-Sigma Memory Anomaly".to_string());
             sig.mitre_tactic = Some("Defense Evasion".to_string());
             sig.recommended_action = ResponseAction::Isolate;
             sig.action_state = osoosi_types::ActionState::Executed;
@@ -7123,7 +7126,10 @@ impl EdrOrchestrator {
                 v.as_u64()
                     .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
             });
-        if ppid.map(|p| p as u32 == std::process::id()).unwrap_or(false) {
+        if ppid
+            .map(|p| p as u32 == std::process::id())
+            .unwrap_or(false)
+        {
             return Ok(());
         }
         let img_lower = image.to_lowercase().replace('/', "\\");
@@ -7960,7 +7966,8 @@ impl EdrOrchestrator {
                                 let _ = self.blocking_manager.block_by_pid(pid).await;
 
                                 // Block network access via WFP
-                                let _ = crate::firewall::block_process_network(Some(pid), Some(image));
+                                let _ =
+                                    crate::firewall::block_process_network(Some(pid), Some(image));
 
                                 // Self-Healing: Rollback any file changes made by the malicious process
                                 let self_healer = self.self_healing.clone();

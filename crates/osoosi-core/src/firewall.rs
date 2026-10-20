@@ -91,9 +91,7 @@ pub fn restore_autoblock_rules() -> Result<usize> {
                 if crate::blocking_manager::is_protected_or_benign_system_path(&norm) {
                     continue;
                 }
-                sanitized_rules.push(BlockedTarget::Program {
-                    path: norm.clone(),
-                });
+                sanitized_rules.push(BlockedTarget::Program { path: norm.clone() });
                 if block_process_network(None, Some(&norm)).is_ok() {
                     count += 1;
                 }
@@ -340,14 +338,7 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             fail_cmd.stdout(std::process::Stdio::null());
             fail_cmd.stderr(std::process::Stdio::null());
             fail_cmd.creation_flags(0x08000000);
-            fail_cmd.args([
-                "failure",
-                "OsoosiEDR",
-                "reset=",
-                "0",
-                "actions=",
-                "",
-            ]);
+            fail_cmd.args(["failure", "OsoosiEDR", "reset=", "0", "actions=", ""]);
             let _ = timeout(Duration::from_secs(5), fail_cmd.status()).await;
 
             let mut sd_cmd = Command::new(&sc_exe);
@@ -818,7 +809,8 @@ fn windows_firewall_rule_exists_native(rule_name: &str) -> bool {
     use winreg::RegKey;
 
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-    let fw_path = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+    let fw_path =
+        r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
     let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ) else {
         return false;
     };
@@ -896,10 +888,12 @@ pub fn purge_windows_firewall_autoblock_rules_native(purge_all: bool) -> usize {
                 }
 
                 let is_duplicate = !rule_name.is_empty()
-                    && !seen_rules.insert((rule_name.to_ascii_lowercase(), dir.to_ascii_lowercase()));
+                    && !seen_rules
+                        .insert((rule_name.to_ascii_lowercase(), dir.to_ascii_lowercase()));
                 let is_protected_app = if !app.is_empty() {
                     let norm = osoosi_types::normalize_nt_device_path(&app);
-                    app.to_ascii_lowercase().starts_with(r"\device\harddiskvolume")
+                    app.to_ascii_lowercase()
+                        .starts_with(r"\device\harddiskvolume")
                         || crate::blocking_manager::is_protected_or_benign_system_path(&norm)
                         || osoosi_types::is_protected_os_shell_or_desktop_binary(&norm)
                         || crate::system_check::is_administrative_lolbin(&norm)

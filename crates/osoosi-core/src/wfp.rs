@@ -52,7 +52,8 @@ type FnFwpmEngineOpen0 = unsafe extern "system" fn(
 type FnFwpmEngineClose0 = unsafe extern "system" fn(engine_handle: *mut c_void) -> u32;
 
 #[cfg(windows)]
-type FnFwpmTransactionBegin0 = unsafe extern "system" fn(engine_handle: *mut c_void, flags: u32) -> u32;
+type FnFwpmTransactionBegin0 =
+    unsafe extern "system" fn(engine_handle: *mut c_void, flags: u32) -> u32;
 
 #[cfg(windows)]
 type FnFwpmTransactionCommit0 = unsafe extern "system" fn(engine_handle: *mut c_void) -> u32;
@@ -61,7 +62,8 @@ type FnFwpmTransactionCommit0 = unsafe extern "system" fn(engine_handle: *mut c_
 type FnFwpmTransactionAbort0 = unsafe extern "system" fn(engine_handle: *mut c_void) -> u32;
 
 #[cfg(windows)]
-type FnFwpmFilterDeleteById0 = unsafe extern "system" fn(engine_handle: *mut c_void, id: u64) -> u32;
+type FnFwpmFilterDeleteById0 =
+    unsafe extern "system" fn(engine_handle: *mut c_void, id: u64) -> u32;
 
 /// Native Windows Filtering Platform (WFP) dynamic session controller.
 pub struct WfpDynamicSession {
@@ -109,16 +111,18 @@ impl WfpDynamicSession {
                 proc.map(|p| p as *const ())
             };
 
-            let fn_open: FnFwpmEngineOpen0 = unsafe {
-                std::mem::transmute(get_func(b"FwpmEngineOpen0\0").ok_or_else(|| {
-                    anyhow!("FwpmEngineOpen0 symbol not found in fwpuclnt.dll")
-                })?)
-            };
-            let fn_close: FnFwpmEngineClose0 = unsafe {
-                std::mem::transmute(get_func(b"FwpmEngineClose0\0").ok_or_else(|| {
-                    anyhow!("FwpmEngineClose0 symbol not found in fwpuclnt.dll")
-                })?)
-            };
+            let fn_open: FnFwpmEngineOpen0 =
+                unsafe {
+                    std::mem::transmute(get_func(b"FwpmEngineOpen0\0").ok_or_else(|| {
+                        anyhow!("FwpmEngineOpen0 symbol not found in fwpuclnt.dll")
+                    })?)
+                };
+            let fn_close: FnFwpmEngineClose0 =
+                unsafe {
+                    std::mem::transmute(get_func(b"FwpmEngineClose0\0").ok_or_else(|| {
+                        anyhow!("FwpmEngineClose0 symbol not found in fwpuclnt.dll")
+                    })?)
+                };
             let fn_txn_begin: FnFwpmTransactionBegin0 = unsafe {
                 std::mem::transmute(get_func(b"FwpmTransactionBegin0\0").ok_or_else(|| {
                     anyhow!("FwpmTransactionBegin0 symbol not found in fwpuclnt.dll")
@@ -134,13 +138,13 @@ impl WfpDynamicSession {
                     anyhow!("FwpmTransactionAbort0 symbol not found in fwpuclnt.dll")
                 })?)
             };
-            let fn_filter_delete_by_id: Option<FnFwpmFilterDeleteById0> = unsafe {
-                get_func(b"FwpmFilterDeleteById0\0").map(|p| std::mem::transmute(p))
-            };
+            let fn_filter_delete_by_id: Option<FnFwpmFilterDeleteById0> =
+                unsafe { get_func(b"FwpmFilterDeleteById0\0").map(|p| std::mem::transmute(p)) };
 
             let mut session_name: Vec<u16> = "OsoosiEDR-DynamicSession\0".encode_utf16().collect();
-            let mut session_desc: Vec<u16> =
-                "OpenOsoosi Autonomous EDR Dynamic Session\0".encode_utf16().collect();
+            let mut session_desc: Vec<u16> = "OpenOsoosi Autonomous EDR Dynamic Session\0"
+                .encode_utf16()
+                .collect();
 
             let session = FwpmSession0 {
                 session_key: [0u8; 16],
@@ -207,7 +211,10 @@ impl WfpDynamicSession {
             if let Some(fn_begin) = self.fn_txn_begin {
                 let status = unsafe { fn_begin(self.engine_handle, 0) };
                 if status != ERROR_SUCCESS {
-                    return Err(anyhow!("FwpmTransactionBegin0 failed with 0x{:08X}", status));
+                    return Err(anyhow!(
+                        "FwpmTransactionBegin0 failed with 0x{:08X}",
+                        status
+                    ));
                 }
                 self.in_transaction.store(true, Ordering::SeqCst);
                 return Ok(());
@@ -232,7 +239,10 @@ impl WfpDynamicSession {
                 let status = unsafe { fn_commit(self.engine_handle) };
                 self.in_transaction.store(false, Ordering::SeqCst);
                 if status != ERROR_SUCCESS {
-                    return Err(anyhow!("FwpmTransactionCommit0 failed with 0x{:08X}", status));
+                    return Err(anyhow!(
+                        "FwpmTransactionCommit0 failed with 0x{:08X}",
+                        status
+                    ));
                 }
                 return Ok(());
             }
@@ -256,7 +266,10 @@ impl WfpDynamicSession {
                 let status = unsafe { fn_abort(self.engine_handle) };
                 self.in_transaction.store(false, Ordering::SeqCst);
                 if status != ERROR_SUCCESS {
-                    return Err(anyhow!("FwpmTransactionAbort0 failed with 0x{:08X}", status));
+                    return Err(anyhow!(
+                        "FwpmTransactionAbort0 failed with 0x{:08X}",
+                        status
+                    ));
                 }
                 return Ok(());
             }
@@ -341,7 +354,10 @@ impl Drop for WfpDynamicSession {
                 if let Some(fn_close) = self.fn_engine_close {
                     let status = unsafe { fn_close(self.engine_handle) };
                     if status == ERROR_SUCCESS {
-                        info!("🟢 [WFP] Closed dynamic WFP engine session (Handle: {:p})", self.engine_handle);
+                        info!(
+                            "🟢 [WFP] Closed dynamic WFP engine session (Handle: {:p})",
+                            self.engine_handle
+                        );
                     } else {
                         warn!("⚠️ [WFP] FwpmEngineClose0 returned 0x{:08X}", status);
                     }

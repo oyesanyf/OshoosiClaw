@@ -358,7 +358,10 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
         .or_else(|| extract_xml_attr(xml, "Execution", "ProcessId"))
         .and_then(|s| {
             let trimmed = s.trim();
-            if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+            if let Some(hex) = trimmed
+                .strip_prefix("0x")
+                .or_else(|| trimmed.strip_prefix("0X"))
+            {
                 u64::from_str_radix(hex, 16).ok()
             } else {
                 trimmed.parse::<u64>().ok()
@@ -883,7 +886,10 @@ mod tests {
         let map: HashMap<String, String> = data.into_iter().collect();
         assert_eq!(map.get("RuleName"), Some(&"".to_string()));
         assert_eq!(map.get("ProcessId"), Some(&"4096".to_string()));
-        assert_eq!(map.get("Image"), Some(&r"C:\Windows\System32\cmd.exe".to_string()));
+        assert_eq!(
+            map.get("Image"),
+            Some(&r"C:\Windows\System32\cmd.exe".to_string())
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -903,9 +909,15 @@ mod tests {
             <Data Name="ImageName">C:\Tools\agent.exe</Data>
           </EventData>
         </Event>"#;
-        let ev = parse_single_windows_event(xml, "Microsoft-Windows-Sysmon/Operational").expect("Should parse");
-        assert_eq!(ev.data.get("ProcessId").and_then(|v| v.as_u64()), Some(5555));
-        assert_eq!(ev.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Tools\agent.exe"));
+        let ev = parse_single_windows_event(xml, "Microsoft-Windows-Sysmon/Operational")
+            .expect("Should parse");
+        assert_eq!(
+            ev.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(5555)
+        );
+        assert_eq!(
+            ev.data.get("Image").and_then(|v| v.as_str()),
+            Some(r"C:\Tools\agent.exe")
+        );
     }
 }
-

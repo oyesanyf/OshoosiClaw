@@ -642,7 +642,9 @@ impl Service<Request<Body>> for SafeServeDir {
                             .into_response();
                         resp.headers_mut().insert(
                             axum::http::header::CACHE_CONTROL,
-                            axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+                            axum::http::HeaderValue::from_static(
+                                "no-store, no-cache, must-revalidate, max-age=0, private",
+                            ),
                         );
                         resp.headers_mut().insert(
                             axum::http::header::PRAGMA,
@@ -662,7 +664,9 @@ impl Service<Request<Body>> for SafeServeDir {
                             .into_response();
                         resp.headers_mut().insert(
                             axum::http::header::CACHE_CONTROL,
-                            axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+                            axum::http::HeaderValue::from_static(
+                                "no-store, no-cache, must-revalidate, max-age=0, private",
+                            ),
                         );
                         resp.headers_mut().insert(
                             axum::http::header::PRAGMA,
@@ -685,7 +689,9 @@ impl Service<Request<Body>> for SafeServeDir {
                             .into_response();
                         resp.headers_mut().insert(
                             axum::http::header::CACHE_CONTROL,
-                            axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+                            axum::http::HeaderValue::from_static(
+                                "no-store, no-cache, must-revalidate, max-age=0, private",
+                            ),
                         );
                         resp.headers_mut().insert(
                             axum::http::header::PRAGMA,
@@ -1038,7 +1044,9 @@ async fn no_cache_header_middleware(
     let headers = resp.headers_mut();
     headers.insert(
         axum::http::header::CACHE_CONTROL,
-        axum::http::HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0, private"),
+        axum::http::HeaderValue::from_static(
+            "no-store, no-cache, must-revalidate, max-age=0, private",
+        ),
     );
     headers.insert(
         axum::http::header::PRAGMA,
@@ -4689,8 +4697,8 @@ async fn post_auth_set_password_endpoint(
     // Hash with BLAKE3
     let hash_b3 = blake3::hash(new_pass.as_bytes()).to_hex().to_string();
 
-    let project_root = osoosi_types::resolve_project_root()
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let project_root =
+        osoosi_types::resolve_project_root().unwrap_or_else(|| std::path::PathBuf::from("."));
     let config_dir = project_root.join("config");
     let _ = std::fs::create_dir_all(&config_dir);
     let hash_file = config_dir.join("admin_password.hash");
@@ -4868,7 +4876,11 @@ async fn post_killchain_isolate_endpoint(
         }
     }
 
-    let pass = payload.password.as_deref().or(payload.credential.as_deref()).unwrap_or("");
+    let pass = payload
+        .password
+        .as_deref()
+        .or(payload.credential.as_deref())
+        .unwrap_or("");
 
     match osoosi_core::killchain::authenticate_hybrid_credentials(
         payload.username.as_deref(),
@@ -4970,7 +4982,11 @@ async fn post_killchain_disarm_endpoint(
         }
     }
 
-    let pass = payload.password.as_deref().or(payload.credential.as_deref()).unwrap_or("");
+    let pass = payload
+        .password
+        .as_deref()
+        .or(payload.credential.as_deref())
+        .unwrap_or("");
 
     match osoosi_core::killchain::authenticate_hybrid_credentials(
         payload.username.as_deref(),
@@ -5522,15 +5538,10 @@ async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
         Some(orch) => {
             let chain_verified = orch.audit().verify();
             let topo = orch.mesh_topology();
-            let topo_peer_count = topo
-                .get("peer_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32;
+            let topo_peer_count =
+                topo.get("peer_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
             let effective_peer_count = orch.mesh_peer_count().max(topo_peer_count);
-            let nodes = topo
-                .get("nodes")
-                .cloned()
-                .unwrap_or_else(|| json!([]));
+            let nodes = topo.get("nodes").cloned().unwrap_or_else(|| json!([]));
             Json(json!({
                 "peer_count": effective_peer_count,
                 "gossip_count": orch.mesh_gossip_count(),
@@ -5904,7 +5915,8 @@ pub async fn get_bootstrap_peers(
     static DUCKDNS_CACHE: std::sync::OnceLock<
         std::sync::RwLock<std::collections::HashMap<String, Option<String>>>,
     > = std::sync::OnceLock::new();
-    let cache = DUCKDNS_CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
+    let cache =
+        DUCKDNS_CACHE.get_or_init(|| std::sync::RwLock::new(std::collections::HashMap::new()));
 
     let host = format!("{}.duckdns.org", clean_domain);
     let cached_entry = cache
@@ -12461,7 +12473,9 @@ mod tests {
             "app.js must filter remotePeers strictly to peer/threat nodes"
         );
         assert_eq!(
-            app_js.matches("addEventListener('DOMContentLoaded', init)").count(),
+            app_js
+                .matches("addEventListener('DOMContentLoaded', init)")
+                .count(),
             1,
             "app.js must register DOMContentLoaded listener for init() exactly once"
         );

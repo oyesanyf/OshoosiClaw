@@ -548,6 +548,86 @@ __declspec(dllimport) VOID NTAPI IoUnregisterBootDriverCallback(
 #define CONTAINING_RECORD(address, type, field) \
     ((type *)((char *)(address) - (ULONG_PTR)(&((type *)0)->field)))
 
+struct _FILE_OBJECT {
+    SHORT Type;
+    SHORT Size;
+    PDEVICE_OBJECT DeviceObject;
+    PVOID Vpb;
+    PVOID FsContext;
+    PVOID FsContext2;
+    PVOID SectionObjectPointer;
+    PVOID PrivateCacheMap;
+    NTSTATUS FinalStatus;
+    struct _FILE_OBJECT *RelatedFileObject;
+    BOOLEAN LockOperation;
+    BOOLEAN DeletePending;
+    BOOLEAN ReadAccess;
+    BOOLEAN WriteAccess;
+    BOOLEAN DeleteAccess;
+    BOOLEAN SharedRead;
+    BOOLEAN SharedWrite;
+    BOOLEAN SharedDelete;
+    ULONG Flags;
+    UNICODE_STRING FileName;
+};
+
+typedef union _FS_FILTER_PARAMETERS {
+    struct {
+        ULONG SyncType;
+        ULONG PageProtection;
+        PVOID Flags;
+    } AcquireForSectionSynchronization;
+    struct {
+        PVOID Argument1;
+        PVOID Argument2;
+        PVOID Argument3;
+        PVOID Argument4;
+        PVOID Argument5;
+    } Others;
+} FS_FILTER_PARAMETERS, *PFS_FILTER_PARAMETERS;
+
+typedef struct _FS_FILTER_CALLBACK_DATA {
+    ULONG SizeOfFsFilterCallbackData;
+    UCHAR Operation;
+    UCHAR Reserved;
+    PDEVICE_OBJECT DeviceObject;
+    PFILE_OBJECT FileObject;
+    FS_FILTER_PARAMETERS Parameters;
+} FS_FILTER_CALLBACK_DATA, *PFS_FILTER_CALLBACK_DATA;
+
+typedef NTSTATUS (NTAPI *PFS_FILTER_CALLBACK)(
+    _In_ PFS_FILTER_CALLBACK_DATA Data,
+    _Out_ PVOID *CompletionContext
+);
+
+typedef VOID (NTAPI *PFS_FILTER_COMPLETION_CALLBACK)(
+    _In_ PFS_FILTER_CALLBACK_DATA Data,
+    _In_ NTSTATUS OperationStatus,
+    _In_ PVOID CompletionContext
+);
+
+typedef struct _FS_FILTER_CALLBACKS {
+    ULONG SizeOfFsFilterCallbacks;
+    ULONG Reserved;
+    PFS_FILTER_CALLBACK PreAcquireForSectionSynchronization;
+    PFS_FILTER_COMPLETION_CALLBACK PostAcquireForSectionSynchronization;
+    PFS_FILTER_CALLBACK PreReleaseForSectionSynchronization;
+    PFS_FILTER_COMPLETION_CALLBACK PostReleaseForSectionSynchronization;
+    PFS_FILTER_CALLBACK PreAcquireForCcFlush;
+    PFS_FILTER_COMPLETION_CALLBACK PostAcquireForCcFlush;
+    PFS_FILTER_CALLBACK PreReleaseForCcFlush;
+    PFS_FILTER_COMPLETION_CALLBACK PostReleaseForCcFlush;
+    PFS_FILTER_CALLBACK PreAcquireForModifiedPageWriter;
+    PFS_FILTER_COMPLETION_CALLBACK PostAcquireForModifiedPageWriter;
+    PFS_FILTER_CALLBACK PreReleaseForModifiedPageWriter;
+    PFS_FILTER_COMPLETION_CALLBACK PostReleaseForModifiedPageWriter;
+} FS_FILTER_CALLBACKS, *PFS_FILTER_CALLBACKS;
+
+__declspec(dllimport) NTSTATUS NTAPI FsRtlRegisterFileSystemFilterCallbacks(
+    _In_ struct _DRIVER_OBJECT *FilterDriverObject,
+    _In_ PFS_FILTER_CALLBACKS Callbacks
+);
+
 static __inline PIO_STACK_LOCATION IoGetCurrentIrpStackLocation(_In_ PIRP Irp) {
     return Irp->Tail.CurrentStackLocation;
 }

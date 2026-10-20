@@ -66,7 +66,11 @@ impl VacuumCosmologySensor {
     /// 2. Zero as the Unseen in Cosmology:
     /// Infers the hidden mass M_dark of an unmonitored rootkit or external agent via gravitational lensing
     /// deflection (latency/cache distortion delta_phi) at impact distance b.
-    pub fn infer_unseen_dark_mass(&self, impact_parameter_b: f64, deflection_angle_phi: f64) -> f64 {
+    pub fn infer_unseen_dark_mass(
+        &self,
+        impact_parameter_b: f64,
+        deflection_angle_phi: f64,
+    ) -> f64 {
         if self.g_sys <= 1e-12 {
             return 0.0;
         }
@@ -122,14 +126,8 @@ mod tests {
         assert!(calm.casimir_pressure_anomaly < 1e-9);
 
         // Unmonitored rootkit bends syscall trajectory (deflection_angle_phi = 0.45)
-        let lensed = sensor.scan_horizon(
-            &[2.0, 4.0, 6.0, 8.0],
-            1.0,
-            expected_casimir,
-            2.0,
-            0.45,
-            5.0,
-        );
+        let lensed =
+            sensor.scan_horizon(&[2.0, 4.0, 6.0, 8.0], 1.0, expected_casimir, 2.0, 0.45, 5.0);
         assert!(lensed.unseen_entity_detected);
         assert!(lensed.inferred_dark_mass > 20.0);
     }

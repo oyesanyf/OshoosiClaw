@@ -260,17 +260,32 @@ fn test_protected_process_and_developer_toolchain_immunity_under_load() {
     let protected_binaries = [
         // Windows Core OS Binaries
         ("explorer.exe", r"C:\Windows\explorer.exe"),
-        ("SearchHost.exe", r"C:\Windows\SystemApps\Microsoft.Windows.Search_cw5n1h2txyewy\SearchHost.exe"),
-        ("SearchIndexer.exe", r"C:\Windows\System32\SearchIndexer.exe"),
-        ("SearchProtocolHost.exe", r"C:\Windows\System32\SearchProtocolHost.exe"),
-        ("SearchFilterHost.exe", r"C:\Windows\System32\SearchFilterHost.exe"),
+        (
+            "SearchHost.exe",
+            r"C:\Windows\SystemApps\Microsoft.Windows.Search_cw5n1h2txyewy\SearchHost.exe",
+        ),
+        (
+            "SearchIndexer.exe",
+            r"C:\Windows\System32\SearchIndexer.exe",
+        ),
+        (
+            "SearchProtocolHost.exe",
+            r"C:\Windows\System32\SearchProtocolHost.exe",
+        ),
+        (
+            "SearchFilterHost.exe",
+            r"C:\Windows\System32\SearchFilterHost.exe",
+        ),
         ("sihost.exe", r"C:\Windows\System32\sihost.exe"),
         ("svchost.exe", r"C:\Windows\System32\svchost.exe"),
         ("lsass.exe", r"C:\Windows\System32\lsass.exe"),
         ("services.exe", r"C:\Windows\System32\services.exe"),
         ("csrss.exe", r"C:\Windows\System32\csrss.exe"),
         ("smss.exe", r"C:\Windows\System32\smss.exe"),
-        ("SecurityHealthSystray.exe", r"C:\Windows\System32\SecurityHealthSystray.exe"),
+        (
+            "SecurityHealthSystray.exe",
+            r"C:\Windows\System32\SecurityHealthSystray.exe",
+        ),
         // Developer Toolchains
         ("python.exe", r"C:\Python312\python.exe"),
         ("python3.exe", r"C:\Program Files\Python312\python3.exe"),
@@ -285,9 +300,15 @@ fn test_protected_process_and_developer_toolchain_immunity_under_load() {
         ("node", "/usr/local/bin/node"),
         ("git.exe", r"C:\Program Files\Git\cmd\git.exe"),
         ("git", "/usr/bin/git"),
-        ("code.exe", r"C:\Users\dev\AppData\Local\Programs\Microsoft VS Code\Code.exe"),
+        (
+            "code.exe",
+            r"C:\Users\dev\AppData\Local\Programs\Microsoft VS Code\Code.exe",
+        ),
         ("wsl.exe", r"C:\Windows\System32\wsl.exe"),
-        ("docker.exe", r"C:\Program Files\Docker\Docker\resources\bin\docker.exe"),
+        (
+            "docker.exe",
+            r"C:\Program Files\Docker\Docker\resources\bin\docker.exe",
+        ),
         // Linux Critical Daemons
         ("systemd", "/lib/systemd/systemd"),
         ("dbus-daemon", "/usr/bin/dbus-daemon"),
@@ -539,7 +560,13 @@ async fn test_netsh_quarantine_rules_cleanly_reverted_upon_disarm() {
         // 1. Ensure clean baseline before test
         for rule in &rule_names {
             let output = Command::new("netsh")
-                .args(["advfirewall", "firewall", "show", "rule", &format!("name={}", rule)])
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "show",
+                    "rule",
+                    &format!("name={}", rule),
+                ])
                 .output()
                 .expect("Failed to execute netsh");
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -578,7 +605,13 @@ async fn test_netsh_quarantine_rules_cleanly_reverted_upon_disarm() {
         // 4. Assert that ALL 15 rules are 100% cleanly deleted with zero residual rules
         for rule in &rule_names {
             let output = Command::new("netsh")
-                .args(["advfirewall", "firewall", "show", "rule", &format!("name={}", rule)])
+                .args([
+                    "advfirewall",
+                    "firewall",
+                    "show",
+                    "rule",
+                    &format!("name={}", rule),
+                ])
                 .output()
                 .expect("Failed to execute netsh show rule");
 
@@ -605,7 +638,8 @@ async fn test_stress_zero_registry_environment_mutation_and_path_immutability() 
     let initial_path = std::env::var("PATH").expect("System PATH must exist");
 
     #[cfg(windows)]
-    let initial_hkcu = EmpiricalStressTestGuard::read_registry_env(HKEY_CURRENT_USER, "Environment");
+    let initial_hkcu =
+        EmpiricalStressTestGuard::read_registry_env(HKEY_CURRENT_USER, "Environment");
     #[cfg(windows)]
     let initial_hklm = EmpiricalStressTestGuard::read_registry_env(
         HKEY_LOCAL_MACHINE,
@@ -615,15 +649,9 @@ async fn test_stress_zero_registry_environment_mutation_and_path_immutability() 
     // 2. Run multi-stage isolation engagement and disarm cycle
     for i in 1..=5 {
         let reason = format!("Immutability Cycle Stage {}", i);
-        let _ = engage_killchain_isolation(
-            "immutability_tester",
-            &reason,
-            false,
-            false,
-            false,
-        )
-        .await
-        .expect("Engage failed in immutability cycle");
+        let _ = engage_killchain_isolation("immutability_tester", &reason, false, false, false)
+            .await
+            .expect("Engage failed in immutability cycle");
 
         // Verify PATH in the middle of isolation
         let mid_path = std::env::var("PATH").expect("System PATH must exist");
@@ -649,7 +677,8 @@ async fn test_stress_zero_registry_environment_mutation_and_path_immutability() 
     // 3. Post-cycle verification of Registry Environment hives
     #[cfg(windows)]
     {
-        let final_hkcu = EmpiricalStressTestGuard::read_registry_env(HKEY_CURRENT_USER, "Environment");
+        let final_hkcu =
+            EmpiricalStressTestGuard::read_registry_env(HKEY_CURRENT_USER, "Environment");
         assert_eq!(
             initial_hkcu, final_hkcu,
             "CRITICAL: HKCU\\Environment was mutated during isolation cycles!"

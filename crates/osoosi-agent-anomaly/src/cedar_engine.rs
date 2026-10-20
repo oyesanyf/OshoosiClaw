@@ -238,8 +238,9 @@ impl VanishingPolynomialTraceVerifier {
                 constraint_residual_mod_zh: 0,
                 chain_continuity_defect: 0,
                 is_valid_zero_identity: true,
-                rationale: "[Law2-Vanishing-Polynomial]: Empty trace trivially satisfies C mod Z_H = 0"
-                    .to_string(),
+                rationale:
+                    "[Law2-Vanishing-Polynomial]: Empty trace trivially satisfies C mod Z_H = 0"
+                        .to_string(),
             };
         }
 

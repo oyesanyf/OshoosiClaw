@@ -36,13 +36,25 @@ pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
     // (Excluding generic script interpreters unless they are administrative runners)
     let is_interpreter = matches!(
         stem,
-        "python" | "python3" | "node" | "perl" | "ruby" | "bash" | "sh" | "zsh" | "powershell" | "cmd"
+        "python"
+            | "python3"
+            | "node"
+            | "perl"
+            | "ruby"
+            | "bash"
+            | "sh"
+            | "zsh"
+            | "powershell"
+            | "cmd"
     );
 
     if !is_interpreter
         && (osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_name)
             || osoosi_types::is_protected_os_shell_or_desktop_binary(base_name)
-            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_name)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(
+                999_999,
+                &lower_name,
+            )
             || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, base_name)
             || matches!(
                 stem,
@@ -101,10 +113,8 @@ pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
     // 5. Developer toolchain processes when invoked directly (name or cmd[0])
     // Developer toolchains (cargo, git, docker, rustc, rustup) or Windows SDK executables (python.exe, node.exe)
     // are shielded when not executing inline evaluation flags or originating from untrusted drop paths.
-    let is_toolchain_proc = matches!(
-        stem,
-        "cargo" | "rustc" | "rustup" | "git" | "docker"
-    ) || (base_name.ends_with(".exe") && matches!(stem, "python" | "python3" | "node"));
+    let is_toolchain_proc = matches!(stem, "cargo" | "rustc" | "rustup" | "git" | "docker")
+        || (base_name.ends_with(".exe") && matches!(stem, "python" | "python3" | "node"));
 
     if is_toolchain_proc {
         let cmd_joined = cmd.join(" ");
@@ -122,10 +132,10 @@ pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
         let base_cmd0 = lower_cmd0.rsplit(['\\', '/']).next().unwrap_or(&lower_cmd0);
         let stem_cmd0 = base_cmd0.strip_suffix(".exe").unwrap_or(base_cmd0);
 
-        let is_cmd0_toolchain = matches!(
-            stem_cmd0,
-            "cargo" | "rustc" | "rustup" | "git" | "docker"
-        ) || (base_cmd0.ends_with(".exe") && matches!(stem_cmd0, "python" | "python3" | "node"));
+        let is_cmd0_toolchain =
+            matches!(stem_cmd0, "cargo" | "rustc" | "rustup" | "git" | "docker")
+                || (base_cmd0.ends_with(".exe")
+                    && matches!(stem_cmd0, "python" | "python3" | "node"));
 
         if is_cmd0_toolchain {
             let cmd_joined = cmd.join(" ");
@@ -138,7 +148,16 @@ pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
 
         let is_cmd0_interpreter = matches!(
             stem_cmd0,
-            "python" | "python3" | "node" | "perl" | "ruby" | "bash" | "sh" | "zsh" | "powershell" | "cmd"
+            "python"
+                | "python3"
+                | "node"
+                | "perl"
+                | "ruby"
+                | "bash"
+                | "sh"
+                | "zsh"
+                | "powershell"
+                | "cmd"
         );
         if !is_cmd0_interpreter
             && (osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_cmd0)
@@ -449,7 +468,9 @@ impl RemediationController {
             if is_administrative_or_ssh_session(proc.name(), proc.cmd())
                 || (!exe_str.is_empty()
                     && (osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
-                        || osoosi_runtime::tarpit::is_protected_system_or_security_process(pid, &exe_str)
+                        || osoosi_runtime::tarpit::is_protected_system_or_security_process(
+                            pid, &exe_str,
+                        )
                         || crate::killchain::is_critical_system_pid(pid, &exe_str)))
             {
                 warn!(
@@ -491,7 +512,9 @@ impl RemediationController {
                     if is_administrative_or_ssh_session(proc.name(), proc.cmd())
                         || (!exe_str.is_empty()
                             && (osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
-                                || osoosi_runtime::tarpit::is_protected_system_or_security_process(child_pid, &exe_str)
+                                || osoosi_runtime::tarpit::is_protected_system_or_security_process(
+                                    child_pid, &exe_str,
+                                )
                                 || crate::killchain::is_critical_system_pid(child_pid, &exe_str)))
                     {
                         warn!(

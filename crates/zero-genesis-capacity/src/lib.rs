@@ -75,7 +75,7 @@ impl GenesisVessel {
         )
     }
 
-    /// 1. Zero Before Visible Form: Evaluates kernel task allocation prior to userspace mapping.
+    /// Zero Before Visible Form (1): Evaluates kernel task allocation prior to userspace mapping.
     /// Computes `<psi | H_threat | psi> == 0`.
     pub fn evaluate_embryonic_state(embryo_state: &[f64], threat_operator_diag: &[f64]) -> f64 {
         embryo_state
@@ -181,14 +181,8 @@ mod tests {
     fn test_genesis_hidden_structure_and_capacity_exhaustion() {
         let mut vessel = GenesisVessel::default_edr_vessel(b"osoosi-boot-attestation-v1");
         // Forbidden transition 1 -> 4 (ReadWorkspace -> PrivilegeOrKernelSink)
-        let forbidden = vessel.observe_transition(
-            &[0.0, 0.0],
-            &[1.0, 1.0],
-            10.0,
-            &[0.1, 0.1, 0.0, 0.0],
-            1,
-            4,
-        );
+        let forbidden =
+            vessel.observe_transition(&[0.0, 0.0], &[1.0, 1.0], 10.0, &[0.1, 0.1, 0.0, 0.0], 1, 4);
         assert!(!forbidden.is_lawful);
         assert_eq!(forbidden.hidden_structure_violation, 1.0);
 

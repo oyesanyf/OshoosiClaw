@@ -174,9 +174,13 @@ fn main() -> Result<()> {
         if args.iter().any(|a| a == "--json") {
             println!("{}", serde_json::to_string_pretty(&scorecard)?);
         } else {
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!("  OpenỌ̀ṣọ́ọ̀sì Built-In Adversarial Red-Team & Bypass-Resistance Gauntlet");
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
             println!(
                 "  Adversarial Vectors Evaluated : {}/{} Prevented ({:.1}%)",
                 scorecard.vectors_prevented,
@@ -218,7 +222,9 @@ fn main() -> Result<()> {
                 scorecard.rl_5_policy_benchmark.backend_label,
                 scorecard.rl_5_policy_benchmark.learned_rl_exceeds_heuristic
             );
-            println!("================================================================================");
+            println!(
+                "================================================================================"
+            );
         }
         if scorecard.prevention_rate_pct < 100.0
             || scorecard.false_positive_rate_pct > 0.0

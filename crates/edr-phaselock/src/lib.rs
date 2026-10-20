@@ -63,20 +63,16 @@ impl PhaseSpaceMonitor {
     }
 
     /// Maps an event ID, inter-arrival delta (ms), and command-line/payload entropy into a scalar phase metric.
-    pub fn compute_syscall_phase_metric(
-        event_id: u32,
-        delta_ms: f64,
-        cmdline_entropy: f64,
-    ) -> f64 {
+    pub fn compute_syscall_phase_metric(event_id: u32, delta_ms: f64, cmdline_entropy: f64) -> f64 {
         let event_weight = match event_id {
-            1 => 1.25,  // ProcessCreate / execve
-            3 => 1.40,  // NetworkConnect
-            8 => 3.80,  // CreateRemoteThread
-            10 => 4.20, // ProcessAccess (LSASS / cross-process memory)
-            11 => 1.15, // FileCreate
+            1 => 1.25,       // ProcessCreate / execve
+            3 => 1.40,       // NetworkConnect
+            8 => 3.80,       // CreateRemoteThread
+            10 => 4.20,      // ProcessAccess (LSASS / cross-process memory)
+            11 => 1.15,      // FileCreate
             12 | 13 => 1.60, // Registry modification
             17 | 18 => 1.75, // Named Pipe create/connect
-            22 => 1.35, // DNS Query
+            22 => 1.35,      // DNS Query
             _ => 1.0,
         };
         let pacing_factor = (1000.0 / (delta_ms.max(1.0) + 10.0)).ln_1p();
@@ -125,8 +121,7 @@ impl PhaseSpaceMonitor {
 
     /// Rosenstein's algorithm approximation for local trajectory divergence in phase space.
     fn compute_local_divergence(&self, current: &[f64]) -> f64 {
-        let max_offset =
-            self.scalar_series.len() - 1 - (self.embedding_dim - 1) * self.tau_delay;
+        let max_offset = self.scalar_series.len() - 1 - (self.embedding_dim - 1) * self.tau_delay;
         let mut min_dist = f64::MAX;
 
         for offset in 1..=max_offset {

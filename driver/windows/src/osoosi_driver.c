@@ -216,6 +216,18 @@ OB_PREOP_CALLBACK_STATUS NTAPI OsoosiObPreThreadCallback(
     _Inout_ POB_PRE_OPERATION_INFORMATION OperationInformation
 );
 
+NTSTATUS NTAPI OsoosiPreAcquireForSectionSync(
+    _In_opt_ PUNICODE_STRING FileName,
+    _In_ ULONG SyncType,
+    _In_ ULONG PageProtection,
+    _In_ ULONG CallerPid
+);
+
+NTSTATUS NTAPI OsoosiFsFilterPreAcquireForSectionSync(
+    _In_ PFS_FILTER_CALLBACK_DATA Data,
+    _Out_ PVOID *CompletionContext
+);
+
 static VOID OsoosiClearRulesLocked(VOID);
 static ULONG OsoosiBoundedWcsLen(_In_reads_(maxChars) PCWSTR str, _In_ ULONG maxChars);
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName);
@@ -328,7 +340,24 @@ NTSTATUS NTAPI DriverEntry(
         KdPrint(("OsoosiDriver: ObRegisterCallbacks returned 0x%08X (continuing with process/image guards)\n", status));
     }
 
-    // 3. Register BYOVD kernel image load callback (PsSetLoadImageNotifyRoutine)
+    // 3. Register Pre-Section Synchronization Filter Callback (FsRtlRegisterFileSystemFilterCallbacks)
+    //    Intercepts IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION (PreAcquireForSectionSynchronization)
+    //    and returns STATUS_ACCESS_DENIED (0xC0000022) BEFORE MmCreateSection maps vulnerable BYOVD
+    //    drivers, ensuring 100% HVCI/KPP compliance without modifying mapped code pages.
+    {
+        FS_FILTER_CALLBACKS fsFilterCallbacks;
+        RtlZeroMemory(&fsFilterCallbacks, sizeof(fsFilterCallbacks));
+        fsFilterCallbacks.SizeOfFsFilterCallbacks = sizeof(FS_FILTER_CALLBACKS);
+        fsFilterCallbacks.PreAcquireForSectionSynchronization = OsoosiFsFilterPreAcquireForSectionSync;
+        status = FsRtlRegisterFileSystemFilterCallbacks(DriverObject, &fsFilterCallbacks);
+        if (NT_SUCCESS(status)) {
+            g_State.MinifilterActive = TRUE;
+        } else {
+            KdPrint(("OsoosiDriver: FsRtlRegisterFileSystemFilterCallbacks returned 0x%08X\n", status));
+        }
+    }
+
+    // 4. Register BYOVD kernel image load callback (PsSetLoadImageNotifyRoutine)
     //    Complemented by pre-section synchronization blocking (OsoosiPreAcquireForSectionSync)
     //    and Windows WDAC Vulnerable Driver Blocklist so HVCI/KPP code integrity is never violated.
     status = PsSetLoadImageNotifyRoutine(OsoosiLoadImageNotifyRoutine);
@@ -1158,6 +1187,31 @@ NTSTATUS NTAPI OsoosiPreAcquireForSectionSync(
     KeReleaseInStackQueuedSpinLock(&lockHandle);
 
     return status;
+}
+
+NTSTATUS NTAPI OsoosiFsFilterPreAcquireForSectionSync(
+    _In_ PFS_FILTER_CALLBACK_DATA Data,
+    _Out_ PVOID *CompletionContext
+) {
+    PUNICODE_STRING fileName = NULL;
+    ULONG callerPid = (ULONG)(ULONG_PTR)PsGetCurrentProcessId();
+
+    if (CompletionContext != NULL) {
+        *CompletionContext = NULL;
+    }
+    if (Data == NULL) {
+        return STATUS_SUCCESS;
+    }
+    if (Data->FileObject != NULL) {
+        fileName = &Data->FileObject->FileName;
+    }
+
+    return OsoosiPreAcquireForSectionSync(
+        fileName,
+        Data->Parameters.AcquireForSectionSynchronization.SyncType,
+        Data->Parameters.AcquireForSectionSynchronization.PageProtection,
+        callerPid
+    );
 }
 
 VOID NTAPI OsoosiLoadImageNotifyRoutine(
