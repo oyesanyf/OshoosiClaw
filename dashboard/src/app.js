@@ -259,7 +259,8 @@ function setupUniversalUiLoadingInterceptors() {
  */
 function init() {
     if (state._initCalled) return;
-    state._initCalled = true;
+    state._initCalled = true;
+
     setupUniversalUiLoadingInterceptors();
     setupLogin();
     setupPasswordResetModal();
@@ -1509,7 +1510,7 @@ function showUserError(context, errorOrPayload, options = {}) {
     }
 
     const title = context ? `[${context}] ${message}` : message;
-    console.error(`[UserError] ${title}`, { errorCode, guidance, errorOrPayload });
+    console.error("[UserError]", title, { errorCode, guidance, errorOrPayload });
 
     const now = Date.now();
     if (_lastUserError.text !== title || (now - _lastUserError.time) > 2500) {
@@ -1607,7 +1608,7 @@ async function fetchAPI(endpoint) {
         }
         return await response.json();
     } catch (err) {
-        console.warn(`Error fetching ${endpoint}:`, err);
+        console.warn("Error fetching endpoint:", endpoint, err);
         return null;
     }
 }
@@ -1639,7 +1640,7 @@ async function postAPI(endpoint, payload = {}) {
         }
         return data || { ok: true, status: 'ok' };
     } catch (err) {
-        console.warn(`Error in postAPI for ${endpoint}:`, err);
+        console.warn("Error in postAPI for endpoint:", endpoint, err);
         return {
             status: 'error',
             error_code: 'NETWORK_ERROR',

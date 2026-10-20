@@ -57,8 +57,11 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     let path_lc = normalized.to_ascii_lowercase();
     if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
         || osoosi_types::is_protected_os_shell_or_desktop_binary(&fname_lc)
-        || crate::blocking_manager::is_protected_or_benign_system_path(&normalized)
+        || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &normalized)
+        || (src.exists() && crate::win_trust::is_trusted_signed_binary(src))
         || path_lc.contains(r"\windows\")
+        || path_lc.contains(r"\program files\")
+        || path_lc.contains(r"\program files (x86)\")
         || path_lc.starts_with("c:\\windows\\")
         || path_lc.starts_with("/bin/")
         || path_lc.starts_with("/sbin/")

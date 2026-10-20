@@ -182,8 +182,12 @@ impl MeshNode {
                 })
             })?
             .with_swarm_config(|c| {
+                const DIAL_CONCURRENCY: std::num::NonZeroU8 = match std::num::NonZeroU8::new(1) {
+                    Some(v) => v,
+                    None => unreachable!(),
+                };
                 c.with_idle_connection_timeout(Duration::from_secs(300))
-                    .with_dial_concurrency_factor(std::num::NonZeroU8::new(1).unwrap()) // Slow down dials
+                    .with_dial_concurrency_factor(DIAL_CONCURRENCY) // Slow down dials
                     .with_max_negotiating_inbound_streams(16)
             })
             .build();

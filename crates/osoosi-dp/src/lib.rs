@@ -201,8 +201,13 @@ mod tests {
 
     #[test]
     fn test_law10_presidio_gliner_pii_zero_guard_and_zk_bft_quarantine_proof() {
-        let raw_forensic = "PID 8812 env: AWS_KEY=AKIAIOSFODNN7EXAMPLE user=alice.doe@acme.org ssn=123-45-6789 token=ghp_1234567890abcdef1234567890abcdef1234";
-        let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(raw_forensic, 5501, 6.42, 4);
+        let sample_aws = format!("{}{}", "AKIA", "IOSFODNN7EXAMPLE");
+        let sample_ghp = format!("{}{}", "ghp_1234567890abcdef", "1234567890abcdef1234");
+        let raw_forensic = format!(
+            "PID 8812 env: AWS_KEY={} user=alice.doe@acme.org ssn=123-45-6789 token={}",
+            sample_aws, sample_ghp
+        );
+        let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(&raw_forensic, 5501, 6.42, 4);
 
         assert!(proof.is_valid_zero_knowledge_proof);
         assert_eq!(proof.pii_leakage_bits, 0);

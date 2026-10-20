@@ -1,11 +1,11 @@
 {
-  "timestamp_utc": "2026-10-20T16:26:13Z",
+  "timestamp_utc": "2026-10-20T17:03:47Z",
   "total_adversarial_vectors": 17,
   "vectors_prevented": 17,
   "prevention_rate_pct": 100.0,
   "detection_rate_pct": 100.0,
-  "containment_latency_p50_us": 45,
-  "containment_latency_p99_us": 3327,
+  "containment_latency_p50_us": 40,
+  "containment_latency_p99_us": 2971,
   "bypass_success_rate_pct": 0.0,
   "false_positive_rate_pct": 0.0,
   "os_stability_score_pct": 100.0,
@@ -32,7 +32,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 123,
+      "latency_us": 106,
       "enforcing_layer": "Law7_CfgHadamardZeroVerifier"
     },
     {
@@ -42,7 +42,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 68,
+      "latency_us": 59,
       "enforcing_layer": "DualStage_5Sigma_QuarantineResponder"
     },
     {
@@ -52,7 +52,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 53,
+      "latency_us": 46,
       "enforcing_layer": "KernelDriverManager_WDAC_SectionSync"
     },
     {
@@ -62,7 +62,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 47,
+      "latency_us": 41,
       "enforcing_layer": "Law4_MartingaleZeroDriftDetector"
     },
     {
@@ -72,7 +72,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 45,
+      "latency_us": 40,
       "enforcing_layer": "HostOsAndSelfDefenseImmunityVeto"
     },
     {
@@ -82,7 +82,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 45,
+      "latency_us": 40,
       "enforcing_layer": "Law6_IharaZetaCycleDetector"
     },
     {
@@ -162,7 +162,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 3327,
+      "latency_us": 2971,
       "enforcing_layer": "Law5_ZeroCopyBuffer_And_PinnedToolObjectBinding"
     },
     {
@@ -172,7 +172,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 390,
+      "latency_us": 328,
       "enforcing_layer": "OsoosiTwoTierDlpEngine_PresidioGlinerPiiZeroGuard"
     },
     {
@@ -182,7 +182,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 1278,
+      "latency_us": 997,
       "enforcing_layer": "IndependentTrustBoundaryVerifier_Layer3_OS_Boundary"
     },
     {
@@ -192,7 +192,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 1322,
+      "latency_us": 1111,
       "enforcing_layer": "NIST_FIPS203_MLKEM768_And_FIPS204_MLDSA65_HybridPQC"
     }
   ]
