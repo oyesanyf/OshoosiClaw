@@ -319,9 +319,9 @@ impl StaticAnalyzer {
                     }
                 }
 
-                let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap();
+                let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})")?;
                 let domain_regex =
-                    Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
+                    Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b")?;
 
                 let known_good_domains: &[&str] = &[
                     "ocsp.",

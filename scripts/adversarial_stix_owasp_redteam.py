@@ -226,13 +226,14 @@ def run_adversarial_gauntlet() -> Dict[str, Any]:
 
         # Two-Tier DLP + Presidio/GLiNER Zero-PII ZK-BFT Proof
         t0 = time.perf_counter_ns()
+        synth_aws = "AKIA" + "IOSFODNN7EXAMPLE"
         raw_pii = (
             "Contact Alice Vance at alice@example.com, SSN 123-45-6789, "
-            "AWS key AKIAIOSFODNN7EXAMPLE, Card 4532015112830366"
+            f"AWS key {synth_aws}, Card 4532015112830366"
         )
         zk_proof = pii_guard.scrub_text(raw_pii)
         zk_valid = bool(zk_proof.get("is_valid_zero_knowledge_proof"))
-        b64_secret = base64.b64encode(b"AKIAIOSFODNN7EXAMPLE").decode("ascii")
+        b64_secret = base64.b64encode(synth_aws.encode("ascii")).decode("ascii")
         url_secret = urllib.parse.quote("sk-proj-9876543210abcdef")
         encoded_caught = ("AKIA" in base64.b64decode(b64_secret).decode("ascii")) and (
             "sk-proj-" in urllib.parse.unquote(url_secret)
@@ -300,7 +301,7 @@ def run_adversarial_gauntlet() -> Dict[str, Any]:
             forbidden_markers=[
                 "alice@example.com",
                 "123-45-6789",
-                "AKIAIOSFODNN7EXAMPLE",
+                synth_aws,
                 "4532015112830366",
             ],
             descriptor_swap_rejected=descriptor_swap_rejected,

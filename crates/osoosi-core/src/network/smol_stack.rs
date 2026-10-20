@@ -98,9 +98,7 @@ impl SmolSandbox {
 
         let mut interface = Interface::new(config, &mut device, Instant::now());
         interface.update_ip_addrs(|addrs| {
-            addrs
-                .push(IpCidr::new(IpAddress::v4(10, 255, 0, 1), 24))
-                .unwrap();
+            let _ = addrs.push(IpCidr::new(IpAddress::v4(10, 255, 0, 1), 24));
         });
 
         Ok(Self {

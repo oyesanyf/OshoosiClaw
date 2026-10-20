@@ -100,11 +100,8 @@ impl WfpDynamicSession {
             use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
             let dll_name: Vec<u16> = "fwpuclnt.dll\0".encode_utf16().collect();
-            let h_module = unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) };
-            if let Err(e) = h_module {
-                return Err(anyhow!("Failed to load fwpuclnt.dll: {}", e));
-            }
-            let h_module = h_module.unwrap();
+            let h_module = unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }
+                .map_err(|e| anyhow!("Failed to load fwpuclnt.dll: {}", e))?;
 
             let get_func = |name: &'static [u8]| -> Option<*const ()> {
                 let proc = unsafe { GetProcAddress(h_module, windows::core::PCSTR(name.as_ptr())) };

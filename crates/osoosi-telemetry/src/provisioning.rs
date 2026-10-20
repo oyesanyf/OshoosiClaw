@@ -1665,10 +1665,9 @@ mod tests {
                 .map(|a| a.to_string_lossy().to_string())
                 .collect();
             let full_cmd = format!("{} {}", prog, args.join(" "));
-            self.executed_commands
-                .lock()
-                .unwrap()
-                .push(full_cmd.clone());
+            if let Ok(mut guard) = self.executed_commands.lock() {
+                guard.push(full_cmd.clone());
+            }
 
             if full_cmd.contains("wevtutil.exe gp") {
                 if let Some((code, stdout)) = self.wevtutil_gp_response {

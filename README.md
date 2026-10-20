@@ -994,6 +994,35 @@ To protect against both **"Harvest Now, Decrypt Later"** store-and-decrypt adver
 | **Hardware-Anchored Binary Merkle Manifest (`Tpm2MerkleRootSigner`)** | TPM 2.0 Handle `0x81010002` + `Ed25519` over `SHA256(BLAKE3_Root)` | **`ML-DSA-65` (`pqc_mldsa65_signature_hex`)** dual-anchored in `<binary>.merkle.sig.json` | **NIST FIPS 204** + TPM 2.0 NV Counter `0x01800001` anti-rollback |
 | **Law 10 Zero-Knowledge BFT Quarantine Proof (`osoosi-dp`)** | Schnorr-BLAKE3 Fiat-Shamir Commitment | **`ML-DSA-65` + `BLAKE3-256`** (128-bit Grover preimage resistance) | **NIST FIPS 204** + 128-bit Quantum Hash Security |
 
+```mermaid
+flowchart LR
+    subgraph KEM["Hybrid Key Encapsulation (NIST FIPS 203 + RFC 7748)"]
+        X25519["X25519 ECDH<br/>(32B Ephemeral Shared Secret)"]
+        MLKEM["ML-KEM-768 (Kyber-768)<br/>Module-LWE R_q (q=3329, k=3)<br/>FIPS 203 §7.2 Modulus Check + FO-CCA2"]
+        KDF["BLAKE3 Domain-Separated KDF<br/>OSHOOSI_HYBRID_KEM_V1_X25519_MLKEM768"]
+        X25519 --> KDF
+        MLKEM --> KDF
+    end
+
+    subgraph SIG["Hybrid Digital Signatures & Pinned Identity (NIST FIPS 204 + RFC 8032)"]
+        ED["Ed25519 Signature<br/>(64B RFC 8032)"]
+        MLDSA["ML-DSA-65 (Dilithium)<br/>Module-SIS/LWE R_q (q=8380417)<br/>Infinity-Norm & Challenge Check"]
+        PIN["Pinned VK Commitment<br/>BLAKE3(OSHOOSI_HYBRID_VK_COMMITMENT_V1 || ed_pk || pq_pk)"]
+        VER["Fail-Closed Verifier<br/>Requires Both Classical & PQC + Pinned Commitment"]
+        ED --> VER
+        MLDSA --> VER
+        PIN --> VER
+    end
+
+    KDF -->|"Quantum-Resistant Session Key"| VER
+```
+
+- **Universal WebUI Loading Spinners & Real-Time Status Feedback (`dashboard/src/index.html`, `dashboard/src/app.js`, `dashboard/src/style.css`)**:
+  - **Login Page Status Banner & Button Spinners**: Immediate `#login-status-banner` (`#login-status-text`), `#login-btn-spinner`, and `#hello-btn-spinner` feedback during `initAuth()` probe, token validation, and Windows Hello WebAuthn challenges so the UI never displays a blank or unresponsive screen.
+  - **Global Navigation & Fetch Progress Bar**: Top-of-viewport `#global-ui-progress-bar` shimmer, header `#global-ui-loading-pill` (`#global-ui-loading-text`), automatic button loading state (`setButtonLoadingState`), and view-switching status overlays (`showViewLoadingFeedback`) wired via `setupUniversalUiLoadingInterceptors()`.
+- **Steady-State Memory Optimization (`83.36 MB` Working Set vs. `< 250 MB` Target)**:
+  - Shared `OnceLock<Option<Arc<yara_x::Rules>>>` compilation across `YaraScanner` and `YaraXMemoryVoter` (`crates/osoosi-core/src/yara.rs`), bounded rule bundle filtering (`<= 256 KB`), and proactive per-process Working Set trimming (`proc_ws_mb > 220.0`) in `spawn_memory_watchdog()` (`crates/osoosi-core/src/memory_watchdog.rs`).
+
 ---
 
 ## 📸 Interactive WebUI Visual Gallery

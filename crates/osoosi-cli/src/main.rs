@@ -7544,7 +7544,9 @@ mod tests {
 
     impl Write for BufferWriter {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(buf);
+            if let Ok(mut guard) = self.0.lock() {
+                guard.extend_from_slice(buf);
+            }
             Ok(buf.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
