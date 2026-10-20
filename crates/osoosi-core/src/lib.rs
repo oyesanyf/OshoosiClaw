@@ -9886,9 +9886,10 @@ impl EdrOrchestrator {
                 {
                     continue;
                 }
-                if item.summary.contains("Veto Trusted Vendor")
-                    || item.summary.contains("outside the vulnerable")
-                    || item.summary.contains("CVE None")
+                let s_lower = item.summary.to_ascii_lowercase();
+                if (s_lower.contains("veto") && s_lower.contains("trusted"))
+                    || s_lower.contains("outside the vulnerable")
+                    || s_lower.contains("cve none")
                 {
                     continue;
                 }
@@ -9898,7 +9899,8 @@ impl EdrOrchestrator {
                         .and_then(|n| n.to_str())
                         .unwrap_or(p)
                         .to_ascii_lowercase();
-                    if self.rea_adjudicated_clean_procs.contains(&b)
+                    if matches!(b.as_str(), "sc.exe" | "git.exe" | "conhost.exe" | "chrome.exe" | "wsl.exe" | "taskkill.exe" | "powershell.exe" | "cmd.exe" | "svchost.exe" | "explorer.exe")
+                        || self.rea_adjudicated_clean_procs.contains(&b)
                         || self.memory.is_false_positive_pattern(Some(p.as_str()), item.hash_blake3.as_deref()).unwrap_or(false)
                         || item.hash_blake3.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
                     {
@@ -9998,10 +10000,11 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim();
-                    if reason_str.contains("Execution Of Non-Existing File")
-                        || reason_str.contains("Veto Trusted Vendor")
-                        || reason_str.contains("outside the vulnerable")
-                        || reason_str.contains("CVE None")
+                    let r_lower = reason_str.to_ascii_lowercase();
+                    if (r_lower.contains("veto") && r_lower.contains("trusted"))
+                        || r_lower.contains("outside the vulnerable")
+                        || r_lower.contains("cve none")
+                        || r_lower.contains("execution of non-existing file")
                         || conf < 0.50
                     {
                         continue;
@@ -10012,7 +10015,8 @@ impl EdrOrchestrator {
                             .and_then(|n| n.to_str())
                             .unwrap_or(p)
                             .to_ascii_lowercase();
-                        if self.rea_adjudicated_clean_procs.contains(&b)
+                        if matches!(b.as_str(), "sc.exe" | "git.exe" | "conhost.exe" | "chrome.exe" | "wsl.exe" | "taskkill.exe" | "powershell.exe" | "cmd.exe" | "svchost.exe" | "explorer.exe")
+                            || self.rea_adjudicated_clean_procs.contains(&b)
                             || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
                             || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
                         {
@@ -10156,12 +10160,13 @@ impl EdrOrchestrator {
                             && !s.eq_ignore_ascii_case("unknown process")
                             && !s.eq_ignore_ascii_case("system process")
                     });
+                    let r3_lower = reason.to_ascii_lowercase();
                     if conf < 0.50
                         || reason.trim().is_empty()
-                        || reason.contains("Execution Of Non-Existing File")
-                        || reason.contains("Veto Trusted Vendor")
-                        || reason.contains("outside the vulnerable")
-                        || reason.contains("CVE None")
+                        || r3_lower.contains("execution of non-existing file")
+                        || (r3_lower.contains("veto") && r3_lower.contains("trusted"))
+                        || r3_lower.contains("outside the vulnerable")
+                        || r3_lower.contains("cve none")
                     {
                         continue;
                     }
@@ -10171,7 +10176,8 @@ impl EdrOrchestrator {
                             .and_then(|n| n.to_str())
                             .unwrap_or(p)
                             .to_ascii_lowercase();
-                        if self.rea_adjudicated_clean_procs.contains(&b)
+                        if matches!(b.as_str(), "sc.exe" | "git.exe" | "conhost.exe" | "chrome.exe" | "wsl.exe" | "taskkill.exe" | "powershell.exe" | "cmd.exe" | "svchost.exe" | "explorer.exe")
+                            || self.rea_adjudicated_clean_procs.contains(&b)
                             || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
                             || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
                         {
