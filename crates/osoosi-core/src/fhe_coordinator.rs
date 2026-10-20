@@ -167,7 +167,7 @@ impl FheCoordinator {
 
     /// Records a new operation leaf in the BLAKE3 Merkle tree.
     fn record_merkle_leaf(&self, op_type: &str, payload_bytes: &[u8]) -> FheMerkleLeaf {
-        let mut guard = self.audit_leaves.write().unwrap();
+        let mut guard = self.audit_leaves.write().unwrap_or_else(|e| e.into_inner());
         let seq = guard.len() as u64;
         let timestamp = Utc::now().to_rfc3339();
         let payload_hash = blake3::hash(payload_bytes).to_hex().to_string();
@@ -193,19 +193,19 @@ impl FheCoordinator {
 
     /// Retrieves current Merkle Root across all recorded FHE operations.
     pub fn get_merkle_root(&self) -> String {
-        let guard = self.audit_leaves.read().unwrap();
+        let guard = self.audit_leaves.read().unwrap_or_else(|e| e.into_inner());
         let leaf_hashes: Vec<String> = guard.iter().map(|l| l.leaf_hash.clone()).collect();
         compute_merkle_root(&leaf_hashes)
     }
 
     /// Retrieves current number of leaves in the Merkle audit tree.
     pub fn get_tree_size(&self) -> usize {
-        self.audit_leaves.read().unwrap().len()
+        self.audit_leaves.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Generates cryptographic Merkle proof for a recorded operation sequence.
     pub fn get_audit_proof(&self, seq: u64) -> Result<FheMerkleAuditProof> {
-        let guard = self.audit_leaves.read().unwrap();
+        let guard = self.audit_leaves.read().unwrap_or_else(|e| e.into_inner());
         let leaf_hashes: Vec<String> = guard.iter().map(|l| l.leaf_hash.clone()).collect();
         let tree_size = leaf_hashes.len();
 

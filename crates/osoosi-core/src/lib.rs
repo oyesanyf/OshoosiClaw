@@ -10342,10 +10342,21 @@ impl EdrOrchestrator {
         };
         for relay in &nostr_relays {
             if !relay.trim().is_empty() {
-                let relay_id = format!("relay:{}", relay);
+                // Automatically upgrade remote non-loopback relays from ws:// to wss://
+                let secure_relay = if relay.starts_with("ws://")
+                    && !relay.contains("127.0.0.1")
+                    && !relay.contains("localhost")
+                    && !relay.contains("[::1]")
+                {
+                    relay.replacen("ws://", "wss://", 1)
+                } else {
+                    relay.clone()
+                };
+
+                let relay_id = format!("relay:{}", secure_relay);
                 nodes.push(serde_json::json!({
                     "id": relay_id.clone(),
-                    "label": format!("Relay ({})", relay.trim_start_matches("wss://").trim_start_matches("ws://")),
+                    "label": format!("Relay ({})", secure_relay.trim_start_matches("wss://").trim_start_matches("ws://")),
                     "group": "relay",
                     "role": "Nostr Telemetry Relay Pool",
                     "status": "online",
@@ -10353,7 +10364,7 @@ impl EdrOrchestrator {
                     "reputation": 0.95,
                     "health": "Synchronized",
                     "latency": "12.4 ms",
-                    "ip": relay.clone(),
+                    "ip": secure_relay.clone(),
                     "os": "Decentralized Relay",
                     "packets_tx": gossip_count,
                     "packets_rx": gossip_count,

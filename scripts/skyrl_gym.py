@@ -13,7 +13,10 @@ import json
 import random
 import urllib.request
 import urllib.error
+import urllib.parse
 from typing import Optional, Tuple, Dict, Any
+
+_csprng = random.SystemRandom()
 
 try:
     import gymnasium as gym
@@ -30,12 +33,12 @@ except ImportError:
                     self.low = low
                     self.high = high
                 def sample(self):
-                    return [random.uniform(0.0, 1.0) for _ in range(self.shape[0])]
+                    return [_csprng.uniform(0.0, 1.0) for _ in range(self.shape[0])]
             class Discrete:
                 def __init__(self, n):
                     self.n = n
                 def sample(self):
-                    return random.randint(0, self.n - 1)
+                    return _csprng.randint(0, self.n - 1)
         gym = object
         spaces = DummySpaces()
 
@@ -105,6 +108,9 @@ class OshoosiSecurityGymEnv:
 
     def _http_post(self, path: str, payload: dict) -> Optional[dict]:
         url = f"{self.base_url.rstrip('/')}{path}"
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme.lower() not in ("http", "https"):
+            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -128,11 +134,11 @@ class OshoosiSecurityGymEnv:
         if seed is not None:
             random.seed(seed)
 
-        self.session_id = f"skyrl-py-{random.randint(10000000, 99999999):08x}"
+        self.session_id = f"skyrl-py-{_csprng.randint(10000000, 99999999):08x}"
         self.current_step = 0
 
         opts = options or {}
-        self._local_pid = opts.get("pid", random.choice([4, 1024, 7812, 8914]))
+        self._local_pid = opts.get("pid", _csprng.choice([4, 1024, 7812, 8914]))
         self._local_bin = opts.get("binary_path", "csrss.exe" if self._local_pid == 4 else "svchost_inject.exe")
         self._local_is_malicious = opts.get("is_malicious", self._local_pid not in PROTECTED_PIDS)
 

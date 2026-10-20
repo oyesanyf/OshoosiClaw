@@ -1,9 +1,10 @@
-﻿import os
+import os
 import sys
 import time
 import subprocess
 import urllib.request
 import json
+from pathlib import Path
 
 def print_header(title):
     print("\n" + "=" * 65)
@@ -16,12 +17,15 @@ def main():
 
     # 1. TEST: Deception Engine Canary Traps
     print("\n[*] 1. Testing Deception / Canary Traps (Filesystem Honeypots)...")
-    traps_dir = "traps"
+    base_traps = Path("traps").resolve()
     traps_tested = 0
-    if os.path.exists(traps_dir):
+    if base_traps.exists() and base_traps.is_dir():
         for trap_name in ["Production_DB_Keys.env", "CEO_Private_Strategy.docx", "root_password_backup.txt"]:
-            trap_path = os.path.join(traps_dir, trap_name)
-            if os.path.exists(trap_path):
+            trap_target = (base_traps / trap_name).resolve()
+            if not trap_target.is_relative_to(base_traps):
+                continue
+            trap_path = str(trap_target)
+            if trap_target.exists():
                 try:
                     with open(trap_path, "a") as f:
                         f.write(f"\n# SYNTHETIC_TEST_PROBE_{int(time.time())}\n")
@@ -35,8 +39,11 @@ def main():
 
     # 2. TEST: Standard EICAR Antivirus Test Signature Drop
     print("\n[*] 2. Testing Anti-Malware / YARA-X Real-Time Scanner (EICAR Drop)...")
-    temp_dir = os.environ.get("TEMP", ".")
-    eicar_file = os.path.join(temp_dir, "synthetic_eicar_test.com")
+    base_temp = Path(os.environ.get("TEMP", ".")).resolve()
+    eicar_target = (base_temp / "synthetic_eicar_test.com").resolve()
+    if not eicar_target.is_relative_to(base_temp):
+        raise ValueError(f"Path traversal detected: {eicar_target} is outside {base_temp}")
+    eicar_file = str(eicar_target)
     eicar_string = r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
     try:
         with open(eicar_file, "w") as f:

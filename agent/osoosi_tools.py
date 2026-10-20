@@ -2,15 +2,28 @@
 import os
 import requests
 from typing import Optional
+from urllib.parse import quote, urlparse
 
-OSOOSI_BASE = os.environ.get("OSOOSI_API_URL", "http://127.0.0.1:3030")
+
+def _validate_base_url(raw_url: str) -> str:
+    parsed = urlparse(raw_url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Invalid OSOOSI_API_URL scheme: {parsed.scheme!r}. Must be http or https.")
+    if not (parsed.hostname or parsed.netloc):
+        raise ValueError(f"Invalid OSOOSI_API_URL: missing host in {raw_url!r}")
+    return raw_url.rstrip("/")
+
+
+OSOOSI_BASE = _validate_base_url(os.environ.get("OSOOSI_API_URL", "http://127.0.0.1:3030"))
 
 
 def _headers() -> dict:
-    api_key = os.environ.get("OSOOSI_API_KEY") or os.environ.get("OSOOSI_API_TOKEN") or ""
+    raw_key = os.environ.get("OSOOSI_API_KEY") or os.environ.get("OSOOSI_API_TOKEN") or ""
+    # Strip CR and LF to prevent HTTP header injection
+    sanitized_key = raw_key.replace("\r", "").replace("\n", "").strip()
     headers = {}
-    if api_key:
-        headers["X-API-Key"] = api_key
+    if sanitized_key:
+        headers["X-API-Key"] = sanitized_key
     return headers
 
 
@@ -39,7 +52,8 @@ def get_agent_context() -> str:
 def approve_peer(peer_id: str) -> str:
     """Approve a pending peer to join the mesh. Use peer_id from pending_joins."""
     try:
-        data = _post(f"/api/pending-joins/{peer_id}/allow")
+        encoded_peer = quote(str(peer_id), safe="")
+        data = _post(f"/api/pending-joins/{encoded_peer}/allow")
         return f"Result: {data}"
     except Exception as e:
         return f"Error: {e}"
@@ -48,7 +62,8 @@ def approve_peer(peer_id: str) -> str:
 def deny_peer(peer_id: str) -> str:
     """Deny a pending peer from joining the mesh."""
     try:
-        data = _post(f"/api/pending-joins/{peer_id}/deny")
+        encoded_peer = quote(str(peer_id), safe="")
+        data = _post(f"/api/pending-joins/{encoded_peer}/deny")
         return f"Result: {data}"
     except Exception as e:
         return f"Error: {e}"
@@ -76,7 +91,8 @@ def get_quarantined_peers() -> str:
 def release_quarantined_peer(peer_id: str) -> str:
     """Release a peer from quarantine (localhost or admin host only)."""
     try:
-        data = _post(f"/api/quarantined-peers/{peer_id}/release")
+        encoded_peer = quote(str(peer_id), safe="")
+        data = _post(f"/api/quarantined-peers/{encoded_peer}/release")
         return f"Result: {data}"
     except Exception as e:
         return f"Error: {e}"

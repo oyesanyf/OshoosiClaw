@@ -48,15 +48,16 @@ pub fn hex_patch(script_path: &Path, target_path: &Path) -> Result<()> {
 
     scope.push("buffer", buffer);
 
-    // Run script
-    engine.run_with_scope(&mut scope, &script).map_err(|e| {
+    // Compile script AST
+    let ast = engine.compile(&script).map_err(|e| {
         anyhow::anyhow!("Script error: {}", e)
     })?;
 
     // Try patches() first
-    let has_patches = engine.eval_with_scope::<Array>(&mut scope, "patches()");
+    let has_patches = engine.call_fn::<Array>(&mut scope, &ast, "patches", ());
     if let Ok(patches) = has_patches {
-        let buffer = scope.get_value::<PatchBuffer>("buffer").unwrap();
+        let buffer = scope.get_value::<PatchBuffer>("buffer")
+            .ok_or_else(|| anyhow::anyhow!("'buffer' missing in scope"))?;
         for (i, entry) in patches.iter().enumerate() {
             let map = entry.clone().try_cast::<Map>().ok_or_else(|| {
                 anyhow::anyhow!("patches()[{}] must be map {{offset, hex}}", i)
@@ -70,7 +71,7 @@ pub fn hex_patch(script_path: &Path, target_path: &Path) -> Result<()> {
             buffer.patch(offset as usize, &hex)?;
             info!("Patched offset 0x{:X} with {}", offset, hex);
         }
-    } else if engine.eval_with_scope::<()>(&mut scope, "apply()").is_ok() {
+    } else if engine.call_fn::<()>(&mut scope, &ast, "apply", ()).is_ok() {
         // apply() ran
     } else {
         anyhow::bail!(
@@ -78,7 +79,8 @@ pub fn hex_patch(script_path: &Path, target_path: &Path) -> Result<()> {
         );
     }
 
-    let buffer = scope.get_value::<PatchBuffer>("buffer").unwrap();
+    let buffer = scope.get_value::<PatchBuffer>("buffer")
+        .ok_or_else(|| anyhow::anyhow!("'buffer' missing in scope"))?;
     let data = buffer.into_data();
     std::fs::write(target_path, &data)
         .with_context(|| format!("Failed to write target: {}", target_path.display()))?;
@@ -154,12 +156,14 @@ pub fn hex_patch_dynamic(target_path: &Path, find_hex: &str, replace_hex: &str) 
     engine.register_fn("patch", buffer_patch);
     scope.push("buffer", buffer);
 
-    engine.run_with_scope(&mut scope, &script)
+    let ast = engine.compile(&script)
         .map_err(|e| anyhow::anyhow!("Generated script error: {}", e))?;
-    engine.eval_with_scope::<()>(&mut scope, "apply()")
+    engine.call_fn::<()>(&mut scope, &ast, "apply", ())
         .map_err(|e| anyhow::anyhow!("apply() failed: {}", e))?;
 
-    let data = scope.get_value::<PatchBuffer>("buffer").unwrap().into_data();
+    let data = scope.get_value::<PatchBuffer>("buffer")
+        .ok_or_else(|| anyhow::anyhow!("'buffer' missing in scope"))?
+        .into_data();
     std::fs::write(target_path, &data)
         .with_context(|| format!("Failed to write target: {}", target_path.display()))?;
     info!("Patched {} (dynamic find {} -> {})", target_path.display(), find_hex, replace_hex);
@@ -274,4 +278,59 @@ fn parse_hex(s: &str) -> Result<Vec<u8>> {
                 .map_err(|_| anyhow::anyhow!("invalid hex at position {}", i))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_hex() {
+        assert_eq!(parse_hex("90 90").unwrap(), vec![0x90, 0x90]);
+        assert_eq!(parse_hex("deadbeef").unwrap(), vec![0xde, 0xad, 0xbe, 0xef]);
+        assert!(parse_hex("909").is_err());
+        assert!(parse_hex("zz").is_err());
+    }
+
+    #[test]
+    fn test_patch_buffer_in_memory() {
+        let mut data = vec![0x00, 0x01, 0x02, 0x03];
+        let buffer = PatchBuffer::new(&mut data);
+        buffer.patch(1, "FF FE").unwrap();
+        let result = buffer.into_data();
+        assert_eq!(result, vec![0x00, 0xFF, 0xFE, 0x03]);
+    }
+
+    #[test]
+    fn test_patch_buffer_out_of_bounds() {
+        let mut data = vec![0x00, 0x01];
+        let buffer = PatchBuffer::new(&mut data);
+        assert!(buffer.patch(1, "FF FE FF").is_err());
+    }
+
+    #[test]
+    fn test_hex_patch_find_replace() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_hexpatch_fr.bin");
+        std::fs::write(&temp_file, b"HELLO WORLD HELLO").unwrap();
+
+        hex_patch_find_replace(&temp_file, "48 45 4c 4c 4f", "57 4f 52 4c 44").unwrap();
+        let content = std::fs::read(&temp_file).unwrap();
+        assert_eq!(&content[..5], b"WORLD");
+
+        let _ = std::fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_hex_patch_dynamic() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_hexpatch_dyn.bin");
+        std::fs::write(&temp_file, b"\x90\x90\xcc\xcc").unwrap();
+
+        hex_patch_dynamic(&temp_file, "9090", "cccc").unwrap();
+        let content = std::fs::read(&temp_file).unwrap();
+        assert_eq!(content, vec![0xcc, 0xcc, 0xcc, 0xcc]);
+
+        let _ = std::fs::remove_file(temp_file);
+    }
 }

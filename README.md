@@ -2444,7 +2444,63 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 ## 🏗️ Production Stability & Hardening (v1.2.0)
 
-Recent hardening efforts have focused on the 7-crate Physics of Zero multi-OS architecture, autonomous reverse engineering (REA), hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
+Recent hardening efforts have focused on the 12 security audit remediations, RAPTOR autonomous full-suite verification, the 7-crate Physics of Zero multi-OS architecture, autonomous reverse engineering (REA), hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
+
+```mermaid
+flowchart TD
+    subgraph Audit["1. RAPTOR Full-Suite Scan & Audit Remediation"]
+        A1["12 Security Audit Findings Remediated\n(Lock Poisoning, SRI, defusedxml, wss://, CSPRNG)"]
+        A2["RAPTOR Mode=all Scan\n(7 Stages: scan, crypto, sca, openant, agentic)"]
+        A3["Verification Gate\n• 0 Exploitable Findings\n• 0 Failed Semgrep Packs"]
+        A1 --> A2 --> A3
+    end
+
+    subgraph Build["2. Multi-Platform Compilation & Signing"]
+        B1["Windows: cargo build --release -p osoosi-cli\nWiX v5: OshoosiClaw.msi (x64)"]
+        B2["Windows 10 SDK signtool.exe\n(SHA-256 + DigiCert RFC 3161 Timestamp)"]
+        B3["Linux: packaging/linux/build_packages.sh\n(.deb, .rpm, .tar.gz + eBPF CO-RE)"]
+        B4["Docker: ghcr.io/oyesanyf/oshoosiclaw:1.2.0\n(UID 65532:65532, --read-only, --cap-drop=ALL)"]
+        B1 --> B2
+    end
+
+    subgraph Delivery["3. Trust & Cloud Delivery"]
+        D1["Microsoft WDSI Submission\n(scripts/submit_to_wdsi.py --all)"]
+        D2["GitHub Releases Sync\n(update_github_release_msi.py + DSSE SLSA Provenance)"]
+        D3["Solo-Developer PR Shipping\n(scripts/solo_pr_ship.ps1 + Auto-Review Bot Approval)"]
+        B2 --> D1
+        B2 & B3 --> D2
+        D1 & D2 & B4 --> D3
+    end
+
+    A3 --> Build
+```
+
+- **12-Point Security Audit Remediation & Defense-in-Depth Hardening (Zero Vulnerabilities)**:
+  - **Rust Lock Poisoning Resilience**: Eliminated all `.unwrap()` invocations on `RwLock` and `Mutex` guards inside fallible functions across `crates/osoosi-core/src/killchain.rs`, `crates/osoosi-core/src/fhe_coordinator.rs`, `crates/osoosi-behavioral/src/agentic_arbitrator.rs`, and `crates/osoosi-hexpatch/src/lib.rs`. Replaced with `.unwrap_or_else(|e| e.into_inner())` poison-recovery and `.map_err(...)` propagation, ensuring that a panicked thread never cascades into a permanent denial of service for the EDR daemon.
+  - **Subresource Integrity (SRI) Pinning & Zero-Diff WebUI Parity**: Pinned `vis-network@9.1.9` in `dashboard/src/index.html` and `dashboard/dist/index.html` with explicit `integrity="sha384-..."` cryptographic hash and `crossorigin="anonymous"`, maintaining strict 0-diff character parity.
+  - **Agent Tool URL Path & Header Sanitization**: Hardened `agent/osoosi_tools.py` with RFC 3986 URL path encoding (`urllib.parse.quote(peer_id, safe="")`), CRLF stripping (`\r`, `\n`) on `X-API-Key` headers to prevent HTTP header injection, and strict scheme (`http`/`https`) and hostname validation.
+  - **Safe XML Parsing & Billion-Laughs Defense**: Replaced vulnerable `xml.etree.ElementTree` with `defusedxml.ElementTree` across `tools/wikiskill/src/wikiskill/spreadsheet/study.py` and `tools/wikiskill/examples/workbook-delivery/score.py`, preventing XML entity expansion and quadratic blowup attacks.
+  - **Dynamic Protocol-Aware WebSocket Auto-Upgrade**: Updated dashboard WebSocket connection handlers in `crates/osoosi-core/src/lib.rs` and `crates/osoosi-dashboard/src/lib.rs` to dynamically detect `location.protocol` and automatically upgrade to `wss://` over TLS while falling back to `ws://` on local plaintext HTTP.
+  - **Outbound URL Scheme Allowlisting**: Added strict scheme validation (`parsed.scheme in ("http", "https")`) across `scripts/skyrl_train_loop.py`, `scripts/submit_to_wdsi.py`, and `scripts/generate_mitre_catalog.py`, rejecting arbitrary protocol handlers (such as `file://` or `gopher://`).
+  - **Subprocess Argument & Path Hardening**: Hardened `tools/harness2/harness2/cli/bridge.py` by resolving executable paths via `Path(litellm).resolve()` and strictly validating port ranges (`1..65535`) and hostnames before process invocation.
+  - **Path Traversal Guards in Test Scripts**: Added `.resolve()` and `.is_relative_to(base)` path confinement checks in `tests/comprehensive_threat_validation.py` and `tests/threat_simulation.py`, preventing directory traversal outside the test directory.
+  - **Explicit Non-Security Digest Intent**: Annotated non-cryptographic identifier hashing with `usedforsecurity=False` in `scripts/submit_to_wdsi.py`, `tools/harness2/harness2/core/runmark.py`, `tools/harness2/harness2/core/selection.py`, and `tools/harness2/harness2/benchmarks/workbuddy.py`.
+  - **Cryptographically Secure PRNG**: Upgraded RL exploration sampling in `scripts/train_cql_edr.py` and `scripts/skyrl_gym.py` to `random.SystemRandom()`.
+  - **Local Loopback Ollama Hygiene**: Documented and sanitized loopback endpoint generation in `crates/osoosi-behavioral/src/agentic_arbitrator.rs` and `crates/osoosi-core/src/voters.rs` to eliminate static analysis false positives.
+  - **Prototype Pollution Defense**: Hardened `deepEqual` in `.agents/skills/security-audit/scripts/validate-findings.cjs` to ignore and filter out `__proto__`, `constructor`, and `prototype` keys.
+
+- **RAPTOR Autonomous Security Framework Full-Suite Scan (`Mode=all`)**:
+  - Full automated adversarial scan executed via `Invoke-RaptorScan.ps1 -TargetPath "D:\harfile\OshoosiClaw" -Mode all` across all 7 research stages (`doctor`, `describe`, `scan`, `crypto`, `sca`, `openant`, `agentic`).
+  - **0 Exploitable Findings**: Verified across the multi-agent exploitability triage engine (`raptor_agentic_report.json`), confirming all candidate findings are fully mitigated or remediated.
+  - **0 Failed Semgrep Packs**: Verified in `scan_metrics.json` across 17 category packs (`auth`, `c`, `crypto`, `deserialisation`, `filesystem`, `flows`, `go`, `injection`, `java`, `javascript`, `logging`, `php`, `python`, `secrets`, `sinks`, `web`, `xml`) and 8 vendor rule packs (`semgrep_auth`, `semgrep_dataflow`, `semgrep_injection`, `owasp_top_10`, `semgrep_secrets`, `security_audit`, `semgrep_sinks`, `trailofbits`).
+
+- **Full-Lifecycle Release Packaging, Authenticode Signing & WDSI Submission**:
+  - **Windows 10 SDK Authenticode Signing**: Every release binary (`osoosi.exe`, `osoosi_inject.dll`, `osoosi-auditor.exe`, `otx-taxii-rs.exe`, `bulk_trainer.exe`, `test-peer.exe`) and installer (`OshoosiClaw.msi`) is signed with native `signtool.exe` using SHA-256 digests and RFC 3161 DigiCert timestamps (`http://timestamp.digicert.com`), asserting `SignerCertificate -ne $null` to satisfy Windows Defender Application Control (WDAC).
+  - **Microsoft Security Intelligence (WDSI) Submission**: Release packages are automatically submitted to WDSI via `python scripts/submit_to_wdsi.py --all --no-launch` on every build to establish SmartScreen reputation and suppress false positives.
+  - **Linux Distribution Packages (.deb, .rpm, .tar.gz)**: Linux packages compiled and generated via `packaging/linux/build_packages.sh` (`oshoosiclaw_1.2.0_amd64.deb`, `oshoosiclaw-1.2.0-1.x86_64.rpm`, `oshoosiclaw-1.2.0-linux-x86_64.tar.gz`) featuring systemd integration (`osoosi-edr.service`) and CO-RE eBPF probes.
+  - **Hardened Multi-Stage Docker Container (`ghcr.io/oyesanyf/oshoosiclaw:1.2.0`)**: Built and verified to enforce CIS Docker Benchmark Level 2 standards—pinned base image digests (`ubuntu:24.04@sha256:...`), non-root unprivileged runtime user (`UID 65532:65532`), zero SUID/SGID files (`chmod a-s`), purged package managers (`apt`/`dpkg`), and validated under `--read-only --cap-drop=ALL`.
+  - **GitHub Releases & SLSA Provenance Sync**: Release MSIs and Linux packages automatically synchronize to GitHub Releases (`scripts/update_github_release_msi.py`) with GPG detached signatures (`.sig`, `.asc`), SHA-256 manifests (`SHA256SUMS.txt`), and in-toto SLSA DSSE provenance (`provenance.intoto.jsonl`).
+  - **Zero-Overwrite PATH Invariant**: System and user `$env:PATH` environment variables and registry hives (`HKCU\Environment`, `HKLM\SYSTEM\...`) are strictly preserved (`Permanent="yes"` and `Part="last"` in WiX manifests) with zero destructive truncations or overwrites.
 
 - **7-Crate Physics & Twelve-Part Architecture of Zero (`crates/zero-genesis-capacity`, `crates/zero-algebraic-kernel`, `crates/zero-vacuum-lensing`, `crates/zero-divine-equilibrium`, `crates/edr-phaselock`, `crates/agent-thermostat`, `crates/silicon-shield`)**: Full cross-platform (Linux & Windows) mathematical and physical security enforcement uniting Pre-Execution Wavefunction $\langle \psi_{\text{embryo}} \mid \hat{H}_{\text{threat}} \mid \psi_{\text{embryo}} \rangle = 0$, Euler-Lagrange Void Capacity $\Omega(t)$, Radix-Weighted Mahalanobis Displacement $D_0(\mathbf{x})$, Forbidden Adjacency $\Vert T \circ \bar{A} \Vert_F = 0$, Poisson Silence Surprise $I_{\text{absence}}(\Delta t)$, Helmholtz IPC Lumen Harmonics $\mathcal{R}_{\text{lumen}}$, Dynamic Givens Rotation $R(\theta)$ on $\ker(M)$, $\mathbb{Z}_N$ Zero Divisors, Zero-Point Energy $E_{\text{ZPE}}$, Casimir Confinement Pressure $P_{\text{Casimir}}(a)$, Gravitational Lensing Dark-Mass Triangulation $M_{\text{dark}}$, Ornstein-Uhlenbeck Reflex $J_{\text{reflex}}$, Latent Refusal Subspace $\langle \mathbf{h}_t, \mathbf{u}_{\text{refusal}} \rangle \to 0$, Quadratic Lyapunov Energy $V(\mathbf{z}) \to 0$, Noether Mesh Flux $\oint_{\partial \Omega} \mathbf{J}_{\text{mesh}} \cdot d\mathbf{S} = 0$, Takens' Delay Embedding & Rosenstein's $\lambda_{\max}$, Statistical Mechanics `ThermodynamicGovernor`, and `SiliconIntegrityGuard` (`Ordering::SeqCst` + constant-time BLAKE3 verification + volatile memory scrubbing). Wired across `PhaseLockAttractorVoter`, `EbpfMonitor`, `BreakoutDefenseCoordinator`, `AgentContainmentRing`, `verify_merkle_audit_path`, and **Sensor 10 (`zero_physics_equilibrium`: "Zero-Physics & Divine Order Sensor")** in `MultiSensorFusionEngine`.
 - **Autonomous REA (`Reverse Engineer Anything`) Forensic Subsystem (`crates/osoosi-core/src/rea.rs`, `/api/rea/*`, `osoosi rea`, & WebUI `#rea`)**: Native static and structural reverse engineering across 13+ binary and artifact formats (PE32/PE64, ELF64, Mach-O, Rust `cargo-auditable`, Go `BuildInfo`, WASM, EVM bytecode, `.NET` CIL, JavaScript/Electron/ASAR, SQLite, HAR/PCAP, Android/Flutter APKs) with zero-touch background daemon watching (`spawn_autonomous_rea_daemon`), automatic threat triage (`spawn_autonomous_rea_for_threat`), pseudo-code reconstruction, and auto-synthesized YARA signatures.

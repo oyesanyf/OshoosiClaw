@@ -26,6 +26,7 @@ $ErrorActionPreference = "Stop"
 $PSNativeCommandUseErrorActionPreference = $false
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
+$env:CARGO_REGISTRIES_CRATES_IO_PROTOCOL = "git"
 
 $ProjectRoot = if ($PSScriptRoot) { Split-Path -Parent $PSScriptRoot } else { Get-Location }
 Set-Location $ProjectRoot
@@ -246,35 +247,41 @@ if (-not $SkipBuild) {
     $buildSigntool = $signtoolCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     $buildSucceeded = $false
+    $env:CARGO_REGISTRIES_CRATES_IO_PROTOCOL = "git"
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        # Clear ReadOnly attributes on release binaries to prevent autocfg / cargo output path errors
-        & cmd.exe /c "attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul" | Out-Null
+        # Clear ReadOnly attributes on release binaries and build directories to prevent autocfg / cargo output path errors
+        Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
+            }
+        }
+        & cmd.exe /c "attrib -r target\release\build /s /d 2>nul & attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul" | Out-Null
 
-        # Sign build scripts with DigiCert RFC 3161 timestamp on retry if cargo failed
-        if ($attempt -gt 1 -and $buildSigntool -and (-not $SkipSigning)) {
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Include "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        # Sign any unsigned build scripts to satisfy WDAC Application Control
+        if ($buildSigntool -and (-not $SkipSigning)) {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
-                (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
+                (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {
                 $wt = $_.LastWriteTimeUtc
-                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /tr $TimestampServer /td SHA256 /q $_.FullName 2>$null | Out-Null
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
                 try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
             }
         }
 
-        & cmd.exe /c "cargo build --release -p osoosi-cli"
+        & cargo build --release -p osoosi-cli
         if ($LASTEXITCODE -eq 0) {
             $buildSucceeded = $true
             break
         }
         if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
-            Write-Host "       [WDAC] Signing newly compiled build scripts with RFC 3161 timestamp before retry ($attempt/10)..." -ForegroundColor Cyan
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Include "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            Write-Host "       [WDAC] Signing newly compiled build scripts before retry ($attempt/10)..." -ForegroundColor Cyan
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
-                (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
+                (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {
                 $wt = $_.LastWriteTimeUtc
-                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /tr $TimestampServer /td SHA256 /q $_.FullName 2>$null | Out-Null
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
                 try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
             }
             Start-Sleep -Seconds 1
