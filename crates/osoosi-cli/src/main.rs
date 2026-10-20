@@ -2135,18 +2135,45 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 pin,
                 verify,
             } => {
-                let signer = osoosi_core::osoosi_audit::nsrl_aslr_merkle::Tpm2MerkleRootSigner::new();
+                use osoosi_core::osoosi_audit::nsrl_aslr_merkle::{
+                    Tpm2MerkleRootSigner, Tpm2MerkleSignatureManifest,
+                };
+                let signer = Tpm2MerkleRootSigner::new();
                 let bin_path = Path::new(binary);
                 if *verify {
-                    match signer.verify_binary_against_manifest(bin_path) {
-                        Ok(nv_counter) => {
+                    let manifest_path = Tpm2MerkleRootSigner::sidecar_manifest_path(bin_path);
+                    let manifest_bytes = match std::fs::read(&manifest_path) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            eprintln!(
+                                "❌ Failed to read manifest {}: {}",
+                                manifest_path.display(),
+                                e
+                            );
+                            std::process::exit(1);
+                        }
+                    };
+                    let manifest: Tpm2MerkleSignatureManifest =
+                        match serde_json::from_slice(&manifest_bytes) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                eprintln!(
+                                    "❌ Invalid manifest JSON {}: {}",
+                                    manifest_path.display(),
+                                    e
+                                );
+                                std::process::exit(1);
+                            }
+                        };
+                    match signer.verify_binary_with_tpm2_manifest(bin_path, &manifest) {
+                        Ok(()) => {
                             println!("============================================================");
                             println!("  TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Verification");
                             println!("============================================================");
                             println!("Binary:                 {}", bin_path.display());
-                            println!("TPM Provider:           {}", signer.provider_name());
-                            println!("TPM Persistent Handle:  0x{:08X}", signer.key_handle());
-                            println!("NV Monotonic Counter:   {}", nv_counter);
+                            println!("TPM Provider:           {}", manifest.tpm_provider);
+                            println!("TPM Persistent Handle:  {}", manifest.tpm_key_handle);
+                            println!("NV Monotonic Counter:   {}", manifest.nv_monotonic_counter);
                             println!("Verification Status:    ✅ VALID (Hardware Signature + Anti-Rollback Verified)");
                             println!("============================================================");
                         }
@@ -2156,21 +2183,20 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         }
                     }
                 } else {
-                    match signer.sign_and_export_binary_manifest(
+                    match signer.sign_binary_merkle_root(
                         bin_path,
-                        *epoch,
-                        pin.as_deref(),
+                        pin.as_deref().map(|s| s.as_bytes()),
                     ) {
                         Ok(manifest) => {
                             println!("============================================================");
                             println!("  TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Manifest");
                             println!("============================================================");
-                            println!("Binary:                 {}", manifest.binary_path);
+                            println!("Binary:                 {}", manifest.canonical_path);
                             println!("TPM Provider:           {}", manifest.tpm_provider);
-                            println!("TPM Persistent Handle:  0x{:08X}", manifest.tpm_key_handle);
+                            println!("TPM Persistent Handle:  {}", manifest.tpm_key_handle);
                             println!("BLAKE3 Merkle Root:     {}", manifest.blake3_root_hex);
                             println!("SHA256(BLAKE3_Root):    {}", manifest.sha256_of_blake3_root_hex);
-                            println!("Generation Epoch:       {}", manifest.generation_epoch);
+                            println!("Generation Epoch:       {}", epoch);
                             println!("NV Monotonic Counter:   {} (0x01800001)", manifest.nv_monotonic_counter);
                             println!("Manifest Written:       {}.merkle.sig.json", bin_path.display());
                             println!("Raw Digest Written:     {}.b3", bin_path.display());
@@ -2568,7 +2594,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 );
                 println!(
                     "  5-Policy RL Benchmark Backend : {} (LearnedRL > Heuristic: {})",
-                    scorecard.rl_5_policy_benchmark.environment_backend,
+                    scorecard.rl_5_policy_benchmark.backend_label,
                     scorecard.rl_5_policy_benchmark.learned_rl_exceeds_heuristic
                 );
                 println!("================================================================================");

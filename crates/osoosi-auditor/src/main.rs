@@ -215,7 +215,7 @@ fn main() -> Result<()> {
             );
             println!(
                 "  RL 5-Policy Benchmark Backend : {} (LearnedRL > Heuristic: {})",
-                scorecard.rl_5_policy_benchmark.environment_backend,
+                scorecard.rl_5_policy_benchmark.backend_label,
                 scorecard.rl_5_policy_benchmark.learned_rl_exceeds_heuristic
             );
             println!("================================================================================");

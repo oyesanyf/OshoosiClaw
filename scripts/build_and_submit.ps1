@@ -315,7 +315,17 @@ if (-not $SkipBuild) {
         }
     }
 
-    if (-not $buildSucceeded) {
+        if (-not $buildSucceeded) {
+        $FallbackExe = Join-Path $DeployDir "osoosi.exe"
+        $ProgFilesExe = "C:\Program Files\OshoosiClaw\osoosi.exe"
+        if ((-not (Test-Path $TargetExe)) -and (Test-Path $FallbackExe)) {
+            Copy-Item -Path $FallbackExe -Destination $TargetExe -Force -ErrorAction SilentlyContinue
+            Write-Host "       [Recovery] Restored $TargetExe from $FallbackExe after build failure." -ForegroundColor Yellow
+        } elseif ((-not (Test-Path $TargetExe)) -and (Test-Path $ProgFilesExe)) {
+            Copy-Item -Path $ProgFilesExe -Destination $TargetExe -Force -ErrorAction SilentlyContinue
+            Write-Host "       [Recovery] Restored $TargetExe from $ProgFilesExe after build failure." -ForegroundColor Yellow
+        }
+        Start-Service OsoosiEDR -ErrorAction SilentlyContinue
         Write-Error "cargo build failed with exit code $LASTEXITCODE"
         exit 1
     }
@@ -353,11 +363,13 @@ if (Test-Path $TargetExe) {
 # =============================================================================
 Write-Host "`n>>> [3/8] Syncing Fresh Binary & Hot-Swapping OsoosiEDR Service..." -ForegroundColor Yellow
 $DeployExe = Join-Path $DeployDir "osoosi.exe"
+$ProgFilesDir = "C:\Program Files\OshoosiClaw"
+$ProgFilesExe = Join-Path $ProgFilesDir "osoosi.exe"
 Test-And-Handle-LockedFile -FilePath $DeployExe
 Copy-Item -Path $TargetExe -Destination $DeployExe -Force
 Write-Host "       -> Copied: $TargetExe -> $DeployExe" -ForegroundColor Green
 
-# Hot-Swap: Ensure both binaries are Authenticode signed and start/restart service immediately
+# Hot-Swap: Ensure all canonical binaries are Authenticode signed and start/restart service immediately
 if (-not $SkipSigning) {
     Invoke-AuthenticodeSigning -Files @($TargetExe, $DeployExe) -Thumbprint $CertThumbprint -Timestamp $TimestampServer | Out-Null
 }
@@ -368,12 +380,22 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
     Start-Sleep -Seconds 1
     Test-And-Handle-LockedFile -FilePath $TargetExe
     Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    try {
+        if (Test-Path $ProgFilesDir) {
+            Copy-Item -Path $DeployExe -Destination $ProgFilesExe -Force -ErrorAction Stop
+        }
+    } catch {}
     & sc.exe start OsoosiEDR | Out-Null
     Write-Host "       -> OsoosiEDR service hot-swapped and running with newly compiled binary." -ForegroundColor Green
 } elseif ($scQueryPre -match "SERVICE_NAME\s*:\s*OsoosiEDR") {
     Write-Host "       Starting OsoosiEDR service with freshly built binary..." -ForegroundColor Cyan
     Test-And-Handle-LockedFile -FilePath $TargetExe
     Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    try {
+        if (Test-Path $ProgFilesDir) {
+            Copy-Item -Path $DeployExe -Destination $ProgFilesExe -Force -ErrorAction Stop
+        }
+    } catch {}
     & sc.exe start OsoosiEDR | Out-Null
     Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
 }

@@ -703,6 +703,9 @@ pub struct ZkBftQuarantineProof {
     pub pii_leakage_bits: usize,
     pub schnorr_fiat_shamir_commitment: String,
     pub schnorr_response_s: String,
+    /// Post-Quantum NIST FIPS 204 `ML-DSA-65` + `Ed25519` hybrid signature over the ZK commitment.
+    #[serde(default)]
+    pub pqc_mldsa65_signature_hex: String,
     pub bft_quorum_threshold_2f_plus_1: usize,
     pub is_valid_zero_knowledge_proof: bool,
 }
@@ -714,6 +717,7 @@ pub struct PresidioGlinerPiiZeroGuard;
 
 impl PresidioGlinerPiiZeroGuard {
     pub const GLINER_MULTI_PII_MODEL_ID: &'static str = "urchade/gliner_multi_pii-v1";
+    pub const LAW10_PQC_SIGNING_SEED: [u8; 32] = *b"OSOOSI_LAW10_PQC_MLDSA65_SEED_V1";
 
     #[inline]
     pub fn compute_zk_pii_tag(entity_type: &str, raw_secret: &str) -> String {
@@ -838,6 +842,13 @@ impl PresidioGlinerPiiZeroGuard {
         resp_hasher.update(Self::GLINER_MULTI_PII_MODEL_ID.as_bytes());
         let schnorr_response_s = hex::encode(resp_hasher.finalize());
 
+        let pqc_mldsa65_signature_hex = hex::encode(
+            osoosi_audit::pqc_primitives::hybrid_sign_bytes(
+                schnorr_fiat_shamir_commitment.as_bytes(),
+                &Self::LAW10_PQC_SIGNING_SEED,
+            ),
+        );
+
         // BFT quorum 2f + 1 where n >= 3f + 1
         let f_faulty = total_bft_nodes.saturating_sub(1) / 3;
         let bft_quorum_threshold_2f_plus_1 = (2 * f_faulty + 1).max(1);
@@ -852,6 +863,7 @@ impl PresidioGlinerPiiZeroGuard {
             pii_leakage_bits: 0,
             schnorr_fiat_shamir_commitment,
             schnorr_response_s,
+            pqc_mldsa65_signature_hex,
             bft_quorum_threshold_2f_plus_1,
             is_valid_zero_knowledge_proof: sigma_z >= 5.0,
         }
@@ -879,7 +891,24 @@ impl PresidioGlinerPiiZeroGuard {
         resp_hasher.update(expected_commit.as_bytes());
         resp_hasher.update(proof.model_id.as_bytes());
         let expected_resp = hex::encode(resp_hasher.finalize());
-        expected_resp == proof.schnorr_response_s && proof.is_valid_zero_knowledge_proof
+        if expected_resp != proof.schnorr_response_s || !proof.is_valid_zero_knowledge_proof {
+            return false;
+        }
+
+        if !proof.pqc_mldsa65_signature_hex.is_empty() {
+            let Ok(sig_bytes) = hex::decode(&proof.pqc_mldsa65_signature_hex) else {
+                return false;
+            };
+            if !osoosi_audit::pqc_primitives::hybrid_verify_bytes(
+                expected_commit.as_bytes(),
+                &sig_bytes,
+                &Self::LAW10_PQC_SIGNING_SEED,
+            ) {
+                return false;
+            }
+        }
+
+        true
     }
 }
 

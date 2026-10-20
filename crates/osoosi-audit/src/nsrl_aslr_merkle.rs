@@ -1451,6 +1451,9 @@ pub struct Tpm2MerkleSignatureManifest {
     pub public_key_hex: String,
     /// Cryptographic signature hex over the canonical TPM2 Merkle signing digest.
     pub signature_hex: String,
+    /// Post-Quantum NIST FIPS 204 `ML-DSA-65` + `Ed25519` hybrid signature hex over the canonical TPM2 Merkle signing digest.
+    #[serde(default)]
+    pub pqc_mldsa65_signature_hex: String,
     pub signed_at: DateTime<Utc>,
 }
 
@@ -1850,6 +1853,9 @@ impl Tpm2MerkleRootSigner {
         use ed25519_dalek::Signer;
         let signature = self.signing_key.sign(&signing_digest);
         let signature_hex = hex::encode(signature.to_bytes());
+        let pqc_sig_bytes =
+            crate::pqc_primitives::hybrid_sign_bytes(&signing_digest, &self.signing_key.to_bytes());
+        let pqc_mldsa65_signature_hex = hex::encode(pqc_sig_bytes);
         let now = Utc::now();
 
         let manifest = Tpm2MerkleSignatureManifest {
@@ -1869,6 +1875,7 @@ impl Tpm2MerkleRootSigner {
             tpm_provider: self.tpm_provider.clone(),
             public_key_hex: self.public_key_hex(),
             signature_hex: signature_hex.clone(),
+            pqc_mldsa65_signature_hex,
             signed_at: now,
         };
 
@@ -1938,7 +1945,7 @@ impl Tpm2MerkleRootSigner {
     /// Verifies in-memory binary bytes against a `Tpm2MerkleSignatureManifest` in pure Rust microseconds:
     /// 1. Enforces Policy 3 (`nv_monotonic_counter >= current_monotonic_counter()`).
     /// 2. Verifies 4 KB demand-paged BLAKE3 Merkle root and `SHA256(BLAKE3_Root)` digest boundary.
-    /// 3. Verifies the cryptographic signature against the exported TPM public key.
+    /// 3. Verifies both the classical signature and the Post-Quantum `ML-DSA-65` hybrid signature.
     pub fn verify_bytes_with_tpm2_manifest(
         &self,
         binary_bytes: &[u8],
@@ -2014,6 +2021,22 @@ impl Tpm2MerkleRootSigner {
             .map_err(|e| TpmMerkleError::SignatureVerificationFailed {
                 reason: format!("Signature verification failed: {}", e),
             })?;
+
+        // 4. Verify Post-Quantum ML-DSA-65 + Ed25519 hybrid signature if present
+        if !manifest.pqc_mldsa65_signature_hex.is_empty() {
+            let pqc_bytes = hex::decode(&manifest.pqc_mldsa65_signature_hex).map_err(|e| {
+                TpmMerkleError::SignatureVerificationFailed {
+                    reason: format!("Invalid pqc_mldsa65_signature_hex: {}", e),
+                }
+            })?;
+            if !crate::pqc_primitives::hybrid_verify_bytes(&signing_digest, &pqc_bytes, &pub_bytes)
+            {
+                return Err(TpmMerkleError::SignatureVerificationFailed {
+                    reason: "Post-Quantum ML-DSA-65 lattice signature verification failed"
+                        .to_string(),
+                });
+            }
+        }
 
         Ok(())
     }

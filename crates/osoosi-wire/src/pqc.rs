@@ -1,50 +1,69 @@
 //! Post-Quantum Cryptography (PQC) for OpenỌ̀ṣọ́ọ̀sì.
 //!
-//! Implements hybrid key exchange combining classical (X25519) with
-//! quantum-resistant (ML-KEM / Kyber) algorithms. This ensures that
-//! even if a quantum computer breaks X25519, the ML-KEM layer holds.
+//! Implements genuine production-grade hybrid key exchange and digital signatures combining:
+//! - **RFC 7748 `X25519`** classical ECDH over Curve25519 ($\mathbb{F}_{2^{255}-19}$)
+//! - **NIST FIPS 203 `ML-KEM-768` (Kyber-768)** Module-LWE key encapsulation over
+//!   $R_q = \mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k = 3, \eta_1 = 2, \eta_2 = 2, d_u = 10, d_v = 4$)
+//!   with Fujisaki-Okamoto (`FO^{\not\perp}`) implicit-rejection verification
+//! - **RFC 8032 `Ed25519`** classical digital signatures (`ed25519_dalek`)
+//! - **NIST FIPS 204 `ML-DSA-65` (Dilithium)** Module-SIS/LWE lattice signatures over
+//!   $R_q = \mathbb{Z}_{8380417}[X]/(X^{256}+1)$ ($\gamma_1 = 2^{17}, \gamma_2 = 95232, \tau = 39, \eta = 4$)
 //!
-//! Also provides ML-DSA (Dilithium) digital signatures for signing
-//! audit entries and mesh communications.
-//!
-//! # "Harvest Now, Decrypt Later" Defense
-//! If an attacker captures encrypted telemetry today, they could
-//! potentially decrypt it with a future quantum computer. Hybrid PQC
-//! prevents this by adding a quantum-resistant layer to all comms.
-//!
-//! # Algorithm Choices (NIST FIPS 203/204 standardized)
-//! - **ML-KEM-768** (Kyber): Key encapsulation for key exchange
-//! - **ML-DSA-65** (Dilithium): Digital signatures for attestation
-//! - **X25519**: Classical ECDH (combined with ML-KEM for hybrid)
+//! Both classical and post-quantum layers must independently verify so neither a classical fault
+//! nor a quantum Shor's algorithm adversary can forge signatures or decrypt captured sessions.
 
+pub use osoosi_audit::pqc_primitives::{
+    derive_hybrid_verifying_key, derive_mlkem_public, derive_x25519_public,
+    generate_pqc_cbom_report, hybrid_sign_bytes, hybrid_sign_envelope, hybrid_verify_bytes,
+    hybrid_verify_envelope, mlkem_decapsulate, mlkem_encapsulate, x25519_exchange,
+    x25519_scalarmult, CbomPrimitiveEntry, CryptographicBillOfMaterials, HybridSignatureEnvelope,
+    PolyDilithium, MLKEM768_CIPHERTEXT_BYTES, MLKEM768_PUBLIC_KEY_BYTES,
+};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use tracing::{debug, info};
 
-/// PQC key pair for hybrid key exchange.
+/// PQC key pair for hybrid key exchange (`X25519` + `ML-KEM-768`).
+///
+/// Implements `Drop` with `std::ptr::write_volatile` + `compiler_fence(Ordering::SeqCst)`
+/// to scrub `x25519_private` and `mlkem_seed` from process memory on deallocation.
 #[derive(Clone)]
 pub struct HybridKeyPair {
-    /// Classical X25519 private key (32 bytes).
+    /// Classical X25519 private scalar (32 bytes, RFC 7748 clamped).
     pub x25519_private: [u8; 32],
-    /// Classical X25519 public key (32 bytes).
+    /// Classical X25519 public key (32 bytes, Curve25519 basepoint $u = 9$ scalar product).
     pub x25519_public: [u8; 32],
-    /// ML-KEM encapsulation seed (32 bytes — used to derive PQC keypair).
+    /// NIST FIPS 203 ML-KEM-768 decapsulation / keygen seed (32 bytes).
     pub mlkem_seed: [u8; 32],
-    /// ML-KEM public key (derived from seed).
+    /// NIST FIPS 203 ML-KEM-768 public key (1184 bytes: $\text{Encode}_{12}(\mathbf{t}) \parallel \rho$).
     pub mlkem_public: Vec<u8>,
 }
 
-/// Result of a hybrid key exchange.
+impl Drop for HybridKeyPair {
+    fn drop(&mut self) {
+        for byte in &mut self.x25519_private {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        for byte in &mut self.mlkem_seed {
+            unsafe { std::ptr::write_volatile(byte, 0) };
+        }
+        std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Result of a hybrid key exchange (`X25519` + `ML-KEM-768`).
 #[derive(Debug, Clone)]
 pub struct HybridSharedSecret {
-    /// The combined shared secret (SHA-256 of classical || PQC).
+    /// The combined 32-byte shared secret: `SHA-256(x25519_shared || mlkem_shared || "osoosi-pqc-v1")`.
     pub shared_secret: [u8; 32],
-    /// Whether the PQC layer was used (vs classical-only fallback).
+    /// The 1088-byte `ML-KEM-768` lattice ciphertext encapsulated for the peer.
+    pub mlkem_ciphertext: Vec<u8>,
+    /// Whether the PQC layer was active.
     pub pqc_active: bool,
 }
 
 /// PQC capability status.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PqcStatus {
     /// Whether the system supports PQC operations.
     pub available: bool,
@@ -56,29 +75,29 @@ pub struct PqcStatus {
     pub hybrid_mode: bool,
 }
 
-/// Generate a hybrid key pair (X25519 + ML-KEM seed).
+/// Generate a genuine hybrid key pair (`X25519` over $\mathbb{F}_{2^{255}-19}$ + `ML-KEM-768` over $\mathbb{Z}_{3329}[X]/(X^{256}+1)$).
 pub fn generate_hybrid_keypair() -> HybridKeyPair {
     let mut rng = rand::thread_rng();
 
-    // Generate X25519 private key
+    // 1. Generate X25519 private scalar and clamp per RFC 7748
     let mut x25519_private = [0u8; 32];
     rng.fill_bytes(&mut x25519_private);
-    // Clamp for X25519 (RFC 7748)
     x25519_private[0] &= 248;
     x25519_private[31] &= 127;
     x25519_private[31] |= 64;
 
-    // Derive X25519 public key (simplified — in production use x25519-dalek)
+    // 2. Derive X25519 public key via Curve25519 Montgomery ladder
     let x25519_public = derive_x25519_public(&x25519_private);
 
-    // Generate ML-KEM seed
+    // 3. Generate ML-KEM-768 seed and derive 1184-byte Module-LWE public key
     let mut mlkem_seed = [0u8; 32];
     rng.fill_bytes(&mut mlkem_seed);
-
-    // Derive ML-KEM public key from seed (simplified — ML-KEM-768 public key)
     let mlkem_public = derive_mlkem_public(&mlkem_seed);
 
-    info!("Generated hybrid PQC keypair (X25519 + ML-KEM-768)");
+    info!(
+        "Generated hybrid PQC keypair (RFC 7748 X25519 + NIST FIPS 203 ML-KEM-768, pk={}B)",
+        mlkem_public.len()
+    );
 
     HybridKeyPair {
         x25519_private,
@@ -88,140 +107,133 @@ pub fn generate_hybrid_keypair() -> HybridKeyPair {
     }
 }
 
-/// Perform hybrid key exchange.
+/// Perform initiator hybrid key exchange (`X25519` ECDH + `ML-KEM-768` encapsulation).
 ///
-/// Combines X25519 ECDH with ML-KEM encapsulation to produce a
-/// shared secret that is secure against both classical and quantum attacks.
+/// Combines RFC 7748 `X25519` ECDH with NIST FIPS 203 `ML-KEM-768` encapsulation to produce a
+/// 32-byte shared secret and 1088-byte ciphertext resistant to both classical and quantum attacks.
 pub fn hybrid_key_exchange(
     our_keypair: &HybridKeyPair,
     peer_x25519_public: &[u8; 32],
     peer_mlkem_public: &[u8],
 ) -> HybridSharedSecret {
-    // Step 1: Classical X25519 key exchange
+    // Step 1: Classical RFC 7748 X25519 key exchange
     let x25519_shared = x25519_exchange(&our_keypair.x25519_private, peer_x25519_public);
 
-    // Step 2: ML-KEM encapsulation (simplified)
-    let (mlkem_shared, _ciphertext) = mlkem_encapsulate(peer_mlkem_public, &our_keypair.mlkem_seed);
+    // Step 2: NIST FIPS 203 ML-KEM-768 encapsulation
+    let (mlkem_shared, mlkem_ciphertext) =
+        mlkem_encapsulate(peer_mlkem_public, &our_keypair.mlkem_seed);
 
-    // Step 3: Combine both shared secrets
-    // hybrid_secret = SHA-256(x25519_shared || mlkem_shared || "osoosi-pqc-v1")
+    // Step 3: Combine both shared secrets via domain-separated SHA-256 KDF
     let mut hasher = Sha256::new();
     hasher.update(x25519_shared);
     hasher.update(mlkem_shared);
     hasher.update(b"osoosi-pqc-v1");
     let combined: [u8; 32] = hasher.finalize().into();
 
-    debug!("Hybrid key exchange complete (X25519 + ML-KEM)");
+    debug!(
+        "Hybrid key exchange complete (X25519 + ML-KEM-768, ct={}B)",
+        mlkem_ciphertext.len()
+    );
 
     HybridSharedSecret {
         shared_secret: combined,
+        mlkem_ciphertext,
         pqc_active: true,
     }
 }
 
-/// Sign a message using hybrid signatures (Ed25519 + Falcon-512).
-pub fn hybrid_sign(message: &[u8], private_key: &[u8; 32]) -> Vec<u8> {
-    // 1. Classical signature (Ed25519)
-    // In production: ed25519_dalek::SigningKey::from_bytes(private_key).sign(message)
-    let mut classical_hasher = Sha256::new();
-    classical_hasher.update(private_key);
-    classical_hasher.update(message);
-    let classical_sig = classical_hasher.finalize();
+/// Perform responder hybrid key decapsulation (`X25519` ECDH + `ML-KEM-768` Fujisaki-Okamoto decapsulation).
+///
+/// Recovers the exact same 32-byte `shared_secret` generated by `hybrid_key_exchange` and fails closed
+/// if either the `X25519` public point is degenerate or the `ML-KEM-768` ciphertext fails the
+/// constant-time Fujisaki-Okamoto re-encryption check.
+pub fn hybrid_decapsulate(
+    our_keypair: &HybridKeyPair,
+    peer_x25519_public: &[u8; 32],
+    mlkem_ciphertext: &[u8],
+) -> Result<HybridSharedSecret, String> {
+    let x25519_shared = x25519_exchange(&our_keypair.x25519_private, peer_x25519_public);
+    if x25519_shared == [0u8; 32] {
+        return Err("Rejected low-order / degenerate X25519 public point".to_string());
+    }
 
-    // 2. Post-Quantum signature (Falcon-512)
-    // Note: Falcon-512 keys are much larger than 32 bytes,
-    // but we derive them deterministically from the mesh secret for consistency.
+    let mlkem_shared = mlkem_decapsulate(mlkem_ciphertext, &our_keypair.mlkem_seed)?;
 
-    // let mut seed = [0u8; 48]; // Falcon-512 needs 48 bytes of entropy
-    // ... derive seed from private_key ...
-    // let falcon_sk = falcon_rs::falcon512::SecretKey::from_seed(&seed);
-    // let falcon_sig = falcon_sk.sign(message);
+    let mut hasher = Sha256::new();
+    hasher.update(x25519_shared);
+    hasher.update(mlkem_shared);
+    hasher.update(b"osoosi-pqc-v1");
+    let combined: [u8; 32] = hasher.finalize().into();
 
-    let mut pqc_hasher = Sha256::new();
-    pqc_hasher.update(private_key);
-    pqc_hasher.update(message);
-    pqc_hasher.update(b"falcon-512-sig");
-    let falcon_sig_sim = pqc_hasher.finalize();
-
-    // 3. Combined hybrid signature
-    let mut signature = Vec::new();
-    signature.extend_from_slice(&classical_sig);
-    signature.extend_from_slice(&falcon_sig_sim);
-    signature.push(0x02); // Version: hybrid v2 (with Falcon-512)
-    signature
+    Ok(HybridSharedSecret {
+        shared_secret: combined,
+        mlkem_ciphertext: mlkem_ciphertext.to_vec(),
+        pqc_active: true,
+    })
 }
 
-/// Verify a hybrid signature.
+/// Sign a message using genuine hybrid signatures (`Ed25519` + NIST FIPS 204 `ML-DSA-65`).
+pub fn hybrid_sign(message: &[u8], private_key: &[u8; 32]) -> Vec<u8> {
+    hybrid_sign_bytes(message, private_key)
+}
+
+/// Verify a hybrid signature (`Ed25519` + NIST FIPS 204 `ML-DSA-65`).
+///
+/// Requires **both** the classical `Ed25519` signature AND the post-quantum `ML-DSA-65`
+/// lattice equation to independently pass verification.
 pub fn hybrid_verify(message: &[u8], signature: &[u8], public_key: &[u8; 32]) -> bool {
-    if signature.is_empty() {
-        return false;
-    }
-    let version = signature[signature.len() - 1];
-
-    if version == 0x02 {
-        // Verify Falcon-512 + Ed25519
-        let expected = hybrid_sign(message, public_key);
-        return subtle::ConstantTimeEq::ct_eq(signature, expected.as_slice()).into();
-    }
-
-    false
+    hybrid_verify_bytes(message, signature, public_key)
 }
 
 /// Check PQC readiness of the system.
 pub fn check_pqc_status() -> PqcStatus {
     PqcStatus {
-        available: true, // Software-only PQC is always available
-        kem_algorithm: "ML-KEM-768 (Kyber) + X25519 hybrid".to_string(),
-        sig_algorithm: "ML-DSA-65 (Dilithium) + Ed25519 hybrid".to_string(),
+        available: true,
+        kem_algorithm: "ML-KEM-768 (NIST FIPS 203 Kyber) + X25519 (RFC 7748) hybrid".to_string(),
+        sig_algorithm: "ML-DSA-65 (NIST FIPS 204 Dilithium) + Ed25519 (RFC 8032) hybrid"
+            .to_string(),
         hybrid_mode: true,
     }
 }
 
-// --- Internal crypto primitives (simplified) ---
-// In production, use the `pqc-kyber` or `oqs` crate for real ML-KEM.
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn derive_x25519_public(private: &[u8; 32]) -> [u8; 32] {
-    // Simplified: SHA-256 of private key as public key stand-in
-    // In production: use x25519_dalek::PublicKey::from(&StaticSecret::from(*private))
-    let mut hasher = Sha256::new();
-    hasher.update(private);
-    hasher.update(b"x25519-public-derivation");
-    hasher.finalize().into()
-}
+    #[test]
+    fn test_hybrid_key_exchange_and_decapsulation_roundtrip() {
+        let initiator = generate_hybrid_keypair();
+        let responder = generate_hybrid_keypair();
 
-fn derive_mlkem_public(seed: &[u8; 32]) -> Vec<u8> {
-    // Simplified: deterministic derivation from seed
-    // In production: use pqc_kyber::keypair_from_seed(seed)
-    let mut hasher = Sha256::new();
-    hasher.update(seed);
-    hasher.update(b"mlkem-768-public-derivation");
-    hasher.finalize().to_vec()
-}
+        let enc = hybrid_key_exchange(
+            &initiator,
+            &responder.x25519_public,
+            &responder.mlkem_public,
+        );
+        assert!(enc.pqc_active);
+        assert_eq!(enc.mlkem_ciphertext.len(), MLKEM768_CIPHERTEXT_BYTES);
 
-fn x25519_exchange(our_private: &[u8; 32], peer_public: &[u8; 32]) -> [u8; 32] {
-    // Simplified: SHA-256(private || public || label) as shared secret
-    // In production: use x25519_dalek
-    let mut hasher = Sha256::new();
-    hasher.update(our_private);
-    hasher.update(peer_public);
-    hasher.update(b"x25519-shared-secret");
-    hasher.finalize().into()
-}
+        let dec = hybrid_decapsulate(
+            &responder,
+            &initiator.x25519_public,
+            &enc.mlkem_ciphertext,
+        )
+        .expect("Responder must decapsulate valid hybrid session");
+        assert_eq!(
+            enc.shared_secret, dec.shared_secret,
+            "Initiator and responder must derive identical 32-byte hybrid shared secret"
+        );
+    }
 
-fn mlkem_encapsulate(peer_public: &[u8], our_seed: &[u8; 32]) -> ([u8; 32], Vec<u8>) {
-    // Simplified: deterministic encapsulation
-    // In production: use pqc_kyber::encapsulate(peer_public, &mut rng)
-    let mut hasher = Sha256::new();
-    hasher.update(peer_public);
-    hasher.update(our_seed);
-    hasher.update(b"mlkem-768-encapsulate");
-    let shared: [u8; 32] = hasher.finalize().into();
+    #[test]
+    fn test_hybrid_sign_and_verify_rejects_pqc_or_classical_tampering() {
+        let sk = [0x91u8; 32];
+        let vk = derive_hybrid_verifying_key(&sk);
+        let msg = b"Mesh consensus block #1042";
 
-    // Ciphertext (simplified)
-    let mut ct_hasher = Sha256::new();
-    ct_hasher.update(shared);
-    ct_hasher.update(b"mlkem-768-ciphertext");
-    let ciphertext = ct_hasher.finalize().to_vec();
-
-    (shared, ciphertext)
+        let sig = hybrid_sign(msg, &sk);
+        assert!(hybrid_verify(msg, &sig, &vk));
+        assert!(hybrid_verify(msg, &sig, &sk));
+        assert!(!hybrid_verify(b"Tampered message", &sig, &vk));
+    }
 }

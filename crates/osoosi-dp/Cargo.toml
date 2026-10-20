@@ -16,3 +16,4 @@ hex = { workspace = true }
 serde_json = { workspace = true }
 fastrand = { workspace = true }
 tfhe = { workspace = true, features = ["integer", "boolean", "shortint"] }
+osoosi-audit = { path = "../osoosi-audit" }

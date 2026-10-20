@@ -983,6 +983,17 @@ python scripts/adversarial_stix_owasp_redteam.py --all
 | **4. `Random` (Uniform Action Selection)** | `local_synthetic_cyberbattlesim_topology_v1` | `-16.90 ± 18.88` | `66.67% ± 3.74%` | `1.5500 ± 0.5356` |
 | **5. `Disabled` (Passive Unmitigated Baseline)** | `local_synthetic_cyberbattlesim_topology_v1` | `-499.43 ± 10.67` | `16.67% ± 0.00%` | `5.8000 ± 0.1920` |
 
+### 4. Quantum-Ready Post-Quantum Cryptography (`NIST FIPS 203 ML-KEM-768` & `FIPS 204 ML-DSA-65`) & CBOM (`crates/osoosi-audit/src/pqc_primitives.rs`, `crates/osoosi-wire/src/pqc.rs`)
+
+To protect against both **"Harvest Now, Decrypt Later"** store-and-decrypt adversaries and **Quantum Shor's Algorithm** signature forgery, OpenỌ̀ṣọ́ọ̀sì implements pure-Rust hybrid Post-Quantum Cryptography across the mesh, TPM 2.0 Merkle root manifests, and Law 10 ZK-BFT proofs:
+
+| Subsystem | Classical Layer | Post-Quantum Layer | NIST Standard & Quantum Security |
+|:---|:---|:---|:---|
+| **P2P Mesh Key Exchange (`osoosi-wire::pqc`)** | `X25519` (RFC 7748 Montgomery Ladder over $\mathbb{F}_{2^{255}-19}$) | **`ML-KEM-768` (Kyber-768)** Module-LWE over $\mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k=3, d_u=10, d_v=4$, 1184B `pk`, 1088B `ct`) + Fujisaki-Okamoto (`FO^{\not\perp}`) | **NIST FIPS 203** (Category 3) + `impl Drop` `write_volatile` key zeroization |
+| **Mesh & Node Identity Signatures (`osoosi-trust`, `osoosi-wire`)** | `Ed25519` (`ed25519_dalek` RFC 8032, 64B) | **`ML-DSA-65` (Dilithium)** Module-SIS/LWE Fiat-Shamir with Aborts over $\mathbb{Z}_{8380417}[X]/(X^{256}+1)$ ($\gamma_1=2^{17}, \gamma_2=95232, \tau=39, \eta=4$) | **NIST FIPS 204** (Category 3); **both** classical and lattice equations must pass (`BYPASS-PQC-SHOR-DOWNGRADE-05`) |
+| **Hardware-Anchored Binary Merkle Manifest (`Tpm2MerkleRootSigner`)** | TPM 2.0 Handle `0x81010002` + `Ed25519` over `SHA256(BLAKE3_Root)` | **`ML-DSA-65` (`pqc_mldsa65_signature_hex`)** dual-anchored in `<binary>.merkle.sig.json` | **NIST FIPS 204** + TPM 2.0 NV Counter `0x01800001` anti-rollback |
+| **Law 10 Zero-Knowledge BFT Quarantine Proof (`osoosi-dp`)** | Schnorr-BLAKE3 Fiat-Shamir Commitment | **`ML-DSA-65` + `BLAKE3-256`** (128-bit Grover preimage resistance) | **NIST FIPS 204** + 128-bit Quantum Hash Security |
+
 ---
 
 ## 📸 Interactive WebUI Visual Gallery

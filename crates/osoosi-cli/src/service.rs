@@ -369,6 +369,20 @@ pub fn install_service() -> anyhow::Result<()> {
     }
     let exe = std::env::current_exe()?;
     let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
+    // Ensure canonical service paths (`C:\Program Files\OshoosiClaw\osoosi.exe` and workspace `target\release\osoosi.exe`)
+    // are always populated so `services.msc` never encounters Error 2 (`ERROR_FILE_NOT_FOUND`).
+    let prog_files_dir = std::path::Path::new(r"C:\Program Files\OshoosiClaw");
+    let _ = std::fs::create_dir_all(prog_files_dir);
+    let prog_files_exe = prog_files_dir.join("osoosi.exe");
+    if exe != prog_files_exe {
+        let _ = std::fs::copy(&exe, &prog_files_exe);
+    }
+    let workspace_release_exe = std::path::Path::new(r"D:\harfile\OshoosiClaw\target\release\osoosi.exe");
+    if let Some(parent) = workspace_release_exe.parent() {
+        if parent.exists() && exe != workspace_release_exe {
+            let _ = std::fs::copy(&exe, workspace_release_exe);
+        }
+    }
     let bin_path = format!("\"{}\" service run --no-browser", exe_str);
 
     info!("Installing Windows Service '{}'...", SERVICE_NAME);
