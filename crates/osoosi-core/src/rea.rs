@@ -101,17 +101,40 @@ fn has_usable_ort_dylib() -> bool {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let dylib_name = "libonnxruntime.so";
 
-    let mut candidates = vec![PathBuf::from(dylib_name)];
+    let mut candidates: Vec<PathBuf> = vec![
+        PathBuf::from(dylib_name),
+        osoosi_types::resolve_base_dir().join(dylib_name),
+    ];
+    if let Some(proj_root) = osoosi_types::resolve_project_root() {
+        candidates.push(proj_root.join(dylib_name));
+    }
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
+        let mut cur = exe.parent();
+        for _ in 0..5 {
+            let Some(dir) = cur else { break };
             candidates.push(dir.join(dylib_name));
+            candidates.push(dir.join("target").join("release").join(dylib_name));
+            candidates.push(dir.join("target").join("debug").join(dylib_name));
+            cur = dir.parent();
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut cur = Some(cwd.as_path());
+        for _ in 0..5 {
+            let Some(dir) = cur else { break };
+            candidates.push(dir.join(dylib_name));
+            candidates.push(dir.join("target").join("release").join(dylib_name));
+            candidates.push(dir.join("target").join("debug").join(dylib_name));
+            cur = dir.parent();
         }
     }
     for cand in candidates {
         if is_valid_native_ort_dylib(&cand) {
             if std::env::var("ORT_DYLIB_PATH").is_err() {
-                if let Some(s) = cand.to_str() {
-                    std::env::set_var("ORT_DYLIB_PATH", s);
+                let abs = std::fs::canonicalize(&cand).unwrap_or(cand);
+                if let Some(s) = abs.to_str() {
+                    let clean = s.strip_prefix(r"\\?\").unwrap_or(s);
+                    std::env::set_var("ORT_DYLIB_PATH", clean);
                 }
             }
             return true;
@@ -342,39 +365,49 @@ fn structural_magika_classify(path: Option<&Path>, bytes: &[u8]) -> MagikaFileId
 pub fn identify_with_magika(path: Option<&Path>, bytes: &[u8]) -> MagikaFileIdentity {
     let structural = structural_magika_classify(path, bytes);
     if let Some(ref mutex) = *GLOBAL_MAGIKA_SESSION {
-        if let Some(mut session) = mutex.try_lock() {
-            let magika_res = if !bytes.is_empty() {
-                session.identify_content_sync(bytes).ok()
-            } else if let Some(p) = path {
-                if p.exists() {
-                    session.identify_file_sync(p).ok()
-                } else {
-                    None
-                }
+        let mut session = mutex.lock();
+        let magika_res = if !bytes.is_empty() {
+            session.identify_content_sync(bytes).ok()
+        } else if let Some(p) = path {
+            if p.exists() {
+                session.identify_file_sync(p).ok()
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
-            if let Some(ft) = magika_res {
-                let info = ft.info();
-                // If Magika returns "unknown" or "txt" on a short synthetic test buffer that has
-                // an explicit binary magic header (MZ, ELF, WASM, SQLite, ASAR), prefer the verified header.
-                if (info.label == "unknown" || info.label == "txt")
-                    && structural.label != "unknown"
-                    && structural.label != "txt"
-                {
-                    return structural;
-                }
+        if let Some(ft) = magika_res {
+            let info = ft.info();
+            // When `structural` matched an explicit binary magic header at offset 0 (score >= 0.99:
+            // MZ/PE, ELF, Mach-O, WASM, SQLite, PCAP, ASAR, APK, DEX) and Magika ONNX returns a
+            // different label on a short/synthetic buffer (or low confidence < 0.85), preserve the
+            // verified container header while recording `google_magika_onnx`.
+            if structural.score >= 0.99 && info.label != structural.label {
                 return MagikaFileIdentity {
-                    label: info.label.to_string(),
-                    mime_type: info.mime_type.to_string(),
-                    group: info.group.to_string(),
-                    description: info.description.to_string(),
-                    is_text: info.is_text,
-                    score: ft.score(),
                     engine: "google_magika_onnx".to_string(),
+                    ..structural
                 };
             }
+            if (info.label == "unknown" || info.label == "txt")
+                && structural.label != "unknown"
+                && structural.label != "txt"
+            {
+                return MagikaFileIdentity {
+                    engine: "google_magika_onnx".to_string(),
+                    ..structural
+                };
+            }
+            return MagikaFileIdentity {
+                label: info.label.to_string(),
+                mime_type: info.mime_type.to_string(),
+                group: info.group.to_string(),
+                description: info.description.to_string(),
+                is_text: info.is_text,
+                score: ft.score(),
+                engine: "google_magika_onnx".to_string(),
+            };
         }
     }
     structural
@@ -714,32 +747,138 @@ pub fn find_valid_dotnet_bsjb_header(bytes: &[u8]) -> Option<(usize, String, Vec
     None
 }
 
-/// Check whether a PE binary has a non-zero CLR Runtime Header DataDirectory (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`, index 14).
+/// Convert a PE Relative Virtual Address (RVA) into a validated file offset using section headers.
+fn pe_rva_to_file_offset(pe: &goblin::pe::PE, rva: usize, file_len: usize) -> Option<usize> {
+    if rva == 0 {
+        return None;
+    }
+    for sec in &pe.sections {
+        let va = sec.virtual_address as usize;
+        let vsize = (sec.virtual_size as usize).max(sec.size_of_raw_data as usize);
+        let raw_ptr = sec.pointer_to_raw_data as usize;
+        let raw_size = sec.size_of_raw_data as usize;
+        if rva >= va && rva < va.saturating_add(vsize) {
+            let delta = rva - va;
+            if delta < raw_size {
+                let off = raw_ptr.saturating_add(delta);
+                if off < file_len {
+                    return Some(off);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Check whether a PE binary has a valid, section-mapped CLR Runtime Header DataDirectory
+/// (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`, index 14).
 /// Returns:
-/// - `Some(true)` if `goblin::pe::PE::parse` succeeds AND the PE Optional Header contains a non-zero CLR Runtime Header DataDirectory.
-/// - `Some(false)` if `goblin::pe::PE::parse` succeeds AND the CLR Runtime Header DataDirectory is absent or zero (meaning it is definitively a native PE, NOT a .NET assembly).
+/// - `Some(true)` if `goblin::pe::PE::parse` succeeds AND OptionalHeader DataDirectory[14] maps to a valid `IMAGE_COR20_HEADER` inside a PE section.
+/// - `Some(false)` if `goblin::pe::PE::parse` succeeds AND DataDirectory[14] is absent, zero, or points outside valid PE sections (meaning it is definitively a native PE, NOT a .NET assembly).
 /// - `None` if `bytes` is not a full parseable PE header (e.g., synthetic minimal unit-test buffer).
 fn pe_clr_runtime_header_present(bytes: &[u8]) -> Option<bool> {
     if !bytes.starts_with(b"MZ") {
         return None;
     }
     if let Ok(pe) = goblin::pe::PE::parse(bytes) {
-        let has_clr = pe
+        let Some(dir) = pe
             .header
             .optional_header
             .and_then(|opt| opt.data_directories.get_clr_runtime_header().copied())
-            .map(|dir| dir.virtual_address != 0 && dir.size != 0)
-            .unwrap_or(false);
-        return Some(has_clr);
+        else {
+            return Some(false);
+        };
+        if dir.virtual_address == 0 || dir.size < 48 {
+            return Some(false);
+        }
+        let Some(cor20_off) = pe_rva_to_file_offset(&pe, dir.virtual_address as usize, bytes.len())
+        else {
+            return Some(false);
+        };
+        if cor20_off + 16 > bytes.len() {
+            return Some(false);
+        }
+        let cb = u32::from_le_bytes([
+            bytes[cor20_off],
+            bytes[cor20_off + 1],
+            bytes[cor20_off + 2],
+            bytes[cor20_off + 3],
+        ]);
+        if cb < 48 {
+            return Some(false);
+        }
+        let metadata_rva = u32::from_le_bytes([
+            bytes[cor20_off + 8],
+            bytes[cor20_off + 9],
+            bytes[cor20_off + 10],
+            bytes[cor20_off + 11],
+        ]) as usize;
+        let metadata_size = u32::from_le_bytes([
+            bytes[cor20_off + 12],
+            bytes[cor20_off + 13],
+            bytes[cor20_off + 14],
+            bytes[cor20_off + 15],
+        ]) as usize;
+        if metadata_rva != 0 && metadata_size >= 16 {
+            if let Some(meta_off) = pe_rva_to_file_offset(&pe, metadata_rva, bytes.len()) {
+                return Some(
+                    find_valid_dotnet_bsjb_header(&bytes[meta_off..])
+                        .map(|(rel_off, _, _)| rel_off == 0)
+                        .unwrap_or(false),
+                );
+            }
+            return Some(false);
+        }
+        return Some(find_valid_dotnet_bsjb_header(bytes).is_some());
     }
     None
 }
 
+/// Locate the ECMA-335 `BSJB` metadata root, preferring the authoritative `IMAGE_COR20_HEADER.MetaData`
+/// RVA when `bytes` is a full parseable PE binary.
+fn find_pe_dotnet_bsjb_header(bytes: &[u8]) -> Option<(usize, String, Vec<Value>)> {
+    if bytes.starts_with(b"MZ") {
+        if let Ok(pe) = goblin::pe::PE::parse(bytes) {
+            if let Some(dir) = pe
+                .header
+                .optional_header
+                .and_then(|opt| opt.data_directories.get_clr_runtime_header().copied())
+            {
+                if dir.virtual_address != 0 && dir.size >= 48 {
+                    if let Some(cor20_off) =
+                        pe_rva_to_file_offset(&pe, dir.virtual_address as usize, bytes.len())
+                    {
+                        if cor20_off + 16 <= bytes.len() {
+                            let metadata_rva = u32::from_le_bytes([
+                                bytes[cor20_off + 8],
+                                bytes[cor20_off + 9],
+                                bytes[cor20_off + 10],
+                                bytes[cor20_off + 11],
+                            ]) as usize;
+                            if let Some(meta_off) =
+                                pe_rva_to_file_offset(&pe, metadata_rva, bytes.len())
+                            {
+                                if let Some((rel_off, ver, streams)) =
+                                    find_valid_dotnet_bsjb_header(&bytes[meta_off..])
+                                {
+                                    return Some((meta_off + rel_off, ver, streams));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    find_valid_dotnet_bsjb_header(bytes)
+}
+
 /// Automatically classify the REA target kind from path and raw bytes using a 2-tier pipeline:
 /// - **Tier 1 (Envelope & MIME Detection)**: Google Magika deep-learning content identification + container magic bytes.
+///   Always runs BEFORE trusting file extensions so masqueraded binaries (e.g. PE renamed to `.wasm` or `.apk`) are never misrouted.
 /// - **Tier 2 (Structural PE/ELF/Mach-O Compiler & Runtime Provenance)**:
-///   - For valid PE files (`goblin::pe::PE::parse`), inspects PE DataDirectory[14] (`CLR Runtime Header`).
-///     If DataDirectory[14] is zero, the PE is unequivocally native (never `.NET`—even if `.rdata` contains `"BSJB"`).
+///   - For valid PE files (`goblin::pe::PE::parse`), inspects PE DataDirectory[14] (`CLR Runtime Header`) and its section-mapped `IMAGE_COR20_HEADER`.
+///     If DataDirectory[14] is zero or unmapped, the PE is unequivocally native (never `.NET`—even if `.rdata` contains `"BSJB"`).
 ///   - Checks `.dep-v0` / `rustc` / `/cargo/registry/` for Rust, `\xff Go buildinf:` for Go, and ECMA-335 `BSJB` stream headers for `.NET`.
 pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
     if let Some(p) = path {
@@ -751,22 +890,9 @@ pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
                 return ReaTargetKind::AndroidFlutter;
             }
         }
-        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-            match ext.to_ascii_lowercase().as_str() {
-                "wasm" => return ReaTargetKind::WasmArtifact,
-                "asar" => return ReaTargetKind::JavaScriptElectron,
-                "sqlite" | "sqlite3" | "db" if bytes.starts_with(b"SQLite format 3\0") => {
-                    return ReaTargetKind::SqliteDatabase;
-                }
-                "har" | "pcap" | "pcapng" | "cap" => return ReaTargetKind::NetworkCapture,
-                "apk" | "dex" => return ReaTargetKind::AndroidFlutter,
-                "evm" | "bin-runtime" => return ReaTargetKind::EvmBytecode,
-                _ => {}
-            }
-        }
     }
 
-    if bytes.starts_with(b"\0asm\x01\0\0\0") {
+    if bytes.starts_with(b"\0asm\x01\0\0\0") || bytes.starts_with(b"\0asm") {
         return ReaTargetKind::WasmArtifact;
     }
 
@@ -793,7 +919,7 @@ pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
         return ReaTargetKind::JavaScriptElectron;
     }
 
-    // Check ZIP / APK magic
+    // Check ZIP / APK magic at offset 0
     if bytes.starts_with(b"PK\x03\x04") {
         if find_subslice(bytes, b"AndroidManifest.xml").is_some()
             || find_subslice(bytes, b"classes.dex").is_some()
@@ -840,9 +966,9 @@ pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
     if is_native_container {
         let pe_has_clr_dir = pe_clr_runtime_header_present(bytes);
 
-        // 1. If PE Optional Header explicitly has a non-zero CLR DataDirectory[14],
+        // 1. If PE Optional Header explicitly has a valid, section-mapped CLR DataDirectory[14],
         //    and a structurally valid BSJB root exists, it is a .NET assembly.
-        if pe_has_clr_dir == Some(true) && find_valid_dotnet_bsjb_header(bytes).is_some() {
+        if pe_has_clr_dir == Some(true) && find_pe_dotnet_bsjb_header(bytes).is_some() {
             return ReaTargetKind::DotNetAssembly;
         }
 
@@ -870,7 +996,7 @@ pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
 
         // 4. If `bytes` is NOT a full PE with a zeroed CLR DataDirectory (e.g. a compact synthetic test buffer
         //    or mono bundle without full OptionalHeader), check for a structurally valid ECMA-335 BSJB header.
-        if pe_has_clr_dir != Some(false) && find_valid_dotnet_bsjb_header(bytes).is_some() {
+        if pe_has_clr_dir != Some(false) && find_pe_dotnet_bsjb_header(bytes).is_some() {
             return ReaTargetKind::DotNetAssembly;
         }
 
@@ -926,13 +1052,27 @@ pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
         return ReaTargetKind::EvmBytecode;
     }
 
-    // Check embedded firmware signatures inside raw image
+    // Check embedded firmware signatures inside raw non-executable image
     if find_subslice(bytes, b"hsqs").is_some()
         || find_subslice(bytes, b"sqsh").is_some()
         || find_subslice(bytes, b"\x27\x05\x19\x56").is_some()
         || find_subslice(bytes, b"\xd0\x0d\xfe\xed").is_some()
     {
         return ReaTargetKind::FirmwareImage;
+    }
+
+    // Extension tie-breaker only for non-executable buffers without conflicting magic headers
+    if let Some(p) = path {
+        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
+            match ext.to_ascii_lowercase().as_str() {
+                "wasm" => return ReaTargetKind::WasmArtifact,
+                "asar" | "js" | "mjs" | "cjs" => return ReaTargetKind::JavaScriptElectron,
+                "har" | "pcap" | "pcapng" | "cap" => return ReaTargetKind::NetworkCapture,
+                "apk" | "dex" => return ReaTargetKind::AndroidFlutter,
+                "evm" | "bin-runtime" => return ReaTargetKind::EvmBytecode,
+                _ => {}
+            }
+        }
     }
 
     ReaTargetKind::NativeBinary
@@ -2334,7 +2474,7 @@ pub fn inspect_dotnet_assembly(
         );
     }
 
-    let Some((bsjb_off, clr_version, streams)) = find_valid_dotnet_bsjb_header(bytes) else {
+    let Some((bsjb_off, clr_version, streams)) = find_pe_dotnet_bsjb_header(bytes) else {
         limitations.push(ReaLimitation {
             code: "MISSING_BSJB_SIGNATURE".to_string(),
             description: "Structurally valid ECMA-335 CLR Metadata root signature `BSJB` (0x424A5342) was not found in target.".to_string(),
@@ -3893,6 +4033,7 @@ impl AutonomousReaEngine {
                                 ReaTargetKind::Auto,
                                 Some(format!("autonomous_sweep_#{}:quarantine_artifact", sweep_num)),
                             ) {
+                                persist_auto_yara_rule(&report);
                                 self.record_report(report.clone());
                                 generated.push(report);
                             }
@@ -3968,6 +4109,32 @@ pub fn spawn_autonomous_rea_daemon(interval_secs: u64) {
     }
 }
 
+/// Persist an auto-synthesized multi-token YARA rule for a quarantined or confirmed threat artifact
+/// into `yara/rea_auto_rules.yar`, never persisting rules for protected OS/toolchain binaries.
+pub fn persist_auto_yara_rule(report: &ReaInvestigationReport) {
+    if crate::blocking_manager::is_protected_or_benign_system_path(&report.target_path) {
+        return;
+    }
+    if let Some(ref yara_rule) = report.auto_yara_rule {
+        let yara_dir = osoosi_types::resolve_base_dir().join("yara");
+        if std::fs::create_dir_all(&yara_dir).is_ok() {
+            let auto_yar_path = yara_dir.join("rea_auto_rules.yar");
+            let existing = std::fs::read_to_string(&auto_yar_path).unwrap_or_default();
+            let rule_header = format!("blake3 = \"{}\"", report.blake3);
+            if !existing.contains(&rule_header) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&auto_yar_path)
+                {
+                    use std::io::Write;
+                    let _ = writeln!(f, "\n{}", yara_rule);
+                }
+            }
+        }
+    }
+}
+
 /// Trigger an immediate asynchronous REA deep-inspection and YARA rule synthesis on a newly
 /// detected or quarantined file artifact.
 pub fn spawn_autonomous_rea_for_threat(path: PathBuf, trigger_reason: String) {
@@ -3977,27 +4144,12 @@ pub fn spawn_autonomous_rea_for_threat(path: PathBuf, trigger_reason: String) {
             return;
         }
         let path_str = path.to_string_lossy().to_string();
+        if crate::blocking_manager::is_protected_or_benign_system_path(&path_str) {
+            return;
+        }
         if let Ok(report) = analyze_target_path(&path_str, ReaTargetKind::Auto, Some(trigger_reason))
         {
-            // Persist synthesized YARA signature to `yara/rea_auto_rules.yar` if threat score is elevated
-            if let Some(ref yara_rule) = report.auto_yara_rule {
-                let yara_dir = osoosi_types::resolve_base_dir().join("yara");
-                if std::fs::create_dir_all(&yara_dir).is_ok() {
-                    let auto_yar_path = yara_dir.join("rea_auto_rules.yar");
-                    let existing = std::fs::read_to_string(&auto_yar_path).unwrap_or_default();
-                    let rule_header = format!("blake3 = \"{}\"", report.blake3);
-                    if !existing.contains(&rule_header) {
-                        if let Ok(mut f) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&auto_yar_path)
-                        {
-                            use std::io::Write;
-                            let _ = writeln!(f, "\n{}", yara_rule);
-                        }
-                    }
-                }
-            }
+            persist_auto_yara_rule(&report);
             engine.record_report(report);
         }
     });
@@ -4343,5 +4495,107 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_detect_target_kind_rejects_extension_masquerading_and_polyglot_overlays() {
+        // 1. A native Rust PE renamed to `.wasm`, `.apk`, `.har`, or `.asar` must still be classified as `rust_binary`
+        let mut rust_pe = Vec::new();
+        rust_pe.extend_from_slice(b"MZ\x90\x00");
+        rust_pe.extend_from_slice(b"rustc 1.82.0\0/cargo/registry/src/index.crates.io-1/tokio-1.40.0/src/lib.rs\0rust_begin_unwind\0");
+        // Append trailing polyglot SquashFS and APK markers
+        rust_pe.extend_from_slice(b"hsqs\0\0\0\0PK\x03\x04AndroidManifest.xml\0classes.dex\0");
+
+        for spoofed_name in [
+            "masqueraded.wasm",
+            "masqueraded.apk",
+            "masqueraded.dex",
+            "masqueraded.har",
+            "masqueraded.pcap",
+            "masqueraded.asar",
+        ] {
+            let kind = detect_target_kind(Some(Path::new(spoofed_name)), &rust_pe);
+            assert_eq!(
+                kind,
+                ReaTargetKind::RustBinary,
+                "Masqueraded Rust PE '{}' must be classified as RustBinary, got {:?}",
+                spoofed_name,
+                kind
+            );
+        }
+
+        // 2. A native ELF binary renamed to `.wasm` or `.apk` must be classified as NativeBinary
+        let elf_bytes = b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x02\x00\x3e\x00";
+        assert_eq!(
+            detect_target_kind(Some(Path::new("spoofed.wasm")), elf_bytes),
+            ReaTargetKind::NativeBinary
+        );
+        assert_eq!(
+            detect_target_kind(Some(Path::new("spoofed.apk")), elf_bytes),
+            ReaTargetKind::NativeBinary
+        );
+    }
+
+    #[test]
+    fn test_pe_clr_runtime_header_validates_section_rva_and_metadata_root() {
+        // Construct a valid 64-bit PE header with 1 section `.text` at VA 0x1000, raw ptr 0x200, size 0x400
+        let mut pe = vec![0u8; 0x600];
+        pe[0..2].copy_from_slice(b"MZ");
+        pe[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes()); // e_lfanew = 0x80
+        pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        // COFF File Header (20 bytes at 0x84..0x98)
+        pe[0x84..0x86].copy_from_slice(&0x8664u16.to_le_bytes()); // Machine = AMD64
+        pe[0x86..0x88].copy_from_slice(&1u16.to_le_bytes()); // NumberOfSections = 1
+        pe[0x94..0x96].copy_from_slice(&0xF0u16.to_le_bytes()); // SizeOfOptionalHeader = 240 (PE32+)
+        pe[0x96..0x98].copy_from_slice(&0x0022u16.to_le_bytes()); // Characteristics
+        // Optional Header PE32+ (240 bytes at 0x98..0x188)
+        pe[0x98..0x9a].copy_from_slice(&0x020bu16.to_le_bytes()); // Magic = PE32+
+        pe[0x104..0x108].copy_from_slice(&16u32.to_le_bytes()); // NumberOfRvaAndSizes = 16
+        // Section Header #1 at 0x188 (40 bytes)
+        pe[0x188..0x18e].copy_from_slice(b".text\0");
+        pe[0x190..0x194].copy_from_slice(&0x400u32.to_le_bytes()); // VirtualSize
+        pe[0x194..0x198].copy_from_slice(&0x1000u32.to_le_bytes()); // VirtualAddress = 0x1000
+        pe[0x198..0x19c].copy_from_slice(&0x400u32.to_le_bytes()); // SizeOfRawData = 0x400
+        pe[0x19c..0x1a0].copy_from_slice(&0x200u32.to_le_bytes()); // PointerToRawData = 0x200
+
+        // Case A: DataDirectory[14] (at OptionalHeader + 112 + 14*8 = 0x98 + 0x70 + 0x70 = 0x178) has bogus RVA 0x99990000 outside `.text`
+        pe[0x178..0x17c].copy_from_slice(&0x9999_0000u32.to_le_bytes());
+        pe[0x17c..0x180].copy_from_slice(&72u32.to_le_bytes());
+        pe[0x210..0x240].copy_from_slice(b"rustc 1.82.0\0rust_begin_unwind\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+        assert_eq!(pe_clr_runtime_header_present(&pe), Some(false));
+        assert_eq!(detect_target_kind(None, &pe), ReaTargetKind::RustBinary);
+
+        // Case B: Valid DataDirectory[14] pointing to RVA 0x1050 (file offset 0x250), with IMAGE_COR20_HEADER
+        // whose MetaData RVA points to 0x1100 (file offset 0x300) containing a valid ECMA-335 BSJB header,
+        // even when a decoy "BSJB\x99\x99" appears earlier at 0x220!
+        pe[0x220..0x228].copy_from_slice(b"BSJB\x99\x99\x99\x99");
+        pe[0x178..0x17c].copy_from_slice(&0x1050u32.to_le_bytes()); // CLR header RVA = 0x1050 -> file 0x250
+        pe[0x17c..0x180].copy_from_slice(&72u32.to_le_bytes());
+        // Write IMAGE_COR20_HEADER at 0x250
+        pe[0x250..0x254].copy_from_slice(&72u32.to_le_bytes()); // cb = 72
+        pe[0x254..0x256].copy_from_slice(&2u16.to_le_bytes()); // MajorRuntimeVersion
+        pe[0x256..0x258].copy_from_slice(&5u16.to_le_bytes()); // MinorRuntimeVersion
+        pe[0x258..0x25c].copy_from_slice(&0x1100u32.to_le_bytes()); // MetaData RVA = 0x1100 -> file 0x300
+        pe[0x25c..0x260].copy_from_slice(&0x100u32.to_le_bytes()); // MetaData Size = 0x100
+        // Write valid BSJB metadata root at 0x300
+        let mut bsjb = Vec::new();
+        bsjb.extend_from_slice(b"BSJB");
+        bsjb.extend_from_slice(&1u16.to_le_bytes());
+        bsjb.extend_from_slice(&1u16.to_le_bytes());
+        bsjb.extend_from_slice(&0u32.to_le_bytes());
+        bsjb.extend_from_slice(&12u32.to_le_bytes());
+        bsjb.extend_from_slice(b"v4.0.30319\0\0");
+        bsjb.extend_from_slice(&0u16.to_le_bytes());
+        bsjb.extend_from_slice(&1u16.to_le_bytes()); // 1 stream
+        bsjb.extend_from_slice(&0x6cu32.to_le_bytes());
+        bsjb.extend_from_slice(&0x40u32.to_le_bytes());
+        bsjb.extend_from_slice(b"#Strings\0\0\0\0");
+        pe[0x300..0x300 + bsjb.len()].copy_from_slice(&bsjb);
+
+        assert_eq!(pe_clr_runtime_header_present(&pe), Some(true));
+        assert_eq!(detect_target_kind(None, &pe), ReaTargetKind::DotNetAssembly);
+        let (meta, _, _, _, _) = inspect_dotnet_assembly(&pe);
+        assert_eq!(meta["valid_dotnet"].as_bool(), Some(true));
+        assert_eq!(meta["bsjb_offset"].as_str(), Some("0x300"));
     }
 }

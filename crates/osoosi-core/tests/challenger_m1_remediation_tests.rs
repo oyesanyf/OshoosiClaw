@@ -67,7 +67,8 @@ fn test_administrative_session_spoofing_via_commandline_arguments() {
         ps_shielded
     );
 
-    if is_shielded || mimikatz_shielded || ps_shielded {
-        println!("CRITICAL VULNERABILITY CONFIRMED: Any malware can evade kill_process_tree by passing 'python', 'git', or 'code' as a CLI argument!");
-    }
+    assert!(!is_shielded, "c2_beacon.exe with '--target python' MUST NOT be shielded");
+    assert!(!mimikatz_shielded, "mimikatz.exe with 'git' MUST NOT be shielded");
+    assert!(!ps_shielded, "powershell.exe with 'code.exe' MUST NOT be shielded");
 }
+

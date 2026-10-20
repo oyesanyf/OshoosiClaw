@@ -9767,12 +9767,24 @@ window.downloadHistoryExport = downloadHistoryExport;
 /**
  * REA: Reverse Engineer Anything Frontend Controller
  */
+window._reaRecentReports = [];
+
 async function renderReaView() {
     try {
         const [statusRes, provRes] = await Promise.all([
             fetchWithRetry(`${API_BASE}/rea/v1/status`).then(r => r.json()).catch(() => null),
             fetchWithRetry(`${API_BASE}/rea/v1/providers`).then(r => r.json()).catch(() => null),
         ]);
+        const patrolBadge = document.getElementById('rea-patrol-badge');
+        if (patrolBadge && statusRes) {
+            const sweeps = Number(statusRes.sweep_count || 0);
+            const artifacts = Number(statusRes.analyzed_unique_artifacts || statusRes.recent_count || 0);
+            const active = statusRes.autonomous_enabled !== false;
+            patrolBadge.className = `badge ${active ? 'green' : 'gray'}`;
+            patrolBadge.innerText = active
+                ? `Autonomous Patrol Active (${sweeps} Sweeps · ${artifacts} Artifacts)`
+                : 'Autonomous Patrol Paused';
+        }
         const bar = document.getElementById('rea-providers-bar');
         const providers = (provRes && Array.isArray(provRes.providers))
             ? provRes.providers
@@ -9786,14 +9798,22 @@ async function renderReaView() {
         }
         const recent = (statusRes && (statusRes.investigations || statusRes.recent_reports)) || [];
         if (Array.isArray(recent) && recent.length > 0) {
-            renderReaReport(recent[0]);
+            window._reaRecentReports = recent;
+            renderReaReport(recent[0], 0);
         }
     } catch (err) {
         console.warn('REA view load warning:', err);
     }
 }
 
-function renderReaReport(report) {
+function selectReaRecentReport(idx) {
+    const list = window._reaRecentReports || [];
+    if (idx >= 0 && idx < list.length) {
+        renderReaReport(list[idx], idx);
+    }
+}
+
+function renderReaReport(report, activeIdx = 0) {
     const container = document.getElementById('rea-report-container');
     if (!container || !report) return;
     const targetLabel = report.target_path || report.target || 'Target';
@@ -9803,6 +9823,19 @@ function renderReaReport(report) {
     const magikaBadgeHtml = magikaInfo && magikaInfo.label
         ? `<span class="badge purple" style="margin-left: 6px;" title="${escapeHtml(magikaInfo.description || '')}">Magika: ${escapeHtml(magikaInfo.label)} (${escapeHtml(magikaInfo.mime_type || '')})</span>`
         : '';
+
+    const recentList = Array.isArray(window._reaRecentReports) ? window._reaRecentReports : [];
+    const recentSelectorHtml = recentList.length > 1 ? `
+        <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06);">
+            <span style="font-size: 11px; color: var(--text-muted); align-self: center; margin-right: 4px;">Recent Autonomous Reports:</span>
+            ${recentList.slice(0, 8).map((r, i) => {
+                const rawName = String(r.target_path || r.target || 'target');
+                const shortName = rawName.split(/[\\\\/]/).pop() || rawName;
+                const isSelected = i === activeIdx;
+                return `<button class="btn-secondary" onclick="selectReaRecentReport(${i})" style="font-size: 11px; padding: 3px 9px; border-color: ${isSelected ? '#38bdf8' : 'var(--glass-border)'}; background: ${isSelected ? 'rgba(56,189,248,0.16)' : 'rgba(255,255,255,0.04)'};">${escapeHtml(shortName.substring(0, 28))} <span style="opacity:0.7;">(${escapeHtml(r.detected_kind || 'auto')})</span></button>`;
+            }).join('')}
+        </div>
+    ` : '';
 
     const evidenceRows = (report.evidence || []).map(ev => `
         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
@@ -9822,6 +9855,7 @@ function renderReaReport(report) {
         </div>
     `).join('');
     container.innerHTML = `
+        ${recentSelectorHtml}
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px;">
             <div>
                 <h4 style="margin: 0; font-size: 15px; color: var(--text-header);">${escapeHtml(targetLabel)} <span class="badge blue" style="margin-left: 8px;">${escapeHtml(report.detected_kind || 'auto')}</span>${magikaBadgeHtml}</h4>
@@ -9870,7 +9904,7 @@ async function runReaAnalysis() {
         });
         const data = await res.json();
         if (data && data.report) {
-            renderReaReport(data.report);
+            renderReaReport(data.report, -1);
         } else if (data && data.error) {
             showUserError('REA Analysis', data.error);
         }
@@ -9888,7 +9922,7 @@ async function runReaPreset(preset) {
         });
         const data = await res.json();
         if (data && data.report) {
-            renderReaReport(data.report);
+            renderReaReport(data.report, -1);
         }
     } catch (err) {
         showUserError('REA Preset', err);
@@ -9905,7 +9939,8 @@ async function runReaAutonomousSweep() {
         const data = await res.json();
         const list = (data && (data.reports || data.investigations)) || [];
         if (Array.isArray(list) && list.length > 0) {
-            renderReaReport(list[0]);
+            window._reaRecentReports = list;
+            await renderReaView();
         } else {
             await renderReaView();
         }
@@ -9915,6 +9950,7 @@ async function runReaAutonomousSweep() {
 }
 
 window.renderReaView = renderReaView;
+window.selectReaRecentReport = selectReaRecentReport;
 window.runReaAnalysis = runReaAnalysis;
 window.runReaPreset = runReaPreset;
 window.runReaAutonomousSweep = runReaAutonomousSweep;

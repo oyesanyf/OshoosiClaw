@@ -128,14 +128,10 @@ static const PCWSTR g_ProtectedImages[] = {
     L"textinputhost.exe",
     L"ctfmon.exe",
     L"dwm.exe",
-    L"rundll32.exe",
     L"dllhost.exe",
     L"conhost.exe",
     L"openconsole.exe",
     L"windowsterminal.exe",
-    L"powershell.exe",
-    L"pwsh.exe",
-    L"cmd.exe",
     L"taskmgr.exe",
     L"securityhealthservice.exe",
     L"securityhealthsystray.exe",
@@ -814,12 +810,38 @@ static BOOLEAN OsoosiIsDeveloperOrSensorImage(_In_reads_(nameLen) PCWSTR name, _
     );
 }
 
+// Interactive shells and LOLBins that must NEVER receive Ring-0 immunity (aligns with user-space NEVER_PROTECTED_SHELLS_AND_LOLBINS)
+static const PCWSTR g_NeverProtectedLolbins[] = {
+    L"powershell.exe",
+    L"pwsh.exe",
+    L"cmd.exe",
+    L"rundll32.exe",
+    L"regsvr32.exe",
+    L"mshta.exe",
+    L"wscript.exe",
+    L"cscript.exe",
+    L"certutil.exe",
+    L"bitsadmin.exe",
+    L"curl.exe"
+};
+
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) {
     if (ImageFileName == NULL || ImageFileName->Buffer == NULL || ImageFileName->Length == 0) {
         return FALSE;
     }
 
     ULONG imgChars = ImageFileName->Length / sizeof(WCHAR);
+
+    // Fail-safe: Interactive shells and LOLBins must NEVER receive Ring-0 immunity
+    for (ULONG i = 0; i < sizeof(g_NeverProtectedLolbins) / sizeof(g_NeverProtectedLolbins[0]); ++i) {
+        PCWSTR lolbin = g_NeverProtectedLolbins[i];
+        ULONG lolbinLen = OsoosiBoundedWcsLen(lolbin, OSOOSI_MAX_PATH - 1);
+        if (imgChars >= lolbinLen && OsoosiEndsWithInsensitive(ImageFileName->Buffer, imgChars, lolbin, lolbinLen)) {
+            if (imgChars == lolbinLen || ImageFileName->Buffer[imgChars - lolbinLen - 1] == L'\\') {
+                return FALSE;
+            }
+        }
+    }
 
     for (ULONG i = 0; i < sizeof(g_ProtectedImages) / sizeof(g_ProtectedImages[0]); ++i) {
         PCWSTR protName = g_ProtectedImages[i];

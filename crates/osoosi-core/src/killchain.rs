@@ -80,11 +80,17 @@ static KILLCHAIN_STORAGE: LazyLock<RwLock<KillChainStorage>> = LazyLock::new(|| 
 static RATE_LIMIT_LOCK: LazyLock<RwLock<(u32, Option<Instant>)>> =
     LazyLock::new(|| RwLock::new((0, None)));
 
-fn storage_file_path() -> PathBuf {
-    std::env::var("OSOOSI_DATABASE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("database"))
-        .join("killchain_state.json")
+/// Returns the path to the killchain state persistence file.
+/// Supports test-specific directory isolation via the `OSOOSI_DATABASE_DIR` environment variable,
+/// falling back to `"database/killchain_state.json"` if unset or empty.
+pub fn storage_file_path() -> PathBuf {
+    if let Ok(dir) = std::env::var("OSOOSI_DATABASE_DIR") {
+        let trimmed = dir.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed).join("killchain_state.json");
+        }
+    }
+    PathBuf::from("database").join("killchain_state.json")
 }
 
 fn load_storage_from_disk() -> Result<KillChainStorage> {
@@ -104,6 +110,26 @@ fn save_storage_to_disk(storage: &KillChainStorage) -> Result<()> {
     }
     let json = serde_json::to_string_pretty(storage)?;
     std::fs::write(&p, json)?;
+    Ok(())
+}
+
+/// Resets both in-memory storage and persisted disk state to clean unisolated defaults.
+/// Guarantees that unit and integration tests start with deterministic clean state
+/// regardless of prior execution artifacts or dirty disk files.
+pub fn reset_killchain_state_for_testing() {
+    record_successful_auth();
+    let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
+    guard.status = KillChainStatus::default();
+    let _ = save_storage_to_disk(&guard);
+}
+
+/// Reloads in-memory storage from the state file on disk.
+/// Enables tests that manipulate `OSOOSI_DATABASE_DIR` or simulate daemon restarts
+/// to synchronize in-memory state with the underlying file.
+pub fn reload_storage_from_disk_for_testing() -> Result<()> {
+    let storage = load_storage_from_disk().unwrap_or_default();
+    let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
+    *guard = storage;
     Ok(())
 }
 
@@ -1786,8 +1812,11 @@ mod tests {
         assert!(!is_critical_system_pid(7777, "C:\\Temp\\cobaltstrike_beacon.exe"));
     }
 
+    static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_lockout_rate_limiting() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         record_successful_auth();
         let (locked, _) = check_lockout_status();
         assert!(!locked);
@@ -1808,33 +1837,129 @@ mod tests {
 
     #[tokio::test]
     async fn test_killchain_lifecycle_state() {
-        record_successful_auth();
-        let initial = get_killchain_status();
-        assert!(!initial.isolated);
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        // 1. Storage Isolation: Create isolated temporary directory for test database
+        let temp_dir = tempfile::tempdir().expect("Failed to create isolated temp database dir");
+        let orig_db_dir = std::env::var("OSOOSI_DATABASE_DIR").ok();
+        std::env::set_var("OSOOSI_DATABASE_DIR", temp_dir.path());
 
-        // Engage with test operator
+        // RAII guard ensuring unconditional cleanup and env restoration even on panic
+        struct TestIsolationGuard {
+            orig_dir: Option<String>,
+        }
+        impl Drop for TestIsolationGuard {
+            fn drop(&mut self) {
+                let _ = execute_host_disarm_unauthenticated();
+                record_successful_auth();
+                if let Some(ref dir) = self.orig_dir {
+                    std::env::set_var("OSOOSI_DATABASE_DIR", dir);
+                } else {
+                    std::env::remove_var("OSOOSI_DATABASE_DIR");
+                }
+            }
+        }
+        let _guard = TestIsolationGuard { orig_dir: orig_db_dir };
+
+        // 2. Clean State Management: Explicitly reset in-memory and disk state prior to assertion
+        record_successful_auth();
+        reset_killchain_state_for_testing();
+
+        // 3. Verify clean unisolated initial state
+        let initial = get_killchain_status();
+        assert!(!initial.isolated, "Killchain initial status must not be isolated");
+
+        // 4. Engage with test operator (live network false for unit test safety)
         let engaged = engage_killchain_isolation(
             "test_operator",
             "Integration Test Quarantine",
-            false, // do not change live network during unit test
+            false,
             false,
             false,
         )
         .await
         .unwrap();
 
-        assert!(engaged.isolated);
+        assert!(engaged.isolated, "Killchain must report isolated after engagement");
         assert_eq!(engaged.isolated_by.as_deref(), Some("test_operator"));
         assert_eq!(
             engaged.reason.as_deref(),
             Some("Integration Test Quarantine")
         );
 
-        // Disarm
+        // 5. Verify state file was persisted inside the isolated temporary directory
+        let state_path = storage_file_path();
+        assert!(state_path.exists(), "State file must exist in isolated temporary directory");
+        assert!(
+            state_path.starts_with(temp_dir.path()),
+            "State file must reside within OSOOSI_DATABASE_DIR"
+        );
+
+        // 6. Disarm and verify state restoration
         let disarmed = disarm_killchain_isolation("test_operator", "Test Complete")
             .await
             .unwrap();
-        assert!(!disarmed.isolated);
+        assert!(!disarmed.isolated, "Killchain must not be isolated after disarm");
+    }
+
+    #[test]
+    fn test_storage_file_path_isolation_env_override() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let orig = std::env::var("OSOOSI_DATABASE_DIR").ok();
+
+        // Active directory override
+        std::env::set_var("OSOOSI_DATABASE_DIR", temp_dir.path());
+        let isolated_path = storage_file_path();
+        assert_eq!(isolated_path, temp_dir.path().join("killchain_state.json"));
+
+        // Fallback when unset
+        std::env::remove_var("OSOOSI_DATABASE_DIR");
+        let default_path = storage_file_path();
+        assert_eq!(default_path, PathBuf::from("database").join("killchain_state.json"));
+
+        // Fallback when set to whitespace/empty string
+        std::env::set_var("OSOOSI_DATABASE_DIR", "   ");
+        let empty_path = storage_file_path();
+        assert_eq!(empty_path, PathBuf::from("database").join("killchain_state.json"));
+
+        // Restore original env var
+        if let Some(o) = orig {
+            std::env::set_var("OSOOSI_DATABASE_DIR", o);
+        } else {
+            std::env::remove_var("OSOOSI_DATABASE_DIR");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clean_state_reset_and_reload() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let orig = std::env::var("OSOOSI_DATABASE_DIR").ok();
+        std::env::set_var("OSOOSI_DATABASE_DIR", temp_dir.path());
+
+        // Reset to clean state
+        reset_killchain_state_for_testing();
+        assert!(!get_killchain_status().isolated);
+
+        // Engage isolation
+        let _ = engage_killchain_isolation("test_operator", "Isolation test", false, false, false)
+            .await
+            .unwrap();
+        assert!(get_killchain_status().isolated);
+
+        // Reset state
+        reset_killchain_state_for_testing();
+        assert!(!get_killchain_status().isolated);
+
+        // Verify disk was reset to default unisolated state as well
+        reload_storage_from_disk_for_testing().unwrap();
+        assert!(!get_killchain_status().isolated);
+
+        if let Some(o) = orig {
+            std::env::set_var("OSOOSI_DATABASE_DIR", o);
+        } else {
+            std::env::remove_var("OSOOSI_DATABASE_DIR");
+        }
     }
 
     #[test]

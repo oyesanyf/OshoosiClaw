@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-10-20 04:01:23 UTC",
+  "timestamp": "2026-10-20 05:28:56 UTC",
   "total_tests": 190,
-  "total_passed": 190,
-  "total_failed": 0,
+  "total_passed": 189,
+  "total_failed": 1,
   "total_errors": 0,
-  "success": true,
+  "success": false,
   "suites": [
     {
       "suite": "Tier 1: Feature Coverage (30 Features)",
       "total": 150,
-      "passed": 150,
-      "failed": 0,
+      "passed": 149,
+      "failed": 1,
       "errors": 0,
-      "duration_seconds": 0.251,
-      "success": true
+      "duration_seconds": 0.519,
+      "success": false
     },
     {
       "suite": "Tier 2: Boundary & Corner Cases",
@@ -21,7 +21,7 @@
       "passed": 15,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.014,
+      "duration_seconds": 0.019,
       "success": true
     },
     {
@@ -30,7 +30,7 @@
       "passed": 8,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.022,
+      "duration_seconds": 0.026,
       "success": true
     },
     {
@@ -39,7 +39,7 @@
       "passed": 5,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.023,
+      "duration_seconds": 0.025,
       "success": true
     },
     {
@@ -48,7 +48,7 @@
       "passed": 12,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.587,
+      "duration_seconds": 2.707,
       "success": true
     }
   ]

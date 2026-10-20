@@ -13,6 +13,7 @@ pub mod injector;
 pub mod linux_ebpf;
 pub mod native;
 pub mod provisioning;
+pub mod timing_shear;
 
 pub use canary::*;
 pub use discovery::*;
@@ -22,3 +23,4 @@ pub use hollowing::*;
 pub use host_events::*;
 pub use injector::*;
 pub use provisioning::*;
+pub use timing_shear::*;

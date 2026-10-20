@@ -1170,6 +1170,276 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
     verify_file_signature(&path.to_string_lossy())
 }
 
+/// Extracts the executable path and remaining commandline arguments from a raw commandline string.
+/// Correctly handles leading and surrounding quotes (`"` and `'`).
+pub fn extract_exe_and_args(input: &str) -> (&str, &str) {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return ("", "");
+    }
+
+    if trimmed.starts_with('"') {
+        if let Some(end_idx) = trimmed[1..].find('"') {
+            let exe = &trimmed[1..=end_idx];
+            let rest = trimmed[end_idx + 2..].trim();
+            return (exe, rest);
+        }
+    } else if trimmed.starts_with('\'') {
+        if let Some(end_idx) = trimmed[1..].find('\'') {
+            let exe = &trimmed[1..=end_idx];
+            let rest = trimmed[end_idx + 2..].trim();
+            return (exe, rest);
+        }
+    }
+
+    // Check for standard executable/script extensions (.exe, .cmd, .bat, .com, .py, .js, etc.)
+    // to correctly support unquoted paths with spaces (e.g. `C:\Program Files\...`).
+    let lower = trimmed.to_ascii_lowercase();
+    for ext in &[".exe", ".cmd", ".bat", ".com", ".py", ".pyw", ".js", ".mjs", ".ts"] {
+        let mut search_start = 0;
+        while let Some(pos) = lower[search_start..].find(ext) {
+            let ext_idx = search_start + pos;
+            let end_pos = ext_idx + ext.len();
+            if end_pos == trimmed.len() {
+                return (trimmed, "");
+            } else if trimmed.as_bytes()[end_pos].is_ascii_whitespace() {
+                let exe = &trimmed[..end_pos];
+                let rest = trimmed[end_pos..].trim();
+                return (exe, rest);
+            }
+            search_start = end_pos;
+        }
+    }
+
+    // Unquoted commandline: split on first whitespace delimiter
+    if let Some(idx) = trimmed.find(|c: char| c.is_whitespace()) {
+        let exe = &trimmed[..idx];
+        let rest = trimmed[idx..].trim();
+        (exe, rest)
+    } else {
+        (trimmed, "")
+    }
+}
+
+/// Returns true if the path or commandline targets an untrusted, temporary, or staging directory
+/// commonly used by malware for drop-and-execute attacks or LOLBin staging.
+pub fn is_untrusted_staging_path(path: &str) -> bool {
+    let lower_win = path.to_ascii_lowercase().replace('/', "\\");
+    let lower_unix = path.to_ascii_lowercase().replace('\\', "/");
+
+    lower_win.contains("\\temp\\")
+        || lower_win.ends_with("\\temp")
+        || lower_unix.contains("/tmp/")
+        || lower_unix.ends_with("/tmp")
+        || lower_unix.contains("/var/tmp/")
+        || lower_unix.ends_with("/var/tmp")
+        || lower_unix.contains("/dev/shm/")
+        || lower_unix.ends_with("/dev/shm")
+        || lower_win.contains("\\appdata\\local\\temp\\")
+        || lower_win.contains("\\appdata\\locallow\\")
+        || lower_win.contains("\\users\\public\\")
+        || lower_unix.contains("/users/public/")
+        || lower_win.contains("\\programdata\\")
+        || lower_unix.contains("/programdata/")
+}
+
+/// Tokenizes a commandline argument string, preserving double and single quoted argument strings.
+pub fn tokenize_cmdline_args(args_str: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut chars = args_str.chars().peekable();
+
+    while let Some(&c) = chars.peek() {
+        if c.is_whitespace() {
+            chars.next();
+            continue;
+        }
+
+        let mut token = String::new();
+        while let Some(&ch) = chars.peek() {
+            if ch.is_whitespace() {
+                break;
+            }
+            if ch == '"' || ch == '\'' {
+                let quote = ch;
+                token.push(chars.next().unwrap());
+                while let Some(&inner) = chars.peek() {
+                    token.push(chars.next().unwrap());
+                    if inner == quote {
+                        break;
+                    }
+                }
+            } else {
+                token.push(chars.next().unwrap());
+            }
+        }
+        if !token.is_empty() {
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
+/// Detects whether commandline arguments for an interpreter include inline code execution
+/// flags (e.g. `-c`, `/c`, `-e`, `--eval`, `-p`, `--print`, `-enc`, `-encodedcommand`).
+///
+/// Correctly distinguishes interpreter inline execution flags from script arguments
+/// (e.g. `python run_tests.py -c config.yaml` or `node build.js -p 8080`).
+pub fn has_inline_script_evaluation_flag(args_str: &str) -> bool {
+    let trimmed = args_str.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let tokens = tokenize_cmdline_args(trimmed);
+    for token in tokens {
+        let lower = token.to_ascii_lowercase();
+
+        // 1. Python inline script flag: -c or /c (handles -c, -c"...", -c'...', -c=..., -c<code>)
+        if lower == "-c"
+            || lower == "/c"
+            || (lower.starts_with("-c") && !lower.starts_with("--"))
+            || (lower.starts_with("/c") && !lower.starts_with("//"))
+        {
+            return true;
+        }
+
+        // 2. Node.js inline eval: -e, --eval
+        if lower == "-e"
+            || lower.starts_with("-e\"")
+            || lower.starts_with("-e\'")
+            || lower.starts_with("-e=")
+            || lower == "--eval"
+            || lower.starts_with("--eval=")
+            || lower.starts_with("--eval\"")
+            || lower.starts_with("--eval\'")
+        {
+            return true;
+        }
+
+        // 3. Node.js print flag: -p, --print
+        if lower == "-p"
+            || lower.starts_with("-p\"")
+            || lower.starts_with("-p\'")
+            || lower.starts_with("-p=")
+            || lower == "--print"
+            || lower.starts_with("--print=")
+            || lower.starts_with("--print\"")
+            || lower.starts_with("--print\'")
+        {
+            return true;
+        }
+
+        // 4. Encoded / inline command flags: -enc, -encodedcommand
+        if lower == "-enc"
+            || lower == "-encodedcommand"
+            || lower.starts_with("-enc=")
+            || lower.starts_with("-enc:")
+            || lower.starts_with("-encodedcommand=")
+            || lower.starts_with("-encodedcommand:")
+        {
+            return true;
+        }
+
+        // Check if token represents a script file argument.
+        // If a non-flag argument ends in a known script extension or appears to be a script file,
+        // any subsequent arguments belong to the script and not to the interpreter.
+        if !lower.starts_with('-') && !lower.starts_with('/') {
+            let clean_token = lower.trim_matches('"').trim_matches('\'');
+            if clean_token.ends_with(".py")
+                || clean_token.ends_with(".pyw")
+                || clean_token.ends_with(".pyc")
+                || clean_token.ends_with(".js")
+                || clean_token.ends_with(".mjs")
+                || clean_token.ends_with(".cjs")
+                || clean_token.ends_with(".ts")
+                || clean_token.ends_with(".jsx")
+                || clean_token.ends_with(".tsx")
+                || clean_token.contains('/')
+                || clean_token.contains('\\')
+            {
+                // Reached target script argument; trailing flags are script parameters
+                break;
+            }
+        }
+    }
+
+    false
+}
+
+/// Recognized developer interpreters and toolchain executables protected under standard developer workstation profiles.
+/// Exported publicly so external security analyzers, canary monitors, and E2E verification suites can inspect the authorized toolchain set.
+pub const DEVELOPER_INTERPRETERS: &[&str] = &[
+    "python",
+    "python.exe",
+    "python3",
+    "python3.exe",
+    "node",
+    "node.exe",
+    "cargo.exe",
+    "rustc.exe",
+    "git.exe",
+    "code.exe",
+    "wsl.exe",
+    "docker.exe",
+];
+
+/// Returns true if the provided image name or path represents a known developer interpreter
+/// runtime (e.g. Python or Node.js).
+pub fn is_developer_interpreter(name_or_path: &str) -> bool {
+    let trimmed = name_or_path.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let (exe_part, _) = extract_exe_and_args(trimmed);
+    let clean_exe = exe_part.trim().trim_matches('"').trim_matches('\'');
+    if clean_exe.is_empty() {
+        return false;
+    }
+
+    let normalized = normalize_nt_device_path(clean_exe);
+    let lower_unix = normalized.to_ascii_lowercase().replace('\\', "/");
+
+    let file_name = lower_unix
+        .rsplit('/')
+        .next()
+        .unwrap_or(&lower_unix)
+        .trim();
+    if file_name.is_empty() {
+        return false;
+    }
+
+    let stem = file_name.strip_suffix(".exe").unwrap_or(file_name);
+
+    matches!(
+        stem,
+        "python"
+            | "python3"
+            | "python2"
+            | "pythonw"
+            | "py"
+            | "node"
+            | "nodejs"
+    ) || (stem.starts_with("python3.")
+        && stem["python3.".len()..]
+            .chars()
+            .all(|c| c.is_ascii_digit()))
+      || (stem.starts_with("python2.")
+        && stem["python2.".len()..]
+            .chars()
+            .all(|c| c.is_ascii_digit()))
+}
+
+/// Alias for `is_protected_os_shell_or_desktop_binary` used across REA, static analyzers, and autonomous response pipelines.
+pub fn is_protected_process(path_or_name: &str) -> bool {
+    is_protected_os_shell_or_desktop_binary(path_or_name)
+}
+
+/// Alias for `is_protected_os_shell_or_desktop_binary` enforcing OS kernel/session/shell immunity in telemetry canary traps.
+pub fn is_critical_system_process(name_or_path: &str) -> bool {
+    is_protected_os_shell_or_desktop_binary(name_or_path)
+}
+
 /// Cross-platform invariant guard: returns `true` if `path_or_name` is a critical
 /// operating system kernel/init daemon, desktop shell, window server/compositor,
 /// system tray / menu bar host, or local desktop search/indexer service across
@@ -1178,14 +1448,21 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
 /// Processes matching this guard must NEVER be killed, suspended/tarpitted,
 /// network-blocked via host firewall, or hijacked via IFEO.
 pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
-    let trimmed = path_or_name.trim().trim_matches('"');
+    let trimmed = path_or_name.trim();
     if trimmed.is_empty() {
         return false;
     }
 
-    let normalized = normalize_nt_device_path(trimmed);
-    let lower_win = normalized.to_ascii_lowercase().replace('/', "\\");
-    let lower_unix = normalized.to_ascii_lowercase().replace('\\', "/");
+    // 1. Never grant protection to binaries or scripts originating from untrusted staging paths
+    if is_untrusted_staging_path(trimmed) {
+        return false;
+    }
+
+    let (exe_part, args_part) = extract_exe_and_args(trimmed);
+    let clean_exe = exe_part.trim().trim_matches('"').trim_matches('\'');
+    let normalized_exe = normalize_nt_device_path(clean_exe);
+    let lower_win = normalized_exe.to_ascii_lowercase().replace('/', "\\");
+    let lower_unix = normalized_exe.to_ascii_lowercase().replace('\\', "/");
 
     // Extract base executable filename
     let file_name = lower_unix
@@ -1197,7 +1474,10 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
         return false;
     }
 
-    // Never classify interactive shells, script hosts, or LOLBins as protected OS desktop/shell binaries
+    let exe_name = file_name.split_whitespace().next().unwrap_or(file_name);
+    let stem = exe_name.strip_suffix(".exe").unwrap_or(exe_name);
+
+    // 2. Never classify interactive shells, script hosts, or LOLBins as protected OS desktop/shell binaries
     const NEVER_PROTECTED_SHELLS_AND_LOLBINS: &[&str] = &[
         "powershell.exe",
         "powershell",
@@ -1227,47 +1507,32 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
         "curl.exe",
         "wget",
     ];
-    let exe_name = file_name.split_whitespace().next().unwrap_or(file_name);
     if NEVER_PROTECTED_SHELLS_AND_LOLBINS.contains(&file_name)
         || NEVER_PROTECTED_SHELLS_AND_LOLBINS.contains(&exe_name)
+        || NEVER_PROTECTED_SHELLS_AND_LOLBINS.contains(&stem)
     {
         return false;
     }
 
-    // Developer Environment vs. Malicious Script Invocation Disambiguation:
-    // Toolchain interpreters (python, node) must be shielded when running as developer
-    // engines or installed SDK binaries, but rejected if executing inline script payloads,
-    // encoded commands, or spawned from untrusted temporary staging directories.
-    const DEVELOPER_INTERPRETERS: &[&str] = &[
-        "python",
-        "python.exe",
-        "python3",
-        "python3.exe",
-        "node",
-        "node.exe",
-    ];
-    if DEVELOPER_INTERPRETERS.contains(&file_name) || DEVELOPER_INTERPRETERS.contains(&exe_name) {
-        let is_suspicious_script_invocation = lower_win.contains(" -c ")
-            || lower_win.contains(" /c ")
-            || lower_win.contains(" -enc ")
-            || lower_win.contains(" -encodedcommand ")
-            || lower_win.contains(" --eval ")
-            || lower_win.contains(" -e ")
-            || lower_win.contains("\\temp\\")
-            || lower_unix.contains("/tmp/")
-            || lower_win.contains("\\appdata\\local\\temp\\")
-            || lower_win.contains("evil")
-            || lower_win.contains("beacon")
-            || lower_win.contains("downloadstring")
-            || lower_win.contains("iex(");
+    // 3. Developer Environment vs. Malicious Script Invocation Disambiguation:
+    // Toolchain interpreters (python, node) and developer scripts must be shielded when running
+    // as developer engines or installed SDK binaries, but rejected if executing inline script
+    // payloads, encoded commands, or spawned from untrusted temporary staging directories.
+    let is_interp = is_developer_interpreter(exe_part);
+    let is_script_file = exe_name.ends_with(".py")
+        || exe_name.ends_with(".pyw")
+        || exe_name.ends_with(".js")
+        || exe_name.ends_with(".mjs")
+        || exe_name.ends_with(".ts");
 
-        if is_suspicious_script_invocation {
+    if is_interp || is_script_file {
+        if has_inline_script_evaluation_flag(args_part) {
             return false;
         }
         return true;
     }
 
-    // Dedicated OS shell / app bundle paths across Windows, Linux, and macOS
+    // 4. Dedicated OS shell / app bundle paths across Windows, Linux, and macOS
     if lower_win.contains("\\windows\\systemapps\\")
         || lower_win.contains("\\windows\\immersivecontrolpanel\\")
         || lower_win.contains("\\windowsapps\\microsoft.windowsterminal")
@@ -1279,28 +1544,26 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
         return true;
     }
 
-    // Prefix patterns for Linux/Unix modular desktop & init daemons
-    if file_name.starts_with("systemd-")
-        || file_name.starts_with("xdg-desktop-portal")
-        || file_name.starts_with("xdg-document-portal")
-        || file_name.starts_with("xdg-permission-store")
-        || file_name.starts_with("gsd-")
-        || file_name.starts_with("gvfsd")
-        || file_name.starts_with("gvfs-")
-        || file_name.starts_with("tracker-miner")
-        || file_name.starts_with("tracker-extract")
-        || file_name.starts_with("tracker-xdg-portal")
-        || file_name.starts_with("localsearch")
-        || file_name.starts_with("baloo_file")
-        || file_name.starts_with("kwin_")
-        || file_name.starts_with("ibus-")
-        || file_name.starts_with("pipewire")
-        || file_name.starts_with("containerd-shim")
+    // 5. Prefix patterns for Linux/Unix modular desktop & init daemons
+    if exe_name.starts_with("systemd-")
+        || exe_name.starts_with("xdg-desktop-portal")
+        || exe_name.starts_with("xdg-document-portal")
+        || exe_name.starts_with("xdg-permission-store")
+        || exe_name.starts_with("gsd-")
+        || exe_name.starts_with("gvfsd")
+        || exe_name.starts_with("gvfs-")
+        || exe_name.starts_with("tracker-miner")
+        || exe_name.starts_with("tracker-extract")
+        || exe_name.starts_with("tracker-xdg-portal")
+        || exe_name.starts_with("localsearch")
+        || exe_name.starts_with("baloo_file")
+        || exe_name.starts_with("kwin_")
+        || exe_name.starts_with("ibus-")
+        || exe_name.starts_with("pipewire")
+        || exe_name.starts_with("containerd-shim")
     {
         return true;
     }
-
-    let stem = file_name.strip_suffix(".exe").unwrap_or(file_name);
 
     matches!(
         stem,
@@ -1902,5 +2165,153 @@ mod tests {
         ));
         assert!(!is_protected_os_shell_or_desktop_binary("/usr/bin/bash"));
     }
+
+    #[test]
+    fn test_is_developer_interpreter_exhaustive() {
+        // Positive interpreter cases
+        assert!(is_developer_interpreter("python"));
+        assert!(is_developer_interpreter("python.exe"));
+        assert!(is_developer_interpreter("python3"));
+        assert!(is_developer_interpreter("python3.exe"));
+        assert!(is_developer_interpreter("python3.11"));
+        assert!(is_developer_interpreter("python3.12.exe"));
+        assert!(is_developer_interpreter("pythonw.exe"));
+        assert!(is_developer_interpreter("py.exe"));
+        assert!(is_developer_interpreter("node"));
+        assert!(is_developer_interpreter("node.exe"));
+        assert!(is_developer_interpreter("nodejs"));
+        assert!(is_developer_interpreter(r"C:\Program Files\Python312\python.exe"));
+        assert!(is_developer_interpreter("/usr/bin/python3"));
+        assert!(is_developer_interpreter("/usr/local/bin/node"));
+        assert!(is_developer_interpreter("python.exe -c \"import os\""));
+        assert!(is_developer_interpreter("\"C:\\Program Files\\Python312\\python.exe\" -v"));
+
+        // Negative non-interpreter cases
+        assert!(!is_developer_interpreter("cargo.exe"));
+        assert!(!is_developer_interpreter("git.exe"));
+        assert!(!is_developer_interpreter("powershell.exe"));
+        assert!(!is_developer_interpreter("cmd.exe"));
+        assert!(!is_developer_interpreter("bash"));
+        assert!(!is_developer_interpreter("explorer.exe"));
+        assert!(!is_developer_interpreter("python_malware.exe"));
+        assert!(!is_developer_interpreter(""));
+    }
+
+    #[test]
+    fn test_inline_script_flag_parsing_and_bypass_prevention() {
+        // Python inline flags: all variations must be rejected
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -c \"import os\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -c\"import os\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -c'import os'"));
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe\t-c\t\"import os\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("python3 -c \"import socket\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -u -c \"import os\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe -cimport(os)"));
+        assert!(!is_protected_os_shell_or_desktop_binary("PYTHON.EXE -C \"IMPORT OS\""));
+
+        // Node.js inline flags: all variations must be rejected
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -e \"process.exit(1)\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -e\"process.exit(1)\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -e'process.exit(1)'"));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe --eval=\"process.exit(1)\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe --eval \"process.exit(1)\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -p \"process.arch\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe -p\"1+1\""));
+        assert!(!is_protected_os_shell_or_desktop_binary("node.exe --print=\"1+1\""));
+    }
+
+    #[test]
+    fn test_legitimate_developer_scripts_and_tools_retained_immunity() {
+        // Python running script files (even with -c or other options passed to the script)
+        assert!(is_protected_os_shell_or_desktop_binary("python.exe run_tests.py -c config.yaml"));
+        assert!(is_protected_os_shell_or_desktop_binary("python.exe test_beacon.py"));
+        assert!(is_protected_os_shell_or_desktop_binary("python.exe simulate_evil.py"));
+        assert!(is_protected_os_shell_or_desktop_binary("python.exe iex_parser.py"));
+        assert!(is_protected_os_shell_or_desktop_binary("python.exe downloadstring_tester.py"));
+        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Dev\beacon_analysis.py"));
+        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Dev\detect_evil.py"));
+
+        // Node running script files
+        assert!(is_protected_os_shell_or_desktop_binary("node.exe build.js -p 8080"));
+        assert!(is_protected_os_shell_or_desktop_binary("node.exe server.js -e production"));
+
+        // Clean toolchain binaries with commandline arguments
+        assert!(is_protected_os_shell_or_desktop_binary("cargo.exe build"));
+        assert!(is_protected_os_shell_or_desktop_binary("cargo.exe test --release"));
+        assert!(is_protected_os_shell_or_desktop_binary("git.exe status"));
+        assert!(is_protected_os_shell_or_desktop_binary("git.exe commit -m \"update\""));
+        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Windows\explorer.exe /n"));
+        assert!(is_protected_os_shell_or_desktop_binary(r"C:\Windows\System32\svchost.exe -k netsvcs"));
+        assert!(is_protected_os_shell_or_desktop_binary("code.exe ."));
+    }
+
+    #[test]
+    fn test_staging_directory_denial_exhaustive() {
+        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Windows\Temp\python.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Users\user\AppData\Local\Temp\python.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Temp\python.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/tmp/python3"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/var/tmp/python3"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/dev/shm/python3"));
+        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Users\Public\python.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\ProgramData\python.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary(r"C:\Users\Public\explorer.exe"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/tmp/cargo"));
+        assert!(!is_protected_os_shell_or_desktop_binary("/dev/shm/git"));
+        assert!(!is_protected_os_shell_or_desktop_binary("python.exe /tmp/malware.py"));
+        assert!(!is_protected_os_shell_or_desktop_binary(r"python.exe C:\Users\Public\payload.py"));
+    }
+
+    #[test]
+    fn test_is_critical_system_process_and_developer_interpreters_export() {
+        // 1. Verify DEVELOPER_INTERPRETERS constant contains all required toolchain entries
+        for required in &[
+            "python",
+            "python.exe",
+            "python3",
+            "python3.exe",
+            "node",
+            "node.exe",
+            "cargo.exe",
+            "rustc.exe",
+            "git.exe",
+            "code.exe",
+            "wsl.exe",
+            "docker.exe",
+        ] {
+            assert!(
+                DEVELOPER_INTERPRETERS.contains(required),
+                "DEVELOPER_INTERPRETERS must contain {}",
+                required
+            );
+        }
+
+        // 2. Verify is_critical_system_process grants immunity to legitimate OS binaries
+        assert!(is_critical_system_process("explorer.exe"));
+        assert!(is_critical_system_process("SearchIndexer.exe"));
+        assert!(is_critical_system_process("svchost.exe"));
+        assert!(is_critical_system_process("SecurityHealthSystray.exe"));
+        assert!(is_critical_system_process(r"C:\Windows\System32\lsass.exe"));
+
+        // 3. Verify is_critical_system_process grants immunity to developer toolchains
+        assert!(is_critical_system_process("cargo.exe"));
+        assert!(is_critical_system_process("rustc.exe"));
+        assert!(is_critical_system_process("git.exe"));
+        assert!(is_critical_system_process("python.exe"));
+        assert!(is_critical_system_process("node.exe"));
+        assert!(is_critical_system_process(r"C:\Program Files\Python312\python.exe"));
+        assert!(is_critical_system_process("python.exe run_tests.py -c config.yaml"));
+
+        // 4. Verify is_critical_system_process rejects interactive shells, LOLBins, and inline attacks
+        assert!(!is_critical_system_process("powershell.exe"));
+        assert!(!is_critical_system_process("cmd.exe"));
+        assert!(!is_critical_system_process("wscript.exe"));
+        assert!(!is_critical_system_process("rundll32.exe"));
+        assert!(!is_critical_system_process("python.exe -c \"import os\""));
+        assert!(!is_critical_system_process("node.exe -e \"require('fs')\""));
+        assert!(!is_critical_system_process(r"C:\Temp\stealer.exe"));
+        assert!(!is_critical_system_process(r"C:\Users\Public\payload.exe"));
+    }
 }
+
 

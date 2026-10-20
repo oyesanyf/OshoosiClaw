@@ -600,6 +600,36 @@ impl ActiveProcessTarpit {
             );
         });
     }
+
+    /// Deterministically triggers immediate thread tarpitting when an unauthorized process
+    /// touches an Axion decoy (`SyntheticCredential`, `GhostNode`, or `UnreferencedShadowPage`),
+    /// while strictly respecting OS & security process immunity (`is_protected_system_or_security_process`).
+    pub fn trigger_axion_canary_tarpit(
+        &self,
+        verdict: &osoosi_telemetry::canary::AxionCanaryTripVerdict,
+    ) -> bool {
+        if !verdict.should_tarpit_immediately || verdict.os_immunity_veto {
+            return false;
+        }
+        if is_protected_system_or_security_process(verdict.offending_pid, &verdict.offending_process)
+        {
+            warn!(
+                "[AXION TARPIT SAFEGUARD] Refused immediate tarpit for protected process PID {} ({}) on trap {}",
+                verdict.offending_pid, verdict.offending_process, verdict.trap_id
+            );
+            return false;
+        }
+        info!(
+            "[AXION CANARY TRIP] Immediate thread tarpit engaged on PID {} ({}) for touching {:?} decoy '{}'",
+            verdict.offending_pid, verdict.offending_process, verdict.kind, verdict.trap_id
+        );
+        self.trap_pid(
+            verdict.offending_pid,
+            Duration::from_millis(50),
+            Duration::from_secs(60),
+        );
+        true
+    }
 }
 
 pub struct TarpitManager {
@@ -621,6 +651,21 @@ impl TarpitManager {
 
     pub fn active_tarpit(&self) -> &ActiveProcessTarpit {
         &self.active_tarpit
+    }
+
+    /// Evaluates an access event against the global Axion deterministic canary registry and
+    /// immediately engages thread tarpitting if an unauthorized read occurred.
+    pub fn inspect_and_tarpit_axion_decoy(
+        &self,
+        pid: u32,
+        process_name: &str,
+        accessed_resource: &str,
+        accessed_address: Option<usize>,
+    ) -> Option<osoosi_telemetry::canary::AxionCanaryTripVerdict> {
+        let reg = osoosi_telemetry::canary::global_axion_canary_registry();
+        let verdict = reg.evaluate_access(pid, process_name, accessed_resource, accessed_address)?;
+        let _ = self.active_tarpit.trigger_axion_canary_tarpit(&verdict);
+        Some(verdict)
     }
 
     /// Enter a "Tarpit" state for a specific process ID.

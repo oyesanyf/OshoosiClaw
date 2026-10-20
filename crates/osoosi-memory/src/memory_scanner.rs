@@ -33,25 +33,33 @@ impl MemoryScanner {
         Self { magika }
     }
 
-    /// Scan a buffer for known file headers.
+    /// Scan a buffer for known file headers (Goblin + Google Magika).
     pub async fn scan_buffer(&self, buffer: &[u8]) -> Option<String> {
-        // 1. Quick check using Goblin for PE/ELF headers
+        // 1. Quick structural check using Goblin for PE/ELF/Mach-O headers + WASM magic
         if let Ok(obj) = goblin::Object::parse(buffer) {
             match obj {
                 goblin::Object::PE(_) => return Some("PE Header Detected in Memory".to_string()),
                 goblin::Object::Elf(_) => return Some("ELF Header Detected in Memory".to_string()),
+                goblin::Object::Mach(_) => {
+                    return Some("Mach-O Header Detected in Memory".to_string())
+                }
                 _ => {}
             }
         }
+        if buffer.starts_with(b"\0asm\x01\0\0\0") {
+            return Some("WASM Header Detected in Memory".to_string());
+        }
 
-        // 2. Deep identification using Magika if enabled
+        // 2. Deep identification using Google Magika if enabled
         if let Some(ref session_mutex) = self.magika {
-            if let Ok(mut session) = session_mutex.try_lock() {
-                if let Ok(res) = session.identify_content_sync(buffer) {
-                    let label = res.info().label;
-                    if label == "pe" || label == "exe" || label == "elf" {
-                        return Some(format!("Magika Detected: {}", label));
-                    }
+            let mut session = session_mutex.lock().await;
+            if let Ok(res) = session.identify_content_sync(buffer) {
+                let label = res.info().label;
+                if matches!(
+                    label,
+                    "pebin" | "elf" | "macho" | "wasm" | "dex" | "pe" | "exe" | "mach-o"
+                ) {
+                    return Some(format!("Magika Detected: {}", label));
                 }
             }
         }

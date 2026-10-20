@@ -677,7 +677,8 @@ class TestTier1Features(unittest.TestCase):
 
     def test_feat22_tc03_raptor_skill_available(self):
         """F22.3: Verify raptor security skill exists in config or environment."""
-        self.assertTrue(True)
+        report_path = self.root / "SECURITY_AUDIT_RAPTOR_SONNET_REPORT.md"
+        self.assertTrue(report_path.exists(), "RAPTOR security audit report must be present")
 
     def test_feat22_tc04_no_banned_unsafe_in_types(self):
         """F22.4: Verify osoosi-types has zero forbidden unsafe code blocks without audit."""
@@ -893,7 +894,8 @@ class TestTier1Features(unittest.TestCase):
 
     def test_feat30_tc02_subsecond_stop_optimization_documented(self):
         """F30.2: Verify sub-second stop git commit is present in history."""
-        self.assertIn("sub-second", "sub-second OsoosiEDR stop")
+        readme_content = (self.root / "README.md").read_text(encoding="utf-8").lower()
+        self.assertIn("sub-second", readme_content, "Sub-second service stop optimization must be documented in README.md")
 
     def test_feat30_tc03_service_install_arguments(self):
         """F30.3: Verify WiX manifest defines ServiceInstall with auto-start."""
