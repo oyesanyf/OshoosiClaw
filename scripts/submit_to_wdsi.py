@@ -209,9 +209,11 @@ def try_tier1_graph_submission(payload: dict, file_path: Path, dry_run: bool, qu
         return None
 
     def _assert_safe_url(url: str) -> str:
-        parsed = urllib.parse.urlparse(url)
-        if parsed.scheme.lower() not in ("http", "https"):
-            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+        parsed = urllib.parse.urlsplit(url)
+        if parsed.scheme.lower() != "https":
+            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': Microsoft Graph API requires 'https'")
+        if not parsed.hostname.endswith(".microsoftonline.com") and not parsed.hostname.endswith(".microsoft.com"):
+            raise ValueError(f"Disallowed destination host: {parsed.hostname}")
         return url
 
     try:

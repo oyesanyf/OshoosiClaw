@@ -1398,101 +1398,10 @@ fn resume_process_win32(pid: u32) -> bool {
 }
 
 #[cfg(windows)]
-mod win_auth {
-    use std::ffi::c_void;
-    use std::ptr::null_mut;
-
-    const LOGON32_LOGON_NETWORK: u32 = 3;
-    const LOGON32_LOGON_INTERACTIVE: u32 = 2;
-    const LOGON32_PROVIDER_DEFAULT: u32 = 0;
-
-    #[link(name = "advapi32")]
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn LogonUserW(
-            lpszUsername: *const u16,
-            lpszDomain: *const u16,
-            lpszPassword: *const u16,
-            dwLogonType: u32,
-            dwLogonProvider: u32,
-            phToken: *mut *mut c_void,
-        ) -> i32;
-
-        fn CloseHandle(hObject: *mut c_void) -> i32;
-    }
-
-    pub fn verify_windows_credentials(username: &str, password: &str) -> bool {
-        if username.trim().is_empty() || password.is_empty() {
-            return false;
-        }
-
-        let (domain_opt, user_clean) = if let Some((dom, usr)) = username.split_once('\\') {
-            (Some(dom), usr)
-        } else if let Some((usr, dom)) = username.split_once('@') {
-            (Some(dom), usr)
-        } else {
-            (None, username)
-        };
-
-        let to_wide =
-            |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
-
-        let user_w = to_wide(user_clean);
-        let pass_w = to_wide(password);
-
-        let mut candidate_domains: Vec<Option<String>> = Vec::new();
-        if let Some(explicit_domain) = domain_opt {
-            candidate_domains.push(Some(explicit_domain.to_string()));
-        } else {
-            // For local or non-domain users, try dot (local account database), USERDOMAIN, COMPUTERNAME, then None
-            candidate_domains.push(Some(".".to_string()));
-            if let Ok(ud) = std::env::var("USERDOMAIN") {
-                if !ud.trim().is_empty() && ud != "." {
-                    candidate_domains.push(Some(ud));
-                }
-            }
-            if let Ok(cn) = std::env::var("COMPUTERNAME") {
-                if !cn.trim().is_empty()
-                    && !candidate_domains.iter().any(|d| d.as_deref() == Some(&cn))
-                {
-                    candidate_domains.push(Some(cn));
-                }
-            }
-            candidate_domains.push(None);
-        }
-
-        let mut token_handle: *mut c_void = null_mut();
-
-        for domain in &candidate_domains {
-            let domain_w = domain.as_deref().map(to_wide);
-            let domain_ptr = domain_w
-                .as_ref()
-                .map(|v| v.as_ptr())
-                .unwrap_or(std::ptr::null());
-
-            for logon_type in [LOGON32_LOGON_INTERACTIVE, LOGON32_LOGON_NETWORK] {
-                let res = unsafe {
-                    LogonUserW(
-                        user_w.as_ptr(),
-                        domain_ptr,
-                        pass_w.as_ptr(),
-                        logon_type,
-                        LOGON32_PROVIDER_DEFAULT,
-                        &mut token_handle,
-                    )
-                };
-
-                if res != 0 {
-                    if !token_handle.is_null() {
-                        unsafe {
-                            CloseHandle(token_handle);
-                        }
-                    }
-                    return true;
-                }
-            }
-        }
-
+pub mod win_auth {
+    /// Safe Windows authentication stub: NEVER calls Win32 LogonUserW or tests credentials
+    /// against the host Windows account to prevent tripping Windows OS Account Lockout Policies.
+    pub fn verify_windows_credentials(_username: &str, _password: &str) -> bool {
         false
     }
 }
@@ -1504,11 +1413,15 @@ pub fn reset_security_lockout() {
 
 /// Authenticate operator via Hybrid Authentication:
 /// 1. Master Admin Password or dashboard token (constant-time verification)
-/// 2. Windows OS Account authentication (LogonUserW) on Windows (or PAM on Linux)
+/// 2. Environment override admin password (`OSOOSI_ADMIN_PASSWORD`)
+/// 3. Stored Admin Hash match (`config/admin_password.hash` — BLAKE3 or SHA-256)
+///
+/// NOTE: Win32 `LogonUserW` and host OS credential hammering are strictly removed
+/// to protect host OS user accounts from tripping Account Lockout Policies.
 ///
 /// Returns `Ok(true)` if valid, `Ok(false)` if invalid, or `Err(lockout_msg)` if locked out.
 pub fn authenticate_hybrid_credentials(
-    username: Option<&str>,
+    _username: Option<&str>,
     password: &str,
     expected_token: &str,
 ) -> Result<bool, String> {
@@ -1548,90 +1461,13 @@ pub fn authenticate_hybrid_credentials(
         }
     }
 
-    // 4. Check lockout status before proceeding to OS-level authentication
+    // 4. Check lockout status before recording failure
     let (is_locked, remaining) = check_lockout_status();
     if is_locked {
         return Err(format!(
             "Security lockout active due to excessive failed attempts. Please retry in {} seconds.",
             remaining
         ));
-    }
-
-    // 5. Windows OS Native Logon
-    #[cfg(windows)]
-    {
-        if let Some(user) = username {
-            if !user.trim().is_empty() && win_auth::verify_windows_credentials(user, password) {
-                record_successful_auth();
-                return Ok(true);
-            }
-        }
-        let mut candidate_users: Vec<String> = Vec::new();
-        if let Ok(current_user) = std::env::var("USERNAME") {
-            if !current_user.trim().is_empty() && !current_user.eq_ignore_ascii_case("SYSTEM") {
-                candidate_users.push(current_user);
-            }
-        }
-        // If running as Windows Service (SYSTEM), enumerate real user accounts from C:\Users
-        if let Ok(entries) = std::fs::read_dir("C:\\Users") {
-            for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        let name_lc = name.to_ascii_lowercase();
-                        if name_lc != "public"
-                            && name_lc != "default"
-                            && name_lc != "default user"
-                            && name_lc != "all users"
-                            && !candidate_users.contains(&name)
-                        {
-                            candidate_users.push(name);
-                        }
-                    }
-                }
-            }
-        }
-        for candidate in &candidate_users {
-            if win_auth::verify_windows_credentials(candidate, password) {
-                record_successful_auth();
-                return Ok(true);
-            }
-        }
-    }
-
-    // 6. Linux & macOS Unix Native Logon (PAM, unix_chkpwd, /etc/shadow, dscl)
-    #[cfg(not(windows))]
-    {
-        if let Some(user) = username {
-            if !user.trim().is_empty() && unix_auth::verify_unix_credentials(user, password) {
-                record_successful_auth();
-                return Ok(true);
-            }
-        }
-        let mut candidate_users: Vec<String> = Vec::new();
-        if let Ok(current_user) = std::env::var("USER") {
-            if !current_user.trim().is_empty() && current_user != "root" {
-                candidate_users.push(current_user);
-            }
-        }
-        if let Ok(entries) = std::fs::read_dir("/home") {
-            for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if !candidate_users.contains(&name) {
-                            candidate_users.push(name);
-                        }
-                    }
-                }
-            }
-        }
-        for candidate in &candidate_users {
-            if unix_auth::verify_unix_credentials(candidate, password) {
-                record_successful_auth();
-                return Ok(true);
-            }
-        }
     }
 
     // All checks failed -> record strike
@@ -1647,7 +1483,8 @@ pub fn authenticate_hybrid_credentials(
 }
 
 #[cfg(not(windows))]
-mod unix_auth {
+#[allow(dead_code)]
+pub mod unix_auth {
     use std::io::Write;
     use std::process::{Command, Stdio};
 

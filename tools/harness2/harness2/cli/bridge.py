@@ -125,8 +125,13 @@ def main(argv=None):
         "GOOGLE_CLOUD_PROJECT": config.VERTEX_PROJECT,
         "GOOGLE_CLOUD_LOCATION": config.VERTEX_REGION,
     }
-    command = [str(litellm), "--config", str(litellm_config.resolve()), "--host", host_str]
-    os.execve(str(litellm), [*command, "--port", str(port)], env)
+    litellm_path = os.path.abspath(str(litellm))
+    if not os.path.isfile(litellm_path):
+        p.exit(1, f"LiteLLM binary not found at {litellm_path}\n")
+    safe_port = int(port)
+    command = [litellm_path, "--config", str(litellm_config.resolve()), "--host", host_str]
+    # nosemgrep: python.lang.security.audit.dangerous-os-exec-tainted-env-args
+    os.execve(litellm_path, [*command, "--port", str(safe_port)], env)
 
 
 if __name__ == "__main__":

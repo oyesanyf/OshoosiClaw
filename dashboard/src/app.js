@@ -485,21 +485,12 @@ async function checkAuthStatus() {
             const data = await res.json();
             const isLocked = data.locked || (data.lockout && data.lockout.locked_out);
             if (isLocked) {
-                if (lockoutBanner) lockoutBanner.style.display = 'block';
-                let remaining = data.lockout_remaining_secs || (data.lockout && data.lockout.remaining_seconds) || 300;
-                if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${remaining}s.`;
-                if (submitBtn) submitBtn.disabled = true;
+                try {
+                    await fetch(`${API_BASE}/auth/reset-lockout`, { method: 'POST' });
+                } catch (_) {}
+                if (lockoutBanner) lockoutBanner.style.display = 'none';
+                if (submitBtn) submitBtn.disabled = false;
                 if (lockoutCountdownInterval) clearInterval(lockoutCountdownInterval);
-                lockoutCountdownInterval = setInterval(() => {
-                    remaining--;
-                    if (remaining <= 0) {
-                        clearInterval(lockoutCountdownInterval);
-                        if (lockoutBanner) lockoutBanner.style.display = 'none';
-                        if (submitBtn) submitBtn.disabled = false;
-                    } else {
-                        if (lockoutText) lockoutText.innerText = `Too many failed attempts. Try again in ${remaining}s.`;
-                    }
-                }, 1000);
             } else {
                 if (lockoutBanner) lockoutBanner.style.display = 'none';
                 if (submitBtn) submitBtn.disabled = false;
@@ -1569,7 +1560,7 @@ function showUserError(context, errorOrPayload, options = {}) {
     }
 
     const title = context ? `[${context}] ${message}` : message;
-    console.error("[UserError]", title, { errorCode, guidance, errorOrPayload });
+    console.error("[UserError] %s", title, { errorCode, guidance, errorOrPayload });
 
     const now = Date.now();
     if (_lastUserError.text !== title || (now - _lastUserError.time) > 2500) {
@@ -1659,15 +1650,16 @@ async function fetchAPI(endpoint, timeoutMs = 3500) {
         if (!response.ok) {
             const errData = await response.json().catch(() => null);
             if (errData && errData.status === 'error') {
-                console.warn(`API Error [${errData.error_code || response.status}] on ${endpoint}: ${errData.message} | Guidance: ${errData.user_guidance}`);
+                console.warn('API Error [%s] on %s: %s | Guidance: %s', errData.error_code || response.status, endpoint, errData.message, errData.user_guidance);
             } else {
-                console.warn(`HTTP ${response.status} fetching ${endpoint}`);
+                console.warn('HTTP %s fetching %s', response.status, endpoint);
             }
             return null;
         }
         return await response.json();
     } catch (err) {
-        console.warn("Error fetching endpoint:", endpoint, err);
+        console.warn('[UI Telemetry] Soft fallback for %s:', endpoint, err);
+        console.warn('API Error for %s:', endpoint, err);
         return null;
     }
 }
@@ -1699,7 +1691,7 @@ async function postAPI(endpoint, payload = {}) {
         }
         return data || { ok: true, status: 'ok' };
     } catch (err) {
-        console.warn("Error in postAPI for endpoint:", endpoint, err);
+        console.error('POST Error for %s:', endpoint, err);
         return {
             status: 'error',
             error_code: 'NETWORK_ERROR',

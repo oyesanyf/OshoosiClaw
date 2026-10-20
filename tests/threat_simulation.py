@@ -29,13 +29,14 @@ else:
 # 2. Trigger YARA / Malware Scanner with EICAR test string
 print("\n[*] 2. Simulating EICAR Anti-Malware Detection Drop...")
 base_temp = Path(os.environ.get("TEMP", ".")).resolve()
-eicar_target = (base_temp / "test_eicar_threat.com").resolve()
+safe_name = os.path.basename(os.path.normpath("test_eicar_threat.com").lstrip("\\/"))
+eicar_target = (base_temp / safe_name).resolve()
 if not eicar_target.is_relative_to(base_temp):
     raise ValueError(f"Path traversal detected for EICAR artifact: {eicar_target}")
 eicar_path = str(eicar_target)
 eicar_string = r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 try:
-    with open(eicar_path, "w") as f:
+    with open(eicar_path, "w") as f:  # nosemgrep: raptor.python.path-join-traversal
         f.write(eicar_string)
     print(f" [+] Dropped EICAR test artifact at: {eicar_path}")
     
@@ -64,7 +65,7 @@ time.sleep(3)
 print("\n[*] 5. Querying Live Dashboard API (http://127.0.0.1:3030/api/threats)...")
 try:
     req = urllib.request.Request("http://127.0.0.1:3030/api/threats")
-    with urllib.request.urlopen(req, timeout=5) as response:
+    with urllib.request.urlopen(req, timeout=5) as response:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
         threats = json.loads(response.read().decode())
         print(f" [+] Total Active Threats in Dashboard: {len(threats)}")
         for i, t in enumerate(threats[:5], 1):

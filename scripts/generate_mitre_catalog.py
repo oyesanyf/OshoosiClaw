@@ -207,15 +207,17 @@ def ensure_stix_bundle():
     import urllib.parse
 
     def _assert_safe_scheme(target_url: str) -> str:
-        parsed = urllib.parse.urlparse(target_url)
-        if parsed.scheme.lower() not in ("http", "https"):
-            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+        parsed = urllib.parse.urlsplit(target_url)
+        if parsed.scheme.lower() != "https":
+            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'https' is permitted")
+        if not parsed.hostname.endswith("githubusercontent.com") and not parsed.hostname.endswith("mitre.org"):
+            raise ValueError(f"Disallowed destination host: {parsed.hostname}")
         return target_url
 
     _assert_safe_scheme(STIX_BUNDLE_URL)
     req = urllib.request.Request(STIX_BUNDLE_URL, headers={"User-Agent": "Mozilla/5.0 OpenOsoosi/0.1.1"})
     try:
-        with urllib.request.urlopen(req) as resp, open(CONFIG_STIX_FILE, "wb") as out_f:
+        with urllib.request.urlopen(req) as resp, open(CONFIG_STIX_FILE, "wb") as out_f:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
             out_f.write(resp.read())
         return CONFIG_STIX_FILE
     except Exception as e:
@@ -233,7 +235,7 @@ def ensure_stix_bundle():
         dest_dir = os.path.join(STIX_DIR, "v19.2")
         os.makedirs(dest_dir, exist_ok=True)
         dest_file = os.path.join(dest_dir, "enterprise-attack.json")
-        urllib.request.urlretrieve(url, dest_file)
+        urllib.request.urlretrieve(url, dest_file)  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
 
     candidates = glob.glob(f"{STIX_DIR}/**/enterprise-attack*.json", recursive=True)
     for c in candidates:

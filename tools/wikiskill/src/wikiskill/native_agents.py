@@ -1,7 +1,7 @@
 """Native-host handoffs. The host creates subagents; this module never calls a model."""
 import re
 from pathlib import Path
-from importlib.resources import files
+from importlib.resources import files  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
 from . import product as p
 
 # Hosts whose role assets ship with this package and whose native subagent flow

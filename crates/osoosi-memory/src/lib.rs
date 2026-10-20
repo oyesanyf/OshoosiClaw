@@ -1030,17 +1030,19 @@ impl MemoryStore {
         {
             let cache = self.status_cache.read();
             if let Some(val) = cache.get(&cache_key) {
-                return Ok(Some(val.clone()));
+                return Ok(if val.is_empty() { None } else { Some(val.clone()) });
             }
         }
-        let conn = self.conn.lock();
+        let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(15)) else {
+            return Ok(None);
+        };
         let mut stmt = conn.prepare("SELECT value FROM repair_status WHERE key = ?1")?;
         let res = stmt
             .query_row(params![key], |row| row.get::<_, String>(0))
             .ok();
-        if let Some(ref val) = res {
+        {
             let mut cache = self.status_cache.write();
-            cache.insert(cache_key, val.clone());
+            cache.insert(cache_key, res.clone().unwrap_or_default());
         }
         Ok(res)
     }

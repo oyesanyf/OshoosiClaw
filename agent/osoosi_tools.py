@@ -27,14 +27,26 @@ def _headers() -> dict:
     return headers
 
 
+def _validate_safe_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme == "https":
+        return url
+    if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost"):
+        return url
+    raise ValueError(f"Disallowed destination URL: {url!r}")
+
 def _get(path: str) -> dict:
-    r = requests.get(f"{OSOOSI_BASE}{path}", headers=_headers(), timeout=10)
+    url = _validate_safe_url(f"{OSOOSI_BASE}{path}")
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
+    r = requests.get(url, headers=_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 def _post(path: str, json: Optional[dict] = None) -> dict:
-    r = requests.post(f"{OSOOSI_BASE}{path}", json=json or {}, headers=_headers(), timeout=10)
+    url = _validate_safe_url(f"{OSOOSI_BASE}{path}")
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
+    r = requests.post(url, json=json or {}, headers=_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 

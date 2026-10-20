@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import importlib.util
-from importlib.resources import files
+from importlib.resources import files  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
 import json
 import os
 from pathlib import Path

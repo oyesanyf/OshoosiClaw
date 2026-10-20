@@ -108,9 +108,11 @@ class OshoosiSecurityGymEnv:
 
     def _http_post(self, path: str, payload: dict) -> Optional[dict]:
         url = f"{self.base_url.rstrip('/')}{path}"
-        parsed = urllib.parse.urlparse(url)
+        parsed = urllib.parse.urlsplit(url)
         if parsed.scheme.lower() not in ("http", "https"):
             raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+        if parsed.scheme.lower() == "http" and parsed.hostname not in ("127.0.0.1", "localhost"):
+            raise ValueError(f"Insecure HTTP destination '{parsed.hostname}': only localhost or HTTPS permitted")
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             url,
@@ -119,7 +121,7 @@ class OshoosiSecurityGymEnv:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=3.0) as resp:
+            with urllib.request.urlopen(req, timeout=3.0) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
                 if resp.status == 200:
                     return json.loads(resp.read().decode("utf-8"))
         except Exception:

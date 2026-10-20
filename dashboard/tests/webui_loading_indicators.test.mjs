@@ -5,9 +5,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 describe('Universal WebUI Loading Spinners & Status Messages Verification', () => {
-    const html = fs.readFileSync(new URL('../src/index.html', import.meta.url), 'utf-8');
-    const js = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf-8');
-    const css = fs.readFileSync(new URL('../src/style.css', import.meta.url), 'utf-8');
+    const html = fs.readFileSync(new URL('../src/index.html', import.meta.url), 'utf-8'); // nosemgrep: raptor.files.path_traversal.js
+    const js = fs.readFileSync(new URL('../src/app.js', import.meta.url), 'utf-8'); // nosemgrep: raptor.files.path_traversal.js
+    const css = fs.readFileSync(new URL('../src/style.css', import.meta.url), 'utf-8'); // nosemgrep: raptor.files.path_traversal.js
 
     it('should include login status banner and inline button spinners in index.html', () => {
         assert.ok(html.includes('id="login-status-banner"'), 'Missing #login-status-banner on Login page');

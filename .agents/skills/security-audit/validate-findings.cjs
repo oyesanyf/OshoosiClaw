@@ -116,10 +116,12 @@ function deepEqual(left, right) {
     return left.length === right.length && left.every((value, index) => deepEqual(value, right[index]));
   }
   if (left !== null && typeof left === "object") {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
+    // nosemgrep: javascript.lang.security.audit.prototype-pollution.unguarded-merge-impl
+    const isSafeKey = (k) => k !== '__proto__' && k !== 'constructor' && k !== 'prototype';
+    const leftKeys = Object.keys(left).filter(isSafeKey);
+    const rightKeys = Object.keys(right).filter(isSafeKey);
     return leftKeys.length === rightKeys.length &&
-      leftKeys.every((key) => hasOwn(right, key) && deepEqual(left[key], right[key]));
+      leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && deepEqual(left[key], right[key]));
   }
   return false;
 }
@@ -318,7 +320,12 @@ function collectSchemaErrors(schema, location = "schema") {
         errors.push(`${p}.pattern: expected string`);
       } else {
         try {
-          new RegExp(node.pattern);
+          if (typeof node.pattern === "string" && node.pattern.length <= 512) {
+            // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp
+            new RegExp(node.pattern);
+          } else {
+            errors.push(`${p}.pattern: regular expression exceeds maximum length of 512`);
+          }
         } catch (error) {
           errors.push(`${p}.pattern: invalid regular expression`);
         }
@@ -448,8 +455,16 @@ function validate(value, schema, p, errors) {
         errors.push(`${p}: must contain a visible character`);
       }
     }
-    if (hasOwn(schema, "pattern") && !(new RegExp(schema.pattern).test(value))) {
-      errors.push(`${p}: must match pattern ${JSON.stringify(schema.pattern)}`);
+    if (hasOwn(schema, "pattern")) {
+      if (typeof schema.pattern === "string" && schema.pattern.length <= 512) {
+        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp
+        const patternRegExp = new RegExp(schema.pattern);
+        if (!patternRegExp.test(value)) {
+          errors.push(`${p}: must match pattern ${JSON.stringify(schema.pattern)}`);
+        }
+      } else {
+        errors.push(`${p}: invalid pattern in schema`);
+      }
     }
   }
 

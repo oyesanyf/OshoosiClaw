@@ -21,9 +21,12 @@ BASE_URL = os.environ.get("OSOOSI_EDR_URL", "http://127.0.0.1:8080")
 def _safe_urlopen(req_or_url, timeout: float = 2.0):
     """Enforces outbound URL scheme allowlisting (http/https only) before opening."""
     url = req_or_url.full_url if isinstance(req_or_url, urllib.request.Request) else req_or_url
-    parsed = urllib.parse.urlparse(url)
+    parsed = urllib.parse.urlsplit(url)
     if parsed.scheme.lower() not in ("http", "https"):
         raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+    if parsed.scheme.lower() == "http" and parsed.hostname not in ("127.0.0.1", "localhost"):
+        raise ValueError(f"Insecure HTTP destination '{parsed.hostname}': only localhost or HTTPS permitted")
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
     return urllib.request.urlopen(req_or_url, timeout=timeout)
 
 def trigger_daemon_train(batch_size=32, gamma=0.99, lr=0.01):

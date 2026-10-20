@@ -145,7 +145,7 @@ def run_self_test() -> int:
     assert "alice.smith@corp.internal" not in scrubbed, "Email leaked!"
     assert "123-45-6789" not in scrubbed, "SSN leaked!"
     assert synth_aws not in scrubbed, "AWS key leaked!"
-    assert "ghp_1234567890abcdef" not in scrubbed, "GitHub token leaked!"
+    assert synth_ghp[:20] not in scrubbed, "GitHub token leaked!"
     assert "<ZK_PII:EMAIL_ADDRESS:" in scrubbed
     assert "<ZK_PII:US_SSN:" in scrubbed
     assert "<ZK_PII:AWS_ACCESS_KEY:" in scrubbed

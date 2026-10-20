@@ -1,4 +1,6 @@
-﻿import json, time, os, random
+﻿import json, time, os, secrets
+
+_RNG = secrets.SystemRandom()
 
 def main():
     print("=" * 72)
@@ -44,9 +46,9 @@ def main():
 
     tests = []
     for i in range(1, 1001):
-        is_attack = random.random() < 0.70
-        cat = random.choice([k for k in CATEGORIES if k != 'Benign_Baseline']) if is_attack else 'Benign_Baseline'
-        ttp, name, risk = random.choice(CATEGORIES[cat])
+        is_attack = _RNG.random() < 0.70
+        cat = _RNG.choice([k for k in CATEGORIES if k != 'Benign_Baseline']) if is_attack else 'Benign_Baseline'
+        ttp, name, risk = _RNG.choice(CATEGORIES[cat])
         tests.append({
             'id': f'TEST-{i:04d}',
             'category': cat,
