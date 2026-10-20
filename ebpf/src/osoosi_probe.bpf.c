@@ -242,18 +242,95 @@ static __always_inline int str_equals_11(const char *s, const char *lit) {
     return 1;
 }
 
+static __always_inline int str_equals_32(const char *s, const char *lit) {
+    #pragma unroll
+    for (int i = 0; i < 32; i++) {
+        if (s[i] != lit[i]) {
+            return 0;
+        }
+        if (lit[i] == '\0') {
+            return 1;
+        }
+    }
+    return 1;
+}
+
 static __always_inline int is_critical_linux_binary(const char *filename) {
-    // Never block /sbin/init, /bin/sh, /bin/bash, /usr/bin/bash, /usr/bin/osoosi, or systemd
-    if (str_equals_11(filename, "/sbin/init")) {
+    // 1. Core OS init, shells, and sensor
+    if (str_equals_32(filename, "/sbin/init") ||
+        str_equals_32(filename, "/bin/sh") ||
+        str_equals_32(filename, "/usr/bin/sh") ||
+        str_equals_32(filename, "/bin/bash") ||
+        str_equals_32(filename, "/usr/bin/bash") ||
+        str_equals_32(filename, "/usr/bin/osoosi") ||
+        str_equals_32(filename, "/usr/local/bin/osoosi")) {
         return 1;
     }
-    if (str_equals_11(filename, "/bin/sh")) {
+
+    // 2. systemd
+    if (str_equals_32(filename, "/usr/lib/systemd/systemd") ||
+        str_equals_32(filename, "/lib/systemd/systemd") ||
+        str_equals_32(filename, "/bin/systemd") ||
+        str_equals_32(filename, "/usr/bin/systemd") ||
+        str_equals_32(filename, "systemd")) {
         return 1;
     }
-    if (str_equals_11(filename, "/bin/bash")) {
+
+    // 3. dbus-daemon
+    if (str_equals_32(filename, "/usr/bin/dbus-daemon") ||
+        str_equals_32(filename, "/bin/dbus-daemon") ||
+        str_equals_32(filename, "dbus-daemon")) {
         return 1;
     }
-    if (str_equals_11(filename, "/usr/bin/sh")) {
+
+    // 4. sshd
+    if (str_equals_32(filename, "/usr/sbin/sshd") ||
+        str_equals_32(filename, "/sbin/sshd") ||
+        str_equals_32(filename, "/usr/bin/sshd") ||
+        str_equals_32(filename, "sshd")) {
+        return 1;
+    }
+
+    // 5. python3
+    if (str_equals_32(filename, "/usr/bin/python3") ||
+        str_equals_32(filename, "/bin/python3") ||
+        str_equals_32(filename, "/usr/local/bin/python3") ||
+        str_equals_32(filename, "python3")) {
+        return 1;
+    }
+
+    // 6. cargo
+    if (str_equals_32(filename, "/usr/bin/cargo") ||
+        str_equals_32(filename, "/bin/cargo") ||
+        str_equals_32(filename, "/usr/local/bin/cargo") ||
+        str_equals_32(filename, "/root/.cargo/bin/cargo") ||
+        str_equals_32(filename, "cargo")) {
+        return 1;
+    }
+
+    // 7. node
+    if (str_equals_32(filename, "/usr/bin/node") ||
+        str_equals_32(filename, "/bin/node") ||
+        str_equals_32(filename, "/usr/local/bin/node") ||
+        str_equals_32(filename, "node")) {
+        return 1;
+    }
+
+    // 8. Desktop shells, network utilities, display servers
+    if (str_equals_11(filename, "/lib/system") ||
+        str_equals_11(filename, "/usr/lib/sy") ||
+        str_equals_11(filename, "/usr/bin/ba") ||
+        str_equals_11(filename, "/usr/bin/zs") ||
+        str_equals_11(filename, "/usr/bin/su") ||
+        str_equals_11(filename, "/usr/sbin/i") ||
+        str_equals_11(filename, "/sbin/iptab") ||
+        str_equals_11(filename, "/usr/sbin/n") ||
+        str_equals_11(filename, "/usr/bin/os") ||
+        str_equals_11(filename, "/usr/bin/gn") ||
+        str_equals_11(filename, "/usr/bin/kw") ||
+        str_equals_11(filename, "/usr/bin/Xo") ||
+        str_equals_11(filename, "/usr/bin/Xw") ||
+        str_equals_11(filename, "/usr/bin/db")) {
         return 1;
     }
     return 0;
@@ -577,15 +654,17 @@ int BPF_PROG(osoosi_socket_connect, struct socket *sock, struct sockaddr_kern *a
     uint32_t ipv4_addr = 0;
     struct ipv6_addr_key ipv6_key = {{0}};
 
+    int is_essential_port = (dport_host == 3030 || dport_host == 53 || dport_host == 67 || dport_host == 68 || dport_host == 546 || dport_host == 547);
+
     if (family == AF_INET_VAL) {
         bpf_probe_read_kernel(&ipv4_addr, sizeof(ipv4_addr), &address->sa_data[2]);
         uint32_t *ip_rule = bpf_map_lookup_elem(&blocked_ipv4, &ipv4_addr);
         if (ip_rule && *ip_rule != 0) {
             should_block = 1;
         }
-        // In Kill-Chain Lockdown mode (2), block non-loopback egress (except port 3030)
+        // In Kill-Chain Lockdown mode (2), block non-loopback egress (except port 3030, DNS 53, DHCP 67/68)
         uint8_t first_octet = (uint8_t)(ipv4_addr & 0xFF);
-        if (mode == OSOOSI_LSM_MODE_LOCKDOWN && first_octet != 127 && dport_host != 3030) {
+        if (mode == OSOOSI_LSM_MODE_LOCKDOWN && first_octet != 127 && !is_essential_port) {
             should_block = 1;
         }
     } else if (family == AF_INET6_VAL && addrlen >= 24) {
@@ -594,7 +673,7 @@ int BPF_PROG(osoosi_socket_connect, struct socket *sock, struct sockaddr_kern *a
         if (ip6_rule && *ip6_rule != 0) {
             should_block = 1;
         }
-        if (mode == OSOOSI_LSM_MODE_LOCKDOWN && dport_host != 3030) {
+        if (mode == OSOOSI_LSM_MODE_LOCKDOWN && !is_essential_port) {
             // Check if IPv6 loopback (::1)
             int is_loopback = (ipv6_key.addr[15] == 1);
             #pragma unroll

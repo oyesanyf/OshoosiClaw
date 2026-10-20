@@ -621,6 +621,108 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
             ],
         );
 
+        run_firewall_cmd(
+            &netsh_str,
+            &[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-DNS-Out",
+                "dir=out",
+                "action=allow",
+                "protocol=UDP",
+                "remoteport=53",
+                "profile=any",
+            ],
+        );
+
+        run_firewall_cmd(
+            &netsh_str,
+            &[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-DHCP-Out",
+                "dir=out",
+                "action=allow",
+                "protocol=UDP",
+                "localport=68",
+                "remoteport=67",
+                "profile=any",
+            ],
+        );
+
+        run_firewall_cmd(
+            &netsh_str,
+            &[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-DHCP-In",
+                "dir=in",
+                "action=allow",
+                "protocol=UDP",
+                "localport=68",
+                "remoteport=67",
+                "profile=any",
+            ],
+        );
+
+        // DNS TCP Fallback (RFC 7766)
+        run_firewall_cmd(
+            &netsh_str,
+            &[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-DNS-TCP-Out",
+                "dir=out",
+                "action=allow",
+                "protocol=TCP",
+                "remoteport=53",
+                "profile=any",
+            ],
+        );
+
+        // DHCPv6 Inbound and Outbound (UDP 546/547)
+        run_firewall_cmd(
+            &netsh_str,
+            &[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-DHCPv6-Out",
+                "dir=out",
+                "action=allow",
+                "protocol=UDP",
+                "localport=546",
+                "remoteport=547",
+                "profile=any",
+            ],
+        );
+
+        run_firewall_cmd(
+            &netsh_str,
+            &[
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                "name=Osoosi-KillChain-Allow-DHCPv6-In",
+                "dir=in",
+                "action=allow",
+                "protocol=UDP",
+                "localport=546",
+                "remoteport=547",
+                "profile=any",
+            ],
+        );
+
         // 2. Block all non-loopback inbound and outbound network traffic
         run_firewall_cmd(
             &netsh_str,
@@ -682,7 +784,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
             ],
         );
 
-        Ok(vec!["All-Windows-Adapters (Loopback Preserved)".to_string()])
+        Ok(vec!["All-Windows-Adapters (Loopback/DNS/DHCP/3030 Preserved)".to_string()])
     }
 
     #[cfg(target_os = "linux")]
@@ -691,6 +793,14 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
         run_firewall_cmd("iptables", &["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"]);
         run_firewall_cmd("iptables", &["-I", "INPUT", "2", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT"]);
         run_firewall_cmd("iptables", &["-I", "OUTPUT", "2", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "OUTPUT", "3", "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "INPUT", "3", "-p", "udp", "--sport", "53", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "OUTPUT", "4", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "INPUT", "4", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "OUTPUT", "5", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "INPUT", "5", "-p", "tcp", "--sport", "53", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "OUTPUT", "6", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT"]);
+        run_firewall_cmd("iptables", &["-I", "INPUT", "6", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT"]);
         run_firewall_cmd(
             "iptables",
             &[
@@ -731,7 +841,7 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
             ],
         );
 
-        Ok(vec!["All-Linux-Interfaces (lo Preserved)".to_string()])
+        Ok(vec!["All-Linux-Interfaces (lo/DNS/DHCP/3030 Preserved)".to_string()])
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -750,6 +860,12 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
             "Osoosi-KillChain-Block-Inbound-High",
             "Osoosi-KillChain-Block-Outbound-Low",
             "Osoosi-KillChain-Block-Outbound-High",
+            "Osoosi-KillChain-Allow-DNS-Out",
+            "Osoosi-KillChain-Allow-DNS-TCP-Out",
+            "Osoosi-KillChain-Allow-DHCP-Out",
+            "Osoosi-KillChain-Allow-DHCP-In",
+            "Osoosi-KillChain-Allow-DHCPv6-Out",
+            "Osoosi-KillChain-Allow-DHCPv6-In",
             "Osoosi-KillChain-Allow-WebUI-In",
             "Osoosi-KillChain-Allow-WebUI-Out",
             "Osoosi-KillChain-Allow-WebUI-Out-Remote",
@@ -826,6 +942,38 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
                 "-D", "OUTPUT", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
             ],
         );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "INPUT", "-p", "udp", "--sport", "53", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "OUTPUT", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "INPUT", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "OUTPUT", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "INPUT", "-p", "tcp", "--sport", "53", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "OUTPUT", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-D", "INPUT", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT"],
+        );
         Ok(())
     }
 
@@ -839,11 +987,21 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
 // Process Freeze Primitives (Non-destructive)
 // ---------------------------------------------------------------------------
 
-fn is_critical_system_pid(pid: u32, name: &str) -> bool {
+pub fn is_critical_system_pid(pid: u32, name: &str) -> bool {
     if pid <= 4 || pid == std::process::id() {
         return true;
     }
-    let name_lc = name.to_ascii_lowercase();
+
+    // Delegate to universal OS shell/desktop/systray protection and runtime tarpit immunity
+    if osoosi_types::is_protected_os_shell_or_desktop_binary(name)
+        || osoosi_runtime::tarpit::is_protected_system_or_security_process(pid, name)
+    {
+        return true;
+    }
+
+    let trimmed = name.trim().trim_matches('"').trim_matches('\'');
+    let base = trimmed.rsplit(['\\', '/']).next().unwrap_or(trimmed);
+    let name_lc = base.to_ascii_lowercase();
 
     // Anti-Hijacking & EDR Self-Preservation Invariant:
     // Never freeze or suspend any component of the OpenOshoosi agent, CLI, service, or supervisor.
@@ -858,6 +1016,7 @@ fn is_critical_system_pid(pid: u32, name: &str) -> bool {
             | "csrss.exe"
             | "wininit.exe"
             | "winlogon.exe"
+            | "userinit.exe"
             | "logonui.exe"
             | "credentialproviderhost.exe"
             | "sihost.exe"
@@ -865,20 +1024,54 @@ fn is_critical_system_pid(pid: u32, name: &str) -> bool {
             | "taskmgr.exe"
             | "securityhealthservice.exe"
             | "securityhealthsystray.exe"
+            | "securityhealthhost.exe"
             | "smartscreen.exe"
             | "consent.exe"
             | "fontdrvhost.exe"
             | "searchhost.exe"
+            | "searchindexer.exe"
+            | "searchprotocolhost.exe"
+            | "searchfilterhost.exe"
             | "startmenuexperiencehost.exe"
             | "shellexperiencehost.exe"
+            | "shellhost.exe"
+            | "applicationframehost.exe"
+            | "textinputhost.exe"
+            | "ctfmon.exe"
+            | "useroobebroker.exe"
+            | "systemsettings.exe"
+            | "systemsettingsbroker.exe"
+            | "widgetservice.exe"
+            | "widgets.exe"
             | "services.exe"
             | "lsass.exe"
+            | "lsm.exe"
             | "dwm.exe"
             | "svchost.exe"
             | "explorer.exe"
+            | "taskhostw.exe"
+            | "dllhost.exe"
+            | "rundll32.exe"
+            | "regsvr32.exe"
+            | "msiexec.exe"
+            | "tiworker.exe"
+            | "trustedinstaller.exe"
+            | "wuauclt.exe"
+            | "usoclient.exe"
+            | "mousocoreworker.exe"
+            | "audiodg.exe"
+            | "spoolsv.exe"
+            | "wlanext.exe"
+            | "dashost.exe"
+            | "unsecapp.exe"
+            | "wmiprvse.exe"
             | "sysmon.exe"
             | "sysmon64.exe"
             | "msmpeng.exe"
+            | "mpcmdrun.exe"
+            | "nissrv.exe"
+            | "senseir.exe"
+            | "msseces.exe"
             | "chrome.exe"
             | "msedge.exe"
             | "firefox.exe"
@@ -892,11 +1085,48 @@ fn is_critical_system_pid(pid: u32, name: &str) -> bool {
             | "powershell.exe"
             | "pwsh.exe"
             | "cmd.exe"
+            | "wsl.exe"
+            | "wslservice.exe"
+            | "wslhost.exe"
+            | "vmmem"
+            | "vmmemwsl"
+            | "docker.exe"
+            | "dockerd.exe"
+            | "com.docker.backend.exe"
+            | "python.exe"
+            | "python"
+            | "python3"
+            | "python3.exe"
+            | "node.exe"
+            | "node"
+            | "git.exe"
+            | "git"
+            | "cargo.exe"
+            | "cargo"
+            | "rustc.exe"
+            | "rustc"
+            | "rustup.exe"
+            | "rustup"
             | "init"
             | "systemd"
             | "systemd-logind"
             | "systemd-journald"
+            | "systemd-resolved"
+            | "systemd-networkd"
+            | "systemd-udevd"
             | "dbus-daemon"
+            | "dbus-broker"
+            | "networkmanager"
+            | "wpa_supplicant"
+            | "dhclient"
+            | "dhcpcd"
+            | "dnsmasq"
+            | "chronyd"
+            | "ntpd"
+            | "rsyslogd"
+            | "cron"
+            | "crond"
+            | "atd"
             | "gdm"
             | "gdm3"
             | "lightdm"
@@ -911,11 +1141,15 @@ fn is_critical_system_pid(pid: u32, name: &str) -> bool {
             | "loginwindow"
             | "launchd"
             | "sshd"
-            | "cargo.exe"
-            | "rustc.exe"
+            | "tmux"
+            | "screen"
+            | "sudo"
+            | "su"
+            | "login"
             | "bash"
             | "sh"
             | "zsh"
+            | "fish"
     )
 }
 
@@ -955,6 +1189,17 @@ fn freeze_untrusted_processes() -> Result<Vec<u32>> {
 
         if immune_pids.contains(&pid) || is_critical_system_pid(pid, name) {
             continue;
+        }
+
+        // Also verify full executable path immunity (OS directories, signed system binaries, developer tools)
+        if let Some(exe_path) = proc.exe() {
+            let exe_str = exe_path.to_string_lossy();
+            if is_critical_system_pid(pid, &exe_str)
+                || osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
+                || crate::blocking_manager::is_protected_or_benign_system_path(&exe_str)
+            {
+                continue;
+            }
         }
 
         // Only freeze non-system processes
@@ -1418,14 +1663,127 @@ mod tests {
     #[test]
     fn test_critical_system_pid_protection() {
         assert!(is_critical_system_pid(0, "System Idle"));
+        assert!(is_critical_system_pid(1, "init"));
         assert!(is_critical_system_pid(4, "System"));
-        assert!(is_critical_system_pid(1234, "smss.exe"));
-        assert!(is_critical_system_pid(1234, "csrss.exe"));
-        assert!(is_critical_system_pid(1234, "services.exe"));
-        assert!(is_critical_system_pid(1234, "lsass.exe"));
-        assert!(is_critical_system_pid(1234, "osoosi.exe"));
+
+        // Windows kernel, session, shell, desktop, search, systray, and update infrastructure
+        let protected_windows = [
+            "smss.exe",
+            "csrss.exe",
+            "wininit.exe",
+            "winlogon.exe",
+            "userinit.exe",
+            "logonui.exe",
+            "services.exe",
+            "lsass.exe",
+            "lsm.exe",
+            "svchost.exe",
+            "dwm.exe",
+            "explorer.exe",
+            "sihost.exe",
+            "taskhostw.exe",
+            "runtimebroker.exe",
+            "searchhost.exe",
+            "searchindexer.exe",
+            "searchprotocolhost.exe",
+            "searchfilterhost.exe",
+            "startmenuexperiencehost.exe",
+            "shellexperiencehost.exe",
+            "shellhost.exe",
+            "applicationframehost.exe",
+            "textinputhost.exe",
+            "ctfmon.exe",
+            "securityhealthsystray.exe",
+            "securityhealthservice.exe",
+            "smartscreen.exe",
+            "taskmgr.exe",
+            "conhost.exe",
+            "openconsole.exe",
+            "windowsterminal.exe",
+            "powershell.exe",
+            "pwsh.exe",
+            "cmd.exe",
+            "rundll32.exe",
+            "dllhost.exe",
+            "msiexec.exe",
+            "tiworker.exe",
+            "trustedinstaller.exe",
+            "wmiprvse.exe",
+            "osoosi.exe",
+            "C:\\Windows\\System32\\svchost.exe",
+            "C:\\Windows\\explorer.exe",
+            "C:\\Windows\\SystemApps\\Microsoft.Windows.Search_cw5n1h2txyewy\\SearchHost.exe",
+        ];
+        for bin in protected_windows {
+            assert!(
+                is_critical_system_pid(2048, bin),
+                "Windows OS/shell binary '{}' MUST be immune to KillChain freeze",
+                bin
+            );
+        }
+
+        // Linux & macOS init, session, desktop, display, network, and shell daemons
+        let protected_unix = [
+            "systemd",
+            "systemd-logind",
+            "systemd-journald",
+            "systemd-resolved",
+            "systemd-networkd",
+            "systemd-udevd",
+            "dbus-daemon",
+            "NetworkManager",
+            "wpa_supplicant",
+            "dhclient",
+            "sshd",
+            "gnome-shell",
+            "Xorg",
+            "Xwayland",
+            "kwin",
+            "WindowServer",
+            "loginwindow",
+            "launchd",
+            "bash",
+            "zsh",
+            "sh",
+            "sudo",
+            "/lib/systemd/systemd-resolved",
+            "/usr/sbin/sshd",
+        ];
+        for bin in protected_unix {
+            assert!(
+                is_critical_system_pid(2048, bin),
+                "Unix OS/shell daemon '{}' MUST be immune to KillChain freeze",
+                bin
+            );
+        }
+
+        // Developer & build toolchains
+        let protected_toolchains = [
+            "cargo.exe",
+            "rustc.exe",
+            "rustup.exe",
+            "python.exe",
+            "python3",
+            "node.exe",
+            "node",
+            "git.exe",
+            "git",
+            "code.exe",
+            "wsl.exe",
+            "docker.exe",
+        ];
+        for bin in protected_toolchains {
+            assert!(
+                is_critical_system_pid(2048, bin),
+                "Developer toolchain binary '{}' MUST be immune to KillChain freeze",
+                bin
+            );
+        }
+
+        // Untrusted / malicious binaries MUST NOT be immune
         assert!(!is_critical_system_pid(5555, "malware.exe"));
         assert!(!is_critical_system_pid(6666, "mimikatz.exe"));
+        assert!(!is_critical_system_pid(7777, "C:\\Temp\\cobaltstrike_beacon.exe"));
     }
 
     #[test]
@@ -1495,5 +1853,153 @@ mod tests {
 
         // Reset auth
         record_successful_auth();
+    }
+
+    #[test]
+    fn test_host_os_and_developer_toolchains_never_frozen() {
+        let protected_catalog = [
+            // Windows OS Core, Session, Shell, Search & Tray
+            "explorer.exe",
+            "SearchHost.exe",
+            "SearchIndexer.exe",
+            "SearchProtocolHost.exe",
+            "SearchFilterHost.exe",
+            "sihost.exe",
+            "svchost.exe",
+            "lsass.exe",
+            "services.exe",
+            "csrss.exe",
+            "dwm.exe",
+            "taskhostw.exe",
+            "runtimebroker.exe",
+            "ctfmon.exe",
+            "securityhealthsystray.exe",
+            "securityhealthservice.exe",
+            "smss.exe",
+            "wininit.exe",
+            "winlogon.exe",
+            "userinit.exe",
+            "logonui.exe",
+            "taskmgr.exe",
+            "dllhost.exe",
+            "conhost.exe",
+            "openconsole.exe",
+            "windowsterminal.exe",
+            "wt.exe",
+            "fontdrvhost.exe",
+            "audiodg.exe",
+            "spoolsv.exe",
+            "smartscreen.exe",
+            "tiworker.exe",
+            "trustedinstaller.exe",
+            // Developer Toolchains & Container Infrastructure
+            "python.exe",
+            "python3.exe",
+            "python",
+            "python3",
+            "cargo.exe",
+            "cargo",
+            "rustc.exe",
+            "rustc",
+            "rustup.exe",
+            "rustup",
+            "node.exe",
+            "node",
+            "git.exe",
+            "git",
+            "git-remote-https.exe",
+            "ssh.exe",
+            "code.exe",
+            "code",
+            "antigravity.exe",
+            "wsl.exe",
+            "wsl",
+            "wslhost.exe",
+            "wslservice.exe",
+            "vmmem",
+            "vmmemwsl",
+            "docker.exe",
+            "docker",
+            "dockerd.exe",
+            "dockerd",
+            "com.docker.backend.exe",
+            // Linux Daemons & Shells
+            "init",
+            "systemd",
+            "systemd-logind",
+            "systemd-journald",
+            "systemd-resolved",
+            "systemd-networkd",
+            "systemd-udevd",
+            "dbus-daemon",
+            "dbus-broker",
+            "sshd",
+            "gnome-shell",
+            "plasmashell",
+            "tracker-miner-fs-3",
+            "NetworkManager",
+            "wpa_supplicant",
+            "dhclient",
+            "dhcpcd",
+            "dnsmasq",
+            "chronyd",
+            "ntpd",
+            "rsyslogd",
+            "cron",
+            "crond",
+            "atd",
+            "polkitd",
+            // macOS Core Daemons & Desktop Shell
+            "launchd",
+            "WindowServer",
+            "Finder",
+            "Dock",
+            "ControlCenter",
+            "Spotlight",
+            "loginwindow",
+            "UserEventAgent",
+            "cfprefsd",
+            "distnoted",
+            "trustd",
+            "securityd",
+            "syspolicyd",
+            "coreaudiod",
+            "bluetoothd",
+            "configd",
+            "mDNSResponder",
+            "symptomsd",
+            "logd",
+            "fseventsd",
+            "powerd",
+        ];
+
+        for bin in protected_catalog {
+            assert!(
+                is_critical_system_pid(2048, bin),
+                "Binary '{}' MUST return true from is_critical_system_pid",
+                bin
+            );
+        }
+    }
+
+    #[test]
+    fn test_adversarial_malware_pids_not_immune() {
+        let malware_samples = [
+            "wannacry.exe",
+            "mimikatz.exe",
+            "beacon.exe",
+            "c2_rat.exe",
+            "dropper.bin",
+            "/tmp/reverse_shell.elf",
+            "C:\\Users\\Public\\malware.exe",
+        ];
+
+        for sample in malware_samples {
+            assert!(
+                !is_critical_system_pid(9999, sample),
+                "Malware sample '{}' MUST NOT be immune to killchain freeze",
+                sample
+            );
+        }
     }
 }

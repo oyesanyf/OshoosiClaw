@@ -1260,8 +1260,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
             info!("Starting OpenỌ̀ṣọ́ọ̀sì Security Agent...");
 
-            // Proactive Out-Of-Memory Watchdog
+            // Proactive Out-Of-Memory Watchdog & Autonomous REA Sweep Loop
             osoosi_core::spawn_memory_watchdog();
+            osoosi_core::rea::spawn_autonomous_rea_daemon(300);
 
             // 2. [NEW] Ensure Firewall rules are applied on startup (User Request)
             let provisioner =
@@ -1333,6 +1334,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::Dashboard { port, no_browser }) => {
             let user_no_browser = no_browser || cli.no_browser;
+            osoosi_core::rea::spawn_autonomous_rea_daemon(300);
             info!("Starting Oshoosi Dashboard (base port {})...", port);
             let mut current_port = port;
             let mut bound: Option<u16> = None;
@@ -2968,17 +2970,66 @@ async fn setup_firewall() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Where we install/load `onnxruntime.dll`: `ORT_DYLIB_PATH` if set, else next to the executable (same as `main`).
+fn ort_default_dylib_name() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "onnxruntime.dll"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        "libonnxruntime.dylib"
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        "libonnxruntime.so"
+    }
+}
+
+fn is_valid_native_ort_binary(path: &Path) -> bool {
+    let mut header = [0u8; 4];
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    use std::io::Read;
+    if f.read_exact(&mut header).is_err() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        header.starts_with(b"MZ")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        header == *b"\x7fELF"
+    }
+    #[cfg(target_os = "macos")]
+    {
+        matches!(
+            u32::from_be_bytes(header),
+            0xfeedface | 0xfeedfacf | 0xcefaedfe | 0xcffaedfe | 0xcafebabe
+        )
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        true
+    }
+}
+
+/// Where we install/load the ONNX Runtime dynamic library: `ORT_DYLIB_PATH` if set, else next to the executable.
 fn ort_dynamic_library_path() -> PathBuf {
+    let dylib_name = ort_default_dylib_name();
     if let Ok(p) = std::env::var("ORT_DYLIB_PATH") {
         let trimmed = p.trim();
         if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
+            let candidate = PathBuf::from(trimmed);
+            if is_valid_native_ort_binary(&candidate) {
+                return candidate;
+            }
         }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join("onnxruntime.dll");
+            let candidate = dir.join(dylib_name);
             if candidate.exists() {
                 return candidate;
             }
@@ -2997,10 +3048,10 @@ fn ort_dynamic_library_path() -> PathBuf {
                 .join("OshoosiClaw")
                 .join("ort");
             let _ = std::fs::create_dir_all(&fallback_dir);
-            return fallback_dir.join("onnxruntime.dll");
+            return fallback_dir.join(dylib_name);
         }
     }
-    PathBuf::from("onnxruntime.dll")
+    PathBuf::from(dylib_name)
 }
 
 async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
@@ -3025,115 +3076,140 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
 
     let dll_path = ort_dynamic_library_path();
 
-    // ORT stable releases for Windows x64 — newest first so we always get the best version.
-    // ort crate 2.0.0-rc.10 is compatible with ONNX Runtime 1.19–1.25.
-    let versions = [
-        ("1.25.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.25.1/onnxruntime-win-x64-1.25.1.zip"),
-        ("1.22.0", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"),
-        ("1.21.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.21.1/onnxruntime-win-x64-1.21.1.zip"),
-        ("1.20.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-win-x64-1.20.1.zip"),
-        ("1.19.2", "https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-win-x64-1.19.2.zip"),
-    ];
-    let mut success = false;
-
-    for (version, url) in versions {
-        // 1. Check if existing DLL is incompatible version
-        if dll_path.exists() {
-            #[cfg(target_os = "windows")]
-            {
-                // Rustify: Use basic metadata check (file size/modification)
-                // OR just trust the path for now if it exists, or check version natively.
-                // For now, if it exists, we'll assume it's okay unless it fails to load.
-            }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if !is_valid_native_ort_binary(&dll_path) {
+            std::env::set_var("OSOOSI_NO_ORT", "1");
+            std::env::remove_var("ORT_DYLIB_PATH");
+            return Ok(());
         }
-
-        info!(
-            "Attempting to initialize ONNX Runtime (target version: {})...",
-            version
-        );
-
-        if !dll_path.exists() {
-            info!("📥 Downloading ONNX Runtime v{}...", version);
-
-            // Use a temp dir next to the exe so it works regardless of CWD
-            let base_dir = dll_path
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(std::env::temp_dir);
-            let zip_path = base_dir.join("ort_tmp.zip");
-            let tmp_dir = base_dir.join("ort_extract");
-
-            let executor = DirectExecutor::new();
-            if let Err(e) = executor.download(url, &zip_path, false).await {
-                warn!(
-                    "Failed to download ORT v{}: {}. Trying next version...",
-                    version, e
-                );
-                continue;
-            }
-
-            if let Err(e) = extract_zip(&zip_path, &tmp_dir) {
-                warn!("Failed to extract ORT v{}: {}", version, e);
-                let _ = fs::remove_file(&zip_path);
-                continue;
-            }
-
-            // Find onnxruntime.dll in extracted files
-            let mut found_dll = None;
-            for entry in walkdir::WalkDir::new(&tmp_dir)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                if entry.file_name() == "onnxruntime.dll" {
-                    found_dll = Some(entry.path().to_path_buf());
-                    break;
-                }
-            }
-
-            if let Some(dll) = found_dll {
-                if let Err(e) = fs::copy(&dll, &dll_path) {
-                    warn!("Failed to copy onnxruntime.dll: {}", e);
-                }
-            }
-
-            let _ = fs::remove_file(&zip_path);
-            let _ = fs::remove_dir_all(&tmp_dir);
-        }
-
         if let Some(p) = dll_path.to_str() {
             std::env::set_var("ORT_DYLIB_PATH", p);
         }
-
-        // 2. Initialize with a guard to prevent the library's internal panics from crashing the app
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
         let init_result = std::panic::catch_unwind(|| ort::init().commit());
+        std::panic::set_hook(prev_hook);
+        if matches!(init_result, Ok(Ok(_))) {
+            info!("✅ ONNX Runtime initialized successfully ({:?}).", dll_path);
+            return Ok(());
+        }
+        std::env::set_var("OSOOSI_NO_ORT", "1");
+        std::env::remove_var("ORT_DYLIB_PATH");
+        return Ok(());
+    }
 
-        match init_result {
-            Ok(Ok(_)) => {
-                info!("✅ ONNX Runtime initialized successfully (v{}).", version);
-                success = true;
-                break;
+    #[cfg(target_os = "windows")]
+    {
+        // ORT stable releases for Windows x64 — newest first so we always get the best version.
+        // ort crate 2.0.0-rc.10 is compatible with ONNX Runtime 1.19–1.25.
+        let versions = [
+            ("1.25.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.25.1/onnxruntime-win-x64-1.25.1.zip"),
+            ("1.22.0", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"),
+            ("1.21.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.21.1/onnxruntime-win-x64-1.21.1.zip"),
+            ("1.20.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-win-x64-1.20.1.zip"),
+            ("1.19.2", "https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-win-x64-1.19.2.zip"),
+        ];
+        let mut success = false;
+
+        for (version, url) in versions {
+            if dll_path.exists() && !is_valid_native_ort_binary(&dll_path) {
+                let _ = fs::remove_file(&dll_path);
             }
-            _ => {
-                warn!(
-                    "⚠️ ONNX Runtime v{} failed to initialize or panicked. Trying fallback...",
-                    version
-                );
-                if dll_path.exists() {
-                    let _ = fs::remove_file(&dll_path);
+
+            info!(
+                "Attempting to initialize ONNX Runtime (target version: {})...",
+                version
+            );
+
+            if !dll_path.exists() {
+                info!("📥 Downloading ONNX Runtime v{}...", version);
+
+                let base_dir = dll_path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(std::env::temp_dir);
+                let zip_path = base_dir.join("ort_tmp.zip");
+                let tmp_dir = base_dir.join("ort_extract");
+
+                let executor = DirectExecutor::new();
+                if let Err(e) = executor.download(url, &zip_path, false).await {
+                    warn!(
+                        "Failed to download ORT v{}: {}. Trying next version...",
+                        version, e
+                    );
+                    continue;
+                }
+
+                if let Err(e) = extract_zip(&zip_path, &tmp_dir) {
+                    warn!("Failed to extract ORT v{}: {}", version, e);
+                    let _ = fs::remove_file(&zip_path);
+                    continue;
+                }
+
+                let mut found_dll = None;
+                for entry in walkdir::WalkDir::new(&tmp_dir)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                {
+                    if entry.file_name() == "onnxruntime.dll" {
+                        found_dll = Some(entry.path().to_path_buf());
+                        break;
+                    }
+                }
+
+                if let Some(dll) = found_dll {
+                    if let Err(e) = fs::copy(&dll, &dll_path) {
+                        warn!("Failed to copy onnxruntime.dll: {}", e);
+                    }
+                }
+
+                let _ = fs::remove_file(&zip_path);
+                let _ = fs::remove_dir_all(&tmp_dir);
+            }
+
+            if !is_valid_native_ort_binary(&dll_path) {
+                continue;
+            }
+
+            if let Some(p) = dll_path.to_str() {
+                std::env::set_var("ORT_DYLIB_PATH", p);
+            }
+
+            let prev_hook = std::panic::take_hook();
+            std::panic::set_hook(Box::new(|_| {}));
+            let init_result = std::panic::catch_unwind(|| ort::init().commit());
+            std::panic::set_hook(prev_hook);
+
+            match init_result {
+                Ok(Ok(_)) => {
+                    info!("✅ ONNX Runtime initialized successfully (v{}).", version);
+                    success = true;
+                    break;
+                }
+                _ => {
+                    warn!(
+                        "⚠️ ONNX Runtime v{} failed to initialize or panicked. Trying fallback...",
+                        version
+                    );
+                    if dll_path.exists() {
+                        let _ = fs::remove_file(&dll_path);
+                    }
                 }
             }
         }
-    }
 
-    if !success {
-        if !suppress_warning {
-            error!("❌ FATAL: All ONNX Runtime initialization attempts failed. AI features will be disabled.");
+        if !success {
+            if !suppress_warning {
+                error!("❌ FATAL: All ONNX Runtime initialization attempts failed. AI features will be disabled.");
+            }
+            std::env::set_var("OSOOSI_NO_ORT", "1");
+            std::env::remove_var("ORT_DYLIB_PATH");
+            anyhow::bail!("All ONNX Runtime initialization attempts failed.");
         }
-        std::env::set_var("OSOOSI_NO_ORT", "1");
-        anyhow::bail!("All ONNX Runtime initialization attempts failed.");
-    }
 
-    Ok(())
+        Ok(())
+    }
 }
 
 fn calc_dir_bytes(dir: &Path) -> u64 {

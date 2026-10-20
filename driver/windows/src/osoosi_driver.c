@@ -100,23 +100,64 @@ static const PCWSTR g_ProtectedImages[] = {
     L"sysmon64.exe",
     L"sysmon.exe",
     L"osoosi.exe",
+    L"osoosi-cli.exe",
+    L"osoosi-auditor.exe",
     L"msmpeng.exe",
     L"csrss.exe",
     L"smss.exe",
     L"wininit.exe",
+    L"winlogon.exe",
+    L"userinit.exe",
+    L"logonui.exe",
     L"services.exe",
     L"lsass.exe",
+    L"lsm.exe",
     L"svchost.exe",
     L"explorer.exe",
     L"searchhost.exe",
+    L"searchindexer.exe",
+    L"searchprotocolhost.exe",
+    L"searchfilterhost.exe",
+    L"startmenuexperiencehost.exe",
+    L"shellexperiencehost.exe",
+    L"shellhost.exe",
     L"sihost.exe",
     L"taskhostw.exe",
+    L"runtimebroker.exe",
+    L"applicationframehost.exe",
+    L"textinputhost.exe",
+    L"ctfmon.exe",
     L"dwm.exe",
     L"rundll32.exe",
     L"dllhost.exe",
     L"conhost.exe",
+    L"openconsole.exe",
+    L"windowsterminal.exe",
+    L"powershell.exe",
+    L"pwsh.exe",
+    L"cmd.exe",
+    L"taskmgr.exe",
+    L"securityhealthservice.exe",
+    L"securityhealthsystray.exe",
+    L"securityhealthhost.exe",
+    L"smartscreen.exe",
+    L"msiexec.exe",
+    L"tiworker.exe",
+    L"trustedinstaller.exe",
+    L"wmiprvse.exe",
+    L"audiodg.exe",
     L"fontdrvhost.exe",
-    L"spoolsv.exe"
+    L"spoolsv.exe",
+    // Developer toolchains & container infrastructure (Host OS & Developer Immunity)
+    L"python.exe",
+    L"python3.exe",
+    L"cargo.exe",
+    L"rustc.exe",
+    L"node.exe",
+    L"git.exe",
+    L"code.exe",
+    L"wsl.exe",
+    L"docker.exe"
 };
 
 // Known Bring Your Own Vulnerable Driver (BYOVD) Ring-0 payloads (Microsoft Vulnerable Driver Blocklist)
@@ -568,6 +609,16 @@ NTSTATUS NTAPI OsoosiDeviceControl(
             }
         }
 
+        UNICODE_STRING candidateUs;
+        candidateUs.Buffer = rule->Path;
+        candidateUs.Length = (USHORT)(rule->Length * sizeof(WCHAR));
+        candidateUs.MaximumLength = (USHORT)(OSOOSI_MAX_PATH * sizeof(WCHAR));
+        if (OsoosiIsCriticalSystemImage(&candidateUs) || OsoosiIsSelfDefenseProtectedAsset(&candidateUs)) {
+            ExFreePoolWithTag(rule, OSOOSI_POOL_TAG);
+            status = STATUS_ACCESS_DENIED;
+            break;
+        }
+
         KeAcquireInStackQueuedSpinLock(&g_State.Lock, &lockHandle);
         InsertTailList(&g_State.PathRuleList, &rule->ListEntry);
         g_State.RuleCount++;
@@ -743,6 +794,26 @@ static BOOLEAN OsoosiEndsWithInsensitive(
     return TRUE;
 }
 
+static BOOLEAN OsoosiIsDeveloperOrSensorImage(_In_reads_(nameLen) PCWSTR name, _In_ ULONG nameLen) {
+    if (name == NULL || nameLen == 0) {
+        return FALSE;
+    }
+    return (
+        OsoosiEndsWithInsensitive(name, nameLen, L"python.exe", 10) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"python3.exe", 11) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"cargo.exe", 9) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"rustc.exe", 9) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"node.exe", 8) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"git.exe", 7) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"code.exe", 8) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"wsl.exe", 7) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"docker.exe", 10) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"osoosi.exe", 10) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"osoosi-cli.exe", 14) ||
+        OsoosiEndsWithInsensitive(name, nameLen, L"osoosi-auditor.exe", 18)
+    );
+}
+
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) {
     if (ImageFileName == NULL || ImageFileName->Buffer == NULL || ImageFileName->Length == 0) {
         return FALSE;
@@ -762,6 +833,18 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) 
         }
 
         if (matchesName) {
+            // 1. Bare name match (from IOCTL_OSOOSI_ADD_BLOCK_PATH) is immediately protected
+            if (imgChars == protLen) {
+                return TRUE;
+            }
+
+            // 2. Developer tools & sensor binaries are protected wherever installed
+            // (%USERPROFILE%\.cargo\bin, AppData\Local\Programs, .rustup, venv, target\release, etc.)
+            if (OsoosiIsDeveloperOrSensorImage(protName, protLen)) {
+                return TRUE;
+            }
+
+            // 3. For OS infrastructure binaries, verify standard system/program directories
             if (OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\System32\\", 10) ||
                 OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\SysWOW64\\", 10) ||
                 OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\SystemApps\\", 12) ||

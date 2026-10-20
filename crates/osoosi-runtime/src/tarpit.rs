@@ -273,14 +273,60 @@ pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> boo
             | "brave.exe"
             | "git.exe"
             | "git-remote-https.exe"
+            | "git"
             | "ssh.exe"
             | "cargo.exe"
+            | "cargo"
             | "rustc.exe"
+            | "rustc"
             | "rustup.exe"
+            | "rustup"
             | "code.exe"
+            | "code"
             | "antigravity.exe"
             | "ollama.exe"
             | "ollama_llama_server.exe"
+            | "python.exe"
+            | "python3.exe"
+            | "python"
+            | "python3"
+            | "node.exe"
+            | "node"
+            | "wsl.exe"
+            | "wsl"
+            | "wslhost.exe"
+            | "wslservice.exe"
+            | "vmmem"
+            | "vmmemwsl"
+            | "docker.exe"
+            | "docker"
+            | "dockerd.exe"
+            | "dockerd"
+            | "com.docker.backend.exe"
+            | "com.docker.backend"
+            | "init"
+            | "systemd"
+            | "systemd-logind"
+            | "systemd-journald"
+            | "systemd-resolved"
+            | "systemd-networkd"
+            | "systemd-udevd"
+            | "dbus-daemon"
+            | "dbus-broker"
+            | "sshd"
+            | "NetworkManager"
+            | "networkmanager"
+            | "wpa_supplicant"
+            | "dhclient"
+            | "dhcpcd"
+            | "dnsmasq"
+            | "chronyd"
+            | "ntpd"
+            | "rsyslogd"
+            | "cron"
+            | "crond"
+            | "atd"
+            | "polkitd"
             | "system"
             | "ntoskrnl.exe"
     )
@@ -1042,6 +1088,18 @@ mod tests {
             std::process::id(),
             "anything.exe"
         ));
+        // Developer toolchains and core system daemons must be protected
+        assert!(is_protected_system_or_security_process(5001, "python.exe"));
+        assert!(is_protected_system_or_security_process(5002, "python3.exe"));
+        assert!(is_protected_system_or_security_process(5003, "python3"));
+        assert!(is_protected_system_or_security_process(5004, "node.exe"));
+        assert!(is_protected_system_or_security_process(5005, "node"));
+        assert!(is_protected_system_or_security_process(5006, "cargo.exe"));
+        assert!(is_protected_system_or_security_process(5007, "git.exe"));
+        assert!(is_protected_system_or_security_process(5008, "code.exe"));
+        assert!(is_protected_system_or_security_process(5009, "dbus-daemon"));
+        assert!(is_protected_system_or_security_process(5010, "sshd"));
+        assert!(is_protected_system_or_security_process(5011, "systemd"));
         assert!(!is_protected_system_or_security_process(9999, "curl.exe"));
 
         let tarpit = ActiveProcessTarpit::new();

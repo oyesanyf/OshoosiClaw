@@ -9424,14 +9424,23 @@ async function fetchKillchainStatus() {
         const res = await fetch(`${API_BASE}/killchain/status`);
         if (!res.ok) return;
         const data = await res.json();
-        const status = data.status || {};
+        const status = data.status || data || {};
+        const isIsolated = Boolean(status.host_isolated);
+        const netContained = Boolean(status.network_hermetically_blocked || status.network_contained);
+        const frozenCount = Number(
+            status.frozen_process_count !== undefined
+                ? status.frozen_process_count
+                : (Array.isArray(status.frozen_pids) ? status.frozen_pids.length : (status.isolated_processes_count || 0))
+        );
+        const kernelLockdown = Boolean(status.driver_lockdown_active || status.kernel_lockdown);
+        const auditCount = Number(status.audit_events_count || 0);
         
         const badgeIsolated = document.getElementById('kc-badge-isolated');
         const badgeNormal = document.getElementById('kc-badge-normal');
-        const btnIsolate = document.getElementById('kc-btn-isolate');
-        const btnRestore = document.getElementById('kc-btn-restore');
+        const btnIsolate = document.getElementById('btn-engage-killchain') || document.getElementById('kc-btn-isolate');
+        const btnRestore = document.getElementById('btn-disarm-killchain') || document.getElementById('kc-btn-restore');
         
-        if (status.host_isolated) {
+        if (isIsolated) {
             if (badgeIsolated) badgeIsolated.style.display = 'inline-flex';
             if (badgeNormal) badgeNormal.style.display = 'none';
             if (btnIsolate) btnIsolate.style.opacity = '0.5';
@@ -9444,36 +9453,90 @@ async function fetchKillchainStatus() {
             if (badgeNormal) badgeNormal.style.display = 'inline-flex';
             if (btnIsolate) btnIsolate.style.opacity = '1';
             if (btnRestore) {
-                btnRestore.style.display = 'none';
+                btnRestore.style.display = 'inline-flex';
+                btnRestore.style.opacity = '0.85';
             }
         }
 
-        const netStatus = document.getElementById('kc-net-status');
+        const netStatus = document.getElementById('kc-metric-net') || document.getElementById('kc-net-status');
         if (netStatus) {
-            netStatus.innerText = status.network_contained ? 'CONTAINED (Loopback / Port 3030 Preserved)' : 'NORMAL / UNRESTRICTED';
-            netStatus.style.color = status.network_contained ? '#ef4444' : '#10b981';
+            netStatus.innerText = netContained ? 'CONTAINED (Loopback / DNS / 3030)' : 'Unrestricted';
+            netStatus.style.color = netContained ? '#ef4444' : '#10b981';
         }
 
-        const procCount = document.getElementById('kc-proc-count');
+        const procCount = document.getElementById('kc-metric-pids') || document.getElementById('kc-proc-count');
         if (procCount) {
-            procCount.innerText = status.isolated_processes_count ? `${status.isolated_processes_count} Suspended` : '0 Suspended (Clean)';
-            procCount.style.color = status.isolated_processes_count > 0 ? '#ef4444' : '#10b981';
+            procCount.innerText = frozenCount > 0 ? `${frozenCount} Frozen` : '0 Frozen';
+            procCount.style.color = frozenCount > 0 ? '#ef4444' : '#10b981';
         }
 
-        const kernelStatus = document.getElementById('kc-kernel-status');
+        const kernelStatus = document.getElementById('kc-metric-driver') || document.getElementById('kc-kernel-status');
         if (kernelStatus) {
-            kernelStatus.innerText = status.kernel_lockdown ? 'ENFORCED (Ring-0 Active)' : 'MONITOR / STANDBY';
-            kernelStatus.style.color = status.kernel_lockdown ? '#ef4444' : '#38bdf8';
+            kernelStatus.innerText = kernelLockdown ? 'ENFORCED (Ring-0 Lockdown)' : 'Standard / Active';
+            kernelStatus.style.color = kernelLockdown ? '#ef4444' : '#38bdf8';
         }
 
-        const merkleStatus = document.getElementById('kc-merkle-status');
+        const merkleStatus = document.getElementById('kc-metric-merkle') || document.getElementById('kc-merkle-status');
         if (merkleStatus) {
-            merkleStatus.innerText = status.restore_checkpoint ? `ANCHORED (${status.restore_checkpoint.substring(0, 12)}...)` : 'INITIALIZED (BLAKE3)';
+            if (status.restore_checkpoint) {
+                merkleStatus.innerText = `ANCHORED (${status.restore_checkpoint.substring(0, 12)}...)`;
+            } else if (auditCount > 0) {
+                merkleStatus.innerText = `BLAKE3 Verified (${auditCount} Proofs)`;
+            } else {
+                merkleStatus.innerText = 'BLAKE3 Verified';
+            }
             merkleStatus.style.color = '#10b981';
+        }
+
+        if (Array.isArray(status.history)) {
+            renderKillchainHistoryRows(status.history);
+        } else {
+            await fetchKillchainHistory();
         }
     } catch (err) {
         console.warn('Failed to fetch killchain status:', err);
     }
+}
+
+function renderKillchainHistoryRows(history) {
+    const tbody = document.getElementById('killchain-history-tbody') || document.getElementById('kc-history-tbody');
+    if (!tbody) return;
+
+    if (!Array.isArray(history) || history.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No containment events recorded. System operating normally.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = history.map(item => {
+        let time = 'N/A';
+        if (typeof item.timestamp === 'number') {
+            time = new Date(item.timestamp * 1000).toLocaleString();
+        } else if (typeof item.timestamp === 'string' && item.timestamp) {
+            const parsed = new Date(item.timestamp);
+            time = isNaN(parsed.getTime()) ? item.timestamp : parsed.toLocaleString();
+        }
+        const act = String(item.action || '').toUpperCase();
+        const isEngage = act === 'ENGAGED' || act === 'ISOLATE';
+        const actionBadge = isEngage
+            ? '<span class="badge red" style="font-weight: 700;">🚨 ISOLATED</span>'
+            : '<span class="badge green" style="font-weight: 700;">🛡️ DISARMED</span>';
+        const evHash = item.event_hash
+            ? `${String(item.event_hash).substring(0, 16)}...`
+            : (item.processes_suspended ? `${item.processes_suspended.length} processes` : '—');
+        const integrityBadge = item.event_hash
+            ? '<span class="badge blue" style="font-size: 10px;">BLAKE3 Chained</span>'
+            : (item.restored ? '<span style="color: #10b981;">Restored</span>' : 'Completed');
+        return `
+            <tr style="border-bottom: 1px solid var(--glass-border);">
+                <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--text-muted);">${escapeHtml(time)}</td>
+                <td style="padding: 10px 14px;">${actionBadge}</td>
+                <td style="padding: 10px 14px; font-weight: 600;">${escapeHtml(item.operator || 'operator')}</td>
+                <td style="padding: 10px 14px; font-size: 12px; color: var(--text-secondary);">${escapeHtml(item.reason || 'Manual invocation')}</td>
+                <td style="padding: 10px 14px; font-family: monospace; font-size: 11px; color: var(--accent-blue);">${escapeHtml(evHash)}</td>
+                <td style="padding: 10px 14px; font-size: 12px; text-align: right;">${integrityBadge}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 async function fetchKillchainHistory() {
@@ -9481,34 +9544,8 @@ async function fetchKillchainHistory() {
         const res = await fetch(`${API_BASE}/killchain/history`);
         if (!res.ok) return;
         const data = await res.json();
-        const history = data.history || [];
-        const tbody = document.getElementById('kc-history-tbody');
-        if (!tbody) return;
-
-        if (history.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">No Kill Chain isolation actions recorded in cryptographic ledger.</td></tr>`;
-            return;
-        }
-
-        tbody.innerHTML = history.map(item => {
-            const time = item.timestamp ? new Date(item.timestamp * 1000).toLocaleString() : 'N/A';
-            const actionBadge = item.action === 'Isolate' 
-                ? '<span class="badge red" style="font-weight: 700;">🚨 ISOLATED</span>'
-                : '<span class="badge green" style="font-weight: 700;">🛡️ DISARMED</span>';
-            const restoreBadge = item.restored 
-                ? '<span style="color: #10b981;">Restored</span>'
-                : (item.action === 'Isolate' ? '<span style="color: #ef4444; font-weight: 700;">Active</span>' : 'Completed');
-            return `
-                <tr style="border-bottom: 1px solid var(--glass-border);">
-                    <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--text-muted);">${time}</td>
-                    <td style="padding: 10px 14px;">${actionBadge}</td>
-                    <td style="padding: 10px 14px; font-weight: 600;">${escapeHtml(item.operator || 'operator')}</td>
-                    <td style="padding: 10px 14px; font-size: 12px; color: var(--text-secondary);">${escapeHtml(item.reason || 'Manual invocation')}</td>
-                    <td style="padding: 10px 14px; font-size: 12px;">${item.processes_suspended ? item.processes_suspended.length : 0} processes</td>
-                    <td style="padding: 10px 14px; font-size: 12px;">${restoreBadge}</td>
-                </tr>
-            `;
-        }).join('');
+        const history = data.events || data.history || [];
+        renderKillchainHistoryRows(history);
     } catch (err) {
         console.warn('Failed to fetch killchain history:', err);
     }
@@ -9565,7 +9602,7 @@ function openKillchainModal(action) {
         if (subtitle) subtitle.innerText = 'Reversible Host Isolation Protocol';
         if (icon) icon.innerText = '🚨';
         if (warning) {
-            warning.innerText = 'Engaging Kill Chain immediately severs all inbound/outbound IPv4/IPv6 traffic (preserving local loopback 127.0.0.1 and dashboard port 3030), freezes untrusted userland processes, and engages kernel driver lockdown.';
+            warning.innerText = 'Engaging Kill Chain immediately severs all inbound/outbound IPv4/IPv6 traffic (preserving local loopback 127.0.0.1, DNS/DHCP, and dashboard port 3030), freezes untrusted userland processes, and engages kernel driver lockdown.';
             warning.style.background = 'rgba(239, 68, 68, 0.08)';
             warning.style.borderColor = 'rgba(239, 68, 68, 0.25)';
             warning.style.color = '#fca5a5';
@@ -9737,15 +9774,19 @@ async function renderReaView() {
             fetchWithRetry(`${API_BASE}/rea/v1/providers`).then(r => r.json()).catch(() => null),
         ]);
         const bar = document.getElementById('rea-providers-bar');
-        if (bar && provRes && Array.isArray(provRes.providers)) {
-            bar.innerHTML = provRes.providers.map(p => `
+        const providers = (provRes && Array.isArray(provRes.providers))
+            ? provRes.providers
+            : ((statusRes && Array.isArray(statusRes.providers)) ? statusRes.providers : []);
+        if (bar && providers.length > 0) {
+            bar.innerHTML = providers.map(p => `
                 <span class="badge ${p.available ? 'green' : 'gray'}" style="font-size: 10px; padding: 3px 8px;">
                     ${p.available ? '🟢' : '⚪'} ${escapeHtml(p.name)}${p.version ? ' (' + escapeHtml(p.version) + ')' : ''}
                 </span>
             `).join('');
         }
-        if (statusRes && Array.isArray(statusRes.recent_reports) && statusRes.recent_reports.length > 0) {
-            renderReaReport(statusRes.recent_reports[0]);
+        const recent = (statusRes && (statusRes.investigations || statusRes.recent_reports)) || [];
+        if (Array.isArray(recent) && recent.length > 0) {
+            renderReaReport(recent[0]);
         }
     } catch (err) {
         console.warn('REA view load warning:', err);
@@ -9755,6 +9796,14 @@ async function renderReaView() {
 function renderReaReport(report) {
     const container = document.getElementById('rea-report-container');
     if (!container || !report) return;
+    const targetLabel = report.target_path || report.target || 'Target';
+    const riskScore = report.threat_score !== undefined ? Number(report.threat_score) : Number(report.risk_score || 0);
+    const reconstructed = report.reconstructed_code || report.reconstructed_source || '';
+    const magikaInfo = report.metadata && report.metadata.magika ? report.metadata.magika : null;
+    const magikaBadgeHtml = magikaInfo && magikaInfo.label
+        ? `<span class="badge purple" style="margin-left: 6px;" title="${escapeHtml(magikaInfo.description || '')}">Magika: ${escapeHtml(magikaInfo.label)} (${escapeHtml(magikaInfo.mime_type || '')})</span>`
+        : '';
+
     const evidenceRows = (report.evidence || []).map(ev => `
         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
             <td style="padding: 8px 10px; font-weight: 600; color: #38bdf8;">${escapeHtml(ev.source || '')}</td>
@@ -9775,10 +9824,10 @@ function renderReaReport(report) {
     container.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px;">
             <div>
-                <h4 style="margin: 0; font-size: 15px; color: var(--text-header);">${escapeHtml(report.target || 'Target')} <span class="badge blue" style="margin-left: 8px;">${escapeHtml(report.detected_kind || 'auto')}</span></h4>
-                <div style="font-size: 11px; color: var(--text-muted); font-family: monospace; margin-top: 4px;">SHA-256: ${escapeHtml(report.sha256 || '')} | Size: ${Number(report.size_bytes || 0).toLocaleString()} bytes</div>
+                <h4 style="margin: 0; font-size: 15px; color: var(--text-header);">${escapeHtml(targetLabel)} <span class="badge blue" style="margin-left: 8px;">${escapeHtml(report.detected_kind || 'auto')}</span>${magikaBadgeHtml}</h4>
+                <div style="font-size: 11px; color: var(--text-muted); font-family: monospace; margin-top: 4px;">SHA-256: ${escapeHtml(report.sha256 || '')} | BLAKE3: ${escapeHtml((report.blake3 || '').substring(0, 16))}... | Size: ${Number(report.size_bytes || 0).toLocaleString()} bytes</div>
             </div>
-            <span class="badge ${Number(report.risk_score || 0) >= 0.7 ? 'red' : 'green'}">Risk: ${Math.round((report.risk_score || 0) * 100)}%</span>
+            <span class="badge ${riskScore >= 0.7 ? 'red' : 'green'}">Threat Score: ${Math.round(riskScore * 100)}%</span>
         </div>
         <p style="font-size: 13px; color: var(--text-primary); margin-bottom: 14px;">${escapeHtml(report.summary || '')}</p>
         <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Findings (${(report.findings || []).length})</h5>
@@ -9797,9 +9846,9 @@ function renderReaReport(report) {
                 <tbody>${evidenceRows}</tbody>
             </table>
         </div>
-        ${report.reconstructed_source ? `
+        ${reconstructed ? `
             <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Reconstructed Code / Interface</h5>
-            <pre style="background: rgba(0,0,0,0.45); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-size: 11.5px; overflow-x: auto; color: #a7f3d0;">${escapeHtml(report.reconstructed_source)}</pre>
+            <pre style="background: rgba(0,0,0,0.45); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-size: 11.5px; overflow-x: auto; color: #a7f3d0;">${escapeHtml(reconstructed)}</pre>
         ` : ''}
         ${report.auto_yara_rule ? `
             <h5 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); margin: 12px 0 8px 0;">Autonomous Multi-Token YARA-X Signature</h5>
@@ -9854,8 +9903,9 @@ async function runReaAutonomousSweep() {
             body: JSON.stringify({})
         });
         const data = await res.json();
-        if (data && Array.isArray(data.reports) && data.reports.length > 0) {
-            renderReaReport(data.reports[0]);
+        const list = (data && (data.reports || data.investigations)) || [];
+        if (Array.isArray(list) && list.length > 0) {
+            renderReaReport(list[0]);
         } else {
             await renderReaView();
         }

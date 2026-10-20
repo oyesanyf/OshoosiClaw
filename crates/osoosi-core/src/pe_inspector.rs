@@ -15,6 +15,8 @@ pub struct InspectionFindings {
     pub suspicious_dependencies: Vec<String>,
     pub byte_patches: Vec<String>,
     pub has_spoofed_stack: bool,
+    pub magika_label: String,
+    pub magika_mime_type: String,
 }
 
 /// Disassembly helper: checks if memory bytes preceding a return address represent a CALL instruction.
@@ -411,12 +413,37 @@ fn inspect_elf64(bytes: &[u8], findings: &mut InspectionFindings) {
     }
 }
 
-/// Inspect a file on disk (PE on Windows or ELF64 on all platforms) for composition and heuristics.
+/// Inspect a file on disk (PE on Windows, ELF64, and Google Magika content type on all platforms) for composition and heuristics.
 pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
     let bytes = std::fs::read(path)?;
     let mut findings = InspectionFindings::default();
 
-    if bytes.starts_with(b"\x7FELF") {
+    let magika_id = crate::rea::identify_with_magika(Some(path), &bytes);
+    findings.magika_label = magika_id.label.clone();
+    findings.magika_mime_type = magika_id.mime_type.clone();
+
+    // Check for file extension masquerading (e.g., an executable disguised as a benign document/image)
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        let ext_lc = ext.to_ascii_lowercase();
+        let claims_benign_doc_or_media = matches!(
+            ext_lc.as_str(),
+            "pdf" | "txt" | "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "doc" | "docx"
+                | "xls" | "xlsx" | "ppt" | "pptx" | "csv" | "md" | "mp3" | "mp4" | "wav"
+        );
+        let is_executable_content = matches!(
+            magika_id.label.as_str(),
+            "pebin" | "elf" | "macho" | "wasm"
+        );
+        if claims_benign_doc_or_media && is_executable_content {
+            findings.suspicious_sections.push(format!(
+                "Magika extension masquerading: .{} file contains {} ({})",
+                ext_lc, magika_id.label, magika_id.mime_type
+            ));
+            findings.composition_score += 0.45;
+        }
+    }
+
+    if bytes.starts_with(b"\x7FELF") || magika_id.label == "elf" {
         inspect_elf64(&bytes, &mut findings);
         return Ok(findings);
     }
