@@ -257,9 +257,17 @@ if (-not $SkipBuild) {
         }
         & cmd.exe /c "attrib -r target\release\build /s /d 2>nul & attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul" | Out-Null
 
-        # Sign any unsigned build scripts to satisfy WDAC Application Control
+        # Sign any unsigned build scripts and proc-macro DLLs to satisfy WDAC Application Control
         if ($buildSigntool -and (-not $SkipSigning)) {
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
+                (-not $sig) -or ($sig.SignerCertificate -eq $null)
+            } | ForEach-Object {
+                $wt = $_.LastWriteTimeUtc
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
+                try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
+            }
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\deps") -Filter "*.dll" -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {
@@ -275,8 +283,16 @@ if (-not $SkipBuild) {
             break
         }
         if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
-            Write-Host "       [WDAC] Signing newly compiled build scripts before retry ($attempt/10)..." -ForegroundColor Cyan
+            Write-Host "       [WDAC] Signing newly compiled build scripts & proc-macro DLLs before retry ($attempt/10)..." -ForegroundColor Cyan
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
+                (-not $sig) -or ($sig.SignerCertificate -eq $null)
+            } | ForEach-Object {
+                $wt = $_.LastWriteTimeUtc
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
+                try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
+            }
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\deps") -Filter "*.dll" -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {
@@ -397,14 +413,22 @@ $TargetBinaries = @(
     $DeployMsi
 ) | Where-Object { Test-Path $_ }
 
-# Also discover and include all auxiliary release executables and dlls
+# Compile and sign Ring-0 Windows Kernel Drivers (osoosi_driver.sys & osoosi_elam.sys)
+$BuildDriversScript = Join-Path $ProjectRoot "scripts\build_windows_drivers.ps1"
+if (Test-Path $BuildDriversScript) {
+    & powershell -ExecutionPolicy Bypass -File $BuildDriversScript -CertThumbprint $CertThumbprint -TimestampServer $TimestampServer
+}
+
+# Also discover and include all auxiliary release executables, dlls, and Ring-0 kernel drivers
 $ReleaseDir = Join-Path $ProjectRoot "target\release"
 $AuxBinaries = @(
     (Join-Path $ReleaseDir "osoosi_inject.dll"),
     (Join-Path $ReleaseDir "osoosi-auditor.exe"),
     (Join-Path $ReleaseDir "otx-taxii-rs.exe"),
     (Join-Path $ReleaseDir "bulk_trainer.exe"),
-    (Join-Path $ReleaseDir "test-peer.exe")
+    (Join-Path $ReleaseDir "test-peer.exe"),
+    (Join-Path $ProjectRoot "driver\windows\osoosi_driver.sys"),
+    (Join-Path $ProjectRoot "driver\windows\osoosi_elam.sys")
 ) | Where-Object { Test-Path $_ }
 
 # Remove any accidental 0-byte placeholder binaries in target\release
