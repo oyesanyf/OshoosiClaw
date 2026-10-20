@@ -230,13 +230,11 @@ impl QuarantineResponder {
 
         let open_rw = |p: &std::path::Path| -> Option<std::fs::File> {
             std::fs::OpenOptions::new()
-                .write(true)
                 .append(true)
                 .open(p)
                 .or_else(|_| {
                     std::fs::OpenOptions::new()
                         .create(true)
-                        .write(true)
                         .append(true)
                         .open(p)
                 })
@@ -889,9 +887,9 @@ impl FrozenProcessForensicCollector {
         };
 
         let mut args = [0u64; 6];
-        for i in 0..6 {
+        for (i, slot) in args.iter_mut().enumerate() {
             if let Some(tok) = tokens.get(1 + i) {
-                args[i] = parse_hex_u64(tok);
+                *slot = parse_hex_u64(tok);
             }
         }
         let rsp = tokens.get(7).map(|t| parse_hex_u64(t)).unwrap_or(0);
@@ -923,9 +921,7 @@ impl FrozenProcessForensicCollector {
         // Verify cgroup.events frozen state if present in proc_root or cgroup v2 path
         let cgroup_events_content = std::fs::read_to_string(tgid_dir.join("cgroup.events"))
             .or_else(|_| std::fs::read_to_string(proc_root.join("cgroup.events")))
-            .or_else(|_| {
-                std::fs::read_to_string("/sys/fs/cgroup/oshoosi_quarantine/cgroup.events")
-            })
+            .or_else(|_| std::fs::read_to_string("/sys/fs/cgroup/oshoosi_quarantine/cgroup.events"))
             .unwrap_or_default();
         let cgroup_frozen_confirmed = if !cgroup_events_content.is_empty() {
             Self::parse_cgroup_events_frozen(&cgroup_events_content)
@@ -1062,10 +1058,9 @@ impl FrozenProcessForensicCollector {
         let ioc_digest_blake3 = ioc_hasher.finalize().to_hex().to_string();
 
         let mesh_key: [u8; 32] = *b"OSOOSI_5SIGMA_FROZEN_IOC_MESH_V1";
-        let mesh_ioc_signature =
-            blake3::keyed_hash(&mesh_key, ioc_digest_blake3.as_bytes())
-                .to_hex()
-                .to_string();
+        let mesh_ioc_signature = blake3::keyed_hash(&mesh_key, ioc_digest_blake3.as_bytes())
+            .to_hex()
+            .to_string();
 
         FrozenProcessForensicSnapshot {
             tgid,
@@ -1094,7 +1089,6 @@ impl FrozenProcessForensicCollector {
         Self::collect_from_proc_root(std::path::Path::new("/proc"), tgid, pid, sigma_z)
     }
 }
-
 
 /// Binary struct layout matching `struct ebpf_process_event` in kernel memory.
 #[repr(C)]
@@ -1230,7 +1224,9 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
             map.insert("Action".to_string(), serde_json::json!("Blocked"));
             map.insert(
                 "Reason".to_string(),
-                serde_json::json!("Linux LSM BPF bprm_check_security: blocked binary execution (-EPERM)"),
+                serde_json::json!(
+                    "Linux LSM BPF bprm_check_security: blocked binary execution (-EPERM)"
+                ),
             );
             (25, map)
         }
@@ -1242,7 +1238,10 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
                 "Image".to_string(),
                 serde_json::json!(if !filename.is_empty() { filename } else { comm }),
             );
-            map.insert("TargetFilename".to_string(), serde_json::json!(command_line));
+            map.insert(
+                "TargetFilename".to_string(),
+                serde_json::json!(command_line),
+            );
             map.insert("Action".to_string(), serde_json::json!("Blocked"));
             map.insert(
                 "Reason".to_string(),
@@ -1848,8 +1847,7 @@ mod tests {
         }
 
         // Create /proc/<pid>/syscall
-        let syscall_text =
-            "10 0x4000 0x1000 0x7 0x0 0x0 0x0 0x7ffd90001120 0x4014\n";
+        let syscall_text = "10 0x4000 0x1000 0x7 0x0 0x0 0x0 0x7ffd90001120 0x4014\n";
         std::fs::write(tgid_dir.join("syscall"), syscall_text).expect("write syscall");
 
         let snapshot =
@@ -2021,7 +2019,8 @@ mod tests {
             )
         };
 
-        let event = parse_network_event(bytes).expect("Should parse LSM socket_connect block event");
+        let event =
+            parse_network_event(bytes).expect("Should parse LSM socket_connect block event");
         assert_eq!(event.source, HostEventSource::Ebpf);
         assert_eq!(event.event_id, 3);
         assert_eq!(event.data["ProcessId"], 31337);
@@ -2158,7 +2157,9 @@ mod tests {
             .read()
             .unwrap_or_else(|e| e.into_inner());
         assert_eq!(st.mode, 2);
-        assert!(st.blocked_paths.contains(&"/tmp/malicious_dropper".to_string()));
+        assert!(st
+            .blocked_paths
+            .contains(&"/tmp/malicious_dropper".to_string()));
         assert!(st.protected_pids.contains(&12345));
         assert!(st.blocked_ipv4.contains(&[203, 0, 113, 9]));
         assert!(st.blocked_ports.contains(&4444));
@@ -2215,9 +2216,8 @@ mod tests {
         std::fs::write(tid1_dir.join("syscall"), "running\n").expect("write tid1 syscall");
         std::fs::write(tid1_dir.join("stat"), stat_line_9101).expect("write tid1 stat");
 
-        let snap = FrozenProcessForensicCollector::collect_from_proc_root(
-            &proc_root, 9100, 9101, 5.85,
-        );
+        let snap =
+            FrozenProcessForensicCollector::collect_from_proc_root(&proc_root, 9100, 9101, 5.85);
         assert!(snap.cgroup_frozen_confirmed);
         assert_eq!(snap.thread_states.len(), 2);
         assert_eq!(snap.thread_states[0].tid, 9100);
@@ -2232,4 +2232,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
-

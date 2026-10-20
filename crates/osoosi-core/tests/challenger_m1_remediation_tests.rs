@@ -20,7 +20,10 @@ fn test_remediation_pid_boundaries_direct() {
     // 3. Self PID
     let self_pid = std::process::id();
     let res_self = controller.kill_process_tree(self_pid);
-    assert!(res_self.is_err(), "kill_process_tree(self_pid) MUST return Err");
+    assert!(
+        res_self.is_err(),
+        "kill_process_tree(self_pid) MUST return Err"
+    );
     println!("kill_process_tree(self_pid = {}): {:?}", self_pid, res_self);
 
     // 4. Low PIDs (1, 2, 3)
@@ -46,10 +49,7 @@ fn test_administrative_session_spoofing_via_commandline_arguments() {
         is_shielded
     );
 
-    let spoofed_cmd_git = vec![
-        "mimikatz.exe".to_string(),
-        "git".to_string(),
-    ];
+    let spoofed_cmd_git = vec!["mimikatz.exe".to_string(), "git".to_string()];
     let mimikatz_shielded = is_administrative_or_ssh_session("mimikatz.exe", &spoofed_cmd_git);
     println!(
         "mimikatz.exe with args ['git']: is_administrative_or_ssh_session = {}",
@@ -67,8 +67,16 @@ fn test_administrative_session_spoofing_via_commandline_arguments() {
         ps_shielded
     );
 
-    assert!(!is_shielded, "c2_beacon.exe with '--target python' MUST NOT be shielded");
-    assert!(!mimikatz_shielded, "mimikatz.exe with 'git' MUST NOT be shielded");
-    assert!(!ps_shielded, "powershell.exe with 'code.exe' MUST NOT be shielded");
+    assert!(
+        !is_shielded,
+        "c2_beacon.exe with '--target python' MUST NOT be shielded"
+    );
+    assert!(
+        !mimikatz_shielded,
+        "mimikatz.exe with 'git' MUST NOT be shielded"
+    );
+    assert!(
+        !ps_shielded,
+        "powershell.exe with 'code.exe' MUST NOT be shielded"
+    );
 }
-

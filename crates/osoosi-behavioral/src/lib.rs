@@ -9,6 +9,8 @@
 #![allow(clippy::too_many_arguments)]
 #![allow(clippy::manual_memcpy)]
 #![allow(clippy::large_enum_variant)]
+#![allow(clippy::field_reassign_with_default)]
+#![allow(clippy::manual_range_contains)]
 
 pub mod agentic_arbitrator;
 mod analyzer;

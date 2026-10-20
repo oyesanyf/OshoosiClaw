@@ -186,10 +186,7 @@ pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> boo
         return true;
     }
     let lower = proc_name.trim().trim_matches('"').to_lowercase();
-    let fn_only = lower
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(lower.as_str());
+    let fn_only = lower.rsplit(['\\', '/']).next().unwrap_or(lower.as_str());
 
     matches!(
         fn_only,
@@ -611,8 +608,10 @@ impl ActiveProcessTarpit {
         if !verdict.should_tarpit_immediately || verdict.os_immunity_veto {
             return false;
         }
-        if is_protected_system_or_security_process(verdict.offending_pid, &verdict.offending_process)
-        {
+        if is_protected_system_or_security_process(
+            verdict.offending_pid,
+            &verdict.offending_process,
+        ) {
             warn!(
                 "[AXION TARPIT SAFEGUARD] Refused immediate tarpit for protected process PID {} ({}) on trap {}",
                 verdict.offending_pid, verdict.offending_process, verdict.trap_id
@@ -663,7 +662,8 @@ impl TarpitManager {
         accessed_address: Option<usize>,
     ) -> Option<osoosi_telemetry::canary::AxionCanaryTripVerdict> {
         let reg = osoosi_telemetry::canary::global_axion_canary_registry();
-        let verdict = reg.evaluate_access(pid, process_name, accessed_resource, accessed_address)?;
+        let verdict =
+            reg.evaluate_access(pid, process_name, accessed_resource, accessed_address)?;
         let _ = self.active_tarpit.trigger_axion_canary_tarpit(&verdict);
         Some(verdict)
     }
@@ -857,7 +857,10 @@ impl TarpitManager {
     /// Linux: Use `renice` to set the process to lowest priority.
     #[cfg(target_os = "linux")]
     async fn linux_throttle(pid: u32, throttle: bool, proc_name: &str) -> anyhow::Result<()> {
-        if pid <= 4 || pid == std::process::id() || is_protected_system_or_security_process(pid, proc_name) {
+        if pid <= 4
+            || pid == std::process::id()
+            || is_protected_system_or_security_process(pid, proc_name)
+        {
             warn!(
                 "[SECURITY SAFEGUARD] Linux Tarpit refused for PID {} ({}): Protected OS or security binary.",
                 pid, proc_name
@@ -1095,21 +1098,39 @@ mod tests {
         assert!(is_protected_system_or_security_process(1236, "msmpeng.exe"));
         assert!(is_protected_system_or_security_process(1237, "osoosi.exe"));
         // Windows Search, Shell, Terminal & System Tray (including NT device paths)
-        assert!(is_protected_system_or_security_process(1238, "SearchHost.exe"));
+        assert!(is_protected_system_or_security_process(
+            1238,
+            "SearchHost.exe"
+        ));
         assert!(is_protected_system_or_security_process(
             1238,
             r"\Device\HarddiskVolume4\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\SearchHost.exe"
         ));
         assert!(is_protected_system_or_security_process(1239, "sihost.exe"));
-        assert!(is_protected_system_or_security_process(1240, "explorer.exe"));
-        assert!(is_protected_system_or_security_process(1241, "SecurityHealthSystray.exe"));
+        assert!(is_protected_system_or_security_process(
+            1240,
+            "explorer.exe"
+        ));
+        assert!(is_protected_system_or_security_process(
+            1241,
+            "SecurityHealthSystray.exe"
+        ));
         assert!(is_protected_system_or_security_process(1242, "ctfmon.exe"));
-        assert!(is_protected_system_or_security_process(1242, "OpenConsole.exe"));
-        assert!(is_protected_system_or_security_process(1242, "WindowsTerminal.exe"));
+        assert!(is_protected_system_or_security_process(
+            1242,
+            "OpenConsole.exe"
+        ));
+        assert!(is_protected_system_or_security_process(
+            1242,
+            "WindowsTerminal.exe"
+        ));
         // Linux Desktop Shell, Search & Systemd
         assert!(is_protected_system_or_security_process(1243, "gnome-shell"));
         assert!(is_protected_system_or_security_process(1244, "plasmashell"));
-        assert!(is_protected_system_or_security_process(1245, "tracker-miner-fs-3"));
+        assert!(is_protected_system_or_security_process(
+            1245,
+            "tracker-miner-fs-3"
+        ));
         assert!(is_protected_system_or_security_process(1246, "systemd"));
         assert!(is_protected_system_or_security_process(
             1246,
@@ -1120,10 +1141,16 @@ mod tests {
             "/usr/libexec/xdg-desktop-portal"
         ));
         // macOS Desktop Shell, Spotlight & ControlCenter
-        assert!(is_protected_system_or_security_process(1247, "WindowServer"));
+        assert!(is_protected_system_or_security_process(
+            1247,
+            "WindowServer"
+        ));
         assert!(is_protected_system_or_security_process(1248, "Finder"));
         assert!(is_protected_system_or_security_process(1249, "Dock"));
-        assert!(is_protected_system_or_security_process(1250, "ControlCenter"));
+        assert!(is_protected_system_or_security_process(
+            1250,
+            "ControlCenter"
+        ));
         assert!(is_protected_system_or_security_process(1251, "Spotlight"));
         assert!(is_protected_system_or_security_process(
             1252,

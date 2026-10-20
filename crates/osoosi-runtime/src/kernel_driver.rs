@@ -313,7 +313,9 @@ pub fn query_current_process_ppl_level() -> PplProtectionLevel {
 ///
 /// Safely returns `Ok(false)` when the ELAM driver is test-signed (non-WHQL), preventing
 /// SCM from blocking service startup while maintaining `ObRegisterCallbacks` + Kernel DACL protection.
-pub fn register_elam_certificate_if_present(elam_sys_path: &std::path::Path) -> anyhow::Result<bool> {
+pub fn register_elam_certificate_if_present(
+    elam_sys_path: &std::path::Path,
+) -> anyhow::Result<bool> {
     if !elam_sys_path.exists() {
         return Ok(false);
     }
@@ -570,15 +572,16 @@ pub struct SharedKernelState {
     pub intercept_events: std::sync::Mutex<Vec<KernelInterceptEvent>>,
 }
 
-static SHARED_KERNEL_STATE: std::sync::OnceLock<Arc<SharedKernelState>> = std::sync::OnceLock::new();
+static SHARED_KERNEL_STATE: std::sync::OnceLock<Arc<SharedKernelState>> =
+    std::sync::OnceLock::new();
 
 pub fn get_shared_kernel_state() -> Arc<SharedKernelState> {
     SHARED_KERNEL_STATE
         .get_or_init(|| {
             let st = Arc::new(SharedKernelState::default());
-            st.mode.store(DriverAutonomyMode::Active as u32, Ordering::SeqCst);
-            st.protected_pid
-                .store(std::process::id(), Ordering::SeqCst);
+            st.mode
+                .store(DriverAutonomyMode::Active as u32, Ordering::SeqCst);
+            st.protected_pid.store(std::process::id(), Ordering::SeqCst);
             st
         })
         .clone()
@@ -1205,9 +1208,7 @@ mod tests {
 
     #[test]
     fn test_byovd_detection_and_ppl_dacl_hardening() {
-        assert!(is_known_byovd_driver(
-            r"C:\Windows\Temp\rtcore64.sys"
-        ));
+        assert!(is_known_byovd_driver(r"C:\Windows\Temp\rtcore64.sys"));
         assert!(is_known_byovd_driver(
             r"\Device\HarddiskVolume3\Users\Public\dbutil_2_3.sys"
         ));
@@ -1540,4 +1541,3 @@ pub fn query_runtime_ppl_protection_level() -> RuntimePplVerificationReport {
         trust_boundary_summary,
     }
 }
-

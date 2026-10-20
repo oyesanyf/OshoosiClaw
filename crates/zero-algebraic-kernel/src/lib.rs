@@ -61,7 +61,11 @@ impl AlgebraicKernelMonitor {
     }
 
     /// 1. Zero as Absence that Carries Evidence: I(dt) = (lambda * dt) / ln(2) when k = 0.
-    pub fn compute_evidentiary_absence(&self, silence_duration_dt: f64, observed_events: usize) -> f64 {
+    pub fn compute_evidentiary_absence(
+        &self,
+        silence_duration_dt: f64,
+        observed_events: usize,
+    ) -> f64 {
         if observed_events == 0 {
             (self.expected_rate_lambda * silence_duration_dt) / LN_2
         } else {
@@ -122,9 +126,15 @@ impl AlgebraicKernelMonitor {
         let prev = self.previous_safety_margin;
         self.previous_safety_margin = current_safety_margin;
 
-        if (prev > 0.0 && current_safety_margin <= 0.0) || (prev < 0.0 && current_safety_margin >= 0.0) {
+        if (prev > 0.0 && current_safety_margin <= 0.0)
+            || (prev < 0.0 && current_safety_margin >= 0.0)
+        {
             let denom = prev.abs() + current_safety_margin.abs();
-            let alpha = if denom > 1e-12 { prev.abs() / denom } else { 0.5 };
+            let alpha = if denom > 1e-12 {
+                prev.abs() / denom
+            } else {
+                0.5
+            };
             Some(alpha)
         } else {
             None
@@ -139,9 +149,10 @@ impl AlgebraicKernelMonitor {
         if a == 0 || b == 0 {
             return false;
         }
-        (a.wrapping_mul(b)) % self.boundary_modulus == 0
+        (a.wrapping_mul(b)).is_multiple_of(self.boundary_modulus)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn evaluate_frame(
         &mut self,
         silence_dt: f64,
@@ -152,7 +163,8 @@ impl AlgebraicKernelMonitor {
         cap_a: u64,
         cap_b: u64,
     ) -> AlgebraicZeroReport {
-        let evidentiary_absence_bits = self.compute_evidentiary_absence(silence_dt, observed_events);
+        let evidentiary_absence_bits =
+            self.compute_evidentiary_absence(silence_dt, observed_events);
         let lumen_boundary_residual = self.compute_lumen_harmony(interval_tau);
         let null_space_leakage_ratio = self.inspect_and_rotate_kernel(telemetry_vec, 0.15);
         let zero_crossing_root = self.check_zero_crossing(current_safety_margin);

@@ -3243,7 +3243,12 @@ impl MerkleAllowlistVetoGate {
     /// 2. The command line does NOT carry inline code execution (`python -c`, `node -e`, etc., checked via
     ///    `osoosi_types::is_protected_os_shell_or_desktop_binary`), and
     /// 3. The tool's leaf hash passes constant-time BLAKE3 Merkle audit path verification against `merkle_root`.
-    pub fn verify_tool_veto(&self, image_path: &str, cmd_line: &str, event_id: u32) -> Option<(String, String)> {
+    pub fn verify_tool_veto(
+        &self,
+        image_path: &str,
+        cmd_line: &str,
+        event_id: u32,
+    ) -> Option<(String, String)> {
         if matches!(event_id, 8 | 10 | 25) {
             return None;
         }
@@ -3536,7 +3541,8 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
 
         if !has_explicit_mem_or_priv_transition {
             if let Some((tool_name, root)) =
-                self.veto_gate.verify_tool_veto(image, cmdline, event.event_id)
+                self.veto_gate
+                    .verify_tool_veto(image, cmdline, event.event_id)
             {
                 return Some(VoteResult {
                     confidence: 0.0,
@@ -3576,7 +3582,8 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
                             return Some(VoteResult {
                                 confidence: 0.0,
                                 reason: format!(
-                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (gen={}, root={}..); vetoing self-lockout.",
+                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (gen={}, epoch={}, root={}..); vetoing self-lockout.",
+                                    build_generation,
                                     build_generation,
                                     &page_merkle_root[..12.min(page_merkle_root.len())]
                                 ),
@@ -3591,7 +3598,8 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
                             return Some(VoteResult {
                                 confidence: 0.0,
                                 reason: format!(
-                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (gen={}, new_root={}..); TPM 2.0 Merkle root rotated.",
+                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (gen={}, epoch={}, new_root={}..); TPM 2.0 Merkle root rotated.",
+                                    build_generation,
                                     build_generation,
                                     &new_page_merkle_root[..12.min(new_page_merkle_root.len())]
                                 ),
@@ -3832,27 +3840,85 @@ mod tests {
         // 1. Noisy developer tools (cargo.exe, python.exe, rustc.exe, node.exe, git.exe, rust-lld.exe, signtool.exe, wix.exe) without inline code
         //    must pass the BLAKE3 Merkle allowlist inclusion proof and emit a negative veto vote (weight = -1.25).
         for (img, cmd) in [
-            ("C:\\Users\\dev\\.cargo\\bin\\cargo.exe", "cargo.exe build --release"),
-            ("C:\\Python312\\python.exe", "python.exe scripts/submit_to_wdsi.py --all"),
+            (
+                "C:\\Users\\dev\\.cargo\\bin\\cargo.exe",
+                "cargo.exe build --release",
+            ),
+            (
+                "C:\\Python312\\python.exe",
+                "python.exe scripts/submit_to_wdsi.py --all",
+            ),
             ("/usr/bin/rustc", "rustc --edition 2021 src/lib.rs"),
-            ("C:\\Program Files\\nodejs\\node.exe", "node.exe dashboard/tests/webui_parity.test.mjs"),
+            (
+                "C:\\Program Files\\nodejs\\node.exe",
+                "node.exe dashboard/tests/webui_parity.test.mjs",
+            ),
             ("C:\\Program Files\\Git\\cmd\\git.exe", "git.exe status -s"),
-            ("C:\\Users\\dev\\.rustup\\toolchains\\stable\\bin\\rust-lld.exe", "rust-lld.exe -flavor link /OUT:target\\release\\osoosi.exe"),
-            ("C:\\Program Files (x86)\\Windows Kits\\10\\bin\\x64\\signtool.exe", "signtool.exe sign /fd SHA256 target\\release\\osoosi.exe"),
-            ("C:\\Users\\dev\\wix_tools\\wix.exe", "wix.exe build wix\\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi"),
+            (
+                "C:\\Users\\dev\\.rustup\\toolchains\\stable\\bin\\rust-lld.exe",
+                "rust-lld.exe -flavor link /OUT:target\\release\\osoosi.exe",
+            ),
+            (
+                "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\x64\\signtool.exe",
+                "signtool.exe sign /fd SHA256 target\\release\\osoosi.exe",
+            ),
+            (
+                "C:\\Users\\dev\\wix_tools\\wix.exe",
+                "wix.exe build wix\\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi",
+            ),
         ] {
             let ev = make_proc_event(img, cmd);
-            let res = voter.vote(&ev).await.expect("Dev tool must trigger Merkle veto vote");
+            let res = voter
+                .vote(&ev)
+                .await
+                .expect("Dev tool must trigger Merkle veto vote");
             assert_eq!(res.confidence, 0.0);
-            assert!(res.weight <= -1.0, "Expected veto weight <= -1.0, got {}", res.weight);
+            assert!(
+                res.weight <= -1.0,
+                "Expected veto weight <= -1.0, got {}",
+                res.weight
+            );
             assert!(res.reason.contains("[DualChannel-Merkle-Veto]"));
         }
 
         // 1b. Workspace build artifact (target/release/*.exe) verified and adapted across recompiles via AdaptiveDevMerkleGuard
-        let temp_ws = std::env::temp_dir().join("osoosi_voter_ws_test").join("target").join("release");
+        let temp_ws = std::env::temp_dir()
+            .join("osoosi_voter_ws_test")
+            .join("target")
+            .join("release");
         let _ = std::fs::create_dir_all(&temp_ws);
         let ws_bin = temp_ws.join("osoosi_custom_bin.exe");
-        std::fs::write(&ws_bin, b"MZ\x90\x00WORKSPACE_BUILD_EPOCH_1").unwrap();
+        let make_valid_rust_bin = |marker: &[u8]| -> Vec<u8> {
+            let mut elf = vec![0u8; 8192];
+            elf[0..4].copy_from_slice(b"\x7FELF");
+            elf[4] = 2;
+            elf[5] = 1;
+            elf[6] = 1;
+            elf[16..18].copy_from_slice(&3u16.to_le_bytes());
+            elf[18..20].copy_from_slice(&0x3Eu16.to_le_bytes());
+            elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+            elf[24..32].copy_from_slice(&0x1000u64.to_le_bytes());
+            elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+            elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+            elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+            elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+            let ph = 64;
+            elf[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes());
+            elf[ph + 4..ph + 8].copy_from_slice(&5u32.to_le_bytes());
+            elf[ph + 8..ph + 16].copy_from_slice(&4096u64.to_le_bytes());
+            elf[ph + 16..ph + 24].copy_from_slice(&0x1000u64.to_le_bytes());
+            elf[ph + 24..ph + 32].copy_from_slice(&0x1000u64.to_le_bytes());
+            elf[ph + 32..ph + 40].copy_from_slice(&4096u64.to_le_bytes());
+            elf[ph + 40..ph + 48].copy_from_slice(&4096u64.to_le_bytes());
+            elf[ph + 48..ph + 56].copy_from_slice(&4096u64.to_le_bytes());
+            elf[4096..4096 + marker.len()].copy_from_slice(marker);
+            elf
+        };
+        std::fs::write(
+            &ws_bin,
+            make_valid_rust_bin(b"rustc 1.85.0 .dep-v0 WORKSPACE_BUILD_EPOCH_1"),
+        )
+        .unwrap();
         let ws_bin_str = ws_bin.to_string_lossy().to_string();
 
         let ev_ws_v1 = HostSecurityEvent {
@@ -3867,17 +3933,38 @@ mod tests {
             }),
             causal_parent: None,
         };
-        let res_ws_v1 = voter.vote(&ev_ws_v1).await.expect("Workspace build artifact must receive Adaptive-Merkle-Guard veto");
+        let res_ws_v1 = voter
+            .vote(&ev_ws_v1)
+            .await
+            .expect("Workspace build artifact must receive Adaptive-Merkle-Guard veto");
         assert_eq!(res_ws_v1.confidence, 0.0);
         assert!(res_ws_v1.weight <= -1.30);
         assert!(res_ws_v1.reason.contains("[Adaptive-Merkle-Guard]"));
 
-        // Recompile the binary in place and verify automatic Merkle root rotation (Epoch 2)
-        std::fs::write(&ws_bin, b"MZ\x90\x00WORKSPACE_BUILD_EPOCH_2_RECOMPILED").unwrap();
-        let res_ws_v2 = voter.vote(&ev_ws_v1).await.expect("Recompiled workspace binary must rotate Merkle root");
+        // Recompile the binary in place with valid compiler provenance and verify automatic Merkle root rotation (Epoch 2)
+        std::fs::write(
+            &ws_bin,
+            make_valid_rust_bin(b"rustc 1.85.0 .dep-v0 WORKSPACE_BUILD_EPOCH_2_RECOMPILED"),
+        )
+        .unwrap();
+        let res_ws_v2 = voter
+            .vote(&ev_ws_v1)
+            .await
+            .expect("Recompiled workspace binary must rotate Merkle root");
         assert_eq!(res_ws_v2.confidence, 0.0);
         assert!(res_ws_v2.weight <= -1.30);
         assert!(res_ws_v2.reason.contains("epoch=2"));
+
+        // Overwrite with unauthorized non-compiler payload -> must emit high-confidence tamper alert (0.96)
+        std::fs::write(&ws_bin, b"MZ\x90\x00UNAUTHORIZED_SHELLCODE_TAMPER").unwrap();
+        let res_ws_tampered = voter
+            .vote(&ev_ws_v1)
+            .await
+            .expect("Unauthorized binary tampering must emit high-confidence alert");
+        assert_eq!(res_ws_tampered.confidence, 0.96);
+        assert!(res_ws_tampered
+            .reason
+            .contains("[Adaptive-Merkle-Tamper-Alert]"));
         let _ = std::fs::remove_dir_all(std::env::temp_dir().join("osoosi_voter_ws_test"));
 
         // 2. Developer tool abused with inline code (`python -c "..."`) + runtime RWX memory transition
@@ -3901,7 +3988,9 @@ mod tests {
             .expect("Inline code + RWX transition must trigger positive S1/S2 vote");
         assert!(res_abused.confidence >= 0.82);
         assert!(res_abused.weight > 1.0);
-        assert!(res_abused.reason.contains("[DualChannel-S1S2-Discriminator]"));
+        assert!(res_abused
+            .reason
+            .contains("[DualChannel-S1S2-Discriminator]"));
 
         // 3. Static high-entropy binary at rest without runtime transition (S2 == 0) must NOT false-positive.
         let ev_static_only = HostSecurityEvent {
@@ -4039,6 +4128,3 @@ impl MartingaleZeroDriftDetector {
         }
     }
 }
-
-
-

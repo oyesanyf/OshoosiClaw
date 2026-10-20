@@ -6,7 +6,7 @@
 //! Define either `patches()` returning array of `#{offset, hex}` or `apply()` to patch in-place.
 
 use anyhow::{Context, Result};
-use rhai::{Engine, EvalAltResult, Scope, Dynamic, Array, Map};
+use rhai::{Array, Dynamic, Engine, EvalAltResult, Map, Scope};
 use std::path::Path;
 use tracing::info;
 
@@ -49,23 +49,27 @@ pub fn hex_patch(script_path: &Path, target_path: &Path) -> Result<()> {
     scope.push("buffer", buffer);
 
     // Compile script AST
-    let ast = engine.compile(&script).map_err(|e| {
-        anyhow::anyhow!("Script error: {}", e)
-    })?;
+    let ast = engine
+        .compile(&script)
+        .map_err(|e| anyhow::anyhow!("Script error: {}", e))?;
 
     // Try patches() first
     let has_patches = engine.call_fn::<Array>(&mut scope, &ast, "patches", ());
     if let Ok(patches) = has_patches {
-        let buffer = scope.get_value::<PatchBuffer>("buffer")
+        let buffer = scope
+            .get_value::<PatchBuffer>("buffer")
             .ok_or_else(|| anyhow::anyhow!("'buffer' missing in scope"))?;
         for (i, entry) in patches.iter().enumerate() {
-            let map = entry.clone().try_cast::<Map>().ok_or_else(|| {
-                anyhow::anyhow!("patches()[{}] must be map {{offset, hex}}", i)
-            })?;
-            let offset: i64 = map.get("offset")
+            let map = entry
+                .clone()
+                .try_cast::<Map>()
+                .ok_or_else(|| anyhow::anyhow!("patches()[{}] must be map {{offset, hex}}", i))?;
+            let offset: i64 = map
+                .get("offset")
                 .and_then(|v| v.as_int().ok())
                 .ok_or_else(|| anyhow::anyhow!("patches()[{}] missing 'offset'", i))?;
-            let hex: String = map.get("hex")
+            let hex: String = map
+                .get("hex")
                 .and_then(|v| v.clone().into_string().ok())
                 .ok_or_else(|| anyhow::anyhow!("patches()[{}] missing 'hex'", i))?;
             buffer.patch(offset as usize, &hex)?;
@@ -74,12 +78,11 @@ pub fn hex_patch(script_path: &Path, target_path: &Path) -> Result<()> {
     } else if engine.call_fn::<()>(&mut scope, &ast, "apply", ()).is_ok() {
         // apply() ran
     } else {
-        anyhow::bail!(
-            "Script must define patches() or apply(). See osoosi-hexpatch docs."
-        );
+        anyhow::bail!("Script must define patches() or apply(). See osoosi-hexpatch docs.");
     }
 
-    let buffer = scope.get_value::<PatchBuffer>("buffer")
+    let buffer = scope
+        .get_value::<PatchBuffer>("buffer")
         .ok_or_else(|| anyhow::anyhow!("'buffer' missing in scope"))?;
     let data = buffer.into_data();
     std::fs::write(target_path, &data)
@@ -113,11 +116,21 @@ pub fn hex_patch_find_replace(target_path: &Path, find_hex: &str, replace_hex: &
     }
     let count = offsets.len();
     if count == 0 {
-        anyhow::bail!("Pattern {:?} not found in {}", find_hex, target_path.display());
+        anyhow::bail!(
+            "Pattern {:?} not found in {}",
+            find_hex,
+            target_path.display()
+        );
     }
     std::fs::write(target_path, &data)
         .with_context(|| format!("Failed to write target: {}", target_path.display()))?;
-    info!("Patched {} ({} occurrence(s) of {} -> {})", target_path.display(), count, find_hex, replace_hex);
+    info!(
+        "Patched {} ({} occurrence(s) of {} -> {})",
+        target_path.display(),
+        count,
+        find_hex,
+        replace_hex
+    );
     Ok(())
 }
 
@@ -156,17 +169,25 @@ pub fn hex_patch_dynamic(target_path: &Path, find_hex: &str, replace_hex: &str) 
     engine.register_fn("patch", buffer_patch);
     scope.push("buffer", buffer);
 
-    let ast = engine.compile(&script)
+    let ast = engine
+        .compile(&script)
         .map_err(|e| anyhow::anyhow!("Generated script error: {}", e))?;
-    engine.call_fn::<()>(&mut scope, &ast, "apply", ())
+    engine
+        .call_fn::<()>(&mut scope, &ast, "apply", ())
         .map_err(|e| anyhow::anyhow!("apply() failed: {}", e))?;
 
-    let data = scope.get_value::<PatchBuffer>("buffer")
+    let data = scope
+        .get_value::<PatchBuffer>("buffer")
         .ok_or_else(|| anyhow::anyhow!("'buffer' missing in scope"))?
         .into_data();
     std::fs::write(target_path, &data)
         .with_context(|| format!("Failed to write target: {}", target_path.display()))?;
-    info!("Patched {} (dynamic find {} -> {})", target_path.display(), find_hex, replace_hex);
+    info!(
+        "Patched {} (dynamic find {} -> {})",
+        target_path.display(),
+        find_hex,
+        replace_hex
+    );
     Ok(())
 }
 
@@ -192,7 +213,10 @@ impl PatchBuffer {
 
     pub fn patch(&self, offset: usize, hex: &str) -> Result<()> {
         let bytes = parse_hex(hex)?;
-        let mut data = self.data.lock().map_err(|_| anyhow::anyhow!("lock failed"))?;
+        let mut data = self
+            .data
+            .lock()
+            .map_err(|_| anyhow::anyhow!("lock failed"))?;
         if offset + bytes.len() > data.len() {
             anyhow::bail!(
                 "patch at offset 0x{:X} would exceed buffer (len={})",
@@ -206,35 +230,60 @@ impl PatchBuffer {
 }
 
 fn buffer_len(buffer: &mut PatchBuffer) -> Result<i64, Box<EvalAltResult>> {
-    let data = buffer.data.lock().map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
+    let data = buffer
+        .data
+        .lock()
+        .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
     Ok(data.len() as i64)
 }
 
 fn buffer_get(buffer: &mut PatchBuffer, offset: i64) -> Result<i64, Box<EvalAltResult>> {
-    let data = buffer.data.lock().map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
+    let data = buffer
+        .data
+        .lock()
+        .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
     if offset >= 0 && (offset as usize) < data.len() {
         Ok(data[offset as usize] as i64)
     } else {
-        Err(Box::<EvalAltResult>::from(format!("offset {} out of range", offset)))
+        Err(Box::<EvalAltResult>::from(format!(
+            "offset {} out of range",
+            offset
+        )))
     }
 }
 
 fn buffer_set(buffer: &mut PatchBuffer, offset: i64, byte: i64) -> Result<(), Box<EvalAltResult>> {
-    let mut data = buffer.data.lock().map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
-    if offset >= 0 && (offset as usize) < data.len() && byte >= 0 && byte <= 255 {
+    let mut data = buffer
+        .data
+        .lock()
+        .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
+    if offset >= 0 && (offset as usize) < data.len() && (0..=255).contains(&byte) {
         data[offset as usize] = byte as u8;
         Ok(())
     } else {
-        Err(Box::<EvalAltResult>::from(format!("offset {} or byte {} out of range", offset, byte)))
+        Err(Box::<EvalAltResult>::from(format!(
+            "offset {} or byte {} out of range",
+            offset, byte
+        )))
     }
 }
 
-fn buffer_set_bytes(buffer: &mut PatchBuffer, offset: i64, hex_str: &str) -> Result<(), Box<EvalAltResult>> {
+fn buffer_set_bytes(
+    buffer: &mut PatchBuffer,
+    offset: i64,
+    hex_str: &str,
+) -> Result<(), Box<EvalAltResult>> {
     let bytes = parse_hex(hex_str).map_err(|e| Box::<EvalAltResult>::from(e.to_string()))?;
-    let mut data = buffer.data.lock().map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
+    let mut data = buffer
+        .data
+        .lock()
+        .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
     let start = offset as usize;
     if start + bytes.len() > data.len() {
-        return Err(Box::<EvalAltResult>::from(format!("patch at offset {} would exceed buffer", offset)));
+        return Err(Box::<EvalAltResult>::from(format!(
+            "patch at offset {} would exceed buffer",
+            offset
+        )));
     }
     data[start..start + bytes.len()].copy_from_slice(&bytes);
     Ok(())
@@ -242,17 +291,28 @@ fn buffer_set_bytes(buffer: &mut PatchBuffer, offset: i64, hex_str: &str) -> Res
 
 fn buffer_find(buffer: &mut PatchBuffer, hex_pattern: &str) -> Result<Dynamic, Box<EvalAltResult>> {
     let pattern = parse_hex(hex_pattern).map_err(|e| Box::<EvalAltResult>::from(e.to_string()))?;
-    let data = buffer.data.lock().map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
-    let pos = data.windows(pattern.len()).position(|w| w == pattern.as_slice());
+    let data = buffer
+        .data
+        .lock()
+        .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
+    let pos = data
+        .windows(pattern.len())
+        .position(|w| w == pattern.as_slice());
     Ok(match pos {
         Some(p) => Dynamic::from(p as i64),
         None => Dynamic::UNIT,
     })
 }
 
-fn buffer_find_all(buffer: &mut PatchBuffer, hex_pattern: &str) -> Result<Array, Box<EvalAltResult>> {
+fn buffer_find_all(
+    buffer: &mut PatchBuffer,
+    hex_pattern: &str,
+) -> Result<Array, Box<EvalAltResult>> {
     let pattern = parse_hex(hex_pattern).map_err(|e| Box::<EvalAltResult>::from(e.to_string()))?;
-    let data = buffer.data.lock().map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
+    let data = buffer
+        .data
+        .lock()
+        .map_err(|_| Box::<EvalAltResult>::from("lock failed"))?;
     let mut offsets = Array::new();
     for (i, w) in data.windows(pattern.len()).enumerate() {
         if w == pattern.as_slice() {
@@ -262,13 +322,19 @@ fn buffer_find_all(buffer: &mut PatchBuffer, hex_pattern: &str) -> Result<Array,
     Ok(offsets)
 }
 
-fn buffer_patch(buffer: &mut PatchBuffer, offset: i64, hex_str: &str) -> Result<(), Box<EvalAltResult>> {
-    buffer.patch(offset as usize, hex_str).map_err(|e| Box::<EvalAltResult>::from(e.to_string()))
+fn buffer_patch(
+    buffer: &mut PatchBuffer,
+    offset: i64,
+    hex_str: &str,
+) -> Result<(), Box<EvalAltResult>> {
+    buffer
+        .patch(offset as usize, hex_str)
+        .map_err(|e| Box::<EvalAltResult>::from(e.to_string()))
 }
 
 fn parse_hex(s: &str) -> Result<Vec<u8>> {
-    let s = s.replace(' ', "").replace('\n', "").replace('\r', "");
-    if s.len() % 2 != 0 {
+    let s = s.replace([' ', '\n', '\r'], "");
+    if !s.len().is_multiple_of(2) {
         anyhow::bail!("hex string must have even length");
     }
     (0..s.len())

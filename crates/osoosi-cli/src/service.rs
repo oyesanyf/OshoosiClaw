@@ -78,11 +78,12 @@ pub fn force_terminate_service_pid() -> anyhow::Result<()> {
                     if let Ok(pid) = pid_str.trim().parse::<u32>() {
                         if pid > 4 {
                             info!("Force terminating stuck service PID {}", pid);
-                            let _ = Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
-                                .args(["/F", "/T", "/PID", &pid.to_string()])
-                                .stdout(std::process::Stdio::null())
-                                .stderr(std::process::Stdio::null())
-                                .status();
+                            let _ =
+                                Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
+                                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .status();
                             return Ok(());
                         }
                     }
@@ -377,7 +378,8 @@ pub fn install_service() -> anyhow::Result<()> {
     if exe != prog_files_exe {
         let _ = std::fs::copy(&exe, &prog_files_exe);
     }
-    let workspace_release_exe = std::path::Path::new(r"D:\harfile\OshoosiClaw\target\release\osoosi.exe");
+    let workspace_release_exe =
+        std::path::Path::new(r"D:\harfile\OshoosiClaw\target\release\osoosi.exe");
     if let Some(parent) = workspace_release_exe.parent() {
         if parent.exists() && exe != workspace_release_exe {
             let _ = std::fs::copy(&exe, workspace_release_exe);
@@ -429,14 +431,7 @@ pub fn install_service() -> anyhow::Result<()> {
     let _ = run_sc_cmd(&["description", SERVICE_NAME, SERVICE_DESCRIPTION]);
 
     // Clear forced failure auto-restart actions so stopping or terminating the service never auto-respawns it
-    let _ = run_sc_cmd(&[
-        "failure",
-        SERVICE_NAME,
-        "reset=",
-        "0",
-        "actions=",
-        "",
-    ]);
+    let _ = run_sc_cmd(&["failure", SERVICE_NAME, "reset=", "0", "actions=", ""]);
 
     // Grant Interactive Users (IU) and Authenticated Users (AU) service restart privileges without UAC errors
     let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
@@ -477,7 +472,10 @@ pub fn start_service() -> anyhow::Result<()> {
     }
     if let Ok(state) = query_service_state() {
         if state.contains("STOP_PENDING") {
-            warn!("Service '{}' is stuck in STOP_PENDING. Clearing stale process...", SERVICE_NAME);
+            warn!(
+                "Service '{}' is stuck in STOP_PENDING. Clearing stale process...",
+                SERVICE_NAME
+            );
             cleanup_stale_service_processes();
             let _ = force_terminate_service_pid();
             let wait_stop = std::time::Instant::now();
@@ -532,14 +530,7 @@ pub fn start_service() -> anyhow::Result<()> {
                     SERVICE_DISPLAY_NAME,
                 ]);
                 let _ = run_sc_cmd(&["description", SERVICE_NAME, SERVICE_DESCRIPTION]);
-                let _ = run_sc_cmd(&[
-                    "failure",
-                    SERVICE_NAME,
-                    "reset=",
-                    "0",
-                    "actions=",
-                    "",
-                ]);
+                let _ = run_sc_cmd(&["failure", SERVICE_NAME, "reset=", "0", "actions=", ""]);
                 let _ = run_sc_cmd(&[
                     "sdset",
                     SERVICE_NAME,

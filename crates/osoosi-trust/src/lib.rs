@@ -185,10 +185,8 @@ impl TrustManager {
 
     /// Generates a dual-anchored Post-Quantum `ML-DSA-65` + `Ed25519` hybrid signature over `payload`.
     pub fn generate_pqc_hybrid_attestation_signature(&self, payload: &[u8]) -> String {
-        let sig_bytes = osoosi_audit::pqc_primitives::hybrid_sign_bytes(
-            payload,
-            &self.signing_key.to_bytes(),
-        );
+        let sig_bytes =
+            osoosi_audit::pqc_primitives::hybrid_sign_bytes(payload, &self.signing_key.to_bytes());
         hex::encode(sig_bytes)
     }
 
@@ -201,9 +199,8 @@ impl TrustManager {
         let Ok(sig_bytes) = hex::decode(signature_hex) else {
             return false;
         };
-        let vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(
-            &self.signing_key.to_bytes(),
-        );
+        let vk =
+            osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(&self.signing_key.to_bytes());
         osoosi_audit::pqc_primitives::hybrid_verify_bytes(payload, &sig_bytes, &vk)
     }
 

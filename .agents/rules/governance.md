@@ -39,3 +39,8 @@ model: gemini-3.1-pro
      1. **Build & Sync All Packages**: Rebuild Windows (`OshoosiClaw.msi`), Linux (`.deb`, `.rpm`, `.tar.gz` via WSL `packaging/linux/build_packages.sh`), and the hardened Docker image (`ghcr.io/oyesanyf/oshoosiclaw:1.2.0`), and sync signed release assets to GitHub Releases.
      2. **Verify Security Invariants**: Audit for zero auth regressions, zero token leaks, zero async `blocking_read()`/`blocking_write()` panics, and strict non-root (`65532:65532`) read-only container confinement.
      3. **Update Documentation & Diagrams**: Update `README.md` and `mermaid` architecture diagrams to reflect all new capabilities, security hardening, and packaging workflows.
+
+7. **Strict Invariant: Zero-Wait Incremental Commits & PR/Workflow Health**:
+   - **User Preferences**: `"NO COMMIT SHOULD WAIT , WE MAY LOSE CODE CHANGE"` and `"ALWAY FIX PR AND WORKFLOW ISSUES"`.
+   - Commit and ship incremental checkpoints immediately via `scripts/solo_pr_ship.ps1` rather than batching uncommitted changes across long runs; verify `git status -s` is empty at the end of every turn.
+   - Continuously check open Pull Requests and GitHub Actions workflow runs; immediately diagnose and fix any failing GitHub Actions workflow, CI check, or blocked PR until merged and green.

@@ -1,6 +1,6 @@
-use dashmap::DashMap;
 #[cfg(target_os = "windows")]
 use chrono::Utc;
+use dashmap::DashMap;
 #[cfg(target_os = "windows")]
 use ferrisetw::parser::*;
 #[cfg(target_os = "windows")]
@@ -223,9 +223,13 @@ impl NativeTelemetryEngine {
                                     let parser = Parser::create(event, &schema);
                                     let pid: u32 = parser
                                         .try_parse::<u32>("ProcessID")
-                                        .or_else(|_| parser.try_parse::<u64>("ProcessID").map(|v| v as u32))
+                                        .or_else(|_| {
+                                            parser.try_parse::<u64>("ProcessID").map(|v| v as u32)
+                                        })
                                         .or_else(|_| parser.try_parse::<u32>("ProcessId"))
-                                        .or_else(|_| parser.try_parse::<u64>("ProcessId").map(|v| v as u32))
+                                        .or_else(|_| {
+                                            parser.try_parse::<u64>("ProcessId").map(|v| v as u32)
+                                        })
                                         .or_else(|_| parser.try_parse::<u32>("PID"))
                                         .unwrap_or_else(|_| event.process_id());
                                     let parent_pid: u32 = parser
@@ -363,14 +367,24 @@ impl NativeTelemetryEngine {
 
                                         if image.is_empty() || image == "unknown" {
                                             if pid == 4 {
-                                                image = "C:\\Windows\\System32\\ntoskrnl.exe".to_string();
-                                                data.insert("ProcessName".to_string(), serde_json::json!("System"));
+                                                image = "C:\\Windows\\System32\\ntoskrnl.exe"
+                                                    .to_string();
+                                                data.insert(
+                                                    "ProcessName".to_string(),
+                                                    serde_json::json!("System"),
+                                                );
                                             } else if pid == 0 {
                                                 image = "System Idle Process".to_string();
-                                                data.insert("ProcessName".to_string(), serde_json::json!("Idle"));
+                                                data.insert(
+                                                    "ProcessName".to_string(),
+                                                    serde_json::json!("Idle"),
+                                                );
                                             } else if pid > 4 {
-                                                let (live_img, _) = query_live_process_image_and_cmdline(pid);
-                                                if let Some(li) = live_img.filter(|s| !s.is_empty() && s != "unknown") {
+                                                let (live_img, _) =
+                                                    query_live_process_image_and_cmdline(pid);
+                                                if let Some(li) = live_img
+                                                    .filter(|s| !s.is_empty() && s != "unknown")
+                                                {
                                                     image = li;
                                                 } else {
                                                     image = format!("Process-{}", pid);
@@ -380,7 +394,10 @@ impl NativeTelemetryEngine {
                                             }
                                         }
 
-                                        data.insert("ProcessId".to_string(), serde_json::json!(pid));
+                                        data.insert(
+                                            "ProcessId".to_string(),
+                                            serde_json::json!(pid),
+                                        );
                                         data.insert("Image".to_string(), serde_json::json!(image));
                                         data.insert(
                                             "ProcessLifetimeMs".to_string(),
@@ -693,14 +710,12 @@ fn is_suspicious_initial_process(image: &str, cmdline: &str) -> bool {
             || cmd_l.contains("krshowkeymgr")
             || (cmd_l.contains("comsvcs") && cmd_l.contains("minidump"))))
         || img_l.ends_with("credwiz.exe")
-        || (img_l.ends_with("vaultcmd.exe")
-            && (cmd_l.contains("/list") || cmd_l.contains("-list")))
+        || (img_l.ends_with("vaultcmd.exe") && (cmd_l.contains("/list") || cmd_l.contains("-list")))
         || cmd_l.contains("sekurlsa")
         || cmd_l.contains("lsadump")
         || img_l.ends_with("mimikatz.exe")
         || (img_l.ends_with("procdump.exe") && cmd_l.contains("lsass"))
-        || (img_l.ends_with("ntdsutil.exe")
-            && (cmd_l.contains("ifm") || cmd_l.contains("ntds")))
+        || (img_l.ends_with("ntdsutil.exe") && (cmd_l.contains("ifm") || cmd_l.contains("ntds")))
         || (img_l.ends_with("cmdkey.exe") && (cmd_l.contains("/list") || cmd_l.contains("-l")))
 }
 

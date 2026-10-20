@@ -11,6 +11,12 @@
 //!    hybrid signature envelope (`HybridSignatureEnvelope`).
 //! 4. **Explicit `impl Drop` `write_volatile` Zeroization** of all secret seeds and private keys.
 
+#![allow(
+    clippy::needless_range_loop,
+    clippy::needless_borrows_for_generic_args,
+    clippy::wrong_self_convention
+)]
+
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -356,7 +362,8 @@ impl Poly3329 {
             let mut t = [0u16; 4];
             for j in 0..4 {
                 let x = self.coeffs[4 * i + j] as u32;
-                t[j] = ((((x << 10) + (MLKEM768_Q as u32 / 2)) / (MLKEM768_Q as u32)) & 0x3ff) as u16;
+                t[j] =
+                    ((((x << 10) + (MLKEM768_Q as u32 / 2)) / (MLKEM768_Q as u32)) & 0x3ff) as u16;
             }
             out[5 * i] = (t[0] & 0xff) as u8;
             out[5 * i + 1] = ((t[0] >> 8) | ((t[1] & 0x3f) << 2)) as u8;
@@ -611,7 +618,7 @@ pub fn mlkem_decapsulate(ciphertext: &[u8], mlkem_seed: &[u8; 32]) -> Result<[u8
         ));
     }
 
-    let ( _rho, sigma, z_reject) = expand_mlkem_seed(mlkem_seed);
+    let (_rho, sigma, z_reject) = expand_mlkem_seed(mlkem_seed);
     let s = [
         Poly3329::sample_cbd2(&sigma, 0),
         Poly3329::sample_cbd2(&sigma, 1),
@@ -1125,7 +1132,9 @@ pub fn hybrid_verify_envelope(
     );
     let key_matches_commitment: bool = envelope_vk_commitment.ct_eq(expected_key).into();
     let derived_seed_commitment = derive_hybrid_verifying_key(expected_key);
-    let key_matches_seed: bool = envelope_vk_commitment.ct_eq(&derived_seed_commitment).into();
+    let key_matches_seed: bool = envelope_vk_commitment
+        .ct_eq(&derived_seed_commitment)
+        .into();
     if !key_matches_commitment && !key_matches_seed {
         return false;
     }
@@ -1228,7 +1237,8 @@ pub fn generate_pqc_cbom_report() -> CryptographicBillOfMaterials {
             CbomPrimitiveEntry {
                 subsystem: "osoosi-wire P2P Mesh Key Exchange".to_string(),
                 classical_algorithm: "X25519 (RFC 7748 Curve25519)".to_string(),
-                post_quantum_algorithm: "ML-KEM-768 (Kyber-768 Module-LWE, q=3329, k=3)".to_string(),
+                post_quantum_algorithm: "ML-KEM-768 (Kyber-768 Module-LWE, q=3329, k=3)"
+                    .to_string(),
                 nist_standard: "NIST FIPS 203 + RFC 7748".to_string(),
                 security_category: "NIST PQC Category 3 (~AES-192 equivalent)".to_string(),
                 shor_resistant: true,
@@ -1237,27 +1247,33 @@ pub fn generate_pqc_cbom_report() -> CryptographicBillOfMaterials {
             CbomPrimitiveEntry {
                 subsystem: "osoosi-wire & osoosi-trust Mesh Attestation Signatures".to_string(),
                 classical_algorithm: "Ed25519 (RFC 8032)".to_string(),
-                post_quantum_algorithm: "ML-DSA-65 (Dilithium Module-SIS/LWE, q=8380417)".to_string(),
+                post_quantum_algorithm: "ML-DSA-65 (Dilithium Module-SIS/LWE, q=8380417)"
+                    .to_string(),
                 nist_standard: "NIST FIPS 204 + RFC 8032".to_string(),
                 security_category: "NIST PQC Category 3".to_string(),
                 shor_resistant: true,
                 grover_resistant: true,
             },
             CbomPrimitiveEntry {
-                subsystem: "osoosi-audit TPM 2.0 + PQC Dual-Anchored Merkle Root Signer".to_string(),
+                subsystem: "osoosi-audit TPM 2.0 + PQC Dual-Anchored Merkle Root Signer"
+                    .to_string(),
                 classical_algorithm: "TPM 2.0 Handle 0x81010002 + Ed25519".to_string(),
                 post_quantum_algorithm: "ML-DSA-65 over SHA256(BLAKE3_Root)".to_string(),
                 nist_standard: "NIST FIPS 204 + TPM 2.0 Rev 1.59".to_string(),
-                security_category: "NIST PQC Category 3 + Hardware Anti-Rollback NV 0x01800001".to_string(),
+                security_category: "NIST PQC Category 3 + Hardware Anti-Rollback NV 0x01800001"
+                    .to_string(),
                 shor_resistant: true,
                 grover_resistant: true,
             },
             CbomPrimitiveEntry {
                 subsystem: "osoosi-dp Zero-Knowledge BFT Quarantine Proof (Law 10)".to_string(),
                 classical_algorithm: "Schnorr-BLAKE3 Fiat-Shamir Commitment".to_string(),
-                post_quantum_algorithm: "ML-DSA-65 + BLAKE3-256 Hash-Based Transcript Binding".to_string(),
-                nist_standard: "NIST FIPS 204 + BLAKE3 (128-bit Grover Preimage Resistance)".to_string(),
-                security_category: "NIST PQC Category 3 / 128-bit Quantum Hash Security".to_string(),
+                post_quantum_algorithm: "ML-DSA-65 + BLAKE3-256 Hash-Based Transcript Binding"
+                    .to_string(),
+                nist_standard: "NIST FIPS 204 + BLAKE3 (128-bit Grover Preimage Resistance)"
+                    .to_string(),
+                security_category: "NIST PQC Category 3 / 128-bit Quantum Hash Security"
+                    .to_string(),
                 shor_resistant: true,
                 grover_resistant: true,
             },
@@ -1288,7 +1304,10 @@ mod tests {
 
         let shared_ab = x25519_exchange(&alice_sk, &bob_pk);
         let shared_ba = x25519_exchange(&bob_sk, &alice_pk);
-        assert_eq!(shared_ab, shared_ba, "RFC 7748 X25519 ECDH must be commutative");
+        assert_eq!(
+            shared_ab, shared_ba,
+            "RFC 7748 X25519 ECDH must be commutative"
+        );
         assert_ne!(shared_ab, [0u8; 32]);
     }
 
@@ -1303,13 +1322,18 @@ mod tests {
         let (shared_enc, mut ct) = mlkem_encapsulate(&pk, &coin);
         assert_eq!(ct.len(), MLKEM768_CIPHERTEXT_BYTES);
 
-        let shared_dec = mlkem_decapsulate(&ct, &seed).expect("Valid ML-KEM-768 ciphertext must decapsulate");
-        assert_eq!(shared_enc, shared_dec, "ML-KEM-768 encaps/decaps must recover exact shared secret");
+        let shared_dec =
+            mlkem_decapsulate(&ct, &seed).expect("Valid ML-KEM-768 ciphertext must decapsulate");
+        assert_eq!(
+            shared_enc, shared_dec,
+            "ML-KEM-768 encaps/decaps must recover exact shared secret"
+        );
 
         // Also verify 32-byte seed-based encapsulation roundtrip canonicalizes h_pk identically
         let (shared_enc_seed, ct_seed) = mlkem_encapsulate(&seed, &coin);
         assert_eq!(shared_enc_seed, shared_enc);
-        let shared_dec_seed = mlkem_decapsulate(&ct_seed, &seed).expect("32-byte seed encapsulation must decapsulate");
+        let shared_dec_seed = mlkem_decapsulate(&ct_seed, &seed)
+            .expect("32-byte seed encapsulation must decapsulate");
         assert_eq!(shared_enc_seed, shared_dec_seed);
 
         // Modulus-boundary test (NIST FIPS 203 §7.2): set first 12-bit coefficient to q = 3329 (0x0D01)
@@ -1383,7 +1407,7 @@ mod tests {
 
         // 3. Modulus-boundary attack on ML-DSA-65 public key coefficient (q = 8380417):
         let mut boundary_env = hybrid_sign_envelope(msg, &sk_seed);
-        boundary_env.mldsa_t[0].coeffs[0] = (MLDSA_Q / 2) + 1;
+        boundary_env.mldsa_t[0].coeffs[0] = ((MLDSA_Q / 2) + 1) as i32;
         assert!(
             !hybrid_verify_envelope(msg, &boundary_env, &vk),
             "Out-of-range ML-DSA-65 public key coefficient at modulus boundary q=8380417 must be rejected"

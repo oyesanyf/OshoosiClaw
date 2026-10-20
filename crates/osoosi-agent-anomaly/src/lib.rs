@@ -4,6 +4,13 @@
 //! based on Google's Gemini Enterprise Agent AAD architecture and the OWASP Top 10
 //! for Agentic Applications (2026).
 
+#![allow(
+    clippy::unusual_byte_groupings,
+    clippy::needless_borrows_for_generic_args,
+    clippy::manual_div_ceil,
+    clippy::manual_is_multiple_of
+)]
+
 pub mod agentjacking_guard;
 pub mod atlas_arm;
 pub mod breakout_defense;

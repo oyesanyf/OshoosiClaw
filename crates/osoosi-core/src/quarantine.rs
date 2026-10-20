@@ -56,6 +56,7 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     let normalized = osoosi_types::normalize_nt_device_path(file_path);
     let path_lc = normalized.to_ascii_lowercase();
     if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
+        || osoosi_types::is_protected_os_shell_or_desktop_binary(&fname_lc)
         || crate::blocking_manager::is_protected_or_benign_system_path(&normalized)
         || path_lc.contains(r"\windows\")
         || path_lc.starts_with("c:\\windows\\")

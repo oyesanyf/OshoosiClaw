@@ -2,6 +2,8 @@
 //!
 //! Manages deception (Ghost Files), Tarpit (Throttling), and automated patching.
 
+#![allow(clippy::manual_c_str_literals)]
+
 pub mod deception;
 pub mod honeytokens;
 pub mod kernel_driver;

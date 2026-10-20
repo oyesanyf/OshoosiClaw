@@ -229,7 +229,9 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .unwrap_or(false)
         || (event.event_id >= 1
             && event.event_id <= 29
-            && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid") || event.data.contains_key("ProcessLifetimeMs")));
+            && (event.data.contains_key("UtcTime")
+                || event.data.contains_key("ProcessGuid")
+                || event.data.contains_key("ProcessLifetimeMs")));
 
     if is_sysmon {
         let event_id = event
@@ -1020,7 +1022,10 @@ mod tests {
         let ev = make_sysmon_event(
             5,
             vec![
-                ("Image", serde_json::json!(r"C:\Windows\System32\notepad.exe")),
+                (
+                    "Image",
+                    serde_json::json!(r"C:\Windows\System32\notepad.exe"),
+                ),
                 ("ProcessId", serde_json::json!(1234)),
             ],
         );
@@ -1057,4 +1062,3 @@ mod tests {
         assert!(s.contains("terminated."));
     }
 }
-

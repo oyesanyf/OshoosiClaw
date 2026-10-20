@@ -297,8 +297,14 @@ mod tests {
         assert_eq!(exact_simplex.cohomology_circulation, 0);
 
         // 2. Non-conservative proxy loop with harmonic circulation defect (\omega(i,j)=10, \omega(j,k)=90, \omega(i,k)=0)
-        let forged_simplex =
-            auditor.verify_2_simplex_exactness("arm_untrusted", "arm_worker", "ledger_sink", 10, 90, 0);
+        let forged_simplex = auditor.verify_2_simplex_exactness(
+            "arm_untrusted",
+            "arm_worker",
+            "ledger_sink",
+            10,
+            90,
+            0,
+        );
         assert!(!forged_simplex.is_exact_zero);
         assert_eq!(forged_simplex.boundary_squared_norm, 0);
         assert_eq!(forged_simplex.cohomology_circulation, 100);
