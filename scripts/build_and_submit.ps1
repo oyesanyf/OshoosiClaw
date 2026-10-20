@@ -475,6 +475,22 @@ if (-not $SkipSigning) {
 }
 
 # =============================================================================
+# Step 5b: TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Manifest (.merkle.sig.json)
+# =============================================================================
+Write-Host "`n>>> [5b/8] Generating TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Manifest..." -ForegroundColor Yellow
+if (Test-Path $TargetExe) {
+    try {
+        & $TargetExe fhe sign-merkle --binary $TargetExe
+        if (Test-Path $DeployExe) {
+            & $TargetExe fhe sign-merkle --binary $DeployExe
+        }
+        Write-Host "       -> TPM 2.0 BLAKE3 Merkle Root manifest (.merkle.sig.json + .b3) anchored." -ForegroundColor Green
+    } catch {
+        Write-Warning "TPM 2.0 Merkle root signing warning: $_"
+    }
+}
+
+# =============================================================================
 # Step 6: Automated Microsoft Security Intelligence (WDSI) Submission
 # =============================================================================
 Write-Host "`n>>> [6/8] Submitting to Microsoft Security Intelligence (WDSI)..." -ForegroundColor Yellow

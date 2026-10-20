@@ -56,4 +56,14 @@ struct ebpf_network_event {
     uint64_t timestamp_ns;
 };
 
+// 5-Sigma Kernel Quarantine Directive (24 bytes total)
+struct quarantine_directive {
+    uint64_t triggered_ts_ns;
+    uint32_t target_pid;
+    uint32_t sigma_x100; // Sigma significance scaled by 100 (e.g., 525 == 5.25 sigma)
+    uint32_t status;     // 1 = Armed, 2 = Signal Injected in Kernel
+    uint32_t _pad;       // Explicit 8-byte struct alignment (24 bytes total)
+};
+
 #endif // OSOOSI_EBPF_TYPES_H
+

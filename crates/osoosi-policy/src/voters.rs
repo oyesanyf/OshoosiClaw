@@ -3159,6 +3159,24 @@ impl MerkleAllowlistVetoGate {
         "rustc.exe",
         "rustup",
         "rustup.exe",
+        "rust-lld",
+        "rust-lld.exe",
+        "lld-link",
+        "lld-link.exe",
+        "link",
+        "link.exe",
+        "cl",
+        "cl.exe",
+        "clang",
+        "clang.exe",
+        "signtool",
+        "signtool.exe",
+        "wix",
+        "wix.exe",
+        "candle",
+        "candle.exe",
+        "light",
+        "light.exe",
         "python",
         "python.exe",
         "python3",
@@ -3287,18 +3305,29 @@ pub struct DualChannelProjection {
 }
 
 /// Dual-Channel Discrimination Voter (`S1` Static Structural Entropy vs. `S2` Runtime Privilege & Memory Transitions)
-/// coupled with a `MerkleAllowlistVetoGate` for noisy developer tools (`cargo.exe`, `python.exe`, `rustc.exe`, `node.exe`, `git.exe`).
+/// coupled with a `MerkleAllowlistVetoGate` for noisy developer tools (`cargo.exe`, `python.exe`, `rustc.exe`, `node.exe`, `git.exe`, `rust-lld.exe`, `signtool.exe`)
+/// and an `AdaptiveDevMerkleGuard` for live developer-recompiled workspace binaries (`target/release`, `target/debug`).
 ///
 /// Operates deterministically on discrete event states without continuous microsecond polling.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct DualChannelDiscriminationVoter {
     pub veto_gate: MerkleAllowlistVetoGate,
+    pub adaptive_merkle_guard: std::sync::Arc<osoosi_audit::nsrl_aslr_merkle::NsrlAslrMerkleGuard>,
+}
+
+impl Default for DualChannelDiscriminationVoter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DualChannelDiscriminationVoter {
     pub fn new() -> Self {
         Self {
             veto_gate: MerkleAllowlistVetoGate::new(),
+            adaptive_merkle_guard: std::sync::Arc::new(
+                osoosi_audit::nsrl_aslr_merkle::NsrlAslrMerkleGuard::new(),
+            ),
         }
     }
 
@@ -3349,7 +3378,11 @@ impl DualChannelDiscriminationVoter {
                 if !image.is_empty() {
                     let path = std::path::Path::new(image);
                     if path.is_file() {
-                        if let Ok(mut f) = std::fs::File::open(path) {
+                        // Use open_shared_for_merkle (FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                        // so entropy inspection never blocks cargo/rust-lld/signtool atomic file replacements!
+                        if let Ok(mut f) =
+                            osoosi_audit::nsrl_aslr_merkle::open_shared_for_merkle(path)
+                        {
                             use std::io::Read;
                             let mut buf = vec![0u8; 65536];
                             if let Ok(n) = f.read(&mut buf) {
@@ -3506,6 +3539,99 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
                     ),
                     weight: -1.25,
                 });
+            }
+
+            // 1b. Adaptive BLAKE3 Merkle Self-Defense & Dev-Recompile Auto-Adaptation for workspace build artifacts
+            let target_file = event
+                .data
+                .get("TargetFilename")
+                .or_else(|| event.data.get("TargetImage"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(image);
+            let norm_target = target_file.replace('\\', "/").to_ascii_lowercase();
+            let is_workspace_build_artifact = norm_target.contains("/target/release/")
+                || norm_target.contains("/target/debug/")
+                || norm_target.contains("osoosi-linux-target/release/");
+
+            if is_workspace_build_artifact && !matches!(event.event_id, 8 | 10 | 25) {
+                let target_path = std::path::Path::new(target_file);
+                if target_path.is_file() {
+                    let parent_proc = event
+                        .data
+                        .get("ParentImage")
+                        .or_else(|| event.data.get("ParentProcessName"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("cargo.exe")
+                        .to_string();
+                    let actor_proc = if !image.is_empty() && image != target_file {
+                        image.to_string()
+                    } else {
+                        "rust-lld.exe".to_string()
+                    };
+                    let provenance = osoosi_audit::nsrl_aslr_merkle::RecompileProvenance {
+                        parent_process_name: parent_proc,
+                        actor_process_name: actor_proc,
+                        in_workspace_target_dir: true,
+                        has_valid_authenticode_or_compiler_marker: true,
+                        user_auth_pin: None,
+                    };
+                    match self
+                        .adaptive_merkle_guard
+                        .verify_or_adapt_binary(target_path, Some(&provenance))
+                    {
+                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::BaselineInitialized {
+                            merkle_root,
+                            generation_epoch,
+                            nv_counter,
+                        }
+                        | osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::VerifiedUnchanged {
+                            merkle_root,
+                            generation_epoch,
+                            nv_counter,
+                        } => {
+                            return Some(VoteResult {
+                                confidence: 0.0,
+                                reason: format!(
+                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (epoch={}, nv_counter={}, root={}..); vetoing self-lockout.",
+                                    generation_epoch,
+                                    nv_counter,
+                                    &merkle_root[..12.min(merkle_root.len())]
+                                ),
+                                weight: -1.35,
+                            });
+                        }
+                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::DevRecompileAdapted {
+                            new_root,
+                            generation_epoch,
+                            nv_counter,
+                            ..
+                        } => {
+                            return Some(VoteResult {
+                                confidence: 0.0,
+                                reason: format!(
+                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (epoch={}, nv_counter={}, new_root={}..); TPM 2.0 Merkle root rotated.",
+                                    generation_epoch,
+                                    nv_counter,
+                                    &new_root[..12.min(new_root.len())]
+                                ),
+                                weight: -1.35,
+                            });
+                        }
+                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::UnauthorizedTampering {
+                            reason,
+                            ..
+                        } => {
+                            return Some(VoteResult {
+                                confidence: 0.96,
+                                reason: format!(
+                                    "[Adaptive-Merkle-Tamper-Alert]: {}",
+                                    reason
+                                ),
+                                weight: 1.50,
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -3722,7 +3848,7 @@ mod tests {
         let voter = DualChannelDiscriminationVoter::new();
         assert_eq!(voter.veto_gate.merkle_root().len(), 64);
 
-        // 1. Noisy developer tools (cargo.exe, python.exe, rustc.exe, node.exe, git.exe) without inline code
+        // 1. Noisy developer tools (cargo.exe, python.exe, rustc.exe, node.exe, git.exe, rust-lld.exe, signtool.exe, wix.exe) without inline code
         //    must pass the BLAKE3 Merkle allowlist inclusion proof and emit a negative veto vote (weight = -1.25).
         for (img, cmd) in [
             ("C:\\Users\\dev\\.cargo\\bin\\cargo.exe", "cargo.exe build --release"),
@@ -3730,6 +3856,9 @@ mod tests {
             ("/usr/bin/rustc", "rustc --edition 2021 src/lib.rs"),
             ("C:\\Program Files\\nodejs\\node.exe", "node.exe dashboard/tests/webui_parity.test.mjs"),
             ("C:\\Program Files\\Git\\cmd\\git.exe", "git.exe status -s"),
+            ("C:\\Users\\dev\\.rustup\\toolchains\\stable\\bin\\rust-lld.exe", "rust-lld.exe -flavor link /OUT:target\\release\\osoosi.exe"),
+            ("C:\\Program Files (x86)\\Windows Kits\\10\\bin\\x64\\signtool.exe", "signtool.exe sign /fd SHA256 target\\release\\osoosi.exe"),
+            ("C:\\Users\\dev\\wix_tools\\wix.exe", "wix.exe build wix\\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi"),
         ] {
             let ev = make_proc_event(img, cmd);
             let res = voter.vote(&ev).await.expect("Dev tool must trigger Merkle veto vote");
@@ -3737,6 +3866,38 @@ mod tests {
             assert!(res.weight <= -1.0, "Expected veto weight <= -1.0, got {}", res.weight);
             assert!(res.reason.contains("[DualChannel-Merkle-Veto]"));
         }
+
+        // 1b. Workspace build artifact (target/release/*.exe) verified and adapted across recompiles via AdaptiveDevMerkleGuard
+        let temp_ws = std::env::temp_dir().join("osoosi_voter_ws_test").join("target").join("release");
+        let _ = std::fs::create_dir_all(&temp_ws);
+        let ws_bin = temp_ws.join("osoosi_custom_bin.exe");
+        std::fs::write(&ws_bin, b"MZ\x90\x00WORKSPACE_BUILD_EPOCH_1").unwrap();
+        let ws_bin_str = ws_bin.to_string_lossy().to_string();
+
+        let ev_ws_v1 = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "Image": ws_bin_str,
+                "CommandLine": format!("{} --version", ws_bin_str),
+                "ParentImage": "C:\\Users\\dev\\.cargo\\bin\\cargo.exe"
+            }),
+            causal_parent: None,
+        };
+        let res_ws_v1 = voter.vote(&ev_ws_v1).await.expect("Workspace build artifact must receive Adaptive-Merkle-Guard veto");
+        assert_eq!(res_ws_v1.confidence, 0.0);
+        assert!(res_ws_v1.weight <= -1.30);
+        assert!(res_ws_v1.reason.contains("[Adaptive-Merkle-Guard]"));
+
+        // Recompile the binary in place and verify automatic Merkle root rotation (Epoch 2)
+        std::fs::write(&ws_bin, b"MZ\x90\x00WORKSPACE_BUILD_EPOCH_2_RECOMPILED").unwrap();
+        let res_ws_v2 = voter.vote(&ev_ws_v1).await.expect("Recompiled workspace binary must rotate Merkle root");
+        assert_eq!(res_ws_v2.confidence, 0.0);
+        assert!(res_ws_v2.weight <= -1.30);
+        assert!(res_ws_v2.reason.contains("epoch=2"));
+        let _ = std::fs::remove_dir_all(std::env::temp_dir().join("osoosi_voter_ws_test"));
 
         // 2. Developer tool abused with inline code (`python -c "..."`) + runtime RWX memory transition
         //    must NOT be vetoed and must trigger S1/S2 dual-channel discrimination!
@@ -3781,4 +3942,5 @@ mod tests {
         );
     }
 }
+
 

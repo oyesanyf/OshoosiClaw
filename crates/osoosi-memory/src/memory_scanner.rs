@@ -89,6 +89,8 @@ impl MemoryScanner {
         let handle_val = handle as usize;
 
         let mut base_addr_val = 0usize;
+        let mut buffer: Vec<u8> = Vec::with_capacity(64 * 1024);
+        const MAX_REGION_SCAN_BYTES: usize = 2 * 1024 * 1024;
         loop {
             let (is_commited, base_address, region_size) = {
                 let mut mem_info: winapi::um::winnt::MEMORY_BASIC_INFORMATION =
@@ -116,29 +118,41 @@ impl MemoryScanner {
                 )
             };
 
-            if is_commited {
-                let mut buffer = vec![0u8; region_size];
+            if is_commited && region_size > 0 {
+                let to_read = region_size.min(MAX_REGION_SCAN_BYTES);
+                buffer.resize(to_read, 0u8);
                 let mut bytes_read = 0;
                 unsafe {
                     winapi::um::memoryapi::ReadProcessMemory(
                         handle_val as *mut _,
                         base_address as *mut _,
                         buffer.as_mut_ptr() as *mut _,
-                        region_size,
+                        to_read,
                         &mut bytes_read,
                     );
                 }
                 if bytes_read > 0 {
-                    if let Some(detection) = self.scan_buffer(&buffer[..bytes_read]).await {
+                    let valid_len = bytes_read.min(to_read);
+                    if let Some(detection) = self.scan_buffer(&buffer[..valid_len]).await {
                         results.push(format!("Detection at {:#x}: {}", base_address, detection));
                     }
                 }
             }
 
-            base_addr_val = base_address + region_size;
+            let Some(next_addr) = base_address.checked_add(region_size) else {
+                break;
+            };
+            if next_addr <= base_addr_val {
+                break;
+            }
+            base_addr_val = next_addr;
         }
 
+        buffer.clear();
+        buffer.shrink_to_fit();
+        std::mem::drop(buffer);
         unsafe { CloseHandle(handle_val as *mut _) };
+        results.shrink_to_fit();
         Ok(results)
     }
 
@@ -160,6 +174,7 @@ impl MemoryScanner {
         };
 
         let mut results = Vec::new();
+        let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);
 
         for line in maps_content.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
@@ -197,18 +212,20 @@ impl MemoryScanner {
                 let region_size = end.saturating_sub(start);
                 let to_read = region_size.min(2 * 1024 * 1024); // up to 2MB
 
-                if let Some(ref mut file) = mem_file {
-                    if file.seek(SeekFrom::Start(start as u64)).is_ok() {
-                        let mut buf = vec![0u8; to_read];
-                        if let Ok(bytes_read) = file.read(&mut buf) {
-                            if bytes_read > 0 {
-                                if let Some(detection) =
-                                    self.analyze_buffer(&buf[..bytes_read]).await
-                                {
-                                    results.push(format!(
-                                        "Detection at {:#x} (perms={}, path={}): {}",
-                                        start, perms, pathname, detection
-                                    ));
+                if to_read > 0 {
+                    if let Some(ref mut file) = mem_file {
+                        if file.seek(SeekFrom::Start(start as u64)).is_ok() {
+                            buf.resize(to_read, 0u8);
+                            if let Ok(bytes_read) = file.read(&mut buf) {
+                                if bytes_read > 0 {
+                                    if let Some(detection) =
+                                        self.analyze_buffer(&buf[..bytes_read]).await
+                                    {
+                                        results.push(format!(
+                                            "Detection at {:#x} (perms={}, path={}): {}",
+                                            start, perms, pathname, detection
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -224,6 +241,12 @@ impl MemoryScanner {
             }
         }
 
+        buf.clear();
+        buf.shrink_to_fit();
+        std::mem::drop(buf);
+        std::mem::drop(mem_file);
+        std::mem::drop(maps_content);
+        results.shrink_to_fit();
         Ok(results)
     }
 

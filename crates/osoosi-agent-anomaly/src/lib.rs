@@ -7,10 +7,12 @@
 pub mod agentjacking_guard;
 pub mod atlas_arm;
 pub mod breakout_defense;
+pub mod cedar_engine;
 pub mod classifier;
 pub mod containment_ring;
 pub mod detector;
 pub mod mercury_guard;
+pub mod mesh_guard;
 pub mod rasp;
 pub mod reasoner;
 pub mod screener;
@@ -25,15 +27,26 @@ pub use breakout_defense::{
     validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,
     UnifiedBreakoutEvaluation,
 };
+pub use cedar_engine::{
+    PolicyExecutionStep, VanishingPolynomialProof, VanishingPolynomialTraceVerifier,
+    MERSENNE_127_PRIME,
+};
 pub use classifier::{
     AgentClassificationRecord, AgentEvidenceSignal, DynamicAgentClassifier, OsqueryAgentDetector,
     SiqueryAgentDetector,
 };
-pub use containment_ring::{compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry};
+pub use containment_ring::{
+    compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry, DiracDeltaCapabilityTicket,
+    ZeroCopyImmutableToolBuffer,
+};
 pub use detector::AgentAnomalyDetector;
 pub use mercury_guard::{
     ActuationPoreClass, AmalgamRecord, DropletEvent, HostActuationPore, HostPoreInventory,
     MercuryContainmentEngine, MercuryLineageState, MercuryPhysicsVerdict, PassivationState,
+};
+pub use mesh_guard::{
+    HomologicalAgentNode, HomologicalBoundaryAuditor, HomologicalBoundaryVerdict,
+    HomologicalMessageEdge,
 };
 pub use reasoner::SemanticReasoningEngine;
 pub use screener::{ScreenerResult, SessionWindow, StatisticalScreener};

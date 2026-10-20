@@ -9769,6 +9769,26 @@ window.downloadHistoryExport = downloadHistoryExport;
  */
 window._reaRecentReports = [];
 
+function deduplicateReaReports(reports) {
+    if (!Array.isArray(reports)) return [];
+    const seen = new Set();
+    const out = [];
+    for (const r of reports) {
+        if (!r) continue;
+        const rawPath = String(r.target_path || r.target || '');
+        const baseName = rawPath.split(/[\\/]/).pop() || rawPath;
+        const keys = [
+            r.sha256 ? `sha256:${r.sha256}` : '',
+            r.blake3 ? `blake3:${r.blake3}` : '',
+            baseName ? `base:${baseName.toLowerCase()}` : '',
+        ].filter(Boolean);
+        if (keys.some(k => seen.has(k))) continue;
+        keys.forEach(k => seen.add(k));
+        out.push(r);
+    }
+    return out;
+}
+
 async function renderReaView() {
     try {
         const [statusRes, provRes] = await Promise.all([
@@ -9796,8 +9816,8 @@ async function renderReaView() {
                 </span>
             `).join('');
         }
-        const recent = (statusRes && (statusRes.investigations || statusRes.recent_reports)) || [];
-        if (Array.isArray(recent) && recent.length > 0) {
+        const recent = deduplicateReaReports((statusRes && (statusRes.investigations || statusRes.recent_reports)) || []);
+        if (recent.length > 0) {
             window._reaRecentReports = recent;
             renderReaReport(recent[0], 0);
         }
@@ -9824,15 +9844,23 @@ function renderReaReport(report, activeIdx = 0) {
         ? `<span class="badge purple" style="margin-left: 6px;" title="${escapeHtml(magikaInfo.description || '')}">Magika: ${escapeHtml(magikaInfo.label)} (${escapeHtml(magikaInfo.mime_type || '')})</span>`
         : '';
 
-    const recentList = Array.isArray(window._reaRecentReports) ? window._reaRecentReports : [];
+    const recentList = deduplicateReaReports(Array.isArray(window._reaRecentReports) ? window._reaRecentReports : []);
+    window._reaRecentReports = recentList;
     const recentSelectorHtml = recentList.length > 1 ? `
         <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,0.06);">
             <span style="font-size: 11px; color: var(--text-muted); align-self: center; margin-right: 4px;">Recent Autonomous Reports:</span>
             ${recentList.slice(0, 8).map((r, i) => {
                 const rawName = String(r.target_path || r.target || 'target');
-                const shortName = rawName.split(/[\\\\/]/).pop() || rawName;
+                const shortName = rawName.split(/[\\/]/).pop() || rawName;
+                const qMatch = shortName.match(/^\d{15,22}_([a-fA-F0-9]{8,64})\.quarantine$/);
+                const pillLabel = qMatch
+                    ? `quarantine:${qMatch[1].substring(0, 16)}`
+                    : shortName.substring(0, 28);
+                const pillTooltip = r.generated_at
+                    ? `Analyzed: ${r.generated_at} (${rawName})`
+                    : rawName;
                 const isSelected = i === activeIdx;
-                return `<button class="btn-secondary" onclick="selectReaRecentReport(${i})" style="font-size: 11px; padding: 3px 9px; border-color: ${isSelected ? '#38bdf8' : 'var(--glass-border)'}; background: ${isSelected ? 'rgba(56,189,248,0.16)' : 'rgba(255,255,255,0.04)'};">${escapeHtml(shortName.substring(0, 28))} <span style="opacity:0.7;">(${escapeHtml(r.detected_kind || 'auto')})</span></button>`;
+                return `<button class="btn-secondary" title="${escapeHtml(pillTooltip)}" onclick="selectReaRecentReport(${i})" style="font-size: 11px; padding: 3px 9px; border-color: ${isSelected ? '#38bdf8' : 'var(--glass-border)'}; background: ${isSelected ? 'rgba(56,189,248,0.16)' : 'rgba(255,255,255,0.04)'};">${escapeHtml(pillLabel)} <span style="opacity:0.7;">(${escapeHtml(r.detected_kind || 'auto')})</span></button>`;
             }).join('')}
         </div>
     ` : '';
@@ -9937,8 +9965,8 @@ async function runReaAutonomousSweep() {
             body: JSON.stringify({})
         });
         const data = await res.json();
-        const list = (data && (data.reports || data.investigations)) || [];
-        if (Array.isArray(list) && list.length > 0) {
+        const list = deduplicateReaReports((data && (data.reports || data.investigations)) || []);
+        if (list.length > 0) {
             window._reaRecentReports = list;
             await renderReaView();
         } else {

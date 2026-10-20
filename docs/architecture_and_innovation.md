@@ -191,6 +191,23 @@ graph TD
 | Socket + connect sequences | C2 network beaconing |
 | LSASS / SAM references | Credential harvesting |
 
+### 7. Dual-Stage $5\sigma$ Kernel Quarantine & Autonomous REA Forensics
+
+When an anomalous process exhibits a $5\sigma$ ($z \ge 5.0$) deviation across hardware telemetry or Axion deterministic canary traps, OpenỌ̀ṣọ́ọ̀sì executes a zero-escape **Dual-Stage Kernel Quarantine** paired with **Autonomous REA (Reverse Engineer Anything)** memory forensics:
+
+```mermaid
+flowchart LR
+    A["5-Sigma Anomaly Detected<br/>(z >= 5.0 / Canary Trap)"] --> B["Stage 1: eBPF Kernel Enforcement<br/>(quarantine_targets BPF Map + bpf_send_signal SIGSTOP)"]
+    B --> C["Stage 2: Pre-Armed Cgroup v2 Freezer<br/>(/sys/fs/cgroup/osoosi_quarantine/cgroup.procs)"]
+    C --> D["FrozenProcessForensicCollector<br/>(/proc/pid/maps + /proc/pid/mem RWXP + /proc/pid/syscall)"]
+    D --> E["Autonomous REA YARA-X Synthesis<br/>(synthesize_yara_from_raw_payload)"]
+    E --> F["libp2p GossipSub + Nostr Broadcast<br/>(Instant Fleet Immunization)"]
+```
+
+- **Stage 1 (In-Kernel eBPF `SIGSTOP` + Hardware PMU Watchdog)**: `quarantine_targets` (`BPF_MAP_TYPE_HASH`, 10,240 entries) triggers `bpf_send_signal(SIGSTOP)` across all hot syscall entry tracepoints (`connect`, `mprotect`, `ptrace`, `mmap`, `memfd_create`) and `SEC("perf_event")` hardware PMU cycle counters (`osoosi_pmu_watchdog`), stopping threads at the kernel/CPU boundary even if they spin in user-space without issuing syscalls.
+- **Stage 2 (Pre-Armed Cgroup v2 Freezer in `< 50 µs`)**: `QuarantineResponder` keeps `/sys/fs/cgroup/osoosi_quarantine/cgroup.procs` open and `cgroup.freeze` pre-armed with `"1\n"`, migrating the target TGID with a single stack-formatted `write_all` syscall while strictly enforcing the Host OS & Developer Immunity Veto (`PID <= 4`, `systemd`, `osoosi`, `sshd`, `cargo`, `rustc`).
+- **Frozen Process Forensics & Fleet Broadcast**: `FrozenProcessForensicCollector` extracts unbacked `rwxp` shellcode and instruction pointers (`RIP`/`RSP`) from the frozen process, synthesizes a YARA-X signature via `AutonomousReaEngine`, and broadcasts the indicator across the P2P and Nostr mesh.
+
 ---
 
 ## 🏗️ System Architecture

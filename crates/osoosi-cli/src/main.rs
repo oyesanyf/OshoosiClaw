@@ -490,6 +490,21 @@ pub enum FheAction {
         #[arg(short = 's', long)]
         seq: u64,
     },
+    /// Sign or verify a binary's 32-byte BLAKE3 Merkle Root via the TPM 2.0 Hardware Root-of-Trust (0x81010002 / MS_PLATFORM_CRYPTO_PROVIDER)
+    SignMerkle {
+        /// Path to the binary to measure and sign
+        #[arg(short = 'b', long)]
+        binary: String,
+        /// Generation epoch (defaults to 1)
+        #[arg(short = 'e', long, default_value_t = 1)]
+        epoch: u64,
+        /// Optional userAuth PIN for TPM Policy 1 authorization
+        #[arg(long)]
+        pin: Option<String>,
+        /// Verify an existing <binary>.merkle.sig.json manifest instead of signing
+        #[arg(long)]
+        verify: bool,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -2096,6 +2111,60 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     Err(e) => {
                         eprintln!("❌ Failed to retrieve audit proof for seq {}: {}", seq, e);
                         std::process::exit(1);
+                    }
+                }
+            }
+            FheAction::SignMerkle {
+                binary,
+                epoch,
+                pin,
+                verify,
+            } => {
+                let signer = osoosi_core::osoosi_audit::nsrl_aslr_merkle::Tpm2MerkleRootSigner::new();
+                let bin_path = Path::new(binary);
+                if *verify {
+                    match signer.verify_binary_against_manifest(bin_path) {
+                        Ok(nv_counter) => {
+                            println!("============================================================");
+                            println!("  TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Verification");
+                            println!("============================================================");
+                            println!("Binary:                 {}", bin_path.display());
+                            println!("TPM Provider:           {}", signer.provider_name());
+                            println!("TPM Persistent Handle:  0x{:08X}", signer.key_handle());
+                            println!("NV Monotonic Counter:   {}", nv_counter);
+                            println!("Verification Status:    ✅ VALID (Hardware Signature + Anti-Rollback Verified)");
+                            println!("============================================================");
+                        }
+                        Err(e) => {
+                            eprintln!("❌ TPM 2.0 Merkle signature verification failed for {}: {}", bin_path.display(), e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    match signer.sign_and_export_binary_manifest(
+                        bin_path,
+                        *epoch,
+                        pin.as_deref(),
+                    ) {
+                        Ok(manifest) => {
+                            println!("============================================================");
+                            println!("  TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Manifest");
+                            println!("============================================================");
+                            println!("Binary:                 {}", manifest.binary_path);
+                            println!("TPM Provider:           {}", manifest.tpm_provider);
+                            println!("TPM Persistent Handle:  0x{:08X}", manifest.tpm_key_handle);
+                            println!("BLAKE3 Merkle Root:     {}", manifest.blake3_root_hex);
+                            println!("SHA256(BLAKE3_Root):    {}", manifest.sha256_of_blake3_root_hex);
+                            println!("Generation Epoch:       {}", manifest.generation_epoch);
+                            println!("NV Monotonic Counter:   {} (0x01800001)", manifest.nv_monotonic_counter);
+                            println!("Manifest Written:       {}.merkle.sig.json", bin_path.display());
+                            println!("Raw Digest Written:     {}.b3", bin_path.display());
+                            println!("============================================================");
+                        }
+                        Err(e) => {
+                            eprintln!("❌ TPM 2.0 Merkle root signing failed for {}: {}", bin_path.display(), e);
+                            std::process::exit(1);
+                        }
                     }
                 }
             }

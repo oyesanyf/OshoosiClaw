@@ -27,6 +27,10 @@ char LICENSE[] SEC("license") = "Dual MIT/GPL";
 #define AF_INET6_VAL 10
 #define FMODE_WRITE_BIT 0x2
 
+#ifndef SIGSTOP
+#define SIGSTOP 19
+#endif
+
 // Process Ring Buffer Map
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -54,6 +58,14 @@ struct {
     __type(key, uint32_t);
     __type(value, uint32_t);
 } protected_sensor_pids SEC(".maps");
+
+// 5-Sigma Kernel Quarantine Targets (key = TGID, value = struct quarantine_directive)
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, uint32_t);
+    __type(value, struct quarantine_directive);
+} quarantine_targets SEC(".maps");
 
 // Blocked Destination IPv4 Addresses (key = network-byte-order uint32_t IPv4)
 struct {
@@ -368,20 +380,55 @@ static __always_inline int is_credential_vault_basename(const char *name) {
     return 0;
 }
 
+static __always_inline int enforce_kernel_quarantine(uint32_t tgid, uint32_t pid) {
+    (void)pid;
+    if (tgid <= 2) {
+        return 0;
+    }
+    uint32_t *pid_role = bpf_map_lookup_elem(&protected_sensor_pids, &tgid);
+    if (pid_role && *pid_role == OSOOSI_PID_ROLE_PROTECTED_SENSOR) {
+        return 0;
+    }
+
+    struct quarantine_directive *q = bpf_map_lookup_elem(&quarantine_targets, &tgid);
+    if (!q) {
+        return 0;
+    }
+
+    if (q->status == 1) {
+        bpf_send_signal_thread(SIGSTOP);
+        bpf_send_signal(SIGSTOP);
+        __sync_val_compare_and_swap(&q->status, 1, 2);
+    } else if (q->status == 2) {
+        bpf_send_signal_thread(SIGSTOP);
+    }
+
+    return 1;
+}
+
 // Hook 1: Process Execution Tracepoint
 SEC("tp/sched/sched_process_exec")
 int handle_process_exec(struct trace_event_raw_sched_process_exec *ctx) {
     struct ebpf_process_event *event;
+
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint32_t tgid = (uint32_t)(pid_tgid >> 32);
+    uint32_t pid = (uint32_t)pid_tgid;
+    if (tgid == 0) {
+        return 0;
+    }
+    if (enforce_kernel_quarantine(tgid, pid)) {
+        return 0; // Thread is frozen; skip telemetry ringbuf emission
+    }
 
     event = bpf_ringbuf_reserve(&process_ring, sizeof(*event), 0);
     if (!event) {
         return 0;
     }
 
-    uint64_t pid_tgid = bpf_get_current_pid_tgid();
     uint64_t uid_gid = bpf_get_current_uid_gid();
 
-    event->pid = (uint32_t)(pid_tgid >> 32);
+    event->pid = tgid;
     event->uid = (uint32_t)uid_gid;
     event->gid = (uint32_t)(uid_gid >> 32);
     event->timestamp_ns = bpf_ktime_get_ns();
@@ -408,6 +455,7 @@ int handle_process_exit(struct trace_event_raw_sched_process_exit *ctx) {
     uint64_t pid_tgid = bpf_get_current_pid_tgid();
     uint32_t pid = (uint32_t)(pid_tgid >> 32);
     bpf_map_delete_elem(&protected_sensor_pids, &pid);
+    bpf_map_delete_elem(&quarantine_targets, &pid);
 
     event = bpf_ringbuf_reserve(&process_ring, sizeof(*event), 0);
     if (!event) {
@@ -435,6 +483,17 @@ int handle_process_exit(struct trace_event_raw_sched_process_exit *ctx) {
 SEC("tp/syscalls/sys_enter_connect")
 int handle_connect(struct trace_event_raw_sys_enter_connect *ctx) {
     struct ebpf_network_event *event;
+
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint32_t tgid = (uint32_t)(pid_tgid >> 32);
+    uint32_t pid = (uint32_t)pid_tgid;
+    if (tgid == 0) {
+        return 0;
+    }
+    if (enforce_kernel_quarantine(tgid, pid)) {
+        return 0; // Thread is frozen; skip telemetry ringbuf emission
+    }
+
     void *sockaddr_ptr = ctx->uservaddr;
     if (!sockaddr_ptr || ctx->addrlen < 8) {
         return 0;
@@ -456,8 +515,7 @@ int handle_connect(struct trace_event_raw_sys_enter_connect *ctx) {
         return 0;
     }
 
-    uint64_t pid_tgid = bpf_get_current_pid_tgid();
-    event->pid = (uint32_t)(pid_tgid >> 32);
+    event->pid = tgid;
     event->family = family;
     event->sport = 0;
     event->_pad1 = 0;
@@ -733,6 +791,16 @@ int BPF_PROG(osoosi_socket_connect, struct socket *sock, struct sockaddr_kern *a
 // Hook 7: Linux mprotect W^X Violation Syscall Tracepoint
 SEC("tp/syscalls/sys_enter_mprotect")
 int handle_mprotect(struct trace_event_raw_sys_enter_mprotect *ctx) {
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint32_t tgid = (uint32_t)(pid_tgid >> 32);
+    uint32_t pid = (uint32_t)pid_tgid;
+    if (tgid == 0) {
+        return 0;
+    }
+    if (enforce_kernel_quarantine(tgid, pid)) {
+        return 0; // Thread is frozen; skip telemetry ringbuf emission
+    }
+
     if ((ctx->prot & 0x6) != 0x6) {
         return 0;
     }
@@ -742,10 +810,9 @@ int handle_mprotect(struct trace_event_raw_sys_enter_mprotect *ctx) {
         return 0;
     }
 
-    uint64_t pid_tgid = bpf_get_current_pid_tgid();
     uint64_t uid_gid = bpf_get_current_uid_gid();
 
-    event->pid = (uint32_t)(pid_tgid >> 32);
+    event->pid = tgid;
     event->uid = (uint32_t)uid_gid;
     event->gid = (uint32_t)(uid_gid >> 32);
     event->timestamp_ns = bpf_ktime_get_ns();
@@ -763,6 +830,16 @@ int handle_mprotect(struct trace_event_raw_sys_enter_mprotect *ctx) {
 // Hook 8: Linux ptrace Injection & Tampering Tracepoint
 SEC("tp/syscalls/sys_enter_ptrace")
 int handle_ptrace(struct trace_event_raw_sys_enter_ptrace *ctx) {
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint32_t tgid = (uint32_t)(pid_tgid >> 32);
+    uint32_t pid = (uint32_t)pid_tgid;
+    if (tgid == 0) {
+        return 0;
+    }
+    if (enforce_kernel_quarantine(tgid, pid)) {
+        return 0; // Thread is frozen; skip telemetry ringbuf emission
+    }
+
     long req = ctx->request;
     if (req != 4 && req != 5 && req != 13 && req != 16 && req != 0x4206) {
         return 0;
@@ -773,10 +850,9 @@ int handle_ptrace(struct trace_event_raw_sys_enter_ptrace *ctx) {
         return 0;
     }
 
-    uint64_t pid_tgid = bpf_get_current_pid_tgid();
     uint64_t uid_gid = bpf_get_current_uid_gid();
 
-    event->pid = (uint32_t)(pid_tgid >> 32);
+    event->pid = tgid;
     event->uid = (uint32_t)uid_gid;
     event->gid = (uint32_t)(uid_gid >> 32);
     event->timestamp_ns = bpf_ktime_get_ns();
@@ -790,3 +866,20 @@ int handle_ptrace(struct trace_event_raw_sys_enter_ptrace *ctx) {
     bpf_ringbuf_submit(event, 0);
     return 0;
 }
+
+// Hook 9: Hardware PMU Clock Overflow Watchdog (catches tight userland shellcode loops without syscalls)
+SEC("perf_event")
+int osoosi_pmu_watchdog(void *ctx) {
+    (void)ctx;
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint32_t tgid = (uint32_t)(pid_tgid >> 32);
+    uint32_t pid = (uint32_t)pid_tgid;
+    if (tgid == 0) {
+        return 0;
+    }
+    if (enforce_kernel_quarantine(tgid, pid)) {
+        return 0;
+    }
+    return 0;
+}
+

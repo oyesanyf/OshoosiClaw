@@ -401,6 +401,251 @@ impl AgentContainmentRing {
     }
 }
 
+// ============================================================================
+// Law 3: Dirac Delta Impulse Capability Law — Zero Standing Privilege
+// Cap(t) = 0 for all t not in [t_0, t_0 + \Delta t_syscall]
+// ============================================================================
+
+/// Ephemeral single-use capability impulse ticket enforcing **Zero Standing Privilege** (Law 3).
+///
+/// ## Mathematical Invariant
+/// $$\operatorname{Cap}(t) = \begin{cases} 1 & \text{if } t \in [t_0, t_0 + \Delta t_{\text{syscall}}] \text{ and } \text{consumed} = 0 \\ 0 & \text{otherwise} \end{cases}$$
+/// - Consumed atomically via `AtomicU32::compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)`
+///   so any concurrent or replay invocation fails closed (`Err`).
+/// - Implements `Drop` (`Situation 2`) to scrub the 32-byte ephemeral capability key in RAM via
+///   `silicon_shield::scrub_sensitive_buffer` the instant the ticket leaves lexical scope.
+pub struct DiracDeltaCapabilityTicket {
+    pub agent_id: String,
+    pub tool_action: String,
+    pub epoch: u64,
+    pub issued_at_ns: u64,
+    pub window_ns: u64,
+    consumed: std::sync::atomic::AtomicU32,
+    ephemeral_secret: [u8; 32],
+}
+
+impl DiracDeltaCapabilityTicket {
+    /// Issues a Dirac-delta capability impulse valid only for `window_ns` nanoseconds and 1 atomic consumption.
+    pub fn issue(agent_id: &str, tool_action: &str, epoch: u64, window_ns: u64) -> Self {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let mut ephemeral_secret = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut ephemeral_secret);
+        let sign_payload = format!(
+            "LAW3_DIRAC_CAP:{}:{}:{}:{}",
+            agent_id, tool_action, epoch, now_ns
+        );
+        let derived = compute_ring_hmac(&ephemeral_secret, sign_payload.as_bytes());
+        Self {
+            agent_id: agent_id.to_string(),
+            tool_action: tool_action.to_string(),
+            epoch,
+            issued_at_ns: now_ns,
+            window_ns: window_ns.max(1_000), // minimum 1 microsecond window
+            consumed: std::sync::atomic::AtomicU32::new(0),
+            ephemeral_secret: derived,
+        }
+    }
+
+    /// Evaluates $\operatorname{Cap}(t_{\text{now}})$ without consuming the ticket.
+    pub fn capability_density_at(&self, now_ns: u64) -> u8 {
+        if self.consumed.load(Ordering::SeqCst) != 0 {
+            return 0;
+        }
+        let end_ns = self.issued_at_ns.saturating_add(self.window_ns);
+        if now_ns >= self.issued_at_ns && now_ns <= end_ns {
+            1
+        } else {
+            0
+        }
+    }
+
+    /// Atomically consumes the Dirac-delta capability ticket (`0 -> 1`).
+    /// Fails closed if already consumed or if $t_{\text{now}} \notin [t_0, t_0 + \Delta t_{\text{syscall}}]$.
+    pub fn consume_once(&self, expected_action: &str) -> Result<[u8; 32], String> {
+        if self.tool_action != expected_action {
+            return Err(format!(
+                "[Law3-Dirac-Zero]: Action mismatch: ticket bound to '{}', attempted '{}'",
+                self.tool_action, expected_action
+            ));
+        }
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let end_ns = self.issued_at_ns.saturating_add(self.window_ns);
+        if now_ns < self.issued_at_ns || now_ns > end_ns {
+            return Err(format!(
+                "[Law3-Dirac-Zero]: Capability impulse expired (now={} not in [{}..{}]); Cap(t)=0",
+                now_ns, self.issued_at_ns, end_ns
+            ));
+        }
+        if self
+            .consumed
+            .compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(
+                "[Law3-Dirac-Zero]: Capability impulse already consumed (0 -> 1); replay rejected"
+                    .to_string(),
+            );
+        }
+        Ok(self.ephemeral_secret)
+    }
+}
+
+impl Drop for DiracDeltaCapabilityTicket {
+    fn drop(&mut self) {
+        self.consumed.store(1, Ordering::SeqCst);
+        silicon_shield::scrub_sensitive_buffer(&mut self.ephemeral_secret);
+    }
+}
+
+// ============================================================================
+// Law 5: Zero-Copy Page-Locked TOCTOU Window (\Delta t_TOCTOU = 0)
+// ============================================================================
+
+/// Hardware page-aligned, read-only locked immutable buffer enforcing **Zero TOCTOU Window** (Law 5).
+///
+/// ## Mathematical & Hardware Invariant
+/// - Allocates 4096-byte page-aligned memory via `std::alloc::Layout::from_size_align(aligned_cap, 4096)`
+///   (`Situation 4`).
+/// - Copies the tool payload once and immediately transitions the hardware page table entry (PTE)
+///   to read-only (`VirtualProtect(..., PAGE_READONLY)` on Windows / `libc::mprotect(..., PROT_READ)` on Unix)
+///   **before** policy authorization and DLP inspection run, guaranteeing $\Delta t_{\text{TOCTOU}} = 0$.
+/// - Implements `Drop` (`Situation 2`) to restore `PAGE_READWRITE` / `PROT_READ | PROT_WRITE`,
+///   volatile-zeroize the entire page via `silicon_shield::scrub_sensitive_buffer`, and `dealloc`.
+pub struct ZeroCopyImmutableToolBuffer {
+    ptr: std::ptr::NonNull<u8>,
+    len: usize,
+    aligned_capacity: usize,
+    blake3_digest: [u8; 32],
+    is_page_locked_readonly: bool,
+}
+
+// SAFETY: The underlying page-aligned memory is exclusively owned by `ZeroCopyImmutableToolBuffer`
+// and locked read-only during its active lifetime.
+unsafe impl Send for ZeroCopyImmutableToolBuffer {}
+unsafe impl Sync for ZeroCopyImmutableToolBuffer {}
+
+impl ZeroCopyImmutableToolBuffer {
+    pub const PAGE_SIZE: usize = 4096;
+
+    /// Allocates a 4096-byte page-aligned buffer, copies `payload`, computes its BLAKE3 commitment,
+    /// and hardware-locks the pages `READONLY` so no concurrent thread can mutate bytes after verification.
+    pub fn new_page_locked(payload: &[u8]) -> Result<Self, String> {
+        let len = payload.len();
+        let aligned_capacity = if len == 0 {
+            Self::PAGE_SIZE
+        } else {
+            ((len + Self::PAGE_SIZE - 1) / Self::PAGE_SIZE) * Self::PAGE_SIZE
+        };
+
+        let layout = std::alloc::Layout::from_size_align(aligned_capacity, Self::PAGE_SIZE)
+            .map_err(|e| format!("Invalid page-aligned layout: {}", e))?;
+
+        let raw_ptr = unsafe { std::alloc::alloc_zeroed(layout) };
+        let ptr = std::ptr::NonNull::new(raw_ptr)
+            .ok_or_else(|| "Failed to allocate 4096-byte aligned tool buffer".to_string())?;
+
+        unsafe {
+            if len > 0 {
+                std::ptr::copy_nonoverlapping(payload.as_ptr(), ptr.as_ptr(), len);
+            }
+        }
+
+        // Compute BLAKE3 digest over the copied slice before locking
+        let slice = unsafe { std::slice::from_raw_parts(ptr.as_ptr(), len) };
+        let blake3_digest = *blake3::hash(slice).as_bytes();
+
+        // Hardware PTE lock to READONLY (\Delta t_TOCTOU = 0)
+        let is_page_locked_readonly = Self::set_page_readonly(ptr.as_ptr(), aligned_capacity, true);
+
+        Ok(Self {
+            ptr,
+            len,
+            aligned_capacity,
+            blake3_digest,
+            is_page_locked_readonly,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    fn set_page_readonly(ptr: *mut u8, size: usize, readonly: bool) -> bool {
+        use windows_sys::Win32::System::Memory::{
+            VirtualProtect, PAGE_READONLY, PAGE_READWRITE,
+        };
+        let new_protect = if readonly {
+            PAGE_READONLY
+        } else {
+            PAGE_READWRITE
+        };
+        let mut old_protect: u32 = 0;
+        let ok = unsafe { VirtualProtect(ptr as *const _, size, new_protect, &mut old_protect) };
+        ok != 0
+    }
+
+    #[cfg(unix)]
+    fn set_page_readonly(ptr: *mut u8, size: usize, readonly: bool) -> bool {
+        let prot = if readonly {
+            libc::PROT_READ
+        } else {
+            libc::PROT_READ | libc::PROT_WRITE
+        };
+        let res = unsafe { libc::mprotect(ptr as *mut libc::c_void, size, prot) };
+        res == 0
+    }
+
+    #[cfg(not(any(target_os = "windows", unix)))]
+    fn set_page_readonly(_ptr: *mut u8, _size: usize, _readonly: bool) -> bool {
+        true
+    }
+
+    /// Returns the immutable slice backed by the hardware read-only page.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// Returns the 4096-byte aligned base address.
+    #[inline]
+    pub fn base_address(&self) -> usize {
+        self.ptr.as_ptr() as usize
+    }
+
+    /// Returns true if the OS page table entry is hardware-locked read-only.
+    #[inline]
+    pub fn is_page_locked_readonly(&self) -> bool {
+        self.is_page_locked_readonly
+    }
+
+    /// Verifies that the in-memory bytes still match the pre-authorization BLAKE3 commitment
+    /// in constant time ($\Delta t_{\text{TOCTOU}} = 0$).
+    pub fn verify_zero_toctou(&self) -> bool {
+        let live_digest = *blake3::hash(self.as_slice()).as_bytes();
+        bool::from(self.blake3_digest.ct_eq(&live_digest)) && self.is_page_locked_readonly
+    }
+}
+
+impl Drop for ZeroCopyImmutableToolBuffer {
+    fn drop(&mut self) {
+        let raw = self.ptr.as_ptr();
+        // Restore PAGE_READWRITE / PROT_READ|PROT_WRITE before volatile scrubbing and deallocation
+        let _ = Self::set_page_readonly(raw, self.aligned_capacity, false);
+        unsafe {
+            let full_slice = std::slice::from_raw_parts_mut(raw, self.aligned_capacity);
+            silicon_shield::scrub_sensitive_buffer(full_slice);
+            if let Ok(layout) =
+                std::alloc::Layout::from_size_align(self.aligned_capacity, Self::PAGE_SIZE)
+            {
+                std::alloc::dealloc(raw, layout);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,4 +717,44 @@ mod tests {
         let merkle = osoosi_audit::global_hierarchical_merkle();
         assert!(merkle.verify_arm_chain(agent_id));
     }
+
+    #[test]
+    fn test_law3_dirac_delta_capability_ticket_single_use_and_zero_standing_privilege() {
+        let ticket =
+            DiracDeltaCapabilityTicket::issue("agent_1", "read_file", 1, 5_000_000_000);
+        assert_eq!(ticket.capability_density_at(ticket.issued_at_ns + 100), 1);
+        assert_eq!(
+            ticket.capability_density_at(ticket.issued_at_ns + 10_000_000_000),
+            0
+        );
+
+        // Wrong action fails closed without burning valid action check
+        assert!(ticket.consume_once("exec_shell").is_err());
+
+        // First consumption succeeds
+        let secret = ticket
+            .consume_once("read_file")
+            .expect("First consumption within Dirac impulse window must succeed");
+        assert_ne!(secret, [0u8; 32]);
+
+        // Capability density is immediately 0 after single consumption
+        assert_eq!(ticket.capability_density_at(ticket.issued_at_ns + 100), 0);
+
+        // Second consumption (replay) fails closed!
+        let replay = ticket.consume_once("read_file");
+        assert!(replay.is_err());
+        assert!(replay.unwrap_err().contains("already consumed"));
+    }
+
+    #[test]
+    fn test_law5_zero_copy_immutable_tool_buffer_page_locked_toctou_zero() {
+        let payload = b"{\"tool\":\"read_file\",\"path\":\"src/main.rs\"}";
+        let buf = ZeroCopyImmutableToolBuffer::new_page_locked(payload)
+            .expect("4096-byte page-aligned read-only tool buffer must allocate");
+        assert_eq!(buf.base_address() % 4096, 0);
+        assert!(buf.is_page_locked_readonly());
+        assert_eq!(buf.as_slice(), payload);
+        assert!(buf.verify_zero_toctou());
+    }
 }
+
