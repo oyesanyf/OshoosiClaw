@@ -608,7 +608,7 @@ def run_batch(
             k = short
 
         before = set(_run_dirs(label_dir))
-        digest = hashlib.sha1(f"{label}|{subset.name}|{sorted(todo)}".encode(), usedforsecurity=False).hexdigest()[:8]
+        digest = hashlib.sha256(f"{label}|{subset.name}|{sorted(todo)}".encode(), usedforsecurity=False).hexdigest()[:8]
         slug = f"{EPHEMERAL_PREFIX}{label_sanitize(label)[:40]}-{digest}"
         yaml_path = config.wb_repo() / "configs" / "jobs" / f"{slug}.yaml"
         label_dir.mkdir(parents=True, exist_ok=True)

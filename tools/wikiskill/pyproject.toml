@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+requires = ["setuptools>=78.1.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -18,7 +18,7 @@ datasets = ["huggingface-hub>=0.30", "pyarrow>=17", "pandas>=2"]
 plots = ["matplotlib>=3.8"]
 paper = ["PyYAML>=6"]
 mcp = ["mcp>=1.30.0,<2"]
-dev = ["pytest>=8", "openpyxl>=3.1", "build>=1", "PyYAML>=6"]
+dev = ["pytest>=9.0.3", "openpyxl>=3.1", "build>=1", "PyYAML>=6"]
 
 [project.scripts]
 wikiskill = "wikiskill.cli:main"

@@ -47,7 +47,7 @@ def fingerprint(harness_dir: Path | None) -> str:
     root = Path(harness_dir)
     if not root.is_dir():
         return "absent"
-    h = hashlib.sha1(usedforsecurity=False)
+    h = hashlib.sha256(usedforsecurity=False)
     for p in sorted(root.rglob("*")):
         if not p.is_file() or p.name == MARK or _ignored(p):
             continue

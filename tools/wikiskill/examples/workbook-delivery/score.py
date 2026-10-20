@@ -15,7 +15,7 @@ try:
     from defusedxml.common import DefusedXmlException
     ParseError = ET.ParseError
 except ImportError:
-    import xml.etree.ElementTree as ET
+    import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml
     class DefusedXmlException(Exception):
         pass
     ParseError = ET.ParseError

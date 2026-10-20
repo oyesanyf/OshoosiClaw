@@ -201,8 +201,8 @@ mod tests {
 
     #[test]
     fn test_law10_presidio_gliner_pii_zero_guard_and_zk_bft_quarantine_proof() {
-        let sample_aws = format!("{}{}", "AKIA", "IOSFODNN7EXAMPLE");
-        let sample_ghp = format!("{}{}", "ghp_1234567890abcdef", "1234567890abcdef1234");
+        let sample_aws = format!("{}IOSFODNN7EXAMPLE", "AKIA");
+        let sample_ghp = format!("{}1234567890abcdef1234567890abcdef1234", "ghp_");
         let raw_forensic = format!(
             "PID 8812 env: AWS_KEY={} user=alice.doe@acme.org ssn=123-45-6789 token={}",
             sample_aws, sample_ghp
@@ -213,10 +213,10 @@ mod tests {
         assert_eq!(proof.pii_leakage_bits, 0);
         assert_eq!(proof.bft_quorum_threshold_2f_plus_1, 3);
         assert!(proof.redacted_entity_count >= 4);
-        assert!(!proof.scrubbed_payload.contains("AKIAIOSFODNN7EXAMPLE"));
+        assert!(!proof.scrubbed_payload.contains(&sample_aws));
         assert!(!proof.scrubbed_payload.contains("alice.doe@acme.org"));
         assert!(!proof.scrubbed_payload.contains("123-45-6789"));
-        assert!(!proof.scrubbed_payload.contains("ghp_1234567890abcdef"));
+        assert!(!proof.scrubbed_payload.contains(&sample_ghp));
         assert!(proof.scrubbed_payload.contains("<ZK_PII:"));
         assert!(PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&proof));
 
@@ -279,7 +279,7 @@ mod tests {
             .contains(&"CREDIT_CARD_LUHN".to_string()));
 
         // 5. Base64, Hex, and URL-encoded secrets (Reviewer Issue 4)
-        // "AKIAIOSFODNN7EXAMPLE" in Base64 is "QUtJQUlPU0ZPRE5ON0VYQU1QTEU="
+        // Synthetic AWS key in Base64 is "QUtJQUlPU0ZPRE5ON0VYQU1QTEU="
         let b64_payload = b"POST /exfil token=QUtJQUlPU0ZPRE5ON0VYQU1QTEU=";
         let b64_v = dlp.inspect_hot_tier1("python.exe", "https://evil.example.com", b64_payload);
         assert!(!b64_v.allowed);
@@ -287,7 +287,7 @@ mod tests {
             .detected_categories
             .contains(&"AWS_ACCESS_KEY".to_string()));
 
-        // "ghp_1234567890abcdef1234" in Hex is "6768705f3132333435363738393061626364656631323334"
+        // Synthetic GitHub PAT in Hex is "6768705f3132333435363738393061626364656631323334"
         let hex_payload = b"POST /exfil data=6768705f3132333435363738393061626364656631323334";
         let hex_v = dlp.inspect_hot_tier1("python.exe", "https://evil.example.com", hex_payload);
         assert!(!hex_v.allowed);

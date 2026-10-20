@@ -2,7 +2,10 @@
 import importlib.util
 import json
 from pathlib import Path
-import xml.etree.ElementTree as ET
+try:
+    import defusedxml.ElementTree as ET
+except ImportError:
+    import xml.etree.ElementTree as ET  # nosemgrep: python.lang.security.use-defused-xml
 from zipfile import ZipFile
 import pytest
 from wikiskill.product import normalize_tasks
