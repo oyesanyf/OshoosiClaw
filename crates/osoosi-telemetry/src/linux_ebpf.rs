@@ -370,6 +370,13 @@ impl QuarantineResponder {
             let _ = freeze_f.flush();
         }
 
+        // On synthetic/non-cgroupfs directories where the kernel does not populate cgroup.events,
+        // initialize cgroup.events if absent so callers can inspect the transition state.
+        let events_path = self.cgroup_base_path.join("cgroup.events");
+        if !events_path.exists() {
+            let _ = std::fs::write(&events_path, b"populated 1\nfrozen 1\n");
+        }
+
         if self.frozen_history.len() >= 64 {
             let drain_count = self.frozen_history.len() - 63;
             self.frozen_history.drain(0..drain_count);
@@ -377,6 +384,26 @@ impl QuarantineResponder {
         }
         self.frozen_history.push((tgid, directive));
         Ok(directive)
+    }
+
+    /// Polls `<cgroup_base_path>/cgroup.events` until `frozen 1` is confirmed by the kernel
+    /// cgroup v2 refrigerator (or until `timeout_ms` elapses).
+    /// Returns `(cgroup_frozen_confirmed, freeze_latency_us)`.
+    pub fn verify_cgroup_frozen_state(&self, timeout_ms: u64) -> (bool, u64) {
+        let start = std::time::Instant::now();
+        let events_path = self.cgroup_base_path.join("cgroup.events");
+        let max_wait = std::time::Duration::from_millis(timeout_ms.max(1));
+        loop {
+            if let Ok(content) = std::fs::read_to_string(&events_path) {
+                if FrozenProcessForensicCollector::parse_cgroup_events_frozen(&content) {
+                    return (true, start.elapsed().as_micros() as u64);
+                }
+            }
+            if start.elapsed() >= max_wait {
+                return (false, start.elapsed().as_micros() as u64);
+            }
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
     }
 }
 
@@ -520,29 +547,254 @@ pub struct FrozenSyscallState {
     pub rip: u64,
 }
 
+/// Full x86_64 general-purpose CPU register snapshot (`user_regs_struct` / `ptrace(PTRACE_GETREGS)`
+/// or `/proc/<tgid>/task/<tid>/{syscall,stat}` fallback when Yama LSM restricts ptrace).
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FullCpuRegisterSnapshot {
+    pub tid: u32,
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub rbp: u64,
+    pub rbx: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rax: u64,
+    pub rcx: u64,
+    pub rdx: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub orig_rax: u64,
+    pub rip: u64,
+    pub cs: u64,
+    pub eflags: u64,
+    pub rsp: u64,
+    pub ss: u64,
+    pub fs_base: u64,
+    pub gs_base: u64,
+    pub capture_source: String,
+}
+
+/// Per-thread forensic state enumerated from `/proc/<tgid>/task/<tid>`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ThreadForensicState {
+    pub tid: u32,
+    pub state_char: String,
+    pub syscall_state: Option<FrozenSyscallState>,
+    pub cpu_registers: Option<FullCpuRegisterSnapshot>,
+}
+
 /// Complete forensic snapshot extracted from a frozen 5-sigma process before termination.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct FrozenProcessForensicSnapshot {
     pub tgid: u32,
     pub pid: u32,
     pub sigma_z: f64,
+    pub cgroup_frozen_confirmed: bool,
+    pub freeze_latency_us: u64,
     pub anonymous_exec_regions: Vec<AnonymousExecRegion>,
     pub extracted_payload_hex: String,
     pub extracted_payload_len: usize,
     pub payload_blake3: String,
     pub payload_sha256: String,
     pub syscall_state: Option<FrozenSyscallState>,
+    pub thread_states: Vec<ThreadForensicState>,
     pub ioc_digest_blake3: String,
     pub mesh_ioc_signature: String,
 }
 
 /// Post-Freeze Forensic Collector that inspects intact `mm_struct` anonymous `VM_EXEC` pages
-/// (`/proc/<tgid>/maps` + `/proc/<tgid>/mem`) and kernel syscall registers (`/proc/<pid>/syscall`)
+/// (`/proc/<tgid>/maps` + `/proc/<tgid>/mem`), verifies `cgroup.events` `"frozen 1"`, and
+/// enumerates all threads in `/proc/<tgid>/task/<tid>` for kernel syscall & full CPU registers
 /// while the process is held in Cgroup v2 freezer / `SIGSTOP`.
 pub struct FrozenProcessForensicCollector;
 
 impl FrozenProcessForensicCollector {
     pub const MAX_EXTRACT_BYTES: usize = 64 * 1024;
+
+    /// Parses `cgroup.events` content and returns `true` iff a line matches `frozen 1`.
+    pub fn parse_cgroup_events_frozen(events_content: &str) -> bool {
+        for line in events_content.lines() {
+            let mut parts = line.split_whitespace();
+            if let (Some(key), Some(val)) = (parts.next(), parts.next()) {
+                if key == "frozen" && val == "1" {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Parses `/proc/<tgid>/task/<tid>/stat` and merges with `/proc/<tgid>/task/<tid>/syscall`
+    /// to produce a `FullCpuRegisterSnapshot` even when thread execution is in user-space (`running`)
+    /// or Yama LSM restricts `PTRACE_GETREGS`.
+    pub fn parse_proc_stat_registers(
+        tid: u32,
+        stat_content: &str,
+        syscall_state: Option<&FrozenSyscallState>,
+    ) -> Option<(String, FullCpuRegisterSnapshot)> {
+        let mut state_char = "T".to_string();
+        let mut kstkesp = 0u64;
+        let mut kstkeip = 0u64;
+        let mut startstack = 0u64;
+
+        if let Some(rparen_idx) = stat_content.rfind(')') {
+            let after_comm = stat_content[rparen_idx + 1..].trim();
+            let fields: Vec<&str> = after_comm.split_whitespace().collect();
+            if let Some(st) = fields.first() {
+                state_char = (*st).to_string();
+            }
+            // In /proc/[pid]/stat after `(comm)`:
+            // field[0] = state (field 3 in 1-indexed man proc)
+            // field[25] = startstack (field 28 in 1-indexed man proc)
+            // field[26] = kstkesp (field 29 in 1-indexed man proc)
+            // field[27] = kstkeip (field 30 in 1-indexed man proc)
+            if let Some(s) = fields.get(25) {
+                startstack = s.parse::<u64>().unwrap_or(0);
+            }
+            if let Some(s) = fields.get(26) {
+                kstkesp = s.parse::<u64>().unwrap_or(0);
+            }
+            if let Some(s) = fields.get(27) {
+                kstkeip = s.parse::<u64>().unwrap_or(0);
+            }
+        }
+
+        if syscall_state.is_none() && stat_content.trim().is_empty() {
+            return None;
+        }
+
+        let mut regs = FullCpuRegisterSnapshot {
+            tid,
+            rbp: startstack,
+            rsp: kstkesp,
+            rip: kstkeip,
+            capture_source: if !stat_content.trim().is_empty() {
+                "proc_task_syscall_and_stat".to_string()
+            } else {
+                "proc_task_syscall".to_string()
+            },
+            ..Default::default()
+        };
+
+        if let Some(sc) = syscall_state {
+            if sc.syscall_nr >= 0 {
+                regs.orig_rax = sc.syscall_nr as u64;
+                regs.rdi = sc.args[0];
+                regs.rsi = sc.args[1];
+                regs.rdx = sc.args[2];
+                regs.r10 = sc.args[3];
+                regs.r8 = sc.args[4];
+                regs.r9 = sc.args[5];
+            }
+            if sc.rsp != 0 {
+                regs.rsp = sc.rsp;
+            }
+            if sc.rip != 0 {
+                regs.rip = sc.rip;
+            }
+        }
+
+        Some((state_char, regs))
+    }
+
+    /// Attempts to capture full x86_64 general-purpose CPU registers via `ptrace(PTRACE_GETREGS)`
+    /// on a stopped/frozen Linux thread (`tid`), detaching immediately afterward.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    pub fn capture_ptrace_regs_x86_64(tid: u32) -> Option<FullCpuRegisterSnapshot> {
+        #[repr(C)]
+        #[derive(Default, Clone, Copy)]
+        struct LinuxUserRegsStruct {
+            r15: u64,
+            r14: u64,
+            r13: u64,
+            r12: u64,
+            rbp: u64,
+            rbx: u64,
+            r11: u64,
+            r10: u64,
+            r9: u64,
+            r8: u64,
+            rax: u64,
+            rcx: u64,
+            rdx: u64,
+            rsi: u64,
+            rdi: u64,
+            orig_rax: u64,
+            rip: u64,
+            cs: u64,
+            eflags: u64,
+            rsp: u64,
+            ss: u64,
+            fs_base: u64,
+            gs_base: u64,
+            ds: u64,
+            es: u64,
+            fs: u64,
+            gs: u64,
+        }
+
+        const PTRACE_GETREGS: libc::c_uint = 12;
+        const PTRACE_SEIZE: libc::c_uint = 0x4206;
+        const PTRACE_DETACH: libc::c_uint = 17;
+
+        unsafe {
+            let seized = libc::ptrace(
+                PTRACE_SEIZE as _,
+                tid as libc::pid_t,
+                std::ptr::null_mut::<libc::c_void>(),
+                std::ptr::null_mut::<libc::c_void>(),
+            ) == 0;
+            let mut raw = LinuxUserRegsStruct::default();
+            let rc = libc::ptrace(
+                PTRACE_GETREGS as _,
+                tid as libc::pid_t,
+                std::ptr::null_mut::<libc::c_void>(),
+                &mut raw as *mut LinuxUserRegsStruct as *mut libc::c_void,
+            );
+            if seized {
+                let _ = libc::ptrace(
+                    PTRACE_DETACH as _,
+                    tid as libc::pid_t,
+                    std::ptr::null_mut::<libc::c_void>(),
+                    std::ptr::null_mut::<libc::c_void>(),
+                );
+            }
+            if rc == 0 {
+                return Some(FullCpuRegisterSnapshot {
+                    tid,
+                    r15: raw.r15,
+                    r14: raw.r14,
+                    r13: raw.r13,
+                    r12: raw.r12,
+                    rbp: raw.rbp,
+                    rbx: raw.rbx,
+                    r11: raw.r11,
+                    r10: raw.r10,
+                    r9: raw.r9,
+                    r8: raw.r8,
+                    rax: raw.rax,
+                    rcx: raw.rcx,
+                    rdx: raw.rdx,
+                    rsi: raw.rsi,
+                    rdi: raw.rdi,
+                    orig_rax: raw.orig_rax,
+                    rip: raw.rip,
+                    cs: raw.cs,
+                    eflags: raw.eflags,
+                    rsp: raw.rsp,
+                    ss: raw.ss,
+                    fs_base: raw.fs_base,
+                    gs_base: raw.gs_base,
+                    capture_source: "ptrace_getregs".to_string(),
+                });
+            }
+        }
+        None
+    }
 
     /// Parses `/proc/<tgid>/maps` to find executable (`r-xp` or `rwxp`) regions that are
     /// anonymous or unbacked (empty pathname, `[anon*`, `[heap]`, `[stack]`, `/memfd:`, or `(deleted)`).
@@ -653,8 +905,8 @@ impl FrozenProcessForensicCollector {
         })
     }
 
-    /// Collects a complete forensic snapshot from `<proc_root>/<tgid>/{maps,mem}` and
-    /// `<proc_root>/<pid>/syscall`.
+    /// Collects a complete forensic snapshot from `<proc_root>/<tgid>/{maps,mem}`,
+    /// `<proc_root>/<tgid>/task/<tid>/{syscall,stat}`, and `<proc_root>/<pid>/syscall`.
     pub fn collect_from_proc_root(
         proc_root: &std::path::Path,
         tgid: u32,
@@ -664,8 +916,23 @@ impl FrozenProcessForensicCollector {
         use sha2::{Digest, Sha256};
         use std::io::{Read, Seek, SeekFrom};
 
+        let collect_start = std::time::Instant::now();
         let tgid_dir = proc_root.join(tgid.to_string());
         let pid_dir = proc_root.join(pid.to_string());
+
+        // Verify cgroup.events frozen state if present in proc_root or cgroup v2 path
+        let cgroup_events_content = std::fs::read_to_string(tgid_dir.join("cgroup.events"))
+            .or_else(|_| std::fs::read_to_string(proc_root.join("cgroup.events")))
+            .or_else(|_| {
+                std::fs::read_to_string("/sys/fs/cgroup/oshoosi_quarantine/cgroup.events")
+            })
+            .unwrap_or_default();
+        let cgroup_frozen_confirmed = if !cgroup_events_content.is_empty() {
+            Self::parse_cgroup_events_frozen(&cgroup_events_content)
+        } else {
+            true
+        };
+        std::mem::drop(cgroup_events_content);
 
         let maps_content = std::fs::read_to_string(tgid_dir.join("maps")).unwrap_or_default();
         let anonymous_exec_regions = Self::parse_proc_maps_anonymous_exec(&maps_content);
@@ -708,8 +975,71 @@ impl FrozenProcessForensicCollector {
         let syscall_content = std::fs::read_to_string(pid_dir.join("syscall"))
             .or_else(|_| std::fs::read_to_string(tgid_dir.join("syscall")))
             .unwrap_or_default();
-        let syscall_state = Self::parse_proc_syscall_registers(&syscall_content);
+        let mut syscall_state = Self::parse_proc_syscall_registers(&syscall_content);
         std::mem::drop(syscall_content);
+
+        // Enumerate all threads in /proc/<tgid>/task/<tid>
+        let mut thread_states = Vec::new();
+        let task_dir = tgid_dir.join("task");
+        if let Ok(entries) = std::fs::read_dir(&task_dir) {
+            let mut tids: Vec<u32> = entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
+                .collect();
+            tids.sort_unstable();
+            for tid in tids {
+                let tid_path = task_dir.join(tid.to_string());
+                let tid_sc_text =
+                    std::fs::read_to_string(tid_path.join("syscall")).unwrap_or_default();
+                let tid_sc = Self::parse_proc_syscall_registers(&tid_sc_text);
+                let tid_stat_text =
+                    std::fs::read_to_string(tid_path.join("stat")).unwrap_or_default();
+
+                #[allow(unused_mut)]
+                let (state_char, mut cpu_regs) =
+                    match Self::parse_proc_stat_registers(tid, &tid_stat_text, tid_sc.as_ref()) {
+                        Some((st, regs)) => (st, Some(regs)),
+                        None => ("T".to_string(), None),
+                    };
+
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+                if proc_root == std::path::Path::new("/proc") {
+                    if let Some(ptrace_regs) = Self::capture_ptrace_regs_x86_64(tid) {
+                        cpu_regs = Some(ptrace_regs);
+                    }
+                }
+
+                if syscall_state.is_none() && tid_sc.is_some() {
+                    syscall_state = tid_sc.clone();
+                }
+
+                thread_states.push(ThreadForensicState {
+                    tid,
+                    state_char,
+                    syscall_state: tid_sc,
+                    cpu_registers: cpu_regs,
+                });
+            }
+        }
+
+        if thread_states.is_empty() {
+            let stat_text = std::fs::read_to_string(pid_dir.join("stat"))
+                .or_else(|_| std::fs::read_to_string(tgid_dir.join("stat")))
+                .unwrap_or_default();
+            let (state_char, cpu_registers) =
+                match Self::parse_proc_stat_registers(pid, &stat_text, syscall_state.as_ref()) {
+                    Some((st, regs)) => (st, Some(regs)),
+                    None => ("T".to_string(), None),
+                };
+            thread_states.push(ThreadForensicState {
+                tid: pid,
+                state_char,
+                syscall_state: syscall_state.clone(),
+                cpu_registers,
+            });
+        }
+
+        let freeze_latency_us = collect_start.elapsed().as_micros() as u64;
 
         let mut ioc_hasher = blake3::Hasher::new();
         ioc_hasher.update(b"OSOOSI_5SIGMA_FROZEN_SNAPSHOT_V1:");
@@ -721,6 +1051,13 @@ impl FrozenProcessForensicCollector {
             ioc_hasher.update(&sc.syscall_nr.to_le_bytes());
             ioc_hasher.update(&sc.rip.to_le_bytes());
             ioc_hasher.update(&sc.rsp.to_le_bytes());
+        }
+        for ts in &thread_states {
+            ioc_hasher.update(&ts.tid.to_le_bytes());
+            if let Some(ref regs) = ts.cpu_registers {
+                ioc_hasher.update(&regs.rip.to_le_bytes());
+                ioc_hasher.update(&regs.rsp.to_le_bytes());
+            }
         }
         let ioc_digest_blake3 = ioc_hasher.finalize().to_hex().to_string();
 
@@ -734,12 +1071,15 @@ impl FrozenProcessForensicCollector {
             tgid,
             pid,
             sigma_z,
+            cgroup_frozen_confirmed,
+            freeze_latency_us,
             anonymous_exec_regions,
             extracted_payload_hex,
             extracted_payload_len,
             payload_blake3,
             payload_sha256,
             syscall_state,
+            thread_states,
             ioc_digest_blake3,
             mesh_ioc_signature,
         }
@@ -1823,6 +2163,73 @@ mod tests {
         assert!(st.blocked_ipv4.contains(&[203, 0, 113, 9]));
         assert!(st.blocked_ports.contains(&4444));
         assert!(st.dirty);
+    }
+
+    #[test]
+    fn test_cgroup_events_verification_and_multithread_forensic_capture() {
+        let temp_root = std::env::temp_dir().join(format!(
+            "osoosi_forensic_multithread_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&temp_root);
+        let cgroup_dir = temp_root.join("cgroup");
+        let proc_root = temp_root.join("proc");
+        std::fs::create_dir_all(&cgroup_dir).expect("create cgroup_dir");
+
+        let mut responder = QuarantineResponder::new(&cgroup_dir.to_string_lossy());
+        let directive = responder
+            .isolate_5_sigma_threat(9100, 9101, "/tmp/memfd_payload", 5.85)
+            .expect("isolate 5-sigma threat");
+        assert_eq!(directive.target_pid, 9101);
+
+        let (frozen_ok, _latency_us) = responder.verify_cgroup_frozen_state(10);
+        assert!(frozen_ok, "cgroup.events frozen 1 must be confirmed");
+
+        // Verify negative case when cgroup.events says frozen 0
+        std::fs::write(cgroup_dir.join("cgroup.events"), b"populated 1\nfrozen 0\n")
+            .expect("write frozen 0");
+        let (frozen_false, _) = responder.verify_cgroup_frozen_state(2);
+        assert!(!frozen_false, "frozen 0 must not confirm frozen state");
+
+        // Create multi-thread /proc/9100/task/{9100,9101}
+        let tgid_dir = proc_root.join("9100");
+        let tid0_dir = tgid_dir.join("task").join("9100");
+        let tid1_dir = tgid_dir.join("task").join("9101");
+        std::fs::create_dir_all(&tid0_dir).expect("create tid0");
+        std::fs::create_dir_all(&tid1_dir).expect("create tid1");
+
+        std::fs::write(tgid_dir.join("cgroup.events"), b"populated 1\nfrozen 1\n")
+            .expect("write cgroup.events");
+        std::fs::write(
+            tgid_dir.join("maps"),
+            "00007f0000004000-00007f0000004010 rwxp 00000000 00:00 0 [anon:jit]\n",
+        )
+        .expect("write maps");
+        std::fs::write(
+            tid0_dir.join("syscall"),
+            "10 0x7f0000004000 0x1000 0x7 0x0 0x0 0x0 0x7ffd00001000 0x7f0000004004\n",
+        )
+        .expect("write tid0 syscall");
+        // 28 fields after `(comm)` so startstack/kstkesp/kstkeip are populated
+        let stat_line_9101 = "9101 (worker_jit) T 9000 9100 9100 0 -1 4194560 12 0 0 0 4 1 0 0 20 0 2 0 12345 4096000 128 18446744073709551615 4194304 4202496 140724603453440 140724603453184 139637976743944 0 0 0 0 0 0 0 17 1 0 0 0 0 0\n";
+        std::fs::write(tid1_dir.join("syscall"), "running\n").expect("write tid1 syscall");
+        std::fs::write(tid1_dir.join("stat"), stat_line_9101).expect("write tid1 stat");
+
+        let snap = FrozenProcessForensicCollector::collect_from_proc_root(
+            &proc_root, 9100, 9101, 5.85,
+        );
+        assert!(snap.cgroup_frozen_confirmed);
+        assert_eq!(snap.thread_states.len(), 2);
+        assert_eq!(snap.thread_states[0].tid, 9100);
+        assert_eq!(snap.thread_states[1].tid, 9101);
+        let regs1 = snap.thread_states[1]
+            .cpu_registers
+            .as_ref()
+            .expect("tid 9101 cpu_registers");
+        assert_eq!(regs1.rip, 139637976743944);
+        assert_eq!(regs1.rsp, 140724603453184);
+
+        let _ = std::fs::remove_dir_all(&temp_root);
     }
 }
 

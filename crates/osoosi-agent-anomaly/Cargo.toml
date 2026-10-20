@@ -27,6 +27,7 @@ zero-genesis-capacity = { workspace = true }
 zero-algebraic-kernel = { workspace = true }
 zero-divine-equilibrium = { workspace = true }
 sha2 = { workspace = true }
+blake3 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
 subtle = { workspace = true }

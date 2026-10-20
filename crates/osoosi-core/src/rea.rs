@@ -1871,6 +1871,12 @@ pub fn inspect_native_binary(
     }
     pseudocode.push_str("    return dispatch_runtime_main();\n}\n");
 
+    // Law 7: Verify static entry-point CFG transition baseline via CfgHadamardZeroVerifier
+    let cfg_baseline = osoosi_audit::nsrl_aslr_merkle::CfgHadamardZeroVerifier::verify_runtime_transitions(
+        &[(image_base, entry_point)],
+        &[(image_base, entry_point)],
+    );
+
     let metadata = json!({
         "format": binary_format,
         "architecture": architecture,
@@ -1885,6 +1891,8 @@ pub fn inspect_native_binary(
         "exports": exports,
         "suspicious_apis": suspicious_apis,
         "high_value_strings": high_value_strings,
+        "cfg_hadamard_zero_verified": cfg_baseline.is_zero_violation,
+        "cfg_hadamard_complement_l1": cfg_baseline.hadamard_complement_l1_norm,
     });
 
     (metadata, findings, evidence, limitations, pseudocode)

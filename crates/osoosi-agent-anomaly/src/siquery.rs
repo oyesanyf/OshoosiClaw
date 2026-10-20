@@ -7602,6 +7602,196 @@ fn parse_linux_ipv6_hex(hex_str: &str) -> Option<Ipv6Addr> {
     Some(Ipv6Addr::from(octets))
 }
 
+// ============================================================================
+// Law 6: Ihara Zeta Function Non-Backtracking Cycle Law (det(I - u B_G) = 0)
+// ============================================================================
+
+/// Verdict produced by `IharaZetaCycleDetector` under Law 6 ($\det(I - u B_G) = 0$).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IharaZetaVerdict {
+    /// True if the directed process/socket/pipe graph is a pure forest/DAG ($\rho(B_G) == 0$).
+    pub is_acyclic_tree: bool,
+    /// Number of directed edges $m = |E|$.
+    pub directed_edge_count: usize,
+    /// Spectral radius $\rho(B_G)$ of the Hashimoto non-backtracking operator $B_G$.
+    pub spectral_radius_rho: f64,
+    /// Reciprocal pole $u^* = 1 / \rho(B_G)$ where $\det(I - u^* B_G) = 0$ (`f64::INFINITY` if acyclic).
+    pub ihara_pole_u: f64,
+    /// Number of non-backtracking 3-cycles $\operatorname{Tr}(B_G^3) / 3$.
+    pub prime_3_cycles: usize,
+    /// Number of non-backtracking 4-cycles $\operatorname{Tr}(B_G^4) / 4$.
+    pub prime_4_cycles: usize,
+    /// Evaluated Bass-Hashimoto determinant $\det(I - u B_G)$ at probe parameter $u = 0.5$.
+    pub determinant_at_half: f64,
+    /// Human-readable mathematical summary.
+    pub rationale: String,
+}
+
+/// Law 6 Auditor: Computes the Hashimoto non-backtracking edge transition operator $B_G$
+/// over `(source_node, target_node)` process/socket/pipe edges and detects prime C2 relay loops,
+/// process resurrection rings, and cyclic fork-bombs where $\det(I - u B_G) = 0$.
+#[derive(Debug, Clone, Default)]
+pub struct IharaZetaCycleDetector;
+
+impl IharaZetaCycleDetector {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Evaluates a directed graph of `(u, v)` edges using the Hashimoto non-backtracking matrix
+    /// $B_G[e_i, e_j] = 1$ iff $\operatorname{head}(e_i) = \operatorname{tail}(e_j)$ and
+    /// $\operatorname{tail}(e_i) \ne \operatorname{head}(e_j)$ (non-backtracking constraint).
+    pub fn analyze_directed_edges(edges: &[(u32, u32)]) -> IharaZetaVerdict {
+        // Deduplicate self-loops and cap at 128 edges for bounded O(m^3) matrix trace
+        let mut clean_edges: Vec<(u32, u32)> = Vec::with_capacity(edges.len().min(128));
+        for &(u, v) in edges {
+            if u != v && !clean_edges.contains(&(u, v)) && clean_edges.len() < 128 {
+                clean_edges.push((u, v));
+            }
+        }
+        clean_edges.shrink_to_fit();
+
+        let m = clean_edges.len();
+        if m == 0 {
+            return IharaZetaVerdict {
+                is_acyclic_tree: true,
+                directed_edge_count: 0,
+                spectral_radius_rho: 0.0,
+                ihara_pole_u: f64::INFINITY,
+                prime_3_cycles: 0,
+                prime_4_cycles: 0,
+                determinant_at_half: 1.0,
+                rationale: "[Law6-Ihara-Zeta-Zero]: Empty edge set is trivially acyclic (det(I - u B_G) = 1)"
+                    .to_string(),
+            };
+        }
+
+        // Construct m x m Hashimoto non-backtracking matrix B_G
+        let mut b_mat = vec![0.0f64; m * m];
+        for i in 0..m {
+            let (u_i, v_i) = clean_edges[i];
+            for j in 0..m {
+                let (u_j, v_j) = clean_edges[j];
+                // Non-backtracking condition: head(e_i) == tail(e_j) AND tail(e_i) != head(e_j)
+                if v_i == u_j && u_i != v_j {
+                    b_mat[i * m + j] = 1.0;
+                }
+            }
+        }
+
+        // Compute B^2, B^3, B^4 to extract exact closed non-backtracking walks Tr(B^k)
+        let mat_mul = |a: &[f64], b: &[f64]| -> Vec<f64> {
+            let mut out = vec![0.0f64; m * m];
+            for r in 0..m {
+                for k in 0..m {
+                    let a_rk = a[r * m + k];
+                    if a_rk == 0.0 {
+                        continue;
+                    }
+                    for c in 0..m {
+                        out[r * m + c] += a_rk * b[k * m + c];
+                    }
+                }
+            }
+            out
+        };
+
+        let trace = |mat: &[f64]| -> f64 { (0..m).map(|i| mat[i * m + i]).sum() };
+
+        let b2 = mat_mul(&b_mat, &b_mat);
+        let b3 = mat_mul(&b2, &b_mat);
+        let b4 = mat_mul(&b2, &b2);
+
+        let tr2 = trace(&b2);
+        let tr3 = trace(&b3);
+        let tr4 = trace(&b4);
+        std::mem::drop(b2);
+        std::mem::drop(b3);
+
+        let prime_3_cycles = (tr3.round() as usize) / 3;
+        let prime_4_cycles = (tr4.round().max(0.0) as usize) / 4;
+
+        // Estimate spectral radius \rho(B_G) via trace root + power iteration on B^4
+        let mut spectral_radius_rho = if tr4 > 0.0 {
+            tr4.powf(0.25)
+        } else if tr3 > 0.0 {
+            (tr3 / 3.0).powf(1.0 / 3.0).max(1.0)
+        } else if tr2 > 0.0 {
+            tr2.sqrt()
+        } else {
+            0.0
+        };
+
+        // Refine via power iteration if non-zero cycles exist
+        if prime_3_cycles > 0 || prime_4_cycles > 0 || tr2 > 0.0 {
+            let mut v = vec![1.0f64; m];
+            for _ in 0..16 {
+                let mut next_v = vec![0.0f64; m];
+                for i in 0..m {
+                    let mut sum = 0.0;
+                    for j in 0..m {
+                        sum += b_mat[i * m + j] * v[j];
+                    }
+                    next_v[i] = sum;
+                }
+                let norm: f64 = next_v.iter().map(|x| x * x).sum::<f64>().sqrt();
+                if norm > 1e-12 {
+                    spectral_radius_rho = norm;
+                    for x in &mut next_v {
+                        *x /= norm;
+                    }
+                    v = next_v;
+                } else {
+                    spectral_radius_rho = 0.0;
+                    break;
+                }
+            }
+            if (prime_3_cycles > 0 || prime_4_cycles > 0) && spectral_radius_rho < 1.0 {
+                spectral_radius_rho = 1.0;
+            }
+        }
+        std::mem::drop(b4);
+        std::mem::drop(b_mat);
+
+        // Ihara zeta series expansion: \det(I - u B_G) = \exp(-\sum_{k=1}^\infty Tr(B_G^k) u^k / k)
+        let u = 0.5f64;
+        let log_zeta_inv =
+            -(tr2 * u.powi(2) / 2.0 + tr3 * u.powi(3) / 3.0 + tr4 * u.powi(4) / 4.0);
+        let determinant_at_half = log_zeta_inv.exp();
+
+        let is_acyclic_tree =
+            spectral_radius_rho == 0.0 && prime_3_cycles == 0 && prime_4_cycles == 0;
+        let ihara_pole_u = if spectral_radius_rho > 1e-9 {
+            1.0 / spectral_radius_rho
+        } else {
+            f64::INFINITY
+        };
+
+        let rationale = if is_acyclic_tree {
+            format!(
+                "[Law6-Ihara-Zeta-Zero]: Tree topology verified across {} directed edges; rho(B_G)=0, det(I - u B_G)=1.0",
+                m
+            )
+        } else {
+            format!(
+                "[Law6-Ihara-Zeta-Cycle-Alert]: Non-backtracking C2/resurrection cycle detected! rho(B_G)={:.3}, pole u*={:.3}, 3-cycles={}, 4-cycles={}, det(I-0.5 B_G)={:.4}",
+                spectral_radius_rho, ihara_pole_u, prime_3_cycles, prime_4_cycles, determinant_at_half
+            )
+        };
+
+        IharaZetaVerdict {
+            is_acyclic_tree,
+            directed_edge_count: m,
+            spectral_radius_rho,
+            ihara_pole_u,
+            prime_3_cycles,
+            prime_4_cycles,
+            determinant_at_half,
+            rationale,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -8118,6 +8308,25 @@ mod tests {
             rows[0].get("aperf_mperf_polling_disabled").and_then(|v| v.as_i64()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn test_law6_ihara_zeta_cycle_detector_tree_vs_c2_ring_topology() {
+        // 1. Normal hierarchical process tree: 100 -> 200 -> 300, 100 -> 201 -> 301
+        let tree_edges = vec![(100, 200), (200, 300), (100, 201), (201, 301)];
+        let tree_verdict = IharaZetaCycleDetector::analyze_directed_edges(&tree_edges);
+        assert!(tree_verdict.is_acyclic_tree);
+        assert_eq!(tree_verdict.spectral_radius_rho, 0.0);
+        assert_eq!(tree_verdict.prime_3_cycles, 0);
+        assert!((tree_verdict.determinant_at_half - 1.0).abs() < 1e-9);
+
+        // 2. Cyclic C2 / process resurrection ring: 500 -> 501 -> 502 -> 500
+        let ring_edges = vec![(500, 501), (501, 502), (502, 500)];
+        let ring_verdict = IharaZetaCycleDetector::analyze_directed_edges(&ring_edges);
+        assert!(!ring_verdict.is_acyclic_tree);
+        assert!(ring_verdict.spectral_radius_rho >= 1.0);
+        assert_eq!(ring_verdict.prime_3_cycles, 1);
+        assert!(ring_verdict.determinant_at_half < 1.0);
     }
 }
 

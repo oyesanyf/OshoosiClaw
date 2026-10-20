@@ -159,11 +159,73 @@ fn calculate_zero_day_score(signals: &ZeroDaySignals) -> f64 {
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
-        println!("OpenỌ̀ṣọ́ọ̀sì Hardware Trust & Policy Auditor\n\nUsage: osoosi-auditor [OPTIONS]\n\nOptions:\n  -h, --help    Print help\n  --version     Print version\n");
+        println!(
+            "OpenỌ̀ṣọ́ọ̀sì Hardware Trust & Policy Auditor\n\nUsage: osoosi-auditor [OPTIONS]\n\nOptions:\n  --redteam-gauntlet  Run Built-In Adversarial Red-Team & Bypass-Resistance Gauntlet\n  --json              Format gauntlet output as JSON\n  -h, --help          Print help\n  --version           Print version\n"
+        );
         return Ok(());
     }
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("osoosi-auditor {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--redteam-gauntlet") {
+        let scorecard =
+            osoosi_core::adversarial_gauntlet::AdversarialRedTeamGauntlet::run_full_gauntlet();
+        if args.iter().any(|a| a == "--json") {
+            println!("{}", serde_json::to_string_pretty(&scorecard)?);
+        } else {
+            println!("================================================================================");
+            println!("  OpenỌ̀ṣọ́ọ̀sì Built-In Adversarial Red-Team & Bypass-Resistance Gauntlet");
+            println!("================================================================================");
+            println!(
+                "  Adversarial Vectors Evaluated : {}/{} Prevented ({:.1}%)",
+                scorecard.vectors_prevented,
+                scorecard.total_adversarial_vectors,
+                scorecard.prevention_rate_pct
+            );
+            println!(
+                "  Detection Rate                : {:.1}%",
+                scorecard.detection_rate_pct
+            );
+            println!(
+                "  Containment Latency (p50/p99) : {} us / {} us",
+                scorecard.containment_latency_p50_us, scorecard.containment_latency_p99_us
+            );
+            println!(
+                "  Bypass Success Rate           : {:.1}%",
+                scorecard.bypass_success_rate_pct
+            );
+            println!(
+                "  False-Positive Rate           : {:.1}% ({}/{} benign developer/OS workloads)",
+                scorecard.false_positive_rate_pct,
+                scorecard.false_positives_triggered,
+                scorecard.benign_workloads_evaluated
+            );
+            println!(
+                "  Host OS Stability Score       : {:.1}%",
+                scorecard.os_stability_score_pct
+            );
+            println!(
+                "  Forensic Completeness         : {:.1}%",
+                scorecard.forensic_completeness_pct
+            );
+            println!(
+                "  OS Boundary Oracle Verified   : {}",
+                scorecard.os_oracle_report.all_os_invariants_verified
+            );
+            println!(
+                "  RL 5-Policy Benchmark Backend : {} (LearnedRL > Heuristic: {})",
+                scorecard.rl_5_policy_benchmark.environment_backend,
+                scorecard.rl_5_policy_benchmark.learned_rl_exceeds_heuristic
+            );
+            println!("================================================================================");
+        }
+        if scorecard.prevention_rate_pct < 100.0
+            || scorecard.false_positive_rate_pct > 0.0
+            || !scorecard.os_oracle_report.all_os_invariants_verified
+        {
+            std::process::exit(1);
+        }
         return Ok(());
     }
 

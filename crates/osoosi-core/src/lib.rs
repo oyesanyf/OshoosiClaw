@@ -63,6 +63,7 @@ pub use hybrid_runtime::{
     spawn_smart, tokio_worker_threads,
 };
 pub mod adaptive;
+pub mod adversarial_gauntlet;
 pub mod agent_egress;
 pub mod blocking_manager;
 pub mod byzantine;
