@@ -130,7 +130,9 @@ impl MemoryStore {
     }
 
     pub fn purge_vetoed_and_false_positive_threats(&self) -> anyhow::Result<usize> {
-        let conn = self.conn.lock();
+        let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(40)) else {
+            return Ok(0);
+        };
         let deleted = conn.execute(
             "DELETE FROM threats WHERE
                 reason LIKE '%Veto%'
@@ -183,7 +185,9 @@ impl MemoryStore {
             [],
         )?;
         drop(conn);
-        self.invalidate_recent_threats_cache();
+        if deleted > 0 {
+            self.invalidate_recent_threats_cache();
+        }
         Ok(deleted)
     }
 
@@ -1609,7 +1613,7 @@ impl MemoryStore {
         let fetch_limit = limit.max(200);
         let mut stmt = conn.prepare(
             "SELECT id, cve_id, process_name, hash_blake3, confidence, MAX(detected_at), source_node, file_path, reason 
-             FROM threats t
+             FROM (SELECT * FROM threats ORDER BY detected_at DESC LIMIT 600) t
              WHERE NOT EXISTS (
                 SELECT 1 FROM false_positive_patterns fp
                 WHERE (fp.process_name != '' AND LOWER(fp.process_name) = LOWER(COALESCE(t.process_name, '')))

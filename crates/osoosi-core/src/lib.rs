@@ -9869,12 +9869,7 @@ impl EdrOrchestrator {
 
     /// Retrieve live and persisted gossip mesh feed items with intelligent sorting and routine chatter pruning.
     pub fn get_gossip_feed(&self, limit: usize) -> Vec<osoosi_types::GossipFeedItem> {
-        let now = chrono::Utc::now().timestamp();
-        let last = self.last_rea_adjudication_ts.load(std::sync::atomic::Ordering::Relaxed);
-        if now.saturating_sub(last) >= 1 {
-            self.last_rea_adjudication_ts.store(now, std::sync::atomic::Ordering::Relaxed);
-            self.run_autonomous_rea_threat_adjudication();
-        }
+        self.run_autonomous_rea_threat_adjudication();
         let mut items = Vec::new();
 
         // 1. First get items from the in-memory live gossip ring buffer
@@ -10370,7 +10365,23 @@ impl EdrOrchestrator {
     /// Autonomously adjudicate pending candidate threats and live gossip items via REA.
     /// Drops benign toolchain / OS binaries, CVE version-mismatch alerts, and vendor-vetoed threats.
     pub fn run_autonomous_rea_threat_adjudication(&self) -> usize {
-        self.last_rea_adjudication_ts.store(chrono::Utc::now().timestamp(), std::sync::atomic::Ordering::Relaxed);
+        let now = chrono::Utc::now().timestamp();
+        let last = self.last_rea_adjudication_ts.load(std::sync::atomic::Ordering::Relaxed);
+        if now.saturating_sub(last) < 15 {
+            return 0;
+        }
+        if self
+            .last_rea_adjudication_ts
+            .compare_exchange(
+                last,
+                now,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return 0;
+        }
         let mut dropped = self.memory.purge_vetoed_and_false_positive_threats().unwrap_or(0);
         let mut candidates = Vec::new();
         if let Ok(feed) = self.mesh_gossip_feed.read() {
