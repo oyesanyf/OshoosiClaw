@@ -212,6 +212,14 @@ mod tests {
         assert!(!proof.scrubbed_payload.contains("ghp_1234567890abcdef"));
         assert!(proof.scrubbed_payload.contains("<ZK_PII:"));
         assert!(PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&proof));
+
+        // Stripping pqc_mldsa65_signature_hex (PQC downgrade attack) must fail closed
+        let mut stripped_proof = proof.clone();
+        stripped_proof.pqc_mldsa65_signature_hex.clear();
+        assert!(
+            !PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&stripped_proof),
+            "Stripping pqc_mldsa65_signature_hex from ZkBftQuarantineProof must fail closed"
+        );
     }
 
     #[test]
@@ -895,17 +903,21 @@ impl PresidioGlinerPiiZeroGuard {
             return false;
         }
 
-        if !proof.pqc_mldsa65_signature_hex.is_empty() {
-            let Ok(sig_bytes) = hex::decode(&proof.pqc_mldsa65_signature_hex) else {
-                return false;
-            };
-            if !osoosi_audit::pqc_primitives::hybrid_verify_bytes(
-                expected_commit.as_bytes(),
-                &sig_bytes,
-                &Self::LAW10_PQC_SIGNING_SEED,
-            ) {
-                return false;
-            }
+        if proof.pqc_mldsa65_signature_hex.is_empty() {
+            return false;
+        }
+        let Ok(sig_bytes) = hex::decode(&proof.pqc_mldsa65_signature_hex) else {
+            return false;
+        };
+        let pinned_vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(
+            &Self::LAW10_PQC_SIGNING_SEED,
+        );
+        if !osoosi_audit::pqc_primitives::hybrid_verify_bytes(
+            expected_commit.as_bytes(),
+            &sig_bytes,
+            &pinned_vk,
+        ) {
+            return false;
         }
 
         true

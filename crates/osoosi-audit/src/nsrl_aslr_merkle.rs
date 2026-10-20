@@ -1992,6 +1992,7 @@ impl Tpm2MerkleRootSigner {
             &manifest.pcr_23_digest,
         );
 
+        let expected_pub_bytes = self.signing_key.verifying_key().to_bytes();
         let pub_bytes: [u8; 32] = hex::decode(&manifest.public_key_hex)
             .map_err(|e| TpmMerkleError::SignatureVerificationFailed {
                 reason: format!("Invalid public_key_hex: {}", e),
@@ -2000,6 +2001,12 @@ impl Tpm2MerkleRootSigner {
             .map_err(|_| TpmMerkleError::SignatureVerificationFailed {
                 reason: "public_key_hex must be 32 bytes".to_string(),
             })?;
+        if pub_bytes != expected_pub_bytes {
+            return Err(TpmMerkleError::SignatureVerificationFailed {
+                reason: "Manifest public_key_hex does not match pinned TPM 2.0 signer key"
+                    .to_string(),
+            });
+        }
         let sig_bytes: [u8; 64] = hex::decode(&manifest.signature_hex)
             .map_err(|e| TpmMerkleError::SignatureVerificationFailed {
                 reason: format!("Invalid signature_hex: {}", e),
@@ -2022,20 +2029,28 @@ impl Tpm2MerkleRootSigner {
                 reason: format!("Signature verification failed: {}", e),
             })?;
 
-        // 4. Verify Post-Quantum ML-DSA-65 + Ed25519 hybrid signature if present
-        if !manifest.pqc_mldsa65_signature_hex.is_empty() {
-            let pqc_bytes = hex::decode(&manifest.pqc_mldsa65_signature_hex).map_err(|e| {
-                TpmMerkleError::SignatureVerificationFailed {
-                    reason: format!("Invalid pqc_mldsa65_signature_hex: {}", e),
-                }
-            })?;
-            if !crate::pqc_primitives::hybrid_verify_bytes(&signing_digest, &pqc_bytes, &pub_bytes)
-            {
-                return Err(TpmMerkleError::SignatureVerificationFailed {
-                    reason: "Post-Quantum ML-DSA-65 lattice signature verification failed"
-                        .to_string(),
-                });
+        // 4. Mandatory Post-Quantum ML-DSA-65 + Ed25519 hybrid signature verification (reject downgrade/stripping)
+        if manifest.pqc_mldsa65_signature_hex.is_empty() {
+            return Err(TpmMerkleError::SignatureVerificationFailed {
+                reason: "Missing mandatory Post-Quantum ML-DSA-65 signature (downgrade attack blocked)"
+                    .to_string(),
+            });
+        }
+        let pqc_bytes = hex::decode(&manifest.pqc_mldsa65_signature_hex).map_err(|e| {
+            TpmMerkleError::SignatureVerificationFailed {
+                reason: format!("Invalid pqc_mldsa65_signature_hex: {}", e),
             }
+        })?;
+        let pinned_hybrid_vk =
+            crate::pqc_primitives::derive_hybrid_verifying_key(&self.signing_key.to_bytes());
+        if !crate::pqc_primitives::hybrid_verify_bytes(
+            &signing_digest,
+            &pqc_bytes,
+            &pinned_hybrid_vk,
+        ) {
+            return Err(TpmMerkleError::SignatureVerificationFailed {
+                reason: "Post-Quantum ML-DSA-65 lattice signature verification failed".to_string(),
+            });
         }
 
         Ok(())
@@ -3416,6 +3431,18 @@ mod tests {
         signer
             .verify_binary_with_tpm2_manifest(&bin_path, &manifest)
             .expect("Verification of untampered binary against signed manifest must pass");
+
+        // Stripping pqc_mldsa65_signature_hex (PQC downgrade attack) must fail closed
+        let mut stripped_manifest = manifest.clone();
+        stripped_manifest.pqc_mldsa65_signature_hex.clear();
+        let stripped_res = signer.verify_binary_with_tpm2_manifest(&bin_path, &stripped_manifest);
+        assert!(
+            matches!(
+                stripped_res,
+                Err(TpmMerkleError::SignatureVerificationFailed { .. })
+            ),
+            "Stripping pqc_mldsa65_signature_hex must be rejected as a PQC downgrade attack"
+        );
 
         // Tamper with binary on disk -> verification must fail closed
         std::fs::write(&bin_path, b"MZ\x90\x00TAMPERED_BYTES").unwrap();

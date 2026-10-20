@@ -6,7 +6,7 @@
     <title>OshoosiClaw — Autonomous Security Dashboard</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <meta name="theme-color" content="#12141c">
-    <link rel="stylesheet" href="style.css?v=20261015_03">
+    <link rel="stylesheet" href="style.css?v=20261020_01">
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -132,9 +132,14 @@
 
         <!-- Main Content -->
         <main class="content">
+            <div id="global-ui-progress-bar" class="global-ui-progress-bar" aria-hidden="true"></div>
             <header class="top-header">
-                <div class="header-left">
+                <div class="header-left" style="display: flex; align-items: center; gap: 12px;">
                     <h2 id="view-title">Detection Overview</h2>
+                    <div id="global-ui-loading-pill" class="global-ui-loading-pill" role="status" aria-live="polite">
+                        <span class="oshoosi-spinner sm" aria-hidden="true"></span>
+                        <span id="global-ui-loading-text">Loading telemetry...</span>
+                    </div>
                 </div>
                 <div class="header-right">
                     <div class="search-bar">
@@ -2755,7 +2760,8 @@
             <!-- Windows Hello / WebAuthn Platform Authenticator (PIN / Biometrics) -->
             <div id="hello-auth-container" style="margin-bottom: 14px; text-align: center;">
                 <button type="button" id="btn-windows-hello" onclick="startWindowsHelloAuth()" style="width: 100%; padding: 9px 12px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid rgba(59, 130, 246, 0.4); color: #93c5fd; background: rgba(59, 130, 246, 0.12); display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s;">
-                    <span>🛡️ Sign In with Windows Hello (PIN / Biometrics)</span>
+                    <span id="hello-btn-spinner" class="oshoosi-spinner sm" style="display: none;" aria-hidden="true"></span>
+                    <span id="hello-btn-text">🛡️ Sign In with Windows Hello (PIN / Biometrics)</span>
                 </button>
                 <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">
                     Fast TPM platform authentication for Hello PIN, fingerprint, or facial recognition.
@@ -2778,9 +2784,14 @@
                     <input type="password" id="login-confirm-password" placeholder="Confirm password..." autocomplete="new-password">
                 </div>
                 <button type="submit" class="login-btn" id="login-submit-btn">
+                    <span id="login-btn-spinner" class="oshoosi-spinner dark" style="display: none;" aria-hidden="true"></span>
                     <span id="login-btn-text">Access System</span>
-                    <i data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
+                    <i id="login-btn-icon" data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
                 </button>
+                <div id="login-status-banner" class="login-status-banner" style="display: none;" role="status" aria-live="polite">
+                    <span class="oshoosi-spinner" aria-hidden="true"></span>
+                    <span id="login-status-text">Verifying credentials &amp; initializing security session...</span>
+                </div>
                 <div id="login-error" class="login-error"></div>
                 <div style="text-align: center; margin-top: 14px;">
                     <a href="#" id="login-reset-password-link" onclick="openPasswordResetModal(event)" style="color: var(--accent-cyan); font-size: 12px; text-decoration: none; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
@@ -3068,7 +3079,7 @@
 
     <!-- Scripts -->
     <script type="text/javascript" src="https://unpkg.com/vis-network@10.1.2/standalone/umd/vis-network.min.js" integrity="sha384-RDdG1CLOxjNlTHh4JYx/rnAueaMHbkBHmeHwrEyljMQw3LF0it4SkuNotIY/FPxD" crossorigin="anonymous"></script>
-    <script src="app.js?v=20261015_03"></script>
+    <script src="app.js?v=20261020_01"></script>
     <script>
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();

@@ -69,12 +69,198 @@ window.state = state;
 let updateInterval = null;
 let supervisorInterval = null;
 
+// ============================================================================
+// Universal WebUI Loading Spinner & Status Feedback Helpers
+// ============================================================================
+let _uiActiveLoadingCount = 0;
+let _uiLoadingHideTimer = null;
+
+function setGlobalUiLoading(isLoading, statusMessage = 'Syncing live telemetry...') {
+    const pill = document.getElementById('global-ui-loading-pill');
+    const textEl = document.getElementById('global-ui-loading-text');
+    const bar = document.getElementById('global-ui-progress-bar');
+
+    if (isLoading) {
+        _uiActiveLoadingCount++;
+        if (_uiLoadingHideTimer) {
+            clearTimeout(_uiLoadingHideTimer);
+            _uiLoadingHideTimer = null;
+        }
+        if (textEl && statusMessage) {
+            textEl.innerText = statusMessage;
+        }
+        if (pill) {
+            pill.style.display = 'inline-flex';
+            pill.style.opacity = '1';
+        }
+        if (bar) {
+            bar.style.display = 'block';
+        }
+    } else {
+        _uiActiveLoadingCount = Math.max(0, _uiActiveLoadingCount - 1);
+        if (_uiActiveLoadingCount === 0) {
+            _uiLoadingHideTimer = setTimeout(() => {
+                if (_uiActiveLoadingCount === 0) {
+                    if (pill) pill.style.display = 'none';
+                    if (bar) bar.style.display = 'none';
+                }
+            }, 180);
+        }
+    }
+}
+window.setGlobalUiLoading = setGlobalUiLoading;
+
+function setLoginLoadingState(isLoading, statusMessage = '', source = 'submit') {
+    const banner = document.getElementById('login-status-banner');
+    const bannerText = document.getElementById('login-status-text');
+    const submitBtn = document.getElementById('login-submit-btn');
+    const submitSpinner = document.getElementById('login-btn-spinner');
+    const submitText = document.getElementById('login-btn-text');
+    const helloBtn = document.getElementById('btn-windows-hello');
+    const helloSpinner = document.getElementById('hello-btn-spinner');
+    const helloText = document.getElementById('hello-btn-text');
+
+    if (isLoading) {
+        if (banner) {
+            banner.style.display = 'flex';
+        }
+        if (bannerText && statusMessage) {
+            bannerText.innerText = statusMessage;
+        }
+        if (source === 'submit') {
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.style.opacity = '0.88';
+            }
+            if (submitSpinner) submitSpinner.style.display = 'inline-block';
+            if (submitText) submitText.innerText = 'Authenticating...';
+        } else if (source === 'hello') {
+            if (helloBtn) {
+                helloBtn.disabled = true;
+                helloBtn.style.opacity = '0.85';
+            }
+            if (helloSpinner) helloSpinner.style.display = 'inline-block';
+            if (helloText) helloText.innerText = 'Awaiting Windows Hello...';
+        }
+    } else {
+        if (banner) {
+            banner.style.display = 'none';
+        }
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.style.opacity = '1';
+        }
+        if (submitSpinner) submitSpinner.style.display = 'none';
+        if (submitText) submitText.innerText = 'Access System';
+        if (helloBtn) {
+            helloBtn.disabled = false;
+            helloBtn.style.opacity = '1';
+        }
+        if (helloSpinner) helloSpinner.style.display = 'none';
+        if (helloText) helloText.innerText = '🛡️ Sign In with Windows Hello (PIN / Biometrics)';
+    }
+}
+window.setLoginLoadingState = setLoginLoadingState;
+
+function setButtonLoadingState(btn, isLoading, loadingText = 'Processing...') {
+    if (!btn) return;
+    if (isLoading) {
+        if (!btn.dataset.originalHtml) {
+            btn.dataset.originalHtml = btn.innerHTML;
+        }
+        btn.disabled = true;
+        const isBrightBtn = btn.classList.contains('login-btn') && !btn.style.background.includes('rgba(255');
+        const spinnerClass = isBrightBtn ? 'oshoosi-spinner dark sm' : 'oshoosi-spinner sm';
+        btn.innerHTML = `<span class="${spinnerClass}" aria-hidden="true" style="margin-right: 6px;"></span><span>${loadingText}</span>`;
+    } else if (btn.dataset.originalHtml) {
+        btn.innerHTML = btn.dataset.originalHtml;
+        delete btn.dataset.originalHtml;
+        btn.disabled = false;
+        if (window.lucide && typeof window.lucide.createIcons === 'function') {
+            try { window.lucide.createIcons(); } catch (_) {}
+        }
+    }
+}
+window.setButtonLoadingState = setButtonLoadingState;
+
+function showViewLoadingFeedback(viewName, viewLabel) {
+    setGlobalUiLoading(true, `Loading ${viewLabel || viewName}...`);
+    setTimeout(() => setGlobalUiLoading(false), 380);
+}
+window.showViewLoadingFeedback = showViewLoadingFeedback;
+
+function setupUniversalUiLoadingInterceptors() {
+    if (window._oshoosiFetchWrapped) return;
+    window._oshoosiFetchWrapped = true;
+
+    const nativeFetch = window.fetch ? window.fetch.bind(window) : null;
+    if (nativeFetch) {
+        window.fetch = async function(input, init) {
+            const urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+            const method = (init && init.method ? init.method : 'GET').toUpperCase();
+            // Show global loading indicator for interactive mutations and explicit view loads
+            const isBackgroundPoll = method === 'GET' && (
+                urlStr.endsWith('/api/status') ||
+                urlStr.endsWith('/api/threats') ||
+                urlStr.endsWith('/api/activity') ||
+                urlStr.endsWith('/api/supervisor/status')
+            ) && state._appStarted;
+
+            let label = 'Syncing telemetry...';
+            if (urlStr.includes('/auth/login')) label = 'Authenticating credentials...';
+            else if (urlStr.includes('/auth/webauthn')) label = 'Verifying Windows Hello TPM assertion...';
+            else if (urlStr.includes('/auth/set-password')) label = 'Updating password & clearing lockout...';
+            else if (urlStr.includes('/rea/')) label = 'Running REA binary analysis...';
+            else if (urlStr.includes('/siquery/')) label = 'Executing Siquery SQL query...';
+            else if (urlStr.includes('/killchain/')) label = 'Updating Kill Chain containment state...';
+            else if (urlStr.includes('/skyrl/')) label = 'Running RL policy step...';
+            else if (urlStr.includes('/malware') || urlStr.includes('/scan')) label = 'Scanning target artifact...';
+            else if (urlStr.includes('/repair')) label = 'Running self-healing repair check...';
+            else if (urlStr.includes('/mitre')) label = 'Loading MITRE ATT&CK matrix...';
+            else if (urlStr.includes('/history') || urlStr.includes('/logs')) label = 'Loading forensic history...';
+            else if (method !== 'GET') label = 'Executing security command...';
+
+            if (!isBackgroundPoll) {
+                setGlobalUiLoading(true, label);
+            }
+            try {
+                return await nativeFetch(input, init);
+            } finally {
+                if (!isBackgroundPoll) {
+                    setGlobalUiLoading(false);
+                }
+            }
+        };
+    }
+
+    // Attach automatic visual feedback when interactive action buttons are clicked
+    if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('click', (e) => {
+            const btn = e.target && typeof e.target.closest === 'function'
+                ? e.target.closest('button')
+                : null;
+            if (!btn || btn.disabled) return;
+            // Skip tab switchers and modal close buttons
+            if (btn.classList.contains('btn-tab') || btn.id.startsWith('close-') || btn.id.startsWith('cancel-')) {
+                return;
+            }
+            const label = (btn.innerText || btn.textContent || '').trim();
+            if (label && !btn.id.includes('top-btn')) {
+                setGlobalUiLoading(true, `${label}...`);
+                setTimeout(() => setGlobalUiLoading(false), 450);
+            }
+        }, true);
+    }
+}
+
+
 /**
  * Initialize Lucide icons and start polling
  */
 function init() {
     if (state._initCalled) return;
-    state._initCalled = true;
+    state._initCalled = true;
+    setupUniversalUiLoadingInterceptors();
     setupLogin();
     setupPasswordResetModal();
     setupNav();
@@ -267,6 +453,9 @@ async function checkAuthStatus() {
     const submitBtn = document.getElementById('login-submit-btn');
 
     try {
+        if (!state._appStarted) {
+            setLoginLoadingState(true, 'Checking active security session & TPM status...', 'session');
+        }
         const res = await fetch(`${API_BASE}/auth/status`);
         if (res.ok) {
             const data = await res.json();
@@ -293,12 +482,15 @@ async function checkAuthStatus() {
             }
 
             if (data.authenticated) {
+                setLoginLoadingState(true, 'Session verified — loading dashboard telemetry...', 'session');
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 localStorage.removeItem('oshoosi_logged_out');
                 if (overlay) overlay.style.display = 'none';
                 startApp();
+                setLoginLoadingState(false);
                 return true;
             } else {
+                setLoginLoadingState(false);
                 localStorage.setItem('oshoosi_logged_in', 'false');
                 localStorage.setItem('oshoosi_logged_out', 'true');
                 localStorage.removeItem('oshoosi_dashboard_token');
@@ -307,6 +499,7 @@ async function checkAuthStatus() {
             }
         }
     } catch (_) {}
+    setLoginLoadingState(false);
 
     return false;
 }
@@ -325,10 +518,7 @@ async function startWindowsHelloAuth() {
         return;
     }
 
-    if (helloBtn) {
-        helloBtn.disabled = true;
-        helloBtn.style.opacity = '0.6';
-    }
+    setLoginLoadingState(true, 'Requesting TPM 2.0 WebAuthn challenge — complete Windows Hello PIN or biometric prompt...', 'hello');
 
     try {
         const chalRes = await fetch(`${API_BASE}/auth/webauthn/challenge`);
@@ -407,10 +597,7 @@ async function startWindowsHelloAuth() {
             }
         }
     } finally {
-        if (helloBtn) {
-            helloBtn.disabled = false;
-            helloBtn.style.opacity = '1';
-        }
+        setLoginLoadingState(false);
     }
 }
 window.startWindowsHelloAuth = startWindowsHelloAuth;
@@ -438,7 +625,13 @@ function setupLogin() {
             const password = passwordInput ? passwordInput.value : '';
 
             if (errorDiv) errorDiv.style.display = 'none';
-            if (submitBtn) submitBtn.disabled = true;
+            setLoginLoadingState(
+                true,
+                mode === 'windows'
+                    ? 'Verifying OS credentials with Local Security Authority & initializing session...'
+                    : 'Verifying Master Admin Token & initializing encrypted session...',
+                'submit'
+            );
 
             try {
                 const payload = {
@@ -454,19 +647,23 @@ function setupLogin() {
 
                 const data = await res.json();
                 if (res.ok && (data.success || data.ok)) {
+                    setLoginLoadingState(true, 'Authenticated — loading real-time EDR telemetry & security views...', 'submit');
                     localStorage.setItem('oshoosi_logged_in', 'true');
                     localStorage.removeItem('oshoosi_logged_out');
                     if (data.token) {
                         localStorage.setItem('oshoosi_dashboard_token', data.token);
                     }
+                    startApp();
                     if (overlay) {
                         overlay.style.opacity = '0';
                         setTimeout(() => {
                             overlay.style.display = 'none';
                             overlay.style.opacity = '1';
-                        }, 300);
+                            setLoginLoadingState(false);
+                        }, 280);
+                    } else {
+                        setLoginLoadingState(false);
                     }
-                    startApp();
                 } else {
                     const isLocked = data.locked || (data.lockout && data.lockout.locked_out) || res.status === 429;
                     if (isLocked) {
@@ -505,7 +702,9 @@ function setupLogin() {
                     errorDiv.innerText = `Login error: ${err.message}`;
                 }
             } finally {
-                if (submitBtn) submitBtn.disabled = false;
+                if (localStorage.getItem('oshoosi_logged_in') !== 'true') {
+                    setLoginLoadingState(false);
+                }
             }
         });
     }
@@ -611,10 +810,7 @@ function setupPasswordResetModal() {
                 return;
             }
 
-            if (saveBtn) {
-                saveBtn.disabled = true;
-                saveBtn.style.opacity = '0.6';
-            }
+            setButtonLoadingState(saveBtn, true, 'Updating Password...');
 
             try {
                 const res = await fetch(`${API_BASE}/auth/set-password`, {
@@ -649,19 +845,19 @@ function setupPasswordResetModal() {
 
                     setTimeout(() => {
                         closePasswordResetModal();
-                        if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+                        setButtonLoadingState(saveBtn, false);
                     }, 1400);
                 } else {
                     msgDiv.style.display = 'block';
                     msgDiv.style.color = '#ff4d4d';
                     msgDiv.innerText = data.error || data.message || 'Failed to update password. Verify your Master Admin Token.';
-                    if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+                    setButtonLoadingState(saveBtn, false);
                 }
             } catch (err) {
                 msgDiv.style.display = 'block';
                 msgDiv.style.color = '#ff4d4d';
                 msgDiv.innerText = 'Network error while updating password: ' + err.message;
-                if (saveBtn) { saveBtn.disabled = false; saveBtn.style.opacity = '1'; }
+                setButtonLoadingState(saveBtn, false);
             }
         });
     }
@@ -787,6 +983,7 @@ function setupNav() {
                     history.pushState ? history.pushState(null, null, '#' + view) : (window.location.hash = '#' + view);
                 }
                 state.current_view = view;
+                showViewLoadingFeedback(view, viewTitle ? viewTitle.innerText : view);
             } catch (err) {
                 console.error('Navigation error:', err);
                 showUserError('Navigation', err);

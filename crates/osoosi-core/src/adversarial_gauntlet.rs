@@ -830,24 +830,59 @@ impl AdversarialRedTeamGauntlet {
             )
             .is_err();
 
+            // NIST FIPS 203 §7.2 modulus-boundary check (q = 3329 = 0x0D01)
+            let mut non_canonical_pk = responder.mlkem_public.clone();
+            if non_canonical_pk.len() >= 2 {
+                non_canonical_pk[0] = 0x01;
+                non_canonical_pk[1] = (non_canonical_pk[1] & 0xf0) | 0x0d;
+            }
+            let modulus_boundary_rejected =
+                !osoosi_audit::pqc_primitives::validate_mlkem768_encapsulation_key(&non_canonical_pk);
+
             let sk_seed = [0x5Au8; 32];
             let vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(&sk_seed);
             let msg = b"OpenOsoosi Quantum-Ready Merkle Root Attestation";
             let mut env = osoosi_audit::pqc_primitives::hybrid_sign_envelope(msg, &sk_seed);
             let valid_hybrid =
                 osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &env, &vk);
-            // Simulate a Quantum Shor's Algorithm forgery: classical Ed25519 sig remains valid,
-            // while 1 coefficient of the ML-DSA-65 lattice vector z is perturbed:
+            // 1. Perturb 1 coefficient of the ML-DSA-65 lattice vector z while keeping classical Ed25519 sig untouched:
             env.mldsa_z[0].coeffs[0] = env.mldsa_z[0].coeffs[0].wrapping_add(1);
-            let shor_forgery_rejected =
+            let shor_z_forgery_rejected =
                 !osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &env, &vk);
 
-            let prevented = dec_ok && fo_rejected && valid_hybrid && shor_forgery_rejected;
+            // 2. Simulate Shor's algorithm key-substitution attack (attacker swaps ML-DSA-65 public key (rho, t)):
+            let attacker_seed = [0xA5u8; 32];
+            let mut key_sub_env =
+                osoosi_audit::pqc_primitives::hybrid_sign_envelope(msg, &attacker_seed);
+            key_sub_env.ed25519_public = env.ed25519_public;
+            let shor_key_sub_rejected =
+                !osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &key_sub_env, &vk);
+
+            // 3. Simulate PQC signature-stripping downgrade attack on Law 10 ZkBftQuarantineProof:
+            let mut zk_proof = osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(
+                "PID 9001 AWS_KEY=AKIAIOSFODNN7EXAMPLE",
+                9001,
+                6.1,
+                4,
+            );
+            let zk_valid = osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&zk_proof);
+            zk_proof.pqc_mldsa65_signature_hex.clear();
+            let zk_stripping_rejected =
+                !osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&zk_proof);
+
+            let prevented = dec_ok
+                && fo_rejected
+                && modulus_boundary_rejected
+                && valid_hybrid
+                && shor_z_forgery_rejected
+                && shor_key_sub_rejected
+                && zk_valid
+                && zk_stripping_rejected;
             results.push(AdversarialVectorResult {
                 suite: "Suite4_Reviewer_Bypass_Resistance".to_string(),
                 vector_id: "BYPASS-PQC-SHOR-DOWNGRADE-05".to_string(),
                 framework_ref: "NIST FIPS 203 (ML-KEM-768) & NIST FIPS 204 (ML-DSA-65) Hybrid Shor/Grover Resistance".to_string(),
-                description: "Quantum Shor's algorithm classical-half forgery & ML-KEM-768 lattice ciphertext bit-flip downgrade attack".to_string(),
+                description: "Quantum Shor key-substitution forgery, signature-stripping downgrade, & ML-KEM-768 modulus-boundary/ciphertext bit-flip attack".to_string(),
                 prevented,
                 detected: prevented,
                 bypass_succeeded: !prevented,
@@ -855,8 +890,8 @@ impl AdversarialRedTeamGauntlet {
                 latency_us: t0.elapsed().as_micros().max(1) as u64,
                 enforcing_layer: "NIST_FIPS203_MLKEM768_And_FIPS204_MLDSA65_HybridPQC".to_string(),
                 evidence: format!(
-                    "kem_roundtrip={}, fo_tamper_rejected={}, hybrid_sig_ok={}, shor_forgery_rejected={}",
-                    dec_ok, fo_rejected, valid_hybrid, shor_forgery_rejected
+                    "kem_roundtrip={}, fo_tamper_rejected={}, mod_q3329_rejected={}, hybrid_sig_ok={}, shor_z_rejected={}, shor_key_sub_rejected={}, zk_strip_rejected={}",
+                    dec_ok, fo_rejected, modulus_boundary_rejected, valid_hybrid, shor_z_forgery_rejected, shor_key_sub_rejected, zk_stripping_rejected
                 ),
             });
         }
