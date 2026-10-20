@@ -97,10 +97,16 @@ impl MemoryWatchdogDebouncer {
 pub fn trim_process_working_set() -> bool {
     extern "system" {
         fn GetCurrentProcess() -> isize;
+        fn SetProcessWorkingSetSize(
+            hProcess: isize,
+            dwMinimumWorkingSetSize: usize,
+            dwMaximumWorkingSetSize: usize,
+        ) -> i32;
         fn K32EmptyWorkingSet(hProcess: isize) -> i32;
     }
     unsafe {
         let handle = GetCurrentProcess();
+        let _ = SetProcessWorkingSetSize(handle, usize::MAX, usize::MAX);
         K32EmptyWorkingSet(handle) != 0
     }
 }
@@ -124,7 +130,9 @@ pub fn trim_process_working_set() -> bool {
 /// Spawns a proactive memory watchdog background task (if not already running).
 ///
 /// Loops every 2 seconds:
-/// - Uses `sysinfo::System::new()` and `refresh_memory()`.
+/// - Uses `sysinfo::System::new()` and `refresh_memory()` + `refresh_process(my_pid)`.
+/// - Enforces the `< 250–300 MB` daemon Working Set budget by calling `trim_process_working_set()`
+///   whenever the daemon's own working set exceeds `220.0 MB`.
 /// - Calculates available RAM in MB: `avail_mb = sys.available_memory() as f64 / (1024.0 * 1024.0)`
 /// - If `avail_mb < 250.0`:
 ///   - Automatically calls `trim_process_working_set()` to actively release committed heap pages.
@@ -139,6 +147,7 @@ pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
 
     let handle = tokio::spawn(async move {
         let mut sys = sysinfo::System::new();
+        let my_pid = sysinfo::Pid::from(std::process::id() as usize);
         let mut interval = tokio::time::interval(Duration::from_secs(2));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut debouncer = MemoryWatchdogDebouncer::new();
@@ -147,6 +156,15 @@ pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
             interval.tick().await;
 
             sys.refresh_memory();
+            sys.refresh_process(my_pid);
+            let proc_ws_mb = sys
+                .process(my_pid)
+                .map(|p| p.memory() as f64 / (1024.0 * 1024.0))
+                .unwrap_or(0.0);
+            if proc_ws_mb > 220.0 {
+                trim_process_working_set();
+            }
+
             let avail_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
             let level = evaluate_memory_pressure(avail_mb);
 
