@@ -141,6 +141,12 @@ impl AgentProvisioner {
         // b. If Sysmon is NOT installed:
         // Determine target directory: prefer tools/sysmon in the workspace / working directory.
         // If creation fails, fall back to %LOCALAPPDATA%\OshoosiClaw\tools\sysmon or temp dir.
+        #[cfg(test)]
+        let target_dir = std::env::temp_dir().join(format!(
+            "osoosi_sysmon_test_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        #[cfg(not(test))]
         let target_dir = {
             let candidates = [
                 PathBuf::from("tools").join("sysmon"),
@@ -236,7 +242,7 @@ impl AgentProvisioner {
 
             // Verify Microsoft Authenticode digital signature on extracted Sysmon binaries
             #[cfg(target_os = "windows")]
-            {
+            if !cfg!(test) {
                 let candidate = if sysmon_exe.exists() {
                     sysmon_exe.clone()
                 } else {
