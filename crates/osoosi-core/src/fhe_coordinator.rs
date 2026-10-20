@@ -200,7 +200,10 @@ impl FheCoordinator {
 
     /// Retrieves current number of leaves in the Merkle audit tree.
     pub fn get_tree_size(&self) -> usize {
-        self.audit_leaves.read().unwrap_or_else(|e| e.into_inner()).len()
+        self.audit_leaves
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 
     /// Generates cryptographic Merkle proof for a recorded operation sequence.

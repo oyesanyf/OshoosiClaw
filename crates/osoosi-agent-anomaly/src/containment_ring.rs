@@ -574,9 +574,7 @@ impl ZeroCopyImmutableToolBuffer {
 
     #[cfg(target_os = "windows")]
     fn set_page_readonly(ptr: *mut u8, size: usize, readonly: bool) -> bool {
-        use windows_sys::Win32::System::Memory::{
-            VirtualProtect, PAGE_READONLY, PAGE_READWRITE,
-        };
+        use windows_sys::Win32::System::Memory::{VirtualProtect, PAGE_READONLY, PAGE_READWRITE};
         let new_protect = if readonly {
             PAGE_READONLY
         } else {
@@ -719,7 +717,10 @@ impl PinnedToolObjectBinding {
 
     /// Verifies at $t_{\text{use}}$ that an opened `std::fs::File` handle still matches
     /// the exact `(file_size, blake3_digest)` pinned at $t_{\text{check}}$.
-    pub fn verify_opened_file_matches_pin(&self, file: &mut std::fs::File) -> Result<Vec<u8>, String> {
+    pub fn verify_opened_file_matches_pin(
+        &self,
+        file: &mut std::fs::File,
+    ) -> Result<Vec<u8>, String> {
         use std::io::{Read, Seek, SeekFrom};
         let meta = file.metadata().map_err(|e| {
             format!(
@@ -932,8 +933,7 @@ mod tests {
 
     #[test]
     fn test_law3_dirac_delta_capability_ticket_single_use_and_zero_standing_privilege() {
-        let ticket =
-            DiracDeltaCapabilityTicket::issue("agent_1", "read_file", 1, 5_000_000_000);
+        let ticket = DiracDeltaCapabilityTicket::issue("agent_1", "read_file", 1, 5_000_000_000);
         assert_eq!(ticket.capability_density_at(ticket.issued_at_ns + 100), 1);
         assert_eq!(
             ticket.capability_density_at(ticket.issued_at_ns + 10_000_000_000),
@@ -1023,4 +1023,3 @@ mod tests {
         );
     }
 }
-

@@ -26,3 +26,5 @@ EXPORTS
     ObUnRegisterCallbacks
     IoRegisterBootDriverCallback
     IoUnregisterBootDriverCallback
+    FsRtlRegisterFileSystemFilterCallbacks
+

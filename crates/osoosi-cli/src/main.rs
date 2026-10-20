@@ -2167,43 +2167,71 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         };
                     match signer.verify_binary_with_tpm2_manifest(bin_path, &manifest) {
                         Ok(()) => {
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                             println!("  TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Verification");
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                             println!("Binary:                 {}", bin_path.display());
                             println!("TPM Provider:           {}", manifest.tpm_provider);
                             println!("TPM Persistent Handle:  {}", manifest.tpm_key_handle);
                             println!("NV Monotonic Counter:   {}", manifest.nv_monotonic_counter);
                             println!("Verification Status:    ✅ VALID (Hardware Signature + Anti-Rollback Verified)");
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                         }
                         Err(e) => {
-                            eprintln!("❌ TPM 2.0 Merkle signature verification failed for {}: {}", bin_path.display(), e);
+                            eprintln!(
+                                "❌ TPM 2.0 Merkle signature verification failed for {}: {}",
+                                bin_path.display(),
+                                e
+                            );
                             std::process::exit(1);
                         }
                     }
                 } else {
-                    match signer.sign_binary_merkle_root(
-                        bin_path,
-                        pin.as_deref().map(|s| s.as_bytes()),
-                    ) {
+                    match signer
+                        .sign_binary_merkle_root(bin_path, pin.as_deref().map(|s| s.as_bytes()))
+                    {
                         Ok(manifest) => {
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                             println!("  TPM 2.0 Hardware-Signed BLAKE3 Merkle Root Manifest");
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                             println!("Binary:                 {}", manifest.canonical_path);
                             println!("TPM Provider:           {}", manifest.tpm_provider);
                             println!("TPM Persistent Handle:  {}", manifest.tpm_key_handle);
                             println!("BLAKE3 Merkle Root:     {}", manifest.blake3_root_hex);
-                            println!("SHA256(BLAKE3_Root):    {}", manifest.sha256_of_blake3_root_hex);
+                            println!(
+                                "SHA256(BLAKE3_Root):    {}",
+                                manifest.sha256_of_blake3_root_hex
+                            );
                             println!("Generation Epoch:       {}", epoch);
-                            println!("NV Monotonic Counter:   {} (0x01800001)", manifest.nv_monotonic_counter);
-                            println!("Manifest Written:       {}.merkle.sig.json", bin_path.display());
+                            println!(
+                                "NV Monotonic Counter:   {} (0x01800001)",
+                                manifest.nv_monotonic_counter
+                            );
+                            println!(
+                                "Manifest Written:       {}.merkle.sig.json",
+                                bin_path.display()
+                            );
                             println!("Raw Digest Written:     {}.b3", bin_path.display());
-                            println!("============================================================");
+                            println!(
+                                "============================================================"
+                            );
                         }
                         Err(e) => {
-                            eprintln!("❌ TPM 2.0 Merkle root signing failed for {}: {}", bin_path.display(), e);
+                            eprintln!(
+                                "❌ TPM 2.0 Merkle root signing failed for {}: {}",
+                                bin_path.display(),
+                                e
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -2410,9 +2438,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                     serde_json::to_string_pretty(&report).unwrap_or_default()
                                 );
                             } else {
-                                println!("============================================================");
+                                println!(
+                                    "============================================================"
+                                );
                                 println!("  OpenỌ̀ṣọ́ọ̀sì REA — Reverse Engineer Anything Report");
-                                println!("============================================================");
+                                println!(
+                                    "============================================================"
+                                );
                                 println!("Target:         {}", report.target_path);
                                 println!("Detected Kind:  {}", report.detected_kind);
                                 println!("Size:           {} bytes", report.size_bytes);
@@ -2422,10 +2454,23 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                 println!("Providers:      {}", report.providers_used.join(", "));
                                 println!("Findings:       {}", report.findings.len());
                                 for (idx, f) in report.findings.iter().enumerate() {
-                                    let sev = f.get("severity").and_then(|v| v.as_str()).unwrap_or("info");
-                                    let title = f.get("title").and_then(|v| v.as_str()).unwrap_or("finding");
-                                    let detail = f.get("detail").and_then(|v| v.as_str()).unwrap_or("");
-                                    println!("  {}. [{}] {} — {}", idx + 1, sev.to_uppercase(), title, detail);
+                                    let sev = f
+                                        .get("severity")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("info");
+                                    let title = f
+                                        .get("title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("finding");
+                                    let detail =
+                                        f.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+                                    println!(
+                                        "  {}. [{}] {} — {}",
+                                        idx + 1,
+                                        sev.to_uppercase(),
+                                        title,
+                                        detail
+                                    );
                                 }
                                 if let Some(ref src) = report.reconstructed_code {
                                     println!("\n--- Reconstructed Artifact Skeleton ---");
@@ -2437,11 +2482,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                                     println!("\n--- Auto-Synthesized Multi-Token YARA Rule ---");
                                     println!("{}", yara.trim());
                                 }
-                                println!("============================================================");
+                                println!(
+                                    "============================================================"
+                                );
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ REA analysis failed for {}: {}", target_path.display(), e);
+                            eprintln!(
+                                "❌ REA analysis failed for {}: {}",
+                                target_path.display(),
+                                e
+                            );
                             std::process::exit(1);
                         }
                     }
@@ -2458,7 +2509,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         println!("  OpenỌ̀ṣọ́ọ̀sì REA Provider Discovery Matrix");
                         println!("============================================================");
                         for p in &providers {
-                            let status_icon = if p.available { "✅ READY" } else { "⚪ OPTIONAL" };
+                            let status_icon = if p.available {
+                                "✅ READY"
+                            } else {
+                                "⚪ OPTIONAL"
+                            };
                             println!(
                                 "{:<12} {:<52} {}",
                                 status_icon,
@@ -2471,8 +2526,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
                 ReaAction::Evm { bytecode_hex, json } => {
                     let trimmed = bytecode_hex.trim();
-                    let raw_hex = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
-                    let decoded = hex::decode(raw_hex).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
+                    let raw_hex = trimmed
+                        .strip_prefix("0x")
+                        .or_else(|| trimmed.strip_prefix("0X"))
+                        .unwrap_or(trimmed);
+                    let decoded =
+                        hex::decode(raw_hex).unwrap_or_else(|_| trimmed.as_bytes().to_vec());
                     let report = analyze_target_bytes(
                         "cli_evm_bytecode",
                         None,
@@ -2492,7 +2551,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         println!("============================================================");
                         println!("Bytecode Size:  {} bytes", report.size_bytes);
                         println!("SHA-256:        {}", report.sha256);
-                        println!("Metadata:       {}", serde_json::to_string_pretty(&report.metadata).unwrap_or_default());
+                        println!(
+                            "Metadata:       {}",
+                            serde_json::to_string_pretty(&report.metadata).unwrap_or_default()
+                        );
                         if let Some(ref src) = report.reconstructed_code {
                             println!("\n--- Reconstructed Solidity Interface ---");
                             println!("{}", src);
@@ -2549,10 +2611,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 );
             } else {
                 println!("================================================================================");
-                println!("  OpenỌ̀ṣọ́ọ̀sì Adversarial Red-Team & Bypass-Resistance Gauntlet (Suite: {})", suite);
+                println!(
+                    "  OpenỌ̀ṣọ́ọ̀sì Adversarial Red-Team & Bypass-Resistance Gauntlet (Suite: {})",
+                    suite
+                );
                 println!("================================================================================");
                 for v in &scorecard.vector_results {
-                    let icon = if v.prevented { "✅ PREVENTED" } else { "❌ BYPASSED" };
+                    let icon = if v.prevented {
+                        "✅ PREVENTED"
+                    } else {
+                        "❌ BYPASSED"
+                    };
                     println!(
                         "  {} [{:<34}] ({} us) -> {}",
                         icon, v.vector_id, v.latency_us, v.enforcing_layer
@@ -3969,29 +4038,76 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
             match client {
                 Some(kd) => match kd.get_extended_status() {
                     Ok(st) => {
-                        println!("================================================================");
+                        println!(
+                            "================================================================"
+                        );
                         println!(" OshoosiClaw Ring-0 Kernel Driver & Inline LSM Status (v1.2.0)");
-                        println!("================================================================");
+                        println!(
+                            "================================================================"
+                        );
                         println!("  Driver Version           : 0x{:08X}", st.version);
                         println!("  Autonomy Mode            : {}", st.mode);
                         println!("  Protected Sensor PID     : {}", st.protected_pid);
                         println!("  Process Protection Level : {}", ppl_level);
-                        println!("  ObRegisterCallbacks      : {} (Altitude 385200)", if st.ob_callbacks_active { "Active" } else { "Standby" });
-                        println!("  BYOVD Image Load Guard   : {} ({} signatures)", if st.image_load_notify_active { "Active" } else { "Standby" }, osoosi_runtime::kernel_driver::KNOWN_BYOVD_DRIVERS.len());
-                        println!("  Minifilter Self-Defense  : {}", if st.minifilter_active { "Active" } else { "Standby" });
-                        println!("  ELAM Boot Driver Ready   : {}", if st.elam_registered { "Yes (OsoosiElam)" } else { "Staged (driver/windows/osoosi_elam.sys)" });
-                        println!("  Linux BPF_PROG_TYPE_LSM  : {} (Hooks: {}, Blocks: {})", if cfg!(target_os = "linux") { "Active (bprm_check_security, file_open, socket_connect)" } else { "Compiled & Packaged (ebpf/osoosi_probe.bpf.o)" }, lsm_hooks, lsm_blocks);
+                        println!(
+                            "  ObRegisterCallbacks      : {} (Altitude 385200)",
+                            if st.ob_callbacks_active {
+                                "Active"
+                            } else {
+                                "Standby"
+                            }
+                        );
+                        println!(
+                            "  BYOVD Image Load Guard   : {} ({} signatures)",
+                            if st.image_load_notify_active {
+                                "Active"
+                            } else {
+                                "Standby"
+                            },
+                            osoosi_runtime::kernel_driver::KNOWN_BYOVD_DRIVERS.len()
+                        );
+                        println!(
+                            "  Minifilter Self-Defense  : {}",
+                            if st.minifilter_active {
+                                "Active"
+                            } else {
+                                "Standby"
+                            }
+                        );
+                        println!(
+                            "  ELAM Boot Driver Ready   : {}",
+                            if st.elam_registered {
+                                "Yes (OsoosiElam)"
+                            } else {
+                                "Staged (driver/windows/osoosi_elam.sys)"
+                            }
+                        );
+                        println!(
+                            "  Linux BPF_PROG_TYPE_LSM  : {} (Hooks: {}, Blocks: {})",
+                            if cfg!(target_os = "linux") {
+                                "Active (bprm_check_security, file_open, socket_connect)"
+                            } else {
+                                "Compiled & Packaged (ebpf/osoosi_probe.bpf.o)"
+                            },
+                            lsm_hooks,
+                            lsm_blocks
+                        );
                         println!("  Pre-Exec Blocked Count   : {}", st.blocked_count);
                         println!("  BYOVD Drivers Blocked    : {}", st.byovd_blocked_count);
                         println!("  Handle Strips Enforced   : {}", st.handle_stripped_count);
-                        println!("  Minifilter Tamper Blocks : {}", st.minifilter_blocked_count);
+                        println!(
+                            "  Minifilter Tamper Blocks : {}",
+                            st.minifilter_blocked_count
+                        );
                         println!("  Active Rule Count        : {}", st.rule_count);
                         println!(
                             "  Device Path              : {}",
                             osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME
                         );
                         println!("  Operational              : Yes (Ring-0 & Inline LSM Enforced)");
-                        println!("================================================================");
+                        println!(
+                            "================================================================"
+                        );
                     }
                     Err(e) => {
                         eprintln!("Error querying driver status: {}", e);
@@ -4047,7 +4163,9 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                     .unwrap_or_else(|| app_root.join(r"driver\windows\osoosi_elam.sys"));
 
                 if elam_path.exists() {
-                    let _ = osoosi_runtime::kernel_driver::register_elam_certificate_if_present(&elam_path);
+                    let _ = osoosi_runtime::kernel_driver::register_elam_certificate_if_present(
+                        &elam_path,
+                    );
                 }
 
                 let sc_bin = osoosi_types::resolve_system_binary("sc.exe");
@@ -4095,7 +4213,9 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                         let _ = std::process::Command::new(&sc_bin)
                             .args(["start", "OsoosiDriver"])
                             .status();
-                        println!("OsoosiDriver & OsoosiElam services registered and start requested.");
+                        println!(
+                            "OsoosiDriver & OsoosiElam services registered and start requested."
+                        );
                     }
                     Ok(s) => {
                         warn!("sc create exited with status: {}. Attempting to start in case service already exists...", s);

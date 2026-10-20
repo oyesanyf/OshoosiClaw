@@ -88,8 +88,8 @@ fn assert_loopback_socket_functional() {
     let port = listener.local_addr().unwrap().port();
 
     let client_handle = std::thread::spawn(move || {
-        let mut stream =
-            TcpStream::connect(("127.0.0.1", port)).expect("Failed to connect to loopback listener");
+        let mut stream = TcpStream::connect(("127.0.0.1", port))
+            .expect("Failed to connect to loopback listener");
         stream
             .write_all(b"OSHOOSI_LOOPBACK_HEALTH_PROBE")
             .expect("Failed to write to loopback stream");
@@ -98,7 +98,9 @@ fn assert_loopback_socket_functional() {
         assert_eq!(&buf[..bytes_read], b"OSHOOSI_LOOPBACK_HEALTH_ACK");
     });
 
-    let (mut server_stream, _) = listener.accept().expect("Failed to accept loopback connection");
+    let (mut server_stream, _) = listener
+        .accept()
+        .expect("Failed to accept loopback connection");
     let mut buf = [0u8; 32];
     let bytes_read = server_stream
         .read(&mut buf)
@@ -292,7 +294,9 @@ fn test_stage_3_credential_access_lsass_shielding() {
         if let Err(e) = kill_res {
             let msg = e.to_string();
             assert!(
-                msg.contains("Cannot kill") || msg.contains("protected") || msg.contains("Refusing"),
+                msg.contains("Cannot kill")
+                    || msg.contains("protected")
+                    || msg.contains("Refusing"),
                 "Remediation must refuse to kill protected credential binary '{}', got: {}",
                 name,
                 msg
@@ -426,9 +430,9 @@ fn test_adversarial_high_privilege_termination_refusal() {
 
     // Critical system PIDs that MUST NEVER be killed
     let critical_pids = [
-        0, // System Idle Process
-        1, // System / Init
-        4, // Windows Kernel System PID
+        0,                  // System Idle Process
+        1,                  // System / Init
+        4,                  // Windows Kernel System PID
         std::process::id(), // OpenOshoosi EDR itself
     ];
 
@@ -479,8 +483,14 @@ fn test_adversarial_tarpit_and_qos_resistance() {
 
     let protected_candidates = [
         ("explorer.exe", r"C:\Windows\explorer.exe"),
-        ("SearchHost.exe", r"C:\Windows\SystemApps\Microsoft.Windows.Search_cw5n1h2txyewy\SearchHost.exe"),
-        ("SearchIndexer.exe", r"C:\Windows\System32\SearchIndexer.exe"),
+        (
+            "SearchHost.exe",
+            r"C:\Windows\SystemApps\Microsoft.Windows.Search_cw5n1h2txyewy\SearchHost.exe",
+        ),
+        (
+            "SearchIndexer.exe",
+            r"C:\Windows\System32\SearchIndexer.exe",
+        ),
         ("sihost.exe", r"C:\Windows\System32\sihost.exe"),
         ("svchost.exe", r"C:\Windows\System32\svchost.exe"),
         ("lsass.exe", r"C:\Windows\System32\lsass.exe"),

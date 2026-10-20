@@ -150,9 +150,8 @@ static GLOBAL_MAGIKA_SESSION: LazyLock<Option<parking_lot::Mutex<magika::Session
         }
         let prev_hook = std::panic::take_hook();
         std::panic::set_hook(Box::new(|_| {}));
-        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            magika::Session::new().ok()
-        }));
+        let res =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| magika::Session::new().ok()));
         std::panic::set_hook(prev_hook);
         res.ok().flatten().map(parking_lot::Mutex::new)
     });
@@ -690,7 +689,8 @@ pub fn find_valid_dotnet_bsjb_header(bytes: &[u8]) -> Option<(usize, String, Vec
             continue;
         }
 
-        let stream_count = u16::from_le_bytes([bytes[flags_off + 2], bytes[flags_off + 3]]) as usize;
+        let stream_count =
+            u16::from_le_bytes([bytes[flags_off + 2], bytes[flags_off + 3]]) as usize;
         if !(1..=16).contains(&stream_count) {
             continue;
         }
@@ -721,9 +721,7 @@ pub fn find_valid_dotnet_bsjb_header(bytes: &[u8]) -> Option<(usize, String, Vec
                 break;
             }
             let name_slice = &bytes[name_start..cur];
-            if name_slice[0] != b'#'
-                || !name_slice.iter().all(|&b| (0x20..=0x7e).contains(&b))
-            {
+            if name_slice[0] != b'#' || !name_slice.iter().all(|&b| (0x20..=0x7e).contains(&b)) {
                 valid_streams = false;
                 break;
             }
@@ -1744,11 +1742,7 @@ pub fn inspect_native_binary(
             });
 
             for sh in &elf.section_headers {
-                let name = elf
-                    .shdr_strtab
-                    .get_at(sh.sh_name)
-                    .unwrap_or("")
-                    .to_string();
+                let name = elf.shdr_strtab.get_at(sh.sh_name).unwrap_or("").to_string();
                 if name.is_empty() {
                     continue;
                 }
@@ -1852,7 +1846,10 @@ pub fn inspect_native_binary(
         binary_format, architecture, image_base, entry_point
     );
     for imp in imports.iter().take(15) {
-        pseudocode.push_str(&format!("extern void* __imp_{}();\n", imp.replace(['!', '.', '-'], "_")));
+        pseudocode.push_str(&format!(
+            "extern void* __imp_{}();\n",
+            imp.replace(['!', '.', '-'], "_")
+        ));
     }
     pseudocode.push_str(&format!(
         "\nint __fastcall entry_0x{:x}(void* peb_or_argc, void* argv) {{\n",
@@ -1872,10 +1869,11 @@ pub fn inspect_native_binary(
     pseudocode.push_str("    return dispatch_runtime_main();\n}\n");
 
     // Law 7: Verify static entry-point CFG transition baseline via CfgHadamardZeroVerifier
-    let cfg_baseline = osoosi_audit::nsrl_aslr_merkle::CfgHadamardZeroVerifier::verify_runtime_transitions(
-        &[(image_base, entry_point)],
-        &[(image_base, entry_point)],
-    );
+    let cfg_baseline =
+        osoosi_audit::nsrl_aslr_merkle::CfgHadamardZeroVerifier::verify_runtime_transitions(
+            &[(image_base, entry_point)],
+            &[(image_base, entry_point)],
+        );
 
     let metadata = json!({
         "format": binary_format,
@@ -1975,7 +1973,10 @@ pub fn inspect_wasm_artifact(
     evidence.push(ReaEvidence {
         source: "wasm_binary_header".to_string(),
         location: "offset 0x0..0x8".to_string(),
-        observation: format!("Validated WebAssembly binary magic `\\0asm` version {}", version),
+        observation: format!(
+            "Validated WebAssembly binary magic `\\0asm` version {}",
+            version
+        ),
         confidence: 1.0,
         digest_sha256: None,
     });
@@ -1999,7 +2000,10 @@ pub fn inspect_wasm_artifact(
         if pos + sec_len > bytes.len() {
             limitations.push(ReaLimitation {
                 code: "TRUNCATED_WASM_SECTION".to_string(),
-                description: format!("Section id {} declared length {} exceeding buffer.", sec_id, sec_len),
+                description: format!(
+                    "Section id {} declared length {} exceeding buffer.",
+                    sec_id, sec_len
+                ),
                 remediation: None,
             });
             break;
@@ -2091,7 +2095,8 @@ pub fn inspect_wasm_artifact(
                         let mut type_index_opt: Option<u32> = None;
                         let kind = match kind_byte {
                             0x00 => {
-                                type_index_opt = Some(read_leb128_u32(bytes, &mut cur).unwrap_or(0));
+                                type_index_opt =
+                                    Some(read_leb128_u32(bytes, &mut cur).unwrap_or(0));
                                 "func"
                             }
                             0x01 => {
@@ -2203,7 +2208,10 @@ pub fn inspect_wasm_artifact(
         "detail": format!("Sections: {}, Function bodies: {}", sections.len(), function_body_count),
     }));
 
-    let mut wat = format!("(module ;; Reconstructed by OpenOshoosi REA (WASM v{})\n", version);
+    let mut wat = format!(
+        "(module ;; Reconstructed by OpenOshoosi REA (WASM v{})\n",
+        version
+    );
     for (idx, t) in func_types.iter().enumerate() {
         wat.push_str(&format!("  (type $t{} {})\n", idx, t));
     }
@@ -2228,10 +2236,7 @@ pub fn inspect_wasm_artifact(
         .max(function_body_count as usize);
     for def_i in 0..defined_total {
         let func_idx = imported_func_count + def_i;
-        let t_idx = defined_func_type_indices
-            .get(def_i)
-            .copied()
-            .unwrap_or(0);
+        let t_idx = defined_func_type_indices.get(def_i).copied().unwrap_or(0);
         wat.push_str(&format!(
             "  (func $f{} (type $t{}) ;; defined function body #{}\n    unreachable\n  )\n",
             func_idx, t_idx, def_i
@@ -2455,12 +2460,18 @@ pub fn inspect_evm_bytecode(
         sol.push_str("    mapping(uint256 => uint256) private _storage;\n\n");
     }
     for sel in &selectors {
-        let s_hex = sel.get("selector").and_then(|v| v.as_str()).unwrap_or("0x00000000");
+        let s_hex = sel
+            .get("selector")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x00000000");
         let sig = sel
             .get("signature")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown()");
-        let dest = sel.get("jump_target").and_then(|v| v.as_str()).unwrap_or("0x00");
+        let dest = sel
+            .get("jump_target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("0x00");
         let mutability = if has_sstore {
             if has_callvalue {
                 "external payable"
@@ -2683,7 +2694,9 @@ pub fn inspect_javascript_electron(
         let json_start = 16usize;
         if json_start + json_len <= bytes.len() {
             let json_slice = &bytes[json_start..json_start + json_len];
-            let json_str = String::from_utf8_lossy(json_slice).trim_matches('\0').to_string();
+            let json_str = String::from_utf8_lossy(json_slice)
+                .trim_matches('\0')
+                .to_string();
             if let Ok(ast) = serde_json::from_str::<Value>(&json_str) {
                 let mut file_tuples = Vec::new();
                 walk_asar_files(&ast, "", &mut file_tuples);
@@ -2691,8 +2704,15 @@ pub fn inspect_javascript_electron(
 
                 evidence.push(ReaEvidence {
                     source: "chromium_asar_header".to_string(),
-                    location: format!("offset 0x0..0x{:x} (data_base=0x{:x})", json_start + json_len, data_base),
-                    observation: format!("Parsed ASAR archive header containing {} virtual files", file_tuples.len()),
+                    location: format!(
+                        "offset 0x0..0x{:x} (data_base=0x{:x})",
+                        json_start + json_len,
+                        data_base
+                    ),
+                    observation: format!(
+                        "Parsed ASAR archive header containing {} virtual files",
+                        file_tuples.len()
+                    ),
                     confidence: 1.0,
                     digest_sha256: Some(sha256_hex(json_slice)),
                 });
@@ -2803,7 +2823,11 @@ pub fn inspect_javascript_electron(
         evidence.push(ReaEvidence {
             source: "electron_ipc_extractor".to_string(),
             location: "main/preload JS".to_string(),
-            observation: format!("Discovered {} Electron IPC channels: {}", ipc_channels.len(), ipc_channels.join(", ")),
+            observation: format!(
+                "Discovered {} Electron IPC channels: {}",
+                ipc_channels.len(),
+                ipc_channels.join(", ")
+            ),
             confidence: 0.97,
             digest_sha256: None,
         });
@@ -2924,8 +2948,8 @@ pub fn inspect_sqlite_database(
     let mut ddl_statements: Vec<String> = Vec::new();
 
     if let Some(ref open_p) = db_open_path {
-        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
-            | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         if let Ok(conn) = rusqlite::Connection::open_with_flags(open_p, flags) {
             if let Ok(mut stmt) = conn.prepare(
                 "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
@@ -3099,7 +3123,10 @@ pub fn inspect_network_capture(
                     .unwrap_or(0);
                 *status_distribution.entry(status).or_insert(0) += 1;
 
-                if let Some(hdrs) = req.and_then(|r| r.get("headers")).and_then(|h| h.as_array()) {
+                if let Some(hdrs) = req
+                    .and_then(|r| r.get("headers"))
+                    .and_then(|h| h.as_array())
+                {
                     for h in hdrs {
                         let hname = h
                             .get("name")
@@ -3335,7 +3362,9 @@ pub fn inspect_firmware_or_apk(
         }
     }
 
-    let has_manifest = apk_entries.iter().any(|e| e.contains("AndroidManifest.xml"))
+    let has_manifest = apk_entries
+        .iter()
+        .any(|e| e.contains("AndroidManifest.xml"))
         || find_subslice(bytes, b"AndroidManifest.xml").is_some();
     let has_dex = apk_entries.iter().any(|e| e.ends_with(".dex"))
         || find_subslice(bytes, b"classes.dex").is_some()
@@ -3371,12 +3400,15 @@ pub fn inspect_firmware_or_apk(
         "detail": format!("Signatures: {:?}", signatures),
     }));
 
-    let mut layout = String::from("// Reconstructed Firmware / APK Partition Map via OpenOshoosi REA\n");
+    let mut layout =
+        String::from("// Reconstructed Firmware / APK Partition Map via OpenOshoosi REA\n");
     for sig in &signatures {
         layout.push_str(&format!(
             "offset {} : {}\n",
             sig.get("offset").and_then(|v| v.as_str()).unwrap_or("0x0"),
-            sig.get("signature").and_then(|v| v.as_str()).unwrap_or("Unknown")
+            sig.get("signature")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown")
         ));
     }
     if has_manifest || has_dex || has_flutter {
@@ -3467,7 +3499,11 @@ pub fn synthesize_rea_yara_rule(
     );
 
     for (idx, tok) in selected_tokens.iter().enumerate() {
-        rule.push_str(&format!("        $tok_{} = \"{}\" ascii wide\n", idx + 1, tok));
+        rule.push_str(&format!(
+            "        $tok_{} = \"{}\" ascii wide\n",
+            idx + 1,
+            tok
+        ));
     }
 
     let min_size = bytes.len().saturating_sub(bytes.len() / 2).max(1);
@@ -3576,8 +3612,8 @@ pub async fn run_external_rea_cli(
     args: &[&str],
     timeout_secs: u64,
 ) -> Result<(i32, String, String, bool)> {
-    let resolved = crate::tool_paths::resolve_executable(program)
-        .unwrap_or_else(|| PathBuf::from(program));
+    let resolved =
+        crate::tool_paths::resolve_executable(program).unwrap_or_else(|| PathBuf::from(program));
 
     let mut cmd = tokio::process::Command::new(resolved);
     cmd.args(args)
@@ -3812,7 +3848,9 @@ pub fn analyze_target_bytes(
     if limitations.is_empty() {
         limitations.push(ReaLimitation {
             code: "STATIC_PASS_COMPLETE".to_string(),
-            description: "Static binary/bytecode reconstruction completed without dynamic execution attach.".to_string(),
+            description:
+                "Static binary/bytecode reconstruction completed without dynamic execution attach."
+                    .to_string(),
             remediation: None,
         });
     }
@@ -3876,13 +3914,8 @@ pub fn analyze_target_path(
         let file_len = f.metadata().map(|m| m.len()).unwrap_or(0);
         let mut buf = Vec::with_capacity((file_len.min(REA_MAX_FILE_READ_BYTES)) as usize);
         f.take(REA_MAX_FILE_READ_BYTES).read_to_end(&mut buf)?;
-        let mut report = analyze_target_bytes(
-            trimmed,
-            Some(p),
-            &buf,
-            requested_kind,
-            autonomous_trigger,
-        );
+        let mut report =
+            analyze_target_bytes(trimmed, Some(p), &buf, requested_kind, autonomous_trigger);
         // Explicitly release the multi-megabyte file buffer before post-processing
         std::mem::drop(buf);
         if file_len > 16 * 1024 * 1024 {
@@ -4089,7 +4122,10 @@ impl AutonomousReaEngine {
                 if let Ok(report) = analyze_target_path(
                     &db_cand.to_string_lossy(),
                     ReaTargetKind::SqliteDatabase,
-                    Some(format!("autonomous_sweep_#{}:sqlite_telemetry_db", sweep_num)),
+                    Some(format!(
+                        "autonomous_sweep_#{}:sqlite_telemetry_db",
+                        sweep_num
+                    )),
                 ) {
                     self.record_report(report.clone());
                     generated.push(report);
@@ -4111,7 +4147,10 @@ impl AutonomousReaEngine {
                             if let Ok(report) = analyze_target_path(
                                 &p.to_string_lossy(),
                                 ReaTargetKind::Auto,
-                                Some(format!("autonomous_sweep_#{}:quarantine_artifact", sweep_num)),
+                                Some(format!(
+                                    "autonomous_sweep_#{}:quarantine_artifact",
+                                    sweep_num
+                                )),
                             ) {
                                 persist_auto_yara_rule(&report);
                                 self.record_report(report.clone());
@@ -4128,7 +4167,10 @@ impl AutonomousReaEngine {
         if let Ok(evm_report) = analyze_target_path(
             SAMPLE_EVM_CONTRACT_HEX,
             ReaTargetKind::EvmBytecode,
-            Some(format!("autonomous_sweep_#{}:evm_bytecode_sentinel", sweep_num)),
+            Some(format!(
+                "autonomous_sweep_#{}:evm_bytecode_sentinel",
+                sweep_num
+            )),
         ) {
             self.record_report(evm_report.clone());
             generated.push(evm_report);
@@ -4137,7 +4179,10 @@ impl AutonomousReaEngine {
         if let Ok(wasm_report) = analyze_target_path(
             SAMPLE_WASM_MODULE_HEX,
             ReaTargetKind::WasmArtifact,
-            Some(format!("autonomous_sweep_#{}:wasm_module_sentinel", sweep_num)),
+            Some(format!(
+                "autonomous_sweep_#{}:wasm_module_sentinel",
+                sweep_num
+            )),
         ) {
             self.record_report(wasm_report.clone());
             generated.push(wasm_report);
@@ -4229,7 +4274,8 @@ pub fn spawn_autonomous_rea_for_threat(path: PathBuf, trigger_reason: String) {
         if crate::blocking_manager::is_protected_or_benign_system_path(&path_str) {
             return;
         }
-        if let Ok(report) = analyze_target_path(&path_str, ReaTargetKind::Auto, Some(trigger_reason))
+        if let Ok(report) =
+            analyze_target_path(&path_str, ReaTargetKind::Auto, Some(trigger_reason))
         {
             persist_auto_yara_rule(&report);
             engine.record_report(report);
@@ -4275,13 +4321,8 @@ mod tests {
     #[test]
     fn test_inspect_wasm_artifact_sections_and_wat() {
         let wasm_bytes = hex::decode(SAMPLE_WASM_MODULE_HEX).expect("valid sample wasm hex");
-        let report = analyze_target_bytes(
-            "sample.wasm",
-            None,
-            &wasm_bytes,
-            ReaTargetKind::Auto,
-            None,
-        );
+        let report =
+            analyze_target_bytes("sample.wasm", None, &wasm_bytes, ReaTargetKind::Auto, None);
         assert_eq!(report.detected_kind, "wasm_artifact");
         assert!(report.metadata["valid_wasm"].as_bool().unwrap_or(false));
         let exports = report.metadata["exports"].as_array().unwrap();
@@ -4305,12 +4346,8 @@ mod tests {
 
     #[test]
     fn test_inspect_evm_bytecode_selectors_and_solidity() {
-        let report = analyze_target_path(
-            SAMPLE_EVM_CONTRACT_HEX,
-            ReaTargetKind::EvmBytecode,
-            None,
-        )
-        .expect("analyze EVM hex");
+        let report = analyze_target_path(SAMPLE_EVM_CONTRACT_HEX, ReaTargetKind::EvmBytecode, None)
+            .expect("analyze EVM hex");
         assert_eq!(report.detected_kind, "evm_bytecode");
         let selectors = report.metadata["selectors"].as_array().unwrap();
         assert!(selectors.len() >= 4);
@@ -4344,13 +4381,7 @@ mod tests {
             b"\npath\tgithub.com/oyesanyf/oshoosi-probe\nmod\tgithub.com/oyesanyf/oshoosi-probe\tv1.2.0\th1:abc=\ndep\tgolang.org/x/crypto\tv0.24.0\th1:xyz=\nbuild\t-compiler=gc\nbuild\tCGO_ENABLED=0\n",
         );
 
-        let report = analyze_target_bytes(
-            "probe_go_bin",
-            None,
-            &go_buf,
-            ReaTargetKind::Auto,
-            None,
-        );
+        let report = analyze_target_bytes("probe_go_bin", None, &go_buf, ReaTargetKind::Auto, None);
         assert_eq!(report.detected_kind, "go_binary");
         assert_eq!(
             report.metadata["go"]["go_version"].as_str(),
@@ -4409,7 +4440,9 @@ mod tests {
         let mut self_like_buf = Vec::new();
         self_like_buf.extend_from_slice(b"MZ\x90\x00");
         // Embed literal "BSJB" followed by x86_64 instructions `mov qword ptr [rsp+0x78], ...`
-        self_like_buf.extend_from_slice(b"BSJB\x48\xc7\x84\x24\x78\x01\x00\x00\x40\x00\x00\x00\x48\xc7\x84\x24\x78");
+        self_like_buf.extend_from_slice(
+            b"BSJB\x48\xc7\x84\x24\x78\x01\x00\x00\x40\x00\x00\x00\x48\xc7\x84\x24\x78",
+        );
         self_like_buf.extend_from_slice(b"#Strings\0mscoree.dll\0v4.0.\0v2.0.\0");
         self_like_buf.extend_from_slice(b"\0rustc 1.85.0\0\\cargo\\registry\\src\\index.crates.io\\tokio-1.40.0\\src\\lib.rs\0rust_begin_unwind\0");
 
@@ -4433,7 +4466,8 @@ mod tests {
         assert_eq!(wasm_id.label, "wasm");
         assert!(wasm_id.score > 0.5);
 
-        let pe_id = identify_with_magika(Some(Path::new("test.exe")), b"MZ\x90\x00\x03\x00\x00\x00");
+        let pe_id =
+            identify_with_magika(Some(Path::new("test.exe")), b"MZ\x90\x00\x03\x00\x00\x00");
         assert_eq!(pe_id.label, "pebin");
 
         let elf_id = identify_with_magika(Some(Path::new("test.elf")), b"\x7fELF\x02\x01\x01\x00");
@@ -4458,7 +4492,7 @@ mod tests {
         dotnet_buf.extend_from_slice(ver);
         dotnet_buf.extend_from_slice(&0u16.to_le_bytes()); // flags
         dotnet_buf.extend_from_slice(&2u16.to_le_bytes()); // 2 streams
-        // Stream 1: #~ (4 bytes aligned)
+                                                           // Stream 1: #~ (4 bytes aligned)
         dotnet_buf.extend_from_slice(&0x6cu32.to_le_bytes());
         dotnet_buf.extend_from_slice(&0x100u32.to_le_bytes());
         dotnet_buf.extend_from_slice(b"#~\0\0");
@@ -4566,8 +4600,7 @@ mod tests {
     #[test]
     fn test_inspect_har_and_firmware() {
         let har = br#"{"log":{"version":"1.2","entries":[{"request":{"method":"POST","url":"https://api.example.com/v1/login","headers":[{"name":"Authorization","value":"Bearer secret"}]},"response":{"status":200}}]}}"#;
-        let har_report =
-            analyze_target_bytes("capture.har", None, har, ReaTargetKind::Auto, None);
+        let har_report = analyze_target_bytes("capture.har", None, har, ReaTargetKind::Auto, None);
         assert_eq!(har_report.detected_kind, "network_capture");
         assert_eq!(har_report.metadata["entry_count"], 1);
 
@@ -4575,8 +4608,7 @@ mod tests {
         fw.extend_from_slice(b"\x27\x05\x19\x56\0\0\0\0");
         fw.extend_from_slice(b"hsqs\0\0\0\0");
         fw.extend_from_slice(b"AndroidManifest.xml\0classes.dex\0libflutter.so\0");
-        let fw_report =
-            analyze_target_bytes("router_fw.bin", None, &fw, ReaTargetKind::Auto, None);
+        let fw_report = analyze_target_bytes("router_fw.bin", None, &fw, ReaTargetKind::Auto, None);
         assert_eq!(fw_report.detected_kind, "firmware_image");
         let sigs = fw_report.metadata["embedded_signatures"]
             .as_array()
@@ -4659,10 +4691,10 @@ mod tests {
         pe[0x86..0x88].copy_from_slice(&1u16.to_le_bytes()); // NumberOfSections = 1
         pe[0x94..0x96].copy_from_slice(&0xF0u16.to_le_bytes()); // SizeOfOptionalHeader = 240 (PE32+)
         pe[0x96..0x98].copy_from_slice(&0x0022u16.to_le_bytes()); // Characteristics
-        // Optional Header PE32+ (240 bytes at 0x98..0x188)
+                                                                  // Optional Header PE32+ (240 bytes at 0x98..0x188)
         pe[0x98..0x9a].copy_from_slice(&0x020bu16.to_le_bytes()); // Magic = PE32+
         pe[0x104..0x108].copy_from_slice(&16u32.to_le_bytes()); // NumberOfRvaAndSizes = 16
-        // Section Header #1 at 0x188 (40 bytes)
+                                                                // Section Header #1 at 0x188 (40 bytes)
         pe[0x188..0x18e].copy_from_slice(b".text\0");
         pe[0x190..0x194].copy_from_slice(&0x400u32.to_le_bytes()); // VirtualSize
         pe[0x194..0x198].copy_from_slice(&0x1000u32.to_le_bytes()); // VirtualAddress = 0x1000
@@ -4672,7 +4704,9 @@ mod tests {
         // Case A: DataDirectory[14] (at OptionalHeader + 112 + 14*8 = 0x98 + 0x70 + 0x70 = 0x178) has bogus RVA 0x99990000 outside `.text`
         pe[0x178..0x17c].copy_from_slice(&0x9999_0000u32.to_le_bytes());
         pe[0x17c..0x180].copy_from_slice(&72u32.to_le_bytes());
-        pe[0x210..0x240].copy_from_slice(b"rustc 1.82.0\0rust_begin_unwind\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0");
+        pe[0x210..0x240].copy_from_slice(
+            b"rustc 1.82.0\0rust_begin_unwind\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0",
+        );
         assert_eq!(pe_clr_runtime_header_present(&pe), Some(false));
         assert_eq!(detect_target_kind(None, &pe), ReaTargetKind::RustBinary);
 
@@ -4688,7 +4722,7 @@ mod tests {
         pe[0x256..0x258].copy_from_slice(&5u16.to_le_bytes()); // MinorRuntimeVersion
         pe[0x258..0x25c].copy_from_slice(&0x1100u32.to_le_bytes()); // MetaData RVA = 0x1100 -> file 0x300
         pe[0x25c..0x260].copy_from_slice(&0x100u32.to_le_bytes()); // MetaData Size = 0x100
-        // Write valid BSJB metadata root at 0x300
+                                                                   // Write valid BSJB metadata root at 0x300
         let mut bsjb = Vec::new();
         bsjb.extend_from_slice(b"BSJB");
         bsjb.extend_from_slice(&1u16.to_le_bytes());

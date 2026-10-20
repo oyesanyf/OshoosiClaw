@@ -213,12 +213,8 @@ mod tests {
         assert!(enc.pqc_active);
         assert_eq!(enc.mlkem_ciphertext.len(), MLKEM768_CIPHERTEXT_BYTES);
 
-        let dec = hybrid_decapsulate(
-            &responder,
-            &initiator.x25519_public,
-            &enc.mlkem_ciphertext,
-        )
-        .expect("Responder must decapsulate valid hybrid session");
+        let dec = hybrid_decapsulate(&responder, &initiator.x25519_public, &enc.mlkem_ciphertext)
+            .expect("Responder must decapsulate valid hybrid session");
         assert_eq!(
             enc.shared_secret, dec.shared_secret,
             "Initiator and responder must derive identical 32-byte hybrid shared secret"

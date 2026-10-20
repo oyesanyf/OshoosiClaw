@@ -427,8 +427,25 @@ pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
         let ext_lc = ext.to_ascii_lowercase();
         let claims_benign_doc_or_media = matches!(
             ext_lc.as_str(),
-            "pdf" | "txt" | "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "doc" | "docx"
-                | "xls" | "xlsx" | "ppt" | "pptx" | "csv" | "md" | "mp3" | "mp4" | "wav"
+            "pdf"
+                | "txt"
+                | "jpg"
+                | "jpeg"
+                | "png"
+                | "gif"
+                | "bmp"
+                | "svg"
+                | "doc"
+                | "docx"
+                | "xls"
+                | "xlsx"
+                | "ppt"
+                | "pptx"
+                | "csv"
+                | "md"
+                | "mp3"
+                | "mp4"
+                | "wav"
         );
         let is_executable_content = matches!(
             magika_id.label.as_str(),
@@ -586,10 +603,8 @@ mod tests {
 
     #[test]
     fn test_inspect_file_flags_executable_masquerading_as_document() {
-        let tmp = std::env::temp_dir().join(format!(
-            "osoosi_pe_masquerade_{}.pdf",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("osoosi_pe_masquerade_{}.pdf", uuid::Uuid::new_v4()));
         let mut pe_stub = vec![0u8; 256];
         pe_stub[0..2].copy_from_slice(b"MZ");
         std::fs::write(&tmp, &pe_stub).unwrap();

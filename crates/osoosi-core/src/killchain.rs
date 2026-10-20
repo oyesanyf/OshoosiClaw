@@ -485,7 +485,10 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
     // 1. Remove network quarantine rules only if network isolation was engaged
     if was_isolated {
         if let Err(e) = remove_network_hermetic_quarantine() {
-            error!("❌ [KILLCHAIN] Error removing network quarantine rules: {}", e);
+            error!(
+                "❌ [KILLCHAIN] Error removing network quarantine rules: {}",
+                e
+            );
         } else {
             info!("🟢 [KILLCHAIN] Network quarantine rules flushed.");
         }
@@ -552,7 +555,8 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
 fn run_firewall_cmd(cmd: &str, args: &[&str]) {
     #[allow(unused_mut)]
     let mut command = Command::new(cmd);
-    command.args(args)
+    command
+        .args(args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -810,23 +814,81 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
             ],
         );
 
-        Ok(vec!["All-Windows-Adapters (Loopback/DNS/DHCP/3030 Preserved)".to_string()])
+        Ok(vec![
+            "All-Windows-Adapters (Loopback/DNS/DHCP/3030 Preserved)".to_string(),
+        ])
     }
 
     #[cfg(target_os = "linux")]
     {
-        run_firewall_cmd("iptables", &["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "INPUT", "2", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "OUTPUT", "2", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "OUTPUT", "3", "-p", "udp", "--dport", "53", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "INPUT", "3", "-p", "udp", "--sport", "53", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "OUTPUT", "4", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "INPUT", "4", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "OUTPUT", "5", "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "INPUT", "5", "-p", "tcp", "--sport", "53", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "OUTPUT", "6", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT"]);
-        run_firewall_cmd("iptables", &["-I", "INPUT", "6", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT"]);
+        run_firewall_cmd(
+            "iptables",
+            &["-I", "INPUT", "1", "-i", "lo", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &["-I", "OUTPUT", "1", "-o", "lo", "-j", "ACCEPT"],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "INPUT", "2", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "OUTPUT", "2", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "OUTPUT", "3", "-p", "udp", "--dport", "53", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "INPUT", "3", "-p", "udp", "--sport", "53", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "OUTPUT", "4", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "INPUT", "4", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "OUTPUT", "5", "-p", "tcp", "--dport", "53", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "INPUT", "5", "-p", "tcp", "--sport", "53", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "OUTPUT", "6", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT",
+            ],
+        );
+        run_firewall_cmd(
+            "iptables",
+            &[
+                "-I", "INPUT", "6", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT",
+            ],
+        );
         run_firewall_cmd(
             "iptables",
             &[
@@ -867,7 +929,9 @@ fn apply_network_hermetic_quarantine() -> Result<Vec<String>> {
             ],
         );
 
-        Ok(vec!["All-Linux-Interfaces (lo/DNS/DHCP/3030 Preserved)".to_string()])
+        Ok(vec![
+            "All-Linux-Interfaces (lo/DNS/DHCP/3030 Preserved)".to_string()
+        ])
     }
 
     #[cfg(not(any(target_os = "windows", target_os = "linux")))]
@@ -978,11 +1042,15 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
         );
         run_firewall_cmd(
             "iptables",
-            &["-D", "OUTPUT", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT"],
+            &[
+                "-D", "OUTPUT", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT",
+            ],
         );
         run_firewall_cmd(
             "iptables",
-            &["-D", "INPUT", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT"],
+            &[
+                "-D", "INPUT", "-p", "udp", "--sport", "67:68", "-j", "ACCEPT",
+            ],
         );
         run_firewall_cmd(
             "iptables",
@@ -994,11 +1062,15 @@ fn remove_network_hermetic_quarantine() -> Result<()> {
         );
         run_firewall_cmd(
             "iptables",
-            &["-D", "OUTPUT", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT"],
+            &[
+                "-D", "OUTPUT", "-p", "udp", "--dport", "546:547", "-j", "ACCEPT",
+            ],
         );
         run_firewall_cmd(
             "iptables",
-            &["-D", "INPUT", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT"],
+            &[
+                "-D", "INPUT", "-p", "udp", "--sport", "546:547", "-j", "ACCEPT",
+            ],
         );
         Ok(())
     }
@@ -1809,7 +1881,10 @@ mod tests {
         // Untrusted / malicious binaries MUST NOT be immune
         assert!(!is_critical_system_pid(5555, "malware.exe"));
         assert!(!is_critical_system_pid(6666, "mimikatz.exe"));
-        assert!(!is_critical_system_pid(7777, "C:\\Temp\\cobaltstrike_beacon.exe"));
+        assert!(!is_critical_system_pid(
+            7777,
+            "C:\\Temp\\cobaltstrike_beacon.exe"
+        ));
     }
 
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -1858,7 +1933,9 @@ mod tests {
                 }
             }
         }
-        let _guard = TestIsolationGuard { orig_dir: orig_db_dir };
+        let _guard = TestIsolationGuard {
+            orig_dir: orig_db_dir,
+        };
 
         // 2. Clean State Management: Explicitly reset in-memory and disk state prior to assertion
         record_successful_auth();
@@ -1866,7 +1943,10 @@ mod tests {
 
         // 3. Verify clean unisolated initial state
         let initial = get_killchain_status();
-        assert!(!initial.isolated, "Killchain initial status must not be isolated");
+        assert!(
+            !initial.isolated,
+            "Killchain initial status must not be isolated"
+        );
 
         // 4. Engage with test operator (live network false for unit test safety)
         let engaged = engage_killchain_isolation(
@@ -1879,7 +1959,10 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(engaged.isolated, "Killchain must report isolated after engagement");
+        assert!(
+            engaged.isolated,
+            "Killchain must report isolated after engagement"
+        );
         assert_eq!(engaged.isolated_by.as_deref(), Some("test_operator"));
         assert_eq!(
             engaged.reason.as_deref(),
@@ -1888,7 +1971,10 @@ mod tests {
 
         // 5. Verify state file was persisted inside the isolated temporary directory
         let state_path = storage_file_path();
-        assert!(state_path.exists(), "State file must exist in isolated temporary directory");
+        assert!(
+            state_path.exists(),
+            "State file must exist in isolated temporary directory"
+        );
         assert!(
             state_path.starts_with(temp_dir.path()),
             "State file must reside within OSOOSI_DATABASE_DIR"
@@ -1898,7 +1984,10 @@ mod tests {
         let disarmed = disarm_killchain_isolation("test_operator", "Test Complete")
             .await
             .unwrap();
-        assert!(!disarmed.isolated, "Killchain must not be isolated after disarm");
+        assert!(
+            !disarmed.isolated,
+            "Killchain must not be isolated after disarm"
+        );
     }
 
     #[test]
@@ -1915,12 +2004,18 @@ mod tests {
         // Fallback when unset
         std::env::remove_var("OSOOSI_DATABASE_DIR");
         let default_path = storage_file_path();
-        assert_eq!(default_path, PathBuf::from("database").join("killchain_state.json"));
+        assert_eq!(
+            default_path,
+            PathBuf::from("database").join("killchain_state.json")
+        );
 
         // Fallback when set to whitespace/empty string
         std::env::set_var("OSOOSI_DATABASE_DIR", "   ");
         let empty_path = storage_file_path();
-        assert_eq!(empty_path, PathBuf::from("database").join("killchain_state.json"));
+        assert_eq!(
+            empty_path,
+            PathBuf::from("database").join("killchain_state.json")
+        );
 
         // Restore original env var
         if let Some(o) = orig {

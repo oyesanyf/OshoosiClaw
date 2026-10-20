@@ -356,8 +356,9 @@ impl Gemma4Analyzer {
         // engine rather than mapping 13.32 GB of multi-shard ONNX/GGUF weights into osoosi.exe RAM.
         if !eager_in_process {
             let res = crate::hardware_selection::get_system_resources();
-            let installed =
-                crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+            let installed = crate::hardware_selection::query_installed_ollama_models_sync(
+                &ai_cfg.reasoning_url,
+            );
             let opt = crate::hardware_selection::select_optimal_models(
                 &res,
                 &installed,
@@ -430,7 +431,10 @@ impl Gemma4Analyzer {
             resolved_dir.join("tokenizer.json")
         };
 
-        let target_onnx = if model_dir.join(onnx_src.file_name().unwrap_or_default()).exists() {
+        let target_onnx = if model_dir
+            .join(onnx_src.file_name().unwrap_or_default())
+            .exists()
+        {
             model_dir.join(onnx_src.file_name().unwrap_or_default())
         } else {
             onnx_src.clone()
@@ -440,8 +444,10 @@ impl Gemma4Analyzer {
         for i in 1..=8 {
             let shard_m = model_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
             let shard_r = resolved_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
-            let ok_m = shard_m.exists() && std::fs::metadata(&shard_m).map(|m| m.len()).unwrap_or(0) > 0;
-            let ok_r = shard_r.exists() && std::fs::metadata(&shard_r).map(|m| m.len()).unwrap_or(0) > 0;
+            let ok_m =
+                shard_m.exists() && std::fs::metadata(&shard_m).map(|m| m.len()).unwrap_or(0) > 0;
+            let ok_r =
+                shard_r.exists() && std::fs::metadata(&shard_r).map(|m| m.len()).unwrap_or(0) > 0;
             if !ok_m && !ok_r {
                 all_shards_present = false;
                 break;
@@ -1041,7 +1047,10 @@ impl SecureBertAnalyzer {
                         });
                     }
                     Err(e) => {
-                        warn!("SecureBERT ONNX init failed: {}. Falling back to TokenizedEncoder.", e);
+                        warn!(
+                            "SecureBERT ONNX init failed: {}. Falling back to TokenizedEncoder.",
+                            e
+                        );
                     }
                 }
             }

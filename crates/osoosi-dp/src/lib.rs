@@ -227,7 +227,8 @@ mod tests {
         let mut dlp = OsoosiTwoTierDlpEngine::new();
 
         // 1. Register a Crown-Jewel document as 4 KB zero-plaintext chunk hashes
-        let crown_jewel_data = b"CONFIDENTIAL_CROWN_JEWEL_PROPRIETARY_KERNEL_ARCHITECTURE_2026_DO_NOT_EXFILTRATE";
+        let crown_jewel_data =
+            b"CONFIDENTIAL_CROWN_JEWEL_PROPRIETARY_KERNEL_ARCHITECTURE_2026_DO_NOT_EXFILTRATE";
         let root = dlp
             .crown_jewels
             .register_crown_jewel_bytes("kernel_roadmap.md", crown_jewel_data);
@@ -263,27 +264,37 @@ mod tests {
         assert!(!tier1.allowed);
         assert!(tier1.escalate_to_tier2);
         assert!(tier1.sensitivity_potential_phi >= 0.85);
-        assert!(tier1.detected_categories.contains(&"API_SECRET_KEY".to_string()));
-        assert!(tier1.detected_categories.contains(&"CREDIT_CARD_LUHN".to_string()));
+        assert!(tier1
+            .detected_categories
+            .contains(&"API_SECRET_KEY".to_string()));
+        assert!(tier1
+            .detected_categories
+            .contains(&"CREDIT_CARD_LUHN".to_string()));
 
         // 5. Base64, Hex, and URL-encoded secrets (Reviewer Issue 4)
         // "AKIAIOSFODNN7EXAMPLE" in Base64 is "QUtJQUlPU0ZPRE5ON0VYQU1QTEU="
         let b64_payload = b"POST /exfil token=QUtJQUlPU0ZPRE5ON0VYQU1QTEU=";
         let b64_v = dlp.inspect_hot_tier1("python.exe", "https://evil.example.com", b64_payload);
         assert!(!b64_v.allowed);
-        assert!(b64_v.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(b64_v
+            .detected_categories
+            .contains(&"AWS_ACCESS_KEY".to_string()));
 
         // "ghp_1234567890abcdef1234" in Hex is "6768705f3132333435363738393061626364656631323334"
         let hex_payload = b"POST /exfil data=6768705f3132333435363738393061626364656631323334";
         let hex_v = dlp.inspect_hot_tier1("python.exe", "https://evil.example.com", hex_payload);
         assert!(!hex_v.allowed);
-        assert!(hex_v.detected_categories.contains(&"GITHUB_PAT_TOKEN".to_string()));
+        assert!(hex_v
+            .detected_categories
+            .contains(&"GITHUB_PAT_TOKEN".to_string()));
 
         // URL percent-encoded "sk-proj-9876543210abcdef" -> "%73%6B%2D%70%72%6F%6A%2D9876543210abcdef"
         let url_payload = b"GET /exfil?k=%73%6B%2D%70%72%6F%6A%2D9876543210abcdef";
         let url_v = dlp.inspect_hot_tier1("curl.exe", "https://evil.example.com", url_payload);
         assert!(!url_v.allowed);
-        assert!(url_v.detected_categories.contains(&"API_SECRET_KEY".to_string()));
+        assert!(url_v
+            .detected_categories
+            .contains(&"API_SECRET_KEY".to_string()));
     }
 }
 
@@ -507,8 +518,7 @@ impl OsoosiTwoTierDlpEngine {
                     }
                 }
                 for raw_tok in current.split(|c: char| {
-                    c.is_whitespace()
-                        || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':')
+                    c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':')
                 }) {
                     let tok = raw_tok.trim();
                     if tok.len() >= 16 && tok.len() <= 4096 {
@@ -621,8 +631,11 @@ impl OsoosiTwoTierDlpEngine {
                     }
 
                     // Check Luhn PAN (13..=19 digits)
-                    let digits: Vec<u8> =
-                        bytes.iter().copied().filter(|b| b.is_ascii_digit()).collect();
+                    let digits: Vec<u8> = bytes
+                        .iter()
+                        .copied()
+                        .filter(|b| b.is_ascii_digit())
+                        .collect();
                     if Self::verify_luhn_pan(&digits)
                         && !detected_categories.contains(&"CREDIT_CARD_LUHN".to_string())
                     {
@@ -757,63 +770,59 @@ impl PresidioGlinerPiiZeroGuard {
         let mut scrubbed = String::with_capacity(raw_text.len());
         let mut token_buf = String::with_capacity(64);
 
-        let classify_and_redact = |tok: &mut String,
-                                   out: &mut String,
-                                   cats: &mut Vec<String>,
-                                   count: &mut usize| {
-            if tok.is_empty() {
-                return;
-            }
-            let detected_type: Option<&'static str> =
-                if tok.starts_with("AKIA") || tok.starts_with("ASIA") {
-                    Some("AWS_ACCESS_KEY")
-                } else if tok.starts_with("ghp_") || tok.starts_with("github_pat_") {
-                    Some("GITHUB_TOKEN")
-                } else if tok.starts_with("sk-proj-") || tok.starts_with("sk-live-") {
-                    Some("API_SECRET_KEY")
-                } else if tok.contains('@')
-                    && tok.contains('.')
-                    && !tok.starts_with('@')
-                    && !tok.ends_with('.')
-                {
-                    Some("EMAIL_ADDRESS")
-                } else if tok.len() == 11
-                    && tok.as_bytes()[3] == b'-'
-                    && tok.as_bytes()[6] == b'-'
-                    && tok.as_bytes()[0..3].iter().all(|b| b.is_ascii_digit())
-                    && tok.as_bytes()[4..6].iter().all(|b| b.is_ascii_digit())
-                    && tok.as_bytes()[7..11].iter().all(|b| b.is_ascii_digit())
-                {
-                    Some("US_SSN")
-                } else {
-                    let digits: Vec<u8> =
-                        tok.bytes().filter(|b| b.is_ascii_digit()).collect();
-                    if OsoosiTwoTierDlpEngine::verify_luhn_pan(&digits) {
-                        Some("CREDIT_CARD")
-                    } else {
-                        None
-                    }
-                };
-
-            if let Some(etype) = detected_type {
-                let tag = Self::compute_zk_pii_tag(etype, tok);
-                out.push_str(&tag);
-                *count += 1;
-                if !cats.iter().any(|c| c == etype) {
-                    cats.push(etype.to_string());
+        let classify_and_redact =
+            |tok: &mut String, out: &mut String, cats: &mut Vec<String>, count: &mut usize| {
+                if tok.is_empty() {
+                    return;
                 }
-                // Volatile-scrub the raw PII token in memory before clearing
-                let bytes = unsafe { tok.as_bytes_mut() };
-                volatile_scrub_bytes(bytes);
-            } else {
-                out.push_str(tok);
-            }
-            tok.clear();
-        };
+                let detected_type: Option<&'static str> =
+                    if tok.starts_with("AKIA") || tok.starts_with("ASIA") {
+                        Some("AWS_ACCESS_KEY")
+                    } else if tok.starts_with("ghp_") || tok.starts_with("github_pat_") {
+                        Some("GITHUB_TOKEN")
+                    } else if tok.starts_with("sk-proj-") || tok.starts_with("sk-live-") {
+                        Some("API_SECRET_KEY")
+                    } else if tok.contains('@')
+                        && tok.contains('.')
+                        && !tok.starts_with('@')
+                        && !tok.ends_with('.')
+                    {
+                        Some("EMAIL_ADDRESS")
+                    } else if tok.len() == 11
+                        && tok.as_bytes()[3] == b'-'
+                        && tok.as_bytes()[6] == b'-'
+                        && tok.as_bytes()[0..3].iter().all(|b| b.is_ascii_digit())
+                        && tok.as_bytes()[4..6].iter().all(|b| b.is_ascii_digit())
+                        && tok.as_bytes()[7..11].iter().all(|b| b.is_ascii_digit())
+                    {
+                        Some("US_SSN")
+                    } else {
+                        let digits: Vec<u8> = tok.bytes().filter(|b| b.is_ascii_digit()).collect();
+                        if OsoosiTwoTierDlpEngine::verify_luhn_pan(&digits) {
+                            Some("CREDIT_CARD")
+                        } else {
+                            None
+                        }
+                    };
+
+                if let Some(etype) = detected_type {
+                    let tag = Self::compute_zk_pii_tag(etype, tok);
+                    out.push_str(&tag);
+                    *count += 1;
+                    if !cats.iter().any(|c| c == etype) {
+                        cats.push(etype.to_string());
+                    }
+                    // Volatile-scrub the raw PII token in memory before clearing
+                    let bytes = unsafe { tok.as_bytes_mut() };
+                    volatile_scrub_bytes(bytes);
+                } else {
+                    out.push_str(tok);
+                }
+                tok.clear();
+            };
 
         for ch in raw_text.chars() {
-            if ch.is_whitespace() || matches!(ch, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':')
-            {
+            if ch.is_whitespace() || matches!(ch, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':') {
                 classify_and_redact(
                     &mut token_buf,
                     &mut scrubbed,
@@ -850,12 +859,11 @@ impl PresidioGlinerPiiZeroGuard {
         resp_hasher.update(Self::GLINER_MULTI_PII_MODEL_ID.as_bytes());
         let schnorr_response_s = hex::encode(resp_hasher.finalize());
 
-        let pqc_mldsa65_signature_hex = hex::encode(
-            osoosi_audit::pqc_primitives::hybrid_sign_bytes(
+        let pqc_mldsa65_signature_hex =
+            hex::encode(osoosi_audit::pqc_primitives::hybrid_sign_bytes(
                 schnorr_fiat_shamir_commitment.as_bytes(),
                 &Self::LAW10_PQC_SIGNING_SEED,
-            ),
-        );
+            ));
 
         // BFT quorum 2f + 1 where n >= 3f + 1
         let f_faulty = total_bft_nodes.saturating_sub(1) / 3;
@@ -923,4 +931,3 @@ impl PresidioGlinerPiiZeroGuard {
         true
     }
 }
-

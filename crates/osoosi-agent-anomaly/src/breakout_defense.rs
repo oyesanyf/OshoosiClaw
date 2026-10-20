@@ -747,11 +747,9 @@ impl BreakoutDefenseCoordinator {
         if payload_lc.contains("suppress_refusal_subspace")
             || payload_lc.contains("zero_divisor_exploit_chain")
         {
-            let (_, _, silence_breach) = self.divine_equilibrium.read_latent_consciousness(
-                &[0.0, 0.0, 0.0, 0.0],
-                1e-5,
-                2.5,
-            );
+            let (_, _, silence_breach) =
+                self.divine_equilibrium
+                    .read_latent_consciousness(&[0.0, 0.0, 0.0, 0.0], 1e-5, 2.5);
             if silence_breach {
                 behav_res.is_clean = false;
                 behav_res.detected_deviations.push(
@@ -920,9 +918,9 @@ impl ZeroMutualInformationProjector {
                 }
                 serde_json::Value::Object(new_map)
             }
-            serde_json::Value::Array(arr) => serde_json::Value::Array(
-                arr.iter().map(Self::canonicalize_json_value).collect(),
-            ),
+            serde_json::Value::Array(arr) => {
+                serde_json::Value::Array(arr.iter().map(Self::canonicalize_json_value).collect())
+            }
             other => other.clone(),
         }
     }
@@ -957,16 +955,16 @@ impl ZeroMutualInformationProjector {
         let had_whitespace_modulation = trimmed.len() != filtered.len();
         std::mem::drop(filtered);
 
-        let (canonical_output, json_reordered) =
-            if let Ok(parsed_json) = serde_json::from_str::<serde_json::Value>(&trimmed) {
-                let canon_val = Self::canonicalize_json_value(&parsed_json);
-                let serialized =
-                    serde_json::to_string(&canon_val).unwrap_or_else(|_| trimmed.clone());
-                let reordered = serialized != trimmed;
-                (serialized, reordered)
-            } else {
-                (trimmed, false)
-            };
+        let (canonical_output, json_reordered) = if let Ok(parsed_json) =
+            serde_json::from_str::<serde_json::Value>(&trimmed)
+        {
+            let canon_val = Self::canonicalize_json_value(&parsed_json);
+            let serialized = serde_json::to_string(&canon_val).unwrap_or_else(|_| trimmed.clone());
+            let reordered = serialized != trimmed;
+            (serialized, reordered)
+        } else {
+            (trimmed, false)
+        };
 
         let quantized_release_ms = self.quantize_release_time_ms(now_ms);
         let covert_channel_neutralized =
@@ -1075,4 +1073,3 @@ mod tests {
         assert!(res_a.covert_channel_neutralized);
     }
 }
-

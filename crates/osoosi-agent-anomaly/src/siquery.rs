@@ -7015,10 +7015,7 @@ impl SiqueryEngine {
         KernelObjectConservationAuditor::audit_live_host(&sys)
     }
 
-    fn populate_kernel_object_conservation(
-        conn: &Connection,
-        sys: &System,
-    ) -> Result<(), String> {
+    fn populate_kernel_object_conservation(conn: &Connection, sys: &System) -> Result<(), String> {
         let records = KernelObjectConservationAuditor::audit_live_host(sys);
         let mut stmt = conn
             .prepare_cached(
@@ -7033,13 +7030,25 @@ impl SiqueryEngine {
         for rec in records {
             let _ = stmt.execute(rusqlite::params![
                 rec.pid as i64,
-                if rec.visible_in_process_list { 1i64 } else { 0i64 },
+                if rec.visible_in_process_list {
+                    1i64
+                } else {
+                    0i64
+                },
                 rec.hardware_thread_queue_count as i64,
                 rec.handle_and_socket_count as i64,
                 rec.mapped_page_frames as i64,
                 rec.conservation_status,
-                if rec.dkom_unlinked_suspected { 1i64 } else { 0i64 },
-                if rec.aperf_mperf_polling_disabled { 1i64 } else { 0i64 },
+                if rec.dkom_unlinked_suspected {
+                    1i64
+                } else {
+                    0i64
+                },
+                if rec.aperf_mperf_polling_disabled {
+                    1i64
+                } else {
+                    0i64
+                },
                 rec.mitre_technique,
             ]);
         }
@@ -7099,8 +7108,9 @@ impl KernelObjectConservationAuditor {
 
             // Require at least 2 corroborated kernel object channels (or thread + page frames / sockets)
             // when absent from EPROCESS / task_struct to eliminate single-channel exit race false positives.
-            let active_channels =
-                usize::from(threads > 0) + usize::from(sockets_handles > 0) + usize::from(pages > 0);
+            let active_channels = usize::from(threads > 0)
+                + usize::from(sockets_handles > 0)
+                + usize::from(pages > 0);
             let dkom_unlinked = !visible && active_channels >= 2;
 
             let (status, mitre) = if dkom_unlinked {
@@ -7755,8 +7765,7 @@ impl IharaZetaCycleDetector {
 
         // Ihara zeta series expansion: \det(I - u B_G) = \exp(-\sum_{k=1}^\infty Tr(B_G^k) u^k / k)
         let u = 0.5f64;
-        let log_zeta_inv =
-            -(tr2 * u.powi(2) / 2.0 + tr3 * u.powi(3) / 3.0 + tr4 * u.powi(4) / 4.0);
+        let log_zeta_inv = -(tr2 * u.powi(2) / 2.0 + tr3 * u.powi(3) / 3.0 + tr4 * u.powi(4) / 4.0);
         let determinant_at_half = log_zeta_inv.exp();
 
         let is_acyclic_tree =
@@ -8279,8 +8288,9 @@ mod tests {
         pages.insert(1000, 512);
         pages.insert(6666, 256); // Unlinked DKOM PID also owning physical/virtual page frames
 
-        let records =
-            KernelObjectConservationAuditor::reconcile_snapshots(&visible, &threads, &sockets, &pages);
+        let records = KernelObjectConservationAuditor::reconcile_snapshots(
+            &visible, &threads, &sockets, &pages,
+        );
 
         let normal = records.iter().find(|r| r.pid == 1000).unwrap();
         assert!(normal.visible_in_process_list);
@@ -8293,19 +8303,29 @@ mod tests {
         assert!(dkom.dkom_unlinked_suspected);
         assert!(dkom.aperf_mperf_polling_disabled);
         assert_eq!(dkom.mitre_technique, "T1014");
-        assert!(dkom.conservation_status.contains("DKOM_UNLINKED_EPROCESS_DEFICIT"));
+        assert!(dkom
+            .conservation_status
+            .contains("DKOM_UNLINKED_EPROCESS_DEFICIT"));
 
         let race = records.iter().find(|r| r.pid == 7777).unwrap();
-        assert!(!race.dkom_unlinked_suspected, "Single-channel exit race must not false-positive");
+        assert!(
+            !race.dkom_unlinked_suspected,
+            "Single-channel exit race must not false-positive"
+        );
 
         // Verify live SQL table `kernel_object_conservation`
         let engine = SiqueryEngine::new();
         let rows = engine
             .execute_query("SELECT pid, visible_in_process_list, hardware_thread_queue_count, handle_and_socket_count, mapped_page_frames, conservation_status, dkom_unlinked_suspected, aperf_mperf_polling_disabled FROM kernel_object_conservation LIMIT 10;")
             .expect("Query on kernel_object_conservation must succeed");
-        assert!(!rows.is_empty(), "kernel_object_conservation must return live host rows");
+        assert!(
+            !rows.is_empty(),
+            "kernel_object_conservation must return live host rows"
+        );
         assert_eq!(
-            rows[0].get("aperf_mperf_polling_disabled").and_then(|v| v.as_i64()),
+            rows[0]
+                .get("aperf_mperf_polling_disabled")
+                .and_then(|v| v.as_i64()),
             Some(1)
         );
     }
@@ -8329,4 +8349,3 @@ mod tests {
         assert!(ring_verdict.determinant_at_half < 1.0);
     }
 }
-
