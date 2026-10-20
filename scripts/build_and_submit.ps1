@@ -167,6 +167,15 @@ function Invoke-AuthenticodeSigning {
                 Write-Host "       -> Already signed by $($existingSig.SignerCertificate.Subject): $file" -ForegroundColor Green
                 continue
             }
+                        # Break any Cargo NTFS hardlink (e.g. target\release\osoosi.exe <-> target\release\deps\osoosi.exe)
+            # before signtool modifies the PE in place, preserving Windows 11 Smart App Control origin EA.
+            $hlOut = & fsutil hardlink list $file 2>$null
+            if ($hlOut -and ($hlOut.Count -gt 1)) {
+                $unlinkedTmp = "$file.unlinked_tmp"
+                Copy-Item -Path $file -Destination $unlinkedTmp -Force
+                Remove-Item -Path $file -Force
+                Move-Item -Path $unlinkedTmp -Destination $file -Force
+            }
             Write-Host "       Signing '$file' (SHA-256 + RFC 3161 timestamp)..." -ForegroundColor Cyan
             $signedOk = $false
             try {
