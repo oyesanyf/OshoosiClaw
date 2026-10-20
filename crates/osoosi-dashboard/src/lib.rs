@@ -1439,6 +1439,25 @@ async fn get_detection_stats(State(state): State<DashboardState>) -> Json<Value>
     }
 }
 
+fn get_cached_system_resources() -> osoosi_behavioral::hardware_selection::SystemResourceSummary {
+    static HW_RESOURCES_CACHE: std::sync::OnceLock<
+        std::sync::RwLock<Option<(std::time::Instant, osoosi_behavioral::hardware_selection::SystemResourceSummary)>>,
+    > = std::sync::OnceLock::new();
+    let cache = HW_RESOURCES_CACHE.get_or_init(|| std::sync::RwLock::new(None));
+    if let Ok(guard) = cache.read() {
+        if let Some((ts, ref res)) = *guard {
+            if ts.elapsed() < std::time::Duration::from_secs(30) {
+                return res.clone();
+            }
+        }
+    }
+    let fresh = osoosi_behavioral::hardware_selection::get_system_resources();
+    if let Ok(mut guard) = cache.write() {
+        *guard = Some((std::time::Instant::now(), fresh.clone()));
+    }
+    fresh
+}
+
 async fn get_supervisor_status(State(state): State<DashboardState>) -> impl IntoResponse {
     let status = match &state.backend {
         Some(orch) => orch.supervisor.get_status(),
@@ -1447,7 +1466,7 @@ async fn get_supervisor_status(State(state): State<DashboardState>) -> impl Into
             let readings = fusion.evaluate_sensors(None, None, None);
             let (health_score, conflict_metric) = fusion.fuse_dempster_shafer(&readings);
             let regime = osoosi_core::supervisor::MultiSensorFusionEngine::map_regime(health_score);
-            let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
+            let hw_res = get_cached_system_resources();
             let ai_cfg = osoosi_types::config::load_ai_config();
             let installed = osoosi_behavioral::hardware_selection::query_installed_ollama_models(
                 &ai_cfg.reasoning_url,
@@ -1495,7 +1514,7 @@ pub struct HardwareSummaryResponse {
 }
 
 async fn get_hardware_summary(State(_state): State<DashboardState>) -> impl IntoResponse {
-    let resources = osoosi_behavioral::hardware_selection::get_system_resources();
+    let resources = get_cached_system_resources();
     let ai_cfg = osoosi_types::config::load_ai_config();
     let installed =
         osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url)
@@ -1557,7 +1576,7 @@ static MODEL_PULL_TRACKER: Lazy<DashMap<String, ModelPullProgress>> = Lazy::new(
 async fn get_calibrated_models(
     State(_state): State<DashboardState>,
 ) -> Json<CalibratedModelsResponse> {
-    let resources = osoosi_behavioral::hardware_selection::get_system_resources();
+    let resources = get_cached_system_resources();
     let tier = resources.determine_tier();
     let ai_cfg = osoosi_types::config::load_ai_config();
     let installed_models =
@@ -1773,7 +1792,7 @@ async fn post_model_pull(
     State(_state): State<DashboardState>,
     Json(payload): Json<PullModelRequest>,
 ) -> Json<Value> {
-    let resources = osoosi_behavioral::hardware_selection::get_system_resources();
+    let resources = get_cached_system_resources();
     let tier = resources.determine_tier();
     let ai_cfg = osoosi_types::config::load_ai_config();
     let installed_models =
@@ -8129,35 +8148,17 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 .map(|s| !s.is_empty() && s != "null")
                 .unwrap_or(false);
             if !has_valid_hash {
-                let computed = if !file_path.is_empty() {
-                    std::fs::read(&file_path)
-                        .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
-                        .unwrap_or_else(|_| {
-                            blake3::hash(
-                                format!(
-                                    "{}:{}:{}",
-                                    id,
-                                    proc_name.as_deref().unwrap_or(""),
-                                    timestamp
-                                )
-                                .as_bytes(),
-                            )
-                            .to_hex()
-                            .to_string()
-                        })
-                } else {
-                    blake3::hash(
-                        format!(
-                            "{}:{}:{}",
-                            id,
-                            proc_name.as_deref().unwrap_or(""),
-                            timestamp
-                        )
-                        .as_bytes(),
+                let computed = blake3::hash(
+                    format!(
+                        "{}:{}:{}",
+                        id,
+                        proc_name.as_deref().unwrap_or(""),
+                        timestamp
                     )
-                    .to_hex()
-                    .to_string()
-                };
+                    .as_bytes(),
+                )
+                .to_hex()
+                .to_string();
                 obj.insert(
                     "hash_blake3".to_string(),
                     serde_json::Value::String(computed),
@@ -8306,31 +8307,12 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                     .map(|s| !s.is_empty() && s != "null")
                     .unwrap_or(false);
                 if !has_valid_hash {
-                    let fp = obj.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
-                    let computed = if !fp.is_empty() {
-                        std::fs::read(fp)
-                            .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
-                            .unwrap_or_else(|_| {
-                                blake3::hash(
-                                    format!(
-                                        "{}:{}:{}",
-                                        id,
-                                        proc.as_deref().unwrap_or(""),
-                                        timestamp
-                                    )
-                                    .as_bytes(),
-                                )
-                                .to_hex()
-                                .to_string()
-                            })
-                    } else {
-                        blake3::hash(
-                            format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp)
-                                .as_bytes(),
-                        )
-                        .to_hex()
-                        .to_string()
-                    };
+                    let computed = blake3::hash(
+                        format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp)
+                            .as_bytes(),
+                    )
+                    .to_hex()
+                    .to_string();
                     obj.insert(
                         "hash_blake3".to_string(),
                         serde_json::Value::String(computed),

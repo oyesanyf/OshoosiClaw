@@ -1474,6 +1474,10 @@ pub struct EdrOrchestrator {
     /// Live Gossip Mesh Feed buffer (recent inbound and outbound peer intelligence)
     mesh_gossip_feed:
         Arc<std::sync::RwLock<std::collections::VecDeque<osoosi_types::GossipFeedItem>>>,
+    /// Set of threat / gossip feed IDs explicitly dismissed or remediated
+    pub dismissed_gossip_ids: Arc<dashmap::DashSet<String>>,
+    /// Set of process basenames autonomously adjudicated clean by REA
+    pub rea_adjudicated_clean_procs: Arc<dashmap::DashSet<String>>,
     /// Debouncer for mesh threat broadcasts (key -> last_broadcast_time)
     mesh_broadcast_debouncer: Arc<dashmap::DashMap<String, Instant>>,
     /// Synthetic Canary Correlator: Tracking probe health and anti-blinding
@@ -1567,84 +1571,93 @@ impl EdrOrchestrator {
 
     /// Confirm a threat and fully entangle it in the Morphic Hyper-Web.
     pub async fn handle_confirm_and_entangle(&self, threat_id: &str) -> anyhow::Result<()> {
+        let (gossip_proc, gossip_hash) = self.resolve_and_dismiss_gossip_item(threat_id);
         let source = self.trust.did().to_string();
 
-        // 1. Mark as True Positive in memory
-        if let Some((process_name_opt, hash_opt, file_path_opt)) =
-            self.memory.mark_threat_true_positive(threat_id, &source)?
-        {
-            let process_name = process_name_opt.unwrap_or_else(|| "unknown".to_string());
-            let hash = hash_opt.unwrap_or_else(|| "unknown".to_string());
-
-            info!(
-                "🕸️  Confirming threat {} and initiating Morphic Entanglement...",
-                threat_id
-            );
-
-            // 2. Try to find the live process to entangle
-            if let Some(pid) = self.find_pid_by_name(&process_name).await {
-                // Perform Binary Analysis (Spider Eyes)
-                match self.spider_eyes.watch_process(pid).await {
-                    Ok(analysis) => {
-                        info!(
-                            "🕸️  [SPIDER-EYES] Analysis for {}: \n{}",
-                            process_name, analysis
-                        );
-
-                        // BROADCAST to mesh: Share the disassembly and intent report
-                        let mut sig =
-                            osoosi_types::ThreatSignature::new(self.trust.did().to_string());
-                        sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
-                        sig.process_name = Some(process_name.clone());
-                        sig.hash_blake3 = Some(hash.clone());
-                        sig.confidence = 1.0;
-                        sig.add_reason(analysis);
-
-                        self.broadcast_threat_to_mesh(sig).await;
-                        info!(
-                            "🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.",
-                            process_name
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "🕸️  [SPIDER-EYES] Binary analysis failed for {}: {}",
-                            process_name, e
-                        );
-                    }
+        let (process_name_opt, hash_opt, file_path_opt) =
+            match self.memory.mark_threat_true_positive(threat_id, &source)? {
+                Some((p, h, f)) => (p, h, f),
+                None => {
+                    let proc = gossip_proc.or_else(|| Some(threat_id.to_string()));
+                    let hash = gossip_hash;
+                    let _ = self.memory.delete_threat_by_id_or_pattern(
+                        Some(threat_id),
+                        proc.as_deref(),
+                        hash.as_deref(),
+                    );
+                    (proc, hash, None)
                 }
+            };
 
-                self.entangle_process(pid, &process_name).await;
-            } else {
-                warn!(
-                    "🕸️  Could not find live process for {}; entanglement pending next spawn.",
-                    process_name
-                );
+        let process_name = process_name_opt.unwrap_or_else(|| "unknown".to_string());
+        let hash = hash_opt.unwrap_or_else(|| "unknown".to_string());
+
+        info!(
+            "🕸️  Confirming threat {} and initiating Morphic Entanglement...",
+            threat_id
+        );
+
+        // 2. Try to find the live process to entangle
+        if let Some(pid) = self.find_pid_by_name(&process_name).await {
+            // Perform Binary Analysis (Spider Eyes)
+            match self.spider_eyes.watch_process(pid).await {
+                Ok(analysis) => {
+                    info!(
+                        "🕸️  [SPIDER-EYES] Analysis for {}: \n{}",
+                        process_name, analysis
+                    );
+
+                    // BROADCAST to mesh: Share the disassembly and intent report
+                    let mut sig =
+                        osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                    sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
+                    sig.process_name = Some(process_name.clone());
+                    sig.hash_blake3 = Some(hash.clone());
+                    sig.confidence = 1.0;
+                    sig.add_reason(analysis);
+
+                    self.broadcast_threat_to_mesh(sig).await;
+                    info!(
+                        "🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.",
+                        process_name
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "🕸️  [SPIDER-EYES] Binary analysis failed for {}: {}",
+                        process_name, e
+                    );
+                }
             }
 
-            // 3. Engage network tarpit (Tarpitting)
-            let target = if let Some(path) = file_path_opt {
-                path
-            } else {
-                process_name.clone()
-            };
-            let _ = crate::firewall::tarpit_process_network(None, Some(&target));
-
-            // 4. Record the action in the audit trail
-            self.audit.log(
-                "MORPHIC_ENTANGLEMENT",
-                serde_json::json!({
-                    "threat_id": threat_id,
-                    "process": process_name,
-                    "hash": hash,
-                    "action": "entangled"
-                }),
-            );
-
-            Ok(())
+            self.entangle_process(pid, &process_name).await;
         } else {
-            Err(anyhow::anyhow!("Threat not found or already processed"))
+            warn!(
+                "🕸️  Could not find live process for {}; entanglement pending next spawn.",
+                process_name
+            );
         }
+
+        // 3. Engage network tarpit (Tarpitting)
+        let target = if let Some(path) = file_path_opt {
+            path
+        } else {
+            process_name.clone()
+        };
+        let _ = crate::firewall::tarpit_process_network(None, Some(&target));
+
+        // 4. Record the action in the audit trail
+        self.audit.log(
+            "MORPHIC_ENTANGLEMENT",
+            serde_json::json!({
+                "threat_id": threat_id,
+                "process": process_name,
+                "hash": hash,
+                "action": "entangled"
+            }),
+        );
+
+        Ok(())
     }
 
     pub fn behavioral_classifier(&self) -> Arc<osoosi_behavioral::BehavioralClassifier> {
@@ -3892,6 +3905,8 @@ impl EdrOrchestrator {
             mesh_gossip_feed: Arc::new(std::sync::RwLock::new(
                 std::collections::VecDeque::with_capacity(200),
             )),
+            dismissed_gossip_ids: Arc::new(dashmap::DashSet::new()),
+            rea_adjudicated_clean_procs: Arc::new(dashmap::DashSet::new()),
             mesh_broadcast_debouncer: Arc::new(dashmap::DashMap::new()),
             nostr_mesh,
             mesh_gossip_count_atomic,
@@ -3925,6 +3940,8 @@ impl EdrOrchestrator {
         );
 
         osoosi_model::malware::trim_working_set_after_init();
+
+        orch.run_autonomous_rea_threat_adjudication();
 
         Ok(orch)
     }
@@ -9845,11 +9862,41 @@ impl EdrOrchestrator {
 
     /// Retrieve live and persisted gossip mesh feed items with intelligent sorting and routine chatter pruning.
     pub fn get_gossip_feed(&self, limit: usize) -> Vec<osoosi_types::GossipFeedItem> {
+        self.run_autonomous_rea_threat_adjudication();
         let mut items = Vec::new();
 
         // 1. First get items from the in-memory live gossip ring buffer
         if let Ok(buffer) = self.mesh_gossip_feed.read() {
             for item in buffer.iter() {
+                if self.dismissed_gossip_ids.contains(&item.id) {
+                    continue;
+                }
+                if item.status == "FALSE_POSITIVE"
+                    || item.status == "REMEDIATED"
+                    || item.status == "CLEARED"
+                    || item.status == "IGNORED"
+                {
+                    continue;
+                }
+                if item.summary.contains("Veto Trusted Vendor")
+                    || item.summary.contains("outside the vulnerable")
+                    || item.summary.contains("CVE None")
+                {
+                    continue;
+                }
+                if let Some(ref p) = item.process_name {
+                    let b = std::path::Path::new(p)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(p)
+                        .to_ascii_lowercase();
+                    if self.rea_adjudicated_clean_procs.contains(&b)
+                        || self.memory.is_false_positive_pattern(Some(p.as_str()), item.hash_blake3.as_deref()).unwrap_or(false)
+                        || item.hash_blake3.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
+                    {
+                        continue;
+                    }
+                }
                 let is_invalid = item.summary.contains("Unknown Process")
                     || item.summary.contains("Execution Of Non-Existing File")
                     || (item.summary.contains("Suspicious Activity")
@@ -9889,7 +9936,7 @@ impl EdrOrchestrator {
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("audit-{}", entry.timestamp.timestamp_micros()));
 
-                    if seen_ids.contains(&id) {
+                    if seen_ids.contains(&id) || self.dismissed_gossip_ids.contains(&id) {
                         continue;
                     }
                     seen_ids.insert(id.clone());
@@ -9943,8 +9990,26 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .trim();
-                    if reason_str.contains("Execution Of Non-Existing File") || conf < 0.50 {
+                    if reason_str.contains("Execution Of Non-Existing File")
+                        || reason_str.contains("Veto Trusted Vendor")
+                        || reason_str.contains("outside the vulnerable")
+                        || reason_str.contains("CVE None")
+                        || conf < 0.50
+                    {
                         continue;
+                    }
+                    if let Some(ref p) = proc {
+                        let b = std::path::Path::new(p)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(p)
+                            .to_ascii_lowercase();
+                        if self.rea_adjudicated_clean_procs.contains(&b)
+                            || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
+                            || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
+                        {
+                            continue;
+                        }
                     }
                     let proc_opt = proc.as_deref().filter(|s| {
                         !s.is_empty()
@@ -10013,15 +10078,7 @@ impl EdrOrchestrator {
                         "LOW".to_string()
                     };
 
-                    let status = if act.contains("Isolate")
-                        || act.contains("Terminated")
-                        || act.contains("Enforced")
-                        || conf >= 0.70
-                    {
-                        "REMEDIATED".to_string()
-                    } else {
-                        "ACTIVE".to_string()
-                    };
+                    let status = "ACTIVE".to_string();
 
                     items.push(osoosi_types::GossipFeedItem {
                         id,
@@ -10059,7 +10116,7 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    if id.is_empty() || seen_ids.contains(&id) {
+                    if id.is_empty() || seen_ids.contains(&id) || self.dismissed_gossip_ids.contains(&id) {
                         continue;
                     }
                     seen_ids.insert(id.clone());
@@ -10094,8 +10151,24 @@ impl EdrOrchestrator {
                     if conf < 0.50
                         || reason.trim().is_empty()
                         || reason.contains("Execution Of Non-Existing File")
+                        || reason.contains("Veto Trusted Vendor")
+                        || reason.contains("outside the vulnerable")
+                        || reason.contains("CVE None")
                     {
                         continue;
+                    }
+                    if let Some(ref p) = proc {
+                        let b = std::path::Path::new(p)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(p)
+                            .to_ascii_lowercase();
+                        if self.rea_adjudicated_clean_procs.contains(&b)
+                            || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
+                            || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
+                        {
+                            continue;
+                        }
                     }
 
                     let (tactic, tech, tech_name) =
@@ -10147,14 +10220,7 @@ impl EdrOrchestrator {
                         continue;
                     }
 
-                    let status = if act_str.contains("Isolate")
-                        || act_str.contains("Terminated")
-                        || conf >= 0.70
-                    {
-                        "REMEDIATED".to_string()
-                    } else {
-                        "ACTIVE".to_string()
-                    };
+                    let status = "ACTIVE".to_string();
 
                     let severity = if conf >= 0.85 {
                         "CRITICAL".to_string()
@@ -10213,8 +10279,27 @@ impl EdrOrchestrator {
         // 4. Prune/deduplicate routine stale heartbeats so active threats stand out
         let mut deduplicated = Vec::new();
         let mut seen_routine = std::collections::HashSet::new();
+        let mut seen_threat_keys = std::collections::HashSet::new();
 
         for item in items {
+            if self.dismissed_gossip_ids.contains(&item.id)
+                || item.status == "FALSE_POSITIVE"
+                || item.status == "REMEDIATED"
+                || item.status == "CLEARED"
+                || item.status == "IGNORED"
+            {
+                continue;
+            }
+            if let Some(ref p) = item.process_name {
+                let b = std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(p)
+                    .to_ascii_lowercase();
+                if self.rea_adjudicated_clean_procs.contains(&b) {
+                    continue;
+                }
+            }
             let is_invalid = item.summary.contains("Unknown Process")
                 || item.summary.contains("Execution Of Non-Existing File")
                 || (item.summary.contains("Suspicious Activity") && item.process_name.is_none())
@@ -10237,6 +10322,19 @@ impl EdrOrchestrator {
                     continue;
                 }
                 seen_routine.insert(key);
+            } else if item.is_threat {
+                let p_lower = item.process_name.as_deref().unwrap_or("").to_ascii_lowercase();
+                let tech = item.mitre_technique.as_deref().unwrap_or("");
+                let sum_pfx = if item.summary.len() > 48 {
+                    &item.summary[..48]
+                } else {
+                    &item.summary
+                };
+                let threat_key = format!("{}:{}:{}", p_lower, tech, sum_pfx);
+                if seen_threat_keys.contains(&threat_key) {
+                    continue;
+                }
+                seen_threat_keys.insert(threat_key);
             }
             deduplicated.push(item);
             if deduplicated.len() >= limit {
@@ -10247,37 +10345,303 @@ impl EdrOrchestrator {
         deduplicated
     }
 
-    /// Mark a threat as false positive in the live gossip feed.
-    pub fn mark_gossip_false_positive(&self, threat_id: &str) {
+    /// Autonomously adjudicate pending candidate threats and live gossip items via REA.
+    /// Drops benign toolchain / OS binaries, CVE version-mismatch alerts, and vendor-vetoed threats.
+    pub fn run_autonomous_rea_threat_adjudication(&self) -> usize {
+        let mut dropped = self.memory.purge_vetoed_and_false_positive_threats().unwrap_or(0);
+        let mut candidates = Vec::new();
+        if let Ok(feed) = self.mesh_gossip_feed.read() {
+            for item in feed.iter() {
+                candidates.push((
+                    item.id.clone(),
+                    item.process_name.clone(),
+                    item.hash_blake3.clone(),
+                    item.summary.clone(),
+                ));
+            }
+        }
+        if let Ok(threats) = self.memory.get_recent_threats(100) {
+            for t in threats {
+                let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let proc = t.get("process_name").and_then(|v| v.as_str()).map(String::from);
+                let hash = t.get("hash_blake3").and_then(|v| v.as_str()).map(String::from);
+                let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if !id.is_empty() {
+                    candidates.push((id, proc, hash, reason));
+                }
+            }
+        }
+        for entry in self.audit.entries().iter().rev().take(60) {
+            if entry.event_type == "MESH_THREAT_BROADCAST"
+                || entry.event_type == "MESH_THREAT_RECEIVED"
+                || entry.event_type == "THREAT_DETECTED"
+            {
+                let id = entry
+                    .data
+                    .get("threat_id")
+                    .or_else(|| entry.data.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("audit-{}", entry.timestamp.timestamp_micros()));
+                if self.dismissed_gossip_ids.contains(&id) {
+                    continue;
+                }
+                let proc = entry
+                    .data
+                    .get("process_name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let hash = entry
+                    .data
+                    .get("hash")
+                    .or_else(|| entry.data.get("hash_blake3"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let reason = entry
+                    .data
+                    .get("reason")
+                    .or_else(|| entry.data.get("summary"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                candidates.push((id, proc, hash, reason));
+            }
+        }
+
+        let rea = crate::rea::global_rea_engine();
+        for (id, proc, hash, reason) in candidates {
+            let proc_base = proc.as_deref().map(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(p)
+                    .to_ascii_lowercase()
+            });
+            let is_already_clean = proc_base
+                .as_ref()
+                .map(|b| self.rea_adjudicated_clean_procs.contains(b))
+                .unwrap_or(false);
+
+            if is_already_clean {
+                self.dismissed_gossip_ids.insert(id.clone());
+                let _ = self.memory.delete_threat_by_id_or_pattern(
+                    Some(&id),
+                    proc.as_deref(),
+                    hash.as_deref(),
+                );
+                dropped += 1;
+                continue;
+            }
+
+            let (should_drop, _, resolved_hash) =
+                rea.adjudicate_process_or_binary_alert(proc.as_deref(), None, Some(&reason));
+
+            if should_drop {
+                if let Some(ref b) = proc_base {
+                    self.rea_adjudicated_clean_procs.insert(b.clone());
+                }
+                self.dismissed_gossip_ids.insert(id.clone());
+                let final_hash = resolved_hash.as_deref().or(hash.as_deref());
+                let _ = self.memory.record_false_positive_pattern(
+                    proc.as_deref(),
+                    final_hash,
+                    "autonomous_rea",
+                );
+                let _ = self.memory.delete_threat_by_id_or_pattern(
+                    Some(&id),
+                    proc.as_deref(),
+                    final_hash,
+                );
+                dropped += 1;
+            }
+        }
+
         if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
-            for item in buffer.iter_mut() {
+            buffer.retain(|item| {
+                if self.dismissed_gossip_ids.contains(&item.id) {
+                    return false;
+                }
+                if item.status == "FALSE_POSITIVE"
+                    || item.status == "REMEDIATED"
+                    || item.status == "CLEARED"
+                    || item.status == "IGNORED"
+                {
+                    return false;
+                }
+                if item.summary.contains("Veto Trusted Vendor")
+                    || item.summary.contains("outside the vulnerable")
+                    || item.summary.contains("CVE None")
+                {
+                    return false;
+                }
+                if let Some(ref p) = item.process_name {
+                    let b = std::path::Path::new(p)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(p)
+                        .to_ascii_lowercase();
+                    if self.rea_adjudicated_clean_procs.contains(&b) {
+                        return false;
+                    }
+                }
+                true
+            });
+        }
+
+        dropped
+    }
+
+    /// Resolve candidate process name and hash for a gossip/threat item, track in `dismissed_gossip_ids`,
+    /// and immediately drop matching items from the in-memory gossip buffer.
+    pub fn resolve_and_dismiss_gossip_item(
+        &self,
+        threat_id: &str,
+    ) -> (Option<String>, Option<String>) {
+        self.dismissed_gossip_ids.insert(threat_id.to_string());
+        let mut resolved_proc = None;
+        let mut resolved_hash = None;
+
+        if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
+            for item in buffer.iter() {
                 if item.id == threat_id
                     || item.hash_blake3.as_deref() == Some(threat_id)
                     || item.process_name.as_deref() == Some(threat_id)
                 {
-                    item.status = "FALSE_POSITIVE".to_string();
-                    item.severity = "LOW".to_string();
+                    if resolved_proc.is_none() {
+                        resolved_proc = item.process_name.clone();
+                    }
+                    if resolved_hash.is_none() {
+                        resolved_hash = item.hash_blake3.clone();
+                    }
+                }
+            }
+            buffer.retain(|item| {
+                !(item.id == threat_id
+                    || item.hash_blake3.as_deref() == Some(threat_id)
+                    || item.process_name.as_deref() == Some(threat_id))
+            });
+        }
+
+        if resolved_proc.is_none() || resolved_hash.is_none() {
+            for entry in self.audit.entries().iter().rev() {
+                let e_id = entry
+                    .data
+                    .get("threat_id")
+                    .or_else(|| entry.data.get("id"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("audit-{}", entry.timestamp.timestamp_micros()));
+                if e_id == threat_id {
+                    if resolved_proc.is_none() {
+                        resolved_proc = entry
+                            .data
+                            .get("process_name")
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                    }
+                    if resolved_hash.is_none() {
+                        resolved_hash = entry
+                            .data
+                            .get("hash")
+                            .or_else(|| entry.data.get("hash_blake3"))
+                            .and_then(|v| v.as_str())
+                            .map(String::from);
+                    }
+                    break;
                 }
             }
         }
+
+        if resolved_proc.is_some() || resolved_hash.is_some() {
+            for entry in self.audit.entries().iter() {
+                let e_proc = entry.data.get("process_name").and_then(|v| v.as_str());
+                let e_hash = entry
+                    .data
+                    .get("hash")
+                    .or_else(|| entry.data.get("hash_blake3"))
+                    .and_then(|v| v.as_str());
+                let matches_proc =
+                    resolved_proc.as_deref().is_some() && resolved_proc.as_deref() == e_proc;
+                let matches_hash =
+                    resolved_hash.as_deref().is_some() && resolved_hash.as_deref() == e_hash;
+                if matches_proc || matches_hash {
+                    let e_id = entry
+                        .data
+                        .get("threat_id")
+                        .or_else(|| entry.data.get("id"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| {
+                            format!("audit-{}", entry.timestamp.timestamp_micros())
+                        });
+                    self.dismissed_gossip_ids.insert(e_id);
+                }
+            }
+        }
+
+        (resolved_proc, resolved_hash)
+    }
+
+    /// Mark a threat as false positive in the live gossip feed.
+    pub fn mark_gossip_false_positive(&self, threat_id: &str) {
+        let (proc, hash) = self.resolve_and_dismiss_gossip_item(threat_id);
+        let _ = self.memory.record_false_positive_pattern(
+            proc.as_deref(),
+            hash.as_deref(),
+            &self.trust.did().to_string(),
+        );
+        let _ = self.memory.delete_threat_by_id_or_pattern(
+            Some(threat_id),
+            proc.as_deref(),
+            hash.as_deref(),
+        );
     }
 
     /// Mark a threat as remediated in the live gossip feed.
     pub fn mark_gossip_remediated(&self, threat_id: &str) {
-        if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
-            for item in buffer.iter_mut() {
-                if item.id == threat_id
-                    || item.hash_blake3.as_deref() == Some(threat_id)
-                    || item.process_name.as_deref() == Some(threat_id)
-                {
-                    item.status = "REMEDIATED".to_string();
-                }
-            }
-        }
+        let (proc, hash) = self.resolve_and_dismiss_gossip_item(threat_id);
+        let _ = self.memory.delete_threat_by_id_or_pattern(
+            Some(threat_id),
+            proc.as_deref(),
+            hash.as_deref(),
+        );
     }
 
     /// Broadcast a detected threat to the P2P wire mesh and Nostr with debouncing and cryptographic signing.
     pub async fn broadcast_threat_to_mesh(&self, mut sig: osoosi_types::ThreatSignature) {
+        let reason_str = sig.reason.as_deref().unwrap_or("");
+        if reason_str.contains("Veto Trusted Vendor")
+            || reason_str.contains("outside the vulnerable")
+            || reason_str.contains("CVE None")
+        {
+            debug!("[Mesh] Threat suppressed from gossip broadcast (vetoed or non-vulnerable version)");
+            return;
+        }
+        if let Some(ref proc) = sig.process_name {
+            let proc_base = std::path::Path::new(proc)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(proc)
+                .to_ascii_lowercase();
+            if self.rea_adjudicated_clean_procs.contains(&proc_base)
+                || self
+                    .memory
+                    .is_false_positive_pattern(Some(proc.as_str()), sig.hash_blake3.as_deref())
+                    .unwrap_or(false)
+                || sig
+                    .hash_blake3
+                    .as_deref()
+                    .map(|h| self.memory.is_hash_clean_ignored(h))
+                    .unwrap_or(false)
+            {
+                debug!(
+                    "[Mesh] Threat suppressed from gossip broadcast (clean/FP pattern: {})",
+                    proc
+                );
+                return;
+            }
+        }
+
         // 1. Signal-to-noise ratio & Zero-Unknown Invariant:
         if sig.confidence < 0.50 {
             debug!(
@@ -10989,78 +11353,100 @@ impl EdrOrchestrator {
 
     /// Mark a threat as false positive: whitelist the hash, clear traps, suppress future alerts.
     pub async fn handle_false_positive(&self, threat_id: &str) -> anyhow::Result<()> {
+        let (gossip_proc, gossip_hash) = self.resolve_and_dismiss_gossip_item(threat_id);
         let source = self.trust.did().to_string();
-        match self.memory.mark_threat_false_positive(threat_id, &source)? {
-            Some((process_name, mut hash_blake3, file_path)) => {
-                info!("Threat {} marked as false positive. Whitelisting and reverting active response...", threat_id);
-
-                if hash_blake3.as_deref().unwrap_or("").is_empty() {
-                    if let Some(path) =
-                        Self::feedback_file_path(process_name.as_deref(), file_path.as_deref())
-                    {
-                        match Self::blake3_file_hex(&path) {
-                            Ok(hash) => {
-                                info!("[FP] Resolved missing hash for '{}' as {}.", path, hash);
-                                hash_blake3 = Some(hash);
-                                let _ = self.memory.record_false_positive_pattern(
-                                    process_name.as_deref().or(Some(path.as_str())),
-                                    hash_blake3.as_deref(),
-                                    &source,
-                                );
-                            }
-                            Err(e) => warn!(
-                                "[FP] Could not hash '{}' for false-positive allowlist: {}",
-                                path, e
-                            ),
-                        }
-                    }
+        let (process_name, mut hash_blake3, file_path) =
+            match self.memory.mark_threat_false_positive(threat_id, &source)? {
+                Some(t) => t,
+                None => {
+                    let proc = gossip_proc;
+                    let hash = gossip_hash;
+                    let _ = self.memory.record_false_positive_pattern(
+                        proc.as_deref(),
+                        hash.as_deref(),
+                        &source,
+                    );
+                    let _ = self.memory.delete_threat_by_id_or_pattern(
+                        Some(threat_id),
+                        proc.as_deref(),
+                        hash.as_deref(),
+                    );
+                    (proc, hash, None)
                 }
+            };
 
-                // 1. Whitelist the hash in the in-memory NSRL bypass cache so future scans skip it instantly
-                if let Some(ref hash) = hash_blake3 {
-                    if !hash.is_empty() {
-                        self.nsrl_cache.insert(hash.clone(), true);
-                        info!(
-                            "[FP] Hash {} added to session NSRL bypass cache — will not re-alert.",
-                            hash
+        info!(
+            "Threat {} marked as false positive. Whitelisting and reverting active response...",
+            threat_id
+        );
+
+        if hash_blake3.as_deref().unwrap_or("").is_empty() {
+            if let Some(path) =
+                Self::feedback_file_path(process_name.as_deref(), file_path.as_deref())
+            {
+                match Self::blake3_file_hex(&path) {
+                    Ok(hash) => {
+                        info!("[FP] Resolved missing hash for '{}' as {}.", path, hash);
+                        hash_blake3 = Some(hash);
+                        let _ = self.memory.record_false_positive_pattern(
+                            process_name.as_deref().or(Some(path.as_str())),
+                            hash_blake3.as_deref(),
+                            &source,
                         );
                     }
+                    Err(e) => warn!(
+                        "[FP] Could not hash '{}' for false-positive allowlist: {}",
+                        path, e
+                    ),
                 }
-
-                // 2. Whitelist the process name in the NSRL bypass cache as well
-                if let Some(ref proc) = process_name {
-                    if !proc.is_empty() {
-                        self.nsrl_cache.insert(proc.clone(), true);
-                        info!(
-                            "[FP] Process '{}' added to session NSRL bypass cache.",
-                            proc
-                        );
-                    }
-                }
-
-                // 3. Revert Deception (Ghost Files / Traps)
-                let traps_dir = self.runtime_config.traps_path.as_str();
-                let _ = self.response.clear_ghost_files(traps_dir).await;
-                info!("[FP] Ghost files cleared from '{}'.", traps_dir);
-
-                self.audit.log(
-                    "FALSE_POSITIVE_REMEDIATION",
-                    serde_json::json!({
-                        "threat_id": threat_id,
-                        "process_name": process_name,
-                        "hash_blake3": hash_blake3,
-                        "file_path": file_path,
-                        "action": "whitelisted_and_remediated",
-                    }),
-                );
-
-                Ok(())
             }
-            None => Err(anyhow::anyhow!(
-                "Threat '{}' not found in database",
-                threat_id
-            )),
         }
+
+        // 1. Whitelist the hash in the in-memory NSRL bypass cache so future scans skip it instantly
+        if let Some(ref hash) = hash_blake3 {
+            if !hash.is_empty() {
+                self.nsrl_cache.insert(hash.clone(), true);
+                info!(
+                    "[FP] Hash {} added to session NSRL bypass cache — will not re-alert.",
+                    hash
+                );
+            }
+        }
+
+        // 2. Whitelist the process name in the NSRL bypass cache as well
+        if let Some(ref proc) = process_name {
+            if !proc.is_empty() {
+                self.nsrl_cache.insert(proc.clone(), true);
+                let proc_base = std::path::Path::new(proc)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(proc)
+                    .to_ascii_lowercase();
+                self.rea_adjudicated_clean_procs.insert(proc_base);
+                info!(
+                    "[FP] Process '{}' added to session NSRL bypass cache.",
+                    proc
+                );
+            }
+        }
+
+        // 3. Revert Deception (Ghost Files / Traps)
+        let traps_dir = self.runtime_config.traps_path.as_str();
+        let _ = self.response.clear_ghost_files(traps_dir).await;
+        info!("[FP] Ghost files cleared from '{}'.", traps_dir);
+
+        self.audit.log(
+            "FALSE_POSITIVE_REMEDIATION",
+            serde_json::json!({
+                "threat_id": threat_id,
+                "process_name": process_name,
+                "hash_blake3": hash_blake3,
+                "file_path": file_path,
+                "action": "whitelisted_and_remediated",
+            }),
+        );
+
+        Ok(())
     }
 
     /// Record a manual false positive suppression for future detections.

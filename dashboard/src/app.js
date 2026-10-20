@@ -9,6 +9,8 @@ const state = {
     peer_count: 0,
     threats: [],
     suppressedThreatKeys: new Set(),
+    suppressedGossipIds: new Set(),
+    _pollStartedAt: 0,
     activity: [],
     chain_verified: false,
     current_view: 'dashboard',
@@ -110,6 +112,18 @@ function setGlobalUiLoading(isLoading, statusMessage = 'Syncing live telemetry..
 }
 window.setGlobalUiLoading = setGlobalUiLoading;
 
+function waitForNextPaint(minMs = 420) {
+    return new Promise((resolve) => {
+        const complete = () => setTimeout(resolve, minMs);
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(() => window.requestAnimationFrame(complete));
+        } else {
+            complete();
+        }
+    });
+}
+window.waitForNextPaint = waitForNextPaint;
+
 function setLoginLoadingState(isLoading, statusMessage = '', source = 'submit') {
     const banner = document.getElementById('login-status-banner');
     const bannerText = document.getElementById('login-status-text');
@@ -119,6 +133,11 @@ function setLoginLoadingState(isLoading, statusMessage = '', source = 'submit') 
     const helloBtn = document.getElementById('btn-windows-hello');
     const helloSpinner = document.getElementById('hello-btn-spinner');
     const helloText = document.getElementById('hello-btn-text');
+    const progressBar = document.getElementById('login-card-progress');
+
+    if (progressBar) {
+        progressBar.style.display = isLoading ? 'block' : 'none';
+    }
 
     if (isLoading) {
         if (banner) {
@@ -141,6 +160,9 @@ function setLoginLoadingState(isLoading, statusMessage = '', source = 'submit') 
             }
             if (helloSpinner) helloSpinner.style.display = 'inline-block';
             if (helloText) helloText.innerText = 'Awaiting Windows Hello...';
+        } else if (source === 'session') {
+            if (submitSpinner) submitSpinner.style.display = 'inline-block';
+            if (submitText) submitText.innerText = 'Checking Session...';
         }
     } else {
         if (banner) {
@@ -456,6 +478,7 @@ async function checkAuthStatus() {
     try {
         if (!state._appStarted) {
             setLoginLoadingState(true, 'Checking active security session & TPM status...', 'session');
+            await waitForNextPaint(380);
         }
         const res = await fetch(`${API_BASE}/auth/status`);
         if (res.ok) {
@@ -484,6 +507,7 @@ async function checkAuthStatus() {
 
             if (data.authenticated) {
                 setLoginLoadingState(true, 'Session verified — loading dashboard telemetry...', 'session');
+                await waitForNextPaint(380);
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 localStorage.removeItem('oshoosi_logged_out');
                 if (overlay) overlay.style.display = 'none';
@@ -633,6 +657,7 @@ function setupLogin() {
                     : 'Verifying Master Admin Token & initializing encrypted session...',
                 'submit'
             );
+            await waitForNextPaint(380);
 
             try {
                 const payload = {
@@ -649,6 +674,7 @@ function setupLogin() {
                 const data = await res.json();
                 if (res.ok && (data.success || data.ok)) {
                     setLoginLoadingState(true, 'Authenticated — loading real-time EDR telemetry & security views...', 'submit');
+                    await waitForNextPaint(380);
                     localStorage.setItem('oshoosi_logged_in', 'true');
                     localStorage.removeItem('oshoosi_logged_out');
                     if (data.token) {
@@ -1129,21 +1155,34 @@ function updateMeshConnectionIndicators(peerCount, gossipCount) {
  */
 async function updateDashboard() {
     // Non-reentrant guard: if previous poll is still in-flight, skip this tick.
-    // This prevents cascading fetch queues when the backend is under heavy consensus load.
-    if (state._pollInFlight) return;
+    // Watchdog: after 8000ms, unlock in-flight state to prevent any permanent lockup.
+    const nowPoll = Date.now();
+    if (state._pollInFlight && (nowPoll - (state._pollStartedAt || 0)) < 8000) return;
     state._pollInFlight = true;
+    state._pollStartedAt = nowPoll;
     try {
-        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData, detectionStats, skyrlStatus] = await Promise.all([
-            fetchAPI('/status'),
-            fetchAPI('/threats'),
-            fetchAPI('/mesh-stats'),
-            fetchAPI('/activity'),
-            fetchAPI('/malware-detections'),
-            fetchAPI('/repair-status'),
-            fetchAPI('/telemetry/timeseries'),
-            fetchAPI('/detection-stats'),
-            fetchAPI('/skyrl/v1/status')
+        const results = await Promise.allSettled([
+            fetchAPI('/status', 3000),
+            fetchAPI('/threats', 3000),
+            fetchAPI('/mesh-stats', 3000),
+            fetchAPI('/activity', 3000),
+            fetchAPI('/malware-detections', 3000),
+            fetchAPI('/repair-status', 3000),
+            fetchAPI('/telemetry/timeseries', 3000),
+            fetchAPI('/detection-stats', 3000),
+            fetchAPI('/skyrl/v1/status', 3000)
         ]);
+        const [
+            status,
+            threats,
+            mesh,
+            activity,
+            malwareDetections,
+            repairStatus,
+            telemetryData,
+            detectionStats,
+            skyrlStatus
+        ] = results.map(r => (r.status === 'fulfilled' ? r.value : null));
 
         if (status && status.uptime !== undefined) {
             state.uptime = status.uptime;
@@ -1445,6 +1484,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
         }
     } catch (_) {}
     opts.headers = headers;
+    const timeoutMs = opts.timeoutMs || 4000;
 
     let lastError = null;
     const normalizeAbortReason = (signal, err) => {
@@ -1465,8 +1505,21 @@ async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
             lastError = normalizeAbortReason(opts.signal, null);
             break;
         }
+
+        let attemptController = null;
+        let attemptTimer = null;
+        let fetchOpts = opts;
+
+        if (!opts.signal) {
+            attemptController = new AbortController();
+            attemptTimer = setTimeout(() => {
+                attemptController.abort(new Error(`Request timed out after ${timeoutMs}ms calling ${url}`));
+            }, timeoutMs);
+            fetchOpts = { ...opts, signal: attemptController.signal };
+        }
+
         try {
-            const resp = await fetch(url, opts);
+            const resp = await fetch(url, fetchOpts);
             if (resp.status === 401 && attempt === 0) {
                 await fetch(`${API_BASE}/status`, { credentials: 'same-origin' }).catch(() => null);
             } else if (resp.ok || resp.status < 500) {
@@ -1474,11 +1527,17 @@ async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
             }
             lastError = new Error(`HTTP ${resp.status} ${resp.statusText}`);
         } catch (err) {
-            if (opts.signal && opts.signal.aborted) {
-                lastError = normalizeAbortReason(opts.signal, err);
-                break;
+            const activeSignal = fetchOpts.signal || opts.signal;
+            if (activeSignal && activeSignal.aborted) {
+                lastError = normalizeAbortReason(activeSignal, err);
+                if (opts.signal && opts.signal.aborted) break;
+            } else {
+                lastError = err;
             }
-            lastError = err;
+        } finally {
+            if (attemptTimer) {
+                clearTimeout(attemptTimer);
+            }
         }
         if (attempt < retries - 1) {
             await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
@@ -1594,9 +1653,9 @@ window.showNotification = showNotification;
 /**
  * Helper to fetch from API with SLA timeout and structured error decoding
  */
-async function fetchAPI(endpoint) {
+async function fetchAPI(endpoint, timeoutMs = 3500) {
     try {
-        const response = await fetchWithRetry(`${API_BASE}${endpoint}`, {}, 2, 350);
+        const response = await fetchWithRetry(`${API_BASE}${endpoint}`, { timeoutMs }, 2, 250);
         if (!response.ok) {
             const errData = await response.json().catch(() => null);
             if (errData && errData.status === 'error') {
@@ -1670,6 +1729,18 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
 }
+function escapeJsArg(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/"/g, '&quot;')
+        .replace(/\r/g, '\\r')
+        .replace(/\n/g, '\\n')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+window.escapeJsArg = escapeJsArg;
 
 function setHtmlIfChanged(elOrId, html) {
     const el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
@@ -1914,8 +1985,8 @@ function renderThreats(threats) {
                     ${t.entropy ? `<span><i data-lucide="zap"></i> Entropy: ${t.entropy.toFixed(2)}</span>` : ''}
                 </div>
                 <div class="item-actions">
-                    <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
-                    <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Confirm</button>
+                    <button class="action-btn" onclick="markFalsePositive('${escapeJsArg(t.id)}', this)">Flag FP</button>
+                    <button class="action-btn primary" onclick="markTruePositive('${escapeJsArg(t.id)}', this)">Confirm</button>
                     <button class="action-btn" onclick="toggleGroupDetails('${t.id}')" style="margin-left:auto; display:flex; align-items:center; gap:4px;">
                         <span>${isExpanded ? 'Hide Details' : 'Details'}</span>
                         <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" style="width:12px; height:12px;"></i>
@@ -2125,9 +2196,9 @@ function renderThreatsView(threats) {
             </div>
 
             <div class="item-actions" style="grid-template-columns: 1fr 1fr 1fr; display: grid; gap: 8px;">
-                <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Mark Positive</button>
-                <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
-                <button class="action-btn" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Isolate</button>
+                <button class="action-btn primary" onclick="markTruePositive('${escapeJsArg(t.id)}', this)">Mark Positive</button>
+                <button class="action-btn" onclick="markFalsePositive('${escapeJsArg(t.id)}', this)">Flag FP</button>
+                <button class="action-btn" onclick="confirmThreat('${escapeJsArg(t.id)}', this)" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Isolate</button>
                 <button class="action-btn" onclick="navigateToStory()" style="grid-column: span 3;">View Forensic Story</button>
             </div>
         </div>
@@ -3485,7 +3556,7 @@ window.quarantineMalware = async function(btn) {
         showSkyrlToast('No file path available for quarantine', 'warning');
         return;
     }
-    if (!confirm(`Quarantine ${name} (${path})? It will be moved to an isolated location.`)) return;
+    // Immediate execution with zero blocking prompt
 
     btn.disabled = true;
     btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px; margin-right:4px;"></i> Isolating...';
@@ -5646,34 +5717,36 @@ window.navigateToApprovalsSettings = function() {
     }, 100);
 };
 
-window.markFalsePositive = async function(threatId) {
+window.markFalsePositive = async function(threatId, btn) {
     if (window.event) window.event.stopPropagation();
-    if (!confirm("Are you sure this is a False Positive? This will stop active responses and un-ghost files.")) return;
+    if (btn) setButtonLoadingState(btn, true, 'Suppressing...');
+    suppressThreatLocally(threatId);
     
     try {
-        const res = await fetchWithRetry(`${API_BASE}/threats/${threatId}/false-positive`, {
+        const res = await fetchWithRetry(`${API_BASE}/threats/${encodeURIComponent(threatId)}/false-positive`, {
             method: 'POST'
         });
         const data = await res.json().catch(() => null);
         if (res.ok && data && (data.ok || data.status === 'success')) {
             showSkyrlToast('Threat marked as False Positive. Suppressed across mesh.', 'success');
-            suppressThreatLocally(threatId);
             setTimeout(updateDashboard, 250);
         } else {
             showUserError('Threat False Positive', data || `HTTP ${res.status}`);
+            if (btn) setButtonLoadingState(btn, false);
         }
     } catch (err) {
         console.error("Failed to mark false positive:", err);
         showUserError('Threat False Positive', err);
+        if (btn) setButtonLoadingState(btn, false);
     }
 };
 
-window.markTruePositive = async function(threatId) {
+window.markTruePositive = async function(threatId, btn) {
     if (window.event) window.event.stopPropagation();
-    if (!confirm("Confirm this as a True Positive? This will boost detection confidence across the mesh.")) return;
+    if (btn) setButtonLoadingState(btn, true, 'Confirming...');
     
     try {
-        const res = await fetchWithRetry(`${API_BASE}/threats/${threatId}/true-positive`, {
+        const res = await fetchWithRetry(`${API_BASE}/threats/${encodeURIComponent(threatId)}/true-positive`, {
             method: 'POST'
         });
         const data = await res.json().catch(() => null);
@@ -5682,10 +5755,12 @@ window.markTruePositive = async function(threatId) {
             updateDashboard();
         } else {
             showUserError('Threat Confirmation', data || `HTTP ${res.status}`);
+            if (btn) setButtonLoadingState(btn, false);
         }
     } catch (err) {
         console.error("Failed to mark true positive:", err);
         showUserError('Threat Confirmation', err);
+        if (btn) setButtonLoadingState(btn, false);
     }
 };
 
@@ -5862,19 +5937,22 @@ window.toggleMalwareDetails = function(id) {
     }
 };
 
-window.confirmThreat = async function(id) {
-    if (!confirm('Are you sure you want to isolate this node and terminate the offending process?')) return;
+window.confirmThreat = async function(id, btn) {
+    if (window.event) window.event.stopPropagation();
+    if (btn) setButtonLoadingState(btn, true, 'Isolating...');
     try {
-        const res = await fetchWithRetry(`${API_BASE}/threats/confirm/${id}`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/threats/confirm/${encodeURIComponent(id)}`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Threat Response Isolation', data || `HTTP ${res.status}`);
+            if (btn) setButtonLoadingState(btn, false);
             return;
         }
         showSkyrlToast('Response initiated: Node isolated and offending process terminated.', 'success');
         updateDashboard();
     } catch (e) {
         showUserError('Threat Response Isolation', e);
+        if (btn) setButtonLoadingState(btn, false);
     }
 };
 
@@ -6024,12 +6102,33 @@ function formatPeerDid(did) {
     return did.substring(0, 10) + '...' + did.substring(did.length - 6);
 }
 
-window.markGossipFalsePositive = async function(threatId, processName, hash) {
+window.markGossipFalsePositive = async function(threatId, processName, hash, btn) {
     if (window.event) window.event.stopPropagation();
-    if (!confirm(`Mark this peer gossip threat as False Positive? This will stop active responses and update the mesh.`)) return;
+    if (btn) setButtonLoadingState(btn, true, 'Dropping off...');
+    if (threatId) state.suppressedGossipIds.add(threatId);
+    if (processName) state.suppressedThreatKeys.add(processName.toLowerCase());
+    if (hash) state.suppressedThreatKeys.add(hash.toLowerCase());
+
+    // Optimistically drop off card from DOM
+    const cards = document.querySelectorAll(
+        `#gossip-feed-list .timeline-item[data-gossip-id="${threatId}"], #gossip-feed-list .timeline-item[data-process="${processName || ''}"]`
+    );
+    cards.forEach(card => {
+        card.style.transition = 'all 0.22s ease';
+        card.style.opacity = '0';
+        card.style.transform = 'translateX(20px)';
+        setTimeout(() => card.remove(), 220);
+    });
+
+    const threatCountEl = document.getElementById('gossip-threats-count');
+    if (threatCountEl) {
+        const cur = parseInt(threatCountEl.innerText, 10) || 0;
+        threatCountEl.innerText = Math.max(0, cur - 1);
+    }
+
     try {
         if (threatId) {
-            const res1 = await fetchWithRetry(`${API_BASE}/threats/${threatId}/false-positive`, { method: 'POST' });
+            const res1 = await fetchWithRetry(`${API_BASE}/threats/${encodeURIComponent(threatId)}/false-positive`, { method: 'POST' });
             const d1 = await res1.json().catch(() => null);
             if (!res1.ok || (d1 && d1.status === 'error')) {
                 showUserError('Gossip False Positive', d1 || `HTTP ${res1.status}`);
@@ -6046,23 +6145,44 @@ window.markGossipFalsePositive = async function(threatId, processName, hash) {
                 showUserError('Gossip False Positive', d2 || `HTTP ${res2.status}`);
             }
         }
-        showSkyrlToast('Peer gossip threat allowlisted and suppressed across mesh.', 'success');
+        showSkyrlToast('Peer gossip threat marked as False Positive & suppressed.', 'success');
         setTimeout(renderGossipView, 250);
     } catch (err) {
         console.error("Failed to mark gossip false positive:", err);
         showUserError('Gossip False Positive', err);
+        if (btn) setButtonLoadingState(btn, false);
     }
 };
 
-window.markGossipRemediated = async function(threatId) {
+window.markGossipRemediated = async function(threatId, btn) {
     if (window.event) window.event.stopPropagation();
-    if (!confirm(`Confirm and entangle this peer threat across the Morphic Hyper-Web?`)) return;
+    if (btn) setButtonLoadingState(btn, true, 'Remediating...');
+    if (threatId) state.suppressedGossipIds.add(threatId);
+
+    // Optimistically drop off card from DOM
+    const cards = document.querySelectorAll(
+        `#gossip-feed-list .timeline-item[data-gossip-id="${threatId}"]`
+    );
+    cards.forEach(card => {
+        card.style.transition = 'all 0.22s ease';
+        card.style.opacity = '0';
+        card.style.transform = 'translateX(20px)';
+        setTimeout(() => card.remove(), 220);
+    });
+
+    const threatCountEl = document.getElementById('gossip-threats-count');
+    if (threatCountEl) {
+        const cur = parseInt(threatCountEl.innerText, 10) || 0;
+        threatCountEl.innerText = Math.max(0, cur - 1);
+    }
+
     try {
         if (threatId) {
-            const res = await fetchWithRetry(`${API_BASE}/threats/confirm/${threatId}`, { method: 'POST' });
+            const res = await fetchWithRetry(`${API_BASE}/threats/confirm/${encodeURIComponent(threatId)}`, { method: 'POST' });
             const data = await res.json().catch(() => null);
             if (!res.ok || (data && data.status === 'error')) {
                 showUserError('Gossip Threat Confirmation', data || `HTTP ${res.status}`);
+                if (btn) setButtonLoadingState(btn, false);
                 return;
             }
         }
@@ -6071,6 +6191,7 @@ window.markGossipRemediated = async function(threatId) {
     } catch (err) {
         console.error("Failed to confirm/remediate gossip threat:", err);
         showUserError('Gossip Threat Confirmation', err);
+        if (btn) setButtonLoadingState(btn, false);
     }
 };
 
@@ -6080,282 +6201,311 @@ window.markGossipRemediated = async function(threatId) {
 async function renderGossipView() {
     try {
         const list = document.getElementById('gossip-feed-list');
-    if (!list) return;
+        if (!list) return;
 
-    // 1. Fetch live gossip feed from dedicated /gossip endpoint
-    let gossipEvents = [];
-    const gossipData = await fetchAPI('/gossip');
-    if (Array.isArray(gossipData) && gossipData.length > 0) {
-        gossipEvents = gossipData.filter(ev => {
-            const pName = (ev.process_name || '').toLowerCase();
-            const summary = (ev.summary || '').toLowerCase();
-            if (pName === 'unknown' || pName === 'unknown process') return false;
-            if (summary.includes('execution of non-existing file')) return false;
-            if (summary.includes('suspicious activity') && !ev.process_name) return false;
-            if (ev.event_type === 'MESH_SKILL_BROADCAST' && ev.is_threat) return false;
-            if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) return false;
-            return true;
-        });
-    } else {
-        // Fallback to recent activity if /gossip is empty
-        const activity = await fetchAPI('/activity');
-        if (Array.isArray(activity) && activity.length > 0) {
-            gossipEvents = activity.filter(a => 
-                (a.type && (a.type.includes('MESH') || a.type.includes('CONSENSUS') || a.type.includes('INTEL') || a.type.includes('THREAT'))) || 
-                (a.summary && a.summary.toLowerCase().includes('mesh'))
-            ).map(a => ({
-                id: a.threat_id || a.id || ('act-' + crypto.getRandomValues(new Uint32Array(1))[0].toString(36)),
-                event_type: a.type || 'GOSSIP_EVENT',
-                timestamp: a.timestamp || new Date().toISOString(),
-                summary: a.summary || '',
-                source_node: a.source_node || a.node_id || 'peer',
-                process_name: a.process_name || null,
-                mitre_technique: a.mitre_technique || null,
-                mitre_technique_name: a.mitre_technique_name || null,
-                mitre_tactic: a.mitre_tactic || null,
-                confidence: a.confidence || 0.8,
-                severity: a.severity || (a.type && a.type.includes('THREAT') ? 'HIGH' : 'LOW'),
-                action: a.action || null,
-                status: a.status || 'ACTIVE',
-                hash_blake3: a.hash || null,
-                is_threat: (a.type && a.type.includes('THREAT')) || false
-            }));
-        }
-    }
+        // 1. Fetch live gossip feed from dedicated /gossip endpoint
+        let gossipEvents = [];
+        const gossipData = await fetchAPI('/gossip');
+        if (Array.isArray(gossipData) && gossipData.length > 0) {
+            gossipEvents = gossipData.filter(ev => {
+                if (state.suppressedGossipIds.has(ev.id)) return false;
+                if (ev.process_name && state.suppressedThreatKeys.has(ev.process_name.toLowerCase())) return false;
+                if (ev.hash_blake3 && state.suppressedThreatKeys.has(ev.hash_blake3.toLowerCase())) return false;
+                const evStatus = (ev.status || '').toUpperCase();
+                if (evStatus === 'FALSE_POSITIVE' || evStatus === 'REMEDIATED' || evStatus === 'CLEARED') return false;
+                const evSummary = ev.summary || '';
+                if (evSummary.includes('Veto Trusted Vendor') || evSummary.includes('outside the vulnerable') || evSummary.includes('CVE None')) return false;
 
-    // 2. If still empty, display default peer synchronization packets
-    if (gossipEvents.length === 0) {
-        if (!state._gossipInitTs) state._gossipInitTs = Date.now();
-        const now = state._gossipInitTs;
-        gossipEvents = [
-            {
-                id: 'sync-hb-1',
-                summary: 'GossipSub v1.2 transport listener ready and active on port 4001',
-                event_type: 'MESH_LISTENER_ACTIVE',
-                timestamp: new Date(now - 14000).toISOString(),
-                source_node: state.node_id || 'did:osoosi:local',
-                severity: 'LOW',
-                status: 'ACTIVE',
-                is_threat: false
-            },
-            {
-                id: 'sync-clock-1',
-                summary: 'Relativistic hardware timer monotonic drift calibrated against TPM 2.0 clock',
-                event_type: 'HARDWARE_CLOCK_SYNC',
-                timestamp: new Date(now - 48000).toISOString(),
-                source_node: state.node_id || 'did:osoosi:local',
-                severity: 'LOW',
-                status: 'ACTIVE',
-                is_threat: false
-            },
-            {
-                id: 'sync-bft-1',
-                summary: 'Autonomous Sentinel Engine armed: Byzantine fault tolerance consensus initialized',
-                event_type: 'INTEL_BFT_INIT',
-                timestamp: new Date(now - 110000).toISOString(),
-                source_node: state.node_id || 'did:osoosi:local',
-                severity: 'LOW',
-                status: 'ACTIVE',
-                is_threat: false
-            },
-            {
-                id: 'sync-pattern-1',
-                summary: 'Dynamic pattern database synchronized: Local allowlist & rule engine active',
-                event_type: 'PATTERN_DB_SYNC',
-                timestamp: new Date(now - 190000).toISOString(),
-                source_node: state.node_id || 'did:osoosi:local',
-                severity: 'LOW',
-                status: 'ACTIVE',
-                is_threat: false
+                const pName = (ev.process_name || '').toLowerCase();
+                const summary = evSummary.toLowerCase();
+                if (pName === 'unknown' || pName === 'unknown process') return false;
+                if (summary.includes('execution of non-existing file')) return false;
+                if (summary.includes('suspicious activity') && !ev.process_name) return false;
+                if (ev.event_type === 'MESH_SKILL_BROADCAST' && ev.is_threat) return false;
+                if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) return false;
+                return true;
+            });
+        } else {
+            // Fallback to recent activity if /gossip is empty
+            const activity = await fetchAPI('/activity');
+            if (Array.isArray(activity) && activity.length > 0) {
+                gossipEvents = activity.filter(a => {
+                    const id = a.threat_id || a.id;
+                    if (id && state.suppressedGossipIds.has(id)) return false;
+                    if (a.process_name && state.suppressedThreatKeys.has(a.process_name.toLowerCase())) return false;
+                    if (a.hash && state.suppressedThreatKeys.has(a.hash.toLowerCase())) return false;
+                    const aStatus = (a.status || '').toUpperCase();
+                    if (aStatus === 'FALSE_POSITIVE' || aStatus === 'REMEDIATED' || aStatus === 'CLEARED') return false;
+                    const aSummary = a.summary || '';
+                    if (aSummary.includes('Veto Trusted Vendor') || aSummary.includes('outside the vulnerable') || aSummary.includes('CVE None')) return false;
+
+                    return (a.type && (a.type.includes('MESH') || a.type.includes('CONSENSUS') || a.type.includes('INTEL') || a.type.includes('THREAT'))) || 
+                           (a.summary && a.summary.toLowerCase().includes('mesh'));
+                }).map(a => ({
+                    id: a.threat_id || a.id || ('act-' + crypto.getRandomValues(new Uint32Array(1))[0].toString(36)),
+                    event_type: a.type || 'GOSSIP_EVENT',
+                    timestamp: a.timestamp || new Date().toISOString(),
+                    summary: a.summary || '',
+                    source_node: a.source_node || a.node_id || 'peer',
+                    process_name: a.process_name || null,
+                    mitre_technique: a.mitre_technique || null,
+                    mitre_technique_name: a.mitre_technique_name || null,
+                    mitre_tactic: a.mitre_tactic || null,
+                    confidence: a.confidence || 0.8,
+                    severity: a.severity || (a.type && a.type.includes('THREAT') ? 'HIGH' : 'LOW'),
+                    action: a.action || null,
+                    status: a.status || 'ACTIVE',
+                    hash_blake3: a.hash || null,
+                    is_threat: (a.type && a.type.includes('THREAT')) || false
+                }));
             }
-        ];
-    }
+        }
 
-    // 3. Intelligent sorting: Active threats first, then recent items
-    gossipEvents.sort((a, b) => {
-        const aThreat = (a.is_threat || (a.event_type && a.event_type.includes('THREAT'))) && a.status === 'ACTIVE' ? 1 : 0;
-        const bThreat = (b.is_threat || (b.event_type && b.event_type.includes('THREAT'))) && b.status === 'ACTIVE' ? 1 : 0;
-        if (bThreat !== aThreat) return bThreat - aThreat;
-        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-    });
+        // 2. If still empty, display default peer synchronization packets
+        if (gossipEvents.length === 0) {
+            if (!state._gossipInitTs) state._gossipInitTs = Date.now();
+            const now = state._gossipInitTs;
+            gossipEvents = [
+                {
+                    id: 'sync-hb-1',
+                    summary: 'GossipSub v1.2 transport listener ready and active on port 4001',
+                    event_type: 'MESH_LISTENER_ACTIVE',
+                    timestamp: new Date(now - 14000).toISOString(),
+                    source_node: state.node_id || 'did:osoosi:local',
+                    severity: 'LOW',
+                    status: 'ACTIVE',
+                    is_threat: false
+                },
+                {
+                    id: 'sync-clock-1',
+                    summary: 'Relativistic hardware timer monotonic drift calibrated against TPM 2.0 clock',
+                    event_type: 'HARDWARE_CLOCK_SYNC',
+                    timestamp: new Date(now - 48000).toISOString(),
+                    source_node: state.node_id || 'did:osoosi:local',
+                    severity: 'LOW',
+                    status: 'ACTIVE',
+                    is_threat: false
+                },
+                {
+                    id: 'sync-bft-1',
+                    summary: 'Autonomous Sentinel Engine armed: Byzantine fault tolerance consensus initialized',
+                    event_type: 'INTEL_BFT_INIT',
+                    timestamp: new Date(now - 110000).toISOString(),
+                    source_node: state.node_id || 'did:osoosi:local',
+                    severity: 'LOW',
+                    status: 'ACTIVE',
+                    is_threat: false
+                },
+                {
+                    id: 'sync-pattern-1',
+                    summary: 'Dynamic pattern database synchronized: Local allowlist & rule engine active',
+                    event_type: 'PATTERN_DB_SYNC',
+                    timestamp: new Date(now - 190000).toISOString(),
+                    source_node: state.node_id || 'did:osoosi:local',
+                    severity: 'LOW',
+                    status: 'ACTIVE',
+                    is_threat: false
+                }
+            ];
+        }
 
-    // 4. Intelligent deduplication: prune routine heartbeats and clock syncs so threats stand out
-    const seenRoutine = new Set();
-    const filteredEvents = [];
-    let threatCount = 0;
+        // 3. Intelligent sorting: Active threats first, then recent items
+        gossipEvents.sort((a, b) => {
+            const aThreat = (a.is_threat || (a.event_type && a.event_type.includes('THREAT'))) && a.status === 'ACTIVE' ? 1 : 0;
+            const bThreat = (b.is_threat || (b.event_type && b.event_type.includes('THREAT'))) && b.status === 'ACTIVE' ? 1 : 0;
+            if (bThreat !== aThreat) return bThreat - aThreat;
+            return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+        });
 
-    for (const ev of gossipEvents) {
-        const isThreat = ev.is_threat || (ev.event_type && ev.event_type.includes('THREAT'));
-        if (isThreat) {
-            const pName = (ev.process_name || '').toLowerCase();
-            const summary = (ev.summary || '').toLowerCase();
-            if (pName === 'unknown' || pName === 'unknown process') continue;
-            if (summary.includes('execution of non-existing file')) continue;
-            if (summary.includes('suspicious activity') && !ev.process_name) continue;
-            if (ev.event_type === 'MESH_SKILL_BROADCAST') continue;
-            if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) continue;
-            threatCount++;
-            filteredEvents.push(ev);
-        } else if (ev.event_type === 'MESH_HEARTBEAT_ACK' || ev.event_type === 'CONSENSUS_CLOCK_SYNC') {
-            const key = `${ev.event_type}:${ev.source_node || 'peer'}`;
-            if (!seenRoutine.has(key)) {
-                seenRoutine.add(key);
+        // 4. Intelligent deduplication: deduplicate threat events and routine heartbeats
+        const seenRoutine = new Set();
+        const seenThreatKeys = new Set();
+        const filteredEvents = [];
+        let threatCount = 0;
+
+        for (const ev of gossipEvents) {
+            if (state.suppressedGossipIds.has(ev.id)) continue;
+            if (ev.process_name && state.suppressedThreatKeys.has(ev.process_name.toLowerCase())) continue;
+            if (ev.hash_blake3 && state.suppressedThreatKeys.has(ev.hash_blake3.toLowerCase())) continue;
+            const evStatus = (ev.status || '').toUpperCase();
+            if (evStatus === 'FALSE_POSITIVE' || evStatus === 'REMEDIATED' || evStatus === 'CLEARED') continue;
+            const evSummary = ev.summary || '';
+            if (evSummary.includes('Veto Trusted Vendor') || evSummary.includes('outside the vulnerable') || evSummary.includes('CVE None')) continue;
+
+            const isThreat = ev.is_threat || (ev.event_type && ev.event_type.includes('THREAT'));
+            if (isThreat) {
+                const pName = (ev.process_name || '').toLowerCase();
+                const summary = evSummary.toLowerCase();
+                if (pName === 'unknown' || pName === 'unknown process') continue;
+                if (summary.includes('execution of non-existing file')) continue;
+                if (summary.includes('suspicious activity') && !ev.process_name) continue;
+                if (ev.event_type === 'MESH_SKILL_BROADCAST') continue;
+                if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) continue;
+
+                // Deduplicate threat events
+                const dedupeKey = `${pName}|${ev.mitre_technique || ''}|${summary.slice(0, 48)}`;
+                if (seenThreatKeys.has(dedupeKey)) continue;
+                seenThreatKeys.add(dedupeKey);
+
+                threatCount++;
+                filteredEvents.push(ev);
+            } else if (ev.event_type === 'MESH_HEARTBEAT_ACK' || ev.event_type === 'CONSENSUS_CLOCK_SYNC') {
+                const key = `${ev.event_type}:${ev.source_node || 'peer'}`;
+                if (!seenRoutine.has(key)) {
+                    seenRoutine.add(key);
+                    filteredEvents.push(ev);
+                }
+            } else {
                 filteredEvents.push(ev);
             }
-        } else {
-            filteredEvents.push(ev);
         }
-    }
 
-    // 5. Update stats cards
-    const totalEl = document.getElementById('gossip-total-received');
-    if (totalEl) {
-        totalEl.innerText = state.gossip_count > 0 ? state.gossip_count : gossipEvents.length;
-    }
+        // 5. Update stats cards
+        const totalEl = document.getElementById('gossip-total-received');
+        if (totalEl) {
+            totalEl.innerText = state.gossip_count > 0 ? state.gossip_count : gossipEvents.length;
+        }
 
-    const threatCountEl = document.getElementById('gossip-threats-count');
-    if (threatCountEl) {
-        threatCountEl.innerText = threatCount;
-    }
+        const threatCountEl = document.getElementById('gossip-threats-count');
+        if (threatCountEl) {
+            threatCountEl.innerText = threatCount;
+        }
 
-    const lastActionEl = document.getElementById('gossip-last-action');
-    if (lastActionEl && filteredEvents.length > 0) {
-        lastActionEl.innerText = filteredEvents[0].summary;
-    }
+        const lastActionEl = document.getElementById('gossip-last-action');
+        if (lastActionEl && filteredEvents.length > 0) {
+            lastActionEl.innerText = filteredEvents[0].summary;
+        }
 
-    // 6. Render timeline items
-    const gossipHtml = filteredEvents.map(event => {
-        const isThreat = event.is_threat || (event.event_type && event.event_type.includes('THREAT'));
-        const eventType = event.event_type || 'GOSSIP_PACKET';
-        const sourceNode = event.source_node || 'peer';
-        const truncatedDid = formatPeerDid(sourceNode);
-        const status = (event.status || 'ACTIVE').toUpperCase();
-        const severity = (event.severity || (isThreat ? 'HIGH' : 'LOW')).toUpperCase();
-        const action = event.action || (isThreat ? 'ISOLATE' : null);
+        // 6. Render timeline items
+        const gossipHtml = filteredEvents.map(event => {
+            const isThreat = event.is_threat || (event.event_type && event.event_type.includes('THREAT'));
+            const eventType = event.event_type || 'GOSSIP_PACKET';
+            const sourceNode = event.source_node || 'peer';
+            const truncatedDid = formatPeerDid(sourceNode);
+            const status = (event.status || 'ACTIVE').toUpperCase();
+            const severity = (event.severity || (isThreat ? 'HIGH' : 'LOW')).toUpperCase();
+            const action = event.action || (isThreat ? 'ISOLATE' : null);
 
-        let icon = 'messages-square';
-        let borderColor = 'var(--glass-border)';
-        let iconBg = 'rgba(0, 210, 255, 0.1)';
-        let iconColor = 'var(--accent-blue)';
+            let icon = 'messages-square';
+            let borderColor = 'var(--glass-border)';
+            let iconBg = 'rgba(0, 210, 255, 0.1)';
+            let iconColor = 'var(--accent-blue)';
 
-        if (isThreat) {
-            icon = 'shield-alert';
-            if (status === 'FALSE_POSITIVE') {
+            if (isThreat) {
+                icon = 'shield-alert';
+                if (status === 'FALSE_POSITIVE') {
+                    borderColor = 'var(--accent-purple)';
+                    iconBg = 'rgba(188, 140, 242, 0.15)';
+                    iconColor = 'var(--accent-purple)';
+                } else if (status === 'REMEDIATED') {
+                    borderColor = 'var(--accent-green)';
+                    iconBg = 'rgba(0, 255, 127, 0.15)';
+                    iconColor = 'var(--accent-green)';
+                } else if (severity === 'CRITICAL') {
+                    borderColor = 'var(--accent-red)';
+                    iconBg = 'rgba(255, 77, 77, 0.2)';
+                    iconColor = 'var(--accent-red)';
+                } else {
+                    borderColor = 'var(--accent-orange)';
+                    iconBg = 'rgba(255, 159, 67, 0.15)';
+                    iconColor = 'var(--accent-orange)';
+                }
+            } else if (eventType.includes('CONSENSUS')) {
+                icon = 'check-circle';
                 borderColor = 'var(--accent-purple)';
-                iconBg = 'rgba(188, 140, 242, 0.15)';
+                iconBg = 'rgba(188, 140, 242, 0.1)';
                 iconColor = 'var(--accent-purple)';
-            } else if (status === 'REMEDIATED') {
+            } else if (eventType.includes('INTEL')) {
+                icon = 'zap';
+                borderColor = 'var(--accent-blue)';
+                iconBg = 'rgba(0, 210, 255, 0.1)';
+                iconColor = 'var(--accent-blue)';
+            } else if (eventType.includes('HEARTBEAT')) {
+                icon = 'activity';
                 borderColor = 'var(--accent-green)';
-                iconBg = 'rgba(0, 255, 127, 0.15)';
+                iconBg = 'rgba(0, 255, 127, 0.1)';
                 iconColor = 'var(--accent-green)';
-            } else if (severity === 'CRITICAL') {
-                borderColor = 'var(--accent-red)';
-                iconBg = 'rgba(255, 77, 77, 0.2)';
-                iconColor = 'var(--accent-red)';
-            } else {
-                borderColor = 'var(--accent-orange)';
-                iconBg = 'rgba(255, 159, 67, 0.15)';
-                iconColor = 'var(--accent-orange)';
-            }
-        } else if (eventType.includes('CONSENSUS')) {
-            icon = 'check-circle';
-            borderColor = 'var(--accent-purple)';
-            iconBg = 'rgba(188, 140, 242, 0.1)';
-            iconColor = 'var(--accent-purple)';
-        } else if (eventType.includes('INTEL')) {
-            icon = 'zap';
-            borderColor = 'var(--accent-blue)';
-            iconBg = 'rgba(0, 210, 255, 0.1)';
-            iconColor = 'var(--accent-blue)';
-        } else if (eventType.includes('HEARTBEAT')) {
-            icon = 'activity';
-            borderColor = 'var(--accent-green)';
-            iconBg = 'rgba(0, 255, 127, 0.1)';
-            iconColor = 'var(--accent-green)';
-        }
-
-        // Badges HTML
-        let badgesHtml = '';
-        if (isThreat) {
-            // Status badge
-            const statusClass = status === 'ACTIVE' ? 'badge red' : (status === 'REMEDIATED' ? 'badge green' : 'badge purple');
-            badgesHtml += `<span class="${statusClass}">${status}</span> `;
-
-            // Severity badge
-            const sevClass = severity === 'CRITICAL' ? 'badge red' : (severity === 'HIGH' ? 'badge orange' : (severity === 'MEDIUM' ? 'badge yellow' : 'badge blue'));
-            badgesHtml += `<span class="${sevClass}">${severity}</span> `;
-
-            // Action badge
-            if (action) {
-                const actUpper = action.toUpperCase();
-                const actClass = actUpper.includes('ISOLATE') || actUpper.includes('KILL') ? 'badge red' : (actUpper.includes('TARPIT') ? 'badge orange' : 'badge blue');
-                badgesHtml += `<span class="${actClass}">${escapeHtml(actUpper)}</span> `;
             }
 
-            // MITRE Technique badge
-            if (event.mitre_technique) {
-                const tech = escapeHtml(event.mitre_technique);
-                const techName = escapeHtml(event.mitre_technique_name || '');
-                badgesHtml += `<span class="badge cyan" style="cursor:pointer;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${tech}'); else { window.location.hash='#mitre'; }" title="${techName}">[${tech}]</span> `;
+            // Badges HTML
+            let badgesHtml = '';
+            if (isThreat) {
+                // Status badge
+                const statusClass = status === 'ACTIVE' ? 'badge red' : (status === 'REMEDIATED' ? 'badge green' : 'badge purple');
+                badgesHtml += `<span class="${statusClass}">${status}</span> `;
+
+                // Severity badge
+                const sevClass = severity === 'CRITICAL' ? 'badge red' : (severity === 'HIGH' ? 'badge orange' : (severity === 'MEDIUM' ? 'badge yellow' : 'badge blue'));
+                badgesHtml += `<span class="${sevClass}">${severity}</span> `;
+
+                // Action badge
+                if (action) {
+                    const actUpper = action.toUpperCase();
+                    const actClass = actUpper.includes('ISOLATE') || actUpper.includes('KILL') ? 'badge red' : (actUpper.includes('TARPIT') ? 'badge orange' : 'badge blue');
+                    badgesHtml += `<span class="${actClass}">${escapeHtml(actUpper)}</span> `;
+                }
+
+                // MITRE Technique badge
+                if (event.mitre_technique) {
+                    const tech = escapeHtml(event.mitre_technique);
+                    const techName = escapeHtml(event.mitre_technique_name || '');
+                    badgesHtml += `<span class="badge cyan" style="cursor:pointer;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${tech}'); else { window.location.hash='#mitre'; }" title="${techName}">[${tech}]</span> `;
+                }
             }
-        }
 
-        // Process Name display: display MITRE technique or "Security Issue" if process is unknown/system process
-        let displayProcess = event.process_name;
-        if (!displayProcess || displayProcess.toLowerCase() === 'unknown' || displayProcess.toLowerCase() === 'unknown process' || displayProcess.toLowerCase() === 'system process') {
-            displayProcess = event.mitre_technique_name || (event.mitre_technique ? `[${event.mitre_technique}]` : (isThreat ? 'Security Issue' : ''));
-        }
-        const processHtml = displayProcess 
-            ? `<span style="font-weight: 700; color: #ffffff; margin-right: 6px;">${escapeHtml(displayProcess)}</span>` 
-            : '';
+            // Process Name display
+            let displayProcess = event.process_name;
+            if (!displayProcess || displayProcess.toLowerCase() === 'unknown' || displayProcess.toLowerCase() === 'unknown process' || displayProcess.toLowerCase() === 'system process') {
+                displayProcess = event.mitre_technique_name || (event.mitre_technique ? `[${event.mitre_technique}]` : (isThreat ? 'Security Issue' : ''));
+            }
+            const processHtml = displayProcess 
+                ? `<span style="font-weight: 700; color: #ffffff; margin-right: 6px;">${escapeHtml(displayProcess)}</span>` 
+                : '';
 
-        // Action buttons for active threats
-        let actionsHtml = '';
-        if (isThreat && status === 'ACTIVE') {
-            const rawId = escapeHtml(event.id);
-            const proc = escapeHtml(event.process_name || '');
-            const hash = escapeHtml(event.hash_blake3 || '');
-            actionsHtml = `
-                <div class="gossip-item-actions" style="margin-top: 8px; display: flex; gap: 8px;">
-                    <button class="btn-text" onclick="markGossipFalsePositive('${rawId}', '${proc}', '${hash}')" style="font-size: 11px; padding: 2px 10px; border-radius: 4px; background: rgba(188, 140, 242, 0.12); color: var(--accent-purple); border: 1px solid rgba(188, 140, 242, 0.3); cursor: pointer;">
-                        <i data-lucide="check" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> False Positive
-                    </button>
-                    <button class="btn-text" onclick="markGossipRemediated('${rawId}')" style="font-size: 11px; padding: 2px 10px; border-radius: 4px; background: rgba(0, 255, 127, 0.12); color: var(--accent-green); border: 1px solid rgba(0, 255, 127, 0.3); cursor: pointer;">
-                        <i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> Remediate / Confirm
-                    </button>
+            // Action buttons on ALL threat items in Gossip feed
+            let actionsHtml = '';
+            if (isThreat) {
+                actionsHtml = `
+                    <div class="gossip-item-actions" style="margin-top: 8px; display: flex; gap: 8px;">
+                        <button type="button" class="btn-text" data-id="${escapeHtml(event.id)}" data-proc="${escapeHtml(event.process_name || '')}" data-hash="${escapeHtml(event.hash_blake3 || '')}" onclick="markGossipFalsePositive('${escapeJsArg(event.id)}', '${escapeJsArg(event.process_name || '')}', '${escapeJsArg(event.hash_blake3 || '')}', this)" style="font-size: 11px; padding: 4px 12px; border-radius: 6px; background: rgba(188, 140, 242, 0.14); color: var(--accent-purple); border: 1px solid rgba(188, 140, 242, 0.35); cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                            <i data-lucide="check" style="width: 12px; height: 12px;"></i> <span>False Positive</span>
+                        </button>
+                        <button type="button" class="btn-text" data-id="${escapeHtml(event.id)}" data-proc="${escapeHtml(event.process_name || '')}" data-hash="${escapeHtml(event.hash_blake3 || '')}" onclick="markGossipRemediated('${escapeJsArg(event.id)}', this)" style="font-size: 11px; padding: 4px 12px; border-radius: 6px; background: rgba(0, 255, 127, 0.14); color: var(--accent-green); border: 1px solid rgba(0, 255, 127, 0.35); cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                            <i data-lucide="shield-check" style="width: 12px; height: 12px;"></i> <span>Remediate / Confirm</span>
+                        </button>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="timeline-item" data-gossip-id="${escapeHtml(event.id)}" data-process="${escapeHtml(event.process_name || '')}" style="border-left: 3px solid ${borderColor}; padding: 12px 16px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.02); border-radius: 0 8px 8px 0;">
+                    <div class="item-icon" style="background-color: ${iconBg}; color: ${iconColor};">
+                        <i data-lucide="${icon}"></i>
+                    </div>
+                    <div class="item-info" style="flex: 1;">
+                        <div class="item-header" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px;">
+                            ${processHtml}
+                            ${badgesHtml}
+                        </div>
+                        <div class="item-title" style="font-size: 13px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">
+                            ${escapeHtml(event.summary)}
+                        </div>
+                        <div class="item-meta" style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-muted);">
+                            <span class="badge gray" title="Origin DID: ${escapeHtml(sourceNode)}" style="text-transform: none; font-weight: 500;">
+                                <i data-lucide="radio" style="width: 11px; height: 11px; display: inline; vertical-align: middle; margin-right: 2px;"></i> ${escapeHtml(truncatedDid)}
+                            </span>
+                            <span><i data-lucide="tag" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${escapeHtml(eventType)}</span>
+                            ${isThreat && event.confidence ? `<span><i data-lucide="percent" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${Math.round(event.confidence * 100)}% Conf</span>` : ''}
+                            <span><i data-lucide="clock" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${formatTimestamp(event.timestamp)}</span>
+                            ${event.hash_blake3 ? `<span style="font-family: monospace;" title="${escapeHtml(event.hash_blake3)}"><i data-lucide="hash" style="width: 11px; height: 11px; display: inline; vertical-align: middle;"></i> ${escapeHtml(event.hash_blake3.substring(0, 10))}...</span>` : ''}
+                        </div>
+                        ${actionsHtml}
+                    </div>
                 </div>
             `;
-        }
+        }).join('');
 
-        return `
-            <div class="timeline-item" style="border-left: 3px solid ${borderColor}; padding: 12px 16px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.02); border-radius: 0 8px 8px 0;">
-                <div class="item-icon" style="background-color: ${iconBg}; color: ${iconColor};">
-                    <i data-lucide="${icon}"></i>
-                </div>
-                <div class="item-info" style="flex: 1;">
-                    <div class="item-header" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px;">
-                        ${processHtml}
-                        ${badgesHtml}
-                    </div>
-                    <div class="item-title" style="font-size: 13px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">
-                        ${escapeHtml(event.summary)}
-                    </div>
-                    <div class="item-meta" style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-muted);">
-                        <span class="badge gray" title="Origin DID: ${escapeHtml(sourceNode)}" style="text-transform: none; font-weight: 500;">
-                            <i data-lucide="radio" style="width: 11px; height: 11px; display: inline; vertical-align: middle; margin-right: 2px;"></i> ${escapeHtml(truncatedDid)}
-                        </span>
-                        <span><i data-lucide="tag" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${escapeHtml(eventType)}</span>
-                        ${isThreat && event.confidence ? `<span><i data-lucide="percent" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${Math.round(event.confidence * 100)}% Conf</span>` : ''}
-                        <span><i data-lucide="clock" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${formatTimestamp(event.timestamp)}</span>
-                        ${event.hash_blake3 ? `<span style="font-family: monospace;" title="${escapeHtml(event.hash_blake3)}"><i data-lucide="hash" style="width: 11px; height: 11px; display: inline; vertical-align: middle;"></i> ${escapeHtml(event.hash_blake3.substring(0, 10))}...</span>` : ''}
-                    </div>
-                    ${actionsHtml}
-                </div>
-            </div>
-        `;
-    }).join('');
-
-    if (setHtmlIfChanged(list, gossipHtml) && window.lucide) lucide.createIcons();
+        if (setHtmlIfChanged(list, gossipHtml) && window.lucide) lucide.createIcons();
     } catch (err) {
         console.error('[renderGossipView] Error:', err);
         renderViewFallbackCard('gossip-view', 'P2P Gossip Feed', err);
