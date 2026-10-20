@@ -201,7 +201,9 @@ impl TrustManager {
         let Ok(sig_bytes) = hex::decode(signature_hex) else {
             return false;
         };
-        let vk = self.signing_key.verifying_key().to_bytes();
+        let vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(
+            &self.signing_key.to_bytes(),
+        );
         osoosi_audit::pqc_primitives::hybrid_verify_bytes(payload, &sig_bytes, &vk)
     }
 

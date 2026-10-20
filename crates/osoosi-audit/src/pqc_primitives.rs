@@ -486,19 +486,39 @@ pub fn derive_mlkem_public(seed: &[u8; 32]) -> Vec<u8> {
     pk
 }
 
-fn pke_encrypt_internal(peer_public: &[u8], msg: &[u8; 32], r_coins: &[u8; 32]) -> Vec<u8> {
-    // If a caller passes a legacy 32-byte seed-derived public key, expand it first
-    let expanded_pk;
-    let pk_slice = if peer_public.len() == MLKEM768_PUBLIC_KEY_BYTES {
-        peer_public
+/// NIST FIPS 203 §7.2 Encapsulation Key Modulus Check:
+/// Verifies that `pk` is exactly 1184 bytes and every 12-bit decoded polynomial coefficient in
+/// $\hat{\mathbf{t}}$ satisfies $0 \le c < q = 3329$.
+pub fn validate_mlkem768_encapsulation_key(pk: &[u8]) -> bool {
+    if pk.len() != MLKEM768_PUBLIC_KEY_BYTES {
+        return false;
+    }
+    let coeff_bytes = &pk[0..3 * 384];
+    for i in 0..(3 * 128) {
+        let b0 = coeff_bytes[3 * i] as u16;
+        let b1 = coeff_bytes[3 * i + 1] as u16;
+        let b2 = coeff_bytes[3 * i + 2] as u16;
+        let c0 = (b0 | ((b1 & 0x0f) << 8)) as i32;
+        let c1 = ((b1 >> 4) | (b2 << 4)) as i32;
+        if c0 >= MLKEM768_Q || c1 >= MLKEM768_Q {
+            return false;
+        }
+    }
+    true
+}
+
+fn canonicalize_mlkem_public_key(peer_public: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if peer_public.len() == MLKEM768_PUBLIC_KEY_BYTES {
+        std::borrow::Cow::Borrowed(peer_public)
     } else {
         let mut seed_arr = [0u8; 32];
         let copy_len = peer_public.len().min(32);
         seed_arr[..copy_len].copy_from_slice(&peer_public[..copy_len]);
-        expanded_pk = derive_mlkem_public(&seed_arr);
-        &expanded_pk
-    };
+        std::borrow::Cow::Owned(derive_mlkem_public(&seed_arr))
+    }
+}
 
+fn pke_encrypt_internal(pk_slice: &[u8], msg: &[u8; 32], r_coins: &[u8; 32]) -> Vec<u8> {
     let t = [
         Poly3329::decode_12(&pk_slice[0..384]),
         Poly3329::decode_12(&pk_slice[384..768]),
@@ -548,13 +568,19 @@ fn pke_encrypt_internal(peer_public: &[u8], msg: &[u8; 32], r_coins: &[u8; 32]) 
 /// NIST FIPS 203 `ML-KEM-768` Encapsulation (`ML-KEM.Encaps`).
 /// Returns `(shared_secret, ciphertext)` where `ciphertext` is 1088 bytes.
 pub fn mlkem_encapsulate(peer_public: &[u8], coin_seed: &[u8; 32]) -> ([u8; 32], Vec<u8>) {
+    let pk_canonical = canonicalize_mlkem_public_key(peer_public);
+    let pk_valid = validate_mlkem768_encapsulation_key(&pk_canonical);
+
     let mut m_hasher = Sha256::new();
     m_hasher.update(b"OSOOSI_MLKEM768_MSG_V1");
     m_hasher.update(coin_seed);
+    if !pk_valid {
+        m_hasher.update(b"INVALID_FIPS203_ENCAPS_KEY");
+    }
     let m: [u8; 32] = m_hasher.finalize().into();
 
     let mut pk_hasher = Sha256::new();
-    pk_hasher.update(peer_public);
+    pk_hasher.update(pk_canonical.as_ref());
     let h_pk: [u8; 32] = pk_hasher.finalize().into();
 
     // (K, r) = G(m || H(pk))
@@ -570,7 +596,7 @@ pub fn mlkem_encapsulate(peer_public: &[u8], coin_seed: &[u8; 32]) -> ([u8; 32],
     shared_secret.copy_from_slice(&kr[0..32]);
     r_coins.copy_from_slice(&kr[32..64]);
 
-    let ciphertext = pke_encrypt_internal(peer_public, &m, &r_coins);
+    let ciphertext = pke_encrypt_internal(&pk_canonical, &m, &r_coins);
     (shared_secret, ciphertext)
 }
 
@@ -926,11 +952,37 @@ fn hash_mldsa_challenge(mu: &[u8; 32], w1: &[[u8; MLDSA_N]]) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-/// Derives the canonical 32-byte Ed25519 verifying key from a 32-byte private key seed.
+/// Computes a 256-bit Grover-resistant BLAKE3 commitment binding both the classical `Ed25519`
+/// public key and the post-quantum `ML-DSA-65` lattice public key $(\rho, \mathbf{t})$.
+///
+/// This prevents a Quantum Adversary who recovers the `Ed25519` private scalar via Shor's
+/// algorithm from substituting an attacker-chosen `ML-DSA-65` keypair $(\rho', \mathbf{t}')$
+/// inside `HybridSignatureEnvelope`.
+pub fn compute_hybrid_vk_commitment(
+    ed25519_public: &[u8; 32],
+    mldsa_rho: &[u8; 32],
+    mldsa_t: &[PolyDilithium],
+) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(b"OSOOSI_HYBRID_VK_COMMIT_V1");
+    h.update(ed25519_public);
+    h.update(mldsa_rho);
+    for poly in mldsa_t {
+        for &coeff in &poly.coeffs {
+            h.update(&coeff.to_le_bytes());
+        }
+    }
+    *h.finalize().as_bytes()
+}
+
+/// Derives the canonical 32-byte Hybrid Verifying Key commitment binding both the classical
+/// `Ed25519` verifying key and the post-quantum `ML-DSA-65` public key $(\rho, \mathbf{t})$.
 pub fn derive_hybrid_verifying_key(private_seed: &[u8; 32]) -> [u8; 32] {
-    SigningKey::from_bytes(private_seed)
+    let ed25519_public = SigningKey::from_bytes(private_seed)
         .verifying_key()
-        .to_bytes()
+        .to_bytes();
+    let (rho, _s1, _s2, t) = derive_mldsa_keypair(private_seed);
+    compute_hybrid_vk_commitment(&ed25519_public, &rho, &t)
 }
 
 /// Signs `message` using genuine dual-algorithm Hybrid Cryptography:
@@ -1033,11 +1085,13 @@ pub fn hybrid_sign_envelope(message: &[u8], private_seed: &[u8; 32]) -> HybridSi
 }
 
 /// Verifies a `HybridSignatureEnvelope` against `message` and `expected_key` (either the 32-byte
-/// Ed25519 verifying key OR the 32-byte private seed for backward-compatible callers).
+/// Hybrid Verifying Key commitment returned by `derive_hybrid_verifying_key` OR the 32-byte
+/// private seed).
 ///
 /// **Both** the classical RFC 8032 `Ed25519` signature AND the post-quantum NIST FIPS 204
 /// `ML-DSA-65` lattice equation $\mathbf{w}'_1 = \operatorname{HighBits}(\mathbf{A}\mathbf{z} - c\mathbf{t} \pmod q, 2\gamma_2)$
-/// must independently pass.
+/// must independently pass, and the envelope's `(ed25519_public, mldsa_rho, mldsa_t)` must match
+/// the pinned commitment in constant time.
 pub fn hybrid_verify_envelope(
     message: &[u8],
     envelope: &HybridSignatureEnvelope,
@@ -1051,25 +1105,8 @@ pub fn hybrid_verify_envelope(
         return false;
     }
 
-    // Determine whether expected_key is already the Ed25519 verifying key or the seed
-    let key_matches_direct: bool = envelope.ed25519_public.ct_eq(expected_key).into();
-    let derived_pub = derive_hybrid_verifying_key(expected_key);
-    let key_matches_seed: bool = envelope.ed25519_public.ct_eq(&derived_pub).into();
-    if !key_matches_direct && !key_matches_seed {
-        return false;
-    }
-
-    // If caller supplied the seed, also pin the ML-DSA public key (rho, t) to prevent key substitution
-    if key_matches_seed {
-        let (expected_rho, _s1, _s2, expected_t) = derive_mldsa_keypair(expected_key);
-        let rho_ok: bool = envelope.mldsa_rho.ct_eq(&expected_rho).into();
-        if !rho_ok || envelope.mldsa_t != expected_t {
-            return false;
-        }
-    }
-
     for poly in &envelope.mldsa_t {
-        if poly.coeffs.len() != MLDSA_N {
+        if poly.coeffs.len() != MLDSA_N || poly.inf_norm() > MLDSA_Q / 2 {
             return false;
         }
     }
@@ -1077,6 +1114,20 @@ pub fn hybrid_verify_envelope(
         if poly.coeffs.len() != MLDSA_N || poly.inf_norm() >= MLDSA_GAMMA1 - MLDSA_BETA {
             return false;
         }
+    }
+
+    // Verify that the envelope's (ed25519_public, mldsa_rho, mldsa_t) matches the pinned
+    // hybrid verifying key commitment (or the commitment derived from a supplied private seed).
+    let envelope_vk_commitment = compute_hybrid_vk_commitment(
+        &envelope.ed25519_public,
+        &envelope.mldsa_rho,
+        &envelope.mldsa_t,
+    );
+    let key_matches_commitment: bool = envelope_vk_commitment.ct_eq(expected_key).into();
+    let derived_seed_commitment = derive_hybrid_verifying_key(expected_key);
+    let key_matches_seed: bool = envelope_vk_commitment.ct_eq(&derived_seed_commitment).into();
+    if !key_matches_commitment && !key_matches_seed {
+        return false;
     }
 
     let mu = compute_mldsa_mu(
@@ -1247,12 +1298,28 @@ mod tests {
         let coin = [0xa5u8; 32];
         let pk = derive_mlkem_public(&seed);
         assert_eq!(pk.len(), MLKEM768_PUBLIC_KEY_BYTES);
+        assert!(validate_mlkem768_encapsulation_key(&pk));
 
         let (shared_enc, mut ct) = mlkem_encapsulate(&pk, &coin);
         assert_eq!(ct.len(), MLKEM768_CIPHERTEXT_BYTES);
 
         let shared_dec = mlkem_decapsulate(&ct, &seed).expect("Valid ML-KEM-768 ciphertext must decapsulate");
         assert_eq!(shared_enc, shared_dec, "ML-KEM-768 encaps/decaps must recover exact shared secret");
+
+        // Also verify 32-byte seed-based encapsulation roundtrip canonicalizes h_pk identically
+        let (shared_enc_seed, ct_seed) = mlkem_encapsulate(&seed, &coin);
+        assert_eq!(shared_enc_seed, shared_enc);
+        let shared_dec_seed = mlkem_decapsulate(&ct_seed, &seed).expect("32-byte seed encapsulation must decapsulate");
+        assert_eq!(shared_enc_seed, shared_dec_seed);
+
+        // Modulus-boundary test (NIST FIPS 203 §7.2): set first 12-bit coefficient to q = 3329 (0x0D01)
+        let mut bad_pk = pk.clone();
+        bad_pk[0] = 0x01;
+        bad_pk[1] = (bad_pk[1] & 0xf0) | 0x0d;
+        assert!(
+            !validate_mlkem768_encapsulation_key(&bad_pk),
+            "NIST FIPS 203 §7.2 must reject non-canonical encapsulation key coefficient >= 3329"
+        );
 
         // Tamper with 1 byte of the lattice ciphertext -> FO transform must reject
         ct[100] ^= 0x01;
@@ -1278,12 +1345,48 @@ mod tests {
             "Valid Ed25519 + ML-DSA-65 hybrid signature must verify with seed"
         );
 
-        // Simulate a Quantum Shor's Algorithm adversary who keeps a valid classical Ed25519 signature
-        // but perturbs 1 coefficient in the post-quantum ML-DSA-65 lattice response z:
+        // 1. Simulate a Quantum Shor's Algorithm adversary who keeps a valid classical Ed25519 signature
+        //    but perturbs 1 coefficient in the post-quantum ML-DSA-65 lattice response z:
         env.mldsa_z[0].coeffs[0] = env.mldsa_z[0].coeffs[0].wrapping_add(1);
         assert!(
             !hybrid_verify_envelope(msg, &env, &vk),
             "Corrupting ML-DSA-65 lattice response z must fail verification even when Ed25519 sig is untouched"
+        );
+
+        // 2. Simulate a Quantum Shor's Algorithm Key-Substitution Forgery:
+        //    Suppose the Quantum Adversary uses Shor's algorithm to recover the victim's classical
+        //    Ed25519 SigningKey, generates their own ML-DSA-65 keypair from attacker_seed, and signs
+        //    both the ML-DSA-65 proof (with attacker_seed) and the Ed25519 transcript (with victim's
+        //    Ed25519 SigningKey). Because derive_hybrid_verifying_key binds (ed25519_public, mldsa_rho, mldsa_t),
+        //    hybrid_verify_envelope MUST reject the substituted ML-DSA-65 public key!
+        let attacker_seed = [0x99u8; 32];
+        let mut forged_env = hybrid_sign_envelope(msg, &attacker_seed);
+        let victim_ed_sk = SigningKey::from_bytes(&sk_seed);
+        forged_env.ed25519_public = victim_ed_sk.verifying_key().to_bytes();
+        let forged_mu = compute_mldsa_mu(
+            &forged_env.ed25519_public,
+            &forged_env.mldsa_rho,
+            &forged_env.mldsa_t,
+            msg,
+        );
+        let mut ed_transcript = Sha256::new();
+        ed_transcript.update(b"OSOOSI_HYBRID_ED25519_MLDSA65_V3");
+        ed_transcript.update(msg);
+        ed_transcript.update(&forged_mu);
+        ed_transcript.update(&forged_env.mldsa_c_seed);
+        let ed_digest = ed_transcript.finalize();
+        forged_env.ed25519_sig = victim_ed_sk.sign(&ed_digest).to_bytes().to_vec();
+        assert!(
+            !hybrid_verify_envelope(msg, &forged_env, &vk),
+            "Shor key-substitution forgery (swapping ML-DSA-65 public key while signing with victim Ed25519 key) must be rejected"
+        );
+
+        // 3. Modulus-boundary attack on ML-DSA-65 public key coefficient (q = 8380417):
+        let mut boundary_env = hybrid_sign_envelope(msg, &sk_seed);
+        boundary_env.mldsa_t[0].coeffs[0] = (MLDSA_Q / 2) + 1;
+        assert!(
+            !hybrid_verify_envelope(msg, &boundary_env, &vk),
+            "Out-of-range ML-DSA-65 public key coefficient at modulus boundary q=8380417 must be rejected"
         );
     }
 }

@@ -1586,3 +1586,103 @@ body::before {
 }
 
 
+/* ==========================================
+   Universal WebUI Loading Spinners & Status Banners
+   ========================================== */
+@keyframes oshoosi-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes oshoosi-progress-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.oshoosi-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2.2px solid rgba(0, 210, 255, 0.25);
+    border-top-color: #00d2ff;
+    border-right-color: rgba(0, 210, 255, 0.75);
+    border-radius: 50%;
+    display: inline-block;
+    animation: oshoosi-spin 0.72s linear infinite;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.oshoosi-spinner.dark {
+    border-color: rgba(7, 9, 13, 0.25);
+    border-top-color: #07090d;
+    border-right-color: rgba(7, 9, 13, 0.8);
+}
+
+.oshoosi-spinner.sm {
+    width: 13px;
+    height: 13px;
+    border-width: 2px;
+}
+
+.login-status-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(0, 210, 255, 0.1);
+    border: 1px solid rgba(0, 210, 255, 0.35);
+    color: #7dd3fc;
+    font-size: 12.5px;
+    font-weight: 500;
+    text-align: left;
+    line-height: 1.4;
+    box-shadow: 0 0 18px rgba(0, 210, 255, 0.12);
+}
+
+.global-ui-loading-pill {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: rgba(0, 210, 255, 0.12);
+    border: 1px solid rgba(0, 210, 255, 0.4);
+    color: #38bdf8;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 0 14px rgba(0, 210, 255, 0.15);
+    transition: opacity 0.2s ease;
+}
+
+.global-ui-progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    z-index: 10050;
+    display: none;
+    background: linear-gradient(90deg, rgba(0, 210, 255, 0.15) 0%, #00d2ff 45%, #10b981 55%, rgba(0, 210, 255, 0.15) 100%);
+    background-size: 200% 100%;
+    animation: oshoosi-progress-shimmer 1.2s linear infinite;
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.6);
+}
+
+.ui-panel-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 28px 20px;
+    color: #93c5fd;
+    font-size: 13px;
+    font-weight: 500;
+    background: rgba(0, 210, 255, 0.04);
+    border: 1px dashed rgba(0, 210, 255, 0.25);
+    border-radius: 10px;
+    margin: 8px 0;
+}
