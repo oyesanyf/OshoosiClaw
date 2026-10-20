@@ -432,14 +432,14 @@ pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
         );
         let is_executable_content = matches!(
             magika_id.label.as_str(),
-            "pebin" | "elf" | "macho" | "wasm"
+            "pebin" | "elf" | "macho" | "wasm" | "dex"
         );
         if claims_benign_doc_or_media && is_executable_content {
             findings.suspicious_sections.push(format!(
                 "Magika extension masquerading: .{} file contains {} ({})",
                 ext_lc, magika_id.label, magika_id.mime_type
             ));
-            findings.composition_score += 0.45;
+            findings.composition_score += 0.60;
         }
     }
 
@@ -511,7 +511,7 @@ pub fn inspect_file(path: &Path) -> Result<InspectionFindings> {
 
             // 3. Check for .NET (COM Descriptor Directory is at index 14)
             if let Some(dir) = pe.data_directory().get(14) {
-                if dir.Size > 0 {
+                if dir.VirtualAddress > 0 && dir.Size >= 48 {
                     findings.is_dot_net = true;
                 }
             }
@@ -582,5 +582,30 @@ mod tests {
             .suspicious_dependencies
             .contains(&"memfd_create".to_string()));
         assert!(findings.composition_score >= 0.7);
+    }
+
+    #[test]
+    fn test_inspect_file_flags_executable_masquerading_as_document() {
+        let tmp = std::env::temp_dir().join(format!(
+            "osoosi_pe_masquerade_{}.pdf",
+            uuid::Uuid::new_v4()
+        ));
+        let mut pe_stub = vec![0u8; 256];
+        pe_stub[0..2].copy_from_slice(b"MZ");
+        std::fs::write(&tmp, &pe_stub).unwrap();
+
+        let findings = inspect_file(&tmp).expect("inspect masqueraded pdf");
+        let _ = std::fs::remove_file(&tmp);
+
+        assert_eq!(findings.magika_label, "pebin");
+        assert!(
+            findings.composition_score >= 0.50,
+            "Masquerading executable must exceed StaticAnalyzer 0.50 threshold, got {}",
+            findings.composition_score
+        );
+        assert!(findings
+            .suspicious_sections
+            .iter()
+            .any(|s| s.contains("Magika extension masquerading")));
     }
 }

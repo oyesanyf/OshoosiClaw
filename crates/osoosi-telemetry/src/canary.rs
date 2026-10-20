@@ -703,6 +703,234 @@ impl SyntheticCanaryEngine {
     }
 }
 
+// ============================================================================
+// Axion-Inspired Deterministic Canary Traps (Zero Resting CPU Cost)
+// ============================================================================
+
+/// Category of zero-resting-cost deterministic Axion decoy trap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum AxionDecoyKind {
+    /// Honey credential token or vault file descriptor (`AKIA_OSOOSI_AXION_...`, `.osoosi_axion_credentials.vault`).
+    SyntheticCredential,
+    /// Ghost IPC pipe, Unix domain socket, or dark loopback listener (`\\.\pipe\osoosi_axion_ghost_cluster`).
+    GhostNode,
+    /// Unreferenced 4 KB shadow memory page (`[base_addr, base_addr + size)`) that benign code never touches.
+    UnreferencedShadowPage,
+}
+
+/// Metadata for a planted zero-resting-cost Axion decoy trap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AxionDecoyTrap {
+    pub trap_id: String,
+    pub kind: AxionDecoyKind,
+    pub resource_marker: String,
+    pub shadow_page_base: usize,
+    pub shadow_page_size: usize,
+}
+
+/// Deterministic verdict emitted when an eBPF probe or kernel callback observes an unauthorized read/touch
+/// of a planted Axion decoy.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AxionCanaryTripVerdict {
+    pub trap_id: String,
+    pub kind: AxionDecoyKind,
+    pub offending_pid: u32,
+    pub offending_process: String,
+    pub accessed_resource: String,
+    pub accessed_address: Option<usize>,
+    pub should_tarpit_immediately: bool,
+    pub os_immunity_veto: bool,
+    pub signal_to_noise_confidence: f32,
+}
+
+/// Event-driven registry of synthetic credentials, ghost nodes, and unreferenced shadow pages.
+///
+/// Consumes zero CPU cycles while at rest; evaluates only when invoked by an eBPF / kernel / file / memory callback.
+pub struct AxionCanaryTrapRegistry {
+    traps: std::sync::RwLock<Vec<AxionDecoyTrap>>,
+    /// Backing allocation for the unreferenced shadow page so its virtual address remains valid for process lifetime.
+    _shadow_allocation: Box<[u8; 4096]>,
+}
+
+impl Default for AxionCanaryTrapRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AxionCanaryTrapRegistry {
+    pub fn new() -> Self {
+        let mut shadow_box = Box::new([0u8; 4096]);
+        // Seed deterministic BLAKE3 marker inside the unreferenced shadow page
+        let marker = blake3::hash(b"OSOOSI_AXION_UNREFERENCED_SHADOW_PAGE_V1");
+        shadow_box[..32].copy_from_slice(marker.as_bytes());
+        let shadow_base = shadow_box.as_ptr() as usize;
+
+        let initial_traps = vec![
+            AxionDecoyTrap {
+                trap_id: "axion-cred-aws-honey-01".to_string(),
+                kind: AxionDecoyKind::SyntheticCredential,
+                resource_marker: "akia_osoosi_axion_decoy_7f9e2a1c".to_string(),
+                shadow_page_base: 0,
+                shadow_page_size: 0,
+            },
+            AxionDecoyTrap {
+                trap_id: "axion-cred-vault-file-02".to_string(),
+                kind: AxionDecoyKind::SyntheticCredential,
+                resource_marker: ".osoosi_axion_credentials.vault".to_string(),
+                shadow_page_base: 0,
+                shadow_page_size: 0,
+            },
+            AxionDecoyTrap {
+                trap_id: "axion-ghost-ipc-pipe-01".to_string(),
+                kind: AxionDecoyKind::GhostNode,
+                resource_marker: "osoosi_axion_ghost_cluster".to_string(),
+                shadow_page_base: 0,
+                shadow_page_size: 0,
+            },
+            AxionDecoyTrap {
+                trap_id: "axion-ghost-mesh-node-02".to_string(),
+                kind: AxionDecoyKind::GhostNode,
+                resource_marker: "osoosi-axion-ghost.sock".to_string(),
+                shadow_page_base: 0,
+                shadow_page_size: 0,
+            },
+            AxionDecoyTrap {
+                trap_id: "axion-shadow-page-01".to_string(),
+                kind: AxionDecoyKind::UnreferencedShadowPage,
+                resource_marker: format!("shadow_page@{:#x}", shadow_base),
+                shadow_page_base: shadow_base,
+                shadow_page_size: 4096,
+            },
+        ];
+
+        Self {
+            traps: std::sync::RwLock::new(initial_traps),
+            _shadow_allocation: shadow_box,
+        }
+    }
+
+    /// Returns the base address and size of the default unreferenced shadow page.
+    pub fn shadow_page_region(&self) -> (usize, usize) {
+        (self._shadow_allocation.as_ptr() as usize, 4096)
+    }
+
+    /// Plant an additional custom synthetic credential, ghost node, or shadow page descriptor.
+    pub fn plant_decoy(&self, trap: AxionDecoyTrap) {
+        if let Ok(mut guard) = self.traps.write() {
+            if !guard.iter().any(|t| t.trap_id == trap.trap_id) {
+                guard.push(trap);
+            }
+        }
+    }
+
+    pub fn list_decoys(&self) -> Vec<AxionDecoyTrap> {
+        self.traps.read().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// Evaluates a discrete kernel/eBPF/file/memory access callback against planted Axion decoys.
+    ///
+    /// Enforces `osoosi_types::is_critical_system_process` so OS kernel/session/shell binaries can NEVER be tarpitted.
+    pub fn evaluate_access(
+        &self,
+        pid: u32,
+        process_name: &str,
+        accessed_resource: &str,
+        accessed_address: Option<usize>,
+    ) -> Option<AxionCanaryTripVerdict> {
+        let res_lower = accessed_resource.to_ascii_lowercase();
+        let guard = self.traps.read().ok()?;
+
+        let matched_trap = guard.iter().find(|trap| match trap.kind {
+            AxionDecoyKind::UnreferencedShadowPage => {
+                if let Some(addr) = accessed_address {
+                    trap.shadow_page_base > 0
+                        && addr >= trap.shadow_page_base
+                        && addr < trap.shadow_page_base.saturating_add(trap.shadow_page_size)
+                } else {
+                    !trap.resource_marker.is_empty()
+                        && res_lower.contains(&trap.resource_marker.to_ascii_lowercase())
+                }
+            }
+            AxionDecoyKind::SyntheticCredential | AxionDecoyKind::GhostNode => {
+                !trap.resource_marker.is_empty()
+                    && res_lower.contains(&trap.resource_marker.to_ascii_lowercase())
+            }
+        })?;
+
+        let os_immunity_veto = pid <= 4
+            || pid == std::process::id()
+            || osoosi_types::is_critical_system_process(process_name);
+
+        Some(AxionCanaryTripVerdict {
+            trap_id: matched_trap.trap_id.clone(),
+            kind: matched_trap.kind,
+            offending_pid: pid,
+            offending_process: process_name.to_string(),
+            accessed_resource: accessed_resource.to_string(),
+            accessed_address,
+            should_tarpit_immediately: !os_immunity_veto,
+            os_immunity_veto,
+            signal_to_noise_confidence: if os_immunity_veto { 0.0 } else { 0.999 },
+        })
+    }
+
+    /// Convenience helper to evaluate a normalized `HostSecurityEvent` against planted Axion decoys.
+    pub fn evaluate_host_event(&self, event: &HostSecurityEvent) -> Option<AxionCanaryTripVerdict> {
+        let pid = event
+            .data
+            .get("ProcessId")
+            .or_else(|| event.data.get("ProcessID"))
+            .or_else(|| event.data.get("process_id"))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
+            .unwrap_or(0) as u32;
+
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("SourceImage"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let target_resource = event
+            .data
+            .get("TargetFilename")
+            .or_else(|| event.data.get("PipeName"))
+            .or_else(|| event.data.get("TargetObject"))
+            .or_else(|| event.data.get("CommandLine"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let mem_addr = event
+            .data
+            .get("MemoryAddress")
+            .or_else(|| event.data.get("StartAddress"))
+            .and_then(|v| {
+                v.as_u64().or_else(|| {
+                    v.as_str().and_then(|s| {
+                        let clean = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+                        u64::from_str_radix(clean, 16).ok()
+                    })
+                })
+            })
+            .map(|a| a as usize);
+
+        self.evaluate_access(pid, image, target_resource, mem_addr)
+    }
+}
+
+static GLOBAL_AXION_CANARY_REGISTRY: std::sync::OnceLock<Arc<AxionCanaryTrapRegistry>> =
+    std::sync::OnceLock::new();
+
+pub fn global_axion_canary_registry() -> Arc<AxionCanaryTrapRegistry> {
+    GLOBAL_AXION_CANARY_REGISTRY
+        .get_or_init(|| Arc::new(AxionCanaryTrapRegistry::new()))
+        .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1226,4 +1454,63 @@ mod tests {
         assert_eq!(matched, Some(probe_id));
         assert!(correlator.pending.is_empty());
     }
+
+    #[test]
+    fn test_axion_deterministic_canary_traps_and_os_immunity() {
+        let reg = AxionCanaryTrapRegistry::new();
+        let (shadow_base, shadow_len) = reg.shadow_page_region();
+        assert!(shadow_base > 0);
+        assert_eq!(shadow_len, 4096);
+
+        // 1. Unauthorized process touching SyntheticCredential decoy -> immediate tarpit
+        let cred_verdict = reg
+            .evaluate_access(
+                9123,
+                "C:\\Temp\\stealer.exe",
+                "C:\\Users\\victim\\.osoosi_axion_credentials.vault",
+                None,
+            )
+            .expect("Must detect SyntheticCredential decoy touch");
+        assert_eq!(cred_verdict.kind, AxionDecoyKind::SyntheticCredential);
+        assert!(cred_verdict.should_tarpit_immediately);
+        assert!(!cred_verdict.os_immunity_veto);
+        assert!(cred_verdict.signal_to_noise_confidence > 0.99);
+
+        // 2. Unauthorized process touching GhostNode pipe -> immediate tarpit
+        let ghost_verdict = reg
+            .evaluate_access(
+                9124,
+                "/tmp/lateral_scanner",
+                "\\\\.\\pipe\\osoosi_axion_ghost_cluster",
+                None,
+            )
+            .expect("Must detect GhostNode decoy touch");
+        assert_eq!(ghost_verdict.kind, AxionDecoyKind::GhostNode);
+        assert!(ghost_verdict.should_tarpit_immediately);
+
+        // 3. Unauthorized process reading inside UnreferencedShadowPage -> immediate tarpit
+        let shadow_verdict = reg
+            .evaluate_access(
+                9125,
+                "C:\\Temp\\mem_dumper.exe",
+                "memory_read",
+                Some(shadow_base + 128),
+            )
+            .expect("Must detect UnreferencedShadowPage read");
+        assert_eq!(shadow_verdict.kind, AxionDecoyKind::UnreferencedShadowPage);
+        assert!(shadow_verdict.should_tarpit_immediately);
+
+        // 4. Critical OS/shell process touching decoy must be vetoed by OS immunity (never tarpitted)
+        let os_verdict = reg
+            .evaluate_access(
+                888,
+                "C:\\Windows\\explorer.exe",
+                "C:\\Users\\victim\\.osoosi_axion_credentials.vault",
+                None,
+            )
+            .expect("Must record decoy touch with OS immunity veto");
+        assert!(!os_verdict.should_tarpit_immediately);
+        assert!(os_verdict.os_immunity_veto);
+    }
 }
+

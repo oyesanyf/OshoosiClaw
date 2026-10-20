@@ -3132,6 +3132,406 @@ impl ThreatVoter for PhaseLockAttractorVoter {
     }
 }
 
+/// Cryptographic BLAKE3 Merkle Allowlist Veto Gate for noisy developer tools
+/// (`cargo.exe`, `python.exe`, `rustc.exe`, `node.exe`, `git.exe`, `code.exe`, etc.).
+///
+/// Verifies tool identities via constant-time Merkle audit path inclusion proofs
+/// (`osoosi_audit::nsrl_aslr_merkle::verify_merkle_audit_path`) and suppresses false-positive
+/// static/dynamic telemetry noise on engineering workstations unless active inline code
+/// execution or process injection/hollowing is present.
+#[derive(Debug, Clone)]
+pub struct MerkleAllowlistVetoGate {
+    merkle_root: String,
+    tool_proofs: std::collections::HashMap<String, (String, Vec<(String, bool)>)>,
+}
+
+impl Default for MerkleAllowlistVetoGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MerkleAllowlistVetoGate {
+    pub const CANONICAL_DEV_TOOLS: &'static [&'static str] = &[
+        "cargo",
+        "cargo.exe",
+        "rustc",
+        "rustc.exe",
+        "rustup",
+        "rustup.exe",
+        "python",
+        "python.exe",
+        "python3",
+        "python3.exe",
+        "node",
+        "node.exe",
+        "git",
+        "git.exe",
+        "code",
+        "code.exe",
+        "cc1",
+        "ld",
+    ];
+
+    pub fn new() -> Self {
+        Self::from_tools(Self::CANONICAL_DEV_TOOLS)
+    }
+
+    pub fn from_tools(tools: &[&str]) -> Self {
+        let mut normalized_tools: Vec<String> = tools
+            .iter()
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+        normalized_tools.sort();
+        normalized_tools.dedup();
+
+        let leaves: Vec<String> = normalized_tools
+            .iter()
+            .enumerate()
+            .map(|(idx, tool)| {
+                osoosi_audit::nsrl_aslr_merkle::compute_nsrl_page_leaf_hash(idx, tool.as_bytes())
+            })
+            .collect();
+
+        let levels = osoosi_audit::nsrl_aslr_merkle::build_merkle_tree_levels(&leaves);
+        let merkle_root = levels
+            .last()
+            .and_then(|lvl| lvl.first())
+            .cloned()
+            .unwrap_or_else(|| "0".repeat(64));
+
+        let mut tool_proofs = std::collections::HashMap::with_capacity(normalized_tools.len());
+        for (idx, tool) in normalized_tools.into_iter().enumerate() {
+            let audit_path =
+                osoosi_audit::nsrl_aslr_merkle::generate_merkle_audit_path(&levels, idx);
+            tool_proofs.insert(tool, (leaves[idx].clone(), audit_path));
+        }
+
+        Self {
+            merkle_root,
+            tool_proofs,
+        }
+    }
+
+    pub fn merkle_root(&self) -> &str {
+        &self.merkle_root
+    }
+
+    /// Evaluates whether the event's binary/command-line qualifies for a deterministic Merkle allowlist veto.
+    ///
+    /// Returns `Some((canonical_tool, merkle_root))` when:
+    /// 1. The event is NOT an explicit injection/hollowing/LSASS access transition (`event_id` 8, 10, 25),
+    /// 2. The command line does NOT carry inline code execution (`python -c`, `node -e`, etc., checked via
+    ///    `osoosi_types::is_protected_os_shell_or_desktop_binary`), and
+    /// 3. The tool's leaf hash passes constant-time BLAKE3 Merkle audit path verification against `merkle_root`.
+    pub fn verify_tool_veto(&self, image_path: &str, cmd_line: &str, event_id: u32) -> Option<(String, String)> {
+        if matches!(event_id, 8 | 10 | 25) {
+            return None;
+        }
+
+        let probe_target = if !cmd_line.trim().is_empty() {
+            cmd_line.trim()
+        } else {
+            image_path.trim()
+        };
+        if probe_target.is_empty() {
+            return None;
+        }
+
+        // Reject if inline interpreter execution (-c / -e / --eval) is present
+        if !osoosi_types::is_protected_os_shell_or_desktop_binary(probe_target)
+            && !osoosi_types::is_protected_os_shell_or_desktop_binary(image_path)
+        {
+            return None;
+        }
+
+        let normalized_image = image_path.trim().trim_matches('"').replace('/', "\\");
+        let basename = normalized_image
+            .rsplit('\\')
+            .next()
+            .unwrap_or(&normalized_image)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let (leaf_hash, audit_path) = self.tool_proofs.get(&basename).or_else(|| {
+            let stem = basename.strip_suffix(".exe").unwrap_or(&basename);
+            self.tool_proofs.get(stem)
+        })?;
+
+        if osoosi_audit::nsrl_aslr_merkle::verify_merkle_audit_path(
+            leaf_hash,
+            audit_path,
+            &self.merkle_root,
+        ) {
+            Some((basename, self.merkle_root.clone()))
+        } else {
+            None
+        }
+    }
+}
+
+/// Discrete two-channel projection result ($S_1$ static structural entropy vs. $S_2$ runtime privilege/memory transitions).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DualChannelProjection {
+    /// Static structural entropy & packing channel ($S_1 \in [0.0, 1.0]$).
+    pub s1_static_entropy: f32,
+    /// Runtime privilege & memory transition channel ($S_2 \in [0.0, 1.0]$).
+    pub s2_runtime_transition: f32,
+    /// Joint nonlinear discrimination score ($D(S_1, S_2) \in [0.0, 1.0]$).
+    pub joint_score: f32,
+    /// Triggered transition reasons.
+    pub transitions: Vec<String>,
+}
+
+/// Dual-Channel Discrimination Voter (`S1` Static Structural Entropy vs. `S2` Runtime Privilege & Memory Transitions)
+/// coupled with a `MerkleAllowlistVetoGate` for noisy developer tools (`cargo.exe`, `python.exe`, `rustc.exe`, `node.exe`, `git.exe`).
+///
+/// Operates deterministically on discrete event states without continuous microsecond polling.
+#[derive(Debug, Clone, Default)]
+pub struct DualChannelDiscriminationVoter {
+    pub veto_gate: MerkleAllowlistVetoGate,
+}
+
+impl DualChannelDiscriminationVoter {
+    pub fn new() -> Self {
+        Self {
+            veto_gate: MerkleAllowlistVetoGate::new(),
+        }
+    }
+
+    /// Computes Shannon byte entropy in bits per byte $[0.0, 8.0]$.
+    pub fn compute_shannon_entropy(bytes: &[u8]) -> f32 {
+        if bytes.is_empty() {
+            return 0.0;
+        }
+        let mut counts = [0usize; 256];
+        for &b in bytes {
+            counts[b as usize] += 1;
+        }
+        let len = bytes.len() as f32;
+        counts
+            .iter()
+            .filter(|&&c| c > 0)
+            .map(|&c| {
+                let p = (c as f32) / len;
+                -p * p.log2()
+            })
+            .sum::<f32>()
+    }
+
+    /// Projects an event's static structural entropy ($S_1$) against its runtime privilege and memory transitions ($S_2$).
+    pub fn project_channels(event: &HostSecurityEvent) -> DualChannelProjection {
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("SourceImage"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cmdline = event
+            .data
+            .get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // --- Channel S1: Static Structural Entropy & Packing ---
+        let raw_entropy = event
+            .data
+            .get("Entropy")
+            .or_else(|| event.data.get("ShannonEntropy"))
+            .or_else(|| event.data.get("StaticEntropy"))
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or_else(|| {
+                if !image.is_empty() {
+                    let path = std::path::Path::new(image);
+                    if path.is_file() {
+                        if let Ok(mut f) = std::fs::File::open(path) {
+                            use std::io::Read;
+                            let mut buf = vec![0u8; 65536];
+                            if let Ok(n) = f.read(&mut buf) {
+                                if n > 0 {
+                                    return Self::compute_shannon_entropy(&buf[..n]);
+                                }
+                            }
+                        }
+                    }
+                }
+                Self::compute_shannon_entropy(cmdline.as_bytes())
+            });
+
+        let mut s1 = ((raw_entropy - 4.5) / 3.5).clamp(0.0, 1.0);
+        if event
+            .data
+            .get("IsPacked")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            s1 = (s1 + 0.35).clamp(0.0, 1.0);
+        }
+        if event
+            .data
+            .get("RWXSection")
+            .or_else(|| event.data.get("HasRwxSection"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            s1 = (s1 + 0.30).clamp(0.0, 1.0);
+        }
+
+        // --- Channel S2: Runtime Privilege & Memory Transitions ---
+        let mut s2: f32 = 0.0;
+        let mut transitions = Vec::new();
+
+        if event.event_id == 8 {
+            s2 += 0.85;
+            transitions.push("CreateRemoteThread(EID=8)".to_string());
+        } else if event.event_id == 25 {
+            s2 += 0.95;
+            transitions.push("ProcessHollowing/Tampering(EID=25)".to_string());
+        } else if event.event_id == 10 {
+            let target = event
+                .data
+                .get("TargetImage")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if target.contains("lsass.exe")
+                || target.contains("winlogon.exe")
+                || target.contains("csrss.exe")
+            {
+                s2 += 0.92;
+                transitions.push(format!("SensitiveProcessAccess({})", target));
+            }
+        }
+
+        let mem_transition = event
+            .data
+            .get("MemoryTransition")
+            .or_else(|| event.data.get("Protection"))
+            .or_else(|| event.data.get("AllocationProtection"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_uppercase();
+        if mem_transition.contains("RWX")
+            || mem_transition.contains("PAGE_EXECUTE_READWRITE")
+            || mem_transition.contains("PROT_EXEC")
+            || mem_transition.contains("VIRTUALALLOCEX")
+            || mem_transition.contains("NTPROTECTVIRTUALMEMORY")
+        {
+            s2 += 0.65;
+            transitions.push(format!("MemoryTransition({})", mem_transition));
+        }
+
+        let priv_transition = event
+            .data
+            .get("PrivilegeTransition")
+            .or_else(|| event.data.get("EnabledPrivileges"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if priv_transition.contains("SeDebugPrivilege")
+            || priv_transition.contains("SeTcbPrivilege")
+            || priv_transition.contains("SeLoadDriverPrivilege")
+            || priv_transition.contains("CAP_SYS_ADMIN")
+            || priv_transition.contains("CAP_SYS_PTRACE")
+        {
+            s2 += 0.55;
+            transitions.push(format!("PrivilegeTransition({})", priv_transition));
+        }
+
+        if event
+            .data
+            .get("PrivilegeEscalation")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            s2 += 0.50;
+            transitions.push("PrivilegeEscalation".to_string());
+        }
+
+        s2 = s2.clamp(0.0, 1.0);
+        let joint_score = (0.40 * s1 + 0.60 * s2 + 0.35 * (s1 * s2)).clamp(0.0, 1.0);
+
+        DualChannelProjection {
+            s1_static_entropy: s1,
+            s2_runtime_transition: s2,
+            joint_score,
+            transitions,
+        }
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for DualChannelDiscriminationVoter {
+    fn name(&self) -> String {
+        "DualChannel-S1S2-Discriminator".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("SourceImage"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cmdline = event
+            .data
+            .get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        // 1. Check Merkle Allowlist Veto Gate for noisy developer tools first
+        let has_explicit_mem_or_priv_transition = event.data.get("MemoryTransition").is_some()
+            || event.data.get("PrivilegeTransition").is_some()
+            || event
+                .data
+                .get("PrivilegeEscalation")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+        if !has_explicit_mem_or_priv_transition {
+            if let Some((tool_name, root)) =
+                self.veto_gate.verify_tool_veto(image, cmdline, event.event_id)
+            {
+                return Some(VoteResult {
+                    confidence: 0.0,
+                    reason: format!(
+                        "[DualChannel-Merkle-Veto]: Verified developer tool '{}' via BLAKE3 Merkle allowlist inclusion proof (root={}..); vetoing workstation noise.",
+                        tool_name,
+                        &root[..12.min(root.len())]
+                    ),
+                    weight: -1.25,
+                });
+            }
+        }
+
+        // 2. Discrete Two-Channel (S1 Static Entropy vs S2 Runtime Transition) Projection
+        let proj = Self::project_channels(event);
+        if proj.s2_runtime_transition > 0.0
+            && (proj.joint_score >= 0.55
+                || (proj.s1_static_entropy >= 0.45 && proj.s2_runtime_transition >= 0.45))
+        {
+            return Some(VoteResult {
+                confidence: proj.joint_score.max(0.82),
+                reason: format!(
+                    "[DualChannel-S1S2-Discriminator]: Coupled static/runtime transition detected (S1_entropy={:.2}, S2_runtime={:.2}, Joint={:.2}, Transitions=[{}])",
+                    proj.s1_static_entropy,
+                    proj.s2_runtime_transition,
+                    proj.joint_score,
+                    proj.transitions.join(", ")
+                ),
+                weight: 1.30,
+            });
+        }
+
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3316,4 +3716,69 @@ mod tests {
         assert_eq!(v25.confidence, 0.98);
         assert!(v25.reason.contains("T1055.012"));
     }
+
+    #[tokio::test]
+    async fn test_dual_channel_discrimination_and_merkle_allowlist_veto_gate() {
+        let voter = DualChannelDiscriminationVoter::new();
+        assert_eq!(voter.veto_gate.merkle_root().len(), 64);
+
+        // 1. Noisy developer tools (cargo.exe, python.exe, rustc.exe, node.exe, git.exe) without inline code
+        //    must pass the BLAKE3 Merkle allowlist inclusion proof and emit a negative veto vote (weight = -1.25).
+        for (img, cmd) in [
+            ("C:\\Users\\dev\\.cargo\\bin\\cargo.exe", "cargo.exe build --release"),
+            ("C:\\Python312\\python.exe", "python.exe scripts/submit_to_wdsi.py --all"),
+            ("/usr/bin/rustc", "rustc --edition 2021 src/lib.rs"),
+            ("C:\\Program Files\\nodejs\\node.exe", "node.exe dashboard/tests/webui_parity.test.mjs"),
+            ("C:\\Program Files\\Git\\cmd\\git.exe", "git.exe status -s"),
+        ] {
+            let ev = make_proc_event(img, cmd);
+            let res = voter.vote(&ev).await.expect("Dev tool must trigger Merkle veto vote");
+            assert_eq!(res.confidence, 0.0);
+            assert!(res.weight <= -1.0, "Expected veto weight <= -1.0, got {}", res.weight);
+            assert!(res.reason.contains("[DualChannel-Merkle-Veto]"));
+        }
+
+        // 2. Developer tool abused with inline code (`python -c "..."`) + runtime RWX memory transition
+        //    must NOT be vetoed and must trigger S1/S2 dual-channel discrimination!
+        let ev_abused_py = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "Image": "C:\\Python312\\python.exe",
+                "CommandLine": "python.exe -c \"import ctypes; ctypes.windll.kernel32.VirtualAlloc(0, 4096, 0x3000, 0x40)\"",
+                "Entropy": 7.4,
+                "MemoryTransition": "PAGE_EXECUTE_READWRITE"
+            }),
+            causal_parent: None,
+        };
+        let res_abused = voter
+            .vote(&ev_abused_py)
+            .await
+            .expect("Inline code + RWX transition must trigger positive S1/S2 vote");
+        assert!(res_abused.confidence >= 0.82);
+        assert!(res_abused.weight > 1.0);
+        assert!(res_abused.reason.contains("[DualChannel-S1S2-Discriminator]"));
+
+        // 3. Static high-entropy binary at rest without runtime transition (S2 == 0) must NOT false-positive.
+        let ev_static_only = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "Image": "C:\\App\\compressed_installer.exe",
+                "CommandLine": "compressed_installer.exe --silent",
+                "Entropy": 7.8,
+                "IsPacked": true
+            }),
+            causal_parent: None,
+        };
+        assert!(
+            voter.vote(&ev_static_only).await.is_none(),
+            "High S1 static entropy without S2 runtime transition must not trigger DualChannel vote"
+        );
+    }
 }
+

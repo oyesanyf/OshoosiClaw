@@ -20,80 +20,134 @@ pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
     let base_name = lower_name.rsplit(['\\', '/']).next().unwrap_or(&lower_name);
     let stem = base_name.strip_suffix(".exe").unwrap_or(base_name);
 
-    if osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_name)
-        || osoosi_types::is_protected_os_shell_or_desktop_binary(base_name)
-        || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_name)
-        || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, base_name)
-        || lower_name == "sshd"
+    // 1. Direct administrative session markers on process name
+    if lower_name == "sshd"
         || lower_name.starts_with("sshd:")
+        || lower_name.contains("sshd:")
+        || lower_name.contains("pts/")
         || lower_name == "ansible"
         || lower_name.starts_with("ansible-")
         || lower_name.starts_with("ansible_module")
-        || matches!(
-            stem,
-            "chrome"
-                | "chrome_proxy"
-                | "googleupdate"
-                | "msedge"
-                | "firefox"
-                | "brave"
-                | "explorer"
-                | "systray"
-                | "python"
-                | "python3"
-                | "node"
-                | "cargo"
-                | "rustc"
-                | "rustup"
-                | "git"
-                | "git-remote-https"
-                | "ssh"
-                | "code"
-                | "antigravity"
-                | "wsl"
-                | "wslhost"
-                | "wslservice"
-                | "docker"
-                | "dockerd"
-                | "com.docker.backend"
-                | "systemd"
-                | "dbus-daemon"
-                | "tmux"
-                | "screen"
-        )
     {
         return true;
     }
+
+    // 2. Protected OS shell, desktop, search, and system init binaries
+    // (Excluding generic script interpreters unless they are administrative runners)
+    let is_interpreter = matches!(
+        stem,
+        "python" | "python3" | "node" | "perl" | "ruby" | "bash" | "sh" | "zsh" | "powershell" | "cmd"
+    );
+
+    if !is_interpreter
+        && (osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_name)
+            || osoosi_types::is_protected_os_shell_or_desktop_binary(base_name)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_name)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, base_name)
+            || matches!(
+                stem,
+                "chrome"
+                    | "chrome_proxy"
+                    | "googleupdate"
+                    | "msedge"
+                    | "firefox"
+                    | "brave"
+                    | "explorer"
+                    | "systray"
+                    | "wsl"
+                    | "wslhost"
+                    | "wslservice"
+                    | "systemd"
+                    | "dbus-daemon"
+                    | "tmux"
+                    | "screen"
+            ))
+    {
+        return true;
+    }
+
+    // 3. Dedicated administrative session markers across command-line arguments
+    // (Only dedicated markers: sshd:, pts/, and ansible - NEVER arbitrary developer toolchain stems)
     for arg in cmd {
         let lower_arg = arg.to_lowercase();
-        let arg_base = lower_arg.rsplit(['\\', '/']).next().unwrap_or(&lower_arg);
-        let arg_stem = arg_base.strip_suffix(".exe").unwrap_or(arg_base);
-
-        if osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_arg)
-            || osoosi_types::is_protected_os_shell_or_desktop_binary(arg_base)
-            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_arg)
-            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, arg_base)
-            || lower_arg.contains("ansible")
+        if lower_arg.contains("ansible")
             || lower_arg.contains("sshd:")
             || lower_arg.contains("pts/")
-            || lower_arg.contains("\\google\\chrome\\")
-            || matches!(
-                arg_stem,
-                "python"
-                    | "python3"
-                    | "node"
-                    | "cargo"
-                    | "rustc"
-                    | "rustup"
-                    | "git"
-                    | "code"
-                    | "wsl"
-                    | "docker"
-            )
         {
             return true;
         }
     }
+
+    // 4. Benign Windows Control Panel / Shell `rundll32.exe` applets (excluding LOLBin payloads)
+    if stem == "rundll32" && !cmd.is_empty() {
+        let joined = cmd.join(" ").to_ascii_lowercase();
+        let has_lolbin_payload = joined.contains("comsvcs")
+            || joined.contains("minidump")
+            || joined.contains("javascript:")
+            || joined.contains("vbscript:")
+            || joined.contains("mshtml")
+            || joined.contains("scrobj")
+            || joined.contains("url.dll")
+            || joined.contains("pcwutl")
+            || joined.contains("dfshim")
+            || joined.contains("http://")
+            || joined.contains("https://")
+            || joined.contains("\\\\");
+        if !has_lolbin_payload {
+            return true;
+        }
+    }
+
+    // 5. Developer toolchain processes when invoked directly (name or cmd[0])
+    // Developer toolchains (cargo, git, docker, rustc, rustup) or Windows SDK executables (python.exe, node.exe)
+    // are shielded when not executing inline evaluation flags or originating from untrusted drop paths.
+    let is_toolchain_proc = matches!(
+        stem,
+        "cargo" | "rustc" | "rustup" | "git" | "docker"
+    ) || (base_name.ends_with(".exe") && matches!(stem, "python" | "python3" | "node"));
+
+    if is_toolchain_proc {
+        let cmd_joined = cmd.join(" ");
+        if !osoosi_types::has_inline_script_evaluation_flag(&cmd_joined)
+            && !osoosi_types::is_untrusted_staging_path(name)
+        {
+            return true;
+        }
+    }
+
+    // 6. Primary executable / invocation binary check (cmd[0])
+    // If argv[0] is an OS protected shell or system binary (e.g. unknown_wrapper launching systemd-logind)
+    if let Some(first_arg) = cmd.first() {
+        let lower_cmd0 = first_arg.to_lowercase();
+        let base_cmd0 = lower_cmd0.rsplit(['\\', '/']).next().unwrap_or(&lower_cmd0);
+        let stem_cmd0 = base_cmd0.strip_suffix(".exe").unwrap_or(base_cmd0);
+
+        let is_cmd0_toolchain = matches!(
+            stem_cmd0,
+            "cargo" | "rustc" | "rustup" | "git" | "docker"
+        ) || (base_cmd0.ends_with(".exe") && matches!(stem_cmd0, "python" | "python3" | "node"));
+
+        if is_cmd0_toolchain {
+            let cmd_joined = cmd.join(" ");
+            if !osoosi_types::has_inline_script_evaluation_flag(&cmd_joined)
+                && !osoosi_types::is_untrusted_staging_path(first_arg)
+            {
+                return true;
+            }
+        }
+
+        let is_cmd0_interpreter = matches!(
+            stem_cmd0,
+            "python" | "python3" | "node" | "perl" | "ruby" | "bash" | "sh" | "zsh" | "powershell" | "cmd"
+        );
+        if !is_cmd0_interpreter
+            && (osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_cmd0)
+                || osoosi_types::is_protected_os_shell_or_desktop_binary(base_cmd0))
+        {
+            return true;
+        }
+    }
+
     false
 }
 
@@ -110,7 +164,7 @@ impl RemediationController {
         Self
     }
 
-    /// Isolate the host from the network (except for the Oshoosi P2P mesh and management access).
+    /// Isolate the host from the network (except for loopback, DNS/DHCP, WebUI, Oshoosi P2P mesh, and management access).
     pub fn isolate_node(&self) -> anyhow::Result<()> {
         let allow_isolation = std::env::var("OSOOSI_ALLOW_HOST_ISOLATION")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -158,50 +212,42 @@ impl RemediationController {
             #[allow(unused_imports)]
             use std::os::windows::process::CommandExt;
             let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
-            // Block all inbound/outbound except common P2P mesh ports (4001, 8080) and remote admin (22, 3389)
-            let mut cmd1 = Command::new(&netsh_bin);
-            cmd1.stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            #[cfg(windows)]
-            cmd1.creation_flags(0x08000000);
-            let _ = cmd1
-                .args([
+            let rules: &[&[&str]] = &[
+                &[
                     "advfirewall",
                     "firewall",
                     "add",
                     "rule",
-                    "name=Oshoosi-Isolation-In",
+                    "name=Oshoosi-Isolation-Loopback-In",
                     "dir=in",
-                    "action=block",
+                    "action=allow",
+                    "remoteip=127.0.0.1,::1",
                     "profile=any",
-                ])
-                .status();
-
-            let mut cmd2 = Command::new(&netsh_bin);
-            cmd2.stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            #[cfg(windows)]
-            cmd2.creation_flags(0x08000000);
-            let _ = cmd2
-                .args([
+                ],
+                &[
                     "advfirewall",
                     "firewall",
                     "add",
                     "rule",
-                    "name=Oshoosi-Isolation-Out",
+                    "name=Oshoosi-Isolation-Loopback-Out",
                     "dir=out",
-                    "action=block",
+                    "action=allow",
+                    "remoteip=127.0.0.1,::1",
                     "profile=any",
-                ])
-                .status();
-
-            let mut cmd3 = Command::new(&netsh_bin);
-            cmd3.stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null());
-            #[cfg(windows)]
-            cmd3.creation_flags(0x08000000);
-            let _ = cmd3
-                .args([
+                ],
+                &[
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-Core-UDP",
+                    "dir=out",
+                    "action=allow",
+                    "protocol=UDP",
+                    "remoteport=53,67,68",
+                    "profile=any",
+                ],
+                &[
                     "advfirewall",
                     "firewall",
                     "add",
@@ -210,18 +256,58 @@ impl RemediationController {
                     "dir=in",
                     "action=allow",
                     "protocol=TCP",
-                    "localport=4001,8080,22,3389",
+                    "localport=4001,8080,3030,22,3389",
                     "profile=any",
-                ])
-                .status();
+                ],
+                &[
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-Mesh-Out",
+                    "dir=out",
+                    "action=allow",
+                    "protocol=TCP",
+                    "localport=4001,8080,3030,22,3389",
+                    "profile=any",
+                ],
+                &[
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-In",
+                    "dir=in",
+                    "action=block",
+                    "profile=any",
+                ],
+                &[
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
+                    "name=Oshoosi-Isolation-Out",
+                    "dir=out",
+                    "action=block",
+                    "profile=any",
+                ],
+            ];
+            for rule_args in rules {
+                let mut cmd = Command::new(&netsh_bin);
+                cmd.stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+                #[cfg(windows)]
+                cmd.creation_flags(0x08000000);
+                let _ = cmd.args(*rule_args).status();
+            }
 
-            info!("Network isolation applied via Windows Firewall (netsh). Preserved admin ports (22, 3389) and mesh ports (4001, 8080).");
+            info!("Network isolation applied via Windows Firewall (netsh). Preserved loopback, DNS/DHCP (53, 67, 68), WebUI (3030), admin ports (22, 3389), and mesh ports (4001, 8080).");
             Ok(())
         }
 
         #[cfg(target_os = "linux")]
         {
-            // Apply iptables isolation safely with explicit argument arrays, preserving loopback, established connections, and SSH (port 22)
+            // Apply iptables isolation safely with explicit argument arrays, preserving loopback, DNS/DHCP, WebUI (3030), established connections, and SSH (port 22)
             let commands = [
                 vec!["-A", "INPUT", "-i", "lo", "-j", "ACCEPT"],
                 vec!["-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"],
@@ -245,8 +331,18 @@ impl RemediationController {
                     "-j",
                     "ACCEPT",
                 ],
+                vec!["-A", "OUTPUT", "-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+                vec![
+                    "-A", "OUTPUT", "-p", "udp", "--dport", "67:68", "-j", "ACCEPT",
+                ],
                 vec!["-A", "INPUT", "-p", "tcp", "--dport", "22", "-j", "ACCEPT"],
                 vec!["-A", "OUTPUT", "-p", "tcp", "--sport", "22", "-j", "ACCEPT"],
+                vec![
+                    "-A", "INPUT", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT",
+                ],
+                vec![
+                    "-A", "OUTPUT", "-p", "tcp", "--sport", "3030", "-j", "ACCEPT",
+                ],
                 vec![
                     "-A", "INPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT",
                 ],
@@ -381,6 +477,17 @@ impl RemediationController {
                         .map(|path| path.to_string_lossy().to_string())
                         .unwrap_or_default();
                     let child_pid = p.as_u32();
+                    // Unconditional invariant: Never kill PID <= 4 or self PID
+                    if child_pid <= 4 || child_pid == std::process::id() {
+                        warn!(
+                            "AUTONOMOUS RESPONSE: Process tree descendant PID {} is protected system or self process. Aborting kill tree.",
+                            child_pid
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Cannot kill process tree containing critical system or self PID {}",
+                            child_pid
+                        ));
+                    }
                     if is_administrative_or_ssh_session(proc.name(), proc.cmd())
                         || (!exe_str.is_empty()
                             && (osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
@@ -501,7 +608,17 @@ mod tests {
             &["/usr/lib/systemd/systemd-logind".to_string()]
         ));
 
-        // Non-protected arbitrary binaries and script interpreters without SSH/protected args must NOT be shielded
+        // SSH/PTY interactive shells and benign Windows Control Panel rundll32 applets must be shielded
+        assert!(is_administrative_or_ssh_session(
+            "bash",
+            &["pts/0".to_string()]
+        ));
+        assert!(is_administrative_or_ssh_session(
+            "rundll32.exe",
+            &["shell32.dll,Control_RunDLL".to_string()]
+        ));
+
+        // Non-protected arbitrary binaries, encoded PowerShell, and LOLBin rundll32 must NOT be shielded
         assert!(!is_administrative_or_ssh_session(
             "evil_payload.exe",
             &["--beacon".to_string()]
@@ -509,6 +626,10 @@ mod tests {
         assert!(!is_administrative_or_ssh_session(
             "powershell.exe",
             &["-enc".to_string(), "AAAA".to_string()]
+        ));
+        assert!(!is_administrative_or_ssh_session(
+            "rundll32.exe",
+            &["comsvcs.dll,MiniDump".to_string(), "652".to_string()]
         ));
     }
 }

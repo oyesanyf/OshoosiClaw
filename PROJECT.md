@@ -49,6 +49,10 @@
 | 28 | Multi-Distro Linux Packaging | `.deb`, `.rpm`, `.tar.gz` built with systemd service via `packaging/linux/build_packages.sh` | M6 | ORIGINAL_REQUEST Acceptance |
 | 29 | Hardened Docker Container | `ghcr.io/oyesanyf/oshoosiclaw:1.2.0` (UID 65532:65532, read-only rootfs, 0 SUID/SGID) | M6 | ORIGINAL_REQUEST Acceptance |
 | 30 | Deterministic Windows Service Lifecycle | `OsoosiEDR` Windows service starts, runs, and stops in < 1.5s without disrupting OS components | M6 | ORIGINAL_REQUEST Acceptance |
+| 31 | Dual-Channel Discrimination & Merkle Veto | Static entropy vs discrete runtime transitions with Merkle allowlist veto for developer tools (`voters.rs`) | M4 | ORIGINAL_REQUEST §R4 |
+| 32 | Axion-Inspired Deterministic Canary Traps | Zero-resting-cost synthetic credentials/shadow pages with event-driven callback tarpit and OS immunity (`canary.rs`, `tarpit.rs`) | M4 | ORIGINAL_REQUEST §R4 |
+| 33 | Memory & Kernel Object DKOM Conservation | Discrete page-frame/handle cross-referencing vs EPROCESS to detect unlinked rootkits without APERF loops (`siquery.rs`) | M4 | ORIGINAL_REQUEST §R4 |
+| 34 | Targeted Syscall Timing-Shear Diagnostic | Brief RDTSC micro-benchmark at startup/on-demand without continuous L3 eviction (`telemetry`) | M4 | ORIGINAL_REQUEST §R4 |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
@@ -56,7 +60,7 @@
 | M1 | Host OS & Developer Immunity Enforcement | Core, runtime tarpit, remediation, Windows driver `g_ProtectedImages`, and eBPF LSM binary/network filters; unit tests in `crates/osoosi-core` | none | IN_PROGRESS |
 | M2 | Tiered REA Pipeline, Engine Wiring & Magika | 2-Tier classification in `rea.rs`, 256 MiB buffer, Magika integration, daemon boot loop, event-driven quarantine trigger; unit tests in `rea.rs` | none | PLANNED |
 | M3 | WebUI Buttons, 0-Diff Parity & Node.js Tests | Dashboard buttons/views verification, 0-diff sync, WiX offline assets, and Node.js native test suite (`dashboard/tests/*.test.mjs`) | none | PLANNED |
-| M4 | Full Security Audit & Cargo Test Pass | Workspace audit, fixing any crate build/test issues, `cargo test --workspace` 100% pass, RAPTOR security scan | M1, M2, M3 | PLANNED |
+| M4 | Full Security Audit & Cargo Test Pass | Workspace audit, 4 adapted physics & deception mechanisms (Dual-channel voter Merkle veto, Axion canary traps, DKOM memory/handle conservation, targeted syscall timing shear), `cargo test --workspace` 100% pass, RAPTOR security scan | M1, M2, M3 | PLANNED |
 | M5 | Final Milestone: E2E Test Suite & Hardening | Phase 1: 100% pass of Tiers 1-4 E2E tests (from `TEST_READY.md`). Phase 2: Tier 5 adversarial coverage hardening with Challengers | M4, E2E Track | PLANNED |
 | M6 | Release Packaging, WDSI Submission & Sync | Windows MSI, Authenticode signing, WDSI submission, GitHub Release sync, Linux packages, Docker image, and service lifecycle verification | M5 | PLANNED |
 | E2E | E2E Testing Track | Requirement-driven opaque-box test infrastructure and Tiers 1-4 test suite; publishes `TEST_READY.md` | none | DONE |

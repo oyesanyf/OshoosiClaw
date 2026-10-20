@@ -3937,9 +3937,17 @@ impl EdrOrchestrator {
         self.policy
             .add_voter(Box::new(osoosi_policy::voters::SpiderWebPhysicsVoter))
             .await;
+        self.policy
+            .add_voter(Box::new(osoosi_policy::voters::PhaseLockAttractorVoter::new()))
+            .await;
+        self.policy
+            .add_voter(Box::new(
+                osoosi_policy::voters::DualChannelDiscriminationVoter::new(),
+            ))
+            .await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
-            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter)"
+            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter + PhaseLockAttractorVoter + DualChannelDiscriminationVoter)"
         );
     }
 
@@ -7771,6 +7779,15 @@ impl EdrOrchestrator {
                 if let Some(tp) = target_path {
                     let tp_buf = std::path::PathBuf::from(tp);
                     if tp_buf.exists() && tp_buf.is_file() {
+                        if !crate::blocking_manager::is_protected_or_benign_system_path(tp) {
+                            crate::rea::spawn_autonomous_rea_for_threat(
+                                tp_buf.clone(),
+                                format!(
+                                    "telemetry_threat_detected:{}",
+                                    signature.reason.as_deref().unwrap_or("consensus_threat")
+                                ),
+                            );
+                        }
                         if crate::secured_executor::OpenShellExecutor::is_available().await {
                             tokio::spawn(async move {
                                 let executor =

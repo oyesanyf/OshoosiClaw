@@ -22,10 +22,9 @@ fn test_python_inline_c_flag_space_vs_nospace() {
     let tab_sep = is_protected_os_shell_or_desktop_binary("python.exe\t-c\t\"import os\"");
     println!("python.exe\\t-c\\t\\\"import os\\\": protected = {}", tab_sep);
 
-    // Check if bypass occurred
-    if nospace_double_quote || nospace_single_quote || tab_sep {
-        println!("VULNERABILITY CONFIRMED: Attacker can execute inline Python payloads and retain immunity!");
-    }
+    assert!(!nospace_double_quote, "python.exe -c\"...\" without space MUST NOT be protected");
+    assert!(!nospace_single_quote, "python.exe -c'...' without space MUST NOT be protected");
+    assert!(!tab_sep, "python.exe\\t-c\\t... with tab separator MUST NOT be protected");
 }
 
 #[test]
@@ -43,9 +42,8 @@ fn test_node_inline_eval_variations() {
     let node_eval_eq = is_protected_os_shell_or_desktop_binary("node.exe --eval=\"process.exit(1)\"");
     println!("node.exe --eval=\\\"code\\\": protected = {}", node_eval_eq);
 
-    if node_nospace || node_eval_eq {
-        println!("VULNERABILITY CONFIRMED: Attacker can execute inline Node.js payloads and retain immunity!");
-    }
+    assert!(!node_nospace, "node.exe -e\"...\" without space MUST NOT be protected");
+    assert!(!node_eval_eq, "node.exe --eval=\"...\" with '=' MUST NOT be protected");
 }
 
 #[test]
@@ -79,9 +77,10 @@ fn test_commandline_arguments_on_non_interpreter_tools() {
     let svchost_with_args = is_protected_os_shell_or_desktop_binary(r"C:\Windows\System32\svchost.exe -k netsvcs");
     println!("svchost.exe -k netsvcs: protected = {}", svchost_with_args);
 
-    if !cargo_with_args || !git_with_args || !explorer_with_args || !svchost_with_args {
-        println!("VULNERABILITY CONFIRMED: Protected OS and developer binaries lose immunity when arguments are present!");
-    }
+    assert!(cargo_with_args, "cargo.exe build with args MUST retain immunity");
+    assert!(git_with_args, "git.exe status with args MUST retain immunity");
+    assert!(explorer_with_args, "explorer.exe /n with args MUST retain immunity");
+    assert!(svchost_with_args, "svchost.exe -k netsvcs with args MUST retain immunity");
 }
 
 #[test]
@@ -99,14 +98,17 @@ fn test_temporary_and_untrusted_folder_paths() {
     // 1. C:\Users\Public\
     let public_dir = is_protected_os_shell_or_desktop_binary(r"C:\Users\Public\python.exe");
     println!(r"C:\Users\Public\python.exe: protected = {}", public_dir);
+    assert!(!public_dir, "C:\\Users\\Public\\python.exe in untrusted directory MUST NOT be protected");
 
     // 2. /dev/shm/
     let shm_dir = is_protected_os_shell_or_desktop_binary("/dev/shm/python3");
     println!("/dev/shm/python3: protected = {}", shm_dir);
+    assert!(!shm_dir, "/dev/shm/python3 in untrusted directory MUST NOT be protected");
 
     // 3. C:\ProgramData\
     let programdata_dir = is_protected_os_shell_or_desktop_binary(r"C:\ProgramData\python.exe");
     println!(r"C:\ProgramData\python.exe: protected = {}", programdata_dir);
+    assert!(!programdata_dir, "C:\\ProgramData\\python.exe in untrusted directory MUST NOT be protected");
 }
 
 #[test]
@@ -114,12 +116,16 @@ fn test_legitimate_developer_argument_false_positives() {
     // Legitimate developer running pytest or python script with -c for config file
     let dev_config_flag = is_protected_os_shell_or_desktop_binary("python.exe run_tests.py -c config.yaml");
     println!("python.exe run_tests.py -c config.yaml: protected = {}", dev_config_flag);
+    assert!(dev_config_flag, "python.exe run_tests.py -c config.yaml MUST retain immunity");
 
     // Legitimate security analysis script named beacon_analysis.py
     let dev_beacon_script = is_protected_os_shell_or_desktop_binary(r"C:\Dev\beacon_analysis.py");
     println!("C:\\Dev\\beacon_analysis.py: protected = {}", dev_beacon_script);
+    assert!(dev_beacon_script, "C:\\Dev\\beacon_analysis.py MUST retain immunity");
 
     // Legitimate security tool detecting evil
     let dev_evil_scanner = is_protected_os_shell_or_desktop_binary(r"C:\Dev\detect_evil.py");
     println!("C:\\Dev\\detect_evil.py: protected = {}", dev_evil_scanner);
+    assert!(dev_evil_scanner, "C:\\Dev\\detect_evil.py MUST retain immunity");
 }
+

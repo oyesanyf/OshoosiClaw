@@ -161,9 +161,12 @@ impl StaticAnalyzer {
                     signature.confidence =
                         (signature.confidence + (comp.composition_score * 0.2)).min(1.0);
                     signature.reason = Some(format!(
-                        "{} | NablaScore: {:.2} | SuspiciousDeps: {:?}",
+                        "{} | Magika: {} ({}) | NablaScore: {:.2} | Sections: {:?} | SuspiciousDeps: {:?}",
                         signature.reason.as_deref().unwrap_or("Detection"),
+                        comp.magika_label,
+                        comp.magika_mime_type,
                         comp.composition_score,
+                        comp.suspicious_sections,
                         comp.suspicious_dependencies
                     ));
                 }
@@ -189,7 +192,14 @@ impl StaticAnalyzer {
                     hash_blake3: Some(hash.clone()),
                     process_name: file_path.file_name().map(|n| n.to_string_lossy().to_string()),
                     confidence: comp.composition_score.min(1.0),
-                    reason: Some(format!("Composition Analysis (Nabla): Suspicious binary structure detected. Score: {:.2} | Dependencies: {:?}", comp.composition_score, comp.suspicious_dependencies)),
+                    reason: Some(format!(
+                        "Composition Analysis (Nabla): Suspicious binary structure detected. Magika: {} ({}) | Score: {:.2} | Sections: {:?} | Dependencies: {:?}",
+                        comp.magika_label,
+                        comp.magika_mime_type,
+                        comp.composition_score,
+                        comp.suspicious_sections,
+                        comp.suspicious_dependencies
+                    )),
                     detector_count: 1,
                     detected_at: chrono::Utc::now(),
                     source_node: "local".to_string(),

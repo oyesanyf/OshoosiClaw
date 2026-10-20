@@ -339,6 +339,8 @@ impl SiqueryEngine {
             !is_pragma && (is_metadata || lower.contains("agent_containment_rings"));
         let need_merkle_anchors =
             !is_pragma && (is_metadata || lower.contains("hierarchical_merkle_anchors"));
+        let need_kernel_conservation =
+            !is_pragma && (is_metadata || lower.contains("kernel_object_conservation"));
 
         let any_table_needed = need_processes
             || need_sockets
@@ -417,12 +419,19 @@ impl SiqueryEngine {
             || need_spider_threads
             || need_octopus_arms
             || need_containment_rings
-            || need_merkle_anchors;
+            || need_merkle_anchors
+            || need_kernel_conservation;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
             let mut sys = System::new();
-            if need_processes || need_envs || need_mmap || need_pipes || need_open_files {
+            if need_processes
+                || need_envs
+                || need_mmap
+                || need_pipes
+                || need_open_files
+                || need_kernel_conservation
+            {
                 sys.refresh_processes_specifics(sysinfo::ProcessRefreshKind::everything());
             }
             if need_sysinfo || need_wmi_comp || need_wmi_os || need_wmi_proc || need_wmi_mem {
@@ -677,6 +686,9 @@ impl SiqueryEngine {
             }
             if need_merkle_anchors {
                 Self::populate_hierarchical_merkle_anchors(&tx)?;
+            }
+            if need_kernel_conservation {
+                Self::populate_kernel_object_conservation(&tx, &sys)?;
             }
 
             tx.commit()
@@ -1466,6 +1478,18 @@ impl SiqueryEngine {
             tpm_pcr_status TEXT,
             cross_ring_intact INTEGER,
             timestamp TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS kernel_object_conservation (
+            pid INTEGER,
+            visible_in_process_list INTEGER,
+            hardware_thread_queue_count INTEGER,
+            handle_and_socket_count INTEGER,
+            mapped_page_frames INTEGER,
+            conservation_status TEXT,
+            dkom_unlinked_suspected INTEGER,
+            aperf_mperf_polling_disabled INTEGER,
+            mitre_technique TEXT
         );
 
         CREATE VIEW IF NOT EXISTS disk_encryption AS SELECT drive_letter, encryption_method, conversion_status, protection_status, lock_status FROM bitlocker_info;
@@ -6977,6 +7001,256 @@ impl SiqueryEngine {
 
         Ok(())
     }
+
+    /// Deterministically audits memory & kernel object conservation across:
+    /// 1. Visible OS process list (`EPROCESS` / `task_struct`),
+    /// 2. Hardware thread scheduling queues (`TH32CS_SNAPTHREAD` / `/proc/[pid]/task`),
+    /// 3. Kernel handle & socket owner tables (`GetExtendedTcpTable` / `GetExtendedUdpTable` / `/proc/[pid]/fd`), and
+    /// 4. Physical/virtual page-frame mappings (`resident_size / 4096`).
+    ///
+    /// Replaces noisy continuous `APERF`/`MPERF` CPU cycle conservation loops.
+    pub fn audit_kernel_object_conservation(&self) -> Vec<KernelObjectConservationRecord> {
+        let mut sys = System::new();
+        sys.refresh_processes_specifics(sysinfo::ProcessRefreshKind::everything());
+        KernelObjectConservationAuditor::audit_live_host(&sys)
+    }
+
+    fn populate_kernel_object_conservation(
+        conn: &Connection,
+        sys: &System,
+    ) -> Result<(), String> {
+        let records = KernelObjectConservationAuditor::audit_live_host(sys);
+        let mut stmt = conn
+            .prepare_cached(
+                "INSERT INTO kernel_object_conservation (
+                    pid, visible_in_process_list, hardware_thread_queue_count,
+                    handle_and_socket_count, mapped_page_frames, conservation_status,
+                    dkom_unlinked_suspected, aperf_mperf_polling_disabled, mitre_technique
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            )
+            .map_err(|e| e.to_string())?;
+
+        for rec in records {
+            let _ = stmt.execute(rusqlite::params![
+                rec.pid as i64,
+                if rec.visible_in_process_list { 1i64 } else { 0i64 },
+                rec.hardware_thread_queue_count as i64,
+                rec.handle_and_socket_count as i64,
+                rec.mapped_page_frames as i64,
+                rec.conservation_status,
+                if rec.dkom_unlinked_suspected { 1i64 } else { 0i64 },
+                if rec.aperf_mperf_polling_disabled { 1i64 } else { 0i64 },
+                rec.mitre_technique,
+            ]);
+        }
+
+        Ok(())
+    }
+}
+
+/// Deterministic Memory & Kernel Object Conservation record for a single PID.
+///
+/// Cross-references physical/virtual page-frame mappings, kernel handle/socket tables,
+/// and hardware thread scheduling queues against the visible OS process list (`EPROCESS` / `task_struct`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KernelObjectConservationRecord {
+    pub pid: u32,
+    pub visible_in_process_list: bool,
+    pub hardware_thread_queue_count: u32,
+    pub handle_and_socket_count: u32,
+    pub mapped_page_frames: u64,
+    pub conservation_status: String,
+    pub dkom_unlinked_suspected: bool,
+    /// Always `true`: noisy continuous `APERF`/`MPERF` CPU cycle conservation polling is disabled by design.
+    pub aperf_mperf_polling_disabled: bool,
+    pub mitre_technique: String,
+}
+
+/// Deterministic Memory & Kernel Object Conservation Auditor for Direct Kernel Object Manipulation (DKOM) detection.
+pub struct KernelObjectConservationAuditor;
+
+impl KernelObjectConservationAuditor {
+    /// Reconciles visible user/kernel process IDs against hardware thread scheduling queues,
+    /// kernel handle/socket owner tables, and physical/virtual page-frame mappings.
+    ///
+    /// A PID is flagged as `dkom_unlinked_suspected` (`T1014` Rootkit) when it is absent from
+    /// the visible OS process list (`pid > 4`) while simultaneously owning active hardware threads,
+    /// kernel handles/sockets, or mapped page frames.
+    pub fn reconcile_snapshots(
+        visible_pids: &std::collections::HashSet<u32>,
+        thread_counts: &std::collections::HashMap<u32, u32>,
+        handle_socket_counts: &std::collections::HashMap<u32, u32>,
+        page_frame_counts: &std::collections::HashMap<u32, u64>,
+    ) -> Vec<KernelObjectConservationRecord> {
+        let mut all_pids: std::collections::BTreeSet<u32> = visible_pids.iter().copied().collect();
+        all_pids.extend(thread_counts.keys().copied());
+        all_pids.extend(handle_socket_counts.keys().copied());
+        all_pids.extend(page_frame_counts.keys().copied());
+
+        let mut records = Vec::with_capacity(all_pids.len());
+        for pid in all_pids {
+            if pid == 0 || pid == 4 {
+                continue;
+            }
+            let visible = visible_pids.contains(&pid);
+            let threads = thread_counts.get(&pid).copied().unwrap_or(0);
+            let sockets_handles = handle_socket_counts.get(&pid).copied().unwrap_or(0);
+            let pages = page_frame_counts.get(&pid).copied().unwrap_or(0);
+
+            // Require at least 2 corroborated kernel object channels (or thread + page frames / sockets)
+            // when absent from EPROCESS / task_struct to eliminate single-channel exit race false positives.
+            let active_channels =
+                usize::from(threads > 0) + usize::from(sockets_handles > 0) + usize::from(pages > 0);
+            let dkom_unlinked = !visible && active_channels >= 2;
+
+            let (status, mitre) = if dkom_unlinked {
+                (
+                    format!(
+                        "DKOM_UNLINKED_EPROCESS_DEFICIT(threads={},handles_sockets={},page_frames={})",
+                        threads, sockets_handles, pages
+                    ),
+                    "T1014".to_string(),
+                )
+            } else if !visible {
+                (
+                    "TRANSIENT_SINGLE_CHANNEL_EXIT_RACE_IGNORED".to_string(),
+                    "NONE".to_string(),
+                )
+            } else {
+                ("CONSERVED".to_string(), "NONE".to_string())
+            };
+
+            records.push(KernelObjectConservationRecord {
+                pid,
+                visible_in_process_list: visible,
+                hardware_thread_queue_count: threads,
+                handle_and_socket_count: sockets_handles,
+                mapped_page_frames: pages,
+                conservation_status: status,
+                dkom_unlinked_suspected: dkom_unlinked,
+                aperf_mperf_polling_disabled: true,
+                mitre_technique: mitre,
+            });
+        }
+        records
+    }
+
+    /// Captures a live cross-referenced snapshot of visible OS processes, hardware thread queues,
+    /// socket/handle owner tables, and page-frame mappings.
+    pub fn audit_live_host(sys: &System) -> Vec<KernelObjectConservationRecord> {
+        let mut visible_pids = std::collections::HashSet::new();
+        let mut thread_counts: std::collections::HashMap<u32, u32> =
+            std::collections::HashMap::new();
+        let mut handle_socket_counts: std::collections::HashMap<u32, u32> =
+            std::collections::HashMap::new();
+        let mut page_frame_counts: std::collections::HashMap<u32, u64> =
+            std::collections::HashMap::new();
+
+        for (pid, proc) in sys.processes() {
+            let p = pid.as_u32();
+            visible_pids.insert(p);
+            let pages = (proc.memory() / 4096).max(1);
+            page_frame_counts.insert(p, pages);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+                Process32FirstW, Process32NextW, Thread32First, Thread32Next, PROCESSENTRY32W,
+                TH32CS_SNAPPROCESS, TH32CS_SNAPTHREAD, THREADENTRY32,
+            };
+
+            unsafe {
+                let proc_snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if proc_snap != INVALID_HANDLE_VALUE && !proc_snap.is_null() {
+                    let mut pe: PROCESSENTRY32W = std::mem::zeroed();
+                    pe.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+                    if Process32FirstW(proc_snap, &mut pe) != 0 {
+                        loop {
+                            visible_pids.insert(pe.th32ProcessID);
+                            if Process32NextW(proc_snap, &mut pe) == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    CloseHandle(proc_snap);
+                }
+
+                let thread_snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+                if thread_snap != INVALID_HANDLE_VALUE && !thread_snap.is_null() {
+                    let mut te: THREADENTRY32 = std::mem::zeroed();
+                    te.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+                    if Thread32First(thread_snap, &mut te) != 0 {
+                        loop {
+                            if te.th32OwnerProcessID > 4 {
+                                *thread_counts.entry(te.th32OwnerProcessID).or_insert(0) += 1;
+                            }
+                            if Thread32Next(thread_snap, &mut te) == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    CloseHandle(thread_snap);
+                }
+            }
+
+            for row in get_tcp_ipv4_table() {
+                if row.dwOwningPid > 4 {
+                    *handle_socket_counts.entry(row.dwOwningPid).or_insert(0) += 1;
+                }
+            }
+            for row in get_udp_ipv4_table() {
+                if row.dwOwningPid > 4 {
+                    *handle_socket_counts.entry(row.dwOwningPid).or_insert(0) += 1;
+                }
+            }
+
+            // Take a second TH32CS_SNAPPROCESS pass after enumerating threads and sockets
+            // so processes spawned mid-snapshot are recorded in visible_pids without masking DKOM unlinked PIDs.
+            unsafe {
+                let proc_snap2 = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+                if proc_snap2 != INVALID_HANDLE_VALUE && !proc_snap2.is_null() {
+                    let mut pe: PROCESSENTRY32W = std::mem::zeroed();
+                    pe.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+                    if Process32FirstW(proc_snap2, &mut pe) != 0 {
+                        loop {
+                            visible_pids.insert(pe.th32ProcessID);
+                            if Process32NextW(proc_snap2, &mut pe) == 0 {
+                                break;
+                            }
+                        }
+                    }
+                    CloseHandle(proc_snap2);
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(proc_dir) = std::fs::read_dir("/proc") {
+                for entry in proc_dir.flatten() {
+                    if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
+                        visible_pids.insert(pid);
+                        let task_cnt = std::fs::read_dir(entry.path().join("task"))
+                            .map(|it| it.count() as u32)
+                            .unwrap_or(1);
+                        thread_counts.insert(pid, task_cnt);
+                        let fd_cnt = std::fs::read_dir(entry.path().join("fd"))
+                            .map(|it| it.count() as u32)
+                            .unwrap_or(0);
+                        handle_socket_counts.insert(pid, fd_cnt);
+                    }
+                }
+            }
+        }
+
+        Self::reconcile_snapshots(
+            &visible_pids,
+            &thread_counts,
+            &handle_socket_counts,
+            &page_frame_counts,
+        )
+    }
 }
 
 /// Dynamic Win32 Buffer Sizing for `GetExtendedTcpTable` (IPv4)
@@ -7796,4 +8070,54 @@ mod tests {
         assert_eq!(linux_tcp_state_name(0x01), "ESTABLISHED");
         assert_eq!(linux_tcp_state_name(0x0A), "LISTEN");
     }
+
+    #[test]
+    fn test_kernel_object_conservation_dkom_detection_and_sql_query() {
+        let mut visible = std::collections::HashSet::new();
+        visible.insert(1000);
+
+        let mut threads = std::collections::HashMap::new();
+        threads.insert(1000, 8);
+        threads.insert(6666, 4); // Unlinked DKOM PID owning hardware scheduling threads
+        threads.insert(7777, 1); // Single-channel transient exit race
+
+        let mut sockets = std::collections::HashMap::new();
+        sockets.insert(1000, 2);
+        sockets.insert(6666, 3); // Unlinked DKOM PID also owning kernel sockets/handles
+
+        let mut pages = std::collections::HashMap::new();
+        pages.insert(1000, 512);
+        pages.insert(6666, 256); // Unlinked DKOM PID also owning physical/virtual page frames
+
+        let records =
+            KernelObjectConservationAuditor::reconcile_snapshots(&visible, &threads, &sockets, &pages);
+
+        let normal = records.iter().find(|r| r.pid == 1000).unwrap();
+        assert!(normal.visible_in_process_list);
+        assert!(!normal.dkom_unlinked_suspected);
+        assert!(normal.aperf_mperf_polling_disabled);
+        assert_eq!(normal.conservation_status, "CONSERVED");
+
+        let dkom = records.iter().find(|r| r.pid == 6666).unwrap();
+        assert!(!dkom.visible_in_process_list);
+        assert!(dkom.dkom_unlinked_suspected);
+        assert!(dkom.aperf_mperf_polling_disabled);
+        assert_eq!(dkom.mitre_technique, "T1014");
+        assert!(dkom.conservation_status.contains("DKOM_UNLINKED_EPROCESS_DEFICIT"));
+
+        let race = records.iter().find(|r| r.pid == 7777).unwrap();
+        assert!(!race.dkom_unlinked_suspected, "Single-channel exit race must not false-positive");
+
+        // Verify live SQL table `kernel_object_conservation`
+        let engine = SiqueryEngine::new();
+        let rows = engine
+            .execute_query("SELECT pid, visible_in_process_list, hardware_thread_queue_count, handle_and_socket_count, mapped_page_frames, conservation_status, dkom_unlinked_suspected, aperf_mperf_polling_disabled FROM kernel_object_conservation LIMIT 10;")
+            .expect("Query on kernel_object_conservation must succeed");
+        assert!(!rows.is_empty(), "kernel_object_conservation must return live host rows");
+        assert_eq!(
+            rows[0].get("aperf_mperf_polling_disabled").and_then(|v| v.as_i64()),
+            Some(1)
+        );
+    }
 }
+

@@ -920,7 +920,7 @@ impl KernelDriverClient {
         let lower = trimmed.replace('/', "\\").to_ascii_lowercase();
         let basename = lower.rsplit('\\').next().unwrap_or(&lower);
 
-        // 1. Developer toolchains & container infrastructure (Universal Immunity)
+        // 1. Developer toolchains, OS shells, & container infrastructure (Universal Ring-0 Path Blocklist Immunity)
         matches!(
             basename,
             "python.exe"
@@ -943,17 +943,30 @@ impl KernelDriverClient {
                 | "wsl"
                 | "docker.exe"
                 | "docker"
-                // Linux core daemons & interactive shells (never block the shell binary itself in Ring-0)
+                // Core OS shells & terminal hosts (never globally block shell binaries on disk in Ring-0;
+                // malicious shell invocations are contained per-PID in userland remediation/tarpit)
+                | "powershell.exe"
+                | "pwsh.exe"
+                | "cmd.exe"
+                | "conhost.exe"
+                | "wt.exe"
+                | "windowsterminal.exe"
+                | "bash"
+                | "sh"
+                | "zsh"
+                | "dash"
+                | "fish"
+                | "csh"
+                | "tcsh"
+                | "ksh"
+                | "login"
+                | "su"
+                | "sudo"
+                // Linux core daemons & init (never block init or core brokers in Ring-0)
                 | "systemd"
                 | "dbus-daemon"
                 | "sshd"
                 | "init"
-                | "bash"
-                | "sh"
-                | "zsh"
-                | "powershell.exe"
-                | "pwsh.exe"
-                | "cmd.exe"
                 // Sensor & auditing binaries
                 | "osoosi.exe"
                 | "osoosi-cli.exe"
