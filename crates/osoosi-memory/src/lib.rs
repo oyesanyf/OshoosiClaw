@@ -212,6 +212,8 @@ impl MemoryStore {
         // Schema Migrations (Dynamic)
         let _ = conn.execute("ALTER TABLE threats ADD COLUMN parent_process TEXT", []);
         let _ = conn.execute("ALTER TABLE threats ADD COLUMN version TEXT", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_threats_detected_at ON threats (detected_at DESC)", []);
+        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_threats_proc_hash ON threats (process_name, hash_blake3)", []);
 
         // Reputation scores for mesh peers (EigenTrust-lite)
         conn.execute(

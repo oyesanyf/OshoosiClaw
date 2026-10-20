@@ -4178,6 +4178,20 @@ impl AutonomousReaEngine {
             let is_protected_path =
                 crate::blocking_manager::is_protected_or_benign_system_path(&resolved_str);
 
+            if is_protected_toolchain || is_protected_path || is_signed {
+                let synthetic_hash = blake3::hash(format!("rea:adjudicated:trusted:{}", resolved_str).as_bytes())
+                    .to_hex()
+                    .to_string();
+                return (
+                    true,
+                    format!(
+                        "Autonomous REA verified protected system binary '{}'",
+                        resolved_str
+                    ),
+                    Some(synthetic_hash),
+                );
+            }
+
             if let Ok(report) = analyze_target_path(
                 &resolved_str,
                 ReaTargetKind::Auto,

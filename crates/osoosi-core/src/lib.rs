@@ -1478,6 +1478,8 @@ pub struct EdrOrchestrator {
     pub dismissed_gossip_ids: Arc<dashmap::DashSet<String>>,
     /// Set of process basenames autonomously adjudicated clean by REA
     pub rea_adjudicated_clean_procs: Arc<dashmap::DashSet<String>>,
+    /// Timestamp (unix seconds) of the last autonomous REA threat adjudication sweep
+    last_rea_adjudication_ts: Arc<std::sync::atomic::AtomicI64>,
     /// Debouncer for mesh threat broadcasts (key -> last_broadcast_time)
     mesh_broadcast_debouncer: Arc<dashmap::DashMap<String, Instant>>,
     /// Synthetic Canary Correlator: Tracking probe health and anti-blinding
@@ -3907,6 +3909,7 @@ impl EdrOrchestrator {
             )),
             dismissed_gossip_ids: Arc::new(dashmap::DashSet::new()),
             rea_adjudicated_clean_procs: Arc::new(dashmap::DashSet::new()),
+            last_rea_adjudication_ts: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             mesh_broadcast_debouncer: Arc::new(dashmap::DashMap::new()),
             nostr_mesh,
             mesh_gossip_count_atomic,
@@ -9862,7 +9865,12 @@ impl EdrOrchestrator {
 
     /// Retrieve live and persisted gossip mesh feed items with intelligent sorting and routine chatter pruning.
     pub fn get_gossip_feed(&self, limit: usize) -> Vec<osoosi_types::GossipFeedItem> {
-        self.run_autonomous_rea_threat_adjudication();
+        let now = chrono::Utc::now().timestamp();
+        let last = self.last_rea_adjudication_ts.load(std::sync::atomic::Ordering::Relaxed);
+        if now.saturating_sub(last) >= 10 {
+            self.last_rea_adjudication_ts.store(now, std::sync::atomic::Ordering::Relaxed);
+            self.run_autonomous_rea_threat_adjudication();
+        }
         let mut items = Vec::new();
 
         // 1. First get items from the in-memory live gossip ring buffer
@@ -10348,6 +10356,7 @@ impl EdrOrchestrator {
     /// Autonomously adjudicate pending candidate threats and live gossip items via REA.
     /// Drops benign toolchain / OS binaries, CVE version-mismatch alerts, and vendor-vetoed threats.
     pub fn run_autonomous_rea_threat_adjudication(&self) -> usize {
+        self.last_rea_adjudication_ts.store(chrono::Utc::now().timestamp(), std::sync::atomic::Ordering::Relaxed);
         let mut dropped = self.memory.purge_vetoed_and_false_positive_threats().unwrap_or(0);
         let mut candidates = Vec::new();
         if let Ok(feed) = self.mesh_gossip_feed.read() {
