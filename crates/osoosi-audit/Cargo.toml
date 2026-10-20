@@ -18,6 +18,7 @@ blake3 = { workspace = true }
 dashmap = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
+subtle = { workspace = true }
 silicon-shield = { workspace = true }
 zero-genesis-capacity = { workspace = true }
 

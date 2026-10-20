@@ -13,10 +13,12 @@ use std::sync::Mutex;
 
 pub mod hierarchical;
 pub mod nsrl_aslr_merkle;
+pub mod pqc_primitives;
 pub mod tpm;
 
 pub use hierarchical::*;
 pub use nsrl_aslr_merkle::*;
+pub use pqc_primitives::*;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuditEntry {

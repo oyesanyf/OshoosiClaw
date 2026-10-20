@@ -290,13 +290,17 @@ Evaluated over $N = 20$ matched episode seeds with identical initial 12-node ent
 | **5. `Disabled` (Passive Unmitigated Baseline)** | `local_synthetic_cyberbattlesim_topology_v1` | `-499.43 ± 10.67` | `16.67% ± 0.00%` | `5.8000 ± 0.1920` |
 
 ```powershell
-# Run the complete 16-vector Adversarial Red-Team Gauntlet + 5-Policy RL Benchmark via CLI:
+# Run the complete 17-vector Adversarial Red-Team Gauntlet + 5-Policy RL Benchmark + PQC CBOM via CLI:
 .\target\release\osoosi.exe redteam --suite all
 
 # Or run via osoosi-auditor / Python orchestrator and export octopus_exhaustive_test_report.json:
 .\target\release\osoosi-auditor.exe --redteam-gauntlet
 python scripts/adversarial_stix_owasp_redteam.py --all
 ```
+
+#### 3. Quantum-Ready Post-Quantum Cryptography (`NIST FIPS 203 ML-KEM-768` & `FIPS 204 ML-DSA-65`) & CBOM
+- **Hybrid Key Encapsulation (`osoosi-wire::pqc`, `osoosi-audit::pqc_primitives`)**: Combines classical RFC 7748 `X25519` Montgomery-ladder ECDH over $\mathbb{F}_{2^{255}-19}$ with NIST FIPS 203 `ML-KEM-768` Module-LWE encapsulation over $R_q = \mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k=3$, 1184-byte public key, 1088-byte ciphertext) and constant-time Fujisaki-Okamoto (`FO^{\not\perp}`) re-encryption verification.
+- **Hybrid Digital Signatures (`HybridSignatureEnvelope`)**: Combines RFC 8032 `Ed25519` (`ed25519_dalek`) with NIST FIPS 204 `ML-DSA-65` (Dilithium) lattice Fiat-Shamir with Aborts over $R_q = \mathbb{Z}_{8380417}[X]/(X^{256}+1)$ ($\gamma_1 = 2^{17}, \gamma_2 = 95232, \tau = 39, \eta = 4$). Both classical and post-quantum equations must independently verify, blocking Quantum Shor's Algorithm classical-half forgeries (`BYPASS-PQC-SHOR-DOWNGRADE-05`).
 
 ---
 

@@ -183,6 +183,28 @@ impl TrustManager {
         &self.did
     }
 
+    /// Generates a dual-anchored Post-Quantum `ML-DSA-65` + `Ed25519` hybrid signature over `payload`.
+    pub fn generate_pqc_hybrid_attestation_signature(&self, payload: &[u8]) -> String {
+        let sig_bytes = osoosi_audit::pqc_primitives::hybrid_sign_bytes(
+            payload,
+            &self.signing_key.to_bytes(),
+        );
+        hex::encode(sig_bytes)
+    }
+
+    /// Verifies a dual-anchored Post-Quantum `ML-DSA-65` + `Ed25519` hybrid signature over `payload`.
+    pub fn verify_pqc_hybrid_attestation_signature(
+        &self,
+        payload: &[u8],
+        signature_hex: &str,
+    ) -> bool {
+        let Ok(sig_bytes) = hex::decode(signature_hex) else {
+            return false;
+        };
+        let vk = self.signing_key.verifying_key().to_bytes();
+        osoosi_audit::pqc_primitives::hybrid_verify_bytes(payload, &sig_bytes, &vk)
+    }
+
     /// Set up a local Certificate Authority (CA) using rcgen (pure Rust).
     pub async fn init_ca(&self, path: &str) -> anyhow::Result<()> {
         use rcgen::{CertificateParams, DistinguishedName, IsCa, KeyPair};

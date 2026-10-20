@@ -81,6 +81,7 @@ pub struct AdversarialGauntletScorecard {
     pub forensic_completeness_pct: f64,
     pub os_oracle_report: IndependentOsOracleReport,
     pub rl_5_policy_benchmark: StandardizedRlBenchmarkReport,
+    pub pqc_cbom: osoosi_audit::pqc_primitives::CryptographicBillOfMaterials,
     pub vector_results: Vec<AdversarialVectorResult>,
 }
 
@@ -800,6 +801,66 @@ impl AdversarialRedTeamGauntlet {
             blocked_independently
         };
 
+        // Vector 4.4: Post-Quantum Shor/Grover Resistance & Hybrid Downgrade Attack (ML-KEM-768 + X25519 & ML-DSA-65 + Ed25519)
+        {
+            let t0 = Instant::now();
+            let initiator = osoosi_wire::pqc::generate_hybrid_keypair();
+            let responder = osoosi_wire::pqc::generate_hybrid_keypair();
+            let enc = osoosi_wire::pqc::hybrid_key_exchange(
+                &initiator,
+                &responder.x25519_public,
+                &responder.mlkem_public,
+            );
+            let dec_ok = osoosi_wire::pqc::hybrid_decapsulate(
+                &responder,
+                &initiator.x25519_public,
+                &enc.mlkem_ciphertext,
+            )
+            .map(|d| d.shared_secret == enc.shared_secret)
+            .unwrap_or(false);
+
+            let mut tampered_ct = enc.mlkem_ciphertext.clone();
+            if !tampered_ct.is_empty() {
+                tampered_ct[42] ^= 0x01;
+            }
+            let fo_rejected = osoosi_wire::pqc::hybrid_decapsulate(
+                &responder,
+                &initiator.x25519_public,
+                &tampered_ct,
+            )
+            .is_err();
+
+            let sk_seed = [0x5Au8; 32];
+            let vk = osoosi_audit::pqc_primitives::derive_hybrid_verifying_key(&sk_seed);
+            let msg = b"OpenOsoosi Quantum-Ready Merkle Root Attestation";
+            let mut env = osoosi_audit::pqc_primitives::hybrid_sign_envelope(msg, &sk_seed);
+            let valid_hybrid =
+                osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &env, &vk);
+            // Simulate a Quantum Shor's Algorithm forgery: classical Ed25519 sig remains valid,
+            // while 1 coefficient of the ML-DSA-65 lattice vector z is perturbed:
+            env.mldsa_z[0].coeffs[0] = env.mldsa_z[0].coeffs[0].wrapping_add(1);
+            let shor_forgery_rejected =
+                !osoosi_audit::pqc_primitives::hybrid_verify_envelope(msg, &env, &vk);
+
+            let prevented = dec_ok && fo_rejected && valid_hybrid && shor_forgery_rejected;
+            results.push(AdversarialVectorResult {
+                suite: "Suite4_Reviewer_Bypass_Resistance".to_string(),
+                vector_id: "BYPASS-PQC-SHOR-DOWNGRADE-05".to_string(),
+                framework_ref: "NIST FIPS 203 (ML-KEM-768) & NIST FIPS 204 (ML-DSA-65) Hybrid Shor/Grover Resistance".to_string(),
+                description: "Quantum Shor's algorithm classical-half forgery & ML-KEM-768 lattice ciphertext bit-flip downgrade attack".to_string(),
+                prevented,
+                detected: prevented,
+                bypass_succeeded: !prevented,
+                os_oracle_verified: prevented,
+                latency_us: t0.elapsed().as_micros().max(1) as u64,
+                enforcing_layer: "NIST_FIPS203_MLKEM768_And_FIPS204_MLDSA65_HybridPQC".to_string(),
+                evidence: format!(
+                    "kem_roundtrip={}, fo_tamper_rejected={}, hybrid_sig_ok={}, shor_forgery_rejected={}",
+                    dec_ok, fo_rejected, valid_hybrid, shor_forgery_rejected
+                ),
+            });
+        }
+
         // =========================================================================
         // Verify Multi-Thread Forensic Completeness (`/proc/<tgid>/task/<tid>`)
         // =========================================================================
@@ -927,6 +988,7 @@ impl AdversarialRedTeamGauntlet {
 
         let rl_5_policy_benchmark =
             RLAdaptiveController::run_standardized_5_policy_benchmark(30, 24);
+        let pqc_cbom = osoosi_audit::pqc_primitives::generate_pqc_cbom_report();
 
         AdversarialGauntletScorecard {
             timestamp_utc: chrono::Utc::now().to_rfc3339(),
@@ -945,6 +1007,7 @@ impl AdversarialRedTeamGauntlet {
             forensic_completeness_pct,
             os_oracle_report,
             rl_5_policy_benchmark,
+            pqc_cbom,
             vector_results: results,
         }
     }
@@ -965,5 +1028,6 @@ mod tests {
         assert_eq!(scorecard.forensic_completeness_pct, 100.0);
         assert!(scorecard.os_oracle_report.all_os_invariants_verified);
         assert!(scorecard.rl_5_policy_benchmark.learned_rl_exceeds_heuristic);
+        assert!(scorecard.pqc_cbom.quantum_ready);
     }
 }

@@ -1,11 +1,11 @@
 {
-  "timestamp_utc": "2026-10-20T13:26:32Z",
-  "total_adversarial_vectors": 16,
-  "vectors_prevented": 16,
+  "timestamp_utc": "2026-10-20T14:25:44Z",
+  "total_adversarial_vectors": 17,
+  "vectors_prevented": 17,
   "prevention_rate_pct": 100.0,
   "detection_rate_pct": 100.0,
-  "containment_latency_p50_us": 18,
-  "containment_latency_p99_us": 1355,
+  "containment_latency_p50_us": 24,
+  "containment_latency_p99_us": 1858,
   "bypass_success_rate_pct": 0.0,
   "false_positive_rate_pct": 0.0,
   "os_stability_score_pct": 100.0,
@@ -17,6 +17,13 @@
     "cross_layer_cedar_bypass_blocked_by_os_ring": true,
     "all_os_invariants_verified": true
   },
+  "pqc_cbom": {
+    "cbom_version": "CBOM-1.2.0-FIPS-203-204",
+    "quantum_ready": true,
+    "hybrid_downgrade_protection": true,
+    "kem_algorithm": "NIST FIPS 203 ML-KEM-768 (Kyber) + RFC 7748 X25519",
+    "signature_algorithm": "NIST FIPS 204 ML-DSA-65 (Dilithium) + RFC 8032 Ed25519"
+  },
   "vectors": [
     {
       "suite": "Suite1_MITRE_STIX_Atomic_CALDERA",
@@ -25,7 +32,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 54,
+      "latency_us": 73,
       "enforcing_layer": "Law7_CfgHadamardZeroVerifier"
     },
     {
@@ -35,7 +42,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 27,
+      "latency_us": 37,
       "enforcing_layer": "DualStage_5Sigma_QuarantineResponder"
     },
     {
@@ -45,7 +52,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 20,
+      "latency_us": 28,
       "enforcing_layer": "KernelDriverManager_WDAC_SectionSync"
     },
     {
@@ -55,7 +62,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 18,
+      "latency_us": 25,
       "enforcing_layer": "Law4_MartingaleZeroDriftDetector"
     },
     {
@@ -65,7 +72,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 17,
+      "latency_us": 24,
       "enforcing_layer": "HostOsAndSelfDefenseImmunityVeto"
     },
     {
@@ -75,7 +82,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 18,
+      "latency_us": 24,
       "enforcing_layer": "Law6_IharaZetaCycleDetector"
     },
     {
@@ -155,7 +162,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 1355,
+      "latency_us": 1858,
       "enforcing_layer": "Law5_ZeroCopyBuffer_And_PinnedToolObjectBinding"
     },
     {
@@ -165,7 +172,7 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 172,
+      "latency_us": 223,
       "enforcing_layer": "OsoosiTwoTierDlpEngine_PresidioGlinerPiiZeroGuard"
     },
     {
@@ -175,8 +182,18 @@
       "prevented": true,
       "detected": true,
       "bypass_succeeded": false,
-      "latency_us": 590,
+      "latency_us": 779,
       "enforcing_layer": "IndependentTrustBoundaryVerifier_Layer3_OS_Boundary"
+    },
+    {
+      "suite": "Suite4_Reviewer_Bypass_Resistance",
+      "vector_id": "BYPASS-PQC-SHOR-DOWNGRADE-05",
+      "framework_ref": "NIST FIPS 203 (ML-KEM-768) & NIST FIPS 204 (ML-DSA-65) Hybrid Shor/Grover Resistance",
+      "prevented": true,
+      "detected": true,
+      "bypass_succeeded": false,
+      "latency_us": 504,
+      "enforcing_layer": "NIST_FIPS203_MLKEM768_And_FIPS204_MLDSA65_HybridPQC"
     }
   ]
 }
