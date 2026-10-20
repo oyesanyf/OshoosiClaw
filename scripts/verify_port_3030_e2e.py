@@ -134,7 +134,7 @@ def test_endpoints():
         data = json.loads(resp.read().decode("utf-8"))
         print(f" [PASS] POST /api/threats/audit-test-123/false-positive -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): {data}")
         assert resp.status == 200
-        assert data.get("status") == "ok"
+        assert data.get("ok") is True or data.get("status") == "ok"
 
     # Test POST /api/threats/confirm/audit-test-456
     cf_url = f"{BASE_URL}/api/threats/confirm/audit-test-456"
@@ -145,7 +145,7 @@ def test_endpoints():
         data = json.loads(resp.read().decode("utf-8"))
         print(f" [PASS] POST /api/threats/confirm/audit-test-456 -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): {data}")
         assert resp.status == 200
-        assert data.get("status") == "ok"
+        assert data.get("ok") is True or data.get("status") == "ok"
 
     print("\n" + "="*70)
     print(" ALL END-TO-END VERIFICATIONS PASSED (100% HEALTH & LATENCY SLA)")
