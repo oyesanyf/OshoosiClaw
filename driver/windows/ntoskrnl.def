@@ -1,0 +1,28 @@
+LIBRARY ntoskrnl.exe
+EXPORTS
+    PsProcessType DATA
+    PsThreadType DATA
+    RtlInitUnicodeString
+    RtlCompareMemory
+    KeInitializeSpinLock
+    KeAcquireInStackQueuedSpinLock
+    KeReleaseInStackQueuedSpinLock
+    KeQuerySystemTime
+    ExAllocatePoolWithTag
+    ExFreePoolWithTag
+    IoCreateDevice
+    IoDeleteDevice
+    IoCreateSymbolicLink
+    IoDeleteSymbolicLink
+    IoCompleteRequest
+    PsSetCreateProcessNotifyRoutineEx
+    PsSetLoadImageNotifyRoutine
+    PsRemoveLoadImageNotifyRoutine
+    PsGetProcessId
+    PsGetCurrentProcessId
+    PsGetCurrentProcess
+    IoThreadToProcess
+    ObRegisterCallbacks
+    ObUnRegisterCallbacks
+    IoRegisterBootDriverCallback
+    IoUnregisterBootDriverCallback

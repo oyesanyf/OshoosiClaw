@@ -1,0 +1,17 @@
+/*
+ * MicrosoftElamCertificateInfo Resource Table for OsoosiElam.sys
+ * Authorizes Protected Process Light (PPL Antimalware Light) launch for OsoosiEDR
+ * Contains both CALG_SHA_256 (0x800C) and CALG_SHA1 (0x8004) certificate hashes
+ * for CN=Oshoosi Developer.
+ */
+
+MSElamCertInfoID MicrosoftElamCertificateInfo
+BEGIN
+    2,
+    L"24B2A55CF709A281FFB6CBD9F96AA00DBAE69EB8AC4D46CC5E10CAC63713D36D\0",
+    0x800C,
+    L"1.3.6.1.4.1.311.61.4.1;1.3.6.1.5.5.7.3.3\0",
+    L"9A6D3B509500813058EC63183476464FAC8F015B\0",
+    0x8004,
+    L"1.3.6.1.4.1.311.61.4.1;1.3.6.1.5.5.7.3.3\0"
+END

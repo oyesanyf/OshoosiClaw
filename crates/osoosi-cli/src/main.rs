@@ -940,6 +940,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         let _ = osoosi_core::firewall::open_mesh_ports().await;
     } else if is_starting {
         println!("[+] Initializing OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Engine...");
+        let _ = osoosi_runtime::kernel_driver::harden_current_process_kernel_dacl();
+        let _ = osoosi_runtime::kernel_driver::register_elam_certificate_if_present(Path::new(
+            r"driver\windows\osoosi_elam.sys",
+        ));
+        if let Some(kd) = osoosi_runtime::kernel_driver::KernelDriverClient::open() {
+            let _ = kd.protect_pid(std::process::id(), true);
+        }
         println!(
             "[+] Configuring firewall filters & P2P mesh ports (4001, 9000, 9876, 5353, 3030)..."
         );
@@ -3686,55 +3693,72 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
 async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
     match action {
         DriverAction::Status => {
+            let _ = osoosi_runtime::kernel_driver::harden_current_process_kernel_dacl();
+            let _ = osoosi_runtime::kernel_driver::register_elam_certificate_if_present(Path::new(
+                r"driver\windows\osoosi_elam.sys",
+            ));
+            let ppl_level = osoosi_runtime::kernel_driver::query_current_process_ppl_level();
+            let (lsm_hooks, lsm_blocks) = osoosi_telemetry::linux_ebpf::get_ebpf_lsm_stats();
             let client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
             match client {
-                Some(kd) => match kd.get_status() {
+                Some(kd) => match kd.get_extended_status() {
                     Ok(st) => {
-                        println!("====================================================");
-                        println!(" OshoosiClaw Ring-0 Kernel Driver Status");
-                        println!("====================================================");
-                        println!("  Driver Version : 0x{:08X}", st.version);
-                        println!("  Autonomy Mode  : {}", st.mode);
-                        println!("  Blocked Count  : {}", st.blocked_count);
-                        println!("  Rule Count     : {}", st.rule_count);
+                        println!("================================================================");
+                        println!(" OshoosiClaw Ring-0 Kernel Driver & Inline LSM Status (v1.2.0)");
+                        println!("================================================================");
+                        println!("  Driver Version           : 0x{:08X}", st.version);
+                        println!("  Autonomy Mode            : {}", st.mode);
+                        println!("  Protected Sensor PID     : {}", st.protected_pid);
+                        println!("  Process Protection Level : {}", ppl_level);
+                        println!("  ObRegisterCallbacks      : {} (Altitude 385200)", if st.ob_callbacks_active { "Active" } else { "Standby" });
+                        println!("  BYOVD Image Load Guard   : {} ({} signatures)", if st.image_load_notify_active { "Active" } else { "Standby" }, osoosi_runtime::kernel_driver::KNOWN_BYOVD_DRIVERS.len());
+                        println!("  Minifilter Self-Defense  : {}", if st.minifilter_active { "Active" } else { "Standby" });
+                        println!("  ELAM Boot Driver Ready   : {}", if st.elam_registered { "Yes (OsoosiElam)" } else { "Staged (driver/windows/osoosi_elam.sys)" });
+                        println!("  Linux BPF_PROG_TYPE_LSM  : {} (Hooks: {}, Blocks: {})", if cfg!(target_os = "linux") { "Active (bprm_check_security, file_open, socket_connect)" } else { "Compiled & Packaged (ebpf/osoosi_probe.bpf.o)" }, lsm_hooks, lsm_blocks);
+                        println!("  Pre-Exec Blocked Count   : {}", st.blocked_count);
+                        println!("  BYOVD Drivers Blocked    : {}", st.byovd_blocked_count);
+                        println!("  Handle Strips Enforced   : {}", st.handle_stripped_count);
+                        println!("  Minifilter Tamper Blocks : {}", st.minifilter_blocked_count);
+                        println!("  Active Rule Count        : {}", st.rule_count);
                         println!(
-                            "  Device Path    : {}",
+                            "  Device Path              : {}",
                             osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME
                         );
-                        println!("  Operational    : Yes (Pre-exec blocking active)");
-                        println!("====================================================");
+                        println!("  Operational              : Yes (Ring-0 & Inline LSM Enforced)");
+                        println!("================================================================");
                     }
                     Err(e) => {
                         eprintln!("Error querying driver status: {}", e);
                     }
                 },
                 None => {
-                    println!("====================================================");
+                    println!("================================================================");
                     println!(" OshoosiClaw Ring-0 Kernel Driver: NOT CONNECTED");
-                    println!("====================================================");
+                    println!("================================================================");
                     println!(
                         "  Device '{}' is not accessible or driver service is not running.",
                         osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME
                     );
-                    println!("  User-mode WFP packet filter + active thread tarpit operating as defense-in-depth.");
+                    println!("  Process Protection Level : {}", ppl_level);
+                    println!("  User-mode WFP packet filter + Kernel DACL + active thread tarpit operating as defense-in-depth.");
                     println!(
-                        "  Run 'osoosi driver install' as Administrator to configure the service."
+                        "  Run 'osoosi driver install' as Administrator to configure OsoosiDriver and OsoosiElam."
                     );
-                    println!("====================================================");
+                    println!("================================================================");
                 }
             }
         }
         DriverAction::Install { path } => {
             #[cfg(windows)]
             {
-                info!("Installing Oshoosi Ring-0 Kernel Driver service...");
+                info!("Installing Oshoosi Ring-0 Kernel Driver & ELAM services...");
+                let app_root = std::env::current_exe()
+                    .ok()
+                    .map(|e| service::resolve_app_root_from_exe(&e))
+                    .unwrap_or_else(|| std::path::PathBuf::from("."));
                 let driver_path = if let Some(p) = path {
                     std::path::PathBuf::from(p)
                 } else {
-                    let app_root = std::env::current_exe()
-                        .ok()
-                        .map(|e| service::resolve_app_root_from_exe(&e))
-                        .unwrap_or_else(|| std::path::PathBuf::from("."));
                     let candidates = [
                         app_root.join(r"driver\windows\osoosi_driver.sys"),
                         app_root.join(r"driver\osoosi_driver.sys"),
@@ -3751,6 +3775,15 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                         .find(|p| p.exists())
                         .unwrap_or_else(|| app_root.join(r"driver\windows\osoosi_driver.sys"))
                 };
+                let elam_path = driver_path
+                    .parent()
+                    .map(|p| p.join("osoosi_elam.sys"))
+                    .unwrap_or_else(|| app_root.join(r"driver\windows\osoosi_elam.sys"));
+
+                if elam_path.exists() {
+                    let _ = osoosi_runtime::kernel_driver::register_elam_certificate_if_present(&elam_path);
+                }
+
                 let sc_bin = osoosi_types::resolve_system_binary("sc.exe");
                 println!(
                     "Registering kernel service 'OsoosiDriver' pointing to {:?}...",
@@ -3769,13 +3802,34 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                     ])
                     .status();
 
+                if elam_path.exists() {
+                    println!(
+                        "Registering Early Launch Anti-Malware (ELAM) driver 'OsoosiElam' pointing to {:?}...",
+                        elam_path
+                    );
+                    let _ = std::process::Command::new(&sc_bin)
+                        .args([
+                            "create",
+                            "OsoosiElam",
+                            "type=",
+                            "kernel",
+                            "binPath=",
+                            &elam_path.to_string_lossy(),
+                            "start=",
+                            "demand",
+                            "group=",
+                            "Early-Launch",
+                        ])
+                        .status();
+                }
+
                 match create_status {
                     Ok(s) if s.success() => {
                         info!("Driver service successfully created. Starting driver...");
                         let _ = std::process::Command::new(&sc_bin)
                             .args(["start", "OsoosiDriver"])
                             .status();
-                        println!("OshoosiDriver service registered and start requested.");
+                        println!("OsoosiDriver & OsoosiElam services registered and start requested.");
                     }
                     Ok(s) => {
                         warn!("sc create exited with status: {}. Attempting to start in case service already exists...", s);
@@ -3798,7 +3852,7 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
             #[cfg(not(windows))]
             {
                 let _ = path;
-                println!("Driver installation is only supported on Windows.");
+                println!("Linux inline BPF_PROG_TYPE_LSM programs (bprm_check_security, file_open, socket_connect) are automatically loaded from ebpf/osoosi_probe.bpf.o upon daemon start.");
             }
         }
         DriverAction::Uninstall => {

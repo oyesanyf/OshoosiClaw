@@ -1,0 +1,53 @@
+;
+; OshoosiClaw Early Launch Anti-Malware (ELAM) Boot-Start Driver INF
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = "EarlyLaunch"
+ClassGuid   = {e5332d79-215d-407f-ab1c-0f28b7986274}
+Provider    = %ProviderString%
+DriverVer   = 10/19/2026,1.2.0.0
+CatalogFile = osoosi_elam.cat
+PnpLockDown = 1
+
+[DestinationDirs]
+DefaultDestDir        = 12    ; %windir%\system32\drivers
+OsoosiElam.DriverFiles = 12
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles]
+osoosi_elam.sys = 1,,
+
+[DefaultInstall.NTamd64]
+OptionDesc          = %ServiceDescription%
+CopyFiles           = OsoosiElam.DriverFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService          = %ServiceName%,,OsoosiElam_Service_Inst
+
+[DefaultUninstall.NTamd64]
+DelFiles            = OsoosiElam.DriverFiles
+
+[DefaultUninstall.NTamd64.Services]
+DelService          = %ServiceName%,0x200
+
+[OsoosiElam.DriverFiles]
+osoosi_elam.sys,,,0x00000040
+
+[OsoosiElam_Service_Inst]
+DisplayName         = %ServiceName%
+Description         = %ServiceDescription%
+ServiceBinary       = %12%\osoosi_elam.sys
+ServiceType         = 1                  ; SERVICE_KERNEL_DRIVER
+StartType           = 0                  ; SERVICE_BOOT_START (Early Launch)
+ErrorControl        = 0                  ; SERVICE_ERROR_IGNORE (Never fail boot)
+LoadOrderGroup      = "Early-Launch"
+
+[Strings]
+ProviderString      = "Oshoosi Security Inc."
+ServiceName         = "OsoosiElam"
+ServiceDescription  = "OshoosiClaw Early Launch Anti-Malware (ELAM) Boot-Start Driver & PPL Authorizer"
+DiskId1             = "Oshoosi ELAM Driver Installation Disk"
