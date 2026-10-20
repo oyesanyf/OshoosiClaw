@@ -94,6 +94,8 @@ impl BehavioralAnalyzer {
         } else {
             std::env::var("OSOOSI_LLM_API_BASE")
                 .or_else(|_| std::env::var("OSOOSI_OPENAI_API_BASE"))
+                // Localhost loopback inference endpoint for local Ollama service.
+                // nosemgrep: rust.reqwest.security.http-url
                 .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string())
         };
         let default_fallback = if cloud_llm_opted_in {

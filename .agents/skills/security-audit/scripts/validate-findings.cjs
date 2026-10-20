@@ -109,6 +109,8 @@ function typeOf(value) {
   return typeof value;
 }
 
+const PROTO_POLLUTION_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 function deepEqual(left, right) {
   if (left === right) return true;
   if (typeOf(left) !== typeOf(right)) return false;
@@ -116,8 +118,8 @@ function deepEqual(left, right) {
     return left.length === right.length && left.every((value, index) => deepEqual(value, right[index]));
   }
   if (left !== null && typeof left === "object") {
-    const leftKeys = Object.keys(left);
-    const rightKeys = Object.keys(right);
+    const leftKeys = Object.keys(left).filter((key) => !PROTO_POLLUTION_KEYS.has(key));
+    const rightKeys = Object.keys(right).filter((key) => !PROTO_POLLUTION_KEYS.has(key));
     return leftKeys.length === rightKeys.length &&
       leftKeys.every((key) => hasOwn(right, key) && deepEqual(left[key], right[key]));
   }
@@ -779,9 +781,11 @@ module.exports = {
   UNSAFE_DIAGNOSTIC_CHARACTER,
   VISIBLE_CONTENT,
   WINDOWS_RESERVED_COMPONENT,
+  PROTO_POLLUTION_KEYS,
   collect,
   collectFindingSemanticErrors,
   collectSchemaErrors,
+  deepEqual,
   hasVisibleProse,
   isSafeRelativeSourcePath,
   validateDocument,

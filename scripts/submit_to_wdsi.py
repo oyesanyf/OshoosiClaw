@@ -20,6 +20,7 @@ import uuid
 import datetime
 import subprocess
 import webbrowser
+import urllib.parse
 from pathlib import Path
 
 # Edge Case 1: Safe Unicode output for Windows terminals (handling Yoruba diacritics in OpenỌ̀ṣọ́ọ̀sì)
@@ -72,7 +73,7 @@ def compute_hashes_and_size(file_path: Path) -> dict:
     to prevent memory exhaustion on large binaries (e.g., 65MB osoosi.exe, 34MB MSI).
     """
     sha256 = hashlib.sha256()
-    md5 = hashlib.md5()
+    md5 = hashlib.md5(usedforsecurity=False)
     total_bytes = 0
 
     with open(file_path, "rb") as f:
@@ -207,10 +208,16 @@ def try_tier1_graph_submission(payload: dict, file_path: Path, dry_run: bool, qu
         log("[WDSI Tier 1] Python 'requests' library not found, skipping Tier 1.", quiet, color="yellow")
         return None
 
+    def _assert_safe_url(url: str) -> str:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme.lower() not in ("http", "https"):
+            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+        return url
+
     try:
         # Obtain OAuth token if needed
         if not token and client_id and client_secret and tenant_id:
-            token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+            token_url = _assert_safe_url(f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token")
             token_resp = requests.post(
                 token_url,
                 data={
@@ -228,7 +235,7 @@ def try_tier1_graph_submission(payload: dict, file_path: Path, dry_run: bool, qu
                 return None
 
         # Build Graph threat submission request
-        submission_url = "https://graph.microsoft.com/v1.0/security/threatSubmission/fileSubmissions"
+        submission_url = _assert_safe_url("https://graph.microsoft.com/v1.0/security/threatSubmission/fileSubmissions")
         headers = {
             "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",

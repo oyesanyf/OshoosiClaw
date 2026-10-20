@@ -123,7 +123,7 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
 
 /// Checks whether the Kill Chain interface is currently in a security lockout state.
 pub fn check_lockout_status() -> (bool, u64) {
-    let mut guard = RATE_LIMIT_LOCK.write().unwrap();
+    let mut guard = RATE_LIMIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
     if let (fails, Some(lock_time)) = *guard {
         if fails >= MAX_FAILED_ATTEMPTS {
             let elapsed = lock_time.elapsed().as_secs();
@@ -140,7 +140,7 @@ pub fn check_lockout_status() -> (bool, u64) {
 
 /// Record a failed verification attempt. Triggers security lockout on 3 strikes.
 pub fn record_failed_attempt() -> (bool, u64) {
-    let mut guard = RATE_LIMIT_LOCK.write().unwrap();
+    let mut guard = RATE_LIMIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
     let (mut fails, _) = *guard;
     fails += 1;
     let now = Instant::now();
@@ -159,13 +159,13 @@ pub fn record_failed_attempt() -> (bool, u64) {
 
 /// Reset failed attempts upon successful authorized operation.
 pub fn record_successful_auth() {
-    let mut guard = RATE_LIMIT_LOCK.write().unwrap();
+    let mut guard = RATE_LIMIT_LOCK.write().unwrap_or_else(|e| e.into_inner());
     *guard = (0, None);
 }
 
 /// Query current Kill Chain host isolation status.
 pub fn get_killchain_status() -> KillChainStatus {
-    let guard = KILLCHAIN_STORAGE.read().unwrap();
+    let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
     let mut status = guard.status.clone();
     let (_, remaining) = check_lockout_status();
     status.lockout_remaining_secs = remaining;
@@ -174,7 +174,7 @@ pub fn get_killchain_status() -> KillChainStatus {
 
 /// Query Kill Chain history ledger.
 pub fn get_killchain_history() -> Vec<KillChainHistoryEntry> {
-    let guard = KILLCHAIN_STORAGE.read().unwrap();
+    let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
     guard.history.clone()
 }
 
@@ -206,7 +206,7 @@ pub async fn engage_killchain_isolation(
         operator, reason
     );
 
-    let mut guard = KILLCHAIN_STORAGE.write().unwrap();
+    let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
     if guard.status.isolated {
         info!("🛡️ [KILLCHAIN-IDEMPOTENCY] Host is already isolated; redundant engagement request from '{}' safely preserved.", operator);
         return Ok(guard.status.clone());
@@ -334,7 +334,7 @@ pub fn validate_killchain_caller(caller_pid: Option<u32>) -> Result<()> {
         if pid <= 4 {
             return Err(anyhow!("Invalid caller PID {}", pid));
         }
-        let guard = KILLCHAIN_STORAGE.read().unwrap();
+        let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
         if guard.status.frozen_pids.contains(&pid) {
             return Err(anyhow!(
                 "Anti-Hijacking Violation: Calling process (PID {}) is currently frozen under Kill Chain quarantine. Refusing invocation.",
@@ -365,7 +365,7 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
         operator, reason
     );
 
-    let mut guard = KILLCHAIN_STORAGE.write().unwrap();
+    let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
     let now = Utc::now().to_rfc3339();
 
     // 1. Remove network quarantine
@@ -442,7 +442,7 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
     let _ = crate::firewall::remove_all_autoblock_rules();
 
     let (was_isolated, frozen_pids_snapshot) = {
-        let guard = KILLCHAIN_STORAGE.read().unwrap();
+        let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
         (
             guard.status.isolated || guard.status.network_isolated,
             guard.status.frozen_pids.clone(),
@@ -450,7 +450,7 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
     };
 
     if !was_isolated && frozen_pids_snapshot.is_empty() {
-        let guard = KILLCHAIN_STORAGE.read().unwrap();
+        let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
         return Ok(guard.status.clone());
     }
 
@@ -465,7 +465,7 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
         }
     }
 
-    let mut guard = KILLCHAIN_STORAGE.write().unwrap();
+    let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
     let now = Utc::now().to_rfc3339();
 
     // 2. Resume suspended processes

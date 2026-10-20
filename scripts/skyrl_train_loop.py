@@ -10,6 +10,7 @@ import sys
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 
 # Ensure scripts dir is in path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -17,13 +18,21 @@ from skyrl_gym import OshoosiSecurityGymEnv, SKY_ACTIONS
 
 BASE_URL = os.environ.get("OSOOSI_EDR_URL", "http://127.0.0.1:8080")
 
+def _safe_urlopen(req_or_url, timeout: float = 2.0):
+    """Enforces outbound URL scheme allowlisting (http/https only) before opening."""
+    url = req_or_url.full_url if isinstance(req_or_url, urllib.request.Request) else req_or_url
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+    return urllib.request.urlopen(req_or_url, timeout=timeout)
+
 def trigger_daemon_train(batch_size=32, gamma=0.99, lr=0.01):
     """Triggers backprop training pass on daemon replay buffer."""
     url = f"{BASE_URL.rstrip('/')}/skyrl/v1/train"
     payload = json.dumps({"batch_size": batch_size, "gamma": gamma, "learning_rate": lr}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
+        with _safe_urlopen(req, timeout=2.0) as resp:
             if resp.status == 200:
                 return json.loads(resp.read().decode("utf-8"))
     except Exception:
@@ -41,7 +50,7 @@ def fetch_daemon_generate(pid, binary_path, obs=None, lora="edr-reasoning-lora-v
     }).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
-        with urllib.request.urlopen(req, timeout=2.0) as resp:
+        with _safe_urlopen(req, timeout=2.0) as resp:
             if resp.status == 200:
                 return json.loads(resp.read().decode("utf-8"))
     except Exception:

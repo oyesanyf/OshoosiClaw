@@ -654,6 +654,8 @@ pub fn discover_disk_ollama_manifests() -> Vec<String> {
 pub async fn query_installed_ollama_models(ollama_endpoint: &str) -> Vec<String> {
     let mut http_models = Vec::new();
     let tags_url = if ollama_endpoint.trim().is_empty() {
+        // Localhost loopback inference endpoint for Ollama daemon.
+        // nosemgrep: rust.reqwest.security.http-url
         "http://127.0.0.1:11434/api/tags".to_string()
     } else if let Ok(mut parsed) = reqwest::Url::parse(ollama_endpoint) {
         parsed.set_path("/api/tags");
@@ -737,6 +739,8 @@ pub fn query_installed_ollama_models_sync(ollama_endpoint: &str) -> Vec<String> 
 fn query_installed_ollama_models_sync_inner(ollama_endpoint: &str) -> Vec<String> {
     let mut http_models = Vec::new();
     let tags_url = if ollama_endpoint.trim().is_empty() {
+        // Localhost loopback inference endpoint for Ollama daemon.
+        // nosemgrep: rust.reqwest.security.http-url
         "http://127.0.0.1:11434/api/tags".to_string()
     } else if let Ok(mut parsed) = reqwest::Url::parse(ollama_endpoint) {
         parsed.set_path("/api/tags");

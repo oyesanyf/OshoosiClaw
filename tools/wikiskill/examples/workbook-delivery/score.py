@@ -10,7 +10,15 @@ import re
 import sys
 from pathlib import Path
 from zipfile import BadZipFile
-from xml.etree.ElementTree import ParseError
+try:
+    import defusedxml.ElementTree as ET
+    from defusedxml.common import DefusedXmlException
+    ParseError = ET.ParseError
+except ImportError:
+    import xml.etree.ElementTree as ET
+    class DefusedXmlException(Exception):
+        pass
+    ParseError = ET.ParseError
 from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl import load_workbook
 
@@ -29,7 +37,7 @@ def score(payload):
     try:
         formula_book = load_workbook(payload['output']['path'], data_only=False)
         value_book = load_workbook(payload['output']['path'], data_only=True)
-    except (BadZipFile, ValueError, KeyError, ParseError, InvalidFileException):
+    except (BadZipFile, ValueError, KeyError, ParseError, DefusedXmlException, InvalidFileException):
         return {'score': 0, 'success': False, 'feedback': 'The delivered file is not a readable XLSX workbook.'}
     problems = []
     if formula_book.sheetnames != original.sheetnames:

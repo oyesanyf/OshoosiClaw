@@ -34,7 +34,10 @@ if [ ! -f "$BINARY_PATH" ]; then
     exit 1
 fi
 
+BINARY_PATH="$(cd "$(dirname "${BINARY_PATH}")" && pwd)/$(basename "${BINARY_PATH}")"
 mkdir -p "${DIST_DIR}"
+DIST_DIR="$(cd "${DIST_DIR}" && pwd)"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -264,8 +267,10 @@ fi
 # 4. Standalone Stripped ELF Binary
 # ---------------------------------------------------------
 echo "[*] Copying standalone stripped binary..."
-install -m 755 "${BINARY_PATH}" "${DIST_DIR}/osoosi-linux-${RPM_ARCH}"
-if [ "${RPM_ARCH}" = "x86_64" ]; then
+if [ "${BINARY_PATH}" != "${DIST_DIR}/osoosi-linux-${RPM_ARCH}" ]; then
+    install -m 755 "${BINARY_PATH}" "${DIST_DIR}/osoosi-linux-${RPM_ARCH}"
+fi
+if [ "${RPM_ARCH}" = "x86_64" ] && [ "${BINARY_PATH}" != "${DIST_DIR}/osoosi-linux-amd64" ]; then
     cp -f "${DIST_DIR}/osoosi-linux-${RPM_ARCH}" "${DIST_DIR}/osoosi-linux-amd64" 2>/dev/null || true
 fi
 

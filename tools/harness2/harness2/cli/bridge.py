@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import os
 import secrets
@@ -72,15 +73,39 @@ def main(argv=None):
     p.add_argument("--port", type=int, default=0, help="default: the saved port, else a free one")
     args = p.parse_args(argv)
 
-    litellm = Path(sys.executable).with_name("litellm")
+    # Canonicalize and resolve litellm executable
+    litellm_target = Path(sys.executable).with_name("litellm")
+    if sys.platform == "win32" and not litellm_target.is_file():
+        litellm_exe = litellm_target.with_suffix(".exe")
+        if litellm_exe.is_file():
+            litellm_target = litellm_exe
+    litellm = litellm_target.resolve()
     if not litellm.is_file():
         p.exit(1, "LiteLLM is not installed; run: uv pip install -e '.[render,bridge]'\n")
     if not config.VERTEX_PROJECT:
         p.exit(1, "Set GOOGLE_CLOUD_PROJECT in .env\n")
 
+    # Strict validation of host argument
+    host_str = args.host.strip()
+    try:
+        ipaddress.ip_address(host_str)
+    except ValueError:
+        if host_str not in ("localhost", "host.docker.internal"):
+            p.exit(1, f"Invalid --host interface: {args.host!r}. Must be an IP address or 'localhost'.\n")
+
+    # Strict validation of port argument
+    if args.port < 0 or args.port > 65535:
+        p.exit(1, f"Invalid --port argument: {args.port}. Must be between 0 and 65535.\n")
+
     root = config.DEPENDENCIES / "codex"
-    endpoint = _endpoint(root / "bridge.json", args.host, args.port)
-    port = endpoint["port"]
+    endpoint = _endpoint(root / "bridge.json", host_str, args.port)
+    try:
+        port = int(endpoint["port"])
+        if not (1 <= port <= 65535):
+            raise ValueError(f"Port {port} out of range")
+    except (ValueError, TypeError) as ex:
+        p.exit(1, f"Invalid endpoint port: {ex}\n")
+
     litellm_config = root / "bridge.yaml"
     litellm_config.write_text(LITELLM_CONFIG.format(model=args.model), encoding="utf-8")
 
@@ -89,7 +114,7 @@ def main(argv=None):
         "HARNESS2_CODEX_API_KEY": endpoint["key"],
         "HARNESS2_CODEX_MODEL": args.model,
     }
-    if args.host != "127.0.0.1":
+    if host_str != "127.0.0.1":
         settings["HARNESS2_CODEX_CONTAINER_URL"] = f"http://host.docker.internal:{port}/v1"
     print("Add these to .env, then run harness2-setup <bench> --substrate cx:")
     print("\n".join(f"{name}={value}" for name, value in settings.items()), flush=True)
@@ -100,7 +125,7 @@ def main(argv=None):
         "GOOGLE_CLOUD_PROJECT": config.VERTEX_PROJECT,
         "GOOGLE_CLOUD_LOCATION": config.VERTEX_REGION,
     }
-    command = [str(litellm), "--config", str(litellm_config), "--host", args.host]
+    command = [str(litellm), "--config", str(litellm_config.resolve()), "--host", host_str]
     os.execve(str(litellm), [*command, "--port", str(port)], env)
 
 

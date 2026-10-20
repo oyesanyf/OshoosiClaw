@@ -31,6 +31,7 @@ members = [
     "crates/zero-algebraic-kernel",
     "crates/zero-vacuum-lensing",
     "crates/zero-divine-equilibrium",
+    "crates/osoosi-hexpatch",
 ]
 
 [workspace.package]

@@ -70,7 +70,7 @@ class Selection:
 
 def assign_ids(labels: Sequence[str], *, task_id: str, k: int, mode: str) -> dict[str, str]:
     """anon id -> label, by canonical sort then a seeded shuffle: stable across reruns."""
-    seed = int(hashlib.sha1(f"{task_id}|{k}|{mode}".encode()).hexdigest()[:12], 16)
+    seed = int(hashlib.sha1(f"{task_id}|{k}|{mode}".encode(), usedforsecurity=False).hexdigest()[:12], 16)
     ordered = sorted(labels)
     random.Random(seed).shuffle(ordered)
     return {_anon_id(i): lbl for i, lbl in enumerate(ordered)}

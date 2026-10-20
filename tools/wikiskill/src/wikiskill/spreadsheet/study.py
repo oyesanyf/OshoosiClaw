@@ -20,7 +20,15 @@ import shutil
 import subprocess
 import sys
 import zipfile
-from xml.etree.ElementTree import ParseError
+try:
+    import defusedxml.ElementTree as ET
+    from defusedxml.common import DefusedXmlException
+    ParseError = ET.ParseError
+except ImportError:
+    import xml.etree.ElementTree as ET
+    class DefusedXmlException(Exception):
+        pass
+    ParseError = ET.ParseError
 
 from wikiskill.benchmarks import spreadsheet
 from wikiskill.jsonl import read_jsonl
@@ -366,7 +374,7 @@ def _score(root, case, archive):
     try:
         workbook = load_workbook(output, data_only=True)
         workbook.close()
-    except (zipfile.BadZipFile, InvalidFileException, ParseError, KeyError, ValueError):
+    except (zipfile.BadZipFile, InvalidFileException, ParseError, DefusedXmlException, KeyError, ValueError):
         return {"score": 0.0, "matched_cells": 0, "total_cells": case["total_cells"],
                 "has_output_workbook": True, "has_final_answer_tag": False,
                 "output_format_valid": False, "fail_reason": "invalid_output_workbook"}

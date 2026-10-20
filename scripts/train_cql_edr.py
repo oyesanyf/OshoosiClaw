@@ -15,6 +15,7 @@ import os
 import sys
 import argparse
 import random
+_csprng = random.SystemRandom()
 import numpy as np
 import torch
 import torch.nn as nn
@@ -43,7 +44,7 @@ except ImportError:
                 def __init__(self, n):
                     self.n = n
                 def sample(self):
-                    return random.randint(0, self.n - 1)
+                    return _csprng.randint(0, self.n - 1)
         class DummyEnv:
             pass
         spaces = DummySpaces()
@@ -165,22 +166,22 @@ class EdrGymEnv(ENV_BASE):
 
         self.current_step = 0
         self.dwell_time = 0
-        self.is_attack = random.random() < 0.70
-        self.is_protected = (not self.is_attack) and (random.random() < 0.35)
+        self.is_attack = _csprng.random() < 0.70
+        self.is_protected = (not self.is_attack) and (_csprng.random() < 0.35)
 
         if self.is_protected:
-            self.target_pid = random.choice([0, 1, 4, 640])
-            self.binary_path = random.choice(["csrss.exe", "lsass.exe", "services.exe", "dwm.exe"])
+            self.target_pid = _csprng.choice([0, 1, 4, 640])
+            self.binary_path = _csprng.choice(["csrss.exe", "lsass.exe", "services.exe", "dwm.exe"])
             self.current_stage = 0
             self.threat_score = 0.05
         elif self.is_attack:
-            self.target_pid = random.randint(3000, 9999)
-            self.binary_path = random.choice(["powershell.exe", "mimikatz.exe", "wannacry.exe", "cmd.exe"])
+            self.target_pid = _csprng.randint(3000, 9999)
+            self.binary_path = _csprng.choice(["powershell.exe", "mimikatz.exe", "wannacry.exe", "cmd.exe"])
             self.current_stage = 1
             self.threat_score = 0.45
         else:
-            self.target_pid = random.randint(2000, 5000)
-            self.binary_path = random.choice(["code.exe", "chrome.exe", "slack.exe", "git.exe"])
+            self.target_pid = _csprng.randint(2000, 5000)
+            self.binary_path = _csprng.choice(["code.exe", "chrome.exe", "slack.exe", "git.exe"])
             self.current_stage = 0
             self.threat_score = 0.05
 
@@ -334,9 +335,9 @@ class CQLTrainer:
         self.optimizer = optim.Adam(self.online_net.parameters(), lr=lr)
 
     def select_action(self, state: np.ndarray, mask: np.ndarray, epsilon: float = 0.05) -> int:
-        if random.random() < epsilon:
+        if _csprng.random() < epsilon:
             valid = [i for i, m in enumerate(mask) if m > 0.0]
-            return random.choice(valid) if valid else 0
+            return _csprng.choice(valid) if valid else 0
 
         with torch.no_grad():
             s_t = torch.tensor(state, dtype=torch.float32).unsqueeze(0)

@@ -204,6 +204,15 @@ def ensure_stix_bundle():
     print(f"Downloading authoritative combined ATT&CK + ATLAS STIX 2.1 bundle from {STIX_BUNDLE_URL}...")
     os.makedirs(os.path.dirname(CONFIG_STIX_FILE), exist_ok=True)
     import urllib.request
+    import urllib.parse
+
+    def _assert_safe_scheme(target_url: str) -> str:
+        parsed = urllib.parse.urlparse(target_url)
+        if parsed.scheme.lower() not in ("http", "https"):
+            raise ValueError(f"Unsafe URL scheme '{parsed.scheme}': only 'http' and 'https' are permitted")
+        return target_url
+
+    _assert_safe_scheme(STIX_BUNDLE_URL)
     req = urllib.request.Request(STIX_BUNDLE_URL, headers={"User-Agent": "Mozilla/5.0 OpenOsoosi/0.1.1"})
     try:
         with urllib.request.urlopen(req) as resp, open(CONFIG_STIX_FILE, "wb") as out_f:
@@ -220,6 +229,7 @@ def ensure_stix_bundle():
         print(f"mitreattack download failed ({e}), attempting direct download...")
         import urllib.request
         url = "https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/enterprise-attack/enterprise-attack-19.2.json"
+        _assert_safe_scheme(url)
         dest_dir = os.path.join(STIX_DIR, "v19.2")
         os.makedirs(dest_dir, exist_ok=True)
         dest_file = os.path.join(dest_dir, "enterprise-attack.json")

@@ -1,8 +1,9 @@
-﻿import os
+import os
 import time
 import urllib.request
 import json
 import subprocess
+from pathlib import Path
 
 print("=" * 60)
 print("       OSHOOSI CLAW LIVE THREAT SIMULATION")
@@ -10,8 +11,12 @@ print("=" * 60)
 
 # 1. Trigger Deception / Canary Tampering
 print("\n[*] 1. Simulating Deception Canary Trap Access...")
-trap_file = os.path.join("traps", "Production_DB_Keys.env")
-if os.path.exists(trap_file):
+base_traps = Path("traps").resolve()
+trap_target = (base_traps / "Production_DB_Keys.env").resolve()
+if not trap_target.is_relative_to(base_traps):
+    raise ValueError(f"Path traversal detected for trap: {trap_target}")
+trap_file = str(trap_target)
+if trap_target.exists():
     try:
         with open(trap_file, "a") as f:
             f.write("\n# ADVERSARY_PROBE=EXFILTRATION_TEST\n")
@@ -23,8 +28,11 @@ else:
 
 # 2. Trigger YARA / Malware Scanner with EICAR test string
 print("\n[*] 2. Simulating EICAR Anti-Malware Detection Drop...")
-temp_dir = os.environ.get("TEMP", ".")
-eicar_path = os.path.join(temp_dir, "test_eicar_threat.com")
+base_temp = Path(os.environ.get("TEMP", ".")).resolve()
+eicar_target = (base_temp / "test_eicar_threat.com").resolve()
+if not eicar_target.is_relative_to(base_temp):
+    raise ValueError(f"Path traversal detected for EICAR artifact: {eicar_target}")
+eicar_path = str(eicar_target)
 eicar_string = r"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 try:
     with open(eicar_path, "w") as f:
