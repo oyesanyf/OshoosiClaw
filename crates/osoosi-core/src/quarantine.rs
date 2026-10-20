@@ -52,6 +52,49 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
         }
     }
 
+    // Self-protection: refuse to quarantine self repository source files and directories
+    if let Some(proj_root) = osoosi_types::resolve_project_root() {
+        if let (Ok(canon_src), Ok(canon_proj)) = (src.canonicalize(), proj_root.canonicalize()) {
+            if canon_src.starts_with(&canon_proj) {
+                let rel = canon_src.strip_prefix(&canon_proj).unwrap_or(&canon_src);
+                let rel_str = rel.to_string_lossy().to_ascii_lowercase();
+                let is_explicit_test_payload = (rel_str.contains("eicar")
+                    || rel_str.contains("test_malware"))
+                    && (rel_str.contains("target") || rel_str.contains("tmp"));
+                if !is_explicit_test_payload {
+                    if rel_str.starts_with("crates")
+                        || rel_str.starts_with("dashboard")
+                        || rel_str.starts_with("scripts")
+                        || rel_str.starts_with("tools")
+                        || rel_str.starts_with("bpf")
+                        || rel_str.starts_with("ebpf")
+                        || rel_str.starts_with("wix")
+                        || rel_str.starts_with(".github")
+                        || rel_str.starts_with(".agents")
+                        || rel_str.starts_with("driver")
+                        || rel_str.starts_with("tests")
+                        || rel_str.ends_with(".rs")
+                        || rel_str.ends_with(".toml")
+                        || rel_str.ends_with(".json")
+                        || rel_str.ends_with(".js")
+                        || rel_str.ends_with(".html")
+                        || rel_str.ends_with(".css")
+                        || rel_str.ends_with(".ps1")
+                        || rel_str.ends_with(".sh")
+                        || rel_str.ends_with(".c")
+                        || rel_str.ends_with(".h")
+                        || rel_str.ends_with(".wxs")
+                    {
+                        anyhow::bail!(
+                            "Refusing to quarantine repository source/project asset: {}",
+                            file_path
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     // System protection: refuse to quarantine Windows/Linux/macOS system binaries, shells, toolchains, or administrative LOLBins
     let normalized = osoosi_types::normalize_nt_device_path(file_path);
     let path_lc = normalized.to_ascii_lowercase();
