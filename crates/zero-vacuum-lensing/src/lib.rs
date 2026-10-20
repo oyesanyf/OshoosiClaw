@@ -45,7 +45,7 @@ impl VacuumCosmologySensor {
     }
 
     /// 1. Zero as Vacuum (Not Simple Nothingness):
-    /// Measures Zero-Point Energy deviation and Casimir pressure anomaly between sandboxes.
+    ///    Measures Zero-Point Energy deviation and Casimir pressure anomaly between sandboxes.
     pub fn measure_vacuum_plenum(
         &self,
         observed_idle_frequencies: &[f64],
@@ -64,8 +64,8 @@ impl VacuumCosmologySensor {
     }
 
     /// 2. Zero as the Unseen in Cosmology:
-    /// Infers the hidden mass M_dark of an unmonitored rootkit or external agent via gravitational lensing
-    /// deflection (latency/cache distortion delta_phi) at impact distance b.
+    ///    Infers the hidden mass M_dark of an unmonitored rootkit or external agent via gravitational lensing
+    ///    deflection (latency/cache distortion delta_phi) at impact distance b.
     pub fn infer_unseen_dark_mass(
         &self,
         impact_parameter_b: f64,

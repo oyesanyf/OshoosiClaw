@@ -48,13 +48,13 @@ impl EquilibriumOrchestrator {
     }
 
     /// 1. Zero as What Life Knew Before It Knew:
-    /// Sub-cognitive homeostatic reflex J = -gamma * x(t) that restores membrane state to 0.
+    ///    Sub-cognitive homeostatic reflex J = -gamma * x(t) that restores membrane state to 0.
     pub fn trigger_primordial_reflex(&self, membrane_perturbation: f64) -> f64 {
         -self.homeostatic_gamma * membrane_perturbation
     }
 
     /// 2. Zero as What Consciousness Eventually Learns to Read:
-    /// Reads the neural residual stream h_t for l_0 sparsity and suppressed refusal projections.
+    ///    Reads the neural residual stream h_t for l_0 sparsity and suppressed refusal projections.
     pub fn read_latent_consciousness(
         &self,
         residual_stream: &[f64],
@@ -79,8 +79,8 @@ impl EquilibriumOrchestrator {
     }
 
     /// 3. Zero as Divine Order (Not Empty):
-    /// Verifies that active system vitality > 0 while Lyapunov anomaly energy V(z) -> 0
-    /// and Noether mesh current divergence sum(J_in - J_out) == 0.
+    ///    Verifies that active system vitality > 0 while Lyapunov anomaly energy V(z) -> 0
+    ///    and Noether mesh current divergence sum(J_in - J_out) == 0.
     pub fn attest_divine_order(
         &self,
         membrane_perturbation: f64,

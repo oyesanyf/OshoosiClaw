@@ -1750,8 +1750,8 @@ mod tests {
             osoosi_types::ResponseAction::Isolate,
             "Expected Isolate action"
         );
-        assert_eq!(
-            sig.require_approval, false,
+        assert!(
+            !sig.require_approval,
             "Expected require_approval to be false"
         );
         assert_eq!(

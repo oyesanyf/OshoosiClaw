@@ -1,4 +1,8 @@
-#![allow(linker_messages)]
+#![allow(
+    linker_messages,
+    clippy::collapsible_if,
+    clippy::suspicious_open_options
+)]
 
 use clap::{Parser, Subcommand};
 use osoosi_core::{secured_executor::DirectExecutor, EdrOrchestrator};
