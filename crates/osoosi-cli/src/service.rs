@@ -1122,6 +1122,22 @@ mod win_scm {
             ])
             .output();
 
+        // Keep C:\Program Files\OshoosiClaw\osoosi.exe synchronized with the active service binary
+        if let Ok(cur_exe) = std::env::current_exe() {
+            let pf_exe = std::path::Path::new(r"C:\Program Files\OshoosiClaw\osoosi.exe");
+            if let Some(pf_dir) = pf_exe.parent() {
+                if pf_dir.is_dir() {
+                    let cur_canon = cur_exe.canonicalize().unwrap_or_else(|_| cur_exe.clone());
+                    let pf_canon = pf_exe
+                        .canonicalize()
+                        .unwrap_or_else(|_| pf_exe.to_path_buf());
+                    if cur_canon != pf_canon {
+                        let _ = std::fs::copy(&cur_exe, pf_exe);
+                    }
+                }
+            }
+        }
+
         // Wait until service stop is triggered
         while !SERVICE_STOP_FLAG.load(Ordering::SeqCst) {
             std::thread::sleep(Duration::from_millis(50));

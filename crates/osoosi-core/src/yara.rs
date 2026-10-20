@@ -660,7 +660,17 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
         }
     }
 
+    let load_legacy_mega = std::env::var("OSOOSI_LOAD_LEGACY_MEGA_YARA")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let max_file_bytes: u64 = if load_legacy_mega {
+        8 * 1024 * 1024
+    } else {
+        256 * 1024
+    };
+
     let mut visited_canonical_files = std::collections::HashSet::new();
+    let mut visited_name_sizes = std::collections::HashSet::<(String, u64)>::new();
     let mut curated_files: Vec<PathBuf> = Vec::new();
     let mut gen_files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
 
@@ -674,16 +684,32 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
             if path.is_file() {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if ext == "yar" || ext == "yara" {
+                    let filename = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                    let p_str = path.to_string_lossy();
+                    let p_lower = p_str.to_ascii_lowercase();
+                    if !load_legacy_mega
+                        && (p_lower.contains("deprecated")
+                            || p_lower.contains("detection-rules")
+                            || p_lower.contains("yara-rules")
+                            || p_lower.contains("packages")
+                            || filename.eq_ignore_ascii_case("peid.yar")
+                            || filename.eq_ignore_ascii_case("packer.yar")
+                            || filename.eq_ignore_ascii_case("yara-rules-core.yar"))
+                    {
+                        continue;
+                    }
                     if let Ok(file_meta) = path.metadata() {
-                        if file_meta.len() > 1_048_576 {
+                        if file_meta.len() > max_file_bytes {
                             continue;
                         }
                         let canon_file = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-                        if !visited_canonical_files.insert(canon_file) {
+                        if !visited_canonical_files.insert(canon_file)
+                            || !visited_name_sizes
+                                .insert((filename.to_ascii_lowercase(), file_meta.len()))
+                        {
                             continue;
                         }
 
-                        let p_str = path.to_string_lossy();
                         if p_str.contains("osoosi_generated") {
                             let mtime = file_meta
                                 .modified()
@@ -702,10 +728,13 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
     let max_gen_rules = std::env::var("OSOOSI_MAX_GENERATED_RULES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(500);
+        .unwrap_or(150);
 
     gen_files.sort_by(|a, b| b.1.cmp(&a.1));
     gen_files.truncate(max_gen_rules);
+    if !load_legacy_mega && curated_files.len() > 150 {
+        curated_files.truncate(150);
+    }
 
     let mut target_paths: Vec<PathBuf> = curated_files;
     target_paths.extend(gen_files.into_iter().map(|(p, _)| p));
@@ -725,6 +754,7 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
             collected_files.push((path, path_str, sanitized));
         }
     }
+    collected_files.shrink_to_fit();
 
     (dirs_searched, canonical_dirs, collected_files)
 }
