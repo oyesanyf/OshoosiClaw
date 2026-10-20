@@ -117,11 +117,45 @@ flowchart TD
 <a id="autonomous-rea-reverse-engineer-anything-forensic-engine"></a>
 ## 🔬 Autonomous REA (`Reverse Engineer Anything`) Forensic Engine
 
-OpenỌ̀ṣọ́ọ̀sì includes a built-in **Autonomous Reverse Engineer Anything (`REA`)** subsystem ([`crates/osoosi-core/src/rea.rs`](crates/osoosi-core/src/rea.rs)) inspired by [`morluto/rea`](https://github.com/morluto/rea):
+OpenỌ̀ṣọ́ọ̀sì includes a built-in **Autonomous Reverse Engineer Anything (`REA`)** subsystem ([`crates/osoosi-core/src/rea.rs`](crates/osoosi-core/src/rea.rs)) inspired by [`morluto/rea`](https://github.com/morluto/rea), powered by a **2-Tier Classification Pipeline**:
 
-- **13+ Binary & Artifact Formats**: Native PE32/PE64 (`.exe`, `.dll`, `.sys`), ELF64, Mach-O, Rust `cargo-auditable` dependency graphs, Go `BuildInfo`, WebAssembly (`.wasm`), EVM bytecode, `.NET` CIL assemblies, JavaScript/Electron/ASAR bundles, SQLite databases, HAR/PCAP network captures, and Android/Flutter APKs.
-- **Zero-Touch Autonomous Daemon & Telemetry Watchdog**: Automatically triggers background static/structural reverse engineering whenever high-confidence threats are intercepted (`spawn_autonomous_rea_for_threat`) or when new artifacts arrive in watched directories (`spawn_autonomous_rea_daemon`), persisting findings, reconstructed pseudo-code, and auto-synthesized YARA rules directly into SQLite (`rea_analyses`).
-- **CLI & WebUI Integration**: Run `osoosi rea <target> --format markdown --emit-yara` from the terminal or inspect artifacts interactively in the WebUI (`#rea`).
+```mermaid
+flowchart LR
+    subgraph Input["Target Artifact (Up to 256 MiB)"]
+        F["File / Process / Inline Bytecode"]
+    end
+
+    subgraph Tier1["Tier 1: Envelope & MIME Identification"]
+        M["Google Magika ONNX Deep Learning\n(identify_with_magika)"]
+        H["Container Magic Verification\n(PE / ELF / Mach-O / WASM / SQLite / PCAP / ASAR / APK)"]
+    end
+
+    subgraph Tier2["Tier 2: Structural Compiler & Runtime Provenance"]
+        PE["goblin PE OptionalHeader\nDataDirectory[14] (CLR Runtime Header)"]
+        R["Rust Provenance\n(.dep-v0 cargo-auditable / rustc)"]
+        G["Go Provenance\n(\\xff Go buildinf: / go.buildid)"]
+        D[".NET CIL Provenance\n(ECMA-335 BSJB + #~ / #Strings Streams)"]
+        N["Native / Bytecode Disassemblers\n(x86_64 / ARM64 / WASM / EVM)"]
+    end
+
+    subgraph Output["Autonomous Defense Synthesis"]
+        E["Cryptographic Evidence Ledger\n(SHA-256 + BLAKE3 + Magika Identity)"]
+        C["Reconstructed Source Skeleton\n(Rust / Go / C# / C / WAT / Solidity)"]
+        Y["Multi-Token YARA-X Rule\n(yara/rea_auto_rules.yar)"]
+    end
+
+    F --> M & H
+    M & H --> PE
+    PE -->|"CLR Dir == 0 (Native PE)"| R & G & N
+    PE -->|"CLR Dir != 0 + Valid BSJB"| D
+    R & G & D & N --> E & C & Y
+```
+
+- **Tier 1 (Google Magika ONNX + Container Magic)**: Uses Google's deep-learning content-type detector ([`identify_with_magika`](crates/osoosi-core/src/rea.rs)) alongside magic headers to identify the outer envelope (`pebin`, `elf`, `macho`, `wasm`, `sqlite`, `pcap`, `json`, `apk`, `dex`, `shell`, `powershell`) and detect extension masquerading in [`pe_inspector::inspect_file`](crates/osoosi-core/src/pe_inspector.rs).
+- **Tier 2 (Structural PE/ELF/Mach-O Compiler & Runtime Provenance)**: Inspects the parsed PE Optional Header's CLR Runtime Header DataDirectory (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`, index 14) via `goblin::pe::PE::parse` before scanning for ECMA-335 `BSJB` metadata roots. If a valid PE binary has `DataDirectory[14] == 0`, it is unequivocally classified as native (`rust_binary`, `go_binary`, or `native_binary`)—eliminating false-positive `.NET` misclassifications when inspecting self-binaries (`osoosi.exe`) that contain `.NET` parser string literals in `.rdata`.
+- **256 MiB Full-Binary Inspection (`REA_MAX_FILE_READ_BYTES`)**: Reads up to **256 MiB** (`268,435,456` bytes) per artifact so large Rust/Go/Electron release binaries (`osoosi.exe` ~82–128 MiB) are analyzed end-to-end without truncating trailing `.dep-v0` or `.rdata` sections.
+- **Zero-Touch Autonomous Daemon & Live Threat Hook**: Runs continuously in the background (`spawn_autonomous_rea_daemon`) and triggers immediately on live malware/quarantine detections (`spawn_autonomous_rea_for_threat`), persisting reconstructed pseudocode and multi-token YARA signatures (`yara/rea_auto_rules.yar`).
+- **CLI & WebUI Integration**: Run `osoosi rea analyze <target> --json` from the terminal or inspect artifacts interactively in the WebUI (`#rea`).
 
 ---
 
@@ -133,7 +167,7 @@ OpenỌ̀ṣọ́ọ̀sì includes a built-in **Autonomous Reverse Engineer Anyt
 
 In critical compromise scenarios—such as active ransomware propagation, lateral credential harvesting, or rootkit staging—traditional response actions either shut down the endpoint (destroying ephemeral volatile memory evidence) or sever all network interfaces (disconnecting remote security analysts and management infrastructure).
 
-**OpenỌ̀ṣọ́ọ̀sì implements the Defend-in-Place Emergency Kill Chain**: a hardware-level, reversible containment killswitch accessible via WebUI (`🚨 Kill Chain / Isolation`) and CLI (`osoosi killchain`). It hermetically isolates the host while preserving local loopback control, non-destructively freezes untrusted processes, and enforces ring-0 driver lockdown. When disarmed via the authenticated `"RESTORE HOST"` verification phrase, it returns all subsystems and threads to their normal operational state without requiring a reboot.
+**OpenỌ̀ṣọ́ọ̀sì implements the Defend-in-Place Emergency Kill Chain**: a hardware-level, reversible containment killswitch accessible via WebUI (`🚨 Kill Chain / Isolation`) and CLI (`osoosi killchain`). It hermetically isolates the host while preserving local loopback control, DNS/DHCP lease continuity, non-destructively freezes untrusted processes, and enforces ring-0 driver lockdown. When disarmed via the authenticated `"RESTORE HOST"` verification phrase, it returns all subsystems and threads to their normal operational state without requiring a reboot.
 
 ```mermaid
 sequenceDiagram
@@ -156,9 +190,9 @@ sequenceDiagram
     rect rgb(255, 235, 235)
         Note over KC,Drv: MULTI-STAGE DEFEND-IN-PLACE ISOLATION
         KC->>KC: Anti-Hijacking Check (Caller validation & Lineage Immunity)
-        KC->>Net: Block Inbound/Outbound Traffic (Preserve 127.0.0.1, ::1, Port 3030)
+        KC->>Net: Block Inbound/Outbound Traffic (Preserve 127.0.0.1, ::1, Port 3030, DNS 53, DHCP 67/68)
         KC->>Proc: Freeze Untrusted Userland Processes (NtSuspendProcess / SIGSTOP)
-        Note over Proc: Protected: osoosi, core OS services, shell ancestry up to 5 levels
+        Note over Proc: Protected: osoosi, core OS/shell/desktop/search/systray services, ancestry up to 5 levels
         KC->>Drv: Set Driver Mode = Lockdown (Deny all unauthorized spawns)
         KC->>Dog: Arm 30-Minute Autonomous Fail-Safe Watchdog
         KC-->>UI: Containment Engaged (Audit Logged to Merkle Chain)
@@ -182,19 +216,19 @@ sequenceDiagram
 
 ### Multi-Stage Containment Capabilities
 
-1. **Hermetic Network Isolation**: Deploys kernel filtering rules (Windows Filtering Platform / `WFP` sub-layer on Windows; `iptables` / `nftables` on Linux) blocking all inbound and outbound TCP, UDP, and ICMP traffic. **Strict Exception**: Local loopback (`127.0.0.1`, `::1`) and the dashboard port (`3030`) remain unconditionally accessible so administrative operators can investigate, extract forensic triage packages, and coordinate disarm procedures.
+1. **Hermetic Network Isolation**: Deploys kernel filtering rules (Windows Filtering Platform / `WFP` sub-layer on Windows; `iptables` / `nftables` and eBPF LSM `socket_connect` on Linux) blocking untrusted inbound and outbound traffic. **Strict OS & Control-Plane Exceptions**: Local loopback (`127.0.0.1`, `::1`), the dashboard port (`3030`), DNS (`UDP 53`), and DHCP (`UDP 67/68`) remain allowlisted so the OS network stack, local IPC, and operator dashboard never break.
 2. **Non-Destructive Process Suspension**: Rather than terminating untrusted processes with `SIGKILL` or `TerminateProcess`—which destroys stack traces, unpacked memory payloads, and active network socket states—the engine invokes `NtSuspendProcess` (Windows) or `SIGSTOP` (Linux) across all non-system, non-immune userland processes.
-3. **Ring-0 Driver & eBPF Lockdown**: Dynamically sets the kernel driver policy to `Lockdown`. Any attempt to spawn new executables is immediately denied at the `PsSetCreateProcessNotifyRoutineEx` or `bprm_check_security` pre-operation boundary with `STATUS_ACCESS_DENIED`.
+3. **Ring-0 Driver & eBPF Lockdown**: Dynamically sets the kernel driver policy to `Lockdown`. Any attempt to spawn unauthorized executables is immediately denied at the `PsSetCreateProcessNotifyRoutineEx` or `bprm_check_security` pre-operation boundary with `STATUS_ACCESS_DENIED`, while 53+ critical Windows/Linux/macOS session, shell, desktop, search, and recovery binaries remain unconditionally allowlisted.
 4. **Dead-Man's Autonomous Fail-Safe Watchdog**: An autonomous background timer monitors the containment state. If an operator loses remote connection or an emergency containment event is left unattended for 30 minutes (1,800 seconds), the engine automatically executes an emergency disarm, unfreezing processes and restoring network connectivity to prevent catastrophic bricking.
 
-### Anti-Hijacking & EDR Self-Preservation Invariant
+### Anti-Hijacking & Zero-OS-Disruption Invariant
 
 > [!IMPORTANT]
-> **Anti-Hijacking Guarantee: No Process Can Hijack Kill Chain and Use It Against Itself.**
-> To prevent malicious userland malware, ransomware, or rogue scripts from misusing the Kill Chain API to weaponize host isolation against the operating system or defense agents, OpenỌ̀ṣọ́ọ̀sì enforces 5 structural invariants:
+> **Zero-Harm & Anti-Hijacking Guarantee: Nothing Must Break the OS.**
+> To prevent malicious userland malware, ransomware, or rogue scripts from weaponizing host isolation against the operating system, desktop shell, or defense agents, OpenỌ̀ṣọ́ọ̀sì enforces 5 structural invariants across Userland (`killchain.rs`, `kernel_driver.rs`), Windows Ring-0 (`osoosi_driver.c`), and Linux eBPF (`osoosi_probe.bpf.c`):
 >
-> 1. **Core Process Immunity**: The EDR daemon (`osoosi.exe`, `osoosi`, `osoosi-cli`, `osoosi-auditor`, `osoosi-service`) and critical system processes (`System`, `smss.exe`, `csrss.exe`, `wininit.exe`, `services.exe`, `lsass.exe`, `svchost.exe`, `systemd`, `init`) are cryptographically and structurally excluded from freezing or termination.
-> 2. **Process Ancestry & Lineage Immunity**: When an operator invokes containment from a terminal or management console, `freeze_untrusted_processes` walks the caller's process lineage up to 5 parent levels (`cargo`, `rustc`, `powershell.exe`, `cmd.exe`, `conhost.exe`, `bash`, `zsh`), guaranteeing the operator's active shell is never frozen.
+> 1. **Core OS, Session, Desktop, Search & Toolchain Immunity**: The EDR daemon (`osoosi.exe`, `osoosi`, `osoosi-cli`, `osoosi-auditor`), Windows kernel/session/shell/desktop/search/systray processes (`System`, `smss.exe`, `csrss.exe`, `wininit.exe`, `winlogon.exe`, `logonui.exe`, `userinit.exe`, `services.exe`, `lsass.exe`, `svchost.exe`, `dwm.exe`, `explorer.exe`, `sihost.exe`, `taskhostw.exe`, `ctfmon.exe`, `fontdrvhost.exe`, `StartMenuExperienceHost.exe`, `ShellExperienceHost.exe`, `SearchHost.exe`, `SearchIndexer.exe`, `RuntimeBroker.exe`, `ApplicationFrameHost.exe`, `TextInputHost.exe`, `SecurityHealthService.exe`, `SecurityHealthSystray.exe`), Linux session/desktop services (`systemd`, `dbus-daemon`, `NetworkManager`, `gnome-shell`, `kwin_wayland`, `Xorg`, `Xwayland`, `sshd`), and macOS core services (`launchd`, `WindowServer`, `Finder`, `Spotlight`, `Dock`) are unconditionally excluded from freezing, termination, tarpitting, or Ring-0 path blocking.
+> 2. **Process Ancestry & Lineage Immunity**: When an operator invokes containment from a terminal or management console, `freeze_untrusted_processes` walks the caller's process lineage up to 5 parent levels (`cargo`, `rustc`, `powershell.exe`, `pwsh.exe`, `cmd.exe`, `conhost.exe`, `WindowsTerminal.exe`, `bash`, `zsh`), guaranteeing the operator's active shell is never frozen.
 > 3. **Caller Process Validation**: `validate_killchain_caller` checks the calling PID against active quarantine and suspension tables. Any already-frozen or quarantined process attempting to invoke the Kill Chain API is instantly denied and flagged as an adversarial containment breakout attempt.
 > 4. **State Machine Anti-Reentrancy**: State transitions (`Idle` -> `Isolating` -> `Isolated` -> `Disarming`) are guarded by atomic mutexes. Repetitive calls cannot corrupt isolation records or trigger reentrant resource deadlocks.
 > 5. **Multi-Modal Cross-Platform Authentication**: Host isolation and disarm APIs support Windows Hello PIN / Biometrics (TPM Platform Authenticator via WebAuthn), OS credentials (Win32 `LogonUserW` with candidate domain resolution on Windows, PAM/shadow on Linux, `dscl` on macOS), and Master Administrative Token verification with automatic lockout bypass and strike counter reset.

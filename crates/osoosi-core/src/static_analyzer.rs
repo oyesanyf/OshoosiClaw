@@ -88,9 +88,9 @@ impl StaticAnalyzer {
             return Ok(None);
         }
 
-        // Limit to 64MB to avoid memory/CPU exhaustion on huge binaries
+        // Limit to REA_MAX_FILE_READ_BYTES (256 MiB) to match REA engine capacity
         if let Ok(meta) = file_path.metadata() {
-            if meta.len() > 64 * 1024 * 1024 {
+            if meta.len() > crate::rea::REA_MAX_FILE_READ_BYTES {
                 debug!("Static Analyzer: skipping huge file {:?}", file_path);
                 return Ok(None);
             }
@@ -346,25 +346,18 @@ impl StaticAnalyzer {
 
     async fn run_composition_analysis(
         &self,
-        _file_path: &Path,
+        file_path: &Path,
     ) -> anyhow::Result<Option<crate::pe_inspector::InspectionFindings>> {
-        #[cfg(target_os = "windows")]
-        {
-            let path = _file_path.to_path_buf();
-            let result = self
-                .adaptive
-                .run_adaptive(ResourceCategory::IO, Priority::Normal, async move {
-                    crate::pe_inspector::inspect_file(&path).ok()
-                })
-                .await;
-            match result {
-                Ok(opt) => Ok(opt),
-                Err(_) => Ok(None),
-            }
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Ok(None)
+        let path = file_path.to_path_buf();
+        let result = self
+            .adaptive
+            .run_adaptive(ResourceCategory::IO, Priority::Normal, async move {
+                crate::pe_inspector::inspect_file(&path).ok()
+            })
+            .await;
+        match result {
+            Ok(opt) => Ok(opt),
+            Err(_) => Ok(None),
         }
     }
 }

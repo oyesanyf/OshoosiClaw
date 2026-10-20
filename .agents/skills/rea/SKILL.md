@@ -9,26 +9,26 @@ REA (`Reverse Engineer Anything`, inspired by `morluto/rea`) connects OpenỌ̀�
 
 ## Core Principles
 
-1. **Autonomous Operation (`AutonomousReaEngine`)**:
-   - REA runs continuously and autonomously in the background (`autonomous_enabled = true`), sweeping active non-whitelisted processes, newly flagged/quarantined artifacts, companion binaries, and local SQLite/manifest snapshots without waiting for human intervention.
-   - Every autonomous investigation produces:
-     - **Evidence-Backed Observations (`ReaEvidence`)**: Exact file offsets, virtual addresses, section names, SHA-256/BLAKE3 digests, and confidence scores.
-     - **Explicit Limitations (`ReaLimitation`)**: Transparent disclosure when stripped symbols, missing external providers (`ghidra`, `rizin`, `hopper`, `ida`), or packed sections bound static visibility.
-     - **Reconstructed Code (`reconstructed_code`)**: Decompiled C/Rust pseudocode for native binaries, WAT (`(module ...)`) for WebAssembly, Solidity interface/dispatchers for EVM bytecode, and IPC security contracts for Electron/ASAR apps.
-     - **Autonomous Defense Synthesis (`auto_yara_rule`)**: Multi-token YARA rules and Clef Decision Engine signals automatically synthesized from unique binary imports, section hashes, and dispatch selectors.
-2. **Bounded Output & Process Cleanup Ownership**:
+1. **Two-Tier Classification Pipeline (Google Magika ONNX + Structural Compiler Provenance)**:
+   - **Tier 1 (Envelope & MIME Detection)**: Every target is first inspected with Google Magika (`identify_with_magika` in `crates/osoosi-core/src/rea.rs`) and magic-byte verification to determine the outer container envelope (`pebin`, `elf`, `macho`, `wasm`, `sqlite`, `pcap`, `json`, `apk`, `dex`, `shell`, `powershell`) and record `metadata["magika"]` + `google_magika` evidence.
+   - **Tier 2 (Structural PE/ELF/Mach-O Provenance)**: For PE binaries, `goblin::pe::PE::parse` inspects the Optional Header's CLR Runtime Header DataDirectory (`IMAGE_DIRECTORY_ENTRY_COM_DESCRIPTOR`, index 14). If `DataDirectory[14]` is zero, the PE is unequivocally native (`rust_binary`, `go_binary`, or `native_binary`) and never misclassified as `.NET` even if `.rdata` contains `"BSJB"` string literals.
+2. **256 MiB Full-Binary Read Capacity (`REA_MAX_FILE_READ_BYTES`)**:
+   - `analyze_target_path` reads up to **256 MiB** (`268,435,456` bytes) so large Rust/Go/Electron binaries (`osoosi.exe` ~82–128 MiB) are analyzed in full without truncating trailing `.dep-v0` or `.rdata` sections.
+3. **Autonomous Operation (`AutonomousReaEngine`)**:
+   - REA runs continuously and autonomously in the background (`spawn_autonomous_rea_daemon`) and triggers immediately on live malware/quarantine detections (`spawn_autonomous_rea_for_threat`), persisting findings, reconstructed code, and multi-token YARA rules (`yara/rea_auto_rules.yar`).
+4. **Bounded Output & Process Cleanup Ownership**:
    - External provider invocations (`rea`, `npx rea-agents`, `rizin`, `radare2`, `ghidraRun`, `objdump`, `dumpbin`, `jadx`, `binwalk`, `tshark`) enforce a strict **4 MiB combined stdout/stderr cap** and guarantee child process termination on timeout or cancellation.
 
 ## Supported Targets
 
 | Target Kind | What Autonomous REA Returns | Built-In / Provider Support |
 |---|---|---|
-| `native` | PE/ELF/Mach-O sections, segments, imports, exports, symbols, security mitigations (`ASLR`, `DEP/NX`, `CFG`, `PIE`, `RELRO`), call targets, C pseudocode | Built-in static PE/ELF/Mach-O parser + optional `ghidra` / `rizin` / `objdump` / `rea-agents` |
+| `native` | PE/ELF/Mach-O sections, segments, imports, exports, symbols, security mitigations (`ASLR`, `DEP/NX`, `CFG`, `PIE`, `RELRO`), call targets, C pseudocode | Built-in static PE/ELF/Mach-O parser + Google Magika + optional `ghidra` / `rizin` / `objdump` |
 | `rust` | Embedded `.dep-v0` (`cargo-auditable`) crate names, versions, dependency edges, `rustc` compiler version, panic strategy | Built-in ELF/PE/Mach-O inspection |
 | `go` | Embedded `\xff Go buildinf:` compiler version, main module, dependency modules, replacements, build flags | Built-in ELF/PE/Mach-O inspection (no Go installation required) |
 | `wasm` | `\0asm` validation, LEB128 section inventory, exact import/export WAT signatures, reconstructed WAT skeleton | Built-in WASM binary parser |
 | `evm` | `PUSH4` 4-byte selector dispatch table, byte offsets, inferred arguments, `view`/`payable`/`non-payable` mutability, Solidity interface | Built-in EVM bytecode disassembler |
-| `dotnet` | `BSJB` CLR metadata root, runtime version, `#~`/`#Strings`/`#US`/`#GUID`/`#Blob` streams, P/Invoke native dependencies, CIL stats | Built-in static PE/.NET parser |
+| `dotnet` | PE CLR DataDirectory[14] + ECMA-335 `BSJB` CLR metadata root, runtime version, `#~`/`#Strings`/`#US`/`#GUID`/`#Blob` streams, P/Invoke native dependencies | Built-in static PE/.NET parser |
 | `electron` | `.asar` archive header & file table, `package.json`, `BrowserWindow` flags (`nodeIntegration`, `contextIsolation`, `sandbox`), `contextBridge`/`ipcMain` channels, `.node` addons | Built-in ASAR & JS/Electron static analyzer |
 | `sqlite` | Read-only snapshot of tables, columns, indexes, views, triggers, and WAL state | Built-in SQLite schema inspector |
 | `har` | HTTP Archive (`.har`) and `.pcap` endpoints, methods, status codes, TLS SNI, and exposed payload schemas | Built-in HAR/PCAP analyzer |

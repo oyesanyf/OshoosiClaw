@@ -6266,15 +6266,35 @@ impl EdrOrchestrator {
                                         let _ = kd.add_blocked_path(&result.file_path);
                                     }
 
-                                    // 2. Physical Quarantine
-                                    if let Err(e) = crate::quarantine::quarantine_file(&result.file_path) {
-                                        let err_msg = e.to_string();
-                                        if err_msg.contains("File does not exist") || err_msg.contains("The system cannot find the file specified") {
-                                            debug!("Quarantine skipped: file was removed by parent installer: {}", result.file_path);
-                                        } else {
-                                            error!("Quarantine failed for {}: {}", result.file_path, e);
+                                    // 2. Physical Quarantine + Autonomous REA Deep-Inspection & YARA Synthesis
+                                    match crate::quarantine::quarantine_file(&result.file_path) {
+                                        Ok(quarantined_path) => {
+                                            crate::rea::spawn_autonomous_rea_for_threat(
+                                                quarantined_path,
+                                                format!(
+                                                    "live_quarantine_detection:magika={}:score={:.2}",
+                                                    result.magika_label, result.combined_score
+                                                ),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            let err_msg = e.to_string();
+                                            if err_msg.contains("File does not exist") || err_msg.contains("The system cannot find the file specified") {
+                                                debug!("Quarantine skipped: file was removed by parent installer: {}", result.file_path);
+                                            } else {
+                                                error!("Quarantine failed for {}: {}", result.file_path, e);
+                                            }
                                         }
                                     }
+                                } else {
+                                    // Monitor Mode: trigger autonomous REA inspection & YARA synthesis in-place
+                                    crate::rea::spawn_autonomous_rea_for_threat(
+                                        std::path::PathBuf::from(&result.file_path),
+                                        format!(
+                                            "live_monitor_detection:magika={}:score={:.2}",
+                                            result.magika_label, result.combined_score
+                                        ),
+                                    );
                                 }
                                 // Broadcast to mesh for distributed EMBER training (PE samples with features)
                                 if let Some(ref features) = result.features {

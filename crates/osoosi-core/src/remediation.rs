@@ -17,35 +17,79 @@ static KILL_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
     let lower_name = name.to_lowercase();
+    let base_name = lower_name.rsplit(['\\', '/']).next().unwrap_or(&lower_name);
+    let stem = base_name.strip_suffix(".exe").unwrap_or(base_name);
+
     if osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_name)
+        || osoosi_types::is_protected_os_shell_or_desktop_binary(base_name)
         || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_name)
+        || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, base_name)
         || lower_name == "sshd"
         || lower_name.starts_with("sshd:")
         || lower_name == "ansible"
         || lower_name.starts_with("ansible-")
         || lower_name.starts_with("ansible_module")
         || matches!(
-            lower_name.as_str(),
-            "chrome.exe"
-                | "chrome"
-                | "chrome_proxy.exe"
-                | "googleupdate.exe"
-                | "msedge.exe"
-                | "firefox.exe"
-                | "brave.exe"
-                | "explorer.exe"
-                | "systray.exe"
+            stem,
+            "chrome"
+                | "chrome_proxy"
+                | "googleupdate"
+                | "msedge"
+                | "firefox"
+                | "brave"
+                | "explorer"
+                | "systray"
+                | "python"
+                | "python3"
+                | "node"
+                | "cargo"
+                | "rustc"
+                | "rustup"
+                | "git"
+                | "git-remote-https"
+                | "ssh"
+                | "code"
+                | "antigravity"
+                | "wsl"
+                | "wslhost"
+                | "wslservice"
+                | "docker"
+                | "dockerd"
+                | "com.docker.backend"
+                | "systemd"
+                | "dbus-daemon"
+                | "tmux"
+                | "screen"
         )
     {
         return true;
     }
     for arg in cmd {
         let lower_arg = arg.to_lowercase();
+        let arg_base = lower_arg.rsplit(['\\', '/']).next().unwrap_or(&lower_arg);
+        let arg_stem = arg_base.strip_suffix(".exe").unwrap_or(arg_base);
+
         if osoosi_types::is_protected_os_shell_or_desktop_binary(&lower_arg)
+            || osoosi_types::is_protected_os_shell_or_desktop_binary(arg_base)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &lower_arg)
+            || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, arg_base)
             || lower_arg.contains("ansible")
             || lower_arg.contains("sshd:")
             || lower_arg.contains("pts/")
             || lower_arg.contains("\\google\\chrome\\")
+            || matches!(
+                arg_stem,
+                "python"
+                    | "python3"
+                    | "node"
+                    | "cargo"
+                    | "rustc"
+                    | "rustup"
+                    | "git"
+                    | "code"
+                    | "wsl"
+                    | "docker"
+            )
         {
             return true;
         }
@@ -246,6 +290,14 @@ impl RemediationController {
 
     /// Terminate a process and all its children.
     pub fn kill_process_tree(&self, pid: u32) -> anyhow::Result<()> {
+        if pid <= 4 || pid == std::process::id() {
+            warn!(
+                "AUTONOMOUS RESPONSE: Refusing to kill protected system or self process (PID {})",
+                pid
+            );
+            return Err(anyhow::anyhow!("Cannot kill protected process PID {}", pid));
+        }
+
         let is_dry_run = std::env::var("OSOOSI_DRY_RUN")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
@@ -284,14 +336,6 @@ impl RemediationController {
             }
         }
 
-        if pid <= 4 || pid == std::process::id() {
-            warn!(
-                "AUTONOMOUS RESPONSE: Refusing to kill protected system or self process (PID {})",
-                pid
-            );
-            return Err(anyhow::anyhow!("Cannot kill protected process PID {}", pid));
-        }
-
         use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
         let mut sys = System::new_with_specifics(
             RefreshKind::new().with_processes(ProcessRefreshKind::new()),
@@ -308,7 +352,9 @@ impl RemediationController {
                 .unwrap_or_default();
             if is_administrative_or_ssh_session(proc.name(), proc.cmd())
                 || (!exe_str.is_empty()
-                    && osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str))
+                    && (osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
+                        || osoosi_runtime::tarpit::is_protected_system_or_security_process(pid, &exe_str)
+                        || crate::killchain::is_critical_system_pid(pid, &exe_str)))
             {
                 warn!(
                     "AUTONOMOUS RESPONSE: Refusing to kill administrative, SSH, or protected OS session PID {} ({})",
@@ -334,9 +380,12 @@ impl RemediationController {
                         .exe()
                         .map(|path| path.to_string_lossy().to_string())
                         .unwrap_or_default();
+                    let child_pid = p.as_u32();
                     if is_administrative_or_ssh_session(proc.name(), proc.cmd())
                         || (!exe_str.is_empty()
-                            && osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str))
+                            && (osoosi_types::is_protected_os_shell_or_desktop_binary(&exe_str)
+                                || osoosi_runtime::tarpit::is_protected_system_or_security_process(child_pid, &exe_str)
+                                || crate::killchain::is_critical_system_pid(child_pid, &exe_str)))
                     {
                         warn!(
                             "AUTONOMOUS RESPONSE: Process tree descendant PID {} ({}) is an administrative / SSH / protected OS session. Aborting kill tree.",

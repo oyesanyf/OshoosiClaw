@@ -14,7 +14,7 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 // CTL_CODE calculation
 pub const FILE_DEVICE_UNKNOWN: u32 = 0x00000022;
@@ -589,7 +589,7 @@ pub fn get_shared_kernel_state() -> Arc<SharedKernelState> {
 pub struct KernelDriverClient {
     #[cfg(windows)]
     handle: Option<Arc<SafeHandle>>,
-    state: Arc<SharedKernelState>,
+    pub state: Arc<SharedKernelState>,
 }
 
 impl KernelDriverClient {
@@ -909,9 +909,83 @@ impl KernelDriverClient {
         Ok(())
     }
 
+    /// Returns `true` if `path_or_name` corresponds to a protected developer toolchain,
+    /// core OS infrastructure binary, system daemon, or security sensor that must NEVER
+    /// be added to the Ring-0 Windows driver or Linux eBPF LSM blocklists.
+    pub fn is_protected_kernel_block_path(path_or_name: &str) -> bool {
+        let trimmed = path_or_name.trim().trim_matches('"');
+        if trimmed.is_empty() {
+            return false;
+        }
+        let lower = trimmed.replace('/', "\\").to_ascii_lowercase();
+        let basename = lower.rsplit('\\').next().unwrap_or(&lower);
+
+        // 1. Developer toolchains & container infrastructure (Universal Immunity)
+        matches!(
+            basename,
+            "python.exe"
+                | "python3.exe"
+                | "python"
+                | "python3"
+                | "cargo.exe"
+                | "cargo"
+                | "rustc.exe"
+                | "rustc"
+                | "rustup.exe"
+                | "rustup"
+                | "node.exe"
+                | "node"
+                | "git.exe"
+                | "git"
+                | "code.exe"
+                | "code"
+                | "wsl.exe"
+                | "wsl"
+                | "docker.exe"
+                | "docker"
+                // Linux core daemons & interactive shells (never block the shell binary itself in Ring-0)
+                | "systemd"
+                | "dbus-daemon"
+                | "sshd"
+                | "init"
+                | "bash"
+                | "sh"
+                | "zsh"
+                | "powershell.exe"
+                | "pwsh.exe"
+                | "cmd.exe"
+                // Sensor & auditing binaries
+                | "osoosi.exe"
+                | "osoosi-cli.exe"
+                | "osoosi-auditor.exe"
+                | "osoosi"
+                | "osoosi-cli"
+                | "osoosi-auditor"
+        )
+    }
+
     /// Add an executable path to the kernel blocklist.
+    ///
+    /// Strictly refuses to block OS kernel, session, shell, desktop, search, systray,
+    /// security sensor, or developer toolchain binaries so Ring-0 / eBPF LSM rules
+    /// can never brick the operating system.
     pub fn add_blocked_path(&self, path: &str) -> anyhow::Result<()> {
-        let normalized_unix = path.replace('\\', "/");
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Ok(());
+        }
+        if Self::is_protected_kernel_block_path(trimmed)
+            || osoosi_types::is_protected_os_shell_or_desktop_binary(trimmed)
+            || crate::tarpit::is_protected_system_or_security_process(9999, trimmed)
+        {
+            warn!(
+                "[KERNEL_DRIVER] OS Immunity Invariant: Refusing to add protected OS/shell/toolchain path to Ring-0 blocklist: {}",
+                trimmed
+            );
+            return Ok(());
+        }
+
+        let normalized_unix = trimmed.replace('\\', "/");
         osoosi_telemetry::linux_ebpf::sync_ebpf_lsm_add_blocked_path(&normalized_unix);
         if let Ok(mut paths) = self.state.blocked_paths.write() {
             if !paths.contains(&normalized_unix) {
@@ -923,7 +997,7 @@ impl KernelDriverClient {
         if let Some(ref h) = self.handle {
             use std::os::windows::ffi::OsStrExt;
 
-            let normalized = path.replace('/', "\\");
+            let normalized = trimmed.replace('/', "\\");
             let mut req = RawAddPathRequest {
                 image_path: [0u16; 260],
             };
@@ -949,7 +1023,7 @@ impl KernelDriverClient {
 
         info!(
             "[KERNEL_DRIVER] Added pre-exec block rule for path: {}",
-            path
+            trimmed
         );
         Ok(())
     }
@@ -1246,6 +1320,7 @@ mod tests {
     fn test_cross_platform_kernel_driver_client() {
         let client = KernelDriverClient::open_or_fallback();
         assert!(client.is_available());
+        let _ = client.clear_rules();
         assert!(client.set_mode(DriverAutonomyMode::Active).is_ok());
         assert!(client.add_blocked_path("/bin/malicious_dropper").is_ok());
         let hash = [0x55u8; 32];
@@ -1255,5 +1330,57 @@ mod tests {
         assert!(status.rule_count >= 2);
         assert!(client.poll_interceptions().is_ok());
         assert!(client.clear_rules().is_ok());
+    }
+
+    #[test]
+    fn test_kernel_driver_refuses_blocking_protected_os_paths() {
+        let client = KernelDriverClient::open_or_fallback();
+        let _ = client.clear_rules();
+
+        let protected_paths = [
+            "C:\\Windows\\explorer.exe",
+            "C:\\Windows\\System32\\svchost.exe",
+            "C:\\Windows\\SystemApps\\Microsoft.Windows.Search_cw5n1h2txyewy\\SearchHost.exe",
+            "C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe",
+            "C:\\Windows\\System32\\SecurityHealthSystray.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "/lib/systemd/systemd",
+            "/usr/bin/gnome-shell",
+            "/usr/sbin/sshd",
+            "/bin/bash",
+            "osoosi.exe",
+            // Developer toolchain & container infrastructure immunity
+            "C:\\Python311\\python.exe",
+            "python.exe",
+            "python3.exe",
+            "/usr/bin/python3",
+            "C:\\Users\\dev\\.cargo\\bin\\cargo.exe",
+            "cargo.exe",
+            "/usr/bin/cargo",
+            "rustc.exe",
+            "/usr/bin/rustc",
+            "node.exe",
+            "/usr/bin/node",
+            "git.exe",
+            "/usr/bin/git",
+            "code.exe",
+            "wsl.exe",
+            "docker.exe",
+            "/usr/bin/dbus-daemon",
+        ];
+
+        for p in protected_paths {
+            assert!(client.add_blocked_path(p).is_ok());
+        }
+
+        let blocked = client.state.blocked_paths.read().unwrap();
+        for p in protected_paths {
+            let norm = p.replace('\\', "/");
+            assert!(
+                !blocked.contains(&norm),
+                "Protected OS/shell binary '{}' must never enter Ring-0 blocked_paths",
+                p
+            );
+        }
     }
 }

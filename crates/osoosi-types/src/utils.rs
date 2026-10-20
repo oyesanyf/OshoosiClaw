@@ -1197,8 +1197,8 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
         return false;
     }
 
-    // Never classify script interpreters or LOLBins as protected OS desktop/shell binaries
-    const NEVER_PROTECTED_INTERPRETERS: &[&str] = &[
+    // Never classify interactive shells, script hosts, or LOLBins as protected OS desktop/shell binaries
+    const NEVER_PROTECTED_SHELLS_AND_LOLBINS: &[&str] = &[
         "powershell.exe",
         "powershell",
         "pwsh.exe",
@@ -1217,14 +1217,8 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
         "zsh",
         "dash",
         "ksh",
-        "python",
-        "python.exe",
-        "python3",
-        "python3.exe",
         "perl",
         "ruby",
-        "node",
-        "node.exe",
         "nc",
         "ncat",
         "netcat",
@@ -1233,8 +1227,44 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
         "curl.exe",
         "wget",
     ];
-    if NEVER_PROTECTED_INTERPRETERS.contains(&file_name) {
+    let exe_name = file_name.split_whitespace().next().unwrap_or(file_name);
+    if NEVER_PROTECTED_SHELLS_AND_LOLBINS.contains(&file_name)
+        || NEVER_PROTECTED_SHELLS_AND_LOLBINS.contains(&exe_name)
+    {
         return false;
+    }
+
+    // Developer Environment vs. Malicious Script Invocation Disambiguation:
+    // Toolchain interpreters (python, node) must be shielded when running as developer
+    // engines or installed SDK binaries, but rejected if executing inline script payloads,
+    // encoded commands, or spawned from untrusted temporary staging directories.
+    const DEVELOPER_INTERPRETERS: &[&str] = &[
+        "python",
+        "python.exe",
+        "python3",
+        "python3.exe",
+        "node",
+        "node.exe",
+    ];
+    if DEVELOPER_INTERPRETERS.contains(&file_name) || DEVELOPER_INTERPRETERS.contains(&exe_name) {
+        let is_suspicious_script_invocation = lower_win.contains(" -c ")
+            || lower_win.contains(" /c ")
+            || lower_win.contains(" -enc ")
+            || lower_win.contains(" -encodedcommand ")
+            || lower_win.contains(" --eval ")
+            || lower_win.contains(" -e ")
+            || lower_win.contains("\\temp\\")
+            || lower_unix.contains("/tmp/")
+            || lower_win.contains("\\appdata\\local\\temp\\")
+            || lower_win.contains("evil")
+            || lower_win.contains("beacon")
+            || lower_win.contains("downloadstring")
+            || lower_win.contains("iex(");
+
+        if is_suspicious_script_invocation {
+            return false;
+        }
+        return true;
     }
 
     // Dedicated OS shell / app bundle paths across Windows, Linux, and macOS
@@ -1466,6 +1496,21 @@ pub fn is_protected_os_shell_or_desktop_binary(path_or_name: &str) -> bool {
             | "podman"
             | "conmon"
             | "libvirtd"
+            // --- Developer Toolchains, Runtimes & Container Engines ---
+            | "cargo"
+            | "rustc"
+            | "rustup"
+            | "git"
+            | "git-remote-https"
+            | "code"
+            | "antigravity"
+            | "wsl"
+            | "wslhost"
+            | "wslservice"
+            | "vmmem"
+            | "vmmemwsl"
+            | "docker"
+            | "com.docker.backend"
             // --- macOS Launchd, WindowServer, Dock, Finder, SystemUIServer/ControlCenter & Spotlight ---
             | "kernel_task"
             | "launchd"
@@ -1830,16 +1875,32 @@ mod tests {
             );
         }
 
-        // Script interpreters / LOLBins / unknown binaries must NOT be protected by this guard
-        assert!(!is_protected_os_shell_or_desktop_binary(
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        // Developer toolchains in clean environments must be protected
+        assert!(is_protected_os_shell_or_desktop_binary("/usr/bin/python3"));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Program Files\Python312\python.exe"
         ));
+        assert!(is_protected_os_shell_or_desktop_binary(
+            r"C:\Program Files\nodejs\node.exe"
+        ));
+        assert!(is_protected_os_shell_or_desktop_binary("cargo.exe"));
+        assert!(is_protected_os_shell_or_desktop_binary("code.exe"));
+
+        // Malicious script invocations and untrusted temp binaries must NOT be protected
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            "python3 -c \"import socket\""
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Temp\python.exe"
+        ));
+        assert!(!is_protected_os_shell_or_desktop_binary("/tmp/evil_beacon"));
         assert!(!is_protected_os_shell_or_desktop_binary(
             r"C:\Windows\System32\cmd.exe"
         ));
+        assert!(!is_protected_os_shell_or_desktop_binary(
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        ));
         assert!(!is_protected_os_shell_or_desktop_binary("/usr/bin/bash"));
-        assert!(!is_protected_os_shell_or_desktop_binary("/usr/bin/python3"));
-        assert!(!is_protected_os_shell_or_desktop_binary("/tmp/evil_beacon"));
     }
 }
 
