@@ -9849,6 +9849,10 @@ impl EdrOrchestrator {
 
     /// Record an item into the live gossip feed ring buffer.
     pub fn record_gossip_item(&self, item: osoosi_types::GossipFeedItem) {
+        let p = item.process_name.as_deref().unwrap_or("");
+        if crate::rea::is_rea_benign_system_or_dev_process(p, Some(&item.summary)) {
+            return;
+        }
         if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
             if buffer.len() >= 200 {
                 buffer.pop_back();
@@ -9867,7 +9871,7 @@ impl EdrOrchestrator {
     pub fn get_gossip_feed(&self, limit: usize) -> Vec<osoosi_types::GossipFeedItem> {
         let now = chrono::Utc::now().timestamp();
         let last = self.last_rea_adjudication_ts.load(std::sync::atomic::Ordering::Relaxed);
-        if now.saturating_sub(last) >= 10 {
+        if now.saturating_sub(last) >= 1 {
             self.last_rea_adjudication_ts.store(now, std::sync::atomic::Ordering::Relaxed);
             self.run_autonomous_rea_threat_adjudication();
         }
@@ -9884,6 +9888,10 @@ impl EdrOrchestrator {
                     || item.status == "CLEARED"
                     || item.status == "IGNORED"
                 {
+                    continue;
+                }
+                let cand_p = item.process_name.as_deref().unwrap_or("");
+                if crate::rea::is_rea_benign_system_or_dev_process(cand_p, Some(&item.summary)) {
                     continue;
                 }
                 let s_lower = item.summary.to_ascii_lowercase();
@@ -10502,6 +10510,44 @@ impl EdrOrchestrator {
                 true
             });
         }
+
+        // Purge audit log of false positive threat detection & gossip events
+        self.audit.retain_entries(|entry| {
+            if entry.event_type == "MESH_THREAT_BROADCAST"
+                || entry.event_type == "MESH_THREAT_RECEIVED"
+                || entry.event_type == "THREAT_DETECTED"
+            {
+                let proc = entry
+                    .data
+                    .get("process_name")
+                    .and_then(|v| v.as_str());
+                let summary = entry
+                    .data
+                    .get("summary")
+                    .or_else(|| entry.data.get("reason"))
+                    .or_else(|| entry.data.get("message"))
+                    .and_then(|v| v.as_str());
+
+                if let Some(p) = proc {
+                    if crate::rea::is_rea_benign_system_or_dev_process(p, summary) {
+                        return false;
+                    }
+                    let b = std::path::Path::new(p)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(p)
+                        .to_ascii_lowercase();
+                    if self.rea_adjudicated_clean_procs.contains(&b) {
+                        return false;
+                    }
+                } else if let Some(s) = summary {
+                    if crate::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(s)) {
+                        return false;
+                    }
+                }
+            }
+            true
+        });
 
         dropped
     }

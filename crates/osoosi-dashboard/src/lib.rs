@@ -1002,6 +1002,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/rea/v1/status", get(get_rea_status))
         .route("/api/rea/v1/providers", get(get_rea_providers))
         .route("/rea/v1/providers", get(get_rea_providers))
+        .route("/api/rea/v1/reports", get(get_rea_reports))
+        .route("/rea/v1/reports", get(get_rea_reports))
         .route("/api/rea/v1/analyze", post(post_rea_analyze))
         .route("/rea/v1/analyze", post(post_rea_analyze))
         .route(
@@ -2504,6 +2506,7 @@ fn enrich_mitre_threat(
 async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            let _ = orch.run_autonomous_rea_threat_adjudication();
             let threats = orch.memory().get_recent_threats(20).unwrap_or_default();
             if threats.is_empty() {
                 let entries = orch.audit().entries();
@@ -2520,6 +2523,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("");
                         let image_path = d.get("image_path").or(d.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
                         let hash_blake3 = d.get("hash_blake3").and_then(|v| v.as_str()).unwrap_or("");
+                        let reason_str = d.get("reason").or_else(|| d.get("summary")).and_then(|v| v.as_str()).unwrap_or("");
                         let process_for_feedback = if !process_name.is_empty() {
                             process_name.to_string()
                         } else if !image_path.is_empty() {
@@ -2534,6 +2538,10 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                                 if hash_blake3.is_empty() { None } else { Some(hash_blake3) },
                             )
                             .unwrap_or(false)
+                            || osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                                &process_for_feedback,
+                                if reason_str.is_empty() { None } else { Some(reason_str) },
+                            )
                         {
                             return None;
                         }
@@ -2587,7 +2595,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
             } else {
                 let formatted: Vec<Value> = threats
                     .into_iter()
-                    .map(|t| {
+                    .filter_map(|t| {
                         let obj = t.as_object().cloned().unwrap_or_default();
                         let process_name = obj.get("process_name").and_then(|v| v.as_str()).unwrap_or("");
                         let image_path = obj.get("image_path").or(obj.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
@@ -2610,12 +2618,17 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         } else {
                             ""
                         };
+
+                        if osoosi_core::rea::is_rea_benign_system_or_dev_process(proc_for_mitre, reason) {
+                            return None;
+                        }
+
                         let reason_str = reason.unwrap_or("");
                         let existing_tech = obj.get("mitre_technique").and_then(|v| v.as_str());
                         let existing_name = obj.get("mitre_technique_name").and_then(|v| v.as_str());
                         let (tech_id, tech_name, display_title) = enrich_mitre_threat(proc_for_mitre, cve_id, reason_str, existing_tech, existing_name);
 
-                        json!({
+                        Some(json!({
                             "id": obj.get("id"),
                             "type": title,
                             "cve_id": cve_id,
@@ -2631,7 +2644,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "mitre_technique": tech_id,
                             "mitre_technique_name": tech_name,
                             "display_title": display_title
-                        })
+                        }))
                     })
                     .collect();
 
@@ -5324,12 +5337,35 @@ async fn get_privilege_status() -> Json<Value> {
 async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            let _ = orch.run_autonomous_rea_threat_adjudication();
             let entries = orch.audit().entries();
             let mut seen_summaries = std::collections::HashSet::new();
             let items: Vec<Value> = entries
                 .iter()
                 .rev()
                 .filter_map(|e| {
+                    if e.event_type == "THREAT_DETECTED"
+                        || e.event_type == "MESH_THREAT_RECEIVED"
+                        || e.event_type == "MESH_THREAT_BROADCAST"
+                    {
+                        let proc = e.data.get("process_name").and_then(|v| v.as_str());
+                        let summary_or_reason = e
+                            .data
+                            .get("summary")
+                            .or_else(|| e.data.get("reason"))
+                            .or_else(|| e.data.get("message"))
+                            .and_then(|v| v.as_str());
+
+                        if let Some(p) = proc {
+                            if osoosi_core::rea::is_rea_benign_system_or_dev_process(p, summary_or_reason) {
+                                return None;
+                            }
+                        } else if let Some(sr) = summary_or_reason {
+                            if osoosi_core::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(sr)) {
+                                return None;
+                            }
+                        }
+                    }
                     let summary = if let Some(s) = e.data.get("summary").and_then(|v| v.as_str()) {
                         s.to_string()
                     } else if let Some(m) = e.data.get("message").and_then(|v| v.as_str()) {
@@ -9677,6 +9713,20 @@ pub async fn get_rea_providers() -> impl IntoResponse {
             "ok": true,
             "count": providers.len(),
             "providers": providers,
+        })),
+    )
+}
+
+pub async fn get_rea_reports() -> impl IntoResponse {
+    let engine = osoosi_core::rea::global_rea_engine();
+    let reports = engine.get_recent_investigations(50);
+    (
+        StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "count": reports.len(),
+            "reports": reports,
+            "investigations": reports,
         })),
     )
 }

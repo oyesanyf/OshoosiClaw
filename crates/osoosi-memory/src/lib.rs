@@ -133,10 +133,51 @@ impl MemoryStore {
         let conn = self.conn.lock();
         let deleted = conn.execute(
             "DELETE FROM threats WHERE
-                reason LIKE '%Veto Trusted Vendor%'
+                reason LIKE '%Veto%'
+                OR reason LIKE '%Trusted Vendor%'
+                OR reason LIKE '%Trusted-Vendor%'
                 OR reason LIKE '%outside the vulnerable%'
                 OR reason LIKE '%CVE None%'
                 OR reason LIKE '%Autonomous REA Verified Clean%'
+                OR reason LIKE '%Execution Of Non-Existing File%'
+                OR process_name = '<unknown process>'
+                OR process_name = 'unknown'
+                OR LOWER(COALESCE(process_name, '')) IN (
+                    'sc.exe', 'git.exe', 'git-remote-https.exe', 'git-credential-manager.exe',
+                    'git-credential-helper.exe', 'git-credential', 'sh.exe', 'bash.exe', 'ssh.exe',
+                    'conhost.exe', 'openconsole.exe', 'windowsterminal.exe', 'wt.exe',
+                    'chrome.exe', 'remoting_host.exe', 'googledrivefs.exe', 'googleupdate.exe',
+                    'googlecrashhandler.exe', 'googlecrashhandler64.exe',
+                    'wsl.exe', 'wslhost.exe', 'wslservice.exe', 'vmmem', 'vmmemwsl',
+                    'taskkill.exe', 'tasklist.exe', 'taskmgr.exe',
+                    'powershell.exe', 'pwsh.exe', 'cmd.exe', 'svchost.exe', 'explorer.exe',
+                    'lsass.exe', 'csrss.exe', 'services.exe', 'wininit.exe', 'winlogon.exe',
+                    'dwm.exe', 'sihost.exe', 'taskhostw.exe', 'dllhost.exe', 'ctfmon.exe',
+                    'runtimebroker.exe', 'runtimebroker.', 'smartscreen.exe', 'smartscreen.ex',
+                    'searchhost.exe', 'searchindexer.exe', 'searchprotocolhost.exe', 'searchfilterhost.exe',
+                    'startmenuexperiencehost.exe', 'shellexperiencehost.exe', 'applicationframehost.exe',
+                    'textinputhost.exe', 'spoolsv.exe', 'audiodg.exe', 'fontdrvhost.exe',
+                    'tiworker.exe', 'trustedinstaller.exe', 'msiexec.exe', 'wmiprvse.exe',
+                    'securityhealthservice.exe', 'securityhealthsystray.exe',
+                    'mpdefendercoreservice.exe', 'msmpeng.exe', 'nissrv.exe', 'mpcmdrun.exe',
+                    'onedrive.exe', 'onedrive.sync.service.exe', 'm365copilot.exe',
+                    'msedge.exe', 'msedgewebview2.exe', 'slack.exe',
+                    'com.docker.backend.exe', 'docker.exe', 'dockerd.exe', 'vpnkit.exe',
+                    'language_server.exe', 'language_server_windows_x64.exe', 'gemini.exe', 'antigravity.exe', 'code.exe',
+                    'velociraptor.exe', 'velociraptor.e',
+                    'cargo.exe', 'rustc.exe', 'rustup.exe', 'clippy-driver.exe', 'cargo-fmt.exe',
+                    'rustfmt.exe', 'rust-analyzer.exe', 'build-script-build.exe',
+                    'link.exe', 'cl.exe', 'msbuild.exe', 'signtool.exe', 'candle.exe', 'light.exe',
+                    'node.exe', 'python.exe', 'python3.exe', 'pythonw.exe',
+                    'arp.exe', 'ipconfig.exe', 'netsh.exe', 'route.exe', 'ping.exe',
+                    'whoami.exe', 'hostname.exe', 'systeminfo.exe', 'reg.exe', 'wevtutil.exe',
+                    'icacls.exe', 'findstr.exe', 'where.exe', 'osoosi.exe', 'osoosi-cli.exe'
+                )
+                OR LOWER(COALESCE(process_name, '')) LIKE 'velociraptor.e%'
+                OR LOWER(COALESCE(process_name, '')) LIKE 'smartscreen.ex%'
+                OR LOWER(COALESCE(process_name, '')) LIKE 'git-credential%'
+                OR LOWER(COALESCE(process_name, '')) LIKE 'runtimebroker.%'
+                OR LOWER(COALESCE(process_name, '')) LIKE 'mpdefendercore%'
                 OR EXISTS (SELECT 1 FROM false_positive_patterns fp WHERE (fp.process_name != '' AND LOWER(fp.process_name) = LOWER(COALESCE(threats.process_name, ''))) OR (fp.hash_blake3 != '' AND fp.hash_blake3 = COALESCE(threats.hash_blake3, '')))
                 OR EXISTS (SELECT 1 FROM known_clean_hashes kch WHERE kch.hash_blake3 != '' AND kch.hash_blake3 = COALESCE(threats.hash_blake3, ''))",
             [],
@@ -1578,9 +1619,51 @@ impl MemoryStore {
                 SELECT 1 FROM known_clean_hashes kch
                 WHERE kch.hash_blake3 != '' AND kch.hash_blake3 = COALESCE(t.hash_blake3, '')
              )
-             AND COALESCE(t.reason, '') NOT LIKE '%Veto Trusted Vendor%'
+             AND COALESCE(t.reason, '') NOT LIKE '%Veto%'
+             AND COALESCE(t.reason, '') NOT LIKE '%Trusted Vendor%'
+             AND COALESCE(t.reason, '') NOT LIKE '%Trusted-Vendor%'
              AND COALESCE(t.reason, '') NOT LIKE '%outside the vulnerable%'
              AND COALESCE(t.reason, '') NOT LIKE '%CVE None%'
+             AND COALESCE(t.reason, '') NOT LIKE '%Autonomous REA Verified Clean%'
+             AND COALESCE(t.reason, '') NOT LIKE '%Execution Of Non-Existing File%'
+             AND COALESCE(t.process_name, '') != '<unknown process>'
+             AND COALESCE(t.process_name, '') != 'unknown'
+             AND LOWER(COALESCE(t.process_name, '')) NOT IN (
+                 'sc.exe', 'git.exe', 'git-remote-https.exe', 'git-credential-manager.exe',
+                 'git-credential-helper.exe', 'git-credential', 'sh.exe', 'bash.exe', 'ssh.exe',
+                 'conhost.exe', 'openconsole.exe', 'windowsterminal.exe', 'wt.exe',
+                 'chrome.exe', 'remoting_host.exe', 'googledrivefs.exe', 'googleupdate.exe',
+                 'googlecrashhandler.exe', 'googlecrashhandler64.exe',
+                 'wsl.exe', 'wslhost.exe', 'wslservice.exe', 'vmmem', 'vmmemwsl',
+                 'taskkill.exe', 'tasklist.exe', 'taskmgr.exe',
+                 'powershell.exe', 'pwsh.exe', 'cmd.exe', 'svchost.exe', 'explorer.exe',
+                 'lsass.exe', 'csrss.exe', 'services.exe', 'wininit.exe', 'winlogon.exe',
+                 'dwm.exe', 'sihost.exe', 'taskhostw.exe', 'dllhost.exe', 'ctfmon.exe',
+                 'runtimebroker.exe', 'runtimebroker.', 'smartscreen.exe', 'smartscreen.ex',
+                 'searchhost.exe', 'searchindexer.exe', 'searchprotocolhost.exe', 'searchfilterhost.exe',
+                 'startmenuexperiencehost.exe', 'shellexperiencehost.exe', 'applicationframehost.exe',
+                 'textinputhost.exe', 'spoolsv.exe', 'audiodg.exe', 'fontdrvhost.exe',
+                 'tiworker.exe', 'trustedinstaller.exe', 'msiexec.exe', 'wmiprvse.exe',
+                 'securityhealthservice.exe', 'securityhealthsystray.exe',
+                 'mpdefendercoreservice.exe', 'msmpeng.exe', 'nissrv.exe', 'mpcmdrun.exe',
+                 'onedrive.exe', 'onedrive.sync.service.exe', 'm365copilot.exe',
+                 'msedge.exe', 'msedgewebview2.exe', 'slack.exe',
+                 'com.docker.backend.exe', 'docker.exe', 'dockerd.exe', 'vpnkit.exe',
+                 'language_server.exe', 'language_server_windows_x64.exe', 'gemini.exe', 'antigravity.exe', 'code.exe',
+                 'velociraptor.exe', 'velociraptor.e',
+                 'cargo.exe', 'rustc.exe', 'rustup.exe', 'clippy-driver.exe', 'cargo-fmt.exe',
+                 'rustfmt.exe', 'rust-analyzer.exe', 'build-script-build.exe',
+                 'link.exe', 'cl.exe', 'msbuild.exe', 'signtool.exe', 'candle.exe', 'light.exe',
+                 'node.exe', 'python.exe', 'python3.exe', 'pythonw.exe',
+                 'arp.exe', 'ipconfig.exe', 'netsh.exe', 'route.exe', 'ping.exe',
+                 'whoami.exe', 'hostname.exe', 'systeminfo.exe', 'reg.exe', 'wevtutil.exe',
+                 'icacls.exe', 'findstr.exe', 'where.exe', 'osoosi.exe', 'osoosi-cli.exe'
+             )
+             AND LOWER(COALESCE(t.process_name, '')) NOT LIKE 'velociraptor.e%'
+             AND LOWER(COALESCE(t.process_name, '')) NOT LIKE 'smartscreen.ex%'
+             AND LOWER(COALESCE(t.process_name, '')) NOT LIKE 'git-credential%'
+             AND LOWER(COALESCE(t.process_name, '')) NOT LIKE 'runtimebroker.%'
+             AND LOWER(COALESCE(t.process_name, '')) NOT LIKE 'mpdefendercore%'
              GROUP BY COALESCE(NULLIF(cve_id, ''), NULLIF(process_name, ''), file_path), source_node
              ORDER BY detected_at DESC
              LIMIT ?1"

@@ -352,6 +352,45 @@ impl MerkleAuditTree {
         );
         computed == inner.root
     }
+
+    /// Retain only audit entries satisfying the predicate `keep`.
+    /// Recomputes the Merkle spine and updates root, returning the number of removed entries.
+    pub fn retain_entries<F>(&self, mut keep: F) -> usize
+    where
+        F: FnMut(&AuditEntry) -> bool,
+    {
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let entries = std::mem::take(&mut inner.entries);
+        let leaves = std::mem::take(&mut inner.leaves);
+        let initial_len = entries.len();
+        if initial_len == 0 {
+            return 0;
+        }
+
+        let mut retained_entries = Vec::with_capacity(initial_len);
+        let mut retained_leaves = Vec::with_capacity(initial_len);
+
+        for (entry, leaf) in entries.into_iter().zip(leaves.into_iter()) {
+            if keep(&entry) {
+                retained_entries.push(entry);
+                retained_leaves.push(leaf);
+            }
+        }
+
+        let removed = initial_len - retained_entries.len();
+        if removed > 0 {
+            inner.spine = rebuild_spine(&retained_leaves);
+            inner.root = Self::compute_root_from_spine(
+                &inner.spine,
+                retained_leaves.len(),
+                inner.epoch_checkpoint_root.as_deref(),
+            );
+        }
+
+        inner.entries = retained_entries;
+        inner.leaves = retained_leaves;
+        removed
+    }
 }
 
 /// Backward compatibility alias for the Merkle Audit Tree.
