@@ -402,6 +402,21 @@ enum Commands {
         #[command(subcommand)]
         action: ReaAction,
     },
+    /// Built-In Adversarial Red-Team & Bypass-Resistance Gauntlet (MITRE STIX/Atomic/CALDERA, Promptfoo/Garak AgentOctopus, OWASP Agentic/LLM/Web, Reviewer Bypass & Independent OS Oracle)
+    #[command(
+        name = "redteam",
+        alias = "red-team",
+        alias = "gauntlet",
+        about = "Execute Built-In Adversarial Red-Team & Bypass-Resistance Gauntlet"
+    )]
+    Redteam {
+        /// Suite filter: all, stix, agent, owasp, bypass
+        #[arg(short, long, default_value = "all")]
+        suite: String,
+        /// Output scorecard as JSON
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -2483,6 +2498,86 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         println!("============================================================");
                     }
                 }
+            }
+        }
+        Some(Commands::Redteam { suite, json }) => {
+            let mut scorecard =
+                osoosi_core::adversarial_gauntlet::AdversarialRedTeamGauntlet::run_full_gauntlet();
+            let suite_lower = suite.to_ascii_lowercase();
+            if suite_lower != "all" {
+                scorecard.vector_results.retain(|v| {
+                    let sl = v.suite.to_ascii_lowercase();
+                    match suite_lower.as_str() {
+                        "stix" | "mitre" | "atomic" | "caldera" => sl.contains("suite1"),
+                        "agent" | "octopus" | "garak" | "promptfoo" => sl.contains("suite2"),
+                        "owasp" => sl.contains("suite3"),
+                        "bypass" | "reviewer" => sl.contains("suite4"),
+                        _ => true,
+                    }
+                });
+            }
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&scorecard).unwrap_or_default()
+                );
+            } else {
+                println!("================================================================================");
+                println!("  OpenỌ̀ṣọ́ọ̀sì Adversarial Red-Team & Bypass-Resistance Gauntlet (Suite: {})", suite);
+                println!("================================================================================");
+                for v in &scorecard.vector_results {
+                    let icon = if v.prevented { "✅ PREVENTED" } else { "❌ BYPASSED" };
+                    println!(
+                        "  {} [{:<34}] ({} us) -> {}",
+                        icon, v.vector_id, v.latency_us, v.enforcing_layer
+                    );
+                }
+                println!("--------------------------------------------------------------------------------");
+                println!(
+                    "  Prevention / Detection Rate   : {:.1}% / {:.1}% ({}/{})",
+                    scorecard.prevention_rate_pct,
+                    scorecard.detection_rate_pct,
+                    scorecard.vectors_prevented,
+                    scorecard.total_adversarial_vectors
+                );
+                println!(
+                    "  Containment Latency (p50/p99) : {} us / {} us",
+                    scorecard.containment_latency_p50_us, scorecard.containment_latency_p99_us
+                );
+                println!(
+                    "  Bypass Success Rate           : {:.1}%",
+                    scorecard.bypass_success_rate_pct
+                );
+                println!(
+                    "  False-Positive Rate           : {:.1}% ({}/{} benign developer/OS workloads)",
+                    scorecard.false_positive_rate_pct,
+                    scorecard.false_positives_triggered,
+                    scorecard.benign_workloads_evaluated
+                );
+                println!(
+                    "  Host OS Stability Score       : {:.1}%",
+                    scorecard.os_stability_score_pct
+                );
+                println!(
+                    "  Forensic Completeness         : {:.1}%",
+                    scorecard.forensic_completeness_pct
+                );
+                println!(
+                    "  OS Boundary Oracle Verified   : {}",
+                    scorecard.os_oracle_report.all_os_invariants_verified
+                );
+                println!(
+                    "  5-Policy RL Benchmark Backend : {} (LearnedRL > Heuristic: {})",
+                    scorecard.rl_5_policy_benchmark.environment_backend,
+                    scorecard.rl_5_policy_benchmark.learned_rl_exceeds_heuristic
+                );
+                println!("================================================================================");
+            }
+            if scorecard.prevention_rate_pct < 100.0
+                || scorecard.false_positive_rate_pct > 0.0
+                || !scorecard.os_oracle_report.all_os_invariants_verified
+            {
+                std::process::exit(1);
             }
         }
         None => {

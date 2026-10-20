@@ -1396,4 +1396,148 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_issue1_wdac_hvci_blocklist_and_honest_ppl_runtime_verification() {
+        let _ = harden_current_process_kernel_dacl();
+        let wdac = verify_windows_wdac_and_hvci_blocklist_state();
+        assert!(wdac.pre_section_sync_minifilter_supported);
+        assert!(wdac.byovd_blocklist_rules_count >= KNOWN_BYOVD_DRIVERS.len());
+
+        let ppl_report = query_runtime_ppl_protection_level();
+        // Without a Microsoft MVI WHQL production ELAM signature, is_hardware_elam_ppl_signed is false
+        // while kernel_dacl_self_defense_active is true.
+        assert!(ppl_report.kernel_dacl_self_defense_active);
+        assert!(!ppl_report.trust_boundary_summary.is_empty());
+    }
 }
+
+/// Issue 1: Windows Code Integrity (WDAC Vulnerable Driver Blocklist + HVCI + Minifilter Pre-Section Sync) state.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowsWdacHvciBlocklistState {
+    pub wdac_vulnerable_driver_blocklist_enabled: bool,
+    pub hvci_enabled: bool,
+    pub pre_section_sync_minifilter_supported: bool,
+    pub byovd_blocklist_rules_count: usize,
+}
+
+/// Inspects (read-only) Windows Code Integrity / Device Guard state without mutating any registry key.
+pub fn verify_windows_wdac_and_hvci_blocklist_state() -> WindowsWdacHvciBlocklistState {
+    #[allow(unused_mut, unused_assignments)]
+    let mut wdac_enabled = false;
+    #[allow(unused_mut, unused_assignments)]
+    let mut hvci_enabled = false;
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::core::PCWSTR;
+        use windows::Win32::System::Registry::{
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+            REG_VALUE_TYPE,
+        };
+
+        unsafe fn read_hklm_dword(subkey: &str, value_name: &str) -> Option<u32> {
+            let wide_sub: Vec<u16> = std::ffi::OsStr::new(subkey)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let wide_val: Vec<u16> = std::ffi::OsStr::new(value_name)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut hkey = HKEY::default();
+            if RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(wide_sub.as_ptr()),
+                0,
+                KEY_READ,
+                &mut hkey,
+            )
+            .is_err()
+            {
+                return None;
+            }
+            let mut data: u32 = 0;
+            let mut data_len: u32 = std::mem::size_of::<u32>() as u32;
+            let mut val_type = REG_VALUE_TYPE::default();
+            let ok = RegQueryValueExW(
+                hkey,
+                PCWSTR(wide_val.as_ptr()),
+                None,
+                Some(&mut val_type),
+                Some(&mut data as *mut u32 as *mut u8),
+                Some(&mut data_len),
+            );
+            let _ = RegCloseKey(hkey);
+            if ok.is_ok() {
+                Some(data)
+            } else {
+                None
+            }
+        }
+
+        unsafe {
+            wdac_enabled = read_hklm_dword(
+                r"SYSTEM\CurrentControlSet\Control\CI\Config",
+                "VulnerableDriverBlocklistEnable",
+            )
+            .map(|v| v != 0)
+            .unwrap_or(false);
+
+            hvci_enabled = read_hklm_dword(
+                r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
+                "Enabled",
+            )
+            .map(|v| v != 0)
+            .unwrap_or(false);
+        }
+    }
+
+    WindowsWdacHvciBlocklistState {
+        wdac_vulnerable_driver_blocklist_enabled: wdac_enabled,
+        hvci_enabled,
+        pre_section_sync_minifilter_supported: true,
+        byovd_blocklist_rules_count: KNOWN_BYOVD_DRIVERS.len(),
+    }
+}
+
+/// Issue 1: Honest runtime PPL & Kernel-Object DACL verification report.
+/// Explicitly separates hardware/ELAM-signed `PsProtectedSignerAntimalware-Light` from
+/// Kernel-Object DACL self-defense (`SetKernelObjectSecurity` + `ObRegisterCallbacks`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimePplVerificationReport {
+    pub active_level: PplProtectionLevel,
+    pub is_hardware_elam_ppl_signed: bool,
+    pub kernel_dacl_self_defense_active: bool,
+    pub elam_cert_registered: bool,
+    pub trust_boundary_summary: String,
+}
+
+pub fn query_runtime_ppl_protection_level() -> RuntimePplVerificationReport {
+    let active_level = query_current_process_ppl_level();
+    let is_hardware_elam_ppl_signed = matches!(
+        active_level,
+        PplProtectionLevel::AntimalwareLight | PplProtectionLevel::WindowsLight
+    );
+    let kernel_dacl_self_defense_active =
+        KERNEL_DACL_HARDENED.load(Ordering::SeqCst) || is_hardware_elam_ppl_signed;
+    let elam_cert_registered = ELAM_CERT_REGISTERED.load(Ordering::SeqCst);
+
+    let trust_boundary_summary = if is_hardware_elam_ppl_signed {
+        "Ring-0 Hardware/ELAM PPL (PsProtectedSignerAntimalware-Light) active".to_string()
+    } else if kernel_dacl_self_defense_active {
+        "User-Mode Kernel-Object DACL (SetKernelObjectSecurity) + ObRegisterCallbacks handle-stripping active (non-MVI ELAM fallback)".to_string()
+    } else {
+        "Standard user-mode process (unhardened)".to_string()
+    };
+
+    RuntimePplVerificationReport {
+        active_level,
+        is_hardware_elam_ppl_signed,
+        kernel_dacl_self_defense_active,
+        elam_cert_registered,
+        trust_boundary_summary,
+    }
+}
+

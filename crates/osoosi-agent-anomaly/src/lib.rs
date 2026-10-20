@@ -15,6 +15,7 @@ pub mod mercury_guard;
 pub mod mesh_guard;
 pub mod rasp;
 pub mod reasoner;
+pub mod rl_controller;
 pub mod screener;
 pub mod siquery;
 pub mod spider_physics;
@@ -25,7 +26,7 @@ pub use agentjacking_guard::{
 };
 pub use breakout_defense::{
     validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,
-    UnifiedBreakoutEvaluation,
+    UnifiedBreakoutEvaluation, ZeroMiProjectionResult, ZeroMutualInformationProjector,
 };
 pub use cedar_engine::{
     PolicyExecutionStep, VanishingPolynomialProof, VanishingPolynomialTraceVerifier,
@@ -37,6 +38,7 @@ pub use classifier::{
 };
 pub use containment_ring::{
     compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry, DiracDeltaCapabilityTicket,
+    IndependentTrustBoundaryVerifier, MultiLayerGateVerdict, PinnedToolObjectBinding,
     ZeroCopyImmutableToolBuffer,
 };
 pub use detector::AgentAnomalyDetector;
@@ -49,8 +51,12 @@ pub use mesh_guard::{
     HomologicalMessageEdge,
 };
 pub use reasoner::SemanticReasoningEngine;
+pub use rl_controller::{
+    ConfidenceInterval95, CyberBattleBackendKind, DefenseAction, DefensePolicyMode,
+    PolicyBenchmarkSummary, RLAdaptiveController, StandardizedRlBenchmarkReport,
+};
 pub use screener::{ScreenerResult, SessionWindow, StatisticalScreener};
-pub use siquery::{SiqueryEngine, SiqueryRow};
+pub use siquery::{IharaZetaCycleDetector, IharaZetaVerdict, SiqueryEngine, SiqueryRow};
 pub use spider_physics::{
     global_spider_web_engine, BusinessPolicyViolation, ContentTrust, ExposureBoundTracker,
     OrbWebContainmentEngine, SilkRegime, SpiderThreadSector, SpiderWebVerdict,

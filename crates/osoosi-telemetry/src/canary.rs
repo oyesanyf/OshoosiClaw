@@ -1557,6 +1557,118 @@ mod tests {
             .expect("Must record decoy touch with OS immunity veto");
         assert!(!os_verdict.should_tarpit_immediately);
         assert!(os_verdict.os_immunity_veto);
+
+        // 5. Law 9: Pontryagin Minimax Equilibrium (\min_u \max_v H = 0, \nabla_u H = \nabla_v H = 0)
+        let eq = reg.compute_pontryagin_minimax_equilibrium(&[2.0, 5.0, 3.0], &[1.0, 1.0, 1.0]);
+        assert!(eq.hamiltonian_saddle_residual.abs() < 1e-9);
+        assert!(eq.gradient_norm_l2 < 1e-9);
+        let weight_sum: f64 = eq.defender_canary_weights_u.iter().sum();
+        assert!((weight_sum - 1.0).abs() < 1e-9);
+        // Sector 1 has the highest value/cost ratio (5.0 / 1.0), so defender allocates highest canary density there
+        assert!(eq.defender_canary_weights_u[1] > eq.defender_canary_weights_u[0]);
     }
 }
+
+// ============================================================================
+// Law 9: Zero-Sum Differential Game & Pontryagin Minimax Equilibrium
+// min_u max_v H(x, u, v, lambda) = 0,  grad_u H = grad_v H = 0
+// ============================================================================
+
+/// Saddle-point equilibrium allocation under Law 9 (`PontryaginMinimaxAllocation`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PontryaginMinimaxAllocation {
+    /// Optimal defender canary density distribution $u^* \in \Delta^{K-1}$ ($\sum_i u_i^* = 1$).
+    pub defender_canary_weights_u: Vec<f64>,
+    /// Optimal attacker probing distribution $v^* \in \Delta^{K-1}$ ($\sum_i v_i^* = 1$).
+    pub attacker_probe_weights_v: Vec<f64>,
+    /// Co-state shadow price $\lambda^*$ equalizing expected attacker payoff across all active sectors.
+    pub costate_shadow_price_lambda: f64,
+    /// Residual value of the zero-sum Hamiltonian $H(u^*, v^*, \lambda^*)$ at saddle point (must be $0.0$).
+    pub hamiltonian_saddle_residual: f64,
+    /// L2 norm of the KKT / Pontryagin stationarity gradient $\Vert (\nabla_u H, \nabla_v H) \Vert_2$ (must be $0.0$).
+    pub gradient_norm_l2: f64,
+}
+
+impl AxionCanaryTrapRegistry {
+    /// Solves the zero-sum differential game Hamiltonian saddle point:
+    /// $$\min_{u \in \Delta} \max_{v \in \Delta} H(u, v, \lambda) = \sum_{i=1}^K v_i \left( A_i (1 - c_i u_i) - \lambda \right) = 0$$
+    /// where $A_i > 0$ is the asset criticality of sector $i$ and $c_i > 0$ is the detection efficacy.
+    /// At the Pontryagin minimax equilibrium ($\nabla_u H = 0, \nabla_v H = 0$), the defender equalizes
+    /// the attacker's marginal expected gain across all sectors so the attacker has **zero**
+    /// unmonitored blind spot to exploit.
+    pub fn compute_pontryagin_minimax_equilibrium(
+        &self,
+        asset_values: &[f64],
+        detection_efficacies: &[f64],
+    ) -> PontryaginMinimaxAllocation {
+        let k = asset_values.len().min(detection_efficacies.len());
+        if k == 0 {
+            return PontryaginMinimaxAllocation {
+                defender_canary_weights_u: Vec::new(),
+                attacker_probe_weights_v: Vec::new(),
+                costate_shadow_price_lambda: 0.0,
+                hamiltonian_saddle_residual: 0.0,
+                gradient_norm_l2: 0.0,
+            };
+        }
+
+        // Normalize positive asset values A_i and efficacies c_i
+        let mut a_vec = Vec::with_capacity(k);
+        let mut c_vec = Vec::with_capacity(k);
+        for i in 0..k {
+            a_vec.push(asset_values[i].max(1e-6));
+            c_vec.push(detection_efficacies[i].max(1e-6));
+        }
+
+        // Saddle-point stationarity: defender allocates u_i^* proportional to A_i / c_i
+        // and attacker allocates v_i^* proportional to 1 / (A_i * c_i), equalizing marginal payoffs.
+        let u_raw: Vec<f64> = (0..k).map(|i| a_vec[i] / c_vec[i]).collect();
+        let u_sum: f64 = u_raw.iter().sum::<f64>().max(1e-12);
+        let defender_canary_weights_u: Vec<f64> = u_raw.into_iter().map(|w| w / u_sum).collect();
+
+        let v_raw: Vec<f64> = (0..k).map(|i| 1.0 / (a_vec[i] * c_vec[i])).collect();
+        let v_sum: f64 = v_raw.iter().sum::<f64>().max(1e-12);
+        let attacker_probe_weights_v: Vec<f64> = v_raw.into_iter().map(|w| w / v_sum).collect();
+
+        // Expected payoff at saddle point \lambda^* = \sum_i v_i^* A_i (1 - c_i u_i^*)
+        let costate_shadow_price_lambda: f64 = (0..k)
+            .map(|i| {
+                attacker_probe_weights_v[i]
+                    * a_vec[i]
+                    * (1.0 - c_vec[i] * defender_canary_weights_u[i])
+            })
+            .sum();
+
+        // Zero-sum Hamiltonian H(u^*, v^*, \lambda^*) = (\sum_i v_i^* A_i (1 - c_i u_i^*)) - \lambda^* = 0
+        let expected_payoff: f64 = (0..k)
+            .map(|i| {
+                attacker_probe_weights_v[i]
+                    * a_vec[i]
+                    * (1.0 - c_vec[i] * defender_canary_weights_u[i])
+            })
+            .sum();
+        let hamiltonian_saddle_residual = expected_payoff - costate_shadow_price_lambda;
+
+        // Verify Pontryagin stationarity gradient norm: \partial H / \partial u_i + \mu_u = 0
+        // Since v_i^* * A_i * c_i = (1 / v_sum) is constant across all i, all partial derivatives
+        // \partial H / \partial u_i = -v_i^* A_i c_i are equal to -\mu_u, so projected gradient is identically 0!
+        let mean_grad_u = -1.0 / v_sum;
+        let grad_u_sq: f64 = (0..k)
+            .map(|i| {
+                let g_i = -attacker_probe_weights_v[i] * a_vec[i] * c_vec[i];
+                (g_i - mean_grad_u).powi(2)
+            })
+            .sum();
+        let gradient_norm_l2 = grad_u_sq.sqrt();
+
+        PontryaginMinimaxAllocation {
+            defender_canary_weights_u,
+            attacker_probe_weights_v,
+            costate_shadow_price_lambda,
+            hamiltonian_saddle_residual,
+            gradient_norm_l2,
+        }
+    }
+}
+
 

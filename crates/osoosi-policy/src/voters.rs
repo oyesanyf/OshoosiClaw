@@ -3309,10 +3309,18 @@ pub struct DualChannelProjection {
 /// and an `AdaptiveDevMerkleGuard` for live developer-recompiled workspace binaries (`target/release`, `target/debug`).
 ///
 /// Operates deterministically on discrete event states without continuous microsecond polling.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DualChannelDiscriminationVoter {
     pub veto_gate: MerkleAllowlistVetoGate,
     pub adaptive_merkle_guard: std::sync::Arc<osoosi_audit::nsrl_aslr_merkle::NsrlAslrMerkleGuard>,
+}
+
+impl std::fmt::Debug for DualChannelDiscriminationVoter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DualChannelDiscriminationVoter")
+            .field("veto_gate", &self.veto_gate)
+            .finish()
+    }
 }
 
 impl Default for DualChannelDiscriminationVoter {
@@ -3556,63 +3564,36 @@ impl ThreatVoter for DualChannelDiscriminationVoter {
             if is_workspace_build_artifact && !matches!(event.event_id, 8 | 10 | 25) {
                 let target_path = std::path::Path::new(target_file);
                 if target_path.is_file() {
-                    let parent_proc = event
-                        .data
-                        .get("ParentImage")
-                        .or_else(|| event.data.get("ParentProcessName"))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("cargo.exe")
-                        .to_string();
-                    let actor_proc = if !image.is_empty() && image != target_file {
-                        image.to_string()
-                    } else {
-                        "rust-lld.exe".to_string()
-                    };
-                    let provenance = osoosi_audit::nsrl_aslr_merkle::RecompileProvenance {
-                        parent_process_name: parent_proc,
-                        actor_process_name: actor_proc,
-                        in_workspace_target_dir: true,
-                        has_valid_authenticode_or_compiler_marker: true,
-                        user_auth_pin: None,
-                    };
                     match self
                         .adaptive_merkle_guard
-                        .verify_or_adapt_binary(target_path, Some(&provenance))
+                        .verify_or_adapt_binary(target_path)
                     {
-                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::BaselineInitialized {
-                            merkle_root,
-                            generation_epoch,
-                            nv_counter,
-                        }
-                        | osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::VerifiedUnchanged {
-                            merkle_root,
-                            generation_epoch,
-                            nv_counter,
-                        } => {
-                            return Some(VoteResult {
-                                confidence: 0.0,
-                                reason: format!(
-                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (epoch={}, nv_counter={}, root={}..); vetoing self-lockout.",
-                                    generation_epoch,
-                                    nv_counter,
-                                    &merkle_root[..12.min(merkle_root.len())]
-                                ),
-                                weight: -1.35,
-                            });
-                        }
-                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::DevRecompileAdapted {
-                            new_root,
-                            generation_epoch,
-                            nv_counter,
+                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::Intact {
+                            page_merkle_root,
+                            build_generation,
                             ..
                         } => {
                             return Some(VoteResult {
                                 confidence: 0.0,
                                 reason: format!(
-                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (epoch={}, nv_counter={}, new_root={}..); TPM 2.0 Merkle root rotated.",
-                                    generation_epoch,
-                                    nv_counter,
-                                    &new_root[..12.min(new_root.len())]
+                                    "[Adaptive-Merkle-Guard]: Verified workspace build artifact (gen={}, root={}..); vetoing self-lockout.",
+                                    build_generation,
+                                    &page_merkle_root[..12.min(page_merkle_root.len())]
+                                ),
+                                weight: -1.35,
+                            });
+                        }
+                        osoosi_audit::nsrl_aslr_merkle::AdaptiveMerkleVerdict::AdaptedToRecompile {
+                            new_page_merkle_root,
+                            build_generation,
+                            ..
+                        } => {
+                            return Some(VoteResult {
+                                confidence: 0.0,
+                                reason: format!(
+                                    "[Adaptive-Merkle-Guard]: Authorized developer recompile adapted (gen={}, new_root={}..); TPM 2.0 Merkle root rotated.",
+                                    build_generation,
+                                    &new_page_merkle_root[..12.min(new_page_merkle_root.len())]
                                 ),
                                 weight: -1.35,
                             });
@@ -3941,6 +3922,123 @@ mod tests {
             "High S1 static entropy without S2 runtime transition must not trigger DualChannel vote"
         );
     }
+
+    #[test]
+    fn test_law4_martingale_zero_drift_detector_villes_inequality_slow_drip() {
+        let mut detector = MartingaleZeroDriftDetector::new(0.15, 0.75);
+        // Zero-drift benign fluctuations around mu_0 = 0.15
+        for _ in 0..15 {
+            let v = detector.observe_risk_score("agent_worker_1", 0.14);
+            assert!(!v.ville_threshold_crossed);
+        }
+
+        // Slow-drip low-and-slow exfiltration / beacon ticks at X_k = 0.65 (below single-event 0.85 cutoff)
+        let mut crossed = false;
+        for _ in 0..60 {
+            let v = detector.observe_risk_score("agent_worker_1", 0.65);
+            if v.ville_threshold_crossed {
+                crossed = true;
+                assert!(v.ville_e_process_value >= 1_000_000.0);
+                assert!(v.compensator_a_t > 0.0);
+                break;
+            }
+        }
+        assert!(
+            crossed,
+            "Slow-drip positive drift must cross Ville's inequality threshold 1/alpha = 10^6"
+        );
+    }
 }
+
+// ============================================================================
+// Law 4: Doob-Meyer Martingale Zero-Drift Law (E[M_{t+1} - M_t | F_t] = 0)
+// & Ville's Inequality (P(sup_t E_t >= 1/alpha) <= alpha)
+// ============================================================================
+
+/// Verdict emitted by `MartingaleZeroDriftDetector` under Law 4.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MartingaleDriftVerdict {
+    pub stream_id: String,
+    pub sample_count: usize,
+    pub cumulative_martingale_m_t: f64,
+    pub compensator_a_t: f64,
+    pub ville_e_process_value: f64,
+    pub ville_threshold_crossed: bool,
+    pub rationale: String,
+}
+
+/// Law 4 Voter / Detector: Tracks the Doob-Meyer decomposition $X_t = M_t + A_t$
+/// and Ville's test supermartingale $E_t = \prod_{k=1}^t (1 + \lambda (X_k - \mu_0))$
+/// to catch low-and-slow C2 beaconing and slow-drip data exfiltration with false-alarm
+/// probability bounded by $\alpha = 10^{-6}$ ($1/\alpha = 10^6$).
+#[derive(Debug, Clone)]
+pub struct MartingaleZeroDriftDetector {
+    pub baseline_mean_mu0: f64,
+    pub betting_fraction_lambda: f64,
+    pub ville_threshold: f64,
+    pub e_process: f64,
+    pub cumulative_m_t: f64,
+    pub compensator_a_t: f64,
+    samples: Vec<f64>,
+}
+
+impl MartingaleZeroDriftDetector {
+    pub const MAX_SAMPLES: usize = 256;
+
+    pub fn new(baseline_mean_mu0: f64, betting_fraction_lambda: f64) -> Self {
+        Self {
+            baseline_mean_mu0,
+            betting_fraction_lambda: betting_fraction_lambda.clamp(0.05, 0.95),
+            ville_threshold: 1_000_000.0,
+            e_process: 1.0,
+            cumulative_m_t: 0.0,
+            compensator_a_t: 0.0,
+            samples: Vec::with_capacity(64),
+        }
+    }
+
+    /// Observes a single event anomaly/DLP risk score $X_k \in [0, 1]$, updates the
+    /// Doob-Meyer compensator $A_t$ and Ville $e$-process $E_t$, and shrinks internal
+    /// history capacity (`Situation 3`).
+    pub fn observe_risk_score(&mut self, stream_id: &str, x_k: f64) -> MartingaleDriftVerdict {
+        let innovation = x_k - self.baseline_mean_mu0;
+        self.cumulative_m_t += innovation;
+        if innovation > 0.0 {
+            self.compensator_a_t += innovation;
+        }
+        let factor = (1.0 + self.betting_fraction_lambda * innovation).max(0.05);
+        self.e_process = (self.e_process * factor).clamp(1e-6, 1e18);
+
+        if self.samples.len() >= Self::MAX_SAMPLES {
+            self.samples.drain(0..(Self::MAX_SAMPLES / 2));
+            self.samples.shrink_to(Self::MAX_SAMPLES);
+        }
+        self.samples.push(x_k);
+
+        let ville_threshold_crossed = self.e_process >= self.ville_threshold;
+        let rationale = if ville_threshold_crossed {
+            format!(
+                "[Law4-Martingale-Drift-Alert]: Ville's inequality threshold crossed for '{}': E_t={:.2e} >= 10^6, A_t={:.3}",
+                stream_id, self.e_process, self.compensator_a_t
+            )
+        } else {
+            format!(
+                "[Law4-Martingale-Zero-Drift]: Zero-drift martingale intact for '{}': E_t={:.2}, A_t={:.3}",
+                stream_id, self.e_process, self.compensator_a_t
+            )
+        };
+
+        MartingaleDriftVerdict {
+            stream_id: stream_id.to_string(),
+            sample_count: self.samples.len(),
+            cumulative_martingale_m_t: self.cumulative_m_t,
+            compensator_a_t: self.compensator_a_t,
+            ville_e_process_value: self.e_process,
+            ville_threshold_crossed,
+            rationale,
+        }
+    }
+}
+
 
 

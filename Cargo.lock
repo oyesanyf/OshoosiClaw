@@ -5660,6 +5660,7 @@ version = "1.2.0"
 dependencies = [
  "agent-thermostat",
  "anyhow",
+ "blake3",
  "chrono",
  "dashmap",
  "hex",

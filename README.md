@@ -732,9 +732,9 @@ flowchart TD
 - **Stage 1: Sub-Microsecond Kernel Instruction Freeze (`ebpf/src/osoosi_probe.bpf.c`)**:
   - `quarantine_targets` BPF hash map (`BPF_MAP_TYPE_HASH`, 10,240 entries) keyed by `tgid` storing 24-byte `struct quarantine_directive` (`timestamp_ns`, `anomaly_score_scaled`, `trigger_hook_id`, `containment_flags`).
   - `enforce_kernel_quarantine(tgid, pid)` invoked across `execve`, `socket_connect`, `sys_enter_ptrace`, `sys_enter_memfd_create`, `security_file_open`, `mprotect`, and **Hook 9 (`SEC("perf_event") int osoosi_pmu_watchdog`)**—immediately halting CPU instruction execution via `bpf_send_signal(SIGSTOP)` (`19`) even if the payload executes a pure ring-3 spin-loop with zero syscalls.
-- **Stage 2: Atomic Cgroup v2 Freezer Prison & Forensic Dump (`crates/osoosi-telemetry/src/linux_ebpf.rs`, `crates/osoosi-core/src/lib.rs`)**:
-  - `QuarantineResponder` pre-opens `/sys/fs/cgroup/osoosi_quarantine/cgroup.procs` and `cgroup.freeze` (pre-armed with `"1\n"` at daemon startup) and migrates the stopped PID via stack-only `format_u32_newline` (zero heap allocation on the hot path), subject to the **Host OS & Developer Immunity Veto**.
-  - `FrozenProcessForensicCollector` extracts `/proc/<pid>/maps` (`[anon:rwx]` regions), `/proc/<pid>/mem` (64 KB capped buffers), `/proc/<pid>/stack`, and `/proc/<pid>/fd` sockets, synthesizes a multi-token YARA-X rule via REA (`synthesize_yara_from_raw_payload`), and broadcasts the confirmed 5-Sigma IOC across the libp2p/Nostr wire mesh before `SIGKILL` cleanup.
+- **Stage 2: Atomic Cgroup v2 Freezer Prison, `cgroup.events` `"frozen 1"` Confirmation & All-Thread Forensic Dump (`crates/osoosi-telemetry/src/linux_ebpf.rs`, `crates/osoosi-core/src/lib.rs`)**:
+  - `QuarantineResponder` pre-opens `/sys/fs/cgroup/osoosi_quarantine/cgroup.procs` and `cgroup.freeze` (pre-armed with `"1\n"` at daemon startup), migrates the stopped PID via stack-only `format_u32_newline` (zero heap allocation on the hot path), and verifies the kernel transition to `"frozen 1"` in `/sys/fs/cgroup/osoosi_quarantine/cgroup.events` (`cgroup_frozen_confirmed: bool`, `freeze_latency_us: u64`), subject to the **Host OS & Developer Immunity Veto**.
+  - `FrozenProcessForensicCollector` enumerates every thread in `/proc/<tgid>/task/<tid>`, captures `FullCpuRegisterSnapshot` (`r15`..`gs_base` via `ptrace(PTRACE_GETREGS)` with `/proc/<tgid>/task/<tid>/stat` `kstkeip`/`kstkesp` fallback), extracts `/proc/<pid>/maps` (`[anon:rwx]` regions), `/proc/<pid>/mem` (64 KB capped buffers), `/proc/<pid>/stack`, and `/proc/<pid>/fd` sockets, synthesizes a multi-token YARA-X rule via REA (`synthesize_yara_from_raw_payload`), and broadcasts the confirmed 5-Sigma IOC across the libp2p/Nostr wire mesh before `SIGKILL` cleanup.
 
 ---
 
@@ -927,6 +927,61 @@ Built within `crates/osoosi-agent-anomaly`, the **AgentOctopus** containment arc
 - **Breakout Defense Coordinator (`BreakoutDefenseCoordinator`)**: Multi-category defense guarding against behavioral deviations, memory tampering, NTFS Alternate Data Streams (`:`), traversal encodings (`%2e`, `%2f`), and mathematical RFC1918 / loopback / link-local / CGNAT IPv4/IPv6 SSRF attacks.
 - **3-Phase Agentjacking Guard**: Intercepts prompt injection payloads and session drift before agent tool execution.
 - **P2P & Nostr Mesh Threat Broadcasting**: Disseminates `[AI AGENT WATCH-OUT]` consensus warnings across GossipSub (`osoosi-telemetry-v1`) and Nostr relays to protect neighboring mesh nodes.
+
+---
+
+<a id="-10-mathematical-laws-of-zero--two-tier-zero-exploit-dlp-engine"></a>
+<a id="10-mathematical-laws-of-zero--two-tier-zero-exploit-dlp-engine"></a>
+## 📐 The 10 Mathematical Laws of Zero, Two-Tier Zero-Exploit DLP (`Presidio` + `GLiNER`) & Adversarial Red-Team Gauntlet
+
+OpenỌ̀ṣọ́ọ̀sì unifies ten mathematical zero-invariant detectors ($\mathcal{L}(x) = 0 \iff \text{Invariant Intact}$) across agent containment, control-flow integrity, and data loss prevention, paired with an explicit separation of **Exact Algebraic Identities in the Model** vs. **Operational Trust Assumptions** and a built-in **16-Vector Adversarial Red-Team Gauntlet (`osoosi redteam`)**.
+
+### 1. The 10 Mathematical Laws of Zero ($\mathcal{L}(x) = 0$)
+
+| Law | Mathematical Identity | Implementation Module | Security Enforcement |
+|:---|:---|:---|:---|
+| **Law 1: Homological Boundary Zero** | $\partial_{k-1} \circ \partial_k = 0,\quad \delta^2 \phi = 0$ | `crates/osoosi-agent-anomaly/src/mesh_guard.rs` (`HomologicalBoundaryAuditor`) | Detects cyclic confused-deputy privilege escalation loops where closed 1-cochains fail exactness ($\oint_\gamma \omega \neq 0$). |
+| **Law 2: Vanishing Polynomial Trace** | $C(t(x), t(g\cdot x)) \equiv 0 \pmod{Z_H(x)}$ over $\mathbb{F}_{2^{127}-1}$ | `crates/osoosi-agent-anomaly/src/cedar_engine.rs` (`VanishingPolynomialTraceVerifier`) | Algebraic execution trace proof that every Dogwood/Cedar authorization step satisfied all transition constraints. |
+| **Law 3: Dirac-Delta Ephemeral Capability** | $\operatorname{Cap}(t) = 0 \quad \forall t \notin [t_0, t_0 + \Delta t_{\text{syscall}}]$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`DiracDeltaCapabilityTicket`) | Zero standing privilege: single-invocation atomic `AtomicBool` consumption + nanosecond TTL + generation epoch pinning. |
+| **Law 4: Doob Martingale Zero-Drift** | $\mathbb{E}[M_{t+1} - M_t \mid \mathcal{F}_t] = 0,\quad \mathbb{P}(\sup_t E_t \ge \alpha^{-1}) \le \alpha$ | `crates/osoosi-policy/src/voters.rs` (`MartingaleZeroDriftDetector`), `crates/osoosi-dns/src/analysis.rs` (`DnsMartingaleDriftDetector`) | Catches low-and-slow APT C2 beaconing and gradual exfiltration via Ville's Inequality ($E_t \ge 10^6 \implies \text{FPR} \le 10^{-6}$). |
+| **Law 5: Zero-Copy Immutable Page Projection** | $\Delta t_{\text{TOCTOU}} = t_{\text{execute}} - t_{\text{verify}} = 0$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`ZeroCopyImmutableToolBuffer`, `PinnedToolObjectBinding`) | 4096-byte page-aligned buffer locked `PAGE_READONLY` / `PROT_READ` before policy check + `FileId`/`dev:ino`/BLAKE3 descriptor pinning. |
+| **Law 6: Ihara Zeta Non-Backtracking Cycle Zero** | $\zeta_G^{-1}(u) = \det(I - u B_G) = 0$ | `crates/osoosi-agent-anomaly/src/siquery.rs` (`IharaZetaCycleDetector`) | Hashimoto non-backtracking edge operator $B_G$ detects covert process-pipe-socket feedback loops in $O(E)$. |
+| **Law 7: CFG Hadamard Zero-Product** | $\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 = 0$ | `crates/osoosi-audit/src/nsrl_aslr_merkle.rs` (`CfgHadamardZeroVerifier`), `crates/osoosi-core/src/rea.rs` | Bitpacked 64-bit bitwise AND verification of indirect branch edges against the binary's static Control-Flow Graph. |
+| **Law 8: Zero Mutual Information Projection** | $I(S; Y) = H(S) - H(S \mid Y) = 0$ | `crates/osoosi-agent-anomaly/src/breakout_defense.rs` (`ZeroMutualInformationProjector`) | Orthogonal linear projection $v_{\text{safe}} = v - \sum_i \langle v, u_i \rangle u_i$ ($\max_i \lvert \langle v_{\text{safe}}, u_i \rangle \rvert < 10^{-6}$) + secret scrubbing. |
+| **Law 9: Pontryagin Zero-Sum Minimax Equilibrium** | $\min_{u \in \mathcal{U}} \max_{v \in \mathcal{V}} H(x, u, v, \lambda) = 0$ | `crates/osoosi-telemetry/src/canary.rs` (`compute_pontryagin_minimax_equilibrium`) | Computes game-theoretic saddle-point allocation across high-entropy canary honeyfiles and ghost-node tarpits. |
+| **Law 10: Zero-Knowledge BFT Proof & Two-Tier DLP** | $\operatorname{Verify}_{\text{ZK}}(\pi, x_{\text{pub}}) = 0$ + Two-Tier DLP | `crates/osoosi-dp/src/lib.rs` (`OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard`, `ZkBftQuarantineProof`) | Unwraps nested Base64/Hex/URL encodings (depth $\le 2$), scans Crown-Jewel 1 KB BLAKE3 chunks, scrubs PII via Presidio + GLiNER (`urchade/gliner_multi_pii-v1`), and generates zero-knowledge Schnorr-BLAKE3 BFT proofs. |
+
+### 2. Formal Threat Model Separation: (A) Exact Algebraic Identities vs. (B) Operational Trust Assumptions
+
+| Subsystem / Law | (A) Exact Algebraic / Mathematical Identity in the Model | (B) Operational Trust Assumptions & Empirical Coverage Boundaries |
+|:---|:---|:---|
+| **Laws 1–3 (`HomologicalBoundaryAuditor`, `VanishingPolynomialTraceVerifier`, `DiracDeltaCapabilityTicket`)** | $\delta^2 \phi = 0$ on the finite directed communication complex $\mathcal{K}$; $C(t(x)) \equiv 0 \pmod{Z_H(x)}$ over $\mathbb{F}_{2^{127}-1}$; atomic single-use `compare_exchange` ticket consumption within $[t_0, t_0 + \Delta t_{\text{syscall}}]$. | Assumes inter-agent messages traverse `MeshGuard` / `ArmContainmentRing` and monotonic hardware clock integrity. Out-of-band OS IPC and single-process memory corruption are mitigated by OS sandboxing and `IndependentTrustBoundaryVerifier` (`L_1 \land L_2 \land L_3`). |
+| **Law 4 (`MartingaleZeroDriftDetector`)** | Under $H_0$ (memoryless exponential inter-arrival times), $\mathbb{E}[E_t] = 1$ and Ville's Inequality guarantees $\mathbb{P}_{H_0}(\sup_t E_t \ge \alpha^{-1}) \le \alpha$. | Benign machine-generated periodic timers violate $H_0$; operational enforcement combines $E_t$ with destination reputation and multi-voter consensus. |
+| **Law 5 (`ZeroCopyImmutableToolBuffer` + `PinnedToolObjectBinding`)** | Hardware `PAGE_READONLY` / `PROT_READ` page protection prevents in-place mutation of verified argument bytes ($\Delta t_{\text{TOCTOU}} = 0$ on buffer memory). | Buffer immutability alone does not stop filesystem path rebinding if a tool re-opens a path by name; `PinnedToolObjectBinding` binds OS `FileId` (`volume_serial` + `file_index` / `st_dev` + `st_ino`) and BLAKE3 digest across verification and open. |
+| **Laws 6–7 (`IharaZetaCycleDetector`, `CfgHadamardZeroVerifier`)** | $\det(I - u B_G) = 0$ detects non-backtracking cycles on snapshot graph $G$; $\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 = 0$ verifies observed edges against static adjacency matrix $A_{\text{CFG}}$. | Graph cycle detection depends on telemetry capture cadence (ETW/eBPF vs. Siquery poll); static disassembly over stripped/JIT binaries approximates the full compiler CFG and is paired with hardware CET / Shadow Stack. |
+| **Laws 8 & 10 (`ZeroMutualInformationProjector`, `OsoosiTwoTierDlpEngine`)** | Orthogonal projection achieves $\langle v_{\text{safe}}, u_i \rangle = 0$ ($< 10^{-6}$) on linear secret subspaces; Tier-1/Tier-2 DLP unwraps up to 2 nested Base64/Hex/URL encoding layers and verifies Schnorr-BLAKE3 ZK-BFT transcripts. | Orthogonal vector projection removes linear embedding correlation and known secret/PII tokens (`Presidio` + `GLiNER`), but cannot mathematically bound arbitrary non-linear semantic paraphrasing or custom encryption above depth 2. |
+| **Kernel Quarantine & BYOVD Self-Defense (`Issue 1` & `Issue 2`)** | Minifilter pre-operation callbacks (`IRP_MJ_CREATE`, `IRP_MJ_WRITE`, `IRP_MJ_SET_INFORMATION`, `IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION`) return `STATUS_ACCESS_DENIED`; Cgroup v2 `cgroup.freeze = 1` freezes all threads in the target TGID. | Assumes no unblocked ring-0 BYOVD driver was loaded prior to EDR startup (audited via `verify_windows_wdac_and_hvci_blocklist_state()` and `query_runtime_ppl_protection_level()`). Linux `SIGSTOP` + Cgroup freeze latency is explicitly measured via `cgroup.events` `"frozen 1"`. |
+
+### 3. Built-In Adversarial Red-Team Gauntlet (`osoosi redteam`) & Standardized 5-Policy RL Benchmark
+
+Execute the built-in 16-vector adversarial evaluation and 5-policy CyberBattleSim RL benchmark directly from the CLI:
+
+```powershell
+# Run all 4 adversarial suites (MITRE STIX/Atomic/CALDERA, Promptfoo/Garak/AgentOctopus, OWASP Agentic/LLM/Web, Reviewer Bypass Suite) + 5-Policy RL Benchmark:
+.\target\release\osoosi.exe redteam --suite all
+
+# Or run via osoosi-auditor / Python orchestrator (exports octopus_exhaustive_test_report.json):
+.\target\release\osoosi-auditor.exe --redteam-gauntlet
+python scripts/adversarial_stix_owasp_redteam.py --all
+```
+
+| Policy Name (`N = 20` Matched Seeds) | Backend Label | Mean Cumulative Reward ($\pm 95\%\text{ CI}$) | Mean Containment Rate ($\pm 95\%\text{ CI}$) | Mean Breach Frequency ($\pm 95\%\text{ CI}$) |
+|:---|:---|:---|:---|:---|
+| **1. `LearnedRL` (Q-Table Active Defense)** | `local_synthetic_cyberbattlesim_topology_v1` | **`+358.13 ± 1.69`** | **`99.58% ± 0.58%`** | **`0.0000 ± 0.0000`** |
+| **2. `Heuristic` (Fixed Static Thresholds)** | `local_synthetic_cyberbattlesim_topology_v1` | `+120.73 ± 6.27` | `92.50% ± 2.41%` | `0.1500 ± 0.1713` |
+| **3. `NoLearning` (Frozen Uncalibrated Prior)** | `local_synthetic_cyberbattlesim_topology_v1` | `+15.14 ± 6.95` | `86.25% ± 3.12%` | `0.4500 ± 0.2804` |
+| **4. `Random` (Uniform Action Selection)** | `local_synthetic_cyberbattlesim_topology_v1` | `-16.90 ± 18.88` | `66.67% ± 3.74%` | `1.5500 ± 0.5356` |
+| **5. `Disabled` (Passive Unmitigated Baseline)** | `local_synthetic_cyberbattlesim_topology_v1` | `-499.43 ± 10.67` | `16.67% ± 0.00%` | `5.8000 ± 0.1920` |
 
 ---
 

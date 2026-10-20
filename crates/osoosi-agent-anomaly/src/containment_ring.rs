@@ -499,7 +499,7 @@ impl DiracDeltaCapabilityTicket {
 impl Drop for DiracDeltaCapabilityTicket {
     fn drop(&mut self) {
         self.consumed.store(1, Ordering::SeqCst);
-        silicon_shield::scrub_sensitive_buffer(&mut self.ephemeral_secret);
+        silicon_shield::SiliconIntegrityGuard::constant_time_scrub(&mut self.ephemeral_secret);
     }
 }
 
@@ -516,7 +516,7 @@ impl Drop for DiracDeltaCapabilityTicket {
 ///   to read-only (`VirtualProtect(..., PAGE_READONLY)` on Windows / `libc::mprotect(..., PROT_READ)` on Unix)
 ///   **before** policy authorization and DLP inspection run, guaranteeing $\Delta t_{\text{TOCTOU}} = 0$.
 /// - Implements `Drop` (`Situation 2`) to restore `PAGE_READWRITE` / `PROT_READ | PROT_WRITE`,
-///   volatile-zeroize the entire page via `silicon_shield::scrub_sensitive_buffer`, and `dealloc`.
+///   volatile-zeroize the entire page via `silicon_shield::SiliconIntegrityGuard::constant_time_scrub`, and `dealloc`.
 pub struct ZeroCopyImmutableToolBuffer {
     ptr: std::ptr::NonNull<u8>,
     len: usize,
@@ -636,12 +636,224 @@ impl Drop for ZeroCopyImmutableToolBuffer {
         let _ = Self::set_page_readonly(raw, self.aligned_capacity, false);
         unsafe {
             let full_slice = std::slice::from_raw_parts_mut(raw, self.aligned_capacity);
-            silicon_shield::scrub_sensitive_buffer(full_slice);
+            silicon_shield::SiliconIntegrityGuard::constant_time_scrub(full_slice);
             if let Ok(layout) =
                 std::alloc::Layout::from_size_align(self.aligned_capacity, Self::PAGE_SIZE)
             {
                 std::alloc::dealloc(raw, layout);
             }
+        }
+    }
+}
+
+/// **Reviewer Issue 4 — Descriptor & Object Identity Pinning (`PinnedToolObjectBinding`)**
+///
+/// Complements Law 5 (`ZeroCopyImmutableToolBuffer`, which eliminates in-memory buffer
+/// mutation TOCTOU) by binding the canonical filesystem path, rejecting symlinks/reparse
+/// points, and pinning `(file_size, modified_ns, blake3_digest)` at $t_{\text{check}}$ so
+/// any symlink or file-swap race between $t_{\text{check}}$ and $t_{\text{use}}$ on the
+/// opened `std::fs::File` descriptor is deterministically rejected before tool execution.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PinnedToolObjectBinding {
+    pub canonical_path: std::path::PathBuf,
+    pub file_size: u64,
+    pub modified_ns: u128,
+    pub blake3_digest: [u8; 32],
+    pub pinned_at_ns: u64,
+}
+
+impl PinnedToolObjectBinding {
+    /// Captures and pins the target file object identity at $t_{\text{check}}$, rejecting
+    /// symlinks and reparse points immediately.
+    pub fn pin_at_check(path: &std::path::Path) -> Result<Self, String> {
+        use std::io::Read;
+        let sym_meta = std::fs::symlink_metadata(path)
+            .map_err(|e| format!("TOCTOU Object Pinning Veto: symlink_metadata failed: {}", e))?;
+        if sym_meta.file_type().is_symlink() {
+            return Err(format!(
+                "TOCTOU Object Pinning Veto: Symlink or reparse point rejected at {:?}",
+                path
+            ));
+        }
+        if !sym_meta.is_file() {
+            return Err(format!(
+                "TOCTOU Object Pinning Veto: Non-regular file rejected at {:?}",
+                path
+            ));
+        }
+
+        let canonical_path = std::fs::canonicalize(path)
+            .map_err(|e| format!("TOCTOU Object Pinning Veto: canonicalize failed: {}", e))?;
+        let mut file = std::fs::File::open(&canonical_path)
+            .map_err(|e| format!("TOCTOU Object Pinning Veto: open failed: {}", e))?;
+        let meta = file
+            .metadata()
+            .map_err(|e| format!("TOCTOU Object Pinning Veto: fstat metadata failed: {}", e))?;
+        let file_size = meta.len();
+        let modified_ns = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+
+        let mut buf = Vec::with_capacity(file_size as usize);
+        file.read_to_end(&mut buf)
+            .map_err(|e| format!("TOCTOU Object Pinning Veto: read failed: {}", e))?;
+        let blake3_digest = *blake3::hash(&buf).as_bytes();
+        std::mem::drop(buf);
+
+        let pinned_at_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+
+        Ok(Self {
+            canonical_path,
+            file_size,
+            modified_ns,
+            blake3_digest,
+            pinned_at_ns,
+        })
+    }
+
+    /// Verifies at $t_{\text{use}}$ that an opened `std::fs::File` handle still matches
+    /// the exact `(file_size, blake3_digest)` pinned at $t_{\text{check}}$.
+    pub fn verify_opened_file_matches_pin(&self, file: &mut std::fs::File) -> Result<Vec<u8>, String> {
+        use std::io::{Read, Seek, SeekFrom};
+        let meta = file.metadata().map_err(|e| {
+            format!(
+                "TOCTOU Object Pinning Violation: descriptor metadata query failed: {}",
+                e
+            )
+        })?;
+        if meta.file_type().is_symlink() {
+            return Err(
+                "TOCTOU Object Pinning Violation: Descriptor resolved to a symlink at t_use"
+                    .to_string(),
+            );
+        }
+        if meta.len() != self.file_size {
+            return Err(format!(
+                "TOCTOU Object Pinning Violation: File size changed between t_check ({}) and t_use ({})",
+                self.file_size,
+                meta.len()
+            ));
+        }
+
+        file.seek(SeekFrom::Start(0)).map_err(|e| {
+            format!(
+                "TOCTOU Object Pinning Violation: descriptor seek failed: {}",
+                e
+            )
+        })?;
+        let mut bytes = Vec::with_capacity(self.file_size as usize);
+        file.read_to_end(&mut bytes).map_err(|e| {
+            format!(
+                "TOCTOU Object Pinning Violation: descriptor read failed: {}",
+                e
+            )
+        })?;
+        let live_digest = *blake3::hash(&bytes).as_bytes();
+        if !bool::from(self.blake3_digest.ct_eq(&live_digest)) {
+            silicon_shield::SiliconIntegrityGuard::constant_time_scrub(&mut bytes);
+            return Err(
+                "TOCTOU Object Pinning Violation: Underlying file content BLAKE3 digest diverged between t_check and t_use"
+                    .to_string(),
+            );
+        }
+
+        Ok(bytes)
+    }
+}
+
+/// Verdict emitted by `IndependentTrustBoundaryVerifier` across the 3 orthogonal security rings.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MultiLayerGateVerdict {
+    pub allowed: bool,
+    pub auth_layer_ok: bool,
+    pub merkle_layer_ok: bool,
+    pub kernel_layer_ok: bool,
+    pub blocking_layer: Option<String>,
+}
+
+/// **Reviewer Issue 5 — Cross-Layer Non-Circular Trust Boundary Verifier (`IndependentTrustBoundaryVerifier`)**
+///
+/// Enforces non-circular, orthogonal verification across 3 independent trust domains:
+/// 1. **Layer 1 (`auth_epoch`)**: User-space `CedarAuthorizer` & `AgentContainmentRing` capability ring.
+/// 2. **Layer 2 (`merkle_epoch`)**: Out-of-band `NsrlAslrMerkleGuard` / `Tpm2MerkleRootSigner` binary/module attestation.
+/// 3. **Layer 3 (`kernel_epoch`)**: OS / Kernel boundary (`KernelDriverManager` / `QuarantineResponder` / `PinnedToolObjectBinding`).
+///
+/// Even if Layer 1 (`auth_layer`) is artificially bypassed or compromised in user space,
+/// Layer 2 (`merkle_layer`) and Layer 3 (`kernel_layer`) independently veto execution.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct IndependentTrustBoundaryVerifier {
+    pub auth_epoch: u64,
+    pub merkle_epoch: u64,
+    pub kernel_epoch: u64,
+    pub pinned_merkle_root: [u8; 32],
+    pub kernel_enforcement_armed: bool,
+}
+
+impl IndependentTrustBoundaryVerifier {
+    pub fn new(pinned_merkle_root: [u8; 32], kernel_enforcement_armed: bool) -> Self {
+        Self {
+            auth_epoch: 1,
+            merkle_epoch: 1,
+            kernel_epoch: 1,
+            pinned_merkle_root,
+            kernel_enforcement_armed,
+        }
+    }
+
+    /// Advances a specific layer's monotonic epoch independently without mutating sibling layers.
+    pub fn advance_layer_epoch(&mut self, layer: &str) -> u64 {
+        match layer {
+            "auth" => {
+                self.auth_epoch = self.auth_epoch.saturating_add(1);
+                self.auth_epoch
+            }
+            "merkle" => {
+                self.merkle_epoch = self.merkle_epoch.saturating_add(1);
+                self.merkle_epoch
+            }
+            "kernel" => {
+                self.kernel_epoch = self.kernel_epoch.saturating_add(1);
+                self.kernel_epoch
+            }
+            _ => 0,
+        }
+    }
+
+    /// Evaluates the 3 orthogonal trust layers. All 3 layers must independently pass (`AND` gate).
+    /// If `auth_layer_ok` is `true` (e.g., simulated user-space prompt/policy bypass), a mismatch in
+    /// `live_merkle_root` or `os_boundary_clean == false` still deterministically blocks execution.
+    pub fn evaluate_multi_layer_gate(
+        &self,
+        auth_layer_ok: bool,
+        live_merkle_root: &[u8; 32],
+        os_boundary_clean: bool,
+    ) -> MultiLayerGateVerdict {
+        let merkle_layer_ok = bool::from(self.pinned_merkle_root.ct_eq(live_merkle_root));
+        let kernel_layer_ok = self.kernel_enforcement_armed && os_boundary_clean;
+        let allowed = auth_layer_ok && merkle_layer_ok && kernel_layer_ok;
+
+        let blocking_layer = if !auth_layer_ok {
+            Some("Layer1_UserSpace_Cedar_Capability".to_string())
+        } else if !merkle_layer_ok {
+            Some("Layer2_TPM2_BLAKE3_Merkle_Attestation".to_string())
+        } else if !kernel_layer_ok {
+            Some("Layer3_OS_Kernel_Confinement_Boundary".to_string())
+        } else {
+            None
+        };
+
+        MultiLayerGateVerdict {
+            allowed,
+            auth_layer_ok,
+            merkle_layer_ok,
+            kernel_layer_ok,
+            blocking_layer,
         }
     }
 }
@@ -755,6 +967,60 @@ mod tests {
         assert!(buf.is_page_locked_readonly());
         assert_eq!(buf.as_slice(), payload);
         assert!(buf.verify_zero_toctou());
+    }
+
+    #[test]
+    fn test_issue4_pinned_tool_object_binding_detects_toctou_file_swap() {
+        let tmp_path = std::env::temp_dir().join(format!(
+            "osoosi_pinned_tool_obj_test_{}.txt",
+            std::process::id()
+        ));
+        std::fs::write(&tmp_path, b"benign_workspace_config=true\n").expect("write initial file");
+
+        let pin = PinnedToolObjectBinding::pin_at_check(&tmp_path).expect("pin at t_check");
+        let mut f_ok = std::fs::File::open(&tmp_path).expect("open unchanged file");
+        let verified_bytes = pin
+            .verify_opened_file_matches_pin(&mut f_ok)
+            .expect("unchanged file must pass descriptor pin verification");
+        assert_eq!(verified_bytes, b"benign_workspace_config=true\n");
+        std::mem::drop(f_ok);
+
+        // Simulate TOCTOU file replacement between t_check and t_use (same size or different size)
+        std::fs::write(&tmp_path, b"malicious_swapped_payload=1!\n").expect("swap file content");
+        let mut f_swapped = std::fs::File::open(&tmp_path).expect("open swapped file");
+        let swap_res = pin.verify_opened_file_matches_pin(&mut f_swapped);
+        assert!(
+            swap_res.is_err(),
+            "File swap between t_check and t_use must be rejected by PinnedToolObjectBinding"
+        );
+        std::mem::drop(f_swapped);
+        let _ = std::fs::remove_file(&tmp_path);
+    }
+
+    #[test]
+    fn test_issue5_independent_trust_boundary_verifier_blocks_when_auth_bypassed() {
+        let root = *blake3::hash(b"trusted_binary_merkle_root_v1").as_bytes();
+        let mut verifier = IndependentTrustBoundaryVerifier::new(root, true);
+        assert_eq!(verifier.advance_layer_epoch("auth"), 2);
+        assert_eq!(verifier.merkle_epoch, 1);
+        assert_eq!(verifier.kernel_epoch, 1);
+
+        // Even when Layer 1 (auth_layer_ok = true) is bypassed, tampered Merkle root blocks at Layer 2
+        let tampered_root = *blake3::hash(b"tampered_in_memory_module").as_bytes();
+        let v_merkle = verifier.evaluate_multi_layer_gate(true, &tampered_root, true);
+        assert!(!v_merkle.allowed);
+        assert_eq!(
+            v_merkle.blocking_layer.as_deref(),
+            Some("Layer2_TPM2_BLAKE3_Merkle_Attestation")
+        );
+
+        // Even when Layer 1 and Layer 2 pass, an OS/kernel boundary violation blocks at Layer 3
+        let v_kernel = verifier.evaluate_multi_layer_gate(true, &root, false);
+        assert!(!v_kernel.allowed);
+        assert_eq!(
+            v_kernel.blocking_layer.as_deref(),
+            Some("Layer3_OS_Kernel_Confinement_Boundary")
+        );
     }
 }
 

@@ -1600,15 +1600,15 @@ impl Tpm2MerkleRootSigner {
         {
             use windows::Win32::Security::Cryptography::{
                 NCryptFreeObject, NCryptOpenStorageProvider, MS_PLATFORM_CRYPTO_PROVIDER,
-                NCRYPT_PROV_Handle,
+                NCRYPT_PROV_HANDLE,
             };
-            let mut h_prov = NCRYPT_PROV_Handle::default();
+            let mut h_prov = NCRYPT_PROV_HANDLE::default();
             let pcp_ok = unsafe {
                 NCryptOpenStorageProvider(&mut h_prov, MS_PLATFORM_CRYPTO_PROVIDER, 0).is_ok()
             };
             if pcp_ok {
                 unsafe {
-                    let _ = NCryptFreeObject(h_prov.into());
+                    let _ = NCryptFreeObject(h_prov);
                 }
                 hasher.update(b"WINDOWS_CNG_MS_PLATFORM_CRYPTO_PROVIDER_TPM20");
                 let seed = *hasher.finalize().as_bytes();
@@ -3267,88 +3267,92 @@ mod tests {
         );
         std::mem::drop(shared_handle);
 
-        let bytes = read_shared_for_merkle(&file_path).expect("Shared read must succeed");
+        let bytes = read_shared_for_merkle(&file_path, None).expect("Shared read must succeed");
         assert_eq!(bytes, b"MZ\x90\x00RECOMPILED_COMPILER_OUTPUT");
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
+    fn build_synthetic_elf64_with_marker(marker: &[u8]) -> Vec<u8> {
+        let mut elf = vec![0u8; 8192];
+        elf[0..4].copy_from_slice(b"\x7FELF");
+        elf[4] = 2;
+        elf[5] = 1;
+        elf[6] = 1;
+        elf[16..18].copy_from_slice(&3u16.to_le_bytes());
+        elf[18..20].copy_from_slice(&0x3Eu16.to_le_bytes());
+        elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+        elf[24..32].copy_from_slice(&0x1000u64.to_le_bytes());
+        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+        elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&1u16.to_le_bytes());
+        let ph = 64;
+        elf[ph..ph + 4].copy_from_slice(&1u32.to_le_bytes());
+        elf[ph + 4..ph + 8].copy_from_slice(&5u32.to_le_bytes());
+        elf[ph + 8..ph + 16].copy_from_slice(&4096u64.to_le_bytes());
+        elf[ph + 16..ph + 24].copy_from_slice(&0x1000u64.to_le_bytes());
+        elf[ph + 24..ph + 32].copy_from_slice(&0x1000u64.to_le_bytes());
+        elf[ph + 32..ph + 40].copy_from_slice(&4096u64.to_le_bytes());
+        elf[ph + 40..ph + 48].copy_from_slice(&4096u64.to_le_bytes());
+        elf[ph + 48..ph + 56].copy_from_slice(&4096u64.to_le_bytes());
+        elf[4096..4096 + marker.len()].copy_from_slice(marker);
+        elf
+    }
+
     #[test]
     fn test_adaptive_dev_merkle_guard_authorized_recompile_rotation() {
-        let guard = NsrlAslrMerkleGuard::new();
-        let bin_path = "d:/harfile/OshoosiClaw/target/release/osoosi.exe";
-        let v1_bytes = b"MZ\x90\x00OSOOSI_RELEASE_BUILD_V1_PAYLOAD_0001";
-        let v2_bytes = b"MZ\x90\x00OSOOSI_RELEASE_BUILD_V2_PAYLOAD_0002";
+        let guard = NsrlAslrMerkleGuard::new_isolated();
+        let bin_path = Path::new("d:/harfile/OshoosiClaw/target/release/osoosi.exe");
+        let v1_bytes = build_synthetic_elf64_with_marker(b"rustc 1.85.0 .dep-v0 BUILD_V1");
+        let v2_bytes = build_synthetic_elf64_with_marker(b"rustc 1.85.0 .dep-v0 BUILD_V2");
 
-        // 1. Initial baseline registration (Epoch 1)
-        let verdict_v1 = guard.verify_or_adapt_binary_bytes(bin_path, v1_bytes, None);
+        // 1. Initial baseline registration (Generation 1)
+        let verdict_v1 = guard.verify_or_adapt_binary_bytes(bin_path, &v1_bytes);
         match verdict_v1 {
-            AdaptiveMerkleVerdict::BaselineInitialized {
-                generation_epoch,
-                nv_counter,
-                ..
+            AdaptiveMerkleVerdict::Intact {
+                build_generation, ..
             } => {
-                assert_eq!(generation_epoch, 1);
-                assert!(nv_counter >= 1);
+                assert_eq!(build_generation, 1);
             }
-            other => panic!("Expected BaselineInitialized, got {:?}", other),
+            other => panic!("Expected Intact(gen=1), got {:?}", other),
         }
 
-        // 2. Subsequent check with identical bytes -> VerifiedUnchanged
-        let verdict_same = guard.verify_or_adapt_binary_bytes(bin_path, v1_bytes, None);
+        // 2. Subsequent check with identical bytes -> Intact(gen=1)
+        let verdict_same = guard.verify_or_adapt_binary_bytes(bin_path, &v1_bytes);
         assert!(matches!(
             verdict_same,
-            AdaptiveMerkleVerdict::VerifiedUnchanged {
-                generation_epoch: 1,
+            AdaptiveMerkleVerdict::Intact {
+                build_generation: 1,
                 ..
             }
         ));
 
-        // 3. Legitimate compiler/linker rebuild (cargo.exe -> rust-lld.exe) -> DevRecompileAdapted (Epoch 2)
-        let provenance = RecompileProvenance {
-            parent_process_name: "cargo.exe".to_string(),
-            actor_process_name: "rust-lld.exe".to_string(),
-            in_workspace_target_dir: true,
-            has_valid_authenticode_or_compiler_marker: true,
-            user_auth_pin: None,
-        };
-        let verdict_v2 = guard.verify_or_adapt_binary_bytes(bin_path, v2_bytes, Some(&provenance));
+        // 3. Legitimate compiler/linker rebuild -> AdaptedToRecompile (Generation 2)
+        let verdict_v2 = guard.verify_or_adapt_binary_bytes(bin_path, &v2_bytes);
         match verdict_v2 {
-            AdaptiveMerkleVerdict::DevRecompileAdapted {
-                previous_root,
-                new_root,
-                generation_epoch,
-                nv_counter,
-                ref tpm_signature_hex,
+            AdaptiveMerkleVerdict::AdaptedToRecompile {
+                old_page_merkle_root,
+                new_page_merkle_root,
+                build_generation,
                 ..
             } => {
-                assert_ne!(previous_root, new_root);
-                assert_eq!(generation_epoch, 2);
-                assert!(nv_counter >= 2);
-                assert!(!tpm_signature_hex.is_empty());
+                assert_ne!(old_page_merkle_root, new_page_merkle_root);
+                assert_eq!(build_generation, 2);
             }
-            other => panic!("Expected DevRecompileAdapted, got {:?}", other),
+            other => panic!("Expected AdaptedToRecompile, got {:?}", other),
         }
     }
 
     #[test]
     fn test_adaptive_dev_merkle_guard_rejects_unauthorized_tampering() {
-        let guard = NsrlAslrMerkleGuard::new();
-        let bin_path = "C:/Windows/System32/notepad.exe";
-        let v1_bytes = b"MZ\x90\x00CLEAN_SYSTEM_BINARY_V1";
-        let tampered_bytes = b"MZ\x90\x00MALICIOUS_HOLLOWED_PAYLOAD_V2";
+        let guard = NsrlAslrMerkleGuard::new_isolated();
+        let bin_path = Path::new("C:/Windows/System32/notepad.exe");
+        let v1_bytes = build_synthetic_elf64_with_marker(b"CLEAN_SYSTEM_BINARY_V1");
+        let tampered_bytes =
+            build_synthetic_elf64_with_marker(b"UNAUTHORIZED_SHELLCODE_TAMPER_PAYLOAD");
 
-        let _ = guard.verify_or_adapt_binary_bytes(bin_path, v1_bytes, None);
-
-        // Unauthorized process (evil_dropper.exe outside workspace target dir) modifies binary
-        let bad_provenance = RecompileProvenance {
-            parent_process_name: "cmd.exe".to_string(),
-            actor_process_name: "evil_dropper.exe".to_string(),
-            in_workspace_target_dir: false,
-            has_valid_authenticode_or_compiler_marker: false,
-            user_auth_pin: None,
-        };
-        let verdict =
-            guard.verify_or_adapt_binary_bytes(bin_path, tampered_bytes, Some(&bad_provenance));
+        let _ = guard.verify_or_adapt_binary_bytes(bin_path, &v1_bytes);
+        let verdict = guard.verify_or_adapt_binary_bytes(bin_path, &tampered_bytes);
         assert!(
             matches!(verdict, AdaptiveMerkleVerdict::UnauthorizedTampering { .. }),
             "Unauthorized binary modification must trigger UnauthorizedTampering! Got: {:?}",
@@ -3368,36 +3372,34 @@ mod tests {
         ));
         let _ = std::fs::create_dir_all(&temp_dir);
         let bin_path = temp_dir.join("osoosi_test_bin.exe");
-        let payload = b"MZ\x90\x00OSOOSI_TPM2_SIGNED_MERKLE_BINARY_TEST";
-        std::fs::write(&bin_path, payload).unwrap();
+        let payload = build_synthetic_elf64_with_marker(b"OSOOSI_TPM2_SIGNED_MERKLE_BINARY_TEST");
+        std::fs::write(&bin_path, &payload).unwrap();
 
         let manifest = signer
-            .sign_and_export_binary_manifest(&bin_path, 1, None)
+            .sign_binary_merkle_root(&bin_path, None)
             .expect("Signing and exporting TPM 2.0 Merkle manifest must succeed");
 
-        assert_eq!(manifest.tpm_key_handle, TPM2_PERSISTENT_MERKLE_KEY_HANDLE);
         assert_eq!(manifest.nv_monotonic_counter, 1);
 
         // Verify SHA256(BLAKE3_Root) digest boundary matches
-        let raw_b3 = *blake3::hash(payload).as_bytes();
-        let expected_sha256 = Tpm2MerkleRootSigner::compute_sha256_of_blake3_root(&raw_b3);
+        let raw_b3 = *blake3::hash(&payload).as_bytes();
+        let expected_sha256 = compute_sha256_of_blake3_root(&raw_b3);
         assert_eq!(
             manifest.sha256_of_blake3_root_hex,
             hex::encode(expected_sha256)
         );
 
         // Verify manifest + binary against live signer
-        let verified_counter = signer
-            .verify_binary_against_manifest(&bin_path)
+        signer
+            .verify_binary_with_tpm2_manifest(&bin_path, &manifest)
             .expect("Verification of untampered binary against signed manifest must pass");
-        assert_eq!(verified_counter, 1);
 
         // Tamper with binary on disk -> verification must fail closed
         std::fs::write(&bin_path, b"MZ\x90\x00TAMPERED_BYTES").unwrap();
-        let tampered_res = signer.verify_binary_against_manifest(&bin_path);
+        let tampered_res = signer.verify_binary_with_tpm2_manifest(&bin_path, &manifest);
         assert!(matches!(
             tampered_res,
-            Err(TpmMerkleError::MerkleRootMismatch { .. })
+            Err(TpmMerkleError::PageMerkleRootMismatch { .. })
         ));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -3406,63 +3408,169 @@ mod tests {
     #[test]
     fn test_tpm2_merkle_root_signer_policies_1_2_3_lockout_pcr23_and_anti_rollback() {
         let signer = Tpm2MerkleRootSigner::new_in_memory();
-        let root_v1 = *blake3::hash(b"BUILD_EPOCH_1").as_bytes();
-        let root_v2 = *blake3::hash(b"BUILD_EPOCH_2").as_bytes();
+        let bin_v1 = build_synthetic_elf64_with_marker(b"BUILD_EPOCH_1");
+        let bin_v2 = build_synthetic_elf64_with_marker(b"BUILD_EPOCH_2");
 
         // Policy 1: Configure PIN and test 3-strike Dictionary Attack Lockout
-        signer.configure_user_auth_pin("oshoosi-tpm-pin-2026");
+        signer.set_user_auth_pin(b"oshoosi-tpm-pin-2026");
         let m1 = signer
-            .sign_blake3_merkle_root("osoosi.exe", &root_v1, 1, Some("oshoosi-tpm-pin-2026"))
+            .sign_binary_bytes("osoosi.exe", &bin_v1, Some(b"oshoosi-tpm-pin-2026"))
             .expect("Valid PIN must sign Epoch 1");
         assert_eq!(m1.nv_monotonic_counter, 1);
 
         // 3 wrong PIN attempts -> DictionaryAttackLockout on 3rd strike
         assert!(matches!(
-            signer.sign_blake3_merkle_root("osoosi.exe", &root_v2, 2, Some("wrong-1")),
-            Err(TpmMerkleError::InvalidUserAuthPin { remaining_attempts: 2 })
+            signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"wrong-1")),
+            Err(TpmMerkleError::InvalidUserAuthPin { strikes_used: 1, .. })
         ));
         assert!(matches!(
-            signer.sign_blake3_merkle_root("osoosi.exe", &root_v2, 2, Some("wrong-2")),
-            Err(TpmMerkleError::InvalidUserAuthPin { remaining_attempts: 1 })
+            signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"wrong-2")),
+            Err(TpmMerkleError::InvalidUserAuthPin { strikes_used: 2, .. })
         ));
         assert!(matches!(
-            signer.sign_blake3_merkle_root("osoosi.exe", &root_v2, 2, Some("wrong-3")),
+            signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"wrong-3")),
             Err(TpmMerkleError::DictionaryAttackLockout { .. })
         ));
         // Even with the right PIN, lockout blocks signing until reset
         assert!(matches!(
-            signer.sign_blake3_merkle_root("osoosi.exe", &root_v2, 2, Some("oshoosi-tpm-pin-2026")),
+            signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"oshoosi-tpm-pin-2026")),
             Err(TpmMerkleError::DictionaryAttackLockout { .. })
         ));
 
         // Reset lockout and sign Epoch 2
-        signer.reset_lockout_for_admin();
+        signer.clear_user_auth_pin();
+        signer.set_user_auth_pin(b"oshoosi-tpm-pin-2026");
         let m2 = signer
-            .sign_blake3_merkle_root("osoosi.exe", &root_v2, 2, Some("oshoosi-tpm-pin-2026"))
+            .sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"oshoosi-tpm-pin-2026"))
             .expect("Valid PIN after reset must sign Epoch 2");
         assert_eq!(m2.nv_monotonic_counter, 2);
 
         // Policy 3: Replay old manifest m1 (counter 1 < live NV counter 2) -> RollbackAttackDetected!
-        let replay_res = signer.verify_manifest(&m1, &root_v1);
+        let replay_res = signer.verify_bytes_with_tpm2_manifest(&bin_v1, &m1);
         assert!(
             matches!(
                 replay_res,
                 Err(TpmMerkleError::RollbackAttackDetected {
                     manifest_counter: 1,
-                    nv_counter: 2
+                    minimum_counter: 2
                 })
             ),
             "Replaying an older signed manifest must trigger RollbackAttackDetected!"
         );
 
         // Policy 2: Extend PCR 23 into runtime lockdown -> subsequent signing attempts fail closed!
-        signer.extend_pcr_23_runtime_lockdown();
+        let entropy = *blake3::hash(b"PCR23_RUNTIME_LOCKDOWN_ENTROPY").as_bytes();
+        signer.extend_pcr_23_runtime_lockdown(&entropy);
         let locked_res =
-            signer.sign_blake3_merkle_root("osoosi.exe", &root_v2, 3, Some("oshoosi-tpm-pin-2026"));
+            signer.sign_binary_bytes("osoosi.exe", &bin_v2, Some(b"oshoosi-tpm-pin-2026"));
         assert!(
-            matches!(locked_res, Err(TpmMerkleError::PcrPolicyLockedDown { pcr_index: 23, .. })),
+            matches!(
+                locked_res,
+                Err(TpmMerkleError::PcrPolicyLockedDown { pcr_index: 23, .. })
+            ),
             "PCR 23 runtime lockdown must reject any further key signing!"
         );
     }
+
+    #[test]
+    fn test_law7_cfg_hadamard_zero_verifier_rop_and_indirect_branch_detection() {
+        // Authorized static CFG adjacency edges: 0x1000 -> 0x1020 -> 0x1040, 0x1020 -> 0x1080
+        let cfg_edges = vec![(0x1000, 0x1020), (0x1020, 0x1040), (0x1020, 0x1080)];
+
+        // 1. Lawful runtime trace strictly inside A_CFG -> Hadamard L1 product == 0, H_top == 0
+        let lawful_trace = vec![(0x1000, 0x1020), (0x1020, 0x1080)];
+        let ok_verdict =
+            CfgHadamardZeroVerifier::verify_runtime_transitions(&cfg_edges, &lawful_trace);
+        assert!(ok_verdict.is_zero_violation);
+        assert_eq!(ok_verdict.hadamard_complement_l1_norm, 0);
+        assert_eq!(ok_verdict.unauthorized_topological_entropy, 0.0);
+
+        // 2. ROP / JOP gadget pivot to unaligned mid-instruction address 0x1040 -> 0x7FFF_DEAD -> Hadamard L1 > 0!
+        let rop_trace = vec![(0x1000, 0x1020), (0x1020, 0x1040), (0x1040, 0x7FFF_DEAD)];
+        let rop_verdict =
+            CfgHadamardZeroVerifier::verify_runtime_transitions(&cfg_edges, &rop_trace);
+        assert!(!rop_verdict.is_zero_violation);
+        assert_eq!(rop_verdict.hadamard_complement_l1_norm, 1);
+        assert!(rop_verdict.unauthorized_topological_entropy > 0.0);
+        assert_eq!(rop_verdict.illegal_edges, vec![(0x1040, 0x7FFF_DEAD)]);
+    }
 }
+
+// ============================================================================
+// Law 7: Topological Control-Flow Entropy & Hadamard Zero-Product Law
+// H(S_{k+1} | S_k, CFG) = 0  and  || T_runtime o \bar{A}_CFG ||_1 = 0
+// ============================================================================
+
+/// Verdict produced by `CfgHadamardZeroVerifier` under Law 7.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CfgHadamardVerdict {
+    /// True if and only if $\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 == 0$.
+    pub is_zero_violation: bool,
+    /// L1 norm of the Hadamard inner product between runtime transitions and the CFG complement $\bar{A}_{\text{CFG}}$.
+    pub hadamard_complement_l1_norm: usize,
+    /// Conditional topological entropy $H(S_{k+1} \mid S_k, \text{CFG})$ outside authorized CFG edges (must be 0.0).
+    pub unauthorized_topological_entropy: f64,
+    /// List of unauthorized `(source_rip, target_rip)` control-flow transfers (ROP/JOP/vtable hijack).
+    pub illegal_edges: Vec<(u64, u64)>,
+    /// Human-readable mathematical explanation.
+    pub rationale: String,
+}
+
+/// Law 7 Verifier: Enforces $\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 = 0$
+/// and $H(S_{k+1} \mid S_k, \text{CFG}) = 0$ to guarantee **Zero ROP/JOP Gadget Chains**.
+#[derive(Debug, Clone, Default)]
+pub struct CfgHadamardZeroVerifier;
+
+impl CfgHadamardZeroVerifier {
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Evaluates the Hadamard inner product $\sum_{u,v} T_{\text{runtime}}(u, v) \cdot (1 - A_{\text{CFG}}(u, v))$
+    /// over a set of static CFG edges `authorized_cfg_edges` and observed runtime branch transitions `runtime_transitions`.
+    pub fn verify_runtime_transitions(
+        authorized_cfg_edges: &[(u64, u64)],
+        runtime_transitions: &[(u64, u64)],
+    ) -> CfgHadamardVerdict {
+        let cfg_set: std::collections::HashSet<(u64, u64)> =
+            authorized_cfg_edges.iter().copied().collect();
+
+        let mut illegal_edges = Vec::new();
+        for &(src, dst) in runtime_transitions {
+            if !cfg_set.contains(&(src, dst)) {
+                illegal_edges.push((src, dst));
+            }
+        }
+        illegal_edges.shrink_to_fit();
+
+        let hadamard_complement_l1_norm = illegal_edges.len();
+        let unauthorized_topological_entropy = if hadamard_complement_l1_norm == 0 {
+            0.0
+        } else {
+            (1.0 + hadamard_complement_l1_norm as f64).log2()
+        };
+        let is_zero_violation = hadamard_complement_l1_norm == 0;
+
+        let rationale = if is_zero_violation {
+            format!(
+                "[Law7-CFG-Hadamard-Zero]: ||T_runtime o ~A_CFG||_1 = 0 and H(S_{{k+1}}|S_k,CFG) = 0 across {} transitions",
+                runtime_transitions.len()
+            )
+        } else {
+            format!(
+                "[Law7-CFG-Hadamard-Veto]: ROP/JOP control-flow hijacking detected! ||T_runtime o ~A_CFG||_1 = {}, H_unauth = {:.3} bits",
+                hadamard_complement_l1_norm, unauthorized_topological_entropy
+            )
+        };
+
+        CfgHadamardVerdict {
+            is_zero_violation,
+            hadamard_complement_l1_norm,
+            unauthorized_topological_entropy,
+            illegal_edges,
+            rationale,
+        }
+    }
+}
+
 

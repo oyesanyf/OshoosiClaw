@@ -39,3 +39,4 @@ pub use otx_connection::{
 };
 pub use semantic::*;
 pub use traffic_adapter::*;
+pub use voters::{MartingaleDriftVerdict, MartingaleZeroDriftDetector};

@@ -329,12 +329,14 @@ NTSTATUS NTAPI DriverEntry(
     }
 
     // 3. Register BYOVD kernel image load callback (PsSetLoadImageNotifyRoutine)
+    //    Complemented by pre-section synchronization blocking (OsoosiPreAcquireForSectionSync)
+    //    and Windows WDAC Vulnerable Driver Blocklist so HVCI/KPP code integrity is never violated.
     status = PsSetLoadImageNotifyRoutine(OsoosiLoadImageNotifyRoutine);
     if (NT_SUCCESS(status)) {
         g_State.ImageNotifyRegistered = TRUE;
     }
 
-    KdPrint(("OsoosiDriver: Ring-0 Minifilter + ObRegisterCallbacks + BYOVD Driver loaded (v1.2.0).\n"));
+    KdPrint(("OsoosiDriver: Ring-0 Minifilter (PreAcquireForSectionSync) + ObRegisterCallbacks + BYOVD Driver loaded (v1.2.0).\n"));
     return STATUS_SUCCESS;
 }
 
@@ -1111,6 +1113,51 @@ OB_PREOP_CALLBACK_STATUS NTAPI OsoosiObPreThreadCallback(
     KeReleaseInStackQueuedSpinLock(&lockHandle);
 
     return OB_PREOP_SUCCESS;
+}
+
+/*
+ * Pre-Section Synchronization Filter (IRP_MJ_ACQUIRE_FOR_SECTION_SYNCHRONIZATION):
+ * Blocks known BYOVD vulnerable drivers and untrusted executable sections with
+ * STATUS_ACCESS_DENIED (0xC0000022) BEFORE MmCreateSection maps the image into memory.
+ * This prevents kernel driver entry execution without patching mapped code pages (100% HVCI/KPP safe).
+ */
+NTSTATUS NTAPI OsoosiPreAcquireForSectionSync(
+    _In_opt_ PUNICODE_STRING FileName,
+    _In_ ULONG SyncType,
+    _In_ ULONG PageProtection,
+    _In_ ULONG CallerPid
+) {
+    KLOCK_QUEUE_HANDLE lockHandle;
+    NTSTATUS status = STATUS_SUCCESS;
+
+    // Inspect executable section creation (SyncTypeCreateSection == 1, PAGE_EXECUTE* == 0x10..0x80)
+    if (FileName == NULL || FileName->Buffer == NULL || FileName->Length == 0) {
+        return STATUS_SUCCESS;
+    }
+    if (SyncType != 1 || (PageProtection & 0xF0) == 0) {
+        return STATUS_SUCCESS;
+    }
+    if (OsoosiIsCriticalSystemImage(FileName)) {
+        return STATUS_SUCCESS;
+    }
+
+    KeAcquireInStackQueuedSpinLock(&g_State.Lock, &lockHandle);
+    if (g_State.Mode >= OSOOSI_MODE_ACTIVE && OsoosiIsByovdDriverLocked(FileName)) {
+        g_State.ByovdBlockedCount++;
+        g_State.MinifilterBlockedCount++;
+        OsoosiEnqueueInterceptEventLocked(
+            CallerPid,
+            0,
+            1,
+            OSOOSI_INTERCEPT_BYOVD_BLOCK,
+            FileName,
+            NULL
+        );
+        status = STATUS_ACCESS_DENIED;
+    }
+    KeReleaseInStackQueuedSpinLock(&lockHandle);
+
+    return status;
 }
 
 VOID NTAPI OsoosiLoadImageNotifyRoutine(

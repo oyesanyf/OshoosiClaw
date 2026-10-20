@@ -14,6 +14,9 @@ pub mod analysis;
 pub mod blocklist;
 pub mod proxy;
 
-pub use analysis::{DnsAnalysis, DnsVerdict};
+pub use analysis::{
+    analyze_domain, shannon_entropy, DnsAnalysis, DnsMartingaleDriftDetector,
+    DnsMartingaleDriftVerdict, DnsVerdict,
+};
 pub use blocklist::DnsBlocklist;
 pub use proxy::DnsShield;
