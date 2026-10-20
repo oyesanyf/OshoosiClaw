@@ -810,9 +810,11 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             get(get_bootstrap_peers).post(post_bootstrap_peers),
         )
         .route("/api/zone-summary", get(get_zone_summary))
+        .route("/api/zone/overview", get(get_zone_summary))
         .route("/api/zone/auto-remediate", post(post_auto_remediate_gap))
         .route("/api/story", get(get_story))
         .route("/api/pending-actions", get(get_pending_actions))
+        .route("/api/approvals", get(get_pending_actions))
         .route("/api/approve-action", post(post_approve_action))
         .route("/api/reject-action", post(post_reject_action))
         .route(
@@ -847,6 +849,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             post(post_killchain_disarm_endpoint),
         )
         .route("/api/auth/status", get(get_auth_status_endpoint))
+        .route("/api/auth/session", get(get_auth_status_endpoint))
         .route("/api/auth/login", post(post_auth_login_endpoint))
         .route("/api/auth/logout", post(post_auth_logout_endpoint))
         .route(
@@ -1249,6 +1252,7 @@ async fn auth_middleware(
     if path == "/api/auth/login"
         || path == "/api/auth/logout"
         || path == "/api/auth/status"
+        || path == "/api/auth/session"
         || path == "/api/auth/webauthn/challenge"
         || path == "/api/auth/webauthn/verify"
         || path == "/api/auth/reset-lockout"
