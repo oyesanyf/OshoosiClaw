@@ -6,7 +6,7 @@
     <title>OshoosiClaw — Autonomous Security Dashboard</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <meta name="theme-color" content="#12141c">
-    <link rel="stylesheet" href="style.css?v=20261020_01">
+    <link rel="stylesheet" href="style.css?v=20261020_02">
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -2735,6 +2735,7 @@
     <!-- Login / First-Time Setup Overlay -->
     <div id="login-overlay" class="login-overlay">
         <div class="login-card" style="max-width: 440px;">
+            <div id="login-card-progress" class="login-card-progress"><div class="login-card-progress-bar"></div></div>
             <div class="login-logo">
                 <div class="login-logo-icon">🏹</div>
                 <h1 class="login-logo-text" id="login-card-title">Oshoosi<span>Claw</span></h1>
@@ -2788,9 +2789,9 @@
                     <span id="login-btn-text">Access System</span>
                     <i id="login-btn-icon" data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
                 </button>
-                <div id="login-status-banner" class="login-status-banner" style="display: none;" role="status" aria-live="polite">
+                <div id="login-status-banner" class="login-status-banner" style="display: flex;" role="status" aria-live="polite">
                     <span class="oshoosi-spinner" aria-hidden="true"></span>
-                    <span id="login-status-text">Verifying credentials &amp; initializing security session...</span>
+                    <span id="login-status-text">Connecting to OpenỌ̀ṣọ́ọ̀sì Security Daemon &amp; verifying session...</span>
                 </div>
                 <div id="login-error" class="login-error"></div>
                 <div style="text-align: center; margin-top: 14px;">
@@ -3079,7 +3080,7 @@
 
     <!-- Scripts -->
     <script type="text/javascript" src="https://unpkg.com/vis-network@10.1.2/standalone/umd/vis-network.min.js" integrity="sha384-RDdG1CLOxjNlTHh4JYx/rnAueaMHbkBHmeHwrEyljMQw3LF0it4SkuNotIY/FPxD" crossorigin="anonymous"></script>
-    <script src="app.js?v=20261020_01"></script>
+    <script src="app.js?v=20261020_02"></script>
     <script>
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();

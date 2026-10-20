@@ -3535,6 +3535,15 @@ pub fn synthesize_rea_yara_rule(
 
 /// Discover both built-in native Rust REA engines and optional external RE providers on the host.
 pub fn discover_rea_providers() -> Vec<ReaProviderStatus> {
+    static REA_PROVIDERS_CACHE: std::sync::OnceLock<
+        parking_lot::RwLock<Option<(std::time::Instant, Vec<ReaProviderStatus>)>>,
+    > = std::sync::OnceLock::new();
+    let cache = REA_PROVIDERS_CACHE.get_or_init(|| parking_lot::RwLock::new(None));
+    if let Some((ts, ref list)) = *cache.read() {
+        if ts.elapsed() < std::time::Duration::from_secs(300) {
+            return list.clone();
+        }
+    }
     let mut providers = vec![
         ReaProviderStatus {
             name: "osoosi-rea-native (PE/ELF/Mach-O/Rust/Go)".to_string(),
@@ -3602,6 +3611,7 @@ pub fn discover_rea_providers() -> Vec<ReaProviderStatus> {
         });
     }
 
+    *cache.write() = Some((std::time::Instant::now(), providers.clone()));
     providers
 }
 
@@ -3986,6 +3996,70 @@ pub const SAMPLE_WASM_MODULE_HEX: &str = "0061736d01000000010b0260017f0060027f7f
 
 /// Autonomous Reverse-Engineering Engine that continuously discovers, inspects,
 /// reconstructs pseudocode, and generates multi-token YARA rules for host binaries and artifacts.
+fn resolve_candidate_binary_path(
+    process_name: Option<&str>,
+    file_path: Option<&str>,
+) -> Option<PathBuf> {
+    for cand in [file_path, process_name].into_iter().flatten() {
+        let trimmed = cand.trim().trim_matches('"');
+        if trimmed.is_empty() {
+            continue;
+        }
+        let p = PathBuf::from(trimmed);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let name = process_name
+        .or(file_path)
+        .map(|s| s.trim().trim_matches('"'))
+        .unwrap_or("");
+    if name.is_empty() {
+        return None;
+    }
+    let base_name = Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(name);
+    let mut names = vec![base_name.to_string()];
+    if !base_name.ends_with(".exe") && !base_name.contains('.') {
+        names.push(format!("{}.exe", base_name));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let standard_dirs = [
+            r"C:\Windows\System32",
+            r"C:\Windows\SysWOW64",
+            r"C:\Windows",
+            r"C:\Program Files\Git\cmd",
+            r"C:\Program Files\Git\mingw64\bin",
+            r"C:\Program Files\Git\usr\bin",
+            r"C:\Program Files\Google\Chrome\Application",
+            r"C:\Program Files (x86)\Google\Chrome\Application",
+            r"C:\Program Files\Microsoft\Edge\Application",
+        ];
+        for dir in &standard_dirs {
+            for n in &names {
+                let cand = Path::new(dir).join(n);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            for n in &names {
+                let cand = dir.join(n);
+                if cand.is_file() {
+                    return Some(cand);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub struct AutonomousReaEngine {
     pub autonomous_enabled: AtomicBool,
     pub total_autonomous_sweeps: AtomicU64,
@@ -4022,6 +4096,143 @@ impl AutonomousReaEngine {
     pub fn sweep_count(&self) -> u64 {
         self.total_autonomous_sweeps.load(Ordering::Relaxed)
     }
+
+    pub fn adjudicate_process_or_binary_alert(
+        &self,
+        process_name: Option<&str>,
+        file_path: Option<&str>,
+        reason: Option<&str>,
+    ) -> (bool, String, Option<String>) {
+        let reason_str = reason.unwrap_or("").trim();
+        if reason_str.contains("Veto Trusted Vendor")
+            || reason_str.contains("outside the vulnerable")
+            || reason_str.contains("CVE None")
+            || reason_str.contains("Execution Of Non-Existing File")
+        {
+            let target = process_name.or(file_path).unwrap_or("unknown_target");
+            let synthetic_hash = blake3::hash(format!("rea:adjudicated:benign:{}", target).as_bytes())
+                .to_hex()
+                .to_string();
+            let report = ReaInvestigationReport {
+                target_path: target.to_string(),
+                detected_kind: "vetoed_benign_threat".to_string(),
+                size_bytes: 0,
+                sha256: "0".repeat(64),
+                blake3: synthetic_hash.clone(),
+                summary: format!("Autonomous REA Vetoed Benign: {}", reason_str),
+                metadata: serde_json::json!({
+                    "adjudication": "benign_vetoed",
+                    "reason": reason_str,
+                    "target": target,
+                }),
+                findings: Vec::new(),
+                evidence: Vec::new(),
+                limitations: Vec::new(),
+                reconstructed_code: Some(format!(
+                    "// Autonomous REA Threat Adjudication: VETOED BENIGN\n// Reason: {}\n// Target: {}\n// Verdict: Dropped as benign false-positive",
+                    reason_str, target
+                )),
+                auto_yara_rule: None,
+                threat_score: 0.0,
+                autonomous_trigger: Some(format!("adjudication:{}", reason_str)),
+                providers_used: vec!["osoosi-rea-native".to_string()],
+                timestamp: chrono::Utc::now().to_rfc3339(),
+            };
+            self.record_report(report);
+            return (
+                true,
+                "Vetoed or non-vulnerable version confirmed by Autonomous REA".to_string(),
+                Some(synthetic_hash),
+            );
+        }
+
+        let resolved = resolve_candidate_binary_path(process_name, file_path);
+        if let Some(resolved_path) = resolved {
+            let resolved_str = resolved_path.to_string_lossy().to_string();
+            let base_lower = resolved_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+
+            let is_protected_toolchain = matches!(
+                base_lower.as_str(),
+                "sc.exe"
+                    | "git.exe"
+                    | "conhost.exe"
+                    | "chrome.exe"
+                    | "wsl.exe"
+                    | "taskkill.exe"
+                    | "powershell.exe"
+                    | "cmd.exe"
+                    | "svchost.exe"
+                    | "explorer.exe"
+                    | "cargo.exe"
+                    | "rustc.exe"
+                    | "node.exe"
+                    | "python.exe"
+                    | "python3.exe"
+            );
+
+            let is_signed = crate::win_trust::is_trusted_signed_binary(&resolved_path);
+            let is_protected_path =
+                crate::blocking_manager::is_protected_or_benign_system_path(&resolved_str);
+
+            if let Ok(report) = analyze_target_path(
+                &resolved_str,
+                ReaTargetKind::Auto,
+                Some("autonomous_rea_threat_adjudication".to_string()),
+            ) {
+                self.record_report(report.clone());
+                if is_signed
+                    || is_protected_path
+                    || is_protected_toolchain
+                    || report.threat_score < 0.35
+                {
+                    return (
+                        true,
+                        format!(
+                            "Autonomous REA inspected '{}' and verified benign/trusted status",
+                            resolved_str
+                        ),
+                        Some(report.blake3),
+                    );
+                } else {
+                    return (
+                        false,
+                        format!(
+                            "Autonomous REA retained alert for '{}' (threat_score={:.2})",
+                            resolved_str, report.threat_score
+                        ),
+                        Some(report.blake3),
+                    );
+                }
+            } else if is_signed || is_protected_path || is_protected_toolchain {
+                let blake3_hex = std::fs::File::open(&resolved_path)
+                    .ok()
+                    .and_then(|mut f| {
+                        let mut hasher = blake3::Hasher::new();
+                        std::io::copy(&mut f, &mut hasher).ok()?;
+                        Some(hasher.finalize().to_hex().to_string())
+                    });
+                return (
+                    true,
+                    format!(
+                        "Autonomous REA verified protected system binary '{}'",
+                        resolved_str
+                    ),
+                    blake3_hex,
+                );
+            }
+        }
+
+        (
+            false,
+            "No candidate binary located for REA adjudication".to_string(),
+            None,
+        )
+    }
+
 
     pub fn record_report(&self, report: ReaInvestigationReport) {
         {
@@ -4267,18 +4478,29 @@ pub fn persist_auto_yara_rule(report: &ReaInvestigationReport) {
 pub fn spawn_autonomous_rea_for_threat(path: PathBuf, trigger_reason: String) {
     tokio::task::spawn_blocking(move || {
         let engine = global_rea_engine();
-        if !engine.is_enabled() || !path.is_file() {
+        if !engine.is_enabled() {
             return;
         }
         let path_str = path.to_string_lossy().to_string();
         if crate::blocking_manager::is_protected_or_benign_system_path(&path_str) {
+            let _ = engine.adjudicate_process_or_binary_alert(
+                Some(&path_str),
+                Some(&path_str),
+                Some(&trigger_reason),
+            );
             return;
         }
         if let Ok(report) =
-            analyze_target_path(&path_str, ReaTargetKind::Auto, Some(trigger_reason))
+            analyze_target_path(&path_str, ReaTargetKind::Auto, Some(trigger_reason.clone()))
         {
             persist_auto_yara_rule(&report);
             engine.record_report(report);
+        } else {
+            let _ = engine.adjudicate_process_or_binary_alert(
+                Some(&path_str),
+                Some(&path_str),
+                Some(&trigger_reason),
+            );
         }
     });
 }

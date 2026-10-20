@@ -21,6 +21,7 @@ pub struct MemoryStore {
     bloom_filter: Mutex<bloomfilter::Bloom<String>>,
     status_cache: parking_lot::RwLock<std::collections::HashMap<String, String>>,
     clean_hashes_cache: parking_lot::RwLock<std::collections::HashSet<String>>,
+    recent_threats_cache: parking_lot::RwLock<Option<(std::time::Instant, Vec<serde_json::Value>)>>,
 }
 
 fn normalize_asset_path(path: &str) -> String {
@@ -74,11 +75,75 @@ impl MemoryStore {
             bloom_filter: Mutex::new(bloom),
             status_cache: parking_lot::RwLock::new(std::collections::HashMap::new()),
             clean_hashes_cache: parking_lot::RwLock::new(std::collections::HashSet::new()),
+            recent_threats_cache: parking_lot::RwLock::new(None),
         };
         s.init_db()?;
         s.repopulate_bloom_filter()?;
         s.load_clean_hashes_cache()?;
+        let _ = s.purge_vetoed_and_false_positive_threats();
         Ok(s)
+    }
+
+    pub fn invalidate_recent_threats_cache(&self) {
+        *self.recent_threats_cache.write() = None;
+    }
+
+    pub fn delete_threat_by_id_or_pattern(
+        &self,
+        threat_id: Option<&str>,
+        process_name: Option<&str>,
+        hash_blake3: Option<&str>,
+    ) -> anyhow::Result<usize> {
+        let tid = threat_id.unwrap_or("").trim();
+        let proc = process_name.unwrap_or("").trim().to_ascii_lowercase();
+        let hash = hash_blake3.unwrap_or("").trim();
+        if tid.is_empty() && proc.is_empty() && hash.is_empty() {
+            return Ok(0);
+        }
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if !tid.is_empty() {
+            params.push(Box::new(tid.to_string()));
+            conditions.push(format!("id = ?{}", params.len()));
+        }
+        if !proc.is_empty() {
+            params.push(Box::new(proc.clone()));
+            let p1 = params.len();
+            params.push(Box::new(format!("%{}%", proc)));
+            let p2 = params.len();
+            conditions.push(format!(
+                "(LOWER(COALESCE(process_name, '')) = ?{} OR LOWER(COALESCE(file_path, '')) LIKE ?{})",
+                p1, p2
+            ));
+        }
+        if !hash.is_empty() {
+            params.push(Box::new(hash.to_string()));
+            conditions.push(format!("hash_blake3 = ?{}", params.len()));
+        }
+        let sql = format!("DELETE FROM threats WHERE {}", conditions.join(" OR "));
+        let conn = self.conn.lock();
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let affected = conn.execute(&sql, rusqlite::params_from_iter(param_refs))?;
+        drop(conn);
+        self.invalidate_recent_threats_cache();
+        Ok(affected)
+    }
+
+    pub fn purge_vetoed_and_false_positive_threats(&self) -> anyhow::Result<usize> {
+        let conn = self.conn.lock();
+        let deleted = conn.execute(
+            "DELETE FROM threats WHERE
+                reason LIKE '%Veto Trusted Vendor%'
+                OR reason LIKE '%outside the vulnerable%'
+                OR reason LIKE '%CVE None%'
+                OR reason LIKE '%Autonomous REA Verified Clean%'
+                OR EXISTS (SELECT 1 FROM false_positive_patterns fp WHERE (fp.process_name != '' AND LOWER(fp.process_name) = LOWER(COALESCE(threats.process_name, ''))) OR (fp.hash_blake3 != '' AND fp.hash_blake3 = COALESCE(threats.hash_blake3, '')))
+                OR EXISTS (SELECT 1 FROM known_clean_hashes kch WHERE kch.hash_blake3 != '' AND kch.hash_blake3 = COALESCE(threats.hash_blake3, ''))",
+            [],
+        )?;
+        drop(conn);
+        self.invalidate_recent_threats_cache();
+        Ok(deleted)
     }
 
     fn load_clean_hashes_cache(&self) -> anyhow::Result<()> {
@@ -1380,6 +1445,7 @@ impl MemoryStore {
         if let Some(ref hash) = sig.hash_blake3 {
             self.mark_hash_known_malicious(hash);
         }
+        self.invalidate_recent_threats_cache();
         Ok(())
     }
 
@@ -1484,20 +1550,38 @@ impl MemoryStore {
 
     /// Get recent threats for dashboard (from memory + audit THREAT_DETECTED events).
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
-        let conn = self.conn.lock();
+        if let Some((ts, ref cached)) = *self.recent_threats_cache.read() {
+            if ts.elapsed() < std::time::Duration::from_millis(1500) && limit <= 200 {
+                return Ok(cached.iter().take(limit).cloned().collect());
+            }
+        }
+        let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(80)) else {
+            if let Some((_, ref cached)) = *self.recent_threats_cache.read() {
+                return Ok(cached.iter().take(limit).cloned().collect());
+            }
+            return Ok(Vec::new());
+        };
+        let fetch_limit = limit.max(200);
         let mut stmt = conn.prepare(
             "SELECT id, cve_id, process_name, hash_blake3, confidence, MAX(detected_at), source_node, file_path, reason 
              FROM threats t
              WHERE NOT EXISTS (
                 SELECT 1 FROM false_positive_patterns fp
-                WHERE (fp.process_name != '' AND fp.process_name = COALESCE(t.process_name, ''))
+                WHERE (fp.process_name != '' AND LOWER(fp.process_name) = LOWER(COALESCE(t.process_name, '')))
                    OR (fp.hash_blake3 != '' AND fp.hash_blake3 = COALESCE(t.hash_blake3, ''))
              )
+             AND NOT EXISTS (
+                SELECT 1 FROM known_clean_hashes kch
+                WHERE kch.hash_blake3 != '' AND kch.hash_blake3 = COALESCE(t.hash_blake3, '')
+             )
+             AND COALESCE(t.reason, '') NOT LIKE '%Veto Trusted Vendor%'
+             AND COALESCE(t.reason, '') NOT LIKE '%outside the vulnerable%'
+             AND COALESCE(t.reason, '') NOT LIKE '%CVE None%'
              GROUP BY COALESCE(NULLIF(cve_id, ''), NULLIF(process_name, ''), file_path), source_node
              ORDER BY detected_at DESC
              LIMIT ?1"
         )?;
-        let rows = stmt.query_map(params![limit as i64], |row| {
+        let rows = stmt.query_map(params![fetch_limit as i64], |row| {
             Ok(serde_json::json!({
                 "id": row.get::<_, String>(0)?,
                 "cve_id": row.get::<_, Option<String>>(1)?,
@@ -1514,7 +1598,10 @@ impl MemoryStore {
         for row in rows {
             out.push(row?);
         }
-        Ok(out)
+        drop(stmt);
+        drop(conn);
+        *self.recent_threats_cache.write() = Some((std::time::Instant::now(), out.clone()));
+        Ok(out.into_iter().take(limit).collect())
     }
 
     /// Mark a threat as false positive (federated learning: pattern shared).
@@ -1526,26 +1613,35 @@ impl MemoryStore {
         threat_id: &str,
         source_node: &str,
     ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
-        let conn = self.conn.lock();
-        let mut stmt =
-            conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
-        let mut rows = stmt.query(params![threat_id])?;
-        let Some(row) = rows.next()? else {
-            return Ok(None);
+        let (process_name, hash_blake3, file_path) = {
+            let conn = self.conn.lock();
+            let mut stmt =
+                conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
+            let mut rows = stmt.query(params![threat_id])?;
+            let Some(row) = rows.next()? else {
+                return Ok(None);
+            };
+            let process_name: Option<String> = row.get(0)?;
+            let hash_blake3: Option<String> = row.get(1)?;
+            let file_path: Option<String> = row.get(2)?;
+            let proc = process_name.as_deref().unwrap_or("");
+            let hash = hash_blake3.as_deref().unwrap_or("");
+            conn.execute(
+                "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![proc, hash, source_node, Utc::now().to_rfc3339()],
+            )?;
+            if !hash.is_empty() {
+                self.record_ai_override_locked(&conn, hash, 0, "analyst false positive", source_node)?;
+            }
+            (process_name, hash_blake3, file_path)
         };
-        let process_name: Option<String> = row.get(0)?;
-        let hash_blake3: Option<String> = row.get(1)?;
-        let file_path: Option<String> = row.get(2)?;
-        let proc = process_name.as_deref().unwrap_or("");
-        let hash = hash_blake3.as_deref().unwrap_or("");
-        conn.execute(
-            "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![proc, hash, source_node, Utc::now().to_rfc3339()],
-        )?;
-        if !hash.is_empty() {
-            self.record_ai_override_locked(&conn, hash, 0, "analyst false positive", source_node)?;
-        }
+        let _ = self.delete_threat_by_id_or_pattern(
+            Some(threat_id),
+            process_name.as_deref(),
+            hash_blake3.as_deref(),
+        );
+        self.invalidate_recent_threats_cache();
         Ok(Some((process_name, hash_blake3, file_path)))
     }
 
@@ -1557,17 +1653,21 @@ impl MemoryStore {
         hash_blake3: Option<&str>,
         source_node: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock();
-        conn.execute(
-            "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![
-                process_name.unwrap_or(""),
-                hash_blake3.unwrap_or(""),
-                source_node,
-                Utc::now().to_rfc3339()
-            ],
-        )?;
+        {
+            let conn = self.conn.lock();
+            conn.execute(
+                "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    process_name.unwrap_or(""),
+                    hash_blake3.unwrap_or(""),
+                    source_node,
+                    Utc::now().to_rfc3339()
+                ],
+            )?;
+        }
+        let _ = self.delete_threat_by_id_or_pattern(None, process_name, hash_blake3);
+        self.invalidate_recent_threats_cache();
         Ok(())
     }
 
@@ -1588,27 +1688,36 @@ impl MemoryStore {
         threat_id: &str,
         source_node: &str,
     ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
-        let conn = self.conn.lock();
-        let mut stmt =
-            conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
-        let mut rows = stmt.query(params![threat_id])?;
-        let Some(row) = rows.next()? else {
-            return Ok(None);
-        };
-        let process_name: Option<String> = row.get(0)?;
-        let hash_blake3: Option<String> = row.get(1)?;
-        let file_path: Option<String> = row.get(2)?;
-        let proc = process_name.as_deref().unwrap_or("");
-        let hash = hash_blake3.as_deref().unwrap_or("");
+        let (process_name, hash_blake3, file_path) = {
+            let conn = self.conn.lock();
+            let mut stmt =
+                conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
+            let mut rows = stmt.query(params![threat_id])?;
+            let Some(row) = rows.next()? else {
+                return Ok(None);
+            };
+            let process_name: Option<String> = row.get(0)?;
+            let hash_blake3: Option<String> = row.get(1)?;
+            let file_path: Option<String> = row.get(2)?;
+            let proc = process_name.as_deref().unwrap_or("");
+            let hash = hash_blake3.as_deref().unwrap_or("");
 
-        conn.execute(
-            "INSERT OR REPLACE INTO verified_threat_patterns (process_name, hash_blake3, source_node, marked_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![proc, hash, source_node, Utc::now().to_rfc3339()],
-        )?;
-        if !hash.is_empty() {
-            self.record_ai_override_locked(&conn, hash, 1, "analyst true positive", source_node)?;
-        }
+            conn.execute(
+                "INSERT OR REPLACE INTO verified_threat_patterns (process_name, hash_blake3, source_node, marked_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![proc, hash, source_node, Utc::now().to_rfc3339()],
+            )?;
+            if !hash.is_empty() {
+                self.record_ai_override_locked(&conn, hash, 1, "analyst true positive", source_node)?;
+            }
+            (process_name, hash_blake3, file_path)
+        };
+        let _ = self.delete_threat_by_id_or_pattern(
+            Some(threat_id),
+            process_name.as_deref(),
+            hash_blake3.as_deref(),
+        );
+        self.invalidate_recent_threats_cache();
         Ok(Some((process_name, hash_blake3, file_path)))
     }
 
@@ -2011,6 +2120,8 @@ impl MemoryStore {
             params![proc, clean_hash, source, now],
         );
 
+        drop(conn);
+        self.invalidate_recent_threats_cache();
         Ok(())
     }
 
@@ -2032,6 +2143,7 @@ impl MemoryStore {
             params![target],
         )?;
         self.clean_hashes_cache.write().remove(&target);
+        self.invalidate_recent_threats_cache();
         Ok(affected > 0)
     }
 
