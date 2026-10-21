@@ -6097,6 +6097,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "blake3",
  "chrono",
  "dashmap",
  "edr-phaselock",

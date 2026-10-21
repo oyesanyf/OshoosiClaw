@@ -36,6 +36,48 @@ pub struct HarEntrySummary {
     pub threat_tags: Vec<String>,
     pub threat_reasons: Vec<String>,
     pub verdict: String,
+    pub body_blake3: Option<String>,
+}
+
+/// Global callback hook for registering and inspecting HAR response bodies in FileLineageTracker.
+/// Arguments: `(session_id: &str, url: &str, domain: &str, body_blake3: &str) -> bool`
+/// Returns `true` if the payload digest is swarm-poisoned.
+pub type HarLineageCallback = dyn Fn(&str, &str, &str, &str) -> bool + Send + Sync;
+
+static HAR_LINEAGE_HOOK: std::sync::RwLock<Option<Box<HarLineageCallback>>> =
+    std::sync::RwLock::new(None);
+static SWARM_POISONED_HAR_DIGESTS: std::sync::LazyLock<dashmap::DashSet<String>> =
+    std::sync::LazyLock::new(dashmap::DashSet::new);
+
+/// Sets the global HAR lineage registration and poison verification hook.
+pub fn set_har_lineage_hook<F>(hook: F)
+where
+    F: Fn(&str, &str, &str, &str) -> bool + Send + Sync + 'static,
+{
+    let mut w = HAR_LINEAGE_HOOK.write().unwrap_or_else(|e| e.into_inner());
+    *w = Some(Box::new(hook));
+}
+
+/// Clears the global HAR lineage hook.
+pub fn clear_har_lineage_hook() {
+    let mut w = HAR_LINEAGE_HOOK.write().unwrap_or_else(|e| e.into_inner());
+    *w = None;
+}
+
+/// Directly registers a swarm-immunized poisoned digest to be rejected by the HAR inspector.
+pub fn register_swarm_poisoned_har_digest(digest: &str) {
+    SWARM_POISONED_HAR_DIGESTS.insert(digest.trim().to_lowercase());
+}
+
+/// Returns whether a given BLAKE3 digest is marked as a swarm-poisoned HAR payload.
+pub fn is_swarm_poisoned_har_digest(digest: &str) -> bool {
+    let norm = digest.trim().to_lowercase();
+    SWARM_POISONED_HAR_DIGESTS.contains(&norm)
+}
+
+/// Clears registered swarm-poisoned HAR digests.
+pub fn clear_swarm_poisoned_har_digests() {
+    SWARM_POISONED_HAR_DIGESTS.clear();
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -564,6 +606,16 @@ pub fn parse_and_inspect_har_json(
     raw_json: &str,
     source_label: &str,
 ) -> Result<HarInspectionReport, String> {
+    parse_and_inspect_har_json_with_session(raw_json, source_label, None)
+}
+
+/// Parses and inspects HAR JSON under an explicit agent session ID for BLAKE3 file-lineage tracking.
+pub fn parse_and_inspect_har_json_with_session(
+    raw_json: &str,
+    source_label: &str,
+    session_id: Option<&str>,
+) -> Result<HarInspectionReport, String> {
+    let effective_session = session_id.unwrap_or(source_label);
     let parsed: serde_json::Value =
         serde_json::from_str(raw_json).map_err(|e| format!("Failed to parse HAR JSON: {}", e))?;
 
@@ -698,6 +750,49 @@ pub fn parse_and_inspect_har_json(
         let headers_lower = req_headers_text.to_ascii_lowercase();
         let host_lower = host.to_ascii_lowercase();
         let mime_lower = mime_type.to_ascii_lowercase();
+
+        // -------------------------------------------------------------
+        // BLAKE3 Response Body Digest & Swarm Poisoning (1.00 score)
+        // -------------------------------------------------------------
+        let body_blake3 = if let Some(content_val) = resp_content {
+            if let Some(text_val) = content_val.get("text").and_then(|v| v.as_str()) {
+                if !text_val.is_empty() {
+                    Some(blake3::hash(text_val.as_bytes()).to_hex().to_string().to_lowercase())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let mut is_swarm_poisoned = false;
+        if let Some(ref digest) = body_blake3 {
+            // Check standalone swarm-poisoned registry
+            if is_swarm_poisoned_har_digest(digest) {
+                is_swarm_poisoned = true;
+            }
+
+            // Query / register via global FileLineageTracker hook if installed
+            let hook_guard = HAR_LINEAGE_HOOK.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(ref hook) = *hook_guard {
+                if hook(effective_session, &url, &host, digest) {
+                    is_swarm_poisoned = true;
+                }
+            }
+        }
+
+        if is_swarm_poisoned {
+            entry_threat_score = 1.00;
+            entry_tags.push("HAR:SWARM_POISONED_PAYLOAD".to_string());
+            entry_reasons.push(format!(
+                "HTTP response body matches swarm-immunized poisoned payload digest ({})",
+                body_blake3.as_deref().unwrap_or("unknown")
+            ));
+            all_vectors.insert("HAR:SWARM_POISONED_PAYLOAD".to_string());
+        }
 
         // -------------------------------------------------------------
         // Vector 1: Prompt Injection (ASI01, score 0.88)
@@ -890,6 +985,7 @@ pub fn parse_and_inspect_har_json(
             threat_tags: entry_tags,
             threat_reasons: entry_reasons,
             verdict,
+            body_blake3,
         });
     }
 
@@ -1069,5 +1165,81 @@ mod tests {
         assert!(report
             .detected_vectors
             .contains(&"HAR:DRIVE_BY_PAYLOAD".to_string()));
+    }
+
+    #[test]
+    fn test_har_blake3_lineage_and_swarm_poisoned_payload() {
+        let payload_text = "<html><body>har_response_payload_test_content</body></html>";
+        let expected_blake3 = blake3::hash(payload_text.as_bytes()).to_hex().to_string().to_lowercase();
+
+        let raw = serde_json::json!({
+            "log": {
+                "entries": [
+                    {
+                        "startedDateTime": "2026-10-21T01:00:00.000Z",
+                        "time": 50.0,
+                        "request": {
+                            "method": "GET",
+                            "url": "https://example.com/data.html"
+                        },
+                        "response": {
+                            "status": 200,
+                            "content": {
+                                "mimeType": "text/html",
+                                "text": payload_text
+                            }
+                        }
+                    }
+                ]
+            }
+        });
+
+        // 1. Initial inspection: clean payload, body_blake3 present
+        let report = parse_and_inspect_har_json(&raw.to_string(), "sess-har-01").unwrap();
+        assert_eq!(report.entries.len(), 1);
+        let entry = &report.entries[0];
+        assert_eq!(entry.body_blake3.as_deref(), Some(expected_blake3.as_str()));
+        assert_eq!(entry.verdict, "benign");
+        assert_ne!(entry.threat_score, 1.00);
+
+        // 2. Swarm immunizes this digest
+        register_swarm_poisoned_har_digest(&expected_blake3);
+
+        // 3. Re-inspection: must be rejected with 1.00 threat score and HAR:SWARM_POISONED_PAYLOAD tag
+        let poisoned_report = parse_and_inspect_har_json(&raw.to_string(), "sess-har-01").unwrap();
+        assert_eq!(poisoned_report.malicious_entries, 1);
+        assert_eq!(poisoned_report.highest_threat_score, 1.00);
+        assert_eq!(poisoned_report.primary_verdict, "MALICIOUS");
+        let p_entry = &poisoned_report.entries[0];
+        assert_eq!(p_entry.threat_score, 1.00);
+        assert!(p_entry.threat_tags.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+
+        // Cleanup
+        clear_swarm_poisoned_har_digests();
+
+        // 4. Test global lineage hook registration and interception
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let hook_invoked = Arc::new(AtomicBool::new(false));
+        let h_inv = hook_invoked.clone();
+        let target_digest = expected_blake3.clone();
+
+        set_har_lineage_hook(move |sess, url, domain, digest| {
+            h_inv.store(true, Ordering::SeqCst);
+            assert_eq!(sess, "sess-hook-99");
+            assert!(url.contains("example.com"));
+            assert_eq!(domain, "example.com");
+            assert_eq!(digest, target_digest);
+            // Simulate hook detecting a poisoned hash
+            true
+        });
+
+        let hook_report = parse_and_inspect_har_json_with_session(&raw.to_string(), "label", Some("sess-hook-99")).unwrap();
+        assert!(hook_invoked.load(Ordering::SeqCst));
+        assert_eq!(hook_report.malicious_entries, 1);
+        assert_eq!(hook_report.entries[0].threat_score, 1.00);
+        assert!(hook_report.entries[0].threat_tags.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+
+        clear_har_lineage_hook();
     }
 }

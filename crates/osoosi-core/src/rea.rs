@@ -538,6 +538,39 @@ pub struct ReaInvestigationReport {
     pub timestamp: String,
 }
 
+/// Errors produced during REA dynamic sandboxed detonation or binary probing.
+#[derive(Debug, thiserror::Error)]
+pub enum ReaError {
+    #[error("Target binary does not exist on disk: {0}")]
+    NotFound(String),
+    #[error("Immune benign process: {0}")]
+    ImmuneBenign(String),
+    #[error("Canary cage execution error: {0}")]
+    CageError(String),
+    #[error("IO error during detonation probe: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("General REA error: {0}")]
+    General(String),
+}
+
+/// Dynamic sandbox detonation report emitted by `run_caged_rea_detonation_probe`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReaDetonationReport {
+    pub binary_path: String,
+    pub session_id: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    pub canary_triggered: bool,
+    pub threat_score: f32,
+    pub verdict: String,
+    pub mitre_attack_ids: Vec<String>,
+    pub findings: Vec<Value>,
+    pub evidence: Vec<ReaEvidence>,
+    pub alert: Option<osoosi_runtime::canary_cage::CanaryAlert>,
+    pub metadata: Value,
+    pub timestamp: String,
+}
+
 /// Request payload for `/api/rea/analyze` dashboard and API endpoint.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReaAnalyzeRequest {
@@ -4158,6 +4191,197 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
     false
 }
 
+/// Runs a dynamic sandboxed detonation probe on an unknown or suspicious binary or script.
+///
+/// Implements R3:
+/// 1. Verifies if target is a known benign system or developer toolchain via `is_rea_benign_system_or_dev_process`.
+///    If benign, dynamic execution is bypassed and a 100% false-positive immune verdict is recorded.
+/// 2. Spawns the binary inside the hardened `CanaryCage` sandbox with ephemeral honey-credentials injected
+///    (`CANARY_HONEY_PIPE` on Windows, `CANARY_HONEY_FD` on Linux, plus honey-credential environment variables).
+/// 3. If the process touches the honey-credential trap (resulting in immediate child exit code 137 and `canary_triggered: true`),
+///    immediately records a `1.00` confidence malicious verdict with MITRE ATLAS `AML.T0043` / `T1552.001` attribution in the REA report.
+pub fn run_caged_rea_detonation_probe(
+    binary_path: &Path,
+    session_id: &str,
+    timeout_ms: u64,
+) -> Result<ReaDetonationReport, ReaError> {
+    if !binary_path.exists() {
+        return Err(ReaError::NotFound(binary_path.to_string_lossy().to_string()));
+    }
+
+    let path_str = binary_path.to_string_lossy().to_string();
+
+    // 1. False-Positive Immunity Adjudication
+    if is_rea_benign_system_or_dev_process(&path_str, Some("static_rea_pre_detonation_check")) {
+        info!(
+            "REA IMMUNITY: Benign system/developer binary '{}' exempted from dynamic detonation",
+            path_str
+        );
+        return Ok(ReaDetonationReport {
+            binary_path: path_str.clone(),
+            session_id: session_id.to_string(),
+            exit_code: Some(0),
+            duration_ms: 0,
+            canary_triggered: false,
+            threat_score: 0.0,
+            verdict: "BENIGN_VERIFIED".to_string(),
+            mitre_attack_ids: Vec::new(),
+            findings: vec![json!({
+                "category": "immunity_adjudication",
+                "title": "Benign System or Developer Process",
+                "description": "Binary identified as a trusted OS binary or developer toolchain; dynamic detonation suppressed with 100% false-positive immunity.",
+                "severity": "info",
+                "confidence": 1.0,
+            })],
+            evidence: vec![ReaEvidence {
+                source: "is_rea_benign_system_or_dev_process".to_string(),
+                location: path_str,
+                observation: "Process matched benign system/developer allowlist".to_string(),
+                confidence: 1.0,
+                digest_sha256: None,
+            }],
+            alert: None,
+            metadata: json!({
+                "suppressed": true,
+                "reason": "benign_system_or_dev_process",
+            }),
+            timestamp: Utc::now().to_rfc3339(),
+        });
+    }
+
+    // 2. Generate Ephemeral Honey Credentials for Trapping
+    let rand_id = format!("{:016x}", rand::random::<u128>());
+    let honey_aws_key = format!("AKIAIOSFODNN7EXAMPLE{}", &rand_id[..6]);
+    let honey_gh_token = format!("ghp_decoy_token_for_canary_{}", rand_id);
+
+    let custom_env = [
+        ("AWS_SECRET_ACCESS_KEY", honey_aws_key.as_str()),
+        ("GITHUB_TOKEN", honey_gh_token.as_str()),
+        ("HONEY_AWS_SECRET_ACCESS_KEY", honey_aws_key.as_str()),
+    ];
+
+    // 3. Spawn child inside hardened CanaryCage sandbox
+    let mut child = osoosi_runtime::canary_cage::CanaryCage::spawn_child(
+        &path_str,
+        &[] as &[&str],
+        session_id,
+        Some(&custom_env),
+        None,
+    ).map_err(|e| ReaError::CageError(format!("Failed to spawn caged detonation probe: {}", e)))?;
+
+    let effective_timeout = Duration::from_millis(timeout_ms.max(500));
+    let cage_res = child
+        .wait_timeout(effective_timeout)
+        .map_err(|e| ReaError::CageError(format!("Canary cage detonation failure: {}", e)))?;
+
+    let timestamp = Utc::now().to_rfc3339();
+
+    // 4. Evaluate Detonation Outcome
+    if cage_res.canary_triggered {
+        info!(
+            "REA DETONATION: Ephemeral honey-credential trap triggered by binary '{}' in session {}",
+            path_str, session_id
+        );
+        let alert = cage_res.alert.clone();
+        let trap_path = alert.as_ref().map(|a| a.trap_path.clone()).unwrap_or_default();
+
+        let findings = vec![
+            json!({
+                "category": "active_deception",
+                "title": "Honey-Credential Trap Triggered",
+                "description": format!("The analyzed binary attempted to open or probe the ephemeral honey-credential trap ({}). Child process terminated immediately with exit code 137.", trap_path),
+                "severity": "critical",
+                "confidence": 1.00,
+                "mitre_atlas": "AML.T0043",
+                "mitre_attack": "T1552.001",
+            }),
+            json!({
+                "category": "malware_attribution",
+                "title": "Adversarial Data & Credential Probing",
+                "description": "Binary confirmed malicious via active deception honeypipe probe during isolated Win32 Job Object sandbox detonation.",
+                "severity": "critical",
+                "confidence": 1.00,
+            }),
+        ];
+
+        let evidence = vec![
+            ReaEvidence {
+                source: "osoosi_runtime::CanaryCage".to_string(),
+                location: path_str.clone(),
+                observation: format!("Canary trap triggered: exit_code={:?}, trap_path={}", cage_res.exit_code, trap_path),
+                confidence: 1.00,
+                digest_sha256: None,
+            },
+            ReaEvidence {
+                source: "mitre_atlas_mapper".to_string(),
+                location: "active_deception_sandbox".to_string(),
+                observation: "Attributed to MITRE ATLAS AML.T0043 (Craft Adversarial Data) & MITRE ATT&CK T1552.001 (Credentials in Files)".to_string(),
+                confidence: 1.00,
+                digest_sha256: None,
+            },
+        ];
+
+        Ok(ReaDetonationReport {
+            binary_path: path_str,
+            session_id: session_id.to_string(),
+            exit_code: cage_res.exit_code,
+            duration_ms: cage_res.duration_ms,
+            canary_triggered: true,
+            threat_score: 1.00,
+            verdict: "MALICIOUS".to_string(),
+            mitre_attack_ids: vec!["AML.T0043".to_string(), "T1552.001".to_string()],
+            findings,
+            evidence,
+            alert,
+            metadata: json!({
+                "detonation_mode": "caged_active_deception",
+                "confinement": "win32_job_object_or_memfd",
+                "canary_triggered": true,
+                "mitre_atlas": "AML.T0043",
+                "mitre_attack": "T1552.001",
+            }),
+            timestamp,
+        })
+    } else {
+        let (threat_score, verdict) = if cage_res.success {
+            (0.05, "CLEAN".to_string())
+        } else {
+            (0.35, "SUSPICIOUS".to_string())
+        };
+
+        Ok(ReaDetonationReport {
+            binary_path: path_str.clone(),
+            session_id: session_id.to_string(),
+            exit_code: cage_res.exit_code,
+            duration_ms: cage_res.duration_ms,
+            canary_triggered: false,
+            threat_score,
+            verdict,
+            mitre_attack_ids: Vec::new(),
+            findings: vec![json!({
+                "category": "detonation_summary",
+                "title": "Caged Execution Completed",
+                "description": format!("Detonation probe completed without tripping ephemeral honeypipe decoys. Exit code: {:?}", cage_res.exit_code),
+                "severity": "info",
+                "confidence": 0.8,
+            })],
+            evidence: vec![ReaEvidence {
+                source: "osoosi_runtime::CanaryCage".to_string(),
+                location: path_str,
+                observation: format!("Child completed: exit_code={:?}, duration_ms={}", cage_res.exit_code, cage_res.duration_ms),
+                confidence: 0.8,
+                digest_sha256: None,
+            }],
+            alert: None,
+            metadata: json!({
+                "detonation_mode": "caged_active_deception",
+                "canary_triggered": false,
+            }),
+            timestamp,
+        })
+    }
+}
+
 impl AutonomousReaEngine {
     pub fn new() -> Self {
         let engine = Self {
@@ -5082,5 +5306,53 @@ mod tests {
         let (meta, _, _, _, _) = inspect_dotnet_assembly(&pe);
         assert_eq!(meta["valid_dotnet"].as_bool(), Some(true));
         assert_eq!(meta["bsjb_offset"].as_str(), Some("0x300"));
+    }
+
+    #[test]
+    fn test_rea_detonation_probe_not_found() {
+        let fake_path = Path::new("non_existent_binary_for_detonation_12345.exe");
+        let res = run_caged_rea_detonation_probe(fake_path, "session_test", 1000);
+        assert!(res.is_err());
+        match res.unwrap_err() {
+            ReaError::NotFound(p) => assert!(p.contains("non_existent_binary")),
+            other => panic!("Expected ReaError::NotFound, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_rea_detonation_probe_benign_system_immunity() {
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        let cmd_path = Path::new(&system_root).join("System32").join("cmd.exe");
+        if cmd_path.exists() {
+            let res = run_caged_rea_detonation_probe(&cmd_path, "session_benign_test", 1000)
+                .expect("Detonation check on benign cmd.exe should succeed with immunity");
+            assert_eq!(res.verdict, "BENIGN_VERIFIED");
+            assert_eq!(res.threat_score, 0.0);
+            assert!(!res.canary_triggered);
+            assert!(res.findings[0]["title"].as_str().unwrap().contains("Benign System or Developer Process"));
+        }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_rea_detonation_probe_honeypipe_trap_attribution() {
+        // Write a test batch file that probes the CANARY_HONEY_PIPE decoy
+        let temp_dir = std::env::temp_dir();
+        let rand_hex = format!("{:016x}", rand::random::<u128>());
+        let trap_bat = temp_dir.join(format!("malicious_probe_test_{}_{}.bat", std::process::id(), rand_hex));
+        std::fs::write(&trap_bat, b"@echo off\r\necho PROBE > %CANARY_HONEY_PIPE%\r\n").expect("write trap bat");
+
+        let res = run_caged_rea_detonation_probe(&trap_bat, "session_detonation_trap", 6000)
+            .expect("Detonation probe should execute and catch trap");
+
+        let _ = std::fs::remove_file(&trap_bat);
+
+        assert!(res.canary_triggered, "Touching honey-pipe must trigger canary");
+        assert_eq!(res.exit_code, Some(137), "Child must be terminated with exit code 137");
+        assert_eq!(res.threat_score, 1.00);
+        assert_eq!(res.verdict, "MALICIOUS");
+        assert!(res.mitre_attack_ids.contains(&"AML.T0043".to_string()));
+        assert!(res.mitre_attack_ids.contains(&"T1552.001".to_string()));
+        assert!(res.alert.is_some());
     }
 }

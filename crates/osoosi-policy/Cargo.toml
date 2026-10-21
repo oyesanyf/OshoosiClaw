@@ -47,6 +47,7 @@ ipnetwork = { workspace = true }
 urlencoding = "2.1.3"
 sha2 = { workspace = true }
 hex = { workspace = true }
+blake3 = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 win32-version-info = "0.3"
