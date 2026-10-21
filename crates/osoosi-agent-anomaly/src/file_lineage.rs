@@ -119,6 +119,7 @@ impl<K: std::hash::Hash + Eq + Clone + Send + Sync, V: Clone> BoundedMap<K, V> {
 pub struct FileLineageTracker {
     pub max_capacity: usize,
     session_files: DashMap<String, VecDeque<LineageEntry>>,
+    session_order: Mutex<VecDeque<String>>,
     known_paths_by_digest: BoundedMap<String, PathBuf>,
     poisoned_digests: BoundedMap<String, PoisonMetadata>,
     seen_alerts: BoundedMap<String, DateTime<Utc>>,
@@ -143,6 +144,7 @@ impl FileLineageTracker {
         Self {
             max_capacity: cap,
             session_files: DashMap::new(),
+            session_order: Mutex::new(VecDeque::new()),
             known_paths_by_digest: BoundedMap::new(cap),
             poisoned_digests: BoundedMap::new(cap),
             seen_alerts: BoundedMap::new(cap),
@@ -276,8 +278,10 @@ impl FileLineageTracker {
         }
         .to_lowercase();
 
-        // Check if digest has been poisoned
-        if self.is_poisoned_digest(&digest) {
+        let is_immune = self.is_path_immune(path);
+
+        // Check if digest has been poisoned (immune repository & OS files are never blocked)
+        if !is_immune && self.is_poisoned_digest(&digest) {
             warn!(
                 "SECURITY ALERT: Blocked ingestion of poisoned file {:?} (digest: {}) in session {}",
                 path, digest, session_id
@@ -288,7 +292,6 @@ impl FileLineageTracker {
             )));
         }
 
-        let is_immune = self.is_path_immune(path);
         let entry = LineageEntry {
             session_id: session_id.to_string(),
             path: path.to_path_buf(),
@@ -296,6 +299,19 @@ impl FileLineageTracker {
             ingested_at: Utc::now(),
             is_immune,
         };
+
+        // Manage session_files map-level bounded capacity with FIFO eviction
+        {
+            let mut order = self.session_order.lock().unwrap_or_else(|e| e.into_inner());
+            if !self.session_files.contains_key(session_id) {
+                while order.len() >= self.max_capacity {
+                    if let Some(oldest_session) = order.pop_front() {
+                        self.session_files.remove(&oldest_session);
+                    }
+                }
+                order.push_back(session_id.to_string());
+            }
+        }
 
         // Record into session lineage with FIFO capping per session
         let mut session_entries = self
@@ -359,7 +375,7 @@ impl FileLineageTracker {
                 }
                 // Check if string is a path whose hash is poisoned
                 let p = Path::new(s);
-                if p.is_file() {
+                if p.is_file() && !self.is_path_immune(p) {
                     if let Ok(digest) = Self::compute_file_blake3(p) {
                         if self.is_poisoned_digest(&digest) {
                             return Err(LineageError::PoisonedDigest(format!(
@@ -393,6 +409,11 @@ impl FileLineageTracker {
             .unwrap_or_default()
     }
 
+    /// Returns the number of active tracked sessions in session_files.
+    pub fn session_count(&self) -> usize {
+        self.session_files.len()
+    }
+
     /// Returns the count of currently registered poisoned digests.
     pub fn poisoned_count(&self) -> usize {
         self.poisoned_digests.len()
@@ -406,6 +427,9 @@ impl FileLineageTracker {
     /// Clear all session lineage state (useful for test resets).
     pub fn clear(&self) {
         self.session_files.clear();
+        let mut order = self.session_order.lock().unwrap_or_else(|e| e.into_inner());
+        order.clear();
+
         let mut q_paths = self.known_paths_by_digest.queue.lock().unwrap_or_else(|e| e.into_inner());
         q_paths.clear();
         self.known_paths_by_digest.map.clear();
@@ -530,5 +554,66 @@ mod tests {
 
         assert_eq!(attributed, Some(digest.clone()));
         assert!(tracker.is_poisoned_digest(&digest));
+    }
+
+    #[test]
+    fn test_session_files_fifo_eviction_at_capacity() {
+        let tracker = FileLineageTracker::with_capacity(3);
+        let dummy_path = Path::new("C:\\temp\\dummy.txt");
+        let content = b"dummy content";
+
+        for i in 0..5 {
+            let session_id = format!("session_{}", i);
+            let res = tracker.record_ingested_file(&session_id, dummy_path, content);
+            assert!(res.is_ok());
+        }
+
+        // Must strictly not exceed max_capacity of 3 sessions
+        assert_eq!(tracker.session_count(), 3);
+
+        // Oldest sessions (0 and 1) should be evicted
+        assert!(tracker.get_session_lineage("session_0").is_empty());
+        assert!(tracker.get_session_lineage("session_1").is_empty());
+
+        // Newest sessions (2, 3, 4) must be present
+        assert_eq!(tracker.get_session_lineage("session_2").len(), 1);
+        assert_eq!(tracker.get_session_lineage("session_3").len(), 1);
+        assert_eq!(tracker.get_session_lineage("session_4").len(), 1);
+    }
+
+    #[test]
+    fn test_immune_file_ingestion_not_blocked_by_poisoned_digest() {
+        let tracker = FileLineageTracker::new();
+
+        if let Some(root) = resolve_project_root() {
+            let repo_file = root.join("Cargo.toml");
+            assert!(tracker.is_path_immune(&repo_file));
+
+            // Compute hash of the actual file
+            let digest = FileLineageTracker::compute_file_blake3(&repo_file).unwrap();
+
+            // Simulate that an attacker or swarm peer managed to insert this hash into poisoned_digests
+            tracker.poisoned_digests.insert(
+                digest.clone(),
+                PoisonMetadata {
+                    digest: digest.clone(),
+                    reason: "malicious hash collision attempt".to_string(),
+                    source_session: "external_attacker".to_string(),
+                    poisoned_at: Utc::now(),
+                    confidence: 1.0,
+                },
+            );
+            assert!(tracker.is_poisoned_digest(&digest));
+
+            // Ingesting the immune repo file MUST succeed despite hash being in poisoned_digests
+            let res = tracker.record_ingested_file("test_session", &repo_file, b"");
+            assert!(res.is_ok(), "Immune repository file must not be blocked: {:?}", res);
+            assert_eq!(res.unwrap(), digest);
+
+            // Verify entry was recorded with is_immune = true
+            let lineage = tracker.get_session_lineage("test_session");
+            assert_eq!(lineage.len(), 1);
+            assert!(lineage[0].is_immune);
+        }
     }
 }

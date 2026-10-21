@@ -2346,6 +2346,36 @@ mod tests {
     }
 
     #[test]
+    fn test_is_false_positive_pattern_lock_timeout() {
+        let mem = std::sync::Arc::new(MemoryStore::new(":memory:").unwrap());
+        let mem_clone = std::sync::Arc::clone(&mem);
+
+        let (lock_acquired_tx, lock_acquired_rx) = std::sync::mpsc::channel();
+        let background_thread = std::thread::spawn(move || {
+            let guard = mem_clone.conn.lock();
+            lock_acquired_tx.send(()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            drop(guard);
+        });
+
+        // Wait until background thread holds the connection lock
+        lock_acquired_rx.recv().unwrap();
+
+        let start = std::time::Instant::now();
+        let result = mem.is_false_positive_pattern(
+            Some(r"C:\Windows\System32\some_random_binary.exe"),
+            Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"),
+        );
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok());
+        assert!(!result.unwrap());
+        assert!(elapsed < std::time::Duration::from_millis(60), "Elapsed was {:?}, expected ~5ms", elapsed);
+
+        background_thread.join().unwrap();
+    }
+
+    #[test]
     fn test_is_nsrl_known_good_empty() {
         let mem = MemoryStore::new(":memory:").unwrap();
         assert!(!mem.is_nsrl_known_good("").unwrap());
