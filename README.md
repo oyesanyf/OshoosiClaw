@@ -2852,6 +2852,62 @@ flowchart TD
     A3 --> Build
 ```
 
+- **Continuous Self-Updating HAR Web Traffic Sensor & Dedicated `#har-traffic` WebUI Menu (`crates/osoosi-agent-anomaly/src/siquery.rs`, `crates/osoosi-dashboard/src/lib.rs`, `dashboard/`)**:
+  - **Multi-Source Browser & Socket Ingestion**: Implemented Step 2c browser `downloads` ingestion directly from Chrome, Edge, Brave, and Chromium SQLite user-data stores, parsing download completion, URL, MIME type, size, and elevating risk score to `0.85` / `"suspicious"` if `danger_type > 0`. Enhanced Step 2d Windows socket telemetry with live `ipconfig /displaydns` DNS cache resolution, process name mapping via `sysinfo`, port filtering (`[80, 443, 8080, 8443, 3000, 3030, 5000, 11434]`), and benign loopback exemptions for internal microservices (`3030`, `11434`, `3000`, `5000`).
+  - **Cryptographic BLAKE3 Swarm Poison Gate**: Added `collect_live_har_entries_fast(&self, limit: usize) -> Vec<serde_json::Value>` in `SiqueryEngine`, deduplicating records on `(method, url, source_file)` while preserving recency. Computes BLAKE3 cryptographic digests and verifies against `osoosi_policy::traffic_adapter::is_swarm_poisoned_har_digest(&digest)` to flag compromised traffic lineages with tag `"SWARM_POISONED_LINEAGE"` and elevate threat score to `0.99` / `"malicious"`.
+  - **Continuous Background Sweeper & Fast Atomic SQLite Transaction**: Spawns an autonomous `osoosi-har-collector` daemon thread on dashboard startup running an immediate baseline sweep and a recurring 5-second collection loop. Atomically persists deduplicated entries into `database/osoosi.db` (`har_entries` table with automated `hash_blake3` schema migration) wrapped in a single `BEGIN IMMEDIATE ... COMMIT` transaction, exports valid W3C HAR 1.2 compliant archives to `logs/live_web_traffic.har`, and maintains an in-memory `LIVE_HAR_CACHE` guarded by `std::sync::RwLock`.
+  - **Comprehensive REST Endpoints & Dedicated `#har-traffic` WebUI**: Registered `POST /api/har/inspect` (HAR upload inspection & anomaly detection), `GET /api/har/entries` (query filtering by `search`, `verdict`, `source`, `method`, `limit`), `POST /api/har/refresh` (asynchronous cache re-sweep), and `GET /api/har/export` (W3C HAR 1.2 attachment download) alongside non-prefixed route aliases (`/har/...`). Integrated a dedicated `#har-traffic` navigation item and view container in the WebUI with 4 live KPI counters, filter pills, search input, manual refresh, and export controls.
+
+```mermaid
+flowchart TD
+    subgraph Ingestion["1. Multi-Source Ingestion & Enrichment (siquery.rs)"]
+        S1["Browser SQLite History & Downloads (Step 2c)
+(Chrome, Edge, Brave, Chromium)"]
+        S2["Active Web Sockets (Step 2d)
+(Ports 80, 443, 8080, 8443, 3000, 3030, 5000, 11434)"]
+        S3["DNS Cache Lookup (ipconfig /displaydns)
+& PID -> Process Name Mapping"]
+        S1 & S2 --> S3
+    end
+
+    subgraph Defense["2. Fast Deduplication & Swarm Poison Defense"]
+        D1["collect_live_har_entries_fast(limit)
+Deduplication on (method, url, source_file)"]
+        D2["BLAKE3 Cryptographic Digest Calculation"]
+        D3{"is_swarm_poisoned_har_digest(digest)?"}
+        D4["Threat Score 0.99 Malicious
+Tag: SWARM_POISONED_LINEAGE"]
+        D5["Calibrated Threat Score (0.0 - 0.85)
+Verdict: Benign / Suspicious"]
+        S3 --> D1 --> D2 --> D3
+        D3 -- Yes --> D4
+        D3 -- No --> D5
+    end
+
+    subgraph Collector["3. Continuous Background Engine (crates/osoosi-dashboard)"]
+        C1["Thread: osoosi-har-collector
+Immediate sweep + 5-second recurring loop"]
+        C2["Global In-Memory LIVE_HAR_CACHE
+(RwLock, Sequence Counter)"]
+        C3["Atomic SQLite Transaction
+(database/osoosi.db har_entries table)"]
+        C4["W3C HAR 1.2 Export
+(logs/live_web_traffic.har)"]
+        D4 & D5 --> C1
+        C1 --> C2 & C3 & C4
+    end
+
+    subgraph API_UI["4. REST Endpoints & WebUI #har-traffic"]
+        R1["GET /api/har/entries (Filter, Search, Limit)"]
+        R2["POST /api/har/refresh (Async Background Sweep)"]
+        R3["GET /api/har/export (W3C HAR 1.2 JSON Attachment)"]
+        R4["Dedicated #har-traffic WebUI Menu
+(KPI Cards, Filter Pills, Real-Time Table)"]
+        C2 --> R1 & R2 & R3
+        R1 & R2 & R3 --> R4
+    end
+```
+
 - **Dual-Stage $5\sigma$ Kernel Quarantine (`SIGSTOP` + Cgroup v2 Freezer), Daemon Memory Footprint Optimization (`< 250 MB` Working Set), 4 Explicit Rust Memory Management Invariants, & REA WebAssembly WAT / YARA-X Precision (`v1.2.0`)**:
   - **Stage 1 Kernel-Space eBPF Enforcement (`ebpf/src/osoosi_probe.bpf.c`)**: Added `struct quarantine_directive` (24-byte `#[repr(C)]`) and `quarantine_targets` (`BPF_MAP_TYPE_HASH`, 10,240 entries). Inlined `enforce_kernel_quarantine(tgid, pid)` across all hot syscall tracepoints (`sys_enter_connect`, `sys_enter_mprotect`, `sys_enter_ptrace`, `sys_enter_mmap`, `sys_enter_memfd_create`) and Hook 9 `osoosi_pmu_watchdog` (`SEC("perf_event")` hardware PMU cycle watchdog) to issue `bpf_send_signal(SIGSTOP)` at the kernel/CPU boundary before user-space returns.
   - **Stage 2 User-Space Pre-Armed Cgroup v2 Freezer & Forensic Collector (`crates/osoosi-telemetry/src/linux_ebpf.rs`)**: `QuarantineResponder` pre-opens `/sys/fs/cgroup/osoosi_quarantine/cgroup.procs` and pre-arms `cgroup.freeze` with `"1\n"` at initialization, migrating flagged TGIDs via stack-only `format_u32_newline` and single `write_all` syscall (`< 50 µs`) while enforcing the Host OS & Developer Immunity Veto (`is_protected_os_or_developer_process`). `FrozenProcessForensicCollector` extracts `/proc/<pid>/maps`, unbacked `rwxp` shellcode via `/proc/<pid>/mem`, and `/proc/<pid>/syscall` RIP/RSP, routing snapshots to `Orchestrator::process_telemetry` for immediate REA YARA synthesis (`synthesize_yara_from_raw_payload`) and P2P/Nostr mesh IOC broadcast.

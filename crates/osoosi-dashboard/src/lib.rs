@@ -3005,6 +3005,8 @@ pub fn refresh_live_har_cache_now() -> Value {
                 );",
                 [],
             );
+            let _ = conn.execute("ALTER TABLE har_entries ADD COLUMN hash_blake3 TEXT DEFAULT '';", []);
+            let _ = conn.execute_batch("BEGIN IMMEDIATE; DELETE FROM har_entries;");
             if let Ok(mut insert_stmt) = conn.prepare_cached(
                 "INSERT INTO har_entries (source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict, hash_blake3) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
             ) {
@@ -3028,10 +3030,7 @@ pub fn refresh_live_har_cache_now() -> Value {
                     ]);
                 }
             }
-            let _ = conn.execute(
-                "DELETE FROM har_entries WHERE id NOT IN (SELECT id FROM har_entries ORDER BY id DESC LIMIT 1000);",
-                [],
-            );
+            let _ = conn.execute_batch("COMMIT;");
             break;
         }
     }
