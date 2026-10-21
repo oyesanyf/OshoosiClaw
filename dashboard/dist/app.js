@@ -2673,6 +2673,14 @@ async function renderDeceptionCard() {
         const entanglements = data.morphic_entanglements || [];
         const entangleCount = entanglements.length;
 
+        const cageMetrics = data.canary_cage || data.canary_cage_metrics || {};
+        const activeCages = cageMetrics.active_cages || 0;
+        const triggeredTraps = cageMetrics.triggered_traps || 0;
+        const totalCages = cageMetrics.total_caged_executions || 0;
+        const immunizedHashes = data.swarm_immunized_hashes || data.poisoned_document_hashes || [];
+        const sessionLineage = data.session_file_lineage || data.file_lineage_graph || {};
+        const trackedSessionsCount = Object.keys(sessionLineage).length;
+
         if (ghostCountEl) ghostCountEl.textContent = ghostServicesCount > 0 ? `${ghostServicesCount} (${totalInteractions} hits)` : '0';
         if (shardCountEl) shardCountEl.textContent = shardCount;
         if (canaryCountEl) canaryCountEl.textContent = canaryCount;
@@ -2680,6 +2688,15 @@ async function renderDeceptionCard() {
 
         if (detailsEl) {
             let details = [];
+            if (activeCages > 0 || triggeredTraps > 0 || totalCages > 0) {
+                details.push(`CanaryCage: ${activeCages} active sandboxes, ${triggeredTraps} traps triggered, ${totalCages} caged executions.`);
+            }
+            if (immunizedHashes.length > 0) {
+                details.push(`Swarm Immunization: ${immunizedHashes.length} poisoned payload digests blocked.`);
+            }
+            if (trackedSessionsCount > 0) {
+                details.push(`Lineage Tracking: ${trackedSessionsCount} active agent sessions tracked.`);
+            }
             if (ghostServicesCount > 0) {
                 const srvs = Object.entries(activeServices).map(([s, p]) => `${s}:${p}`).join(', ');
                 details.push(`Active Ghost Services: ${srvs}`);
@@ -8136,15 +8153,20 @@ async function renderHistoryView(page = 1) {
         if (window.lucide) lucide.createIcons();
     } catch (err) {
         console.error("renderHistoryView error:", err);
-        renderViewFallbackCard('history-view', 'Forensic History', err);
-        if (tableBody) {
-            tableBody.innerHTML = `
-                <tr>
-                    <td colspan="9" style="text-align: center; padding: 24px; color: var(--accent-red, #ff4d4d);">
-                        Failed to load forensic events: ${escapeHtml(err.message)}
-                    </td>
-                </tr>
-            `;
+        if (state.lastHistoryData && Array.isArray(state.lastHistoryData.items) && state.lastHistoryData.items.length > 0) {
+            console.warn("renderHistoryView retaining cached lastHistoryData instead of replacing with error fallback:", err);
+            clearViewFallbackCard('history-view');
+        } else {
+            renderViewFallbackCard('history-view', 'Forensic History', err);
+            if (tableBody) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="9" style="text-align: center; padding: 24px; color: var(--accent-red, #ff4d4d);">
+                            Failed to load forensic events: ${escapeHtml(err.message)}
+                        </td>
+                    </tr>
+                `;
+            }
         }
     }
 }
@@ -8766,6 +8788,117 @@ async function renderAgentAnomaliesView() {
                     `;
                 }).join('');
             if (setHtmlIfChanged(watchoutList, watchoutsHtml)) aadDomChanged = true;
+        }
+
+        // Active Deception & Ephemeral CanaryCage Telemetry (CanaryCage & FileLineageTracker)
+        const cageMetrics = (summary && (summary.canary_cage || summary.canary_cage_metrics)) || {};
+        const sessionLineage = (summary && (summary.session_file_lineage || summary.file_lineage_graph)) || {};
+        const immunizedHashes = (summary && (summary.swarm_immunized_hashes || summary.poisoned_document_hashes)) || [];
+
+        let cageContainer = document.getElementById('aad-canarycage-card');
+        if (!cageContainer && watchoutList) {
+            const watchoutCard = watchoutList.closest('.card');
+            if (watchoutCard && watchoutCard.parentNode) {
+                cageContainer = document.createElement('div');
+                cageContainer.id = 'aad-canarycage-card';
+                cageContainer.className = 'card glass shadow-glow mb-4';
+                cageContainer.style.borderLeft = '4px solid #10b981';
+                watchoutCard.parentNode.insertBefore(cageContainer, watchoutCard);
+            }
+        }
+
+        if (cageContainer) {
+            const activeCages = cageMetrics.active_cages || 0;
+            const triggeredTraps = cageMetrics.triggered_traps || 0;
+            const totalCages = cageMetrics.total_caged_executions || 0;
+            const sessionEntries = Object.entries(sessionLineage);
+
+            const lineageRows = sessionEntries.length === 0 ? `
+                <tr>
+                    <td colspan="3" style="text-align: center; color: var(--text-muted); padding: 16px 0;">
+                        No active session file-lineage graphs recorded. Lineage tracked on ingestion.
+                    </td>
+                </tr>
+            ` : sessionEntries.map(([sessId, digests]) => {
+                const digestList = Array.isArray(digests) ? digests : [];
+                return `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                        <td style="padding: 8px 12px; font-size: 11px; font-family: monospace; color: var(--text-primary);">${escapeHtml(sessId)}</td>
+                        <td style="padding: 8px 12px; font-size: 11px; text-align: center;">
+                            <span class="badge blue" style="font-size: 10px;">${digestList.length} files</span>
+                        </td>
+                        <td style="padding: 8px 12px; font-size: 10px; font-family: monospace; color: var(--text-muted);">
+                            ${digestList.map(d => `<span style="display:inline-block; margin-right:6px; color:#06b6d4;">${escapeHtml(String(d).substring(0, 16))}…</span>`).join('')}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            const immunizedRows = immunizedHashes.length === 0 ? `
+                <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 12px 0;">
+                    No swarm-immunized poisoned digests registered. Swarm consensus active.
+                </div>
+            ` : immunizedHashes.map(h => {
+                const d = typeof h === 'string' ? h : (h.digest || '');
+                const reason = (typeof h === 'object' && h.reason) ? h.reason : 'Poisoned document payload';
+                return `
+                    <div style="background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.2); border-left: 3px solid #ef4444; padding: 6px 10px; border-radius: 6px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <span style="font-family: monospace; font-size: 11px; color: #ef4444; font-weight: 600;">${escapeHtml(d.substring(0, 20))}…</span>
+                            <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">${escapeHtml(reason)}</span>
+                        </div>
+                        <span class="badge red" style="font-size: 9px;">PRE-IMMUNIZED</span>
+                    </div>
+                `;
+            }).join('');
+
+            const cageHtml = `
+                <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <h4 style="font-size: 15px; font-weight: 600; color: var(--text-header); display: flex; align-items: center; gap: 8px; margin: 0;">
+                        <i data-lucide="shield-alert" style="width: 16px; height: 16px; color: #10b981;"></i>
+                        Active Deception &amp; Ephemeral CanaryCage Telemetry (CanaryCage &amp; FileLineageTracker)
+                    </h4>
+                    <div style="display: flex; gap: 6px;">
+                        <span class="badge ${activeCages > 0 ? 'yellow' : 'gray'}" style="font-size: 10px;">${activeCages} Active Sandboxes</span>
+                        <span class="badge ${triggeredTraps > 0 ? 'red' : 'green'}" style="font-size: 10px;">${triggeredTraps} Traps Triggered</span>
+                        <span class="badge blue" style="font-size: 10px;">${totalCages} Caged Executions</span>
+                    </div>
+                </div>
+                <div class="card-body" style="padding: 14px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div>
+                            <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; display: flex; justify-content: space-between;">
+                                <span>Active Session File-Lineage Graph</span>
+                                <span class="badge blue" style="font-size: 10px;">${sessionEntries.length} Sessions</span>
+                            </div>
+                            <div style="max-height: 200px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: 6px;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--glass-border);">
+                                            <th style="padding: 6px 12px; text-align: left; font-size: 10px;">Session ID</th>
+                                            <th style="padding: 6px 12px; text-align: center; font-size: 10px;">Files</th>
+                                            <th style="padding: 6px 12px; text-align: left; font-size: 10px;">Ingested BLAKE3 Hashes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${lineageRows}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div>
+                            <div style="font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 8px; display: flex; justify-content: space-between;">
+                                <span>Swarm-Immunized Document Hashes</span>
+                                <span class="badge red" style="font-size: 10px;">${immunizedHashes.length} Blocked</span>
+                            </div>
+                            <div style="max-height: 200px; overflow-y: auto;">
+                                ${immunizedRows}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            if (setHtmlIfChanged(cageContainer, cageHtml)) aadDomChanged = true;
         }
 
         if (aadDomChanged && window.lucide) {

@@ -22,6 +22,7 @@
 )]
 
 pub use osoosi_audit;
+pub use parking_lot;
 
 pub mod attack_graph;
 pub mod backup;
