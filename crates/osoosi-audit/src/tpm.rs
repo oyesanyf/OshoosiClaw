@@ -165,7 +165,7 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
         // Direct fast registry read of TPM device/vendor to form hardware PCR reading in < 1ms
         use windows::Win32::System::Registry::{
             RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
-            REG_DWORD,
+            REG_DWORD, REG_SZ,
         };
         unsafe {
             let subkey = windows::core::w!("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI");
@@ -183,13 +183,47 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
                     Some(&mut mfg_id as *mut u32 as *mut u8),
                     Some(&mut val_size),
                 );
+
+                let mut fw_buf = [0u16; 64];
+                let mut fw_len = (fw_buf.len() * 2) as u32;
+                let mut fw_type = REG_SZ;
+                let res = RegQueryValueExW(
+                    hkey,
+                    windows::core::w!("TaskFirmwareVersion"),
+                    None,
+                    Some(&mut fw_type),
+                    Some(fw_buf.as_mut_ptr() as *mut u8),
+                    Some(&mut fw_len),
+                );
+                let fw_str = if res.is_ok() && fw_len > 2 {
+                    let u16_slice = &fw_buf[..(fw_len as usize / 2).saturating_sub(1)];
+                    String::from_utf16_lossy(u16_slice).trim_matches('\0').trim().to_string()
+                } else {
+                    let mut fw_len2 = (fw_buf.len() * 2) as u32;
+                    let mut fw_type2 = REG_SZ;
+                    let res2 = RegQueryValueExW(
+                        hkey,
+                        windows::core::w!("FirmwareVersionAtLastProvision"),
+                        None,
+                        Some(&mut fw_type2),
+                        Some(fw_buf.as_mut_ptr() as *mut u8),
+                        Some(&mut fw_len2),
+                    );
+                    if res2.is_ok() && fw_len2 > 2 {
+                        let u16_slice = &fw_buf[..(fw_len2 as usize / 2).saturating_sub(1)];
+                        String::from_utf16_lossy(u16_slice).trim_matches('\0').trim().to_string()
+                    } else {
+                        "2.0".to_string()
+                    }
+                };
                 let _ = RegCloseKey(hkey);
 
                 let mut hasher = Sha256::new();
                 hasher.update(b"TPM2_PCR_HARDWARE_WIN:");
                 hasher.update(pcr_index.to_le_bytes());
                 hasher.update(mfg_id.to_le_bytes());
-                hasher.update(b"2.0 (FW 1.3.2.8)");
+                let fw_tag = format!("2.0 (FW {})", fw_str);
+                hasher.update(fw_tag.as_bytes());
                 return Some(hex::encode(hasher.finalize()));
             }
         }
@@ -370,4 +404,36 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simulated_pcr_readings() {
+        let pcr0 = simulated_pcr(0);
+        let pcr7 = simulated_pcr(7);
+        let pcr16 = simulated_pcr(16);
+        assert_eq!(pcr0.len(), 64);
+        assert_eq!(pcr7.len(), 64);
+        assert_eq!(pcr16.len(), 64);
+        assert_ne!(pcr0, pcr7);
+    }
+
+    #[test]
+    fn test_get_pcr_value_returns_64_hex() {
+        let (val, is_hw) = get_pcr_value(16);
+        assert_eq!(val.len(), 64);
+        let _ = is_hw;
+    }
+
+    #[test]
+    fn test_compute_pcr_composite_digest() {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert(0, simulated_pcr(0));
+        map.insert(7, simulated_pcr(7));
+        let composite = compute_pcr_composite_digest(&map);
+        assert_eq!(composite.len(), 64);
+    }
 }

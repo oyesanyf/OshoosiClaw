@@ -2761,9 +2761,10 @@ fn start_inside_wsl(
 
 #[cfg(windows)]
 fn ensure_wsl_ready() -> anyhow::Result<()> {
-    let status = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"))
-        .arg("--status")
-        .output();
+    use std::os::windows::process::CommandExt;
+    let mut wsl_cmd = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"));
+    wsl_cmd.arg("--status").creation_flags(0x08000000);
+    let status = wsl_cmd.output();
 
     match status {
         Ok(output) if output.status.success() => {
@@ -2815,9 +2816,10 @@ fn decode_command_output(stdout: &[u8], stderr: &[u8]) -> String {
 
 #[cfg(windows)]
 fn wsl_has_distro() -> anyhow::Result<bool> {
-    let output = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"))
-        .args(["-l", "-q"])
-        .output()?;
+    use std::os::windows::process::CommandExt;
+    let mut wsl_cmd = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"));
+    wsl_cmd.args(["-l", "-q"]).creation_flags(0x08000000);
+    let output = wsl_cmd.output()?;
     if !output.status.success() {
         return Ok(false);
     }
@@ -3043,10 +3045,12 @@ async fn handle_grant_access() -> anyhow::Result<()> {
 fn kill_port_holder(port: u16) {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+
         // Step 1: find PIDs LISTENING on this local port via netstat (ignore client ESTABLISHED connections)
-        let output = std::process::Command::new(osoosi_types::resolve_system_binary("netstat.exe"))
-            .args(["-ano", "-p", "TCP"])
-            .output();
+        let mut netstat_cmd = std::process::Command::new(osoosi_types::resolve_system_binary("netstat.exe"));
+        netstat_cmd.args(["-ano", "-p", "TCP"]).creation_flags(0x08000000);
+        let output = netstat_cmd.output();
         let Ok(out) = output else { return };
         let stdout = String::from_utf8_lossy(&out.stdout);
         let port_suffix = format!(":{}", port);
@@ -3075,10 +3079,12 @@ fn kill_port_holder(port: u16) {
         // Step 2: for each LISTENING PID, check if the image name is osoosi.exe (or edr_webui_server.exe)
         let mut killed_any = false;
         for pid in pids {
-            let wmic =
-                std::process::Command::new(osoosi_types::resolve_system_binary("tasklist.exe"))
-                    .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
-                    .output();
+            let mut tasklist_cmd =
+                std::process::Command::new(osoosi_types::resolve_system_binary("tasklist.exe"));
+            tasklist_cmd
+                .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+                .creation_flags(0x08000000);
+            let wmic = tasklist_cmd.output();
             if let Ok(wout) = wmic {
                 let line = String::from_utf8_lossy(&wout.stdout).to_ascii_lowercase();
                 if line.contains("osoosi") || line.contains("edr_webui") {
@@ -3086,11 +3092,13 @@ fn kill_port_holder(port: u16) {
                         "Killing stale osoosi.exe (PID {}) holding port {}...",
                         pid, port
                     );
-                    let _ = std::process::Command::new(osoosi_types::resolve_system_binary(
+                    let mut taskkill_cmd = std::process::Command::new(osoosi_types::resolve_system_binary(
                         "taskkill.exe",
-                    ))
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output();
+                    ));
+                    taskkill_cmd
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .creation_flags(0x08000000);
+                    let _ = taskkill_cmd.output();
                     killed_any = true;
                 } else {
                     info!(
@@ -3888,10 +3896,14 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
         let python_cmds = ["python", "python3", "py"];
         let mut script_ran = false;
         for py in &python_cmds {
-            if let Ok(status) = std::process::Command::new(py)
-                .arg("scripts/generate_mitre_catalog.py")
-                .status()
+            let mut py_cmd = std::process::Command::new(py);
+            py_cmd.arg("scripts/generate_mitre_catalog.py");
+            #[cfg(target_os = "windows")]
             {
+                use std::os::windows::process::CommandExt;
+                py_cmd.creation_flags(0x08000000);
+            }
+            if let Ok(status) = py_cmd.status() {
                 if status.success() {
                     script_ran = true;
                     println!("✓ Catalog regeneration completed successfully via {}", py);
@@ -4173,59 +4185,60 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                 }
 
                 let sc_bin = osoosi_types::resolve_system_binary("sc.exe");
+                use std::os::windows::process::CommandExt;
+                let sc_cmd = |args: &[&str]| {
+                    let mut cmd = std::process::Command::new(&sc_bin);
+                    cmd.args(args).creation_flags(0x08000000);
+                    cmd
+                };
+
                 println!(
                     "Registering kernel service 'OsoosiDriver' pointing to {:?}...",
                     driver_path
                 );
-                let create_status = std::process::Command::new(&sc_bin)
-                    .args([
-                        "create",
-                        "OsoosiDriver",
-                        "type=",
-                        "kernel",
-                        "binPath=",
-                        &driver_path.to_string_lossy(),
-                        "start=",
-                        "demand",
-                    ])
-                    .status();
+                let create_status = sc_cmd(&[
+                    "create",
+                    "OsoosiDriver",
+                    "type=",
+                    "kernel",
+                    "binPath=",
+                    &driver_path.to_string_lossy(),
+                    "start=",
+                    "demand",
+                ])
+                .status();
 
                 if elam_path.exists() {
                     println!(
                         "Registering Early Launch Anti-Malware (ELAM) driver 'OsoosiElam' pointing to {:?}...",
                         elam_path
                     );
-                    let _ = std::process::Command::new(&sc_bin)
-                        .args([
-                            "create",
-                            "OsoosiElam",
-                            "type=",
-                            "kernel",
-                            "binPath=",
-                            &elam_path.to_string_lossy(),
-                            "start=",
-                            "demand",
-                            "group=",
-                            "Early-Launch",
-                        ])
-                        .status();
+                    let _ = sc_cmd(&[
+                        "create",
+                        "OsoosiElam",
+                        "type=",
+                        "kernel",
+                        "binPath=",
+                        &elam_path.to_string_lossy(),
+                        "start=",
+                        "demand",
+                        "group=",
+                        "Early-Launch",
+                    ])
+                    .status();
                 }
 
                 match create_status {
                     Ok(s) if s.success() => {
                         info!("Driver service successfully created. Starting driver...");
-                        let _ = std::process::Command::new(&sc_bin)
-                            .args(["start", "OsoosiDriver"])
-                            .status();
+                        let _ = sc_cmd(&["start", "OsoosiDriver"]).status();
                         println!(
                             "OsoosiDriver & OsoosiElam services registered and start requested."
                         );
                     }
                     Ok(s) => {
                         warn!("sc create exited with status: {}. Attempting to start in case service already exists...", s);
-                        let start_status = std::process::Command::new(&sc_bin)
-                            .args(["start", "OsoosiDriver"])
-                            .status();
+                        let start_status = sc_cmd(&["start", "OsoosiDriver"]).status();
                         match start_status {
                             Ok(st) if st.success() => {
                                 println!("OsoosiDriver service started successfully.")
@@ -4249,13 +4262,16 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
             #[cfg(windows)]
             {
                 let sc_bin = osoosi_types::resolve_system_binary("sc.exe");
+                use std::os::windows::process::CommandExt;
+                let sc_cmd = |args: &[&str]| {
+                    let mut cmd = std::process::Command::new(&sc_bin);
+                    cmd.args(args).creation_flags(0x08000000);
+                    cmd
+                };
+
                 info!("Stopping and removing Oshoosi Ring-0 Kernel Driver service...");
-                let _ = std::process::Command::new(&sc_bin)
-                    .args(["stop", "OsoosiDriver"])
-                    .status();
-                let del_status = std::process::Command::new(&sc_bin)
-                    .args(["delete", "OsoosiDriver"])
-                    .status();
+                let _ = sc_cmd(&["stop", "OsoosiDriver"]).status();
+                let del_status = sc_cmd(&["delete", "OsoosiDriver"]).status();
                 match del_status {
                     Ok(s) if s.success() => println!("OsoosiDriver service successfully removed."),
                     Ok(s) => eprintln!("sc delete exited with status: {}", s),
@@ -5569,9 +5585,14 @@ async fn ensure_ollama_model() {
 
     info!("Ollama detected. Ensuring a local reasoning model is available...");
 
-    let list_fut = tokio::process::Command::new(get_ollama_bin())
-        .arg("list")
-        .output();
+    let mut list_cmd = tokio::process::Command::new(get_ollama_bin());
+    list_cmd.arg("list");
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        list_cmd.creation_flags(0x08000000);
+    }
+    let list_fut = list_cmd.output();
 
     let list_stdout = match tokio::time::timeout(std::time::Duration::from_secs(30), list_fut).await
     {
@@ -5597,9 +5618,14 @@ async fn ensure_ollama_model() {
             let f_model = ai.foundation_sec_model.clone();
             if !list_stdout.contains(&f_model) {
                 info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
-                let pull_fut = tokio::process::Command::new(get_ollama_bin())
-                    .args(["pull", &f_model])
-                    .status();
+                let mut pull_cmd = tokio::process::Command::new(get_ollama_bin());
+                pull_cmd.args(["pull", &f_model]);
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    pull_cmd.creation_flags(0x08000000);
+                }
+                let pull_fut = pull_cmd.status();
                 let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
             }
         }
@@ -5627,9 +5653,14 @@ async fn ensure_ollama_model() {
                 break;
             }
 
-            let pull_fut = tokio::process::Command::new(get_ollama_bin())
-                .args(["pull", model])
-                .status();
+            let mut pull_cmd = tokio::process::Command::new(get_ollama_bin());
+            pull_cmd.args(["pull", model]);
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                pull_cmd.creation_flags(0x08000000);
+            }
+            let pull_fut = pull_cmd.status();
 
             match tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await {
                 Ok(Ok(status)) if status.success() => {
@@ -5695,11 +5726,17 @@ async fn ollama_available() -> bool {
     }
 
     let bin = get_ollama_bin();
-    let check_fut = tokio::process::Command::new(&bin)
+    let mut check_cmd = tokio::process::Command::new(&bin);
+    check_cmd
         .arg("--version")
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        check_cmd.creation_flags(0x08000000);
+    }
+    let check_fut = check_cmd.status();
 
     match tokio::time::timeout(std::time::Duration::from_secs(3), check_fut).await {
         Ok(Ok(status)) => status.success(),
@@ -5741,16 +5778,21 @@ async fn install_ollama_best_effort() {
 
         info!("Ollama not found. Attempting best-effort local Ollama installation via winget...");
         let winget_path = winget_bin.unwrap();
-        let winget_fut = tokio::process::Command::new(winget_path)
-            .args([
-                "install",
-                "--id",
-                "Ollama.Ollama",
-                "-e",
-                "--accept-package-agreements",
-                "--accept-source-agreements",
-            ])
-            .status();
+        let mut winget_cmd = tokio::process::Command::new(winget_path);
+        winget_cmd.args([
+            "install",
+            "--id",
+            "Ollama.Ollama",
+            "-e",
+            "--accept-package-agreements",
+            "--accept-source-agreements",
+        ]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            winget_cmd.creation_flags(0x08000000);
+        }
+        let winget_fut = winget_cmd.status();
 
         match tokio::time::timeout(std::time::Duration::from_secs(600), winget_fut).await {
             Ok(Ok(status)) if status.success() => info!("Ollama installed with winget."),
@@ -6457,7 +6499,14 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
                 }
             );
             if let Some(ref py) = python_opt {
-                if let Ok(ver_out) = std::process::Command::new(py).arg("--version").output() {
+                let mut py_cmd = std::process::Command::new(py);
+                py_cmd.arg("--version");
+                #[cfg(target_os = "windows")]
+                {
+                    use std::os::windows::process::CommandExt;
+                    py_cmd.creation_flags(0x08000000);
+                }
+                if let Ok(ver_out) = py_cmd.output() {
                     let ver = String::from_utf8_lossy(&ver_out.stdout).trim().to_string();
                     let ver_err = String::from_utf8_lossy(&ver_out.stderr).trim().to_string();
                     let full_ver = if !ver.is_empty() { ver } else { ver_err };
@@ -7445,6 +7494,11 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
         // Attempt via CLI 'ollama pull' first
         let mut cli_cmd = tokio::process::Command::new(get_ollama_bin());
         cli_cmd.args(["pull", m]);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            cli_cmd.creation_flags(0x08000000);
+        }
 
         let cli_res = cli_cmd.status().await;
         let success = match cli_res {

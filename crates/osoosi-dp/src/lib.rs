@@ -124,7 +124,7 @@ pub fn perturb_timestamp_csprng(timestamp_unix: i64, epsilon: f64) -> i64 {
     let scale = 1.0 / eff_eps;
     let mut rng = rand::rngs::OsRng;
     let u: f64 = rng.gen_range(-0.499999999..0.499999999);
-    let noise = -scale * u.signum() * (1.0 - 2.0 * u.abs()).ln();
+    let noise = (-scale * u.signum() * (1.0 - 2.0 * u.abs()).ln()).clamp(-3599.0, 3599.0);
     timestamp_unix + noise.round() as i64
 }
 
@@ -144,6 +144,15 @@ mod tests {
         assert!(perturbed_vals.iter().any(|&v| v != ts));
         for &v in &perturbed_vals {
             assert!((v - ts).abs() < 100);
+        }
+    }
+
+    #[test]
+    fn test_perturb_timestamp_csprng_bounded_at_extreme_epsilon() {
+        let ts = 1776543210i64;
+        for _ in 0..100 {
+            let p = perturb_timestamp_csprng(ts, 1e-9);
+            assert!((p - ts).abs() < 3600, "Perturbation must be clamped strictly < 3600s");
         }
     }
 
