@@ -3965,7 +3965,10 @@ impl SiqueryEngine {
 
         #[cfg(target_os = "windows")]
         {
-            if let Ok(output) = std::process::Command::new("arp").arg("-a").output() {
+            use std::os::windows::process::CommandExt;
+            let mut arp_cmd = std::process::Command::new("arp");
+            arp_cmd.arg("-a").creation_flags(0x08000000);
+            if let Ok(output) = arp_cmd.output() {
                 if output.status.success() {
                     let text = String::from_utf8_lossy(&output.stdout);
                     let mut current_iface = String::new();
@@ -6454,7 +6457,10 @@ impl SiqueryEngine {
 
         #[cfg(target_os = "windows")]
         {
-            if let Ok(output) = std::process::Command::new("route").arg("print").output() {
+            use std::os::windows::process::CommandExt;
+            let mut route_cmd = std::process::Command::new("route");
+            route_cmd.arg("print").creation_flags(0x08000000);
+            if let Ok(output) = route_cmd.output() {
                 if output.status.success() {
                     let text = String::from_utf8_lossy(&output.stdout);
                     let mut in_ipv4_table = false;
@@ -6669,22 +6675,24 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO tpm_info (spec_version, manufacturer_id, manufacturer_name, manufacturer_version, enabled, activated, owned, tpm_present, tpm_ready, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
-        let spec_version = "2.0".to_string();
-        let mut manufacturer_id = "NTC".to_string();
-        let mut manufacturer_name = "Nuvoton".to_string();
-        let mut manufacturer_version = "1.3.2.8".to_string();
-        let mut enabled = "1".to_string();
-        let mut activated = "1".to_string();
-        let mut owned = "1".to_string();
-        let mut tpm_present = 1i64;
-        let mut tpm_ready = 1i64;
-        let mut device_id = "ACPI\\MSFT0101\\1".to_string();
+        let mut spec_version = "None".to_string();
+        let mut manufacturer_id = "".to_string();
+        let mut manufacturer_name = "".to_string();
+        let mut manufacturer_version = "".to_string();
+        let mut enabled = "0".to_string();
+        let mut activated = "0".to_string();
+        let mut owned = "0".to_string();
+        let mut tpm_present = 0i64;
+        let mut tpm_ready = 0i64;
+        let mut device_id = "".to_string();
 
         #[cfg(target_os = "windows")]
         {
             if let Ok(hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
                 .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI")
             {
+                tpm_present = 1;
+                spec_version = "2.0".to_string();
                 if let Ok(mfg_u32) = hklm.get_value::<u32, _>("TaskManufacturerId") {
                     let mfg_bytes = mfg_u32.to_be_bytes();
                     let mfg_txt = String::from_utf8_lossy(&mfg_bytes)
@@ -6715,14 +6723,20 @@ impl SiqueryEngine {
                         activated = "1".to_string();
                         owned = "1".to_string();
                     }
+                } else {
+                    tpm_ready = 1;
+                    enabled = "1".to_string();
+                    activated = "1".to_string();
+                    owned = "1".to_string();
                 }
-                tpm_present = 1;
             }
-            if let Ok(enum_key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
-                .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\Enum")
-            {
-                if let Ok(dev) = enum_key.get_value::<String, _>("0") {
-                    device_id = dev;
+            if tpm_present == 1 {
+                if let Ok(enum_key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+                    .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\Enum")
+                {
+                    if let Ok(dev) = enum_key.get_value::<String, _>("0") {
+                        device_id = dev;
+                    }
                 }
             }
         }
@@ -6732,6 +6746,10 @@ impl SiqueryEngine {
             if std::path::Path::new("/dev/tpmrm0").exists() || std::path::Path::new("/dev/tpm0").exists() {
                 tpm_present = 1;
                 tpm_ready = 1;
+                spec_version = "2.0".to_string();
+                enabled = "1".to_string();
+                activated = "1".to_string();
+                owned = "1".to_string();
                 device_id = "/dev/tpm0".to_string();
                 if let Ok(desc) = std::fs::read_to_string("/sys/class/tpm/tpm0/device/description") {
                     let d = desc.trim();

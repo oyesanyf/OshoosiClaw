@@ -3866,14 +3866,16 @@ pub fn analyze_target_bytes(
     }
     threat_score = threat_score.min(0.99);
 
-    // R15: Zero threat score on self-inspection
+    // R15: Zero threat score on self-inspection and developer / benign system processes
     let target_lower = target_label.to_ascii_lowercase();
-    let is_self_binary = target_lower.contains("osoosi")
+    let is_self_or_dev_binary = target_lower.contains("osoosi")
         || target_lower.ends_with("osoosi.exe")
         || target_lower.ends_with("osoosi-cli.exe")
-        || target_lower.ends_with("osoosi_inject.dll");
+        || target_lower.ends_with("osoosi_inject.dll")
+        || is_rea_benign_system_or_dev_process(target_label, None)
+        || path.map(|p| is_rea_benign_system_or_dev_process(&p.to_string_lossy(), None)).unwrap_or(false);
 
-    if is_self_binary {
+    if is_self_or_dev_binary {
         threat_score = 0.0f32;
         for f in &mut findings {
             if let Some(sev) = f.get_mut("severity") {
@@ -5375,5 +5377,33 @@ mod tests {
         assert!(res.mitre_attack_ids.contains(&"AML.T0043".to_string()));
         assert!(res.mitre_attack_ids.contains(&"T1552.001".to_string()));
         assert!(res.alert.is_some());
+    }
+
+    #[test]
+    fn test_rea_analyze_target_bytes_developer_immunity() {
+        let dummy_bytes = b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00\xb8\x00\x00\x00";
+        for dev_tool in &["python.exe", "cargo.exe", "node.exe", "git.exe", "osoosi.exe"] {
+            let report = analyze_target_bytes(
+                dev_tool,
+                None,
+                dummy_bytes,
+                ReaTargetKind::NativeBinary,
+                None,
+            );
+            assert_eq!(
+                report.threat_score, 0.0,
+                "Developer/system binary {} must have threat_score 0.0",
+                dev_tool
+            );
+            for finding in &report.findings {
+                if let Some(sev) = finding.get("severity").and_then(|v| v.as_str()) {
+                    assert_eq!(
+                        sev, "info",
+                        "Findings for dev tool {} must be info severity",
+                        dev_tool
+                    );
+                }
+            }
+        }
     }
 }

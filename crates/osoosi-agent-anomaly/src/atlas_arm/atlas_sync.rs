@@ -400,7 +400,18 @@ impl AtlasSyncManager {
             let download_url = "https://github.com/mitre-atlas/atlas-data/releases/latest/download/stix-atlas.json";
 
             // Execute curl with strict TLS 1.3, HTTPS-only, and 8s timeout
-            let status = std::process::Command::new("curl.exe")
+            #[cfg(target_os = "windows")]
+            let mut curl_cmd = std::process::Command::new("curl.exe");
+            #[cfg(not(target_os = "windows"))]
+            let mut curl_cmd = std::process::Command::new("curl");
+
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                curl_cmd.creation_flags(0x08000000);
+            }
+
+            let status = curl_cmd
                 .arg("--proto")
                 .arg("=https")
                 .arg("--tlsv1.3")
