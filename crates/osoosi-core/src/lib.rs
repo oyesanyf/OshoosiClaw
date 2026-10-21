@@ -7517,8 +7517,13 @@ impl EdrOrchestrator {
         // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
         {
             if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
-                let mut engine = self.deception_engine.write().await;
-                if engine.get_spider(pid as u32).is_some() {
+                let has_spider = {
+                    let engine = self.deception_engine.read().await;
+                    engine.get_spider(pid as u32).is_some()
+                };
+                if has_spider {
+                    let mut engine = self.deception_engine.write().await;
+                    if engine.get_spider(pid as u32).is_some() {
                     match event.event_id {
                         // 11: FileCreate, 23: FileDeleteArchived, 26: FileDeleteLogged
                         11 | 23 | 26 => {
@@ -7551,6 +7556,7 @@ impl EdrOrchestrator {
                 }
             }
         }
+    }
 
         // --- PROCESS HOLLOWING INTERCEPTION (T1055.012) ---
         {
