@@ -3338,9 +3338,19 @@ async fn get_adversarial_test_stream(
             "line": format!("[SPAWN] Spawning adversarial tester process (suite: {})...", suite)
         })))).await;
 
+        let script_path = [
+            "tests/strix_llm_adversarial_tester.py",
+            "../tests/strix_llm_adversarial_tester.py",
+            "../../tests/strix_llm_adversarial_tester.py",
+            r"D:\harfile\OshoosiClaw\tests\strix_llm_adversarial_tester.py",
+        ]
+        .into_iter()
+        .find(|cand| std::path::Path::new(cand).exists())
+        .unwrap_or("tests/strix_llm_adversarial_tester.py");
+
         let mut cmd = tokio::process::Command::new("python");
         cmd.arg("-u")
-           .arg("tests/strix_llm_adversarial_tester.py")
+           .arg(script_path)
            .arg("--skip-strix");
 
         if suite == "pyrit" {
