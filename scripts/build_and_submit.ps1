@@ -19,7 +19,7 @@ param(
     [switch]$SkipSigning = $false,
     [switch]$SkipSubmit = $false,
     [switch]$NoLaunch = $true,
-    [string]$PrTitle = "feat(siquery): resilient sqlite busy timeout and peer status fallback for 100 tables"
+    [string]$PrTitle = "feat(m2e): full-lifecycle build, signing, port 3030 E2E verification, and docs sync"
 )
 
 $ErrorActionPreference = "Stop"
@@ -567,6 +567,23 @@ if ($svc) {
     }
 } else {
     Write-Host "       OsoosiEDR service is not installed (skipping)." -ForegroundColor Gray
+}
+
+# Wait for service port 3030 to be active and run E2E verification
+$VerifyScript = Join-Path $ProjectRoot "scripts\verify_port_3030_e2e.py"
+if (Test-Path $VerifyScript) {
+    Write-Host "       Waiting for Port 3030 to be active..." -ForegroundColor Cyan
+    for ($waitAttempt = 1; $waitAttempt -le 15; $waitAttempt++) {
+        $tcp = Test-NetConnection -ComputerName 127.0.0.1 -Port 3030 -WarningAction SilentlyContinue
+        if ($tcp.TcpTestSucceeded) { break }
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "       Running Port 3030 E2E Verification & Latency SLA (< 200ms)..." -ForegroundColor Cyan
+    & python $VerifyScript
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Port 3030 E2E verification failed with exit code $LASTEXITCODE"
+        exit 1
+    }
 }
 
 Cleanup-OldLockedFiles
