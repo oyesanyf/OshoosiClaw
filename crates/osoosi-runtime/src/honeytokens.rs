@@ -58,7 +58,104 @@ impl HoneytokenManager {
         }
         Ok(())
     }
+
+    /// Deploy a diskless ephemeral canary named pipe on Windows.
+    #[cfg(windows)]
+    pub fn deploy_diskless_canary_pipe(
+        &self,
+        session_id: &str,
+    ) -> anyhow::Result<(String, windows::Win32::Foundation::HANDLE)> {
+        use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows::Win32::Storage::FileSystem::{
+            FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
+        };
+        use windows::Win32::System::Pipes::{
+            CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+            PIPE_TYPE_BYTE, PIPE_WAIT,
+        };
+        use windows::core::PCWSTR;
+
+        let rand_hex = format!("{:016x}", uuid::Uuid::new_v4().as_u128());
+        let pipe_name = format!(r"\\.\pipe\osoosi_canary_{}_{}", session_id, rand_hex);
+        let wide_pipe: Vec<u16> = pipe_name.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let handle = unsafe {
+            CreateNamedPipeW(
+                PCWSTR::from_raw(wide_pipe.as_ptr()),
+                PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                1,
+                4096,
+                4096,
+                0,
+                None,
+            )
+        };
+
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(anyhow::anyhow!(
+                "Failed to create ephemeral canary named pipe {}: {:?}",
+                pipe_name,
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        info!("DECEPTION: Deployed diskless ephemeral canary named pipe {}", pipe_name);
+        Ok((pipe_name, handle))
+    }
+
+    /// Fallback for diskless ephemeral pipe on non-Windows platforms.
+    #[cfg(not(windows))]
+    pub fn deploy_diskless_canary_pipe(&self, _session_id: &str) -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("Named pipe canary is only supported on Windows"))
+    }
+
+    /// Deploy a diskless ephemeral in-memory canary file descriptor (memfd) on Linux.
+    #[cfg(target_os = "linux")]
+    pub fn deploy_diskless_canary_memfd(
+        &self,
+        name: &str,
+        payload: &[u8],
+    ) -> anyhow::Result<std::os::fd::RawFd> {
+        use std::ffi::CString;
+        let c_name = CString::new(name).unwrap_or_else(|_| CString::new("edr_canary_token").unwrap());
+        let fd = unsafe {
+            libc::syscall(libc::SYS_memfd_create, c_name.as_ptr(), libc::MFD_CLOEXEC) as std::os::fd::RawFd
+        };
+        if fd < 0 {
+            return Err(anyhow::anyhow!(
+                "memfd_create failed: {:?}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if !payload.is_empty() {
+            let written = unsafe {
+                libc::write(fd, payload.as_ptr() as *const libc::c_void, payload.len())
+            };
+            if written < 0 {
+                unsafe { libc::close(fd); }
+                return Err(anyhow::anyhow!(
+                    "Failed to write payload to memfd: {:?}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            unsafe {
+                libc::lseek(fd, 0, libc::SEEK_SET);
+            }
+        }
+        info!("DECEPTION: Deployed diskless ephemeral memfd canary fd {}", fd);
+        Ok(fd)
+    }
+
+    /// Fallback for memfd canary on non-Linux platforms.
+    #[cfg(not(target_os = "linux"))]
+    pub fn deploy_diskless_canary_memfd(&self, _name: &str, _payload: &[u8]) -> anyhow::Result<i32> {
+        Err(anyhow::anyhow!("memfd_create canary is only supported on Linux"))
+    }
 }
+
+/// Alias for HoneytokenManager to support CanaryManager naming convention.
+pub type CanaryManager = HoneytokenManager;
 
 /// Verify if a file event is a 'trap hit'.
 pub fn is_trap_hit(path: &Path, trap_locations: &[PathBuf]) -> bool {

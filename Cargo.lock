@@ -6184,6 +6184,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "hex",
+ "libc",
  "osoosi-audit",
  "osoosi-sandbox",
  "osoosi-telemetry",
