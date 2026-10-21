@@ -10024,13 +10024,18 @@ impl EdrOrchestrator {
                     continue;
                 }
                 let cand_p = item.process_name.as_deref().unwrap_or("");
-                if crate::rea::is_rea_benign_system_or_dev_process(cand_p, Some(&item.summary)) {
+                let extracted_p = crate::rea::extract_process_from_summary(&item.summary).unwrap_or(cand_p);
+                if crate::rea::is_rea_benign_system_or_dev_process(cand_p, Some(&item.summary))
+                    || (!extracted_p.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_p, Some(&item.summary)))
+                {
                     continue;
                 }
                 let s_lower = item.summary.to_ascii_lowercase();
                 if (s_lower.contains("veto") && s_lower.contains("trusted"))
                     || s_lower.contains("outside the vulnerable")
                     || s_lower.contains("cve none")
+                    || s_lower.contains("unknown v0.0.0 has known cves")
+                    || s_lower.contains("cve-2009-2940")
                 {
                     continue;
                 }
@@ -10040,7 +10045,7 @@ impl EdrOrchestrator {
                         .and_then(|n| n.to_str())
                         .unwrap_or(p)
                         .to_ascii_lowercase();
-                    if matches!(b.as_str(), "sc.exe" | "git.exe" | "conhost.exe" | "chrome.exe" | "wsl.exe" | "taskkill.exe" | "powershell.exe" | "cmd.exe" | "svchost.exe" | "explorer.exe")
+                    if crate::rea::is_rea_benign_system_or_dev_process(p, Some(&item.summary))
                         || self.rea_adjudicated_clean_procs.contains(&b)
                         || self.memory.is_false_positive_pattern(Some(p.as_str()), item.hash_blake3.as_deref()).unwrap_or(false)
                         || item.hash_blake3.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
@@ -10150,14 +10155,27 @@ impl EdrOrchestrator {
                     {
                         continue;
                     }
+                    let raw_summary = entry
+                        .data
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let proc_str = proc.as_deref().unwrap_or("");
+                    let extracted_from_sum = crate::rea::extract_process_from_summary(raw_summary).unwrap_or(proc_str);
+                    let is_benign_proc = (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(reason_str)))
+                        || (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(raw_summary)))
+                        || (!raw_summary.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(raw_summary, Some(raw_summary)))
+                        || (!extracted_from_sum.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_from_sum, Some(raw_summary)));
+                    if is_benign_proc {
+                        continue;
+                    }
                     if let Some(ref p) = proc {
                         let b = std::path::Path::new(p)
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(p)
                             .to_ascii_lowercase();
-                        if matches!(b.as_str(), "sc.exe" | "git.exe" | "conhost.exe" | "chrome.exe" | "wsl.exe" | "taskkill.exe" | "powershell.exe" | "cmd.exe" | "svchost.exe" | "explorer.exe")
-                            || self.rea_adjudicated_clean_procs.contains(&b)
+                        if self.rea_adjudicated_clean_procs.contains(&b)
                             || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
                             || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
                         {
@@ -10183,11 +10201,6 @@ impl EdrOrchestrator {
                     };
                     let act = action.as_deref().unwrap_or("Enforced");
                     let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
-                    let raw_summary = entry
-                        .data
-                        .get("summary")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
                     if reason_clean.is_empty() && raw_summary.is_empty() {
                         continue;
                     }
@@ -10311,14 +10324,21 @@ impl EdrOrchestrator {
                     {
                         continue;
                     }
+                    let description = t.get("description").or_else(|| t.get("reason")).and_then(|v| v.as_str()).unwrap_or(reason);
+                    let proc_str = proc.as_deref().unwrap_or("");
+                    let extracted_from_desc = crate::rea::extract_process_from_summary(description).unwrap_or(proc_str);
+                    let is_benign_proc = (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(description)))
+                        || (!extracted_from_desc.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_from_desc, Some(description)));
+                    if is_benign_proc {
+                        continue;
+                    }
                     if let Some(ref p) = proc {
                         let b = std::path::Path::new(p)
                             .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or(p)
                             .to_ascii_lowercase();
-                        if matches!(b.as_str(), "sc.exe" | "git.exe" | "conhost.exe" | "chrome.exe" | "wsl.exe" | "taskkill.exe" | "powershell.exe" | "cmd.exe" | "svchost.exe" | "explorer.exe")
-                            || self.rea_adjudicated_clean_procs.contains(&b)
+                        if self.rea_adjudicated_clean_procs.contains(&b)
                             || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
                             || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
                         {
@@ -10445,7 +10465,12 @@ impl EdrOrchestrator {
             {
                 continue;
             }
-            if let Some(ref p) = item.process_name {
+            let extracted_p = crate::rea::extract_process_from_summary(&item.summary);
+            let check_p = item.process_name.as_deref().or(extracted_p);
+            if let Some(p) = check_p {
+                if crate::rea::is_rea_benign_system_or_dev_process(p, Some(&item.summary)) {
+                    continue;
+                }
                 let b = std::path::Path::new(p)
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -10524,21 +10549,23 @@ impl EdrOrchestrator {
         let mut candidates = Vec::new();
         if let Ok(feed) = self.mesh_gossip_feed.read() {
             for item in feed.iter() {
-                candidates.push((
-                    item.id.clone(),
-                    item.process_name.clone(),
-                    item.hash_blake3.clone(),
-                    item.summary.clone(),
-                ));
+                if !self.dismissed_gossip_ids.contains(&item.id) {
+                    candidates.push((
+                        item.id.clone(),
+                        item.process_name.clone(),
+                        item.hash_blake3.clone(),
+                        item.summary.clone(),
+                    ));
+                }
             }
         }
-        if let Ok(threats) = self.memory.get_recent_threats(100) {
+        if let Ok(threats) = self.memory.get_recent_threats(60) {
             for t in threats {
                 let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let proc = t.get("process_name").and_then(|v| v.as_str()).map(String::from);
-                let hash = t.get("hash_blake3").and_then(|v| v.as_str()).map(String::from);
-                let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                if !id.is_empty() {
+                if !id.is_empty() && !self.dismissed_gossip_ids.contains(&id) {
+                    let proc = t.get("process_name").and_then(|v| v.as_str()).map(String::from);
+                    let hash = t.get("hash_blake3").and_then(|v| v.as_str()).map(String::from);
+                    let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     candidates.push((id, proc, hash, reason));
                 }
             }
@@ -10581,32 +10608,63 @@ impl EdrOrchestrator {
         }
 
         let rea = crate::rea::global_rea_engine();
+        let mut purged_procs = std::collections::HashSet::new();
+        let mut disk_probes = 0usize;
         for (id, proc, hash, reason) in candidates {
-            let proc_base = proc.as_deref().map(|p| {
-                std::path::Path::new(p)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(p)
-                    .to_ascii_lowercase()
-            });
-            let is_already_clean = proc_base
-                .as_ref()
-                .map(|b| self.rea_adjudicated_clean_procs.contains(b))
-                .unwrap_or(false);
+            let extracted = proc.as_deref().or_else(|| crate::rea::extract_process_from_summary(&reason));
+            let proc_str = extracted.unwrap_or("").trim();
+            let proc_base = if !proc_str.is_empty() {
+                Some(
+                    std::path::Path::new(proc_str)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(proc_str)
+                        .to_ascii_lowercase(),
+                )
+            } else {
+                None
+            };
+            let is_benign_direct = if !proc_str.is_empty() {
+                crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(&reason))
+            } else {
+                false
+            };
+            let is_already_clean = is_benign_direct
+                || proc_base
+                    .as_ref()
+                    .map(|b| self.rea_adjudicated_clean_procs.contains(b))
+                    .unwrap_or(false);
 
             if is_already_clean {
+                if let Some(ref b) = proc_base {
+                    self.rea_adjudicated_clean_procs.insert(b.clone());
+                }
                 self.dismissed_gossip_ids.insert(id.clone());
-                let _ = self.memory.delete_threat_by_id_or_pattern(
-                    Some(&id),
-                    proc.as_deref(),
-                    hash.as_deref(),
-                );
+                let cand_p = if !proc_str.is_empty() { Some(proc_str) } else { proc.as_deref() };
+                if let Some(p) = cand_p {
+                    if purged_procs.insert(p.to_ascii_lowercase()) {
+                        let _ = self.memory.delete_threat_by_id_or_pattern(
+                            Some(&id),
+                            Some(p),
+                            hash.as_deref(),
+                        );
+                        let _ = self.memory.delete_threats_matching_process_substring(p);
+                        // Also record a lightweight REA report once per benign process
+                        let _ = rea.adjudicate_process_or_binary_alert(Some(p), None, Some(&reason));
+                    }
+                }
                 dropped += 1;
                 continue;
             }
 
+            if disk_probes >= 2 {
+                continue;
+            }
+            disk_probes += 1;
+
+            let cand_p = if !proc_str.is_empty() { Some(proc_str) } else { proc.as_deref() };
             let (should_drop, _, resolved_hash) =
-                rea.adjudicate_process_or_binary_alert(proc.as_deref(), None, Some(&reason));
+                rea.adjudicate_process_or_binary_alert(cand_p, None, Some(&reason));
 
             if should_drop {
                 if let Some(ref b) = proc_base {
@@ -10614,16 +10672,21 @@ impl EdrOrchestrator {
                 }
                 self.dismissed_gossip_ids.insert(id.clone());
                 let final_hash = resolved_hash.as_deref().or(hash.as_deref());
-                let _ = self.memory.record_false_positive_pattern(
-                    proc.as_deref(),
-                    final_hash,
-                    "autonomous_rea",
-                );
-                let _ = self.memory.delete_threat_by_id_or_pattern(
-                    Some(&id),
-                    proc.as_deref(),
-                    final_hash,
-                );
+                if let Some(p) = cand_p {
+                    if purged_procs.insert(p.to_ascii_lowercase()) {
+                        let _ = self.memory.record_false_positive_pattern(
+                            Some(p),
+                            final_hash,
+                            "autonomous_rea",
+                        );
+                        let _ = self.memory.delete_threat_by_id_or_pattern(
+                            Some(&id),
+                            Some(p),
+                            final_hash,
+                        );
+                        let _ = self.memory.delete_threats_matching_process_substring(p);
+                    }
+                }
                 dropped += 1;
             }
         }
@@ -10643,10 +10706,16 @@ impl EdrOrchestrator {
                 if item.summary.contains("Veto Trusted Vendor")
                     || item.summary.contains("outside the vulnerable")
                     || item.summary.contains("CVE None")
+                    || item.summary.contains("unknown v0.0.0 has known cves")
+                    || item.summary.contains("cve-2009-2940")
                 {
                     return false;
                 }
-                if let Some(ref p) = item.process_name {
+                let ext_p = crate::rea::extract_process_from_summary(&item.summary);
+                if let Some(p) = item.process_name.as_deref().or(ext_p) {
+                    if crate::rea::is_rea_benign_system_or_dev_process(p, Some(&item.summary)) {
+                        return false;
+                    }
                     let b = std::path::Path::new(p)
                         .file_name()
                         .and_then(|n| n.to_str())
@@ -10677,7 +10746,10 @@ impl EdrOrchestrator {
                     .or_else(|| entry.data.get("message"))
                     .and_then(|v| v.as_str());
 
-                if let Some(p) = proc {
+                let ext = summary.and_then(|s| crate::rea::extract_process_from_summary(s));
+                let cand_p = proc.or(ext);
+
+                if let Some(p) = cand_p {
                     if crate::rea::is_rea_benign_system_or_dev_process(p, summary) {
                         return false;
                     }
@@ -10823,11 +10895,22 @@ impl EdrOrchestrator {
         if reason_str.contains("Veto Trusted Vendor")
             || reason_str.contains("outside the vulnerable")
             || reason_str.contains("CVE None")
+            || reason_str.contains("unknown v0.0.0 has known cves")
+            || reason_str.contains("cve-2009-2940")
         {
             debug!("[Mesh] Threat suppressed from gossip broadcast (vetoed or non-vulnerable version)");
             return;
         }
         if let Some(ref proc) = sig.process_name {
+            if crate::rea::is_rea_benign_system_or_dev_process(proc, sig.reason.as_deref())
+                || crate::rea::global_rea_engine().adjudicate_process_or_binary_alert(Some(proc), None, sig.reason.as_deref()).0
+            {
+                debug!(
+                    "[Mesh] Threat suppressed from gossip broadcast (REA benign system/dev: {})",
+                    proc
+                );
+                return;
+            }
             let proc_base = std::path::Path::new(proc)
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -12188,6 +12271,12 @@ impl EdrOrchestrator {
                     || proc_clean.eq_ignore_ascii_case("unknown process")
                 {
                     debug!("PeerThreatRx: Dropped unknown process threat {}", sig.id);
+                    continue;
+                }
+                if crate::rea::is_rea_benign_system_or_dev_process(proc_clean, sig.reason.as_deref())
+                    || crate::rea::global_rea_engine().adjudicate_process_or_binary_alert(Some(proc_clean), None, sig.reason.as_deref()).0
+                {
+                    debug!("PeerThreatRx: Suppressed benign system/dev threat for {}", proc_clean);
                     continue;
                 }
 

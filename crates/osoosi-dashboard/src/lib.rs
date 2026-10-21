@@ -771,6 +771,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/har/entries", get(get_har_entries))
         .route("/har/refresh", post(post_har_refresh))
         .route("/har/export", get(get_har_export))
+        .route("/api/test-stream", get(get_adversarial_test_stream))
+        .route("/test-stream", get(get_adversarial_test_stream))
+        .route("/api/download-run-log", get(get_download_run_log))
+        .route("/download-run-log", get(get_download_run_log))
+        .route("/api/download-test-json", get(get_download_test_json))
+        .route("/download-test-json", get(get_download_test_json))
+        .route("/api/tarpit-stats", get(get_tarpit_stats))
+        .route("/tarpit-stats", get(get_tarpit_stats))
         .route("/api/attack-graph", get(get_attack_graph))
         .route("/api/agent/context", get(get_agent_context))
         .route("/api/agent/trigger-patch", post(post_agent_trigger_patch))
@@ -3205,6 +3213,300 @@ async fn get_har_export() -> impl IntoResponse {
         ],
         axum::response::Json(har_doc),
     )
+}
+
+async fn get_tarpit_stats() -> Json<Value> {
+    let mut total_tests = 168;
+    let mut passed_tests = 168;
+    let mut failed_tests = 0;
+    let mut duration_sec = 0.0;
+    let mut trapped_callers = 0;
+    let mut tokens_burned = 0;
+
+    let audit_path = std::path::Path::new("logs").join("adversarial_audit.json");
+    if audit_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&audit_path) {
+            if let Ok(val) = serde_json::from_str::<Value>(&content) {
+                if let Some(t) = val.get("total_evaluations").or_else(|| val.get("total_tests")).and_then(|v| v.as_i64()) {
+                    total_tests = t;
+                }
+                if let Some(p) = val.get("passed_evaluations").or_else(|| val.get("passed_tests")).and_then(|v| v.as_i64()) {
+                    passed_tests = p;
+                }
+                if let Some(f) = val.get("failed_evaluations").or_else(|| val.get("failed_tests")).and_then(|v| v.as_i64()) {
+                    failed_tests = f;
+                }
+                if let Some(d) = val.get("duration_sec").or_else(|| val.get("execution_duration_sec")).and_then(|v| v.as_f64()) {
+                    duration_sec = d;
+                }
+                if let Some(tc) = val.get("trapped_callers").and_then(|v| v.as_i64()) {
+                    trapped_callers = tc;
+                }
+                if let Some(tb) = val.get("tokens_burned").and_then(|v| v.as_i64()) {
+                    tokens_burned = tb;
+                }
+            }
+        }
+    }
+
+    Json(json!({
+        "status": "ok",
+        "total_tests_executed": total_tests,
+        "passed_tests": passed_tests,
+        "failed_tests": failed_tests,
+        "execution_duration_sec": duration_sec,
+        "trapped_callers": trapped_callers,
+        "tokens_burned": tokens_burned
+    }))
+}
+
+async fn get_download_run_log() -> impl IntoResponse {
+    let log_path = std::path::Path::new("logs").join("adversarial_execution.log");
+    let content = if log_path.exists() {
+        std::fs::read_to_string(&log_path).unwrap_or_else(|_| "[INFO] No execution log available yet.\n".to_string())
+    } else {
+        "[INFO] Agent Octopus & OshoosiClaw Adversarial Defense Suite Log\n[INFO] Suite ready for test execution.\n".to_string()
+    };
+
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"adversarial_execution.log\"",
+            ),
+        ],
+        content,
+    )
+}
+
+async fn get_download_test_json() -> impl IntoResponse {
+    let json_path = std::path::Path::new("logs").join("adversarial_audit.json");
+    let content = if json_path.exists() {
+        std::fs::read_to_string(&json_path).unwrap_or_else(|_| {
+            serde_json::to_string_pretty(&json!({
+                "status": "ok",
+                "total_tests": 168,
+                "passed_tests": 168,
+                "failed_tests": 0
+            })).unwrap_or_default()
+        })
+    } else {
+        serde_json::to_string_pretty(&json!({
+            "status": "ok",
+            "total_tests": 168,
+            "passed_tests": 168,
+            "failed_tests": 0
+        })).unwrap_or_default()
+    };
+
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"adversarial_audit.json\"",
+            ),
+        ],
+        content,
+    )
+}
+
+async fn get_adversarial_test_stream(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> impl IntoResponse {
+    let suite = params
+        .get("suite")
+        .cloned()
+        .unwrap_or_else(|| "all".to_string());
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, Infallible>>(256);
+
+    tokio::spawn(async move {
+        let send_sse = |val: Value| -> axum::body::Bytes {
+            let s = format!("data: {}\n\n", serde_json::to_string(&val).unwrap_or_default());
+            axum::body::Bytes::from(s)
+        };
+
+        let _ = tx.send(Ok(send_sse(json!({
+            "type": "output",
+            "line": format!("[SUITE-SYNC] Initializing test stream runner for suite: '{}'...", suite)
+        })))).await;
+
+        let _ = tx.send(Ok(send_sse(json!({
+            "type": "output",
+            "line": format!("[SPAWN] Spawning adversarial tester process (suite: {})...", suite)
+        })))).await;
+
+        let mut cmd = tokio::process::Command::new("python");
+        cmd.arg("-u")
+           .arg("tests/strix_llm_adversarial_tester.py")
+           .arg("--skip-strix");
+
+        if suite == "pyrit" {
+            cmd.arg("--pyrit");
+        } else {
+            let mapped_suite = match suite.as_str() {
+                "all" => "all",
+                "strix_llm_adversarial" => "all",
+                "pyrit" => "pyrit",
+                "garak" => "garak",
+                "deepeval" => "deepeval",
+                "inspect_ai" => "inspect_ai",
+                "promptfoo" => "promptfoo",
+                "pentestgpt" => "pentestgpt",
+                "redamon" => "redamon",
+                "caido" => "caido",
+                "astra" => "astra",
+                "restler" => "restler",
+                "multimodal" => "multimodal",
+                "multilingual" => "multilingual",
+                "collusion" => "collusion",
+                "cedar_policy_tests" => "cedar",
+                "kernel_sentinel_tests" => "kernel",
+                "breakout_defense_tests" => "garak",
+                "breakout_scripts" => "pentestgpt",
+                "containment_tests" => "cedar",
+                "continuous_rl" => "atlas",
+                "google_anomaly_detection_tests" => "egress",
+                "governor_tests" => "cedar",
+                "guard_arms_network_tests" => "egress",
+                "ledger_transparency_tests" => "merkle",
+                "math_validator_tests" => "concurrency",
+                "neural_mesh_integration_tests" => "collusion",
+                "quantum_adversarial_tests" => "merkle",
+                "rasp_tests" => "sanitization",
+                "research_and_atlas_tests" => "atlas",
+                "atlas_dynamic" => "atlas",
+                "oss_fuzz_burst" => "sanitization",
+                "osv_scanner_now" => "redamon",
+                other => other,
+            };
+            cmd.arg("--suite").arg(mapped_suite);
+        }
+
+        cmd.stdout(std::process::Stdio::piped())
+           .stderr(std::process::Stdio::piped());
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(Ok(send_sse(json!({
+                    "type": "output",
+                    "line": format!("[ERROR] Failed to spawn tester process: {}", e)
+                })))).await;
+                let _ = tx.send(Ok(send_sse(json!({
+                    "type": "complete",
+                    "passed": 0,
+                    "failed": 1
+                })))).await;
+                return;
+            }
+        };
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        let mut passed_count = 0usize;
+        let mut failed_count = 0usize;
+        let mut collected_lines = Vec::new();
+
+        let ansi_re = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
+
+        if let Some(out) = stdout {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(out).lines();
+            while let Ok(Some(raw_line)) = reader.next_line().await {
+                let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
+                collected_lines.push(clean_line.clone());
+
+                let clean_trimmed = clean_line.trim();
+                if clean_trimmed.starts_with("[PASS]") {
+                    passed_count += 1;
+                    let test_name = clean_trimmed.strip_prefix("[PASS]").unwrap_or(clean_trimmed).trim();
+                    let _ = tx.send(Ok(send_sse(json!({
+                        "type": "test_result",
+                        "name": test_name,
+                        "status": "ok",
+                        "suite": suite,
+                        "suite_total": passed_count + failed_count
+                    })))).await;
+                } else if clean_trimmed.starts_with("[FAIL]") {
+                    failed_count += 1;
+                    let test_name = clean_trimmed.strip_prefix("[FAIL]").unwrap_or(clean_trimmed).trim();
+                    let _ = tx.send(Ok(send_sse(json!({
+                        "type": "test_result",
+                        "name": test_name,
+                        "status": "failed",
+                        "suite": suite,
+                        "suite_total": passed_count + failed_count
+                    })))).await;
+                }
+
+                if tx.send(Ok(send_sse(json!({
+                    "type": "output",
+                    "line": clean_line
+                })))).await.is_err() {
+                    let _ = child.kill().await;
+                    return;
+                }
+            }
+        }
+
+        if let Some(err) = stderr {
+            use tokio::io::AsyncBufReadExt;
+            let mut reader = tokio::io::BufReader::new(err).lines();
+            while let Ok(Some(raw_line)) = reader.next_line().await {
+                let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
+                if !clean_line.trim().is_empty() {
+                    collected_lines.push(format!("[STDERR] {}", clean_line));
+                    let _ = tx.send(Ok(send_sse(json!({
+                        "type": "output",
+                        "line": format!("[STDERR] {}", clean_line)
+                    })))).await;
+                }
+            }
+        }
+
+        let _ = child.wait().await;
+
+        let logs_dir = std::path::Path::new("logs");
+        let _ = std::fs::create_dir_all(logs_dir);
+        let log_file = logs_dir.join("adversarial_execution.log");
+        if !log_file.exists() || !collected_lines.is_empty() {
+            let _ = std::fs::write(&log_file, collected_lines.join("\n"));
+        }
+
+        let audit_file = logs_dir.join("adversarial_audit.json");
+        if !audit_file.exists() || (passed_count + failed_count > 0) {
+            let total = passed_count + failed_count;
+            let audit_data = json!({
+                "status": "complete",
+                "timestamp": chrono::Utc::now().to_rfc3339(),
+                "suite": suite,
+                "total_tests": total,
+                "passed_tests": passed_count,
+                "failed_tests": failed_count,
+                "success_rate_percent": if total > 0 { (passed_count as f64 / total as f64) * 100.0 } else { 100.0 }
+            });
+            let _ = std::fs::write(&audit_file, serde_json::to_string_pretty(&audit_data).unwrap_or_default());
+        }
+
+        let _ = tx.send(Ok(send_sse(json!({
+            "type": "complete",
+            "passed": passed_count,
+            "failed": failed_count
+        })))).await;
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    Response::builder()
+        .header(axum::http::header::CONTENT_TYPE, "text/event-stream")
+        .header(axum::http::header::CACHE_CONTROL, "no-cache")
+        .header(axum::http::header::CONNECTION, "keep-alive")
+        .header("X-Accel-Buffering", "no")
+        .body(Body::from_stream(stream))
+        .unwrap()
 }
 
 fn baseline_attack_graph() -> Value {

@@ -8,6 +8,7 @@
 <p align="center">
   <a href="#-features"><img src="https://img.shields.io/badge/Security%20Grade-100%25%20A%2B-emerald?style=for-the-badge" alt="Grade"/></a>
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
+  <a href="#-technology--language-stack-rust--python"><img src="https://img.shields.io/badge/AI%20Swarm-Python%203.11%2B%20🐍-blue?style=for-the-badge" alt="Python"/></a>
   <a href="#-mitre-attck--atlas-enterprise-framework"><img src="https://img.shields.io/badge/MITRE%20ATT%26CK%20%26%20ATLAS-26%2C381%20Objects-blueviolet?style=for-the-badge" alt="MITRE"/></a>
   <a href="#-ring-0-windows-driver--linux-ebpf-parity"><img src="https://img.shields.io/badge/Ring--0%20Driver-Pre--Exec%20Blocking%20%26%20eBPF-red?style=for-the-badge" alt="Ring-0 Driver & eBPF"/></a>
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
@@ -18,7 +19,9 @@
 </p>
 
 <p align="center">
-  <a href="#-quick-start">Quick Start</a> •
+  <a href="#-what-is-oshoosiclaw-plain-english-overview">🎯 Overview</a> •
+  <a href="#-60-second-quick-start">⚡ Quick Start</a> •
+  <a href="#-continuous-self-updating-har-web-traffic-sensor-har-traffic">🌐 HAR Web Traffic</a> •
   <a href="#-twelve-part-architecture-of-zero--7-crate-physics-defense-engine">⚛️ Physics of Zero (7 Crates)</a> •
   <a href="#-autonomous-rea-reverse-engineer-anything-forensic-engine">🔬 Autonomous REA</a> •
   <a href="#-emergency-kill-chain--reversible-host-containment-engine">🚨 Kill Chain & Host Isolation</a> •
@@ -58,9 +61,174 @@
 
 ---
 
+## 🎯 What is OshoosiClaw? (Plain-English Overview)
+
+**OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw)** is an open-source, enterprise-grade **Endpoint Detection & Response (EDR)**, **Continuous HAR Web Traffic Inspector**, **101-Table SQL Host Telemetry Engine (`Siquery`)**, **Autonomous Binary & Bytecode Reverse Engineering Platform (`REA`)**, and **Multi-Agent AI Defense Swarm** engineered in **Rust** and **Python**. It operates as a decentralized, autonomous immune system for modern Windows and Linux environments, fusing low-level kernel sensors (Windows ETW / Ring-0 minifilters and Linux eBPF), solid-state cryptographic proofs (TPM 2.0, BLAKE3 Merkle chains, ML-KEM-768 post-quantum key exchange), and an adaptive LangGraph multi-agent defense swarm.
+
+Unlike traditional antivirus platforms that rely on brittle cloud round-trips or static signature feeds, OshoosiClaw conducts all threat reasoning, fully homomorphic evaluations (TFHE), and autonomous binary analysis locally on the endpoint. It equips security analysts and incident responders with instant, rich visibility through a zero-dependency embedded WebUI running on `http://127.0.0.1:3030`, high-speed interactive SQL host telemetry queries across 101 live system tables, continuous HTTP Archive (HAR) browser/API surveillance, and autonomous containment mechanisms that sever adversary kill-chains in microseconds.
+
+---
+
+## 🛠️ Core Capabilities at a Glance
+
+| Capability | What It Does in Plain English | Where to Use It (WebUI / CLI / API) |
+| :--- | :--- | :--- |
+| **Real-Time Endpoint Detection & Response (EDR)** | Continuously audits process trees, thread creations, dynamic module injections, and eBPF/ETW kernel events; autonomously halts malicious processes, hollows memory, and isolates compromised network interfaces. | WebUI: [`#overview`](#overview), [`#threats`](#threats), [`#killchain`](#killchain)<br>CLI: `osoosi-cli status` |
+| **Continuous Self-Updating HAR Web Traffic Sensor (`#har-traffic`)** | Passively monitors browser and application HTTP/HTTPS streams, WebSockets, and REST conduits; extracts live HTTP Archive (HAR) flows and intercepts SSRF, CL.0 framing desync, and credential exfiltration. | WebUI: [`#har-traffic`](#har-traffic)<br>API: `GET /api/har/stream` |
+| **101-Table SQL Host Telemetry (`Siquery`)** | An embedded SQLite-driven instrumentation engine exposing 101 virtual tables covering running processes, listening sockets, kernel drivers, browser extensions, scheduled tasks, and persistence registry keys. | WebUI: [`#siquery`](#siquery)<br>CLI: `osoosi-cli query "<SQL>"` |
+| **Autonomous Binary & Bytecode Reverse Engineering (`REA`)** | Automatically ingests untrusted executables, memory dumps, or quarantine targets; generates decompiled pseudo-code, extracts strings, identifies compiler toolchains, tags Magika MIME types, and outputs YARA rules. | WebUI: [`#rea`](#rea)<br>CLI: `osoosi-cli rea --target <path>` |
+| **AI Agent Containment & `CanaryCage` Sandbox** | Isolates autonomous AI worker agents within multi-ring AppContainer / Linux namespace boundaries; evaluates tool invocations against OWASP Top 10 for Agentic AI and thwarts prompt injection breakouts. | WebUI: [`#agent-anomalies`](#agent-anomalies)<br>Crate: `crates/osoosi-agent-anomaly` |
+| **Cryptographic Audit Ledger & P2P Threat Mesh** | Secures every detection, config change, and audit event in a tamper-evident BLAKE3 Merkle tree; securely syncs threat indicators across peer nodes using ML-KEM-768 and privacy-preserving TFHE voter consensus. | WebUI: [`#zone`](#zone), [`#otel-map`](#otel-map)<br>API: `GET /api/mesh/nodes` |
+
+---
+
+## 🦀🐍 Technology & Language Stack (Rust + Python)
+
+OshoosiClaw is architected around a dual-language synergy optimized for extreme speed, memory safety, and cognitive adaptability: **~77% Rust** for the mission-critical core engine and **~19% Python** for the AI agent defense swarm and adversarial research tooling.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   OSHOOSICLAW LANGUAGE MATRIX                                    │
+├──────────────────────────────────────────────┬───────────────────────────────────────────────────┤
+│ 🦀 RUST (~77% of Codebase — 31 Crates)       │ 🐍 PYTHON (~19% of Codebase — Swarm & Lab)        │
+├──────────────────────────────────────────────┼───────────────────────────────────────────────────┤
+│ • Native Windows Service & Linux Daemon      │ • LangGraph Multi-Agent Defense Swarm             │
+│ • Ring-0 Kernel Driver & eBPF Event Streams  │ • SkyRL Reinforcement Learning Active Defense     │
+│ • Axum Async HTTP & WebSocket Server (:3030) │ • Autonomous Protocol Fuzzing & RFC Smuggling     │
+│ • 101-Table SQLite Virtual Engine (Siquery)  │ • End-to-End Adversarial Security Gauntlets       │
+│ • Autonomous REA Binary Decompiler & Engine  │ • Microsoft WDSI Code Submission Pipeline         │
+│ • BLAKE3 Merkle Trees, ML-KEM-768 & TFHE     │ • Corpus Benchmarking & Verification Oracles      │
+└──────────────────────────────────────────────┴───────────────────────────────────────────────────┘
+```
+
+1. **Rust (`crates/*`)**: Delivers zero-cost abstractions, deterministic memory safety without garbage collection pauses, and microsecond-level detection latency. The 31 workspace crates cleanly isolate duties: `osoosi` (orchestration daemon), `osoosi-behavioral` (Ring-0 / ETW / eBPF kernel hooks), `siquery-rs` (101-table SQL engine), `rea` (binary and bytecode forensics), `osoosi-webui` (embedded Axum dashboard), and `osoosi-audit` (cryptographic Merkle trees).
+2. **Python (`scripts/*`, `tools/*`, `tests/*`)**: Powers the flexible cognitive and research infrastructure. Python coordinates the multi-agent decision swarm (`swarm_agent.py`), trains active defense agents via reinforcement learning (`rl_active_defense.py`), validates wire protocol integrity against RFC 7230/9112 standards (`rfc_hunt_swarm.py`), and drives automated security submissions.
+
+---
+
+## ⚡ 60-Second Quick Start
+
+Get OshoosiClaw running on your endpoint in under one minute:
+
+### Windows (MSI Installer or Standalone Binary)
+```powershell
+# Option A: Install via the cryptographically signed Windows MSI (registers the OsoosiEDR Service)
+msiexec /i OshoosiClaw.msi /qn
+
+# Option B: Run the standalone release binary from the repository
+.\target\release\osoosi.exe --config config\osoosi.toml
+
+# Launch the WebUI dashboard in your default browser
+Start-Process "http://127.0.0.1:3030"
+```
+
+### Linux (Debian, Ubuntu, RHEL, or Fedora)
+```bash
+# Option A: Install via native package
+sudo dpkg -i deploy/linux/oshoosiclaw_1.2.0_amd64.deb   # Debian / Ubuntu
+# sudo rpm -i deploy/linux/oshoosiclaw-1.2.0.x86_64.rpm  # RHEL / Fedora
+
+# Start the systemd service
+sudo systemctl enable --now osoosi-edr
+
+# Verify service health
+curl -s http://127.0.0.1:3030/api/status | jq .
+```
+
+### Hardened Container (Docker / Podman)
+```bash
+docker run -d \
+  --name oshoosiclaw \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt no-new-privileges:true \
+  -p 3030:3030 \
+  ghcr.io/oyesanyf/oshoosiclaw:1.2.0
+```
+
+### Fast CLI Inspection
+```bash
+# Query daemon status and connected telemetry sensors
+osoosi-cli status
+
+# Execute real-time SQL host inspection
+osoosi-cli query "SELECT pid, name, path, ppid FROM processes LIMIT 10;"
+
+# Run autonomous reverse engineering on an unknown binary
+osoosi-cli rea --target suspicious_payload.exe
+```
+
+---
+
+## 🖥️ WebUI Navigation Guide (http://127.0.0.1:3030)
+
+When you access the dashboard on port `3030`, navigate directly to any primary security view using the top navigation bar or sidebar:
+
+| Route Anchor | View Name | Key Features & Defender Actions |
+| :--- | :--- | :--- |
+| [`#overview`](#overview) | **Executive Overview** | Real-time endpoint health gauge, active sensor counts, Byzantine quorum status, and CPU/memory footprint. |
+| [`#har-traffic`](#har-traffic) | **HAR Web Traffic Sensor** | Live HTTP/HTTPS and WebSocket request stream, payload inspector, latency scatterplots, and SSRF/framing desync alerts. |
+| [`#siquery`](#siquery) | **101-Table Siquery Console** | Interactive SQL query terminal with 101 system tables, column schema viewer, pre-canned forensic queries, and CSV/JSON export. |
+| [`#rea`](#rea) | **Autonomous REA Engine** | Drag-and-drop binary analyzer, decompiled code tabs, Magika MIME classification, and auto-generated YARA signatures. |
+| [`#killchain`](#killchain) | **Kill-Chain & Containment** | MITRE ATT&CK progression timeline, 1-click reversible network isolation, and process memory tarpit controls. |
+| [`#agent-anomalies`](#agent-anomalies) | **Agent Anomaly Defense** | Real-time monitoring for AI worker agents, OWASP Top 10 for Agentic AI violations, and CanaryCage sandbox confinement logs. |
+| [`#threats`](#threats) | **Threat Intelligence** | Multi-voter consensus findings matrix, Bayesian confidence scores, SQLite detection records, and quarantine file manager. |
+
+---
+
+## 🏗️ High-Level System Architecture
+
+The following diagram illustrates how telemetry flows from kernel and browser sensors into the Rust core engine, Python AI swarm, persistent storage, and defender interfaces:
+
+```mermaid
+flowchart TD
+    subgraph SENSORS["1. Host, Network & Browser Telemetry Sensors"]
+        EBPF["Linux eBPF Probes & /proc Socket Tracing"]
+        ETW["Windows ETW, Minifilter Driver & Win32 API"]
+        HAR["Continuous HAR Web Traffic Inspector (#har-traffic)"]
+        AGENT["AI Agent Syscall & Tool Execution Streams"]
+    end
+
+    subgraph ENGINE["2. Rust High-Assurance Core Engine (OsoosiEDR)"]
+        COLL["Event Normalization & Zero-Copy Ring Buffers"]
+        SIQ["101-Table Siquery-RS SQLite Virtual Engine"]
+        REA["Autonomous REA Binary & Bytecode Decompiler"]
+        POL["PhaseLock Attractor & Byzantine Decision Voters"]
+        SAND["CanaryCage Multi-Ring Agent Sandbox"]
+    end
+
+    subgraph SWARM["3. Python AI Swarm & Adaptive Learning"]
+        LANG["LangGraph Multi-Agent Defense Swarm"]
+        SKY["SkyRL Active Defense Reinforcement Learning"]
+        ORAC["RFC Smuggling Oracles & Red-Team Gauntlets"]
+    end
+
+    subgraph STORAGE["4. Cryptographic Storage & Mesh Ledger"]
+        SQL["Local SQLite Database (threats, telemetry, audits)"]
+        MRK["BLAKE3 Hierarchical Merkle Hash Chain"]
+        MESH["P2P STIX/TAXII Threat Mesh (ML-KEM-768 / TFHE)"]
+    end
+
+    subgraph DEFENDER["5. Defender Operations & Integration"]
+        UI["Modern WebUI Dashboard (http://127.0.0.1:3030)"]
+        CLI["High-Speed CLI Utility (osoosi-cli)"]
+        REST["REST & WebSocket Event Streaming API"]
+    end
+
+    SENSORS --> COLL
+    COLL --> SIQ & REA & POL & SAND
+    POL <--> LANG & SKY
+    POL --> SQL & MRK
+    MRK --> MESH
+    SIQ & REA & POL & SQL --> UI & CLI & REST
+```
+
+---
+
 <a id="-twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
 <a id="twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
-## ⚛️ Twelve-Part Architecture of Zero & 7-Crate Physics Defense Engine (Cross-Platform Linux & Windows)
+## ⚛️ Advanced Architecture & Theoretical Foundations
+### ⚛️ Twelve-Part Architecture of Zero & 7-Crate Physics Defense Engine (Cross-Platform Linux & Windows)
 
 Rather than treating runtime security solely as a heuristic search for static strings, **OpenỌ̀ṣọ́ọ̀sì** embeds a **7-crate mathematical and physical defense workspace** that operationalizes nonlinear dynamics, statistical mechanics, constant-time solid-state cryptography, and the **Twelve-Part Architecture of Zero** across both **Linux** (`/proc` kernel socket/memory introspection, eBPF ring buffers) and **Windows** (ETW, Win32 process/conduit telemetry, WDAC):
 

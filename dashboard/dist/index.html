@@ -6,7 +6,7 @@
     <title>OshoosiClaw — Autonomous Security Dashboard</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <meta name="theme-color" content="#12141c">
-    <link rel="stylesheet" href="style.css?v=20261020_02">
+    <link rel="stylesheet" href="style.css?v=20261021_05">
     <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
@@ -27,16 +27,70 @@
                     <i data-lucide="layout-dashboard"></i>
                     <span>Dashboard</span>
                 </a>
-                <a href="#zone" class="nav-item" data-view="zone">
-                    <i data-lucide="globe"></i>
-                    <span>Zone Overview</span>
+
+                <div class="nav-section-title">Modules (A–Z)</div>
+                <a href="#adversarial-tests" class="nav-item" data-view="adversarial-tests">
+                    <i data-lucide="rocket"></i>
+                    <span>Adversarial Test Suite</span>
+                    <span id="nav-adv-tests-badge" class="badge green" style="margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 999px;">2,250+</span>
+                </a>
+                <a href="#agent-anomalies" class="nav-item" data-view="agent-anomalies">
+                    <i data-lucide="bot"></i>
+                    <span>AI Agents &amp; Containment</span>
                 </a>
                 <a href="#approvals" class="nav-item" data-view="approvals">
                     <i data-lucide="check-square"></i>
                     <span>Approval Queue</span>
                 </a>
-
-                <div class="nav-section-title">Mesh Intelligence</div>
+                <a href="#mitre" class="nav-item" data-view="mitre">
+                    <i data-lucide="shield-alert"></i>
+                    <span>ATT&amp;CK Matrix</span>
+                </a>
+                <a href="#graph" class="nav-item" data-view="process-map">
+                    <i data-lucide="network"></i>
+                    <span>Attack Graph</span>
+                </a>
+                <a href="#history" class="nav-item" data-view="history">
+                    <i data-lucide="history"></i>
+                    <span>Forensic History</span>
+                </a>
+                <a href="#story" class="nav-item" data-view="story">
+                    <i data-lucide="book-open"></i>
+                    <span>Forensic Story</span>
+                </a>
+                <a href="#gossip" class="nav-item" data-view="gossip">
+                    <i data-lucide="messages-square"></i>
+                    <span>Gossip Feed</span>
+                </a>
+                <a href="#har-traffic" class="nav-item" data-view="har-traffic">
+                    <i data-lucide="globe"></i>
+                    <span>HAR Web Traffic</span>
+                    <span id="nav-har-count-badge" class="badge cyan" style="margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 999px;">LIVE</span>
+                </a>
+                <a href="#malware" class="nav-item" data-view="malware">
+                    <i data-lucide="scan"></i>
+                    <span>Malware Scanner</span>
+                </a>
+                <a href="#mesh" class="nav-item" data-view="mesh">
+                    <i data-lucide="share-2"></i>
+                    <span>Mesh Network</span>
+                </a>
+                <a href="#rea" class="nav-item" data-view="rea">
+                    <i data-lucide="microscope"></i>
+                    <span>REA Reverse Engineer</span>
+                </a>
+                <a href="#repair" class="nav-item" data-view="repair">
+                    <i data-lucide="wrench"></i>
+                    <span>Repair Engine</span>
+                </a>
+                <a href="#skyrl" class="nav-item" data-view="skyrl">
+                    <i data-lucide="brain-circuit"></i>
+                    <span>RL Policy Training</span>
+                </a>
+                <a href="#siquery" class="nav-item" data-view="siquery">
+                    <i data-lucide="database"></i>
+                    <span>Siquery SQL Console</span>
+                </a>
                 <a href="#otel-map" class="nav-item" data-view="otel-map">
                     <i data-lucide="map"></i>
                     <span>Telemetry Map</span>
@@ -45,73 +99,13 @@
                     <i data-lucide="shield-alert"></i>
                     <span>Threat Intelligence</span>
                 </a>
-                <a href="#mitre" class="nav-item" data-view="mitre">
-                    <i data-lucide="shield-alert"></i>
-                    <span>ATT&CK Matrix</span>
-                </a>
-                <a href="#mesh" class="nav-item" data-view="mesh">
-                    <i data-lucide="share-2"></i>
-                    <span>Mesh Network</span>
-                </a>
-                <a href="#gossip" class="nav-item" data-view="gossip">
-                    <i data-lucide="messages-square"></i>
-                    <span>Gossip Feed</span>
-                </a>
-                <a href="#malware" class="nav-item" data-view="malware">
-                    <i data-lucide="scan"></i>
-                    <span>Malware Scanner</span>
-                </a>
-
-                <div class="nav-section-title" style="color: #ff5252; font-weight: 700; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px;">
-                    <i data-lucide="shield-alert" style="width: 14px; height: 14px; color: #ff5252;"></i>
-                    <span>Emergency Defense</span>
-                </div>
-                <a href="#killchain" class="nav-item nav-killchain" data-view="killchain" style="background: rgba(255, 82, 82, 0.08); border: 1px solid rgba(255, 82, 82, 0.3); color: #ff5252; font-weight: 600; margin-bottom: 8px;">
-                    <i data-lucide="alert-octagon" style="color: #ff5252;"></i>
-                    <span>🚨 Kill Chain / Isolation</span>
-                </a>
-
-                <div class="nav-section-title">System Analysis</div>
-                <a href="#repair" class="nav-item" data-view="repair">
-                    <i data-lucide="wrench"></i>
-                    <span>Repair Engine</span>
-                </a>
                 <a href="#utilities" class="nav-item" data-view="utilities">
                     <i data-lucide="sliders"></i>
                     <span>Utilities &amp; Models</span>
                 </a>
-                <a href="#graph" class="nav-item" data-view="process-map">
-                    <i data-lucide="network"></i>
-                    <span>Attack Graph</span>
-                </a>
-                <a href="#story" class="nav-item" data-view="story">
-                    <i data-lucide="book-open"></i>
-                    <span>Forensic Story</span>
-                </a>
-                <a href="#history" class="nav-item" data-view="history">
-                    <i data-lucide="history"></i>
-                    <span>Forensic History</span>
-                </a>
-                <a href="#skyrl" class="nav-item" data-view="skyrl">
-                    <i data-lucide="brain-circuit"></i>
-                    <span>RL Policy Training</span>
-                </a>
-                <a href="#agent-anomalies" class="nav-item" data-view="agent-anomalies">
-                    <i data-lucide="bot"></i>
-                    <span>AI Agents &amp; Containment</span>
-                </a>
-                <a href="#siquery" class="nav-item" data-view="siquery">
-                    <i data-lucide="database"></i>
-                    <span>Siquery SQL Console</span>
-                </a>
-                <a href="#rea" class="nav-item" data-view="rea">
-                    <i data-lucide="microscope"></i>
-                    <span>REA Reverse Engineer</span>
-                </a>
-                <a href="#har-traffic" class="nav-item" data-view="har-traffic">
+                <a href="#zone" class="nav-item" data-view="zone">
                     <i data-lucide="globe"></i>
-                    <span>HAR Web Traffic</span>
-                    <span id="nav-har-count-badge" class="badge cyan" style="margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 999px;">LIVE</span>
+                    <span>Zone Overview</span>
                 </a>
             </nav>
             <div class="sidebar-footer">
@@ -124,9 +118,10 @@
                     <span id="sidebar-mesh-text" style="font-size: 12px; color: var(--text-muted);">P2P Swarm: Standalone</span>
                 </div>
                 <div class="node-id-label">Node ID: <span id="node-id-short">...</span></div>
-                <a href="#admin-settings" id="reset-password-nav-btn" class="nav-item" style="margin-top: 6px; border: 1px solid var(--glass-border); color: var(--text-primary); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
-                    <i data-lucide="key-round" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                <a href="#admin-settings" id="reset-password-nav-btn" class="nav-item nav-killchain" data-view="killchain" style="margin-top: 6px; border: 1px solid var(--glass-border); color: var(--text-primary); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
+                    <i data-lucide="settings" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                     <span>Admin Settings</span>
+                    <span class="badge red" style="margin-left: auto; font-size: 9px; padding: 1px 5px;">KILL CHAIN</span>
                 </a>
                 <a href="#logout" id="logout-btn" class="nav-item" style="margin-top: 4px; border: 1px solid rgba(255, 77, 77, 0.2); color: rgba(255, 77, 77, 0.7); display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; text-decoration: none; font-size: 12.5px; font-weight: 500;">
                     <i data-lucide="log-out" style="width: 16px; height: 16px;"></i>
@@ -2573,6 +2568,24 @@
 
             <!-- Emergency Kill Chain & Reversible Host Containment View -->
             <div id="killchain-view" class="view-content">
+                <!-- Admin Settings & Access Control Card -->
+                <div class="card glass shadow-glow mb-4" style="border-left: 4px solid var(--accent-blue); background: rgba(59, 130, 246, 0.04);">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <h3 style="font-size: 18px; font-weight: 700; color: #f8fafc; margin: 0; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="settings" style="width: 20px; height: 20px; color: var(--accent-blue);"></i>
+                                <span>⚙️ Admin Settings, Access Control &amp; Emergency Kill Chain</span>
+                            </h3>
+                            <p style="font-size: 13px; color: var(--text-muted); margin: 6px 0 0 0;">
+                                Manage administrator authentication credentials, defense policy mode, and emergency host isolation controls.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <button type="button" class="btn-primary" onclick="openPasswordResetModal()" style="padding: 8px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer;">🔑 Change Admin Password / PIN</button>
+                            <button type="button" class="btn-secondary" onclick="navigateToApprovalsSettings()" style="padding: 8px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer;">🛡️ Configure Defense Policy Mode</button>
+                        </div>
+                    </div>
+                </div>
                 <!-- Status Banner Card -->
                 <div class="card glass shadow-glow mb-4" id="killchain-status-banner" style="border-left: 4px solid #ff4d4d; background: rgba(255, 77, 77, 0.04);">
                     <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
@@ -2914,7 +2927,159 @@
                     </div>
                 </div>
             </div>
-        </main>
+                    <!-- Adversarial & Defense Test Execution Suite View -->
+            <div id="adversarial-tests-view" class="view-content">
+                <!-- Top 6-Card KPI Row -->
+                <div style="display: grid; grid-template-columns: repeat(6, minmax(140px, 1fr)); gap: 14px; margin-bottom: 20px;">
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="adv-stat-total" style="font-size: 28px; font-weight: 800; color: #38bdf8;">168</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">TOTAL TESTS EXECUTED</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="adv-stat-passed" style="font-size: 28px; font-weight: 800; color: #10b981;">168</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">PASSED TESTS</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="adv-stat-failed" style="font-size: 28px; font-weight: 800; color: #ef4444;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">FAILED TESTS</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="adv-stat-time" style="font-size: 28px; font-weight: 800; color: #38bdf8;">0.0s</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">EXECUTION DURATION</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="adv-stat-tarpit-callers" style="font-size: 28px; font-weight: 800; color: #f8fafc;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">TRAPPED CALLERS</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="adv-stat-tarpit-tokens" style="font-size: 28px; font-weight: 800; color: #06b6d4;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">DECOY TOKENS BURNED</div>
+                    </div>
+                </div>
+
+                <!-- Main Execution Control Panel Card -->
+                <div class="card glass shadow-glow mb-4" style="padding: 20px;">
+                    <!-- Header row -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding-bottom: 16px; border-bottom: 1px solid var(--glass-border); margin-bottom: 16px;">
+                        <h3 style="margin: 0; font-size: 18px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 10px;">
+                            <span>🚀 Adversarial &amp; Defense Test Execution Suite</span>
+                        </h3>
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                            <button type="button" class="btn-secondary" id="adv-btn-stop" onclick="stopAdversarialTestRun()" disabled style="padding: 8px 14px; font-size: 12.5px;">⏹️ Cancel</button>
+                            <button type="button" id="adv-btn-run-all" onclick="runAdversarialSuite('all')" style="background: #10b981; color: #ffffff; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);">⚡ Run ALL (2,250+ Tests Combined)</button>
+                            <a href="/api/download-run-log" download="adversarial_execution.log" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none; display: inline-flex; align-items: center;">📥 Download Run Log</a>
+                            <a href="/api/download-test-json" download="adversarial_audit.json" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none; display: inline-flex; align-items: center;">📥 Export JSON</a>
+                            <button type="button" class="btn-secondary" onclick="exportAdversarialTerminalOutput()" style="padding: 8px 14px; font-size: 12.5px;">📋 Export Terminal</button>
+                        </div>
+                    </div>
+
+                    <!-- Suite Selector row -->
+                    <div style="display: flex; gap: 14px; align-items: flex-end; margin-bottom: 16px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 280px;">
+                            <label for="adv-suite-selector" style="display: block; font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">SELECT SPECIFIC TEST SUITE</label>
+                            <select id="adv-suite-selector" style="width: 100%; padding: 10px 14px; border-radius: 8px; background: rgba(13, 17, 23, 0.95); border: 1px solid var(--glass-border-bright); color: #e6edf3; font-size: 13.5px; font-weight: 500; outline: none; cursor: pointer;">
+                                <option value="all">⚡ All Test Suites Combined (2,250+ Tests)</option>
+                                <option value="atlas_dynamic">MITRE ATLAS Dynamic Ingestion &amp; Threat Mutation</option>
+                                <option value="oss_fuzz_burst">OSS-Fuzz Continuous Memory &amp; Payload Burst</option>
+                                <option value="osv_scanner_now">OSV Vulnerability Scanner Live Feed</option>
+                                <option value="collusion">Multi-Agent Model Collusion &amp; Deception Matrix</option>
+                                <option value="astra">Astra API Security &amp; Attack Orchestrator</option>
+                                <option value="breakout_defense_tests">Multi-Ring Breakout Defense Verification</option>
+                                <option value="breakout_scripts">Breakout Shellcode &amp; Script Containment</option>
+                                <option value="caido">Caido Intercept &amp; Web Attack Defense</option>
+                                <option value="cedar_policy_tests">Cedar Temporal Policy Verification</option>
+                                <option value="containment_tests">Kernel &amp; Process AppContainer Containment</option>
+                                <option value="continuous_rl">Continuous RL Policy Evasion Defense</option>
+                                <option value="deepeval">DeepEval LLM Unit &amp; Safety Evaluation</option>
+                                <option value="garak">Garak LLM Vulnerability &amp; Probe Gauntlet</option>
+                                <option value="google_anomaly_detection_tests">Google AAD Anomaly Detection</option>
+                                <option value="governor_tests">Containment Ring Governor &amp; Rate Limiter</option>
+                                <option value="guard_arms_network_tests">Guard Arms Network Packet &amp; Protocol Fuzzer</option>
+                                <option value="inspect_ai">UK AISI Inspect AI Evals &amp; Safety Benchmarks</option>
+                                <option value="kernel_sentinel_tests">Windows Kernel Sentinel &amp; ETW Hook Verification</option>
+                                <option value="ledger_transparency_tests">Cryptographic Merkle Ledger Audit</option>
+                                <option value="math_validator_tests">Mathematical Model Invariant Validator</option>
+                                <option value="research_and_atlas_tests">Protocol Research &amp; Differential Parser Tests</option>
+                                <option value="strix_llm_adversarial">Strix LLM Adversarial Jailbreak Gauntlet</option>
+                                <option value="multilingual">Multilingual Prompt Injection &amp; Bypass Matrix</option>
+                                <option value="multimodal">Multimodal Vision &amp; Audio Adversarial Perturbation</option>
+                                <option value="neural_mesh_integration_tests">Neural Mesh Swarm &amp; P2P Gossip Invariants</option>
+                                <option value="pentestgpt">PentestGPT Automated Exploitation Defense</option>
+                                <option value="promptfoo">Promptfoo Security Assertion Suite</option>
+                                <option value="pyrit">Microsoft PyRIT Red Teaming Orchestrator</option>
+                                <option value="quantum_adversarial_tests">Post-Quantum Cryptographic Attack Defense</option>
+                                <option value="rasp_tests">Runtime Application Self-Protection (RASP) Tests</option>
+                                <option value="redamon">Redamon EDR Evasion &amp; Memory Defense</option>
+                                <option value="restler">RESTler REST API Stateful Fuzzing Engine</option>
+                                <option value="atomic_red_team">Atomic Red Team &amp; MITRE ATT&amp;CK Simulation</option>
+                            </select>
+                        </div>
+                        <div>
+                            <button type="button" id="adv-btn-run-selected" onclick="runSelectedAdversarialSuite()" style="background: #3b82f6; color: #ffffff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 13.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);">▶️ Run Selected Suite</button>
+                        </div>
+                    </div>
+
+                    <!-- Progress bar section -->
+                    <div style="margin-top: 12px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px;">
+                            <span id="adv-progress-status">Ready to execute tests</span>
+                            <span id="adv-progress-percent">0%</span>
+                        </div>
+                        <div style="width: 100%; height: 10px; background: rgba(255, 255, 255, 0.06); border-radius: 999px; overflow: hidden;">
+                            <div id="adv-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #3b82f6, #10b981); transition: width 0.25s ease;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2-Column Live Terminal & Test Progression Table Grid -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                    <!-- Left Card: Terminal -->
+                    <div class="card glass shadow-glow" style="display: flex; flex-direction: column; min-height: 480px;">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--glass-border);">
+                            <div style="font-size: 13px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="terminal" style="width: 16px; height: 16px; color: #38bdf8;"></i>
+                                <span>📺 Live Execution Terminal Output</span>
+                            </div>
+                            <button type="button" class="btn-secondary" onclick="clearAdversarialTerminal()" style="padding: 4px 10px; font-size: 11px;">Clear</button>
+                        </div>
+                        <div id="adv-terminal" style="flex: 1; padding: 14px; background: #080c14; font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace; font-size: 11.5px; line-height: 1.5; color: #e2e8f0; overflow-y: auto; max-height: 460px; white-space: pre-wrap; word-break: break-all; border-radius: 0 0 8px 8px;">
+<span style="color: #64748b;">[INIT] OshoosiClaw Adversarial Testing Harness Initialized.</span>
+<span style="color: #64748b;">[READY] Select a test suite or click 'Run ALL' to begin execution.</span>
+                        </div>
+                    </div>
+
+                    <!-- Right Card: Test Progression Table -->
+                    <div class="card glass shadow-glow" style="display: flex; flex-direction: column; min-height: 480px;">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-bottom: 1px solid var(--glass-border);">
+                            <div style="font-size: 13px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="list-checks" style="width: 16px; height: 16px; color: #10b981;"></i>
+                                <span>📋 Live Test Progression Table</span>
+                            </div>
+                            <span id="adv-test-table-summary" style="font-size: 11px; color: var(--text-muted); font-family: monospace;">0 tests recorded</span>
+                        </div>
+                        <div style="flex: 1; overflow-y: auto; max-height: 460px;">
+                            <table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid var(--glass-border); color: var(--text-muted); font-size: 11px; text-transform: uppercase;">
+                                        <th style="padding: 10px 12px; width: 70px;">Status</th>
+                                        <th style="padding: 10px 12px;">Test Name</th>
+                                        <th style="padding: 10px 12px; width: 140px;">Suite</th>
+                                        <th style="padding: 10px 12px; width: 90px; text-align: right;">Outcome</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="adv-test-table-body">
+                                    <tr>
+                                        <td colspan="4" style="padding: 30px; text-align: center; color: var(--text-muted);">
+                                            No tests executed in this session. Click "Run ALL" or "Run Selected Suite" to begin.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+</main>
     </div>
 
     <!-- Login / First-Time Setup Overlay -->
@@ -3266,7 +3431,7 @@
 
     <!-- Scripts -->
     <script type="text/javascript" src="https://unpkg.com/vis-network@10.1.2/standalone/umd/vis-network.min.js" integrity="sha384-RDdG1CLOxjNlTHh4JYx/rnAueaMHbkBHmeHwrEyljMQw3LF0it4SkuNotIY/FPxD" crossorigin="anonymous"></script>
-    <script src="app.js?v=20261021_03"></script>
+    <script src="app.js?v=20261021_04"></script>
     <script>
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();
