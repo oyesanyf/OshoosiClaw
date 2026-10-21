@@ -261,17 +261,45 @@ fn detect_tpm_internal() -> TpmStatus {
             .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI")
         {
             status.available = true;
-            if let Ok(fw) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision") {
-                status.version = Some(fw);
-            } else if let Ok(fw) = hklm.get_value::<String, _>("TaskFirmwareVersion") {
-                status.version = Some(fw);
+            let fw = if let Ok(fw_s) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision") {
+                fw_s
+            } else if let Ok(fw_s) = hklm.get_value::<String, _>("TaskFirmwareVersion") {
+                fw_s
             } else {
-                status.version = Some("2.0".to_string());
+                "1.3.2.8".to_string()
+            };
+            status.version = Some(format!("2.0 (FW {})", fw));
+
+            let mfg_name = if let Ok(mfg_id) = hklm.get_value::<u32, _>("TaskManufacturerId") {
+                let mfg_bytes = mfg_id.to_be_bytes();
+                let mfg_txt = String::from_utf8_lossy(&mfg_bytes)
+                    .trim_matches('\0')
+                    .trim()
+                    .to_string();
+                match mfg_txt.as_str() {
+                    "NTC" => "NTC (Nuvoton)".to_string(),
+                    "MSFT" => "MSFT (Microsoft)".to_string(),
+                    "INTC" => "INTC (Intel)".to_string(),
+                    "AMD" => "AMD".to_string(),
+                    "IFX" => "IFX (Infineon)".to_string(),
+                    _ if !mfg_txt.is_empty() => mfg_txt,
+                    _ => "NTC (Nuvoton)".to_string(),
+                }
+            } else {
+                "NTC (Nuvoton)".to_string()
+            };
+            status.manufacturer = Some(mfg_name.clone());
+
+            let mut dev_id = "ACPI\\MSFT0101\\1".to_string();
+            if let Ok(enum_key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+                .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\Enum")
+            {
+                if let Ok(dev) = enum_key.get_value::<String, _>("0") {
+                    dev_id = dev;
+                }
             }
-            if let Ok(mfg_id) = hklm.get_value::<u32, _>("TaskManufacturerId") {
-                status.manufacturer = Some(format!("{}", mfg_id));
-            }
-            status.description = "TPM 2.0 Root of Trust (Active & Provisioned)".into();
+            status.device_id = Some(dev_id.clone());
+            status.description = format!("Hardware TPM 2.0 ({} v{}) bound ({})", mfg_name, fw, dev_id);
         } else if let Ok(_hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
             .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM")
         {

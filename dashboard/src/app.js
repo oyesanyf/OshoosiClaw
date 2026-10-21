@@ -1149,11 +1149,22 @@ async function updateDashboard() {
     // Watchdog: after 8000ms, unlock in-flight state to prevent any permanent lockup.
     const nowPoll = Date.now();
     if (state._pollInFlight && (nowPoll - (state._pollStartedAt || 0)) < 8000) return;
+    if (state._daemonOffline && (nowPoll - (state._lastOfflineProbeAt || 0)) < 9000) return;
     state._pollInFlight = true;
     state._pollStartedAt = nowPoll;
     try {
+        const status = await fetchAPI('/status', 3000);
+        if (!status) {
+            state._daemonOffline = true;
+            state._lastOfflineProbeAt = Date.now();
+            return;
+        }
+        if (state._daemonOffline) {
+            state._daemonOffline = false;
+            try { console.clear(); } catch (_) {}
+        }
+
         const results = await Promise.allSettled([
-            fetchAPI('/status', 3000),
             fetchAPI('/threats', 3000),
             fetchAPI('/mesh-stats', 3000),
             fetchAPI('/activity', 3000),
@@ -1164,7 +1175,6 @@ async function updateDashboard() {
             fetchAPI('/skyrl/v1/status', 3000)
         ]);
         const [
-            status,
             threats,
             mesh,
             activity,
@@ -1300,6 +1310,12 @@ async function updateDashboard() {
             }
             if (state.current_view === 'agent-anomalies') {
                 renderAgentAnomaliesView();
+            }
+            if (state.current_view === 'history') {
+                const histViewEl = document.getElementById('history-view');
+                if (threatsChanged || (histViewEl && histViewEl.querySelector('.oshoosi-view-fallback-card'))) {
+                    renderHistoryView(state.historyPage || 1);
+                }
             }
         }
 
@@ -1475,7 +1491,7 @@ async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
         }
     } catch (_) {}
     opts.headers = headers;
-    const timeoutMs = opts.timeoutMs || 4000;
+    const timeoutMs = opts.timeoutMs || 12000;
 
     let lastError = null;
     const normalizeAbortReason = (signal, err) => {
@@ -1578,6 +1594,31 @@ function showUserError(context, errorOrPayload, options = {}) {
 }
 
 /**
+ * Clear any stale fallback notification card inside a view container
+ */
+function clearViewFallbackCard(containerOrId) {
+    const el = typeof containerOrId === 'string' ? document.getElementById(containerOrId) : containerOrId;
+    if (!el) return;
+    el.querySelectorAll('.oshoosi-view-fallback-card').forEach(c => c.remove());
+}
+
+/**
+ * Retry the currently active view and clear any fallback banner
+ */
+function retryActiveView(containerId) {
+    if (containerId) {
+        clearViewFallbackCard(containerId);
+    }
+    document.querySelectorAll('.oshoosi-view-fallback-card').forEach(c => c.remove());
+    if (containerId === 'history-view' || state.current_view === 'history') {
+        renderHistoryView(state.historyPage || 1);
+    }
+    updateDashboard();
+}
+window.clearViewFallbackCard = clearViewFallbackCard;
+window.retryActiveView = retryActiveView;
+
+/**
  * Render resilient fallback notification card inside a view container
  */
 function renderViewFallbackCard(containerOrId, viewName, error) {
@@ -1591,6 +1632,7 @@ function renderViewFallbackCard(containerOrId, viewName, error) {
         return;
     }
 
+    const containerIdStr = typeof containerOrId === 'string' ? containerOrId : (el.id || '');
     const existing = el.querySelector('.oshoosi-view-fallback-card');
     if (existing) {
         const msgEl = existing.querySelector('.fallback-msg');
@@ -1615,7 +1657,7 @@ function renderViewFallbackCard(containerOrId, viewName, error) {
         <div style="padding:10px 14px; background:rgba(0,0,0,0.3); border-radius:8px; border-left:3px solid var(--accent-blue); font-size:12px; color:var(--text-muted); margin-bottom:14px;">
             <strong style="color:var(--accent-blue);">Actionable Guidance:</strong> ${escapeHtml(guidance)}
         </div>
-        <button class="btn btn-sm btn-outline" onclick="updateDashboard()" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+        <button class="btn btn-sm btn-outline" onclick="retryActiveView('${escapeHtml(containerIdStr)}')" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
             <i data-lucide="refresh-cw" style="width:13px; height:13px;"></i> Retry View
         </button>
     `;
@@ -1645,8 +1687,11 @@ window.showNotification = showNotification;
  * Helper to fetch from API with SLA timeout and structured error decoding
  */
 async function fetchAPI(endpoint, timeoutMs = 3500) {
+    if (state._daemonOffline && endpoint !== '/status') {
+        return null;
+    }
     try {
-        const response = await fetchWithRetry(`${API_BASE}${endpoint}`, { timeoutMs }, 2, 250);
+        const response = await fetchWithRetry(`${API_BASE}${endpoint}`, { timeoutMs }, 1, 250);
         if (!response.ok) {
             const errData = await response.json().catch(() => null);
             if (errData && errData.status === 'error') {
@@ -1658,8 +1703,10 @@ async function fetchAPI(endpoint, timeoutMs = 3500) {
         }
         return await response.json();
     } catch (err) {
-        console.warn('[UI Telemetry] Soft fallback for %s:', endpoint, err);
-        console.warn('API Error for %s:', endpoint, err);
+        if (endpoint === '/status') {
+            state._daemonOffline = true;
+            state._lastOfflineProbeAt = Date.now();
+        }
         return null;
     }
 }
@@ -7862,8 +7909,62 @@ function setupHistoryEvents() {
 /**
  * Fetch and Render History Records
  */
+function buildFallbackHistoryData(page = 1) {
+    if (state.lastHistoryData && Array.isArray(state.lastHistoryData.items)) {
+        return state.lastHistoryData;
+    }
+    const items = [];
+    const threats = Array.isArray(state.threats) ? state.threats : [];
+    for (let i = 0; i < threats.length; i++) {
+        const t = threats[i] || {};
+        items.push({
+            id: t.id || `threat-cache-${i}`,
+            timestamp: t.timestamp || new Date().toISOString(),
+            category: 'threat',
+            event_type: 'THREAT_DETECTED',
+            process_name: t.process_name || t.process || 'System',
+            mitre_technique: t.mitre_technique || null,
+            mitre_technique_name: t.mitre_technique_name || null,
+            severity: (t.confidence >= 0.85) ? 'critical' : 'high',
+            status: 'ALERTED',
+            summary: t.reason || t.summary || 'Detected security event',
+            details: t
+        });
+    }
+    const activity = Array.isArray(state.activity) ? state.activity : [];
+    for (let i = 0; i < activity.length; i++) {
+        const a = activity[i] || {};
+        items.push({
+            id: a.id || `audit-cache-${i}`,
+            timestamp: a.timestamp || new Date().toISOString(),
+            category: (a.type && a.type.includes('THREAT')) ? 'threat' : 'system',
+            event_type: a.type || 'AUDIT_EVENT',
+            process_name: a.process_name || a.process || 'System',
+            mitre_technique: a.mitre_technique || null,
+            mitre_technique_name: a.mitre_technique_name || null,
+            severity: 'low',
+            status: 'RESOLVED',
+            summary: a.message || a.summary || a.type || 'Audit trail record',
+            details: a
+        });
+    }
+    return {
+        items: items.slice(0, 50),
+        total_count: items.length,
+        page: page,
+        limit: 50,
+        total_pages: Math.max(1, Math.ceil(items.length / 50)),
+        total_events: items.length,
+        threats_count: threats.length,
+        actions_count: 0,
+        gossip_count: state.gossip_count || 0,
+        system_count: activity.length
+    };
+}
+
 async function renderHistoryView(page = 1) {
     state.historyPage = page;
+    clearViewFallbackCard('history-view');
     const tableBody = document.getElementById('history-table-body');
     const pageInfo = document.getElementById('history-page-info');
     const countLabel = document.getElementById('history-count-label');
@@ -7885,9 +7986,20 @@ async function renderHistoryView(page = 1) {
             params.set('search', state.historySearch);
         }
 
-        const res = await fetchWithRetry(`${API_BASE}/history?${params.toString()}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        let data = null;
+        try {
+            const res = await fetchWithRetry(`${API_BASE}/history?${params.toString()}`, { timeoutMs: 12000 }, 2);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            data = await res.json();
+            if (data && Array.isArray(data.items)) {
+                state.lastHistoryData = data;
+            }
+            clearViewFallbackCard('history-view');
+        } catch (fetchErr) {
+            console.warn('renderHistoryView using cached fallback during high I/O load:', fetchErr);
+            data = buildFallbackHistoryData(page);
+            clearViewFallbackCard('history-view');
+        }
 
         // Update stats
         if (totalEventsEl) totalEventsEl.innerText = data.total_events || data.total_count || 0;

@@ -38,6 +38,7 @@ pub mod hybrid_runtime;
 pub mod landlock;
 pub mod memory_watchdog;
 pub mod military;
+pub mod mitre;
 pub mod network;
 pub mod nostr_mesh;
 pub mod openshell;
@@ -1503,14 +1504,133 @@ pub struct EdrOrchestrator {
     pub siquery_engine: Arc<osoosi_agent_anomaly::SiqueryEngine>,
     /// Cached latest siquery EDR multi-table audit sweep telemetry
     pub siquery_last_telemetry: Arc<parking_lot::RwLock<Option<serde_json::Value>>>,
+    /// Autonomous MITRE ATT&CK + MITRE ATLAS™ STIX 2.1 Refresh Synchronizer
+    pub mitre_synchronizer: Arc<mitre::AutonomousMitreSynchronizer>,
+    /// RL Adaptive Controller (SkyRL-aligned multi-technique containment & voter weight optimization)
+    pub rl_controller: Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>>,
 }
 
 impl EdrOrchestrator {
+    /// Access the RL Adaptive Controller.
+    pub fn rl_controller(&self) -> Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>> {
+        self.rl_controller.clone()
+    }
+
     /// Access the synthetic canary correlator.
     pub fn canary_correlator(
         &self,
     ) -> Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>> {
         self.canary_correlator.clone()
+    }
+
+    /// Access the autonomous MITRE ATT&CK and ATLAS synchronizer.
+    pub fn mitre_synchronizer(&self) -> &Arc<mitre::AutonomousMitreSynchronizer> {
+        &self.mitre_synchronizer
+    }
+
+    /// Trigger on-demand autonomous refresh of MITRE ATT&CK + ATLAS STIX 2.1 catalog.
+    pub async fn trigger_autonomous_stix_atlas_refresh(
+        &self,
+    ) -> anyhow::Result<mitre::MitreRefreshTelemetry> {
+        self.mitre_synchronizer
+            .trigger_autonomous_stix_atlas_refresh()
+            .await
+    }
+
+    /// Process a verified CanaryAlert breach: triggers deterministic quorum isolation, RL reward update, and P2P swarm broadcast.
+    pub async fn handle_canary_alert(
+        &self,
+        alert: &osoosi_runtime::canary_cage::CanaryAlert,
+    ) -> anyhow::Result<()> {
+        info!(
+            "[CanaryTrap] Ephemeral Canary Breach detected: ID={} Session={} PID={} Trap={}",
+            alert.alert_id, alert.session_id, alert.pid, alert.trap_path
+        );
+
+        // 1. Build HostSecurityEvent injecting Canary indicators directly into event.data
+        let mut data = serde_json::Map::new();
+        data.insert("CanaryTrapTripped".to_string(), serde_json::json!(true));
+        data.insert("CanaryAlertId".to_string(), serde_json::json!(alert.alert_id));
+        data.insert("ProcessId".to_string(), serde_json::json!(alert.pid));
+        data.insert("SessionId".to_string(), serde_json::json!(alert.session_id));
+        data.insert("TrapKind".to_string(), serde_json::json!(alert.trap_kind));
+        data.insert("TrapPath".to_string(), serde_json::json!(alert.trap_path));
+        data.insert("Confidence".to_string(), serde_json::json!(1.00));
+        data.insert("PromptInjectionExfil".to_string(), serde_json::json!(true));
+        data.insert("SacrificialFracture".to_string(), serde_json::json!(true));
+        data.insert("SilkRegime".to_string(), serde_json::json!("SacrificialFracture"));
+        data.insert("StrainEpsilon".to_string(), serde_json::json!(1.0));
+
+        let event = osoosi_types::HostSecurityEvent {
+            source: if cfg!(target_os = "windows") {
+                osoosi_types::HostEventSource::WindowsEventLog
+            } else {
+                osoosi_types::HostEventSource::LinuxAudit
+            },
+            event_id: 9999,
+            timestamp: chrono::Utc::now(),
+            computer: hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "localhost".to_string()),
+            data: serde_json::Value::Object(data),
+            causal_parent: None,
+        };
+
+        // 2. Evaluate through PolicyEngine; Agentic-Escape-Detector & SpiderWeb-Containment both vote 1.00
+        let _decision = self.policy.scan_event(&event).await;
+
+        // 3. Update RLAdaptiveController with positive high-priority containment reward and voter nudges
+        {
+            let mut rl = self.rl_controller.write();
+            rl.record_canary_containment_reward();
+            rl.nudge_voter_weights();
+        }
+
+        // 4. Attribute CanaryAlert to ingested file/HAR BLAKE3 digest in FileLineageTracker / broadcast
+        if let Some(ref digest) = alert.attributed_file_digest {
+            osoosi_policy::traffic_adapter::register_swarm_poisoned_har_digest(digest);
+            self.broadcast_poisoned_digest_to_mesh(digest, &alert.session_id).await;
+        }
+
+        Ok(())
+    }
+
+    /// Broadcast poisoned payload digest to peer mesh with Hybrid PQC (ML-DSA-65 + Ed25519) and DP perturbed timestamp.
+    pub async fn broadcast_poisoned_digest_to_mesh(&self, digest: &str, session_id: &str) {
+        let raw_ts = chrono::Utc::now().timestamp();
+        let perturbed_ts = osoosi_dp::perturb_timestamp_csprng(raw_ts, 0.5);
+
+        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+        sig.id = format!("canary-poison-{}", &digest[..8.min(digest.len())]);
+        sig.confidence = 1.0;
+        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+        sig.hash_blake3 = Some(digest.to_string());
+        sig.reason = Some(format!(
+            "Canary Breach Immunization: Poisoned payload digest {} attributed to breached session {}",
+            digest, session_id
+        ));
+        sig.mitre_tactic = Some("TA0006".to_string());
+        sig.mitre_technique = Some("T1552.001".to_string());
+        sig.mitre_technique_name = Some("Credentials In Files: Ephemeral Canary Trap".to_string());
+        sig.detected_at = chrono::DateTime::from_timestamp(perturbed_ts, 0).unwrap_or_else(chrono::Utc::now);
+
+        // Sign with TrustManager Hybrid PQC
+        let payload = format!("{}:{}:{}", sig.id, digest, perturbed_ts);
+        let pqc_sig = self.trust.generate_pqc_hybrid_attestation_signature(payload.as_bytes());
+        sig.signature = Some(pqc_sig);
+
+        // Record locally and broadcast over mesh command channels
+        let _ = self.memory.log_threat(&sig);
+        self.record_gossip_threat(&sig, "CANARY_SWARM_IMMUNITY_BROADCAST");
+
+        let nostr = self.nostr_mesh.clone();
+        let sig_c = sig.clone();
+        tokio::spawn(async move {
+            let _ = nostr.broadcast_threat(sig_c).await;
+        });
+        if let Some(ref tx) = *self.mesh_command_tx.lock().await {
+            let _ = tx.try_send(osoosi_wire::MeshCommand::Broadcast(sig));
+        }
     }
 
     /// Trigger an embedded Velociraptor forensic sweep on-demand.
@@ -2220,7 +2340,7 @@ impl EdrOrchestrator {
             });
         let tpm_row = engine
             .execute_query(
-                "SELECT tpm_present, tpm_ready, manufacturer_version FROM tpm_info LIMIT 1;",
+                "SELECT spec_version, manufacturer_id, manufacturer_name, manufacturer_version, enabled, activated, owned, tpm_present, tpm_ready, device_id FROM tpm_info LIMIT 1;",
             )
             .ok()
             .and_then(|mut r| {
@@ -3854,6 +3974,15 @@ impl EdrOrchestrator {
         let siquery_last_telemetry = Arc::new(parking_lot::RwLock::new(None));
         info!("[SIQUERY] Native in-process relational SQL engine initialized (41 tables).");
 
+        let mitre_synchronizer = Arc::new(mitre::AutonomousMitreSynchronizer::new(mesh_command_tx.clone()));
+        mitre::AutonomousMitreSynchronizer::start_background_refresh_loop(mitre_synchronizer.clone());
+        info!("[MITRE-STIX] Autonomous MITRE ATT&CK + ATLAS STIX 2.1 refresh loop started.");
+
+        let rl_controller = Arc::new(parking_lot::RwLock::new(
+            osoosi_agent_anomaly::RLAdaptiveController::new(),
+        ));
+        info!("[RL-CONTROLLER] RL Adaptive Controller initialized (SkyRL MDP & Action Masking).");
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -3933,6 +4062,8 @@ impl EdrOrchestrator {
             agent_anomaly_detector,
             siquery_engine,
             siquery_last_telemetry,
+            mitre_synchronizer,
+            rl_controller,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -9930,7 +10061,7 @@ impl EdrOrchestrator {
 
         // 2. If buffer has fewer items than limit (e.g. after fresh restart), backfill from audit entries
         if items.len() < limit {
-            let audit_entries = self.audit.entries();
+            let audit_entries = self.audit.get_recent_entries(250);
             let mut seen_ids = std::collections::HashSet::new();
             for item in &items {
                 seen_ids.insert(item.id.clone());

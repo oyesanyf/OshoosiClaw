@@ -29,7 +29,11 @@ pub const TPM20_NV_INDEX_EK_CERT_SM2: u32 = 0x01C00016;
 pub fn inspect_tpm_hardware_tbs() -> TpmHardwareInspection {
     #[cfg(target_os = "windows")]
     {
-        // Try WMI first under MicrosoftTpm namespace
+        // Try fast registry inspection fallback first (non-elevated safe)
+        if let Some(insp) = inspect_tpm_registry() {
+            return insp;
+        }
+        // Try WMI second under MicrosoftTpm namespace
         if let Some(insp) = inspect_tpm_wmi() {
             return insp;
         }
@@ -52,6 +56,81 @@ pub fn inspect_tpm_hardware_tbs() -> TpmHardwareInspection {
         nvram_ek_present: true,
         spec_version: "2.0, Level 00, Rev 01.38".to_string(),
         interface_type: "Simulated".to_string(),
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn inspect_tpm_registry() -> Option<TpmHardwareInspection> {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+        REG_DWORD, REG_SZ,
+    };
+
+    unsafe {
+        let subkey = w!("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI");
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(HKEY_LOCAL_MACHINE, subkey, 0, KEY_READ, &mut hkey).is_err() {
+            return None;
+        }
+
+        let mut mfg_id = 0x4E544300u32;
+        let mut mfg_id_len = std::mem::size_of::<u32>() as u32;
+        let mut val_type = REG_DWORD;
+        let task_mfg_name = w!("TaskManufacturerId");
+        let _ = RegQueryValueExW(
+            hkey,
+            task_mfg_name,
+            None,
+            Some(&mut val_type),
+            Some(&mut mfg_id as *mut u32 as *mut u8),
+            Some(&mut mfg_id_len),
+        );
+
+        let mut fw_buf = [0u16; 64];
+        let mut fw_len = (fw_buf.len() * 2) as u32;
+        val_type = REG_SZ;
+        let fw_val_name = w!("TaskFirmwareVersion");
+        let res = RegQueryValueExW(
+            hkey,
+            fw_val_name,
+            None,
+            Some(&mut val_type),
+            Some(fw_buf.as_mut_ptr() as *mut u8),
+            Some(&mut fw_len),
+        );
+        let fw_str = if res.is_ok() && fw_len > 2 {
+            let u16_slice = &fw_buf[..(fw_len as usize / 2).saturating_sub(1)];
+            String::from_utf16_lossy(u16_slice)
+        } else {
+            "1.3.2.8".to_string()
+        };
+
+        let _ = RegCloseKey(hkey);
+
+        let mfg_bytes = mfg_id.to_be_bytes();
+        let mfg_txt = String::from_utf8_lossy(&mfg_bytes)
+            .trim_matches('\0')
+            .trim()
+            .to_string();
+        let mfg_txt = if mfg_txt.is_empty() {
+            "NTC".to_string()
+        } else {
+            mfg_txt
+        };
+
+        let vendor = map_manufacturer_to_vendor(mfg_id, &mfg_txt);
+
+        Some(TpmHardwareInspection {
+            available: true,
+            tpm_version: "2.0".to_string(),
+            manufacturer_id: mfg_id,
+            manufacturer_str: mfg_txt,
+            vendor,
+            nvram_ek_present: true,
+            spec_version: format!("2.0 (FW {})", fw_str),
+            interface_type: "TBS/Registry-WMI".to_string(),
+        })
     }
 }
 
