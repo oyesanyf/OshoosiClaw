@@ -18,6 +18,7 @@ pub struct GhostCanary {
 
 pub struct CanaryManager {
     base_dirs: Vec<PathBuf>,
+    deployed_cache: std::sync::RwLock<Vec<String>>,
 }
 
 impl Default for CanaryManager {
@@ -49,7 +50,10 @@ impl CanaryManager {
             }
         }
 
-        Self { base_dirs }
+        Self {
+            base_dirs,
+            deployed_cache: std::sync::RwLock::new(Vec::new()),
+        }
     }
 
     /// Deploy a set of Ghost Traps across the system.
@@ -116,6 +120,10 @@ impl CanaryManager {
                 }
             }
         }
+        let paths: Vec<String> = deployed.iter().map(|c| c.path.to_string_lossy().to_string()).collect();
+        if let Ok(mut lock) = self.deployed_cache.write() {
+            *lock = paths;
+        }
         deployed
     }
 
@@ -134,6 +142,11 @@ impl CanaryManager {
 
     /// Return the paths of all currently deployed Ghost Trap decoy files.
     pub fn list_canaries(&self) -> Vec<String> {
+        if let Ok(lock) = self.deployed_cache.read() {
+            if !lock.is_empty() {
+                return lock.clone();
+            }
+        }
         let decoys = [
             "passwords_2025.txt",
             "client_billing_records.xlsx",
@@ -149,6 +162,9 @@ impl CanaryManager {
                     result.push(p.to_string_lossy().to_string());
                 }
             }
+        }
+        if let Ok(mut lock) = self.deployed_cache.write() {
+            *lock = result.clone();
         }
         result
     }

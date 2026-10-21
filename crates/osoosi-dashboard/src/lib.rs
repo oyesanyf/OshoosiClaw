@@ -3448,13 +3448,7 @@ pub async fn enrich_deception_telemetry(state: &DashboardState, val: &mut Value)
 
         if let Some(orch) = &state.backend {
             for c_path in orch.canary.list_canaries() {
-                let p = std::path::Path::new(&c_path);
-                let digest = if p.exists() {
-                    osoosi_agent_anomaly::file_lineage::FileLineageTracker::compute_file_blake3(p)
-                        .unwrap_or_else(|_| blake3::hash(c_path.as_bytes()).to_hex().to_string())
-                } else {
-                    blake3::hash(c_path.as_bytes()).to_hex().to_string()
-                };
+                let digest = blake3::hash(c_path.as_bytes()).to_hex().to_string();
                 immunized_hashes.push(json!({
                     "digest": digest,
                     "reason": "Ghost Canary Honey-File".to_string(),
