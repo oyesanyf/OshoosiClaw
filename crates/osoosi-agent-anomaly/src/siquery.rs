@@ -870,6 +870,148 @@ impl SiqueryEngine {
 
         Ok(out)
     }
+    /// Fast, dedicated collector for `har_entries` without populating the other 97 Siquery tables.
+    /// Used by the continuous background HAR Web Traffic sensor and `/api/har/entries`.
+    pub fn collect_live_har_entries_fast(&self, limit: usize) -> Vec<serde_json::Value> {
+        let conn = match Connection::open_in_memory() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+
+        let schema = "CREATE TABLE har_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file TEXT,
+            started_at TEXT,
+            method TEXT,
+            url TEXT,
+            host TEXT,
+            status INTEGER,
+            mime_type TEXT,
+            server_ip TEXT,
+            request_bytes INTEGER,
+            response_bytes INTEGER,
+            duration_ms REAL,
+            threat_score REAL,
+            threat_tags TEXT,
+            verdict TEXT
+        );";
+
+        if conn.execute(schema, []).is_err() {
+            return Vec::new();
+        }
+
+        let _ = Self::populate_har_entries(&conn);
+
+        struct RawHarRow {
+            id: i64,
+            source_file: String,
+            started_at: String,
+            method: String,
+            url: String,
+            host: String,
+            status: i64,
+            mime_type: String,
+            server_ip: String,
+            request_bytes: i64,
+            response_bytes: i64,
+            duration_ms: f64,
+            threat_score: f64,
+            threat_tags: String,
+            verdict: String,
+        }
+
+        let mut raw_rows = Vec::new();
+        if let Ok(mut stmt) = conn.prepare("SELECT id, source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict FROM har_entries ORDER BY started_at DESC, id DESC LIMIT 1000;") {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok(RawHarRow {
+                    id: row.get::<_, i64>(0).unwrap_or(0),
+                    source_file: row.get::<_, String>(1).unwrap_or_default(),
+                    started_at: row.get::<_, String>(2).unwrap_or_default(),
+                    method: row.get::<_, String>(3).unwrap_or_default(),
+                    url: row.get::<_, String>(4).unwrap_or_default(),
+                    host: row.get::<_, String>(5).unwrap_or_default(),
+                    status: row.get::<_, i64>(6).unwrap_or(200),
+                    mime_type: row.get::<_, String>(7).unwrap_or_default(),
+                    server_ip: row.get::<_, String>(8).unwrap_or_default(),
+                    request_bytes: row.get::<_, i64>(9).unwrap_or(0),
+                    response_bytes: row.get::<_, i64>(10).unwrap_or(0),
+                    duration_ms: row.get::<_, f64>(11).unwrap_or(0.0),
+                    threat_score: row.get::<_, f64>(12).unwrap_or(0.0),
+                    threat_tags: row.get::<_, String>(13).unwrap_or_default(),
+                    verdict: row.get::<_, String>(14).unwrap_or_else(|_| "benign".to_string()),
+                })
+            }) {
+                for r in rows.filter_map(|r| r.ok()) {
+                    raw_rows.push(r);
+                }
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        let mut deduped = Vec::new();
+        let target_limit = limit.max(1);
+
+        for item in raw_rows {
+            let key = (
+                item.method.to_uppercase(),
+                item.url.clone(),
+                item.source_file.clone(),
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+
+            let digest = blake3::hash(
+                format!(
+                    "{}:{}:{}:{}:{}",
+                    item.method, item.url, item.status, item.response_bytes, item.started_at
+                )
+                .as_bytes(),
+            )
+            .to_hex()
+            .to_string();
+
+            let mut threat_score = item.threat_score;
+            let mut verdict = item.verdict;
+            let mut threat_tags = item.threat_tags;
+
+            if osoosi_policy::traffic_adapter::is_swarm_poisoned_har_digest(&digest) {
+                threat_score = 0.99;
+                verdict = "malicious".to_string();
+                if threat_tags.is_empty() {
+                    threat_tags = "SWARM_POISONED_LINEAGE".to_string();
+                } else if !threat_tags.contains("SWARM_POISONED_LINEAGE") {
+                    threat_tags = format!("{}, SWARM_POISONED_LINEAGE", threat_tags);
+                }
+            }
+
+            deduped.push(serde_json::json!({
+                "id": item.id,
+                "source_file": item.source_file,
+                "started_at": item.started_at,
+                "method": item.method,
+                "url": item.url,
+                "host": item.host,
+                "status": item.status,
+                "mime_type": item.mime_type,
+                "server_ip": item.server_ip,
+                "request_bytes": item.request_bytes,
+                "response_bytes": item.response_bytes,
+                "duration_ms": item.duration_ms,
+                "threat_score": threat_score,
+                "threat_tags": threat_tags,
+                "verdict": verdict,
+                "hash_blake3": digest,
+            }));
+
+            if deduped.len() >= target_limit {
+                break;
+            }
+        }
+
+        deduped
+    }
+
 
     /// Displays the schema of a specific table using PRAGMA table_info formatted as an ASCII box table.
     pub fn get_table_schema(&self, table: &str) -> Result<String, String> {
@@ -4898,21 +5040,123 @@ impl SiqueryEngine {
                             }
                         }
                     }
+
+                    // Ingest recent downloads from the same temp_path SQLite copy
+                    if let Ok(mut dl_stmt) = src_conn.prepare("SELECT target_path, tab_url, mime_type, total_bytes, datetime(start_time / 1000000 - 11644473600, 'unixepoch'), danger_type FROM downloads ORDER BY start_time DESC LIMIT 25;") {
+                        if let Ok(rows) = dl_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, String>(2).unwrap_or_default(),
+                                row.get::<_, i64>(3).unwrap_or(0),
+                                row.get::<_, String>(4).unwrap_or_default(),
+                                row.get::<_, i64>(5).unwrap_or(0),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (_target_path, tab_url, mime_type, total_bytes, start_time, danger_type) = r;
+                                if tab_url.is_empty() {
+                                    continue;
+                                }
+                                let host = if let Ok(parsed) = url::Url::parse(&tab_url) {
+                                    parsed.host_str().unwrap_or("").to_string()
+                                } else {
+                                    tab_url.split("://").nth(1).unwrap_or(&tab_url).split('/').next().unwrap_or("").split(':').next().unwrap_or("").to_string()
+                                };
+                                let (mut score, mut verdict) = Self::score_url_risk(&tab_url);
+                                if danger_type > 0 {
+                                    score = score.max(0.85);
+                                    verdict = "suspicious";
+                                }
+                                let started_at = if start_time.is_empty() {
+                                    chrono::Utc::now().to_rfc3339()
+                                } else {
+                                    start_time
+                                };
+                                let m_type = if mime_type.is_empty() {
+                                    "application/octet-stream".to_string()
+                                } else {
+                                    mime_type
+                                };
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    format!("browser_download:{}", browser.to_ascii_lowercase()),
+                                    started_at,
+                                    "GET",
+                                    tab_url,
+                                    host,
+                                    200i64,
+                                    m_type,
+                                    "",
+                                    0i64,
+                                    total_bytes,
+                                    10.0f64,
+                                    score,
+                                    if score > 0.0 { "SUSPICIOUS_DOWNLOAD" } else { "" },
+                                    verdict,
+                                ]);
+                                count += 1;
+                            }
+                        }
+                    }
                 }
                 let _ = std::fs::remove_file(&temp_path);
             }
         }
 
-        // 2d. Ingest active web socket connections on port 80, 443, 8080, 8443
+        // 2d. Ingest active web socket connections on port 80, 443, 8080, 8443, 3000, 3030, 5000, 11434
         #[cfg(target_os = "windows")]
         {
+            use std::collections::HashMap;
+
+            // 1. Lightweight DNS cache lookup map (IP -> domain)
+            let mut dns_map: HashMap<String, String> = HashMap::new();
+            dns_map.insert("127.0.0.1".to_string(), "localhost".to_string());
+            dns_map.insert("::1".to_string(), "localhost".to_string());
+
+            use std::os::windows::process::CommandExt;
+            if let Ok(output) = std::process::Command::new("ipconfig")
+                .creation_flags(0x08000000)
+                .arg("/displaydns")
+                .output()
+            {
+                if output.status.success() {
+                    let text = String::from_utf8_lossy(&output.stdout);
+                    let mut cur_name = String::new();
+                    for line in text.lines() {
+                        let tr = line.trim();
+                        if tr.starts_with("Record Name") {
+                            if let Some(n) = tr.split(':').nth(1) {
+                                cur_name = n.trim().to_string();
+                            }
+                        } else if (tr.starts_with("A (Host) Record") || tr.starts_with("AAAA Record")) && !cur_name.is_empty() {
+                            if let Some(d) = tr.split(':').nth(1) {
+                                let ip = d.trim().to_string();
+                                if !ip.is_empty() {
+                                    dns_map.insert(ip, cur_name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. PID -> Process Name map
+            let mut proc_map: HashMap<u32, String> = HashMap::new();
+            let sys = sysinfo::System::new_with_specifics(
+                sysinfo::RefreshKind::new().with_processes(sysinfo::ProcessRefreshKind::new()),
+            );
+            for (pid, process) in sys.processes() {
+                proc_map.insert(pid.as_u32(), format!("{}", process.name()));
+            }
+
+            let candidate_ports = [80, 443, 8080, 8443, 3000, 3030, 5000, 11434];
             let tcp4 = get_tcp_ipv4_table();
             for row in tcp4 {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
                 let local_port = u16::from_be(row.dwLocalPort as u16);
-                let web_port = if [80, 443, 8080, 8443].contains(&remote_port) {
+                let web_port = if candidate_ports.contains(&remote_port) {
                     remote_port
-                } else if [80, 443, 8080, 8443].contains(&local_port) {
+                } else if candidate_ports.contains(&local_port) {
                     local_port
                 } else {
                     continue;
@@ -4921,23 +5165,37 @@ impl SiqueryEngine {
                 if remote_ip == "0.0.0.0" {
                     continue;
                 }
+                let host = dns_map.get(&remote_ip).cloned().unwrap_or_else(|| remote_ip.clone());
+                let proc_name = proc_map.get(&(row.dwOwningPid as u32));
+                let source_file = match proc_name {
+                    Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
+                    _ => "active_socket:tcp".to_string(),
+                };
                 let scheme = if web_port == 443 || web_port == 8443 { "https" } else { "http" };
-                let url = format!("{}://{}:{}/", scheme, remote_ip, web_port);
+                let url = format!("{}://{}:{}/", scheme, host, web_port);
+                let (mut score, mut verdict) = Self::score_url_risk(&url);
+                // For local loopback 127.0.0.1:3030 or 127.0.0.1:11434 on active local sockets,
+                // keep score 0.0 / "benign" unless path has suspicious tokens.
+                if (remote_ip == "127.0.0.1" || host == "localhost") && (web_port == 3030 || web_port == 11434 || web_port == 3000 || web_port == 5000) {
+                    score = 0.0;
+                    verdict = "benign";
+                }
+                let threat_tags = if score > 0.0 { "SUSPICIOUS_SOCKET" } else { "" };
                 let _ = insert_stmt.execute(rusqlite::params![
-                    "active_socket:tcp",
+                    source_file,
                     chrono::Utc::now().to_rfc3339(),
                     "CONNECT",
                     url,
-                    remote_ip.clone(),
+                    host,
                     200i64,
                     "application/octet-stream",
                     remote_ip,
                     1024i64,
                     4096i64,
                     10.0f64,
-                    0.0f64,
-                    "",
-                    "benign",
+                    score,
+                    threat_tags,
+                    verdict,
                 ]);
                 count += 1;
             }
@@ -8348,6 +8606,19 @@ mod tests {
             !physics_rows.is_empty(),
             "agent_mercury_physics must contain at least 1 active lineage row"
         );
+    }
+
+    #[test]
+    fn test_collect_live_har_entries_fast() {
+        let engine = SiqueryEngine::new();
+        let entries = engine.collect_live_har_entries_fast(25);
+        assert!(!entries.is_empty(), "collect_live_har_entries_fast must return entries");
+        for entry in &entries {
+            assert!(entry.get("method").is_some(), "Entry must contain method");
+            assert!(entry.get("url").is_some(), "Entry must contain url");
+            assert!(entry.get("verdict").is_some(), "Entry must contain verdict");
+            assert!(entry.get("risk_score").is_some(), "Entry must contain risk_score");
+        }
     }
 
     #[test]
