@@ -129,6 +129,26 @@ impl MemoryStore {
         Ok(affected)
     }
 
+    pub fn delete_threats_matching_process_substring(&self, substr: &str) -> anyhow::Result<usize> {
+        let trimmed = substr.trim();
+        if trimmed.is_empty() {
+            return Ok(0);
+        }
+        let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(50)) else {
+            return Ok(0);
+        };
+        let pattern = format!("%{}%", trimmed.to_ascii_lowercase());
+        let deleted = conn.execute(
+            "DELETE FROM threats WHERE LOWER(COALESCE(process_name, '')) LIKE ?1 OR LOWER(COALESCE(file_path, '')) LIKE ?1 OR LOWER(COALESCE(reason, '')) LIKE ?1",
+            [&pattern],
+        )?;
+        drop(conn);
+        if deleted > 0 {
+            self.invalidate_recent_threats_cache();
+        }
+        Ok(deleted)
+    }
+
     pub fn purge_vetoed_and_false_positive_threats(&self) -> anyhow::Result<usize> {
         let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(40)) else {
             return Ok(0);
@@ -142,6 +162,8 @@ impl MemoryStore {
                 OR reason LIKE '%CVE None%'
                 OR reason LIKE '%Autonomous REA Verified Clean%'
                 OR reason LIKE '%Execution Of Non-Existing File%'
+                OR reason LIKE '%unknown v0.0.0 has known cves%'
+                OR reason LIKE '%cve-2009-2940%'
                 OR process_name = '<unknown process>'
                 OR process_name = 'unknown'
                 OR LOWER(COALESCE(process_name, '')) IN (
@@ -156,6 +178,15 @@ impl MemoryStore {
                     'lsass.exe', 'csrss.exe', 'services.exe', 'wininit.exe', 'winlogon.exe',
                     'dwm.exe', 'sihost.exe', 'taskhostw.exe', 'dllhost.exe', 'ctfmon.exe',
                     'runtimebroker.exe', 'runtimebroker.', 'smartscreen.exe', 'smartscreen.ex',
+                    'appidcertstorecheck.exe', 'appidcertstore', 'mousocoreworker.exe', 'mousocoreworke',
+                    'wuaucltcore.exe', 'wuauclt.exe', 'usoclient.exe', 'uhssvc.exe', 'sihclient.exe',
+                    'microsoftstartfeedprovider.exe', 'microsoftstart', 'widgets.exe', 'widgetservice.exe',
+                    'zoom.exe', 'cpthost.exe', 'docker-credential-desktop.exe', 'docker-credential-wincred.exe',
+                    'docker-credent', 'scdaemon.exe', 'gpg-agent.exe', 'gpg.exe', 'gpgsm.exe', 'dirmngr.exe',
+                    'ollama.exe', 'ollama_llama_server.exe', 'llama-server.exe', 'llama-server.e',
+                    'cvtres.exe', 'rc.exe', 'lib.exe', 'ml64.exe', 'py.exe', 'py312.exe', 'py311.exe', 'py313.exe',
+                    'python3.11.exe', 'python3.12.exe', 'rg.exe', 'rg_embedded-7a', 'rg_embedded',
+                    'm2d_verification.exe', 'm2d_verificati',
                     'searchhost.exe', 'searchindexer.exe', 'searchprotocolhost.exe', 'searchfilterhost.exe',
                     'startmenuexperiencehost.exe', 'shellexperiencehost.exe', 'applicationframehost.exe',
                     'textinputhost.exe', 'spoolsv.exe', 'audiodg.exe', 'fontdrvhost.exe',

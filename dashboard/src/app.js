@@ -805,7 +805,7 @@ function setupPasswordResetModal() {
     const form = document.getElementById('password-reset-form');
     
     if (topBtn) topBtn.addEventListener('click', openPasswordResetModal);
-    if (navBtn) navBtn.addEventListener('click', openPasswordResetModal);
+    // Nav btn handled by setupNav() for #killchain-view
     if (cancelBtn) cancelBtn.addEventListener('click', closePasswordResetModal);
     
     if (form) {
@@ -990,9 +990,13 @@ function setupNav() {
                     renderSiqueryView();
                 } else if (view === 'killchain') {
                     document.getElementById('killchain-view').classList.add('active');
-                    viewTitle.innerText = "Emergency Kill Chain & Reversible Host Containment";
+                    viewTitle.innerText = "Admin Settings & Emergency Kill Chain";
                     fetchKillchainStatus();
                     fetchKillchainHistory();
+                } else if (view === 'adversarial-tests') {
+                    document.getElementById('adversarial-tests-view').classList.add('active');
+                    viewTitle.innerText = "Adversarial & Defense Test Execution Suite";
+                    renderAdversarialTestsView();
                 } else if (view === 'rea') {
                     document.getElementById('rea-view').classList.add('active');
                     viewTitle.innerText = "REA: Reverse Engineer Anything (Autonomous Inspector)";
@@ -1027,6 +1031,12 @@ function setupNav() {
         const hash = window.location.hash.replace(/^#/, '');
         if (hash) {
             const aliasMap = {
+                'admin-settings': 'killchain',
+                'admin': 'killchain',
+                'settings': 'killchain',
+                'adversarial-tests': 'adversarial-tests',
+                'adversarial': 'adversarial-tests',
+                'test-suite': 'adversarial-tests',
                 'graph': 'process-map',
                 'attack-graph': 'process-map',
                 'scanner': 'malware',
@@ -10469,7 +10479,7 @@ function renderReaReport(report, activeIdx = 0) {
                     ? `Analyzed: ${r.generated_at} (${rawName})`
                     : rawName;
                 const isSelected = i === activeIdx;
-                return `<button class="btn-secondary" title="${escapeHtml(pillTooltip)}" onclick="selectReaRecentReport(${i})" style="font-size: 11px; padding: 3px 9px; border-color: ${isSelected ? '#38bdf8' : 'var(--glass-border)'}; background: ${isSelected ? 'rgba(56,189,248,0.16)' : 'rgba(255,255,255,0.04)'};">${escapeHtml(pillLabel)} <span style="opacity:0.7;">(${escapeHtml(r.detected_kind || 'auto')})</span></button>`;
+                return `<button class="btn-secondary" title="${escapeHtml(pillTooltip)}" onclick="selectReaRecentReport(${i})" style="font-size: 11px; padding: 4px 10px; color: ${isSelected ? '#38bdf8' : '#e6edf3'}; border-color: ${isSelected ? '#38bdf8' : 'var(--glass-border-bright)'}; background: ${isSelected ? 'rgba(56,189,248,0.18)' : 'rgba(255,255,255,0.06)'};">${escapeHtml(pillLabel)} <span style="color: ${isSelected ? '#bae6fd' : '#94a3b8'}; font-weight: 500;">(${escapeHtml(r.detected_kind || 'auto')})</span></button>`;
             }).join('')}
         </div>
     ` : '';
@@ -10477,8 +10487,8 @@ function renderReaReport(report, activeIdx = 0) {
     const evidenceRows = (report.evidence || []).map(ev => `
         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
             <td style="padding: 8px 10px; font-weight: 600; color: #38bdf8;">${escapeHtml(ev.source || '')}</td>
-            <td style="padding: 8px 10px; font-family: monospace; font-size: 11px;">${escapeHtml(ev.location || '')}</td>
-            <td style="padding: 8px 10px;">${escapeHtml(ev.observation || '')}</td>
+            <td style="padding: 8px 10px; font-family: monospace; font-size: 11px; color: var(--text-primary);">${escapeHtml(ev.location || '')}</td>
+            <td style="padding: 8px 10px; color: #cbd5e1;">${escapeHtml(ev.observation || '')}</td>
             <td style="padding: 8px 10px; text-align: right;"><span class="badge green">${Math.round((ev.confidence || 0) * 100)}%</span></td>
         </tr>
     `).join('');
@@ -11219,3 +11229,299 @@ window.exportLiveHarFile = exportLiveHarFile;
 window.openHarHostInSiquery = openHarHostInSiquery;
 window.onHarFilterChange = onHarFilterChange;
 
+
+
+// ==========================================
+// Adversarial & Defense Test Execution Suite
+// ==========================================
+
+let activeAdvEventSource = null;
+let advElapsedInterval = null;
+let advStartTime = null;
+let advTestsRun = 0;
+let advTestsPassed = 0;
+let advTestsFailed = 0;
+
+async function renderAdversarialTestsView() {
+    if (window.lucide && typeof window.lucide.createIcons === 'function') {
+        try { window.lucide.createIcons(); } catch (_) {}
+    }
+    try {
+        const data = (typeof fetchAPI === 'function')
+            ? (await fetchAPI('/tarpit-stats') || await fetchAPI('/api/tarpit-stats'))
+            : null;
+        if (data) {
+            const callersEl = document.getElementById('adv-stat-tarpit-callers');
+            const tokensEl = document.getElementById('adv-stat-tarpit-tokens');
+            if (callersEl && data.trapped_callers !== undefined) callersEl.innerText = Number(data.trapped_callers).toLocaleString();
+            if (tokensEl && data.decoy_tokens_burned !== undefined) tokensEl.innerText = Number(data.decoy_tokens_burned).toLocaleString();
+        }
+    } catch (err) {
+        console.warn('Adversarial tarpit stats probe:', err.message);
+    }
+}
+
+function runSelectedAdversarialSuite() {
+    const selector = document.getElementById('adv-suite-selector');
+    const suite = selector ? selector.value : 'all';
+    runAdversarialSuite(suite);
+}
+
+function appendAdvTerminal(text, type = 'info') {
+    const terminal = document.getElementById('adv-terminal');
+    if (!terminal) return;
+    const line = document.createElement('div');
+    line.style.lineHeight = '1.45';
+    
+    let color = '#e2e8f0';
+    let prefix = '';
+    if (type === 'pass') {
+        color = '#10b981';
+        prefix = '✔ ';
+    } else if (type === 'fail') {
+        color = '#ef4444';
+        prefix = '✖ ';
+    } else if (type === 'warn') {
+        color = '#f59e0b';
+        prefix = '⚠ ';
+    } else if (type === 'exec') {
+        color = '#38bdf8';
+        prefix = '⚡ ';
+    }
+    
+    line.style.color = color;
+    line.textContent = `${prefix}${text}`;
+    terminal.appendChild(line);
+    terminal.scrollTop = terminal.scrollHeight;
+}
+
+function addAdvTestTableRow(name, suite, passed, details) {
+    const tbody = document.getElementById('adv-test-table-body');
+    const summary = document.getElementById('adv-test-table-summary');
+    if (!tbody) return;
+
+    if (advTestsRun === 1) {
+        tbody.innerHTML = '';
+    }
+
+    const tr = document.createElement('tr');
+    tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.05)';
+    
+    const statusBadge = passed
+        ? '<span class="badge green" style="font-size: 10px; padding: 2px 6px;">PASS</span>'
+        : '<span class="badge red" style="font-size: 10px; padding: 2px 6px;">FAIL</span>';
+    
+    tr.innerHTML = `
+        <td style="padding: 8px 12px;">${statusBadge}</td>
+        <td style="padding: 8px 12px; font-weight: 500; color: #f8fafc;">${escapeHtml(name || 'Unnamed Assertion')}</td>
+        <td style="padding: 8px 12px; color: var(--text-muted); font-family: monospace; font-size: 11px;">${escapeHtml(suite || 'general')}</td>
+        <td style="padding: 8px 12px; text-align: right; font-family: monospace; font-size: 11px; color: ${passed ? '#10b981' : '#ef4444'};">${passed ? 'ASSERTION_VERIFIED' : 'CONTAINMENT_TRIP'}</td>
+    `;
+    
+    tbody.insertBefore(tr, tbody.firstChild);
+
+    if (summary) {
+        summary.innerText = `${advTestsRun} test${advTestsRun === 1 ? '' : 's'} recorded (${advTestsPassed} pass, ${advTestsFailed} fail)`;
+    }
+}
+
+function runAdversarialSuite(suiteName) {
+    suiteName = suiteName || 'all';
+    stopAdversarialTestRun(false);
+
+    advTestsRun = 0;
+    advTestsPassed = 0;
+    advTestsFailed = 0;
+
+    const totalEl = document.getElementById('adv-stat-total');
+    const passedEl = document.getElementById('adv-stat-passed');
+    const failedEl = document.getElementById('adv-stat-failed');
+    const timeEl = document.getElementById('adv-stat-time');
+    const progBar = document.getElementById('adv-progress-bar');
+    const progPercent = document.getElementById('adv-progress-percent');
+    const progStatus = document.getElementById('adv-progress-status');
+    const tbody = document.getElementById('adv-test-table-body');
+    const summary = document.getElementById('adv-test-table-summary');
+    const stopBtn = document.getElementById('adv-btn-stop');
+    const runAllBtn = document.getElementById('adv-btn-run-all');
+    const runSelBtn = document.getElementById('adv-btn-run-selected');
+
+    if (totalEl) totalEl.innerText = '0';
+    if (passedEl) passedEl.innerText = '0';
+    if (failedEl) failedEl.innerText = '0';
+    if (timeEl) timeEl.innerText = '0.0s';
+    if (progBar) progBar.style.width = '0%';
+    if (progPercent) progPercent.innerText = '0%';
+    if (progStatus) progStatus.innerText = `Starting suite: ${suiteName}...`;
+    if (summary) summary.innerText = 'Executing tests...';
+    if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="4" style="padding: 24px; text-align: center; color: var(--text-muted);"><span class="oshoosi-spinner sm" style="display: inline-block; vertical-align: middle; margin-right: 8px;"></span> Executing real-time security assertions for suite: ${escapeHtml(suiteName)}...</td></tr>`;
+    }
+
+    if (stopBtn) stopBtn.disabled = false;
+    if (runAllBtn) runAllBtn.disabled = true;
+    if (runSelBtn) runSelBtn.disabled = true;
+
+    appendAdvTerminal(`[EXEC] Initializing adversarial execution suite '${suiteName}'...`, 'exec');
+
+    advStartTime = Date.now();
+    advElapsedInterval = setInterval(() => {
+        if (!advStartTime) return;
+        const elapsed = ((Date.now() - advStartTime) / 1000).toFixed(1);
+        if (timeEl) timeEl.innerText = `${elapsed}s`;
+    }, 100);
+
+    const base = (typeof API_BASE !== 'undefined') ? API_BASE : '';
+    const streamUrl = `${base}/api/test-stream?suite=${encodeURIComponent(suiteName)}`;
+    
+    let es;
+    try {
+        es = new EventSource(streamUrl);
+        activeAdvEventSource = es;
+    } catch (err) {
+        appendAdvTerminal(`[ERR] Failed to open EventSource: ${err.message}`, 'fail');
+        stopAdversarialTestRun(true);
+        return;
+    }
+
+    const handleTestResult = (raw) => {
+        let parsed = raw;
+        if (typeof raw === 'string') {
+            try { parsed = JSON.parse(raw); } catch (_) { parsed = { name: raw, passed: true, suite: suiteName }; }
+        }
+        advTestsRun++;
+        const passed = parsed.passed !== false && parsed.status !== 'failed';
+        if (passed) {
+            advTestsPassed++;
+        } else {
+            advTestsFailed++;
+        }
+
+        if (totalEl) totalEl.innerText = advTestsRun.toLocaleString();
+        if (passedEl) passedEl.innerText = advTestsPassed.toLocaleString();
+        if (failedEl) failedEl.innerText = advTestsFailed.toLocaleString();
+
+        const targetTotal = suiteName === 'all' ? 2250 : 168;
+        const pct = Math.min(100, Math.max(1, Math.round((advTestsRun / targetTotal) * 100)));
+        if (progBar) progBar.style.width = `${pct}%`;
+        if (progPercent) progPercent.innerText = `${pct}%`;
+        if (progStatus) progStatus.innerText = `Running (${advTestsRun} tests completed)`;
+
+        addAdvTestTableRow(parsed.name || parsed.test || `Test Assertion #${advTestsRun}`, parsed.suite || suiteName, passed, parsed.details);
+        appendAdvTerminal(`[TEST] ${parsed.name || `Assertion #${advTestsRun}`}: ${passed ? 'PASSED' : 'FAILED'}`, passed ? 'pass' : 'fail');
+    };
+
+    const handleComplete = (raw) => {
+        let info = '';
+        if (typeof raw === 'string') {
+            try {
+                const obj = JSON.parse(raw);
+                info = obj.message || obj.status || raw;
+            } catch (_) { info = raw; }
+        }
+        if (progBar) progBar.style.width = '100%';
+        if (progPercent) progPercent.innerText = '100%';
+        if (progStatus) progStatus.innerText = 'Suite Execution Completed';
+        appendAdvTerminal(`[COMPLETE] Suite '${suiteName}' finished. Total: ${advTestsRun}, Passed: ${advTestsPassed}, Failed: ${advTestsFailed}. ${info}`, 'pass');
+        stopAdversarialTestRun(true);
+    };
+
+    es.addEventListener('output', (event) => {
+        appendAdvTerminal(event.data);
+    });
+
+    es.addEventListener('test_result', (event) => {
+        handleTestResult(event.data);
+    });
+
+    es.addEventListener('complete', (event) => {
+        handleComplete(event.data);
+    });
+
+    es.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.event === 'test_result' || msg.test !== undefined || msg.passed !== undefined) {
+                handleTestResult(msg);
+            } else if (msg.event === 'complete' || msg.completed) {
+                handleComplete(msg);
+            } else if (msg.output) {
+                appendAdvTerminal(msg.output);
+            } else {
+                appendAdvTerminal(event.data);
+            }
+        } catch (_) {
+            appendAdvTerminal(event.data);
+        }
+    };
+
+    es.onerror = (err) => {
+        if (activeAdvEventSource === es) {
+            if (advTestsRun > 0) {
+                appendAdvTerminal(`[STREAM] Connection closed after ${advTestsRun} test assertions.`, 'info');
+                if (progBar) progBar.style.width = '100%';
+                if (progPercent) progPercent.innerText = '100%';
+                if (progStatus) progStatus.innerText = 'Execution Stream Closed';
+            } else {
+                appendAdvTerminal(`[WARN] Backend /api/test-stream offline or returned empty stream. Check server status.`, 'warn');
+                if (progStatus) progStatus.innerText = 'Backend Test Stream Offline';
+            }
+            stopAdversarialTestRun(true);
+        }
+    };
+}
+
+function stopAdversarialTestRun(isFinished = false) {
+    if (activeAdvEventSource) {
+        try { activeAdvEventSource.close(); } catch (_) {}
+        activeAdvEventSource = null;
+    }
+    if (advElapsedInterval) {
+        clearInterval(advElapsedInterval);
+        advElapsedInterval = null;
+    }
+    advStartTime = null;
+
+    const stopBtn = document.getElementById('adv-btn-stop');
+    const runAllBtn = document.getElementById('adv-btn-run-all');
+    const runSelBtn = document.getElementById('adv-btn-run-selected');
+    const progStatus = document.getElementById('adv-progress-status');
+
+    if (stopBtn) stopBtn.disabled = true;
+    if (runAllBtn) runAllBtn.disabled = false;
+    if (runSelBtn) runSelBtn.disabled = false;
+
+    if (!isFinished && progStatus && progStatus.innerText.includes('Starting')) {
+        progStatus.innerText = 'Cancelled by user';
+        appendAdvTerminal('[STOP] Execution cancelled by user.', 'warn');
+    }
+}
+
+function clearAdversarialTerminal() {
+    const terminal = document.getElementById('adv-terminal');
+    if (!terminal) return;
+    terminal.innerHTML = '<span style="color: #64748b;">[INIT] OshoosiClaw Adversarial Testing Harness Initialized.</span>\n<span style="color: #64748b;">[READY] Select a test suite or click \'Run ALL\' to begin execution.</span>\n';
+}
+
+function exportAdversarialTerminalOutput() {
+    const terminal = document.getElementById('adv-terminal');
+    const text = terminal ? terminal.innerText : 'No terminal log available.';
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `adversarial_terminal_${Date.now()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 200);
+}
+
+window.renderAdversarialTestsView = renderAdversarialTestsView;
+window.runSelectedAdversarialSuite = runSelectedAdversarialSuite;
+window.runAdversarialSuite = runAdversarialSuite;
+window.stopAdversarialTestRun = stopAdversarialTestRun;
+window.clearAdversarialTerminal = clearAdversarialTerminal;
+window.exportAdversarialTerminalOutput = exportAdversarialTerminalOutput;

@@ -4081,27 +4081,61 @@ fn resolve_candidate_binary_path(
     if !base_name.ends_with(".exe") && !base_name.contains('.') {
         names.push(format!("{}.exe", base_name));
     }
+    let base_lower = base_name.to_ascii_lowercase();
+    match base_lower.as_str() {
+        "appidcertstore" => names.push("AppIdCertStoreCheck.exe".to_string()),
+        "mousocoreworke" => names.push("MoUsoCoreWorker.exe".to_string()),
+        "docker-credent" => {
+            names.push("docker-credential-desktop.exe".to_string());
+            names.push("docker-credential-wincred.exe".to_string());
+        }
+        "llama-server.e" => names.push("llama-server.exe".to_string()),
+        "velociraptor.e" => names.push("velociraptor.exe".to_string()),
+        "smartscreen.ex" => names.push("smartscreen.exe".to_string()),
+        "runtimebroker." => names.push("RuntimeBroker.exe".to_string()),
+        "m2d_verificati" => names.push("m2d_verification.exe".to_string()),
+        "rg_embedded-7a" => names.push("rg.exe".to_string()),
+        _ => {
+            if base_lower.starts_with("rg_embedded") {
+                names.push("rg.exe".to_string());
+            }
+        }
+    }
     #[cfg(target_os = "windows")]
     {
-        let standard_dirs = [
-            r"C:\Windows\System32",
-            r"C:\Windows\SysWOW64",
-            r"C:\Windows",
-            r"C:\Program Files\Git\cmd",
-            r"C:\Program Files\Git\mingw64\bin",
-            r"C:\Program Files\Git\usr\bin",
-            r"C:\Program Files\Google\Chrome\Application",
-            r"C:\Program Files (x86)\Google\Chrome\Application",
-            r"C:\Program Files\Microsoft\Edge\Application",
+        let mut standard_dirs: Vec<PathBuf> = vec![
+            PathBuf::from(r"C:\Windows\System32"),
+            PathBuf::from(r"C:\Windows\SysWOW64"),
+            PathBuf::from(r"C:\Windows"),
+            PathBuf::from(r"C:\Program Files\Git\cmd"),
+            PathBuf::from(r"C:\Program Files\Git\mingw64\bin"),
+            PathBuf::from(r"C:\Program Files\Git\usr\bin"),
+            PathBuf::from(r"C:\Program Files\Google\Chrome\Application"),
+            PathBuf::from(r"C:\Program Files (x86)\Google\Chrome\Application"),
+            PathBuf::from(r"C:\Program Files\Microsoft\Edge\Application"),
+            PathBuf::from(r"C:\Program Files\Docker\Docker\resources\bin"),
+            PathBuf::from(r"C:\Program Files (x86)\GnuPG\bin"),
+            PathBuf::from(r"C:\Program Files\GnuPG\bin"),
         ];
+        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+            let p = PathBuf::from(local_app_data);
+            standard_dirs.push(p.join(r"Programs\Ollama"));
+            standard_dirs.push(p.join(r"Microsoft\WindowsApps"));
+        }
+        if let Some(app_data) = std::env::var_os("APPDATA") {
+            let p = PathBuf::from(app_data);
+            standard_dirs.push(p.join(r"Zoom\bin"));
+        }
         for dir in &standard_dirs {
             for n in &names {
-                let cand = Path::new(dir).join(n);
+                let cand = dir.join(n);
                 if cand.is_file() {
                     return Some(cand);
                 }
             }
         }
+
+
     }
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
@@ -4145,6 +4179,8 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         || reason_lower.contains("cve none")
         || reason_lower.contains("execution of non-existing file")
         || reason_lower.contains("autonomous rea verified clean")
+        || reason_lower.contains("unknown v0.0.0 has known cves")
+        || reason_lower.contains("cve-2009-2940")
     {
         return true;
     }
@@ -4178,6 +4214,15 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         "lsass.exe", "csrss.exe", "services.exe", "wininit.exe", "winlogon.exe",
         "dwm.exe", "sihost.exe", "taskhostw.exe", "dllhost.exe", "ctfmon.exe",
         "runtimebroker.exe", "runtimebroker.", "smartscreen.exe", "smartscreen.ex",
+        "appidcertstorecheck.exe", "appidcertstore", "mousocoreworker.exe", "mousocoreworke",
+        "wuaucltcore.exe", "wuauclt.exe", "usoclient.exe", "uhssvc.exe", "sihclient.exe",
+        "microsoftstartfeedprovider.exe", "microsoftstart", "widgets.exe", "widgetservice.exe",
+        "zoom.exe", "cpthost.exe", "docker-credential-desktop.exe", "docker-credential-wincred.exe",
+        "docker-credent", "scdaemon.exe", "gpg-agent.exe", "gpg.exe", "gpgsm.exe", "dirmngr.exe",
+        "ollama.exe", "ollama_llama_server.exe", "llama-server.exe", "llama-server.e",
+        "cvtres.exe", "rc.exe", "lib.exe", "ml64.exe", "py.exe", "py312.exe", "py311.exe", "py313.exe",
+        "python3.11.exe", "python3.12.exe", "rg.exe", "rg_embedded-7a", "rg_embedded",
+        "m2d_verification.exe", "m2d_verificati",
         "searchhost.exe", "searchindexer.exe", "searchprotocolhost.exe", "searchfilterhost.exe",
         "startmenuexperiencehost.exe", "shellexperiencehost.exe", "applicationframehost.exe",
         "textinputhost.exe", "spoolsv.exe", "audiodg.exe", "fontdrvhost.exe",
@@ -4212,6 +4257,32 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
     }
 
     false
+}
+
+/// Helper to extract candidate process name from mesh broadcast or peer threat summaries,
+/// stripping any leading [AML.Txxxx ...], [Txxxx ...], or action labels.
+pub fn extract_process_from_summary(summary: &str) -> Option<&str> {
+    let mut s = summary.trim();
+    if let Some(rest) = s.strip_prefix("Broadcast to Mesh:") {
+        s = rest.trim();
+    } else if let Some(rest) = s.strip_prefix("Peer Threat:") {
+        s = rest.trim();
+    } else if let Some(rest) = s.strip_prefix("Peer Threat") {
+        s = rest.trim();
+    }
+    if s.starts_with('[') {
+        if let Some(idx) = s.find(']') {
+            s = s[idx + 1..].trim();
+        }
+    }
+    s = s.trim_start_matches(':').trim();
+    if let Some((cand, _)) = s.split_once(':') {
+        let cand = cand.trim();
+        if !cand.is_empty() {
+            return Some(cand);
+        }
+    }
+    None
 }
 
 /// Runs a dynamic sandboxed detonation probe on an unknown or suspicious binary or script.

@@ -1,2 +1,42 @@
 # Ensure research snapshots and skill data retain LF line endings for checksum stability
 tools/wikiskill/src/wikiskill/resources/research/** text eol=lf
+
+# Primary project languages: Rust (core EDR, kernel/eBPF, Siquery, REA, WebUI backend) & Python (AI swarm, RL, verification)
+crates/**/*.rs linguist-detectable=true
+**/*.py linguist-detectable=true
+
+# Bundled / static WebUI assets, installer manifests, packaging & helper scripts
+dashboard/dist/** linguist-generated=true
+dashboard/src/** linguist-vendored=true
+dashboard/tests/** linguist-vendored=true
+wix/** linguist-generated=true
+packaging/** linguist-vendored=true
+deploy/** linguist-vendored=true
+docker/** linguist-vendored=true
+scripts/*.ps1 linguist-vendored=true
+scripts/*.sh linguist-vendored=true
+scripts/*.bat linguist-vendored=true
+scripts/*.cmd linguist-vendored=true
+driver/** linguist-vendored=true
+
+# Documentation, rule catalogs, and static data fixtures
+docs/** linguist-documentation=true
+rules/** linguist-generated=true
+yara/** linguist-generated=true
+config/** linguist-generated=true
+tests/fixtures/** linguist-generated=true
+tools/wikiskill/src/wikiskill/resources/** linguist-generated=true
+tools/capa/** linguist-vendored=true
+*.md linguist-documentation=true
+*.json linguist-generated=true
+*.har linguist-generated=true
+*.yaml linguist-generated=true
+*.yml linguist-generated=true
+*.toml linguist-generated=true
+*.html linguist-vendored=true
+*.css linguist-vendored=true
+*.js linguist-vendored=true
+*.mjs linguist-vendored=true
+*.ps1 linguist-vendored=true
+*.sh linguist-vendored=true
+*.wxs linguist-generated=true

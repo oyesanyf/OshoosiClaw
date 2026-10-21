@@ -209,8 +209,16 @@ def test_endpoints():
     print(" 7. STALE THREAT & GOSSIP PURGE VERIFICATION")
     print("="*70)
 
-    stale_procs = {'sc.exe', 'git.exe', 'conhost.exe', 'chrome.exe', 'wsl.exe', 'taskkill.exe'}
-    stale_reasons = ['veto trusted vendor', 'outside the vulnerable', 'cve none']
+    stale_procs = {
+        'sc.exe', 'git.exe', 'conhost.exe', 'chrome.exe', 'wsl.exe', 'taskkill.exe',
+        'appidcertstore', 'docker-credent', 'microsoftstartfeedprovider.exe', 'py312.exe',
+        'mousocoreworke', 'zoom.exe', 'scdaemon.exe', 'ollama.exe', 'wuaucltcore.exe',
+        'cvtres.exe', 'llama-server.e', 'm2d_verificati', 'rg_embedded-7a'
+    }
+    stale_reasons = [
+        'veto trusted vendor', 'outside the vulnerable', 'cve none',
+        'unknown v0.0.0 has known cves', 'cve-2009-2940'
+    ]
 
     # Threats check
     threats_data = cached_data.get("/api/threats", [])
@@ -346,7 +354,33 @@ def test_endpoints():
         ui_html = resp.read().decode("utf-8")
         assert 'data-view="har-traffic"' in ui_html, 'Live index.html must contain data-view="har-traffic"'
         assert 'id="har-traffic-view"' in ui_html, 'Live index.html must contain id="har-traffic-view"'
-        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic menu and view container")
+        assert 'data-view="adversarial-tests"' in ui_html, 'Live index.html must contain data-view="adversarial-tests"'
+        assert 'id="adversarial-tests-view"' in ui_html, 'Live index.html must contain id="adversarial-tests-view"'
+        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic and #adversarial-tests menus and views")
+
+    # =========================================================================
+    # 10. ADVERSARIAL & DEFENSE TEST EXECUTION SUITE VERIFICATION
+    # =========================================================================
+    print("\n" + "="*70)
+    print(" 10. ADVERSARIAL & DEFENSE TEST EXECUTION SUITE VERIFICATION")
+    print("="*70)
+
+    tarpit_url = f"{BASE_URL}/api/tarpit-stats"
+    tarpit_req = urllib.request.Request(tarpit_url, headers=headers, method="GET")
+    with urllib.request.urlopen(tarpit_req, timeout=10) as resp:
+        tarpit_data = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert "total_tests_executed" in tarpit_data
+        assert "passed_tests" in tarpit_data
+        print(f" [PASS] GET /api/tarpit-stats -> HTTP {resp.status}: {tarpit_data}")
+
+    for dl_ep in ["/api/download-run-log", "/api/download-test-json"]:
+        dl_req = urllib.request.Request(f"{BASE_URL}{dl_ep}", headers=headers, method="GET")
+        with urllib.request.urlopen(dl_req, timeout=10) as resp:
+            assert resp.status == 200
+            body_bytes = resp.read()
+            assert len(body_bytes) > 0
+            print(f" [PASS] GET {dl_ep:<24} -> HTTP {resp.status} ({len(body_bytes)} bytes)")
 
     print("\n" + "="*70)
     print(" ALL END-TO-END VERIFICATIONS PASSED (100% HEALTH, LATENCY SLA & PARITY)")
