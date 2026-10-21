@@ -49,6 +49,7 @@ def test_endpoints():
         "/api/deception/status",
         "/api/siquery/edr-status",
         "/api/mitre/stix/status",
+        "/api/har/entries",
     ]
 
     print("\n" + "="*70)
@@ -285,6 +286,67 @@ def test_endpoints():
         print(f" [PASS] POST /api/threats/confirm/audit-test-456 -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): {data}")
         assert resp.status == 200
         assert data.get("ok") is True or data.get("status") == "ok"
+
+    # =========================================================================
+    # 9. CONTINUOUS HAR WEB TRAFFIC SENSOR & DEDICATED #har-traffic MENU VERIFICATION
+    # =========================================================================
+    print("\n" + "="*70)
+    print(" 9. CONTINUOUS HAR WEB TRAFFIC SENSOR & DEDICATED #har-traffic MENU VERIFICATION")
+    print("="*70)
+
+    # 1. GET /api/har/entries
+    har_url = f"{BASE_URL}/api/har/entries"
+    har_req = urllib.request.Request(har_url, headers=headers, method="GET")
+    start_t = time.perf_counter()
+    with urllib.request.urlopen(har_req, timeout=15) as resp:
+        elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+        data = json.loads(resp.read().decode("utf-8"))
+        print(f" [PASS] GET /api/har/entries -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): count={data.get('count')}, active={data.get('continuous_collector_active')}")
+        assert resp.status == 200, f"Expected 200 but got {resp.status}"
+        assert data.get("status") == "ok", f"Expected status ok but got {data.get('status')}"
+        assert data.get("continuous_collector_active") is True, "continuous_collector_active must be True"
+        assert data.get("count", 0) > 0, f"Expected count > 0 but got {data.get('count')}"
+        stats = data.get("stats")
+        assert isinstance(stats, dict), "Expected stats dictionary"
+        for field in ["total_entries", "unique_hosts", "active_sources", "total_bytes"]:
+            assert field in stats, f"Missing {field} in stats"
+        entries = data.get("entries", [])
+        assert len(entries) > 0, "Entries list must not be empty"
+        assert "hash_blake3" in entries[0], "entries[0] must contain hash_blake3"
+
+    # 2. POST /api/har/refresh
+    refresh_url = f"{BASE_URL}/api/har/refresh"
+    refresh_req = urllib.request.Request(refresh_url, data=b"{}", headers={**headers, "Content-Type": "application/json"}, method="POST")
+    start_t = time.perf_counter()
+    with urllib.request.urlopen(refresh_req, timeout=15) as resp:
+        elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+        data = json.loads(resp.read().decode("utf-8"))
+        print(f" [PASS] POST /api/har/refresh -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): sweep_sequence={data.get('sweep_sequence')}")
+        assert resp.status == 200, f"Expected 200 but got {resp.status}"
+        assert data.get("status") == "ok", f"Expected status ok but got {data.get('status')}"
+        assert data.get("sweep_sequence", 0) >= 1, f"Expected sweep_sequence >= 1 but got {data.get('sweep_sequence')}"
+
+    # 3. GET /api/har/export
+    export_url = f"{BASE_URL}/api/har/export"
+    export_req = urllib.request.Request(export_url, headers=headers, method="GET")
+    start_t = time.perf_counter()
+    with urllib.request.urlopen(export_req, timeout=15) as resp:
+        elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+        raw_body = resp.read()
+        export_data = json.loads(raw_body.decode("utf-8"))
+        print(f" [PASS] GET /api/har/export -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): version={export_data.get('log', {}).get('version')}, entries={len(export_data.get('log', {}).get('entries', []))}")
+        assert resp.status == 200, f"Expected 200 but got {resp.status}"
+        assert export_data.get("log", {}).get("version") == "1.2", "Expected W3C HAR version 1.2"
+        assert isinstance(export_data.get("log", {}).get("entries"), list), "Expected log.entries to be a list"
+
+    # 4. Live GET /index.html contains data-view="har-traffic" and id="har-traffic-view"
+    ui_url = f"{BASE_URL}/index.html"
+    ui_req = urllib.request.Request(ui_url, headers=headers, method="GET")
+    with urllib.request.urlopen(ui_req, timeout=10) as resp:
+        ui_html = resp.read().decode("utf-8")
+        assert 'data-view="har-traffic"' in ui_html, 'Live index.html must contain data-view="har-traffic"'
+        assert 'id="har-traffic-view"' in ui_html, 'Live index.html must contain id="har-traffic-view"'
+        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic menu and view container")
 
     print("\n" + "="*70)
     print(" ALL END-TO-END VERIFICATIONS PASSED (100% HEALTH, LATENCY SLA & PARITY)")
