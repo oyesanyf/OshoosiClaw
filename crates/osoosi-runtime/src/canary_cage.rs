@@ -147,11 +147,23 @@ pub struct CagedChild {
 
     #[cfg(not(windows))]
     child: std::process::Child,
+    #[cfg(not(windows))]
+    memfd: i32,
+    #[cfg(not(windows))]
+    target_fd: i32,
+    #[cfg(not(windows))]
+    shutdown: Arc<AtomicBool>,
+    #[cfg(not(windows))]
+    watcher_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(windows)]
 unsafe impl Send for CagedChild {}
 #[cfg(windows)]
+unsafe impl Sync for CagedChild {}
+#[cfg(not(windows))]
+unsafe impl Send for CagedChild {}
+#[cfg(not(windows))]
 unsafe impl Sync for CagedChild {}
 
 impl CagedChild {
@@ -193,6 +205,8 @@ impl CagedChild {
 
             if wait_res == WAIT_TIMEOUT {
                 unsafe {
+                    use windows::Win32::System::JobObjects::TerminateJobObject;
+                    let _ = TerminateJobObject(self.job_handle, 137);
                     let _ = TerminateProcess(self.child_handle, 137);
                 }
                 return Err(CanaryCageError::Timeout(timeout));
@@ -220,8 +234,45 @@ impl CagedChild {
         {
             let start = Instant::now();
             loop {
+                // Check if canary trap was touched
+                if self.canary_triggered.load(Ordering::SeqCst) {
+                    self.shutdown.store(true, Ordering::SeqCst);
+                    if let Some(h) = self.watcher_thread.take() {
+                        let _ = h.join();
+                    }
+                    let _ = self.child.kill();
+                    let _ = self.child.wait();
+                    let alert = self.alert_received.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    return Ok(CanaryCageResult {
+                        exit_code: Some(137),
+                        success: false,
+                        canary_triggered: true,
+                        stdout: String::new(),
+                        stderr: "Execution aborted: Ephemeral canary memfd touched by caged process".into(),
+                        alert,
+                        duration_ms: start.elapsed().as_millis() as u64,
+                    });
+                }
+
                 match self.child.try_wait() {
                     Ok(Some(status)) => {
+                        self.shutdown.store(true, Ordering::SeqCst);
+                        if let Some(h) = self.watcher_thread.take() {
+                            let _ = h.join();
+                        }
+                        let triggered = self.canary_triggered.load(Ordering::SeqCst);
+                        if triggered {
+                            let alert = self.alert_received.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                            return Ok(CanaryCageResult {
+                                exit_code: Some(137),
+                                success: false,
+                                canary_triggered: true,
+                                stdout: String::new(),
+                                stderr: "Execution aborted: Ephemeral canary memfd touched by caged process".into(),
+                                alert,
+                                duration_ms: start.elapsed().as_millis() as u64,
+                            });
+                        }
                         let code = status.code();
                         return Ok(CanaryCageResult {
                             exit_code: code,
@@ -235,12 +286,22 @@ impl CagedChild {
                     }
                     Ok(None) => {
                         if start.elapsed() >= timeout {
+                            self.shutdown.store(true, Ordering::SeqCst);
+                            if let Some(h) = self.watcher_thread.take() {
+                                let _ = h.join();
+                            }
                             let _ = self.child.kill();
                             return Err(CanaryCageError::Timeout(timeout));
                         }
                         std::thread::sleep(Duration::from_millis(5));
                     }
-                    Err(e) => return Err(CanaryCageError::Io(e)),
+                    Err(e) => {
+                        self.shutdown.store(true, Ordering::SeqCst);
+                        if let Some(h) = self.watcher_thread.take() {
+                            let _ = h.join();
+                        }
+                        return Err(CanaryCageError::Io(e));
+                    }
                 }
             }
         }
@@ -271,6 +332,10 @@ impl CagedChild {
 
         #[cfg(not(windows))]
         {
+            self.shutdown.store(true, Ordering::SeqCst);
+            if let Some(h) = self.watcher_thread.take() {
+                let _ = h.join();
+            }
             self.child.kill().map_err(CanaryCageError::Io)
         }
     }
@@ -297,6 +362,21 @@ impl Drop for CagedChild {
                 let _ = CloseHandle(self.job_handle);
                 let _ = CloseHandle(self.shutdown_event);
             }
+        }
+
+        #[cfg(not(windows))]
+        {
+            self.shutdown.store(true, Ordering::SeqCst);
+            if let Some(h) = self.watcher_thread.take() {
+                let _ = h.join();
+            }
+            if self.memfd >= 0 {
+                unsafe {
+                    libc::close(self.memfd);
+                }
+                self.memfd = -1;
+            }
+            let _ = self.child.kill();
         }
     }
 }
@@ -567,7 +647,7 @@ impl CanaryCage {
             let shutdown_raw = dup_shutdown.0 as isize;
 
             // 9. Deterministic Overlapped Honey-Pipe Watcher Thread
-            let watcher_thread = std::thread::Builder::new()
+            let watcher_thread = match std::thread::Builder::new()
                 .name(format!("canary_watcher_{}", watcher_pid))
                 .spawn(move || {
                     let pipe = HANDLE(pipe_raw as *mut _);
@@ -640,8 +720,25 @@ impl CanaryCage {
                         let _ = CloseHandle(job_handle);
                         let _ = CloseHandle(pipe);
                     }
-                })
-                .map_err(|e| CanaryCageError::SpawnFailed(format!("Failed to spawn watcher thread: {:?}", e)))?;
+                }) {
+                Ok(h) => h,
+                Err(e) => {
+                    unsafe {
+                        let _ = TerminateProcess(pi.hProcess, 137);
+                        let _ = CloseHandle(pi.hThread);
+                        let _ = CloseHandle(pi.hProcess);
+                        let _ = CloseHandle(shutdown_event);
+                        let _ = CloseHandle(dup_shutdown);
+                        let _ = CloseHandle(job);
+                        let _ = CloseHandle(dup_job);
+                        let _ = CloseHandle(h_pipe);
+                    }
+                    return Err(CanaryCageError::SpawnFailed(format!(
+                        "Failed to spawn watcher thread: {:?}",
+                        e
+                    )));
+                }
+            };
 
             // 10. Resume Child Thread
             unsafe {
@@ -665,12 +762,72 @@ impl CanaryCage {
 
         #[cfg(not(windows))]
         {
+            use std::os::unix::process::CommandExt;
+
             let mut cmd = std::process::Command::new(command);
             for a in args {
                 cmd.arg(a.as_ref());
             }
 
-            // Zero parent environment mutation: use Command::env only
+            // 1. Determine high FD below RLIMIT_NOFILE
+            let mut rlim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+            let high_fd: i32 = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) } == 0 && rlim.rlim_cur > 10 {
+                ((rlim.rlim_cur - 1) as i32).min(1020)
+            } else {
+                512
+            };
+
+            // 2. Create genuine memfd canary
+            #[cfg(target_os = "linux")]
+            let memfd = unsafe { libc::memfd_create(c"edr_vault_key".as_ptr(), libc::MFD_CLOEXEC) };
+            #[cfg(not(target_os = "linux"))]
+            let memfd = unsafe {
+                let mut pipe_fds = [0i32; 2];
+                if libc::pipe(pipe_fds.as_mut_ptr()) == 0 {
+                    libc::close(pipe_fds[1]);
+                    pipe_fds[0]
+                } else {
+                    -1
+                }
+            };
+
+            if memfd < 0 {
+                return Err(CanaryCageError::SpawnFailed(format!(
+                    "Failed to create memfd canary: {:?}",
+                    std::io::Error::last_os_error()
+                )));
+            }
+
+            // Write canary honey-credential payload into memfd
+            let canary_payload = b"{\"vault\":\"osoosi_edr_vault\",\"key\":\"cage_honeytoken_secret_canary\",\"credential\":\"edr_vault_token_trap\"}\n";
+            let initial_size = canary_payload.len() as libc::off_t;
+            unsafe {
+                libc::write(memfd, canary_payload.as_ptr() as *const libc::c_void, canary_payload.len());
+                libc::lseek(memfd, 0, libc::SEEK_SET);
+            }
+
+            // 3. Map via dup2 in pre_exec to the dynamically selected high FD below RLIMIT_NOFILE
+            let memfd_for_child = memfd;
+            let target_high_fd = high_fd;
+            unsafe {
+                cmd.pre_exec(move || {
+                    let dup = libc::dup2(memfd_for_child, target_high_fd);
+                    if dup < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    // Clear FD_CLOEXEC on target_high_fd so it is retained in the executed image
+                    let flags = libc::fcntl(target_high_fd, libc::F_GETFD);
+                    if flags >= 0 {
+                        libc::fcntl(target_high_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+                    }
+                    Ok(())
+                });
+            }
+
+            // 4. Pass environment variables strictly via Command::env (zero parent environment mutation)
+            let trap_path = format!("/proc/self/fd/{}", high_fd);
+            cmd.env("CANARY_HONEY_FD", high_fd.to_string());
+            cmd.env("CANARY_TRAP_PATH", &trap_path);
             cmd.env("CANARY_SESSION_ID", session_id);
             cmd.env("OSOOSI_CANARY_ACTIVE", "1");
             if let Some(custom) = custom_env {
@@ -679,17 +836,119 @@ impl CanaryCage {
                 }
             }
 
-            let child = cmd.spawn().map_err(CanaryCageError::Io)?;
+            let child = match cmd.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    unsafe { libc::close(memfd); }
+                    return Err(CanaryCageError::Io(e));
+                }
+            };
             let pid = child.id();
+
+            let canary_triggered = Arc::new(AtomicBool::new(false));
+            let alert_received = Arc::new(Mutex::new(None));
+            let shutdown = Arc::new(AtomicBool::new(false));
+
+            let watcher_triggered = Arc::clone(&canary_triggered);
+            let watcher_alert = Arc::clone(&alert_received);
+            let watcher_session = session_id.to_string();
+            let watcher_trap_path = trap_path.clone();
+            let watcher_pid = pid;
+            let watcher_shutdown = Arc::clone(&shutdown);
+
+            // 5. Watcher thread genuinely monitoring trap accesses
+            let watcher_thread = match std::thread::Builder::new()
+                .name(format!("canary_watcher_{}", watcher_pid))
+                .spawn(move || {
+                    let mut last_size = initial_size;
+                    while !watcher_shutdown.load(Ordering::SeqCst) {
+                        let mut trap_hit = false;
+
+                        // Check 1: File seek position on shared open file description
+                        let cur_pos = unsafe { libc::lseek(memfd, 0, libc::SEEK_CUR) };
+                        if cur_pos > 0 {
+                            trap_hit = true;
+                        }
+
+                        // Check 2: Size modification on memfd
+                        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+                        if unsafe { libc::fstat(memfd, &mut st) } == 0 {
+                            if st.st_size != last_size {
+                                trap_hit = true;
+                                last_size = st.st_size;
+                            }
+                        }
+
+                        // Check 3: Check /proc/<pid>/fdinfo/<target_fd> if accessible
+                        let fdinfo_path = format!("/proc/{}/fdinfo/{}", watcher_pid, high_fd);
+                        if let Ok(info) = std::fs::read_to_string(&fdinfo_path) {
+                            for line in info.lines() {
+                                if line.starts_with("pos:") {
+                                    if let Some(pos_str) = line.split_whitespace().nth(1) {
+                                        if let Ok(pos_val) = pos_str.parse::<i64>() {
+                                            if pos_val > 0 {
+                                                trap_hit = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if trap_hit {
+                            watcher_triggered.store(true, Ordering::SeqCst);
+                            // Immediate kill with SIGKILL -> exit code 137
+                            unsafe {
+                                libc::kill(watcher_pid as i32, libc::SIGKILL);
+                            }
+                            let alert = CanaryAlert {
+                                alert_id: format!("canary-alert-{}", uuid::Uuid::new_v4()),
+                                session_id: watcher_session.clone(),
+                                pid: watcher_pid,
+                                trap_kind: "MemfdCanary".to_string(),
+                                trap_path: watcher_trap_path.clone(),
+                                confidence: 1.00,
+                                timestamp: Utc::now(),
+                                attributed_file_digest: None,
+                                details: format!(
+                                    "Ephemeral memfd canary fd {} ({}) accessed by caged child PID {}",
+                                    high_fd, watcher_trap_path, watcher_pid
+                                ),
+                            };
+                            if let Some(ref cb) = on_alert {
+                                cb(alert.clone());
+                            }
+                            let mut slot = watcher_alert.lock().unwrap_or_else(|e| e.into_inner());
+                            *slot = Some(alert);
+                            break;
+                        }
+
+                        std::thread::sleep(Duration::from_millis(2));
+                    }
+                }) {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = child;
+                    unsafe { libc::close(memfd); }
+                    return Err(CanaryCageError::SpawnFailed(format!(
+                        "Failed to spawn watcher thread: {:?}",
+                        e
+                    )));
+                }
+            };
 
             Ok(CagedChild {
                 pid,
                 session_id: session_id.to_string(),
-                honey_trap_path: "/dev/shm/osoosi_canary_memfd".to_string(),
-                canary_triggered: Arc::new(AtomicBool::new(false)),
-                alert_received: Arc::new(Mutex::new(None)),
+                honey_trap_path: trap_path,
+                canary_triggered,
+                alert_received,
                 start_time: Instant::now(),
                 child,
+                memfd,
+                target_fd: high_fd,
+                shutdown,
+                watcher_thread: Some(watcher_thread),
             })
         }
     }
