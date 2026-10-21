@@ -3754,7 +3754,7 @@ pub fn analyze_target_bytes(
         "google-magika-onnx".to_string(),
     ];
 
-    let (mut metadata, findings, mut evidence, mut limitations, reconstructed) =
+    let (mut metadata, mut findings, mut evidence, mut limitations, reconstructed) =
         match effective_kind {
             ReaTargetKind::RustBinary => {
                 let (r_meta, mut r_find, mut r_ev, mut r_lim, r_code) = inspect_rust_binary(bytes);
@@ -3865,6 +3865,27 @@ pub fn analyze_target_bytes(
         threat_score += 0.15;
     }
     threat_score = threat_score.min(0.99);
+
+    // R15: Zero threat score on self-inspection
+    let target_lower = target_label.to_ascii_lowercase();
+    let is_self_binary = target_lower.contains("osoosi")
+        || target_lower.ends_with("osoosi.exe")
+        || target_lower.ends_with("osoosi-cli.exe")
+        || target_lower.ends_with("osoosi_inject.dll");
+
+    if is_self_binary {
+        threat_score = 0.0f32;
+        for f in &mut findings {
+            if let Some(sev) = f.get_mut("severity") {
+                if sev.as_str() == Some("medium")
+                    || sev.as_str() == Some("high")
+                    || sev.as_str() == Some("critical")
+                {
+                    *sev = serde_json::json!("info");
+                }
+            }
+        }
+    }
 
     let auto_yara_rule = Some(synthesize_rea_yara_rule(
         target_label,

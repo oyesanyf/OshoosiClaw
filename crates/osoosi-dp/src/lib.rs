@@ -116,9 +116,36 @@ impl LocalTelemetryNoiseEngine {
     }
 }
 
+/// Perturb a unix timestamp using CSPRNG-backed Laplace noise for differential privacy in P2P mesh broadcasts.
+/// Prevents timing side-channel attacks and de-anonymization of canary detections.
+pub fn perturb_timestamp_csprng(timestamp_unix: i64, epsilon: f64) -> i64 {
+    use rand::Rng;
+    let eff_eps = epsilon.max(1e-6);
+    let scale = 1.0 / eff_eps;
+    let mut rng = rand::rngs::OsRng;
+    let u: f64 = rng.gen_range(-0.499999999..0.499999999);
+    let noise = -scale * u.signum() * (1.0 - 2.0 * u.abs()).ln();
+    timestamp_unix + noise.round() as i64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_perturb_timestamp_csprng() {
+        let ts = 1776543210i64;
+        let mut perturbed_vals = Vec::new();
+        for _ in 0..100 {
+            let p = perturb_timestamp_csprng(ts, 1.0);
+            perturbed_vals.push(p);
+        }
+        // Should not be completely static and should stay close to original ts
+        assert!(perturbed_vals.iter().any(|&v| v != ts));
+        for &v in &perturbed_vals {
+            assert!((v - ts).abs() < 100);
+        }
+    }
 
     #[test]
     fn test_noise_range() {

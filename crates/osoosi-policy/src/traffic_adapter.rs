@@ -80,6 +80,29 @@ pub fn clear_swarm_poisoned_har_digests() {
     SWARM_POISONED_HAR_DIGESTS.clear();
 }
 
+static RECENT_INSPECTED_HAR_ENTRIES: std::sync::LazyLock<
+    parking_lot::RwLock<std::collections::VecDeque<(String, HarEntrySummary)>>,
+> = std::sync::LazyLock::new(|| {
+    parking_lot::RwLock::new(std::collections::VecDeque::with_capacity(1024))
+});
+
+/// Stores inspected HAR entries in the global ring buffer (max 1024 entries).
+pub fn record_inspected_har_entries(source_label: &str, entries: &[HarEntrySummary]) {
+    let mut ring = RECENT_INSPECTED_HAR_ENTRIES.write();
+    for entry in entries {
+        if ring.len() >= 1024 {
+            ring.pop_front();
+        }
+        ring.push_back((source_label.to_string(), entry.clone()));
+    }
+}
+
+/// Retrieves the most recent inspected HAR entries from the ring buffer.
+pub fn get_recent_inspected_har_entries(limit: usize) -> Vec<(String, HarEntrySummary)> {
+    let ring = RECENT_INSPECTED_HAR_ENTRIES.read();
+    ring.iter().rev().take(limit).cloned().collect()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct HarInspectionReport {
     pub source_label: String,
@@ -996,6 +1019,8 @@ pub fn parse_and_inspect_har_json_with_session(
     } else {
         "BENIGN".to_string()
     };
+
+    record_inspected_har_entries(source_label, &summaries);
 
     Ok(HarInspectionReport {
         source_label: source_label.to_string(),

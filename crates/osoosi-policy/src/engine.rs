@@ -396,12 +396,46 @@ fn orchestrate_evidence(
                 || v.result.reason.contains("keymgr")
                 || v.result.reason.contains("comsvcs"))
     });
-    let corroboration = if has_deterministic_credential_or_memory_guard {
+
+    let has_canary_trap_tripped = event
+        .data
+        .get("CanaryTrapTripped")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || event.data.get("CanaryAlert").is_some()
+        || votes.iter().any(|v| {
+            v.result.reason.contains("CanaryTrapTripped")
+                || v.result.reason.contains("CanaryCage")
+                || v.result.reason.contains("CanaryAlert")
+                || v.result.reason.contains("Canary Trap Breach")
+        });
+
+    let has_deterministic_canary_guard = has_canary_trap_tripped
+        || votes.iter().any(|v| {
+            v.result.confidence >= 0.95
+                && (v.result.reason.contains("canary")
+                    || v.result.reason.contains("Canary")
+                    || v.result.reason.contains("SacrificialFracture")
+                    || v.result.reason.contains("PromptInjectionExfil")
+                    || v.result.reason.contains("SpiderWeb")
+                    || v.result.reason.contains("Escape-Detector"))
+        });
+
+    let has_deterministic_guard =
+        has_deterministic_credential_or_memory_guard || has_deterministic_canary_guard;
+
+    let corroboration = if has_deterministic_canary_guard {
+        1.0f32
+    } else if has_deterministic_credential_or_memory_guard {
         corroboration.max(0.92f32)
     } else {
         corroboration
     };
-    let mut confidence = (base * corroboration + max_single.min(1.0) * 0.12).min(1.0);
+    let mut confidence = if has_deterministic_canary_guard {
+        1.0f32
+    } else {
+        (base * corroboration + max_single.min(1.0) * 0.12).min(1.0)
+    };
 
     let has_live_network = classes.contains(&EvidenceClass::LiveNetwork);
     let has_behavior = classes.contains(&EvidenceClass::Behavior);
@@ -417,7 +451,7 @@ fn orchestrate_evidence(
     if threat_intel_only {
         confidence = confidence.min(0.49);
     }
-    if !has_deterministic_credential_or_memory_guard {
+    if !has_deterministic_guard {
         if lifecycle_only && !has_behavior && !has_memory && !has_live_network {
             confidence = confidence.min(0.62);
         }
@@ -445,9 +479,9 @@ fn orchestrate_evidence(
     }
 
     let require_approval =
-        confidence >= 0.70 && independent < 2 && !has_deterministic_credential_or_memory_guard;
+        confidence >= 0.70 && independent < 2 && !has_deterministic_guard;
     let action = if (confidence >= 0.94 && independent >= 3 && strong_action)
-        || (confidence >= 0.90 && has_deterministic_credential_or_memory_guard)
+        || (confidence >= 0.90 && has_deterministic_guard)
     {
         ResponseAction::Isolate
     } else if confidence >= 0.82 && has_live_network && (has_behavior || has_static || has_memory) {

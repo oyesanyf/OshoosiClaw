@@ -6114,6 +6114,7 @@ dependencies = [
  "osoosi-telemetry",
  "osoosi-types",
  "otx-taxii-rs",
+ "parking_lot",
  "rand 0.8.6",
  "rayon",
  "regex",

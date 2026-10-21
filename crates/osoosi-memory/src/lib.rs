@@ -1600,7 +1600,7 @@ impl MemoryStore {
     /// Get recent threats for dashboard (from memory + audit THREAT_DETECTED events).
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
         if let Some((ts, ref cached)) = *self.recent_threats_cache.read() {
-            if ts.elapsed() < std::time::Duration::from_millis(1500) && limit <= 200 {
+            if ts.elapsed() < std::time::Duration::from_millis(2000) && (limit <= 1000 || cached.len() >= limit) {
                 return Ok(cached.iter().take(limit).cloned().collect());
             }
         }
@@ -1610,7 +1610,7 @@ impl MemoryStore {
             }
             return Ok(Vec::new());
         };
-        let fetch_limit = limit.max(200);
+        let fetch_limit = limit.max(1000);
         let mut stmt = conn.prepare(
             "SELECT id, cve_id, process_name, hash_blake3, confidence, MAX(detected_at), source_node, file_path, reason 
              FROM (SELECT * FROM threats ORDER BY detected_at DESC LIMIT 600) t

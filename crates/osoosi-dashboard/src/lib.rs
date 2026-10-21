@@ -8118,19 +8118,33 @@ pub struct HistoryItem {
     pub details: Value,
 }
 
+static HISTORY_ITEMS_CACHE: Lazy<
+    parking_lot::Mutex<Option<(std::time::Instant, Vec<HistoryItem>)>>,
+> = Lazy::new(|| parking_lot::Mutex::new(None));
+
 fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
+    if state.backend.is_some() {
+        if let Some(guard) = HISTORY_ITEMS_CACHE.try_lock_for(Duration::from_millis(5)) {
+            if let Some((ts, cached)) = guard.as_ref() {
+                if ts.elapsed() < Duration::from_secs(3) {
+                    return cached.clone();
+                }
+            }
+        }
+    }
+
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    // 1. Historical threats from memory store or on-disk SQLite database
+    // 1. Historical threats from in-memory cache (limit <= 200 avoids synchronous SQLite lock contention)
     let threats: Vec<Value> = if let Some(orch) = &state.backend {
-        orch.memory().get_recent_threats(1000).unwrap_or_default()
+        orch.memory().get_recent_threats(200).unwrap_or_default()
     } else {
         let runtime_cfg = osoosi_types::load_runtime_config();
         let db_path = std::path::Path::new(&runtime_cfg.db_path);
         if db_path.exists() {
             osoosi_core::MemoryStore::new(&runtime_cfg.db_path)
-                .and_then(|m| m.get_recent_threats(1000))
+                .and_then(|m| m.get_recent_threats(200))
                 .unwrap_or_default()
         } else {
             Vec::new()
@@ -8291,8 +8305,8 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     }
 
     if let Some(orch) = &state.backend {
-        // 2. Audit Trail Merkle entries
-        for (idx, entry) in orch.audit().entries().into_iter().enumerate() {
+        // 2. Audit Trail Merkle entries (bounded to latest 300 entries for sub-5ms latency)
+        for (idx, entry) in orch.audit().get_recent_entries(300).into_iter().enumerate() {
             let timestamp = entry.timestamp.to_rfc3339();
             let event_type = entry.event_type;
             let mut d = entry.data;
@@ -8527,6 +8541,11 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
 
     // Sort descending by timestamp
     items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    if state.backend.is_some() {
+        if let Some(mut guard) = HISTORY_ITEMS_CACHE.try_lock_for(Duration::from_millis(5)) {
+            *guard = Some((std::time::Instant::now(), items.clone()));
+        }
+    }
     items
 }
 
