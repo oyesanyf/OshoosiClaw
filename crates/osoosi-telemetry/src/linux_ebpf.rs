@@ -45,6 +45,32 @@ pub struct QuarantineDirective {
 #[cfg(target_os = "linux")]
 unsafe impl aya::Pod for QuarantineDirective {}
 
+/// Kernel trap FD entry for ephemeral in-memory canaries (memfd).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CanaryTrapFdEntry {
+    pub tgid: u32,
+    pub fd: u32,
+    pub trap_kind: u32,
+    pub created_ts_ns: u64,
+}
+
+#[cfg(target_os = "linux")]
+unsafe impl aya::Pod for CanaryTrapFdEntry {}
+
+/// Kernel trap Inode entry for ephemeral canary traps.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CanaryTrapInodeEntry {
+    pub inode: u64,
+    pub dev: u64,
+    pub trap_kind: u32,
+    pub _pad: u32,
+}
+
+#[cfg(target_os = "linux")]
+unsafe impl aya::Pod for CanaryTrapInodeEntry {}
+
 /// Shared user-to-BPF control state synchronized into kernel BPF maps (`blocked_paths`,
 /// `protected_sensor_pids`, `quarantine_targets`, `blocked_ipv4`, `blocked_ipv6`, `blocked_ports`, `lsm_autonomy_mode`).
 #[derive(Debug, Clone)]
@@ -54,6 +80,8 @@ pub struct EbpfLsmSharedState {
     pub protected_pids: Vec<u32>,
     pub quarantined_pids: Vec<u32>,
     pub quarantine_directives: Vec<(u32, QuarantineDirective)>,
+    pub canary_trap_fds: Vec<CanaryTrapFdEntry>,
+    pub canary_trap_inodes: Vec<CanaryTrapInodeEntry>,
     pub blocked_ipv4: Vec<[u8; 4]>,
     pub blocked_ipv6: Vec<[u8; 16]>,
     pub blocked_ports: Vec<u16>,
@@ -68,6 +96,8 @@ impl Default for EbpfLsmSharedState {
             protected_pids: vec![std::process::id()],
             quarantined_pids: Vec::new(),
             quarantine_directives: Vec::new(),
+            canary_trap_fds: Vec::new(),
+            canary_trap_inodes: Vec::new(),
             blocked_ipv4: Vec::new(),
             blocked_ipv6: Vec::new(),
             blocked_ports: Vec::new(),
@@ -188,6 +218,60 @@ pub fn sync_ebpf_lsm_add_blocked_port(port: u16) {
     }
 }
 
+pub fn sync_ebpf_register_canary_fd(entry: CanaryTrapFdEntry) {
+    let mut guard = get_ebpf_lsm_state()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = guard
+        .canary_trap_fds
+        .iter_mut()
+        .find(|e| e.tgid == entry.tgid && e.fd == entry.fd)
+    {
+        *existing = entry;
+    } else {
+        guard.canary_trap_fds.push(entry);
+    }
+    guard.dirty = true;
+}
+
+pub fn sync_ebpf_unregister_canary_fd(tgid: u32, fd: u32) {
+    let mut guard = get_ebpf_lsm_state()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    let initial_len = guard.canary_trap_fds.len();
+    guard.canary_trap_fds.retain(|e| !(e.tgid == tgid && e.fd == fd));
+    if guard.canary_trap_fds.len() != initial_len {
+        guard.dirty = true;
+    }
+}
+
+pub fn sync_ebpf_register_canary_inode(entry: CanaryTrapInodeEntry) {
+    let mut guard = get_ebpf_lsm_state()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(existing) = guard
+        .canary_trap_inodes
+        .iter_mut()
+        .find(|e| e.inode == entry.inode && e.dev == entry.dev)
+    {
+        *existing = entry;
+    } else {
+        guard.canary_trap_inodes.push(entry);
+    }
+    guard.dirty = true;
+}
+
+pub fn sync_ebpf_unregister_canary_inode(inode: u64) {
+    let mut guard = get_ebpf_lsm_state()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    let initial_len = guard.canary_trap_inodes.len();
+    guard.canary_trap_inodes.retain(|e| e.inode != inode);
+    if guard.canary_trap_inodes.len() != initial_len {
+        guard.dirty = true;
+    }
+}
+
 pub fn sync_ebpf_lsm_clear_rules() {
     let mut guard = get_ebpf_lsm_state()
         .write()
@@ -195,6 +279,8 @@ pub fn sync_ebpf_lsm_clear_rules() {
     guard.blocked_paths.clear();
     guard.quarantined_pids.clear();
     guard.quarantine_directives.clear();
+    guard.canary_trap_fds.clear();
+    guard.canary_trap_inodes.clear();
     guard.blocked_ipv4.clear();
     guard.blocked_ipv6.clear();
     guard.blocked_ports.clear();

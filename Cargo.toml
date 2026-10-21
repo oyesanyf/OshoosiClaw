@@ -142,10 +142,12 @@ windows = { version = "0.58", features = [
     "Win32_Security_WinTrust", "Win32_Security_Cryptography",
     "Win32_System_Pipes", "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO", "Win32_System_Services", "Win32_System_Registry",
+    "Win32_System_JobObjects",
 ] }
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
 winreg = "0.52"
 pelite = "0.10"
+rhai = { version = "1.26.1", features = ["sync"] }
 
 [patch.crates-io]
 wasm-bindgen-futures = { path = "crates/wasm-bindgen-futures" }

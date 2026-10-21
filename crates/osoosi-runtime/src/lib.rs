@@ -4,6 +4,7 @@
 
 #![allow(clippy::manual_c_str_literals)]
 
+pub mod canary_cage;
 pub mod deception;
 pub mod honeytokens;
 pub mod kernel_driver;
@@ -11,6 +12,7 @@ pub mod mitigations;
 pub mod sleeper;
 pub mod tarpit;
 
+pub use canary_cage::*;
 pub use deception::*;
 pub use honeytokens::*;
 pub use kernel_driver::*;

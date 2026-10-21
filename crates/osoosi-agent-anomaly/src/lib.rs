@@ -18,6 +18,7 @@ pub mod cedar_engine;
 pub mod classifier;
 pub mod containment_ring;
 pub mod detector;
+pub mod file_lineage;
 pub mod mercury_guard;
 pub mod mesh_guard;
 pub mod rasp;
@@ -30,6 +31,10 @@ pub mod types;
 
 pub use agentjacking_guard::{
     AgentjackingGuard, AgentjackingPhase, AgentjackingVerdict, LogSanitizer, SessionTaintState,
+};
+pub use file_lineage::{
+    FileLineageTracker, IngestedFileEntry, LineageEntry, LineageError, PoisonMetadata,
+    DEFAULT_MAX_CAPACITY,
 };
 pub use breakout_defense::{
     validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,

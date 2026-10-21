@@ -1845,7 +1845,6 @@ impl MemoryStore {
         process_name: Option<&str>,
         hash_blake3: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let conn = self.conn.lock();
         let raw_proc = process_name.unwrap_or("").trim();
         let hash = hash_blake3.unwrap_or("").trim();
         if raw_proc.is_empty() && hash.is_empty() {
@@ -1872,10 +1871,15 @@ impl MemoryStore {
             || raw_proc_lc.contains("resources\\app")
             || raw_proc_lc.contains("resources/app");
 
-        // Allowlist-seeded components only match if within an IDE path
+        // Allowlist-seeded components only match if within an IDE path (fast path before lock)
         if is_known_component && is_ide_path {
             return Ok(true);
         }
+
+        let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(5)) else {
+            // Lock timeout: return safe default (false) without blocking HTTP endpoints
+            return Ok(false);
+        };
 
         let is_ide_int = if is_ide_path { 1 } else { 0 };
         let mut stmt = conn.prepare_cached(
@@ -2353,7 +2357,7 @@ mod tests {
         let mem = MemoryStore::new(":memory:").unwrap();
         let mut sig = ThreatSignature::new("test-source".to_string());
         sig.id = "test-threat-uuid-1".to_string();
-        sig.process_name = Some("powershell.exe".to_string());
+        sig.process_name = Some("evil_beacon.exe".to_string());
         sig.confidence = 0.5;
         sig.reason = Some("Suspicious execution".to_string());
 
@@ -2404,7 +2408,7 @@ mod tests {
                 for j in 0..25 {
                     let mut sig = ThreatSignature::new(format!("node-{}", i));
                     sig.id = "concurrent-threat-uuid".to_string();
-                    sig.process_name = Some("powershell.exe".to_string());
+                    sig.process_name = Some("evil_beacon.exe".to_string());
                     sig.confidence = (j as f32) / 25.0;
                     sig.reason = Some(format!("Thread {} iteration {}", i, j));
                     assert!(mem_clone.log_threat(&sig).is_ok());

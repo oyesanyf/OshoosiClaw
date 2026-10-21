@@ -6,7 +6,7 @@ license.workspace = true
 description = "Cross-OS hex patching with Lua script logic"
 
 [dependencies]
-rhai = { version = "1.18", features = ["sync"] }
+rhai = { workspace = true }
 anyhow = { workspace = true }
 hex = { workspace = true }
 tracing = { workspace = true }
