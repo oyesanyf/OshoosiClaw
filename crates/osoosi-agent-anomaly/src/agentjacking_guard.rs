@@ -30,12 +30,26 @@ pub enum AgentjackingPhase {
 pub enum SessionTaintState {
     /// Clean, trusted execution environment
     Clean,
-    /// Ingested untrusted external data (web scrape, external doc, RAG text)
+    /// Ingested untrusted external data (web scrape, external doc, RAG text, repo clone)
     TaintedByExternalData,
     /// Context poisoning attack was detected and defanged
     ContextPoisoningNeutralized,
     /// Chained tool abuse attempted; agent quarantined
     Quarantined,
+}
+
+impl SessionTaintState {
+    /// Returns true if this session state requires forced execution inside `CanaryCage`.
+    /// When tainted by untrusted external content (PDFs, Markdown, web pages, repo clones)
+    /// or quarantined, subsequent subprocess/tool executions are automatically caged.
+    pub fn force_canary_cage(&self) -> bool {
+        matches!(
+            self,
+            SessionTaintState::TaintedByExternalData
+                | SessionTaintState::ContextPoisoningNeutralized
+                | SessionTaintState::Quarantined
+        )
+    }
 }
 
 /// Verdict returned by the Agentjacking Defense Arm.
@@ -47,6 +61,7 @@ pub struct AgentjackingVerdict {
     pub reason: String,
     pub defanged_content: Option<String>,
     pub taint_state: SessionTaintState,
+    pub force_canary_cage: bool,
 }
 
 /// Active Session State tracked by the Agentjacking Guard.
@@ -129,6 +144,7 @@ impl AgentjackingGuard {
                 ),
                 defanged_content: Some(LogSanitizer::sanitize_text(&clean_prompt)),
                 taint_state: SessionTaintState::Clean,
+                force_canary_cage: false,
             };
         }
 
@@ -143,6 +159,7 @@ impl AgentjackingGuard {
                 ),
                 defanged_content: Some(LogSanitizer::sanitize_text(&clean_prompt)),
                 taint_state: SessionTaintState::Clean,
+                force_canary_cage: false,
             };
         }
 
@@ -154,6 +171,7 @@ impl AgentjackingGuard {
             reason: "Phase 1: Entry prompt aligned with system goal boundaries.".to_string(),
             defanged_content: Some(clean_prompt),
             taint_state: current_taint,
+            force_canary_cage: current_taint.force_canary_cage(),
         }
     }
 
@@ -213,6 +231,7 @@ impl AgentjackingGuard {
                     ),
                     defanged_content: Some(encapsulated_context.clone()),
                     taint_state: SessionTaintState::ContextPoisoningNeutralized,
+                    force_canary_cage: true,
                 },
                 encapsulated_context,
             )
@@ -229,6 +248,7 @@ impl AgentjackingGuard {
                     ),
                     defanged_content: Some(encapsulated_context.clone()),
                     taint_state: SessionTaintState::TaintedByExternalData,
+                    force_canary_cage: true,
                 },
                 encapsulated_context,
             )
@@ -285,6 +305,7 @@ impl AgentjackingGuard {
                     ),
                     defanged_content: None,
                     taint_state: SessionTaintState::Quarantined,
+                    force_canary_cage: true,
                 };
             }
         }
@@ -297,6 +318,7 @@ impl AgentjackingGuard {
                 reason: format!("Session '{}' is currently quarantined following an Agentjacking containment action.", session_id),
                 defanged_content: None,
                 taint_state: SessionTaintState::Quarantined,
+                force_canary_cage: true,
             };
         }
 
@@ -310,6 +332,7 @@ impl AgentjackingGuard {
             ),
             defanged_content: None,
             taint_state: track.taint_state,
+            force_canary_cage: track.taint_state.force_canary_cage(),
         }
     }
 
@@ -323,6 +346,35 @@ impl AgentjackingGuard {
     ) -> AgentjackingVerdict {
         let json_val = serde_json::from_str(payload_str).unwrap_or(serde_json::Value::Null);
         self.evaluate_chained_tool_call(session_id, tool_name, &json_val, None)
+    }
+
+    /// Marks an agent session as tainted by untrusted external content (PDFs, Markdown, web pages, repo clones),
+    /// setting `force_canary_cage: true` to automatically route subsequent subprocess/tool executions through `CanaryCage::spawn_caged`.
+    pub fn mark_session_tainted(&self, session_id: &str, content_source: &str) -> SessionTaintState {
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let mut track = self
+            .session_tracks
+            .entry(session_id.to_string())
+            .or_insert_with(|| AgentSessionTrack {
+                taint_state: SessionTaintState::Clean,
+                tool_history: Vec::new(),
+                unverified_data_sources: Vec::new(),
+                last_action_secs: now_secs,
+            });
+
+        track.taint_state = SessionTaintState::TaintedByExternalData;
+        track.unverified_data_sources.push(content_source.to_string());
+        track.last_action_secs = now_secs;
+        track.taint_state
+    }
+
+    /// Returns whether the active session requires forced canary caging.
+    pub fn requires_canary_cage(&self, session_id: &str) -> bool {
+        self.get_session_taint(session_id).force_canary_cage()
     }
 
     pub fn get_session_taint(&self, session_id: &str) -> SessionTaintState {
@@ -448,5 +500,44 @@ mod tests {
             "CHAINED_TOOL_ABUSE_VETO"
         );
         assert_eq!(shell_abuse.taint_state, SessionTaintState::Quarantined);
+    }
+
+    #[test]
+    fn test_tainted_session_forced_canary_cage() {
+        let guard = AgentjackingGuard::new();
+        let session_id = "sess-taint-cage-1";
+
+        // Clean session does not force canary cage
+        assert!(!guard.requires_canary_cage(session_id));
+        let entry_verdict = guard.inspect_entry_point(session_id, "Analyze repository structure");
+        assert!(entry_verdict.is_allowed);
+        assert!(!entry_verdict.force_canary_cage);
+
+        // Taint session by untrusted external content (PDF, Markdown, web page, or repo clone)
+        let taint_state = guard.mark_session_tainted(session_id, "untrusted_downloaded_pdf.pdf");
+        assert_eq!(taint_state, SessionTaintState::TaintedByExternalData);
+        assert!(taint_state.force_canary_cage());
+        assert!(guard.requires_canary_cage(session_id));
+
+        // Subsequent tool call verdict carries force_canary_cage = true
+        let tool_verdict = guard.evaluate_chained_tool_call(
+            session_id,
+            "format_text",
+            &serde_json::json!({"text": "sample"}),
+            None,
+        );
+        assert!(tool_verdict.is_allowed);
+        assert!(tool_verdict.force_canary_cage, "Tainted session must enforce force_canary_cage = true");
+
+        // Quarantined session also enforces force_canary_cage = true
+        let blocked = guard.evaluate_chained_tool_call(
+            session_id,
+            "shell_exec",
+            &serde_json::json!({"cmd": "calc.exe"}),
+            None,
+        );
+        assert!(!blocked.is_allowed);
+        assert!(blocked.force_canary_cage);
+        assert_eq!(blocked.taint_state, SessionTaintState::Quarantined);
     }
 }

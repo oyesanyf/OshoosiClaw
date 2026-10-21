@@ -399,6 +399,57 @@ impl AgentContainmentRing {
             "merkle_hierarchy": osoosi_audit::global_hierarchical_merkle().get_summary(),
         })
     }
+
+    /// Pre-execution tool parameter lineage inspection.
+    ///
+    /// Inspects file/document paths in `telemetry.call_parameters` via `FileLineageTracker`
+    /// against `poisoned_digests`. Strictly ensures `is_path_immune` is checked first so
+    /// repository files and developer binaries are never blocked.
+    pub fn inspect_pre_tool_execution(
+        &self,
+        telemetry: &crate::types::ToolCallTelemetry,
+        tracker: &crate::file_lineage::FileLineageTracker,
+    ) -> Result<(), crate::file_lineage::LineageError> {
+        tracker.inspect_tool_call_parameters(&telemetry.call_parameters)
+    }
+
+    /// Executes an agent tool closure under multi-ring containment.
+    ///
+    /// Evaluates:
+    /// 1. Pre-execution file lineage parameter inspection against `poisoned_digests`
+    ///    (ensuring `is_path_immune` is checked first so repository files are never blocked).
+    /// 2. Dirac-delta single-use capability impulse ticket consumption.
+    /// 3. Executes the tool closure only if all containment invariants pass.
+    pub fn execute_contained_tool<F, R>(
+        &self,
+        telemetry: &crate::types::ToolCallTelemetry,
+        ticket: &DiracDeltaCapabilityTicket,
+        tracker: &crate::file_lineage::FileLineageTracker,
+        tool_closure: F,
+    ) -> Result<R, String>
+    where
+        F: FnOnce() -> R,
+    {
+        self.total_evaluations.fetch_add(1, Ordering::Relaxed);
+
+        // Pre-tool lineage inspection (checks immune paths before poisoned digests)
+        if let Err(err) = self.inspect_pre_tool_execution(telemetry, tracker) {
+            return Err(format!(
+                "[ContainmentRing-Lineage-Veto]: Blocked tool execution for action '{}' due to poisoned lineage: {}",
+                telemetry.tool_name, err
+            ));
+        }
+
+        // Dirac-delta single-use capability impulse check & consumption
+        if let Err(err) = ticket.consume_once(&telemetry.tool_name) {
+            return Err(format!(
+                "[ContainmentRing-Capability-Veto]: Capability ticket rejected for action '{}': {}",
+                telemetry.tool_name, err
+            ));
+        }
+
+        Ok(tool_closure())
+    }
 }
 
 // ============================================================================
@@ -422,6 +473,8 @@ pub struct DiracDeltaCapabilityTicket {
     pub window_ns: u64,
     consumed: std::sync::atomic::AtomicU32,
     ephemeral_secret: [u8; 32],
+    pub canary_token_id: Option<String>,
+    pub canary_trap_uri: Option<String>,
 }
 
 impl DiracDeltaCapabilityTicket {
@@ -446,7 +499,36 @@ impl DiracDeltaCapabilityTicket {
             window_ns: window_ns.max(1_000), // minimum 1 microsecond window
             consumed: std::sync::atomic::AtomicU32::new(0),
             ephemeral_secret: derived,
+            canary_token_id: None,
+            canary_trap_uri: None,
         }
+    }
+
+    /// Issues a Dirac-delta capability impulse pre-bound with ephemeral canary trap metadata.
+    pub fn issue_with_canary(
+        agent_id: &str,
+        tool_action: &str,
+        epoch: u64,
+        window_ns: u64,
+        canary_token_id: Option<String>,
+        canary_trap_uri: Option<String>,
+    ) -> Self {
+        let mut ticket = Self::issue(agent_id, tool_action, epoch, window_ns);
+        ticket.canary_token_id = canary_token_id;
+        ticket.canary_trap_uri = canary_trap_uri;
+        ticket
+    }
+
+    /// Binds an ephemeral canary token ID and trap URI to this capability ticket.
+    pub fn bind_canary(&mut self, token_id: &str, trap_uri: &str) {
+        self.canary_token_id = Some(token_id.to_string());
+        self.canary_trap_uri = Some(trap_uri.to_string());
+    }
+
+    /// Builder pattern helper to bind canary trap metadata.
+    pub fn with_canary(mut self, token_id: &str, trap_uri: &str) -> Self {
+        self.bind_canary(token_id, trap_uri);
+        self
     }
 
     /// Evaluates $\operatorname{Cap}(t_{\text{now}})$ without consuming the ticket.
@@ -1021,5 +1103,108 @@ mod tests {
             v_kernel.blocking_layer.as_deref(),
             Some("Layer3_OS_Kernel_Confinement_Boundary")
         );
+    }
+
+    #[test]
+    fn test_dirac_delta_capability_ticket_canary_binding() {
+        let mut ticket = DiracDeltaCapabilityTicket::issue("agent_canary_test", "read_doc", 1, 10_000_000_000);
+        assert!(ticket.canary_token_id.is_none());
+        assert!(ticket.canary_trap_uri.is_none());
+
+        ticket.bind_canary("canary_tok_1234", "\\\\.\\pipe\\osoosi_canary_trap_01");
+        assert_eq!(ticket.canary_token_id.as_deref(), Some("canary_tok_1234"));
+        assert_eq!(
+            ticket.canary_trap_uri.as_deref(),
+            Some("\\\\.\\pipe\\osoosi_canary_trap_01")
+        );
+
+        let ticket2 = DiracDeltaCapabilityTicket::issue_with_canary(
+            "agent_canary_test2",
+            "write_log",
+            2,
+            5_000_000_000,
+            Some("tok_abc".to_string()),
+            Some("memfd://canary_trap".to_string()),
+        );
+        assert_eq!(ticket2.canary_token_id.as_deref(), Some("tok_abc"));
+        assert_eq!(ticket2.canary_trap_uri.as_deref(), Some("memfd://canary_trap"));
+    }
+
+    #[test]
+    fn test_agent_containment_ring_pre_tool_lineage_and_execute_contained_tool() {
+        use crate::file_lineage::FileLineageTracker;
+        use crate::types::ToolCallTelemetry;
+
+        let ring = AgentContainmentRing::new();
+        let tracker = FileLineageTracker::new();
+
+        // 1. Create a non-immune temporary file and mark its digest poisoned
+        let temp_dir = std::env::temp_dir();
+        let poisoned_file = temp_dir.join(format!("poisoned_doc_{}.txt", std::process::id()));
+        std::fs::write(&poisoned_file, b"poisoned prompt injection content").unwrap();
+        let poisoned_digest = FileLineageTracker::compute_file_blake3(&poisoned_file).unwrap();
+        tracker
+            .mark_digest_poisoned(&poisoned_digest, "session_test", "injected payload", 1.0)
+            .unwrap();
+
+        // 2. Telemetry pointing to the poisoned file must be rejected before tool execution
+        let poisoned_telemetry = ToolCallTelemetry {
+            session_id: "session_test".to_string(),
+            agent_id: "agent_42".to_string(),
+            trace_id: None,
+            tool_name: "read_file".to_string(),
+            call_parameters: serde_json::json!({
+                "path": poisoned_file.to_string_lossy().to_string()
+            }),
+            execution_duration_ms: 10,
+            timestamp: chrono::Utc::now(),
+            tokens_used: None,
+            is_error: false,
+            error_message: None,
+        };
+
+        let ticket = DiracDeltaCapabilityTicket::issue("agent_42", "read_file", 1, 10_000_000_000);
+        let mut executed = false;
+        let res = ring.execute_contained_tool(&poisoned_telemetry, &ticket, &tracker, || {
+            executed = true;
+            "should not execute"
+        });
+
+        assert!(res.is_err());
+        assert!(!executed, "Tool closure must NOT run when parameters reference poisoned files");
+        assert!(res.unwrap_err().contains("Lineage-Veto"));
+
+        // 3. Telemetry pointing to an immune repository file must SUCCEED even if attempted to be poisoned
+        let root = osoosi_types::resolve_project_root().expect("workspace root");
+        let immune_file = root.join("Cargo.toml");
+        assert!(tracker.is_path_immune(&immune_file));
+
+        let immune_telemetry = ToolCallTelemetry {
+            session_id: "session_test".to_string(),
+            agent_id: "agent_42".to_string(),
+            trace_id: None,
+            tool_name: "read_file".to_string(),
+            call_parameters: serde_json::json!({
+                "path": immune_file.to_string_lossy().to_string()
+            }),
+            execution_duration_ms: 10,
+            timestamp: chrono::Utc::now(),
+            tokens_used: None,
+            is_error: false,
+            error_message: None,
+        };
+
+        let valid_ticket = DiracDeltaCapabilityTicket::issue("agent_42", "read_file", 1, 10_000_000_000);
+        let mut executed_immune = false;
+        let res_immune = ring.execute_contained_tool(&immune_telemetry, &valid_ticket, &tracker, || {
+            executed_immune = true;
+            "immune_success"
+        });
+
+        assert!(res_immune.is_ok());
+        assert_eq!(res_immune.unwrap(), "immune_success");
+        assert!(executed_immune, "Immune repository path must execute successfully");
+
+        let _ = std::fs::remove_file(poisoned_file);
     }
 }
