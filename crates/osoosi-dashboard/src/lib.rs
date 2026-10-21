@@ -12,6 +12,7 @@ use axum::{
 };
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
+use osoosi_core::parking_lot;
 use osoosi_behavioral::{
     DeepQEngine, OshoosiSecurityGym, PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail,
     SkyAction, Transition,
@@ -896,6 +897,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             post(post_deception_activate_hologram),
         )
         .route("/api/deception/entangle", post(post_deception_entangle))
+        .route("/api/redteam/run", post(post_redteam_run).get(post_redteam_run))
+        .route("/redteam/run", post(post_redteam_run).get(post_redteam_run))
         .route("/api/detection-stats", get(get_detection_stats))
         .route("/api/supervisor/status", get(get_supervisor_status))
         .route("/supervisor/status", get(get_supervisor_status))
@@ -3367,10 +3370,110 @@ struct DeceptionEntangleRequest {
     pub peer_id: Option<String>,
 }
 
+pub static CANARY_CAGE_ACTIVE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static CANARY_CAGE_TRIGGERED_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static CANARY_CAGE_TOTAL_EXECUTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+static GLOBAL_FILE_LINEAGE_TRACKER: std::sync::OnceLock<
+    Arc<osoosi_agent_anomaly::file_lineage::FileLineageTracker>,
+> = std::sync::OnceLock::new();
+
+pub fn get_global_file_lineage_tracker() -> Arc<osoosi_agent_anomaly::file_lineage::FileLineageTracker> {
+    GLOBAL_FILE_LINEAGE_TRACKER
+        .get_or_init(|| {
+            Arc::new(osoosi_agent_anomaly::file_lineage::FileLineageTracker::new())
+        })
+        .clone()
+}
+
+pub fn record_canary_cage_spawn() {
+    CANARY_CAGE_ACTIVE_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    CANARY_CAGE_TOTAL_EXECUTIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn record_canary_cage_exit() {
+    let mut current = CANARY_CAGE_ACTIVE_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+    while current > 0 {
+        match CANARY_CAGE_ACTIVE_COUNT.compare_exchange_weak(
+            current,
+            current - 1,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        ) {
+            Ok(_) => break,
+            Err(actual) => current = actual,
+        }
+    }
+}
+
+pub fn record_canary_cage_trap_triggered() {
+    CANARY_CAGE_TRIGGERED_COUNT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub async fn enrich_deception_telemetry(state: &DashboardState, val: &mut Value) {
+    if let Some(obj) = val.as_object_mut() {
+        let cage_metrics = json!({
+            "active_cages": CANARY_CAGE_ACTIVE_COUNT.load(std::sync::atomic::Ordering::SeqCst),
+            "triggered_traps": CANARY_CAGE_TRIGGERED_COUNT.load(std::sync::atomic::Ordering::SeqCst),
+            "total_caged_executions": CANARY_CAGE_TOTAL_EXECUTIONS.load(std::sync::atomic::Ordering::SeqCst),
+        });
+        obj.insert("canary_cage".to_string(), cage_metrics.clone());
+        obj.insert("canary_cage_metrics".to_string(), cage_metrics);
+
+        let tracker = get_global_file_lineage_tracker();
+        let mut lineage_map = serde_json::Map::new();
+        let session_summaries = state.agent_anomaly_detector.get_session_summaries();
+        for s in session_summaries {
+            let entries = tracker.get_session_lineage(&s.session_id);
+            let digests: Vec<String> = entries.into_iter().map(|e| e.blake3_digest).collect();
+            lineage_map.insert(s.session_id, json!(digests));
+        }
+
+        obj.insert("session_file_lineage".to_string(), Value::Object(lineage_map.clone()));
+        obj.insert("file_lineage_graph".to_string(), Value::Object(lineage_map));
+
+        let poisoned_meta = tracker.get_all_poisoned_digests();
+        let mut immunized_hashes: Vec<Value> = poisoned_meta
+            .into_iter()
+            .map(|p| {
+                json!({
+                    "digest": p.digest,
+                    "reason": p.reason,
+                    "source_session": p.source_session,
+                    "confidence": p.confidence,
+                    "poisoned_at": p.poisoned_at.to_rfc3339(),
+                })
+            })
+            .collect();
+
+        if let Some(orch) = &state.backend {
+            for c_path in orch.canary.list_canaries() {
+                let p = std::path::Path::new(&c_path);
+                let digest = if p.exists() {
+                    osoosi_agent_anomaly::file_lineage::FileLineageTracker::compute_file_blake3(p)
+                        .unwrap_or_else(|_| blake3::hash(c_path.as_bytes()).to_hex().to_string())
+                } else {
+                    blake3::hash(c_path.as_bytes()).to_hex().to_string()
+                };
+                immunized_hashes.push(json!({
+                    "digest": digest,
+                    "reason": "Ghost Canary Honey-File".to_string(),
+                    "source_session": "canary_manager",
+                    "confidence": 1.0,
+                    "path": c_path,
+                }));
+            }
+        }
+
+        obj.insert("swarm_immunized_hashes".to_string(), json!(immunized_hashes));
+        obj.insert("poisoned_document_hashes".to_string(), json!(immunized_hashes));
+    }
+}
+
 async fn get_deception_status_endpoint(State(state): State<DashboardState>) -> Json<Value> {
-    match &state.backend {
-        Some(orch) => Json(orch.get_deception_status().await),
-        None => Json(json!({
+    let mut val = match &state.backend {
+        Some(orch) => orch.get_deception_status().await,
+        None => json!({
             "ghost_nodes": {
                 "active_services": {},
                 "total_interactions": 0
@@ -3381,8 +3484,22 @@ async fn get_deception_status_endpoint(State(state): State<DashboardState>) -> J
             "canary_count": 0,
             "morphic_entanglements": [],
             "total_interactions": 0
-        })),
-    }
+        }),
+    };
+    enrich_deception_telemetry(&state, &mut val).await;
+    Json(val)
+}
+
+async fn post_redteam_run() -> Json<Value> {
+    let scorecard = tokio::task::spawn_blocking(move || {
+        osoosi_core::adversarial_gauntlet::AdversarialRedTeamGauntlet::run_full_gauntlet()
+    })
+    .await
+    .unwrap_or_else(|e| {
+        panic!("Redteam gauntlet task failed: {:?}", e);
+    });
+
+    Json(serde_json::to_value(scorecard).unwrap_or_else(|_| json!({ "status": "error" })))
 }
 
 async fn post_deception_deploy_traps(State(state): State<DashboardState>) -> Json<Value> {
@@ -8118,15 +8235,16 @@ pub struct HistoryItem {
     pub details: Value,
 }
 
-static HISTORY_ITEMS_CACHE: Lazy<
-    parking_lot::Mutex<Option<(std::time::Instant, Vec<HistoryItem>)>>,
-> = Lazy::new(|| parking_lot::Mutex::new(None));
+static HISTORY_ITEMS_CACHE: std::sync::OnceLock<
+    parking_lot::RwLock<Option<(std::time::Instant, Vec<HistoryItem>)>>,
+> = std::sync::OnceLock::new();
 
-fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
+pub fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     if state.backend.is_some() {
-        if let Some(guard) = HISTORY_ITEMS_CACHE.try_lock_for(Duration::from_millis(5)) {
+        let cache = HISTORY_ITEMS_CACHE.get_or_init(|| parking_lot::RwLock::new(None));
+        if let Some(guard) = cache.try_read_for(Duration::from_millis(5)) {
             if let Some((ts, cached)) = guard.as_ref() {
-                if ts.elapsed() < Duration::from_secs(3) {
+                if ts.elapsed() < Duration::from_millis(2000) {
                     return cached.clone();
                 }
             }
@@ -8305,8 +8423,8 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     }
 
     if let Some(orch) = &state.backend {
-        // 2. Audit Trail Merkle entries (bounded to latest 300 entries for sub-5ms latency)
-        for (idx, entry) in orch.audit().get_recent_entries(300).into_iter().enumerate() {
+        // 2. Audit Trail Merkle entries (bounded to latest 400 entries for sub-5ms latency)
+        for (idx, entry) in orch.audit().get_recent_entries(400).into_iter().enumerate() {
             let timestamp = entry.timestamp.to_rfc3339();
             let event_type = entry.event_type;
             let mut d = entry.data;
@@ -8542,7 +8660,8 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     // Sort descending by timestamp
     items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     if state.backend.is_some() {
-        if let Some(mut guard) = HISTORY_ITEMS_CACHE.try_lock_for(Duration::from_millis(5)) {
+        let cache = HISTORY_ITEMS_CACHE.get_or_init(|| parking_lot::RwLock::new(None));
+        if let Some(mut guard) = cache.try_write_for(Duration::from_millis(5)) {
             *guard = Some((std::time::Instant::now(), items.clone()));
         }
     }
@@ -9002,6 +9121,7 @@ pub async fn get_agent_anomalies_sessions(
 
 pub async fn get_agent_anomalies_summary(State(state): State<DashboardState>) -> impl IntoResponse {
     let mut summary = state.agent_anomaly_detector.get_risk_summary().await;
+    enrich_deception_telemetry(&state, &mut summary).await;
     if let Some(obj) = summary.as_object_mut() {
         obj.insert(
             "embedding_engine".to_string(),
