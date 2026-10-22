@@ -1671,7 +1671,7 @@ impl SiqueryEngine {
 
         CREATE TABLE IF NOT EXISTS agent_drift_traces (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            trace_id TEXT,
+            trace_id TEXT UNIQUE,
             session_id TEXT,
             agent_id TEXT,
             arm_id TEXT,
@@ -7772,6 +7772,7 @@ impl SiqueryEngine {
             std::path::Path::new("database/osoosi.db"),
             std::path::Path::new("target/release/database/osoosi.db"),
             std::path::Path::new("../database/osoosi.db"),
+            std::path::Path::new("../../database/osoosi.db"),
         ];
 
         let mut threats_count = 0usize;
@@ -8292,7 +8293,7 @@ impl SiqueryEngine {
     fn populate_agent_drift_traces(conn: &Connection) -> Result<(), String> {
         let mut insert_stmt = conn
             .prepare_cached(
-                "INSERT INTO agent_drift_traces (
+                "INSERT OR REPLACE INTO agent_drift_traces (
                     trace_id, session_id, agent_id, arm_id, model_name, step_index,
                     intent_hash_blake3, user_intent, untrusted_source, untrusted_taint,
                     proposed_tool, proposed_parameters, tier1_passed, tier1_cosine_score,

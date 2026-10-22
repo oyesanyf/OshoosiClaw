@@ -340,8 +340,9 @@ async function runLiveRestFallbackAssertions(suiteName, handleTestResult, handle
     const probes = [
         { url: '/api/status', suite: 'Kernel & Daemon Sentinel', name: 'OsoosiEDR Daemon & Multi-Ring Telemetry Status Verification' },
         { url: '/api/tarpit-stats', suite: 'Canary Tarpit Defense', name: 'Decoy Token & Trapped Caller Telemetry Counter Integrity' },
-        { url: '/api/siquery/edr-status', suite: 'Siquery SQL Engine', name: '101-Table Siquery Host Telemetry & Kernel Hook Verification' },
+        { url: '/api/siquery/edr-status', suite: 'Siquery SQL Engine', name: '103-Table Siquery Host Telemetry & Longitudinal Drift Verification' },
         { url: '/api/agent-anomalies/summary', suite: 'AI Agent Containment', name: 'Multi-Ring Agent Breakout & Behavioral Anomaly Gate' },
+        { url: '/api/agent-anomalies/drift-traces', suite: 'Runtime Trace-Alignment Scanner', name: 'Two-Stage AlignmentCheck & Longitudinal Drift Telemetry (agent_drift_traces)' },
         { url: '/api/rea/v1/status', suite: 'REA Autonomous Vetting', name: 'Reverse Engineer Anything (REA) Catalog & Authenticode Verifier' },
         { url: '/api/har/entries?limit=10', suite: 'HAR Web Lineage', name: 'Continuous HAR Web Traffic & BLAKE3 Lineage Sensor Check' },
         { url: '/api/mitre/stix/status', suite: 'MITRE ATT&CK / ATLAS', name: 'MITRE ATT&CK & ATLAS Dynamic STIX Threat Matrix Sync' }
@@ -365,6 +366,10 @@ function runAdversarialSuite(suiteName, isAutoCycle = false) {
     if (!isAutoCycle) {
         advAutonomousEnabled = true;
         updateAdvAutonomousButtonUI();
+        const selector = document.getElementById('adv-suite-selector');
+        if (selector) {
+            selector.value = suiteName;
+        }
     }
     if (advAutoCycleTimer) {
         clearTimeout(advAutoCycleTimer);

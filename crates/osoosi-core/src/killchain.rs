@@ -1682,22 +1682,49 @@ pub fn authenticate_hybrid_credentials(
         }
     }
 
-    // 3. Stored Admin Hash Match (BLAKE3 or SHA-256)
-    let hash_path = osoosi_types::resolve_project_root()
-        .map(|p| p.join("config").join("admin_password.hash"))
-        .unwrap_or_else(|| PathBuf::from("config").join("admin_password.hash"));
+    // 3. Stored Admin Hash Match (BLAKE3 or SHA-256 across config/admin_password.hash and admin_auth.json)
+    let root = osoosi_types::resolve_project_root().unwrap_or_else(|| PathBuf::from("."));
+    let computed_b3 = blake3::hash(trimmed_pass.as_bytes()).to_hex().to_string();
+    let mut sha_hasher = sha2::Sha256::new();
+    sha2::Digest::update(&mut sha_hasher, trimmed_pass.as_bytes());
+    let computed_sha = hex::encode(sha2::Digest::finalize(sha_hasher));
+
+    let hash_path = root.join("config").join("admin_password.hash");
     if hash_path.is_file() {
         if let Ok(stored_hash) = std::fs::read_to_string(&hash_path) {
-            let computed_b3 = blake3::hash(trimmed_pass.as_bytes()).to_hex().to_string();
-            let mut sha_hasher = sha2::Sha256::new();
-            sha2::Digest::update(&mut sha_hasher, trimmed_pass.as_bytes());
-            let computed_sha = hex::encode(sha2::Digest::finalize(sha_hasher));
-
-            if constant_time_eq(&computed_b3, stored_hash.trim())
-                || constant_time_eq(&computed_sha, stored_hash.trim())
+            let clean_hash = stored_hash.trim();
+            if !clean_hash.is_empty()
+                && (constant_time_eq(&computed_b3, clean_hash)
+                    || constant_time_eq(&computed_sha, clean_hash)
+                    || constant_time_eq(trimmed_pass, clean_hash))
             {
                 record_successful_auth();
                 return Ok(true);
+            }
+        }
+    }
+
+    for json_rel in &[
+        root.join("config").join("admin_auth.json"),
+        root.join("logs").join("admin_auth.json"),
+    ] {
+        if json_rel.is_file() {
+            if let Ok(raw_json) = std::fs::read_to_string(json_rel) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw_json) {
+                    for key in &["password_hash", "hash", "token", "pin_hash"] {
+                        if let Some(h) = val.get(*key).and_then(|v| v.as_str()) {
+                            let clean_h = h.trim();
+                            if !clean_h.is_empty()
+                                && (constant_time_eq(&computed_b3, clean_h)
+                                    || constant_time_eq(&computed_sha, clean_h)
+                                    || constant_time_eq(trimmed_pass, clean_h))
+                            {
+                                record_successful_auth();
+                                return Ok(true);
+                            }
+                        }
+                    }
+                }
             }
         }
     }

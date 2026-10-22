@@ -353,6 +353,7 @@ impl AgentAnomalyDetector {
         if has_pinned_intent
             || explicit_user_intent.is_some()
             || explicit_untrusted_input.is_some()
+            || aj_verdict.taint_state.force_canary_cage()
         {
             let align_req = crate::alignment_scanner::AlignmentCheckRequest {
                 session_id: Some(telemetry.session_id.clone()),
