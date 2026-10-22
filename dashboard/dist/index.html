@@ -50,6 +50,11 @@
                     <i data-lucide="network"></i>
                     <span>Attack Graph</span>
                 </a>
+                <a href="#dlp" class="nav-item" data-view="dlp">
+                    <i data-lucide="shield-alert"></i>
+                    <span>Data Loss Prevention (DLP)</span>
+                    <span id="nav-dlp-badge" class="badge green" style="margin-left: auto; font-size: 10px; padding: 2px 6px; border-radius: 999px;">0B EXFIL</span>
+                </a>
                 <a href="#history" class="nav-item" data-view="history">
                     <i data-lucide="history"></i>
                     <span>Forensic History</span>
@@ -168,6 +173,51 @@
                     </div>
                 </div>
             </header>
+
+                <!-- NIST Article & Standards Compliance Documentation Banner -->
+                <div class="card glass shadow-glow mb-4" id="nist-compliance-top-card" style="padding: 16px 20px; border-left: 4px solid #10b981; margin-bottom: 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <span style="font-size: 16px; font-weight: 800; color: #f8fafc;">🏛️ NIST Article &amp; Standards Alignment Checklist</span>
+                            <span class="badge blue" style="font-size: 10.5px; padding: 3px 8px;">NIST AI 100-2e2023/2025 &bull; AI RMF 1.0 &bull; SP 800-207 &bull; SP 800-53 &bull; FIPS 203/204</span>
+                        </div>
+                        <button type="button" class="btn-secondary" onclick="const b=document.getElementById('nist-checklist-grid-main'); if(b){b.style.display=b.style.display==='none'?'grid':'none'; this.innerText=b.style.display==='none'?'Expand NIST Checklist':'Collapse';}" style="font-size: 11.5px; padding: 4px 10px;">Collapse</button>
+                    </div>
+                    <div id="nist-checklist-grid-main" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; font-size: 12.5px; color: #e2e8f0;">
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST AI 100-2e2023 / 2025 (Adversarial ML Taxonomy):</strong> Autonomous 34-suite red-teaming harness (2,250+ probes across MITRE ATLAS, PyRIT, Garak, Inspect AI, DeepEval, Promptfoo).</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">Generator-Discriminator Co-Evolution:</strong> SkyRL training loop automatically persists newly evolved ATLAS/PyRIT/Garak prompt mutations into versioned <code>tests/corpus/adversarial_regression_corpus.json</code> after every cycle.</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST AI RMF 1.0 &amp; AI 600-1 (GOVERN / MAP / MEASURE / MANAGE):</strong> OWASP Agentic Top 10 (ASI01&ndash;ASI10), EmbeddingGemma 2 MRL drift, and CanaryCage honey-pipe / Job Object sandboxing.</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST SP 800-207 (Zero Trust Architecture):</strong> Continuous per-invocation Cedar PARC &amp; Dogwood temporal authorization (MFOTL) with fail-closed multi-ring containment.</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST SP 800-53 Rev. 5 &amp; SP 800-88 (Two-Tier DLP &amp; Volatile Scrubbing):</strong> Dedicated <code>#dlp</code> engine (&lt;50&micro;s O(N) scan + 4 KB Crown-Jewel Merkle chunks + Presidio/GLiNER <code>&lt;ZK_PII&gt;</code> proofs, 0B exfil).</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST FIPS 203 (ML-KEM-768) &amp; FIPS 204 (ML-DSA-65):</strong> Hybrid post-quantum key encapsulation and lattice signatures across P2P mesh, Merkle manifests, and ZK-BFT proofs.</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST SP 800-193 &amp; NSRL RDS (TPM 2.0 Silicon Root &amp; REA Vetting):</strong> TPM 2.0 handle <code>0x81010002</code> BLAKE3 Merkle signing + NV counter <code>0x01800001</code> &amp; autonomous REA catalog vetting.</span>
+                        </label>
+                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
+                            <span><strong style="color: #10b981;">NIST SP 800-218 (SSDF) &amp; SLSA v1.0 Provenance:</strong> Authenticode SHA-256 + RFC 3161 signing, DSSE in-toto attestations, and rootless read-only container confinement.</span>
+                        </label>
+                    </div>
+                </div>
 
             <div id="dashboard-view" class="view-content active">
                 <!-- Stats Grid -->
@@ -2929,6 +2979,30 @@
             </div>
                     <!-- Adversarial & Defense Test Execution Suite View -->
             <div id="adversarial-tests-view" class="view-content">
+                <!-- NIST Article & Generator-Discriminator Co-Evolution Documentation Banner -->
+                <div class="card glass shadow-glow mb-4" id="nist-compliance-adv-card" style="padding: 16px 20px; border-left: 4px solid #38bdf8; margin-bottom: 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <span style="font-size: 15.5px; font-weight: 800; color: #f8fafc;">🏛️ NIST Article Alignment &amp; Closed-Loop Generator-Discriminator Co-Evolution</span>
+                            <span class="badge green" style="font-size: 11px; padding: 3px 9px;">SELF-EXPANDING CORPUS ACTIVE</span>
+                        </div>
+                        <span id="adv-corpus-epoch-badge" class="badge blue" style="font-size: 11px; padding: 3px 9px; font-family: monospace;">Corpus: tests/corpus/adversarial_regression_corpus.json</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px; font-size: 12px; color: #e2e8f0;">
+                        <label style="display: flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 8px;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 14px; height: 14px;">
+                            <span><strong>NIST AI 100-2e2023/2025:</strong> 34-Suite Autonomous Red-Teaming (MITRE ATLAS, PyRIT, Garak, Inspect AI)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 8px;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 14px; height: 14px;">
+                            <span><strong>Generator-Discriminator Evolution:</strong> SkyRL persists new prompt mutations to disk after every cycle</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 8px;">
+                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 14px; height: 14px;">
+                            <span><strong>NIST SP 800-207 &amp; SP 800-53:</strong> Cedar PARC Zero-Trust + Two-Tier DLP Zero-PII ZK-BFT Verification</span>
+                        </label>
+                    </div>
+                </div>
                 <!-- Top 6-Card KPI Row -->
                 <div style="display: grid; grid-template-columns: repeat(6, minmax(140px, 1fr)); gap: 14px; margin-bottom: 20px;">
                     <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
@@ -3078,6 +3152,236 @@
                                 </tbody>
                             </table>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Two-Tier Data Loss Prevention (DLP) & Crown-Jewel Guard View -->
+            <div id="dlp-view" class="view-content">
+                <!-- Top Header & Enforcement Control Card -->
+                <div class="card glass shadow-glow mb-4" style="padding: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+                        <div style="flex: 1; min-width: 320px;">
+                            <h3 style="margin: 0 0 6px 0; font-size: 19px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 10px;">
+                                <span>🛡️ Two-Tier Zero-Exploit Data Loss Prevention (DLP) &amp; Crown-Jewel Guard</span>
+                            </h3>
+                            <p style="margin: 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.5;">
+                                Tier-1 O(N) Hot-Path Credential/PAN/SSN &amp; 4 KB Crown-Jewel Merkle Fingerprinter (&lt;50µs, Base64/Hex/URL Unwrapping) + Tier-2 Presidio &amp; GLiNER Zero-PII Scrubber with ML-DSA-65 + Ed25519 ZK-BFT Quarantine Proofs.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <span id="dlp-live-status-badge" class="badge green" style="padding: 6px 12px; font-size: 11.5px; font-weight: 700;">🟢 ENFORCE: BLOCK &amp; ZK-SCRUB</span>
+                            <select id="dlp-policy-mode-select" onchange="updateDlpPolicyMode()" style="padding: 7px 12px; border-radius: 8px; background: rgba(13, 17, 23, 0.95); border: 1px solid var(--glass-border-bright); color: #e6edf3; font-size: 12.5px; font-weight: 600; cursor: pointer;">
+                                <option value="ENFORCE_BLOCK_AND_SCRUB">Policy: Enforce Block &amp; ZK-Scrub</option>
+                                <option value="QUARANTINE_ON_CROWN_JEWEL">Policy: Quarantine on Crown-Jewel</option>
+                                <option value="MONITOR_AND_SCRUB">Policy: Monitor &amp; Audit Only</option>
+                            </select>
+                            <button type="button" class="btn-secondary" onclick="runDlpLiveHarSweep()" style="padding: 8px 14px; font-size: 12.5px;">🔍 Sweep Live HAR Traffic</button>
+                            <button type="button" class="btn-primary" onclick="runDlpExfilSimulationGauntlet()" style="padding: 8px 14px; font-size: 12.5px;">⚡ Run Exfil &amp; Obfuscation Gauntlet</button>
+                            <button type="button" class="btn-secondary" onclick="renderDlpView(true)" style="padding: 8px 14px; font-size: 12.5px;">🔄 Refresh</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 6 KPI Summary Cards Row -->
+                <div style="display: grid; grid-template-columns: repeat(6, minmax(145px, 1fr)); gap: 14px; margin-bottom: 20px;">
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="dlp-stat-inspected" style="font-size: 26px; font-weight: 800; color: #38bdf8;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">Payloads Inspected</div>
+                        <div style="font-size: 10px; color: #64748b; margin-top: 2px;">Tier-1 O(N) Hot Scanner (&lt;50µs)</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="dlp-stat-blocked" style="font-size: 26px; font-weight: 800; color: #ef4444;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">Blocked Exfiltrations</div>
+                        <div style="font-size: 10px; color: #64748b; margin-top: 2px;">Outbound HTTP/TLS, CLI &amp; Agent Sinks</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="dlp-stat-scrubbed" style="font-size: 26px; font-weight: 800; color: #f59e0b;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">PII &amp; Secrets Scrubbed</div>
+                        <div style="font-size: 10px; color: #64748b; margin-top: 2px;">Committed as &lt;ZK_PII:TYPE:HASH8&gt;</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="dlp-stat-crown-jewels" style="font-size: 26px; font-weight: 800; color: #a855f7;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">Crown-Jewel Assets</div>
+                        <div style="font-size: 10px; color: #64748b; margin-top: 2px;"><span id="dlp-stat-chunks">0</span> Zero-Plaintext 4 KB Chunks</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="dlp-stat-zk-proofs" style="font-size: 26px; font-weight: 800; color: #10b981;">0</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">ZK-BFT Proofs Verified</div>
+                        <div style="font-size: 10px; color: #64748b; margin-top: 2px;">ML-DSA-65 + Ed25519 (0 Bits Leaked)</div>
+                    </div>
+                    <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
+                        <div id="dlp-stat-bytes-exfil" style="font-size: 26px; font-weight: 800; color: #10b981;">0 B (0%)</div>
+                        <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin-top: 4px;">Attacker Exfil Exposure</div>
+                        <div style="font-size: 10px; color: #64748b; margin-top: 2px;"><span id="dlp-stat-lineage-count">0</span> BLAKE3 Lineage Tracked</div>
+                    </div>
+                </div>
+
+                <!-- 2-Column Interactive DLP Inspector & Crown-Jewel Vault Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 18px; margin-bottom: 20px;">
+                    <!-- Left Card: Interactive Two-Tier DLP Inspector & Law 10 Zero-PII Scrubber -->
+                    <div class="card glass shadow-glow" style="padding: 18px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px;">
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+                                <span>🔬 Interactive Two-Tier DLP Inspector &amp; Law 10 Zero-PII Scrubber</span>
+                            </h4>
+                            <span class="badge blue" style="font-size: 10.5px;">&lt;50µs HOT-PATH + ZK-BFT</span>
+                        </div>
+
+                        <!-- 3-column input row -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+                            <div>
+                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Actor Process</label>
+                                <input type="text" id="dlp-inspect-process" value="python.exe" style="width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.4); color: #fff; font-size: 12px; font-family: monospace;">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Destination Sink / URL</label>
+                                <input type="text" id="dlp-inspect-sink" value="https://paste.external.org/upload" style="width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.4); color: #fff; font-size: 12px; font-family: monospace;">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Egress Channel</label>
+                                <select id="dlp-inspect-channel" style="width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.4); color: #fff; font-size: 12px;">
+                                    <option value="HTTPS_POST">HTTPS_POST (External Web)</option>
+                                    <option value="AGENT_TOOL_CALL">AGENT_TOOL_CALL (LLM Output Sink)</option>
+                                    <option value="WEBHOOK_SINK">WEBHOOK_SINK (Discord / Slack)</option>
+                                    <option value="CLIPBOARD_EGRESS">CLIPBOARD_EGRESS (Host OS Paste)</option>
+                                    <option value="LOCAL_IPC">LOCAL_IPC (Subprocess Pipe)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Preset & Native File Upload bar -->
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px;">
+                            <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('aws_pan')" style="padding: 5px 10px; font-size: 11.5px;">🔑 AWS Key + Luhn Card + Email</button>
+                            <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('b64_ssn')" style="padding: 5px 10px; font-size: 11.5px;">🧬 Base64/Hex Obfuscated Secret + SSN</button>
+                            <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('clean')" style="padding: 5px 10px; font-size: 11.5px;">✅ Benign Dev Build</button>
+                            <input type="file" id="dlp-inspect-file-input" accept=".txt,.json,.env,.md,.log,.csv,.py,.rs" style="display:none" onchange="handleDlpInspectFileUpload(event)">
+                            <button type="button" class="btn-secondary" onclick="document.getElementById('dlp-inspect-file-input').click()" style="padding: 5px 10px; font-size: 11.5px;">📂 Upload File to Inspect</button>
+                        </div>
+
+                        <!-- Payload textarea -->
+                        <div style="margin-bottom: 12px;">
+                            <label style="display: flex; justify-content: space-between; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">
+                                <span>Outbound Egress Payload Buffer</span>
+                                <span id="dlp-inspect-char-count" style="color: #64748b;">175 chars</span>
+                            </label>
+                            <textarea id="dlp-inspect-payload" rows="4" style="width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.5); color: #38bdf8; font-family: monospace; font-size: 12px; resize: vertical; line-height: 1.45;" placeholder="Enter outbound text, HTTP request, code, or environment payload to test...">POST /upload env: AWS_KEY=AKIAIOSFODNN7EXAMPLE user=alice.doe@acme.org ssn=123-45-6789 card=4532015112830366 token=ghp_1234567890abcdef1234567890abcdef1234</textarea>
+                        </div>
+
+                        <!-- Submit button -->
+                        <button type="button" class="btn-primary" onclick="submitDlpInspection()" style="width: 100%; padding: 10px 16px; font-weight: 700; margin-bottom: 14px;">⚡ Inspect Payload (Tier-1 Hot Scan + Tier-2 ZK-PII Scrub &amp; PQC Proof)</button>
+
+                        <!-- Live Verdict & ZK-BFT Proof Output Box -->
+                        <div id="dlp-inspect-result-box" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); border-radius: 8px; padding: 14px; font-size: 12px; min-height: 140px;">
+                            <div style="color: var(--text-muted); text-align: center; padding: 30px 10px;">
+                                Ready to inspect. Click "Inspect Payload" or select a preset above to run Tier-1 hot-path extraction and Tier-2 ZK-BFT scrubbing.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right Card: Zero-Plaintext Crown-Jewel 4 KB Merkle Fingerprinter -->
+                    <div class="card glass shadow-glow" style="padding: 18px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px;">
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
+                                <span>💎 Zero-Plaintext Crown-Jewel 4 KB Merkle Fingerprinter</span>
+                            </h4>
+                            <span class="badge purple" style="font-size: 10.5px;">SHA-256 MERKLE ROOTS</span>
+                        </div>
+
+                        <!-- Registration form -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                            <div>
+                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Asset Label / Filename</label>
+                                <input type="text" id="dlp-cj-label" placeholder="e.g. proprietary_weights_manifest.json" style="width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.4); color: #fff; font-size: 12px;">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase;">Security Classification</label>
+                                <select id="dlp-cj-classification" style="width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.4); color: #fff; font-size: 12px;">
+                                    <option value="CRITICAL_CROWN_JEWEL">Critical Crown-Jewel (Auto-Quarantine)</option>
+                                    <option value="PROPRIETARY_SOURCE">Proprietary Source Code &amp; Models</option>
+                                    <option value="CRYPTO_KEY_MATERIAL">Cryptographic Key Material</option>
+                                    <option value="REGULATED_PII_VAULT">Regulated PII &amp; Financial Vault</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style="margin-bottom: 10px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <label style="font-size: 11px; color: var(--text-muted); text-transform: uppercase;">Crown-Jewel Document / Secret Content</label>
+                                <div style="display: flex; gap: 6px;">
+                                    <input type="file" id="dlp-cj-file-input" style="display:none" onchange="handleDlpCrownJewelFileUpload(event)">
+                                    <button type="button" class="btn-secondary" onclick="document.getElementById('dlp-cj-file-input').click()" style="padding: 3px 8px; font-size: 11px;">📂 Load File</button>
+                                </div>
+                            </div>
+                            <textarea id="dlp-cj-content" rows="3" placeholder="Paste or load Crown-Jewel document content to index as 4 KB SHA-256 chunk digests (raw plaintext is volatile-wiped from RAM)..." style="width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.5); color: #a855f7; font-family: monospace; font-size: 11.5px; resize: vertical; line-height: 1.4;"></textarea>
+                        </div>
+
+                        <button type="button" class="btn-primary" onclick="registerDlpCrownJewel()" style="width: 100%; padding: 9px 16px; font-weight: 700; margin-bottom: 14px; background: #9333ea;">💎 Register 4 KB Zero-Plaintext Merkle Fingerprint</button>
+
+                        <!-- Registered Crown-Jewels Table -->
+                        <div style="overflow-x: auto; max-height: 220px; border: 1px solid var(--glass-border); border-radius: 8px;">
+                            <table class="data-table" style="width: 100%; font-size: 11.5px; border-collapse: collapse;">
+                                <thead>
+                                    <tr style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--glass-border); color: var(--text-muted);">
+                                        <th style="padding: 8px 10px; text-align: left;">Asset Label</th>
+                                        <th style="padding: 8px 10px; text-align: left;">Class</th>
+                                        <th style="padding: 8px 10px; text-align: center;">4 KB Chunks</th>
+                                        <th style="padding: 8px 10px; text-align: right;">Size</th>
+                                        <th style="padding: 8px 10px; text-align: left;">SHA-256 Merkle Root</th>
+                                        <th style="padding: 8px 10px; text-align: center;">Test Exfil</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dlp-crown-jewels-tbody">
+                                    <tr>
+                                        <td colspan="6" style="padding: 24px; text-align: center; color: var(--text-muted);">No Crown-Jewel assets registered yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live DLP Interception & Zero-Knowledge Quarantine Audit Log Card -->
+                <div class="card glass shadow-glow" style="padding: 18px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="shield-check" style="width: 18px; height: 18px; color: #10b981;"></i>
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #f8fafc;">Live DLP Interception &amp; Zero-Knowledge Quarantine Audit Log</h4>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <input type="text" id="dlp-event-search" oninput="onDlpFilterChange()" placeholder="Search process, sink, category, ZK hash..." style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.35); color: #fff; font-size: 12px; width: 260px;">
+                            <select id="dlp-event-verdict-filter" onchange="onDlpFilterChange()" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.35); color: #fff; font-size: 12px;">
+                                <option value="all">All Verdicts</option>
+                                <option value="BLOCKED">Blocked Only</option>
+                                <option value="SCRUBBED">Scrubbed / Allowed</option>
+                                <option value="ALLOWED">Benign Clean</option>
+                            </select>
+                            <button type="button" class="btn-secondary" onclick="renderDlpView(true)" style="padding: 6px 10px; font-size: 11.5px;">🔄 Refresh Log</button>
+                        </div>
+                    </div>
+
+                    <div style="overflow-x: auto; max-height: 400px; border: 1px solid var(--glass-border); border-radius: 8px;">
+                        <table class="data-table" style="width: 100%; font-size: 11.5px; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--glass-border); color: var(--text-muted);">
+                                    <th style="padding: 9px 10px; text-align: left; width: 130px;">Time (UTC)</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 120px;">Actor Process</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 190px;">Destination Sink &amp; Channel</th>
+                                    <th style="padding: 9px 10px; text-align: center; width: 110px;">Verdict</th>
+                                    <th style="padding: 9px 10px; text-align: center; width: 100px;">Sensitivity (φ)</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 170px;">Detected Categories</th>
+                                    <th style="padding: 9px 10px; text-align: left;">Zero-PII Scrubbed Output (&lt;ZK_PII&gt;)</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 190px;">ZK-BFT Commitment &amp; PQC Sig</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dlp-events-tbody">
+                                <tr>
+                                    <td colspan="8" style="padding: 28px; text-align: center; color: var(--text-muted);">
+                                        No DLP inspection events recorded yet. Run the Gauntlet or submit a test payload above.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>

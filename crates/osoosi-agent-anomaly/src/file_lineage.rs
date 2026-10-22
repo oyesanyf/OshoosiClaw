@@ -414,6 +414,16 @@ impl FileLineageTracker {
         self.session_files.len()
     }
 
+    /// Returns the number of active tracked sessions in session_files.
+    pub fn len(&self) -> usize {
+        self.session_files.len()
+    }
+
+    /// Returns true if there are no tracked sessions.
+    pub fn is_empty(&self) -> bool {
+        self.session_files.is_empty()
+    }
+
     /// Returns the count of currently registered poisoned digests.
     pub fn poisoned_count(&self) -> usize {
         self.poisoned_digests.len()

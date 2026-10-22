@@ -356,7 +356,11 @@ def test_endpoints():
         assert 'id="har-traffic-view"' in ui_html, 'Live index.html must contain id="har-traffic-view"'
         assert 'data-view="adversarial-tests"' in ui_html, 'Live index.html must contain data-view="adversarial-tests"'
         assert 'id="adversarial-tests-view"' in ui_html, 'Live index.html must contain id="adversarial-tests-view"'
-        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic and #adversarial-tests menus and views")
+        assert 'data-view="dlp"' in ui_html, 'Live index.html must contain data-view="dlp"'
+        assert 'id="dlp-view"' in ui_html, 'Live index.html must contain id="dlp-view"'
+        assert 'id="nist-compliance-top-card"' in ui_html, 'Live index.html must contain id="nist-compliance-top-card"'
+        assert 'id="adv-btn-stop"' in ui_html, 'Live index.html must contain id="adv-btn-stop"'
+        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic, #adversarial-tests, #dlp, Stop button, and NIST top checklist")
 
     # =========================================================================
     # 10. ADVERSARIAL & DEFENSE TEST EXECUTION SUITE VERIFICATION
@@ -381,6 +385,53 @@ def test_endpoints():
             body_bytes = resp.read()
             assert len(body_bytes) > 0
             print(f" [PASS] GET {dl_ep:<24} -> HTTP {resp.status} ({len(body_bytes)} bytes)")
+
+    # =========================================================================
+    # 11. TWO-TIER DATA LOSS PREVENTION (#dlp) & SKYRL PROMPT EVOLUTION
+    # =========================================================================
+    print("\n" + "="*70)
+    print(" 11. TWO-TIER DATA LOSS PREVENTION (#dlp) & SKYRL PROMPT EVOLUTION")
+    print("="*70)
+
+    dlp_req = urllib.request.Request(f"{BASE_URL}/api/dlp/status", headers=headers, method="GET")
+    with urllib.request.urlopen(dlp_req, timeout=10) as resp:
+        dlp_data = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert dlp_data.get("status") == "ok"
+        print(f" [PASS] GET /api/dlp/status -> HTTP {resp.status}: crown_jewels={len(dlp_data.get('crown_jewels', []))}, events={len(dlp_data.get('recent_events', []))}")
+
+    ins_body = json.dumps({
+        "actor_process": "python.exe",
+        "destination_sink": "https://paste.external.org/upload",
+        "channel": "HTTPS_POST",
+        "payload": "POST /exfil token=QUtJQUlPU0ZPRE5ON0VYQU1QTEU= ssn=123-45-6789 card=4532015112830366"
+    }).encode("utf-8")
+    ins_req = urllib.request.Request(
+        f"{BASE_URL}/api/dlp/inspect",
+        data=ins_body,
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(ins_req, timeout=10) as resp:
+        ins_data = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert ins_data.get("zk_verified") is True
+        assert ins_data.get("tier1_verdict", {}).get("allowed") is False
+        print(f" [PASS] POST /api/dlp/inspect -> HTTP {resp.status}: allowed=False, zk_verified=True, categories={ins_data.get('tier1_verdict', {}).get('detected_categories')}")
+
+    sky_req = urllib.request.Request(
+        f"{BASE_URL}/api/skyrl/v1/train",
+        data=b"{}",
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(sky_req, timeout=10) as resp:
+        sky_data = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        rc = sky_data.get("regression_corpus", {})
+        assert rc.get("corpus_epoch", 0) >= 1
+        assert rc.get("total_mutations_persisted", 0) >= 1
+        print(f" [PASS] POST /api/skyrl/v1/train -> HTTP {resp.status}: Corpus Epoch #{rc.get('corpus_epoch')}, Total Mutations={rc.get('total_mutations_persisted')}, Merkle={str(rc.get('merkle_root_sha256'))[:16]}...")
 
     print("\n" + "="*70)
     print(" ALL END-TO-END VERIFICATIONS PASSED (100% HEALTH, LATENCY SLA & PARITY)")
