@@ -153,7 +153,10 @@ rhai = { version = "1.26.1", features = ["sync"] }
 wasm-bindgen-futures = { path = "crates/wasm-bindgen-futures" }
 
 [profile.dev]
-debug = 1
+debug = 0
+
+[profile.test]
+debug = 0
 
 [profile.dev.package.tfhe]
 opt-level = 3

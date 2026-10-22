@@ -22,6 +22,22 @@ pub const KILLCHAIN_RESTORE_TOKEN: &str = "CONFIRM RESTORE";
 pub const MAX_FAILED_ATTEMPTS: u32 = 3;
 pub const LOCKOUT_DURATION_SECS: u64 = 300; // 5 minutes
 
+pub const ROLLBACK_WATCHDOG_MAX_SECS: u64 = 1800; // 30 minutes hard failsafe ceiling
+pub const INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS: u64 = 60; // 60-second intermediate probe window
+pub const REQUIRED_CONSECUTIVE_HEALTHY_PROBES: u32 = 3; // 3 clean process-tree probes -> early automatic rollback
+
+fn default_rollback_watchdog_max_secs() -> u64 {
+    ROLLBACK_WATCHDOG_MAX_SECS
+}
+
+fn default_health_probe_interval_secs() -> u64 {
+    INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS
+}
+
+fn default_required_healthy_probes() -> u32 {
+    REQUIRED_CONSECUTIVE_HEALTHY_PROBES
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KillChainStatus {
     pub isolated: bool,
@@ -36,6 +52,20 @@ pub struct KillChainStatus {
     pub frozen_pids: Vec<u32>,
     pub last_action_timestamp: Option<String>,
     pub lockout_remaining_secs: u64,
+    #[serde(default = "default_rollback_watchdog_max_secs")]
+    pub rollback_watchdog_max_secs: u64,
+    #[serde(default = "default_health_probe_interval_secs")]
+    pub health_probe_interval_secs: u64,
+    #[serde(default = "default_required_healthy_probes")]
+    pub consecutive_healthy_probes_required: u32,
+    #[serde(default)]
+    pub consecutive_healthy_probes: u32,
+    #[serde(default)]
+    pub last_health_probe_timestamp: Option<String>,
+    #[serde(default)]
+    pub last_health_probe_passed: Option<bool>,
+    #[serde(default)]
+    pub last_health_probe_summary: Option<String>,
 }
 
 impl Default for KillChainStatus {
@@ -53,6 +83,13 @@ impl Default for KillChainStatus {
             frozen_pids: vec![],
             last_action_timestamp: None,
             lockout_remaining_secs: 0,
+            rollback_watchdog_max_secs: ROLLBACK_WATCHDOG_MAX_SECS,
+            health_probe_interval_secs: INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS,
+            consecutive_healthy_probes_required: REQUIRED_CONSECUTIVE_HEALTHY_PROBES,
+            consecutive_healthy_probes: 0,
+            last_health_probe_timestamp: None,
+            last_health_probe_passed: None,
+            last_health_probe_summary: None,
         }
     }
 }
@@ -316,6 +353,13 @@ pub async fn engage_killchain_isolation(
         frozen_pids,
         last_action_timestamp: Some(now.clone()),
         lockout_remaining_secs: 0,
+        rollback_watchdog_max_secs: ROLLBACK_WATCHDOG_MAX_SECS,
+        health_probe_interval_secs: INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS,
+        consecutive_healthy_probes_required: REQUIRED_CONSECUTIVE_HEALTHY_PROBES,
+        consecutive_healthy_probes: 0,
+        last_health_probe_timestamp: None,
+        last_health_probe_passed: None,
+        last_health_probe_summary: None,
     };
 
     guard.history.insert(
@@ -334,11 +378,23 @@ pub async fn engage_killchain_isolation(
     let status_clone = guard.status.clone();
     drop(guard);
 
-    // Anti-Bricking / Dead-Man's Failsafe Watchdog:
-    // Guarantees an isolated host is automatically restored after 30 minutes if unattended,
-    // ensuring an attacker or script can NEVER permanently hold the machine hostage.
+    // Anti-Bricking / Dead-Man's Failsafe Watchdog & Early Rollback Engine:
+    // Regularly probes process tree telemetry every 60s. If 3 consecutive healthy probes pass,
+    // automatically restores host early. Otherwise, hard failsafe triggers at 30 minutes.
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+        let max_probes = (ROLLBACK_WATCHDOG_MAX_SECS / INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS).max(1);
+        for _ in 0..max_probes {
+            tokio::time::sleep(std::time::Duration::from_secs(INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS)).await;
+            let current = get_killchain_status();
+            if !current.isolated {
+                return;
+            }
+            if let Ok((report, updated)) = evaluate_and_execute_intermediate_rollback().await {
+                if !updated.isolated || report.eligible_for_early_rollback {
+                    return;
+                }
+            }
+        }
         let current = get_killchain_status();
         if current.isolated {
             warn!("⏰ [KILLCHAIN-WATCHDOG] 30-minute maximum isolation limit reached. Automatically restoring host to prevent permanent lockout.");
@@ -433,6 +489,13 @@ pub async fn disarm_killchain_isolation(operator: &str, reason: &str) -> Result<
         frozen_pids: vec![],
         last_action_timestamp: Some(now.clone()),
         lockout_remaining_secs: 0,
+        rollback_watchdog_max_secs: ROLLBACK_WATCHDOG_MAX_SECS,
+        health_probe_interval_secs: INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS,
+        consecutive_healthy_probes_required: REQUIRED_CONSECUTIVE_HEALTHY_PROBES,
+        consecutive_healthy_probes: 0,
+        last_health_probe_timestamp: Some(now.clone()),
+        last_health_probe_passed: Some(true),
+        last_health_probe_summary: Some("Isolation disarmed; host operational".to_string()),
     };
 
     guard.history.insert(
@@ -528,6 +591,13 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
         frozen_pids: vec![],
         last_action_timestamp: Some(now.clone()),
         lockout_remaining_secs: 0,
+        rollback_watchdog_max_secs: ROLLBACK_WATCHDOG_MAX_SECS,
+        health_probe_interval_secs: INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS,
+        consecutive_healthy_probes_required: REQUIRED_CONSECUTIVE_HEALTHY_PROBES,
+        consecutive_healthy_probes: 0,
+        last_health_probe_timestamp: Some(now.clone()),
+        last_health_probe_passed: Some(true),
+        last_health_probe_summary: Some("Isolation disarmed; host operational".to_string()),
     };
 
     guard.history.insert(
@@ -544,6 +614,177 @@ pub fn execute_host_disarm_unauthenticated() -> Result<KillChainStatus> {
     let _ = save_storage_to_disk(&guard);
     record_successful_auth();
     Ok(guard.status.clone())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KillChainHealthProbeReport {
+    pub timestamp: String,
+    pub process_tree_integrity_ok: bool,
+    pub total_processes_scanned: usize,
+    pub critical_os_anchors_verified: usize,
+    pub frozen_pids_monitored: usize,
+    pub suspicious_unfrozen_processes: Vec<String>,
+    pub orphaned_malicious_children: Vec<u32>,
+    pub consecutive_healthy_probes: u32,
+    pub required_healthy_probes: u32,
+    pub eligible_for_early_rollback: bool,
+    pub rollback_watchdog_max_secs: u64,
+    pub probe_interval_secs: u64,
+    pub probe_hash_blake3: String,
+    pub summary: String,
+}
+
+/// Intermediate Automatic Health Probe:
+/// Inspects live process tree telemetry integrity across endpoints during isolation.
+/// Validates critical OS anchors, monitors frozen PIDs, and detects suspicious unfrozen processes
+/// or orphaned malicious children spawned from quarantined parents.
+pub fn run_intermediate_process_tree_health_probe() -> KillChainHealthProbeReport {
+    use sysinfo::System;
+    let sys = System::new_all();
+    let total_processes_scanned = sys.processes().len();
+
+    let (frozen_pids, required_probes, watchdog_max_secs, probe_interval_secs) = {
+        let guard = KILLCHAIN_STORAGE.read().unwrap_or_else(|e| e.into_inner());
+        (
+            guard.status.frozen_pids.clone(),
+            guard.status.consecutive_healthy_probes_required.max(1),
+            guard.status.rollback_watchdog_max_secs,
+            guard.status.health_probe_interval_secs,
+        )
+    };
+
+    let mut critical_os_anchors_verified = 0;
+    let mut suspicious_unfrozen_processes = Vec::new();
+    let mut orphaned_malicious_children = Vec::new();
+
+    let high_risk_markers = [
+        "wannacry",
+        "mimikatz",
+        "cobaltstrike",
+        "beacon.exe",
+        "c2_rat.exe",
+        "meterpreter",
+        "reverse_shell.elf",
+    ];
+
+    for (pid_raw, proc) in sys.processes() {
+        let pid = pid_raw.as_u32();
+        let name = proc.name();
+        let name_lc = name.to_ascii_lowercase();
+        let cmd_lc = proc.cmd().join(" ").to_ascii_lowercase();
+
+        if is_critical_system_pid(pid, name) {
+            critical_os_anchors_verified += 1;
+            continue;
+        }
+
+        if !frozen_pids.contains(&pid) {
+            let is_malware = high_risk_markers
+                .iter()
+                .any(|marker| name_lc.contains(marker) || cmd_lc.contains(marker));
+            if is_malware {
+                suspicious_unfrozen_processes.push(format!("{}:{}", pid, name));
+            }
+
+            if let Some(parent_pid) = proc.parent() {
+                let p_u32 = parent_pid.as_u32();
+                if frozen_pids.contains(&p_u32) && !is_critical_system_pid(pid, name) {
+                    orphaned_malicious_children.push(pid);
+                }
+            }
+        }
+    }
+
+    let process_tree_integrity_ok = total_processes_scanned > 0
+        && critical_os_anchors_verified > 0
+        && suspicious_unfrozen_processes.is_empty()
+        && orphaned_malicious_children.is_empty();
+
+    let now = Utc::now().to_rfc3339();
+
+    let (consecutive_healthy_probes, summary) = {
+        let mut guard = KILLCHAIN_STORAGE.write().unwrap_or_else(|e| e.into_inner());
+        if process_tree_integrity_ok {
+            guard.status.consecutive_healthy_probes += 1;
+        } else {
+            guard.status.consecutive_healthy_probes = 0;
+        }
+
+        let consecutive = guard.status.consecutive_healthy_probes;
+        let summary = if process_tree_integrity_ok {
+            format!(
+                "Process tree healthy ({} procs scanned, {} critical OS anchors verified, {}/{} consecutive healthy probes)",
+                total_processes_scanned,
+                critical_os_anchors_verified,
+                consecutive,
+                required_probes
+            )
+        } else {
+            format!(
+                "Process tree integrity violation: {} suspicious unfrozen processes, {} orphaned malicious children",
+                suspicious_unfrozen_processes.len(),
+                orphaned_malicious_children.len()
+            )
+        };
+
+        guard.status.last_health_probe_timestamp = Some(now.clone());
+        guard.status.last_health_probe_passed = Some(process_tree_integrity_ok);
+        guard.status.last_health_probe_summary = Some(summary.clone());
+        let _ = save_storage_to_disk(&guard);
+        (consecutive, summary)
+    };
+
+    let eligible_for_early_rollback = consecutive_healthy_probes >= required_probes;
+
+    let probe_payload = format!(
+        "{}:{}:{}:{}:{}:{}",
+        now,
+        process_tree_integrity_ok,
+        total_processes_scanned,
+        critical_os_anchors_verified,
+        consecutive_healthy_probes,
+        summary
+    );
+    let probe_hash_blake3 = blake3::hash(probe_payload.as_bytes()).to_hex().to_string();
+
+    KillChainHealthProbeReport {
+        timestamp: now,
+        process_tree_integrity_ok,
+        total_processes_scanned,
+        critical_os_anchors_verified,
+        frozen_pids_monitored: frozen_pids.len(),
+        suspicious_unfrozen_processes,
+        orphaned_malicious_children,
+        consecutive_healthy_probes,
+        required_healthy_probes: required_probes,
+        eligible_for_early_rollback,
+        rollback_watchdog_max_secs: watchdog_max_secs,
+        probe_interval_secs: probe_interval_secs,
+        probe_hash_blake3,
+        summary,
+    }
+}
+
+/// Evaluates live process tree health and triggers early automatic rollback if eligible.
+/// Restores the endpoint cleanly before the 30-minute hard failsafe timer expires.
+pub async fn evaluate_and_execute_intermediate_rollback(
+) -> Result<(KillChainHealthProbeReport, KillChainStatus)> {
+    let report = run_intermediate_process_tree_health_probe();
+    let current = get_killchain_status();
+    if current.isolated && report.eligible_for_early_rollback {
+        info!(
+            "🟢 [KILLCHAIN-HEALTH-PROBE] Process tree telemetry integrity verified ({}/{} consecutive probes). Executing early automatic host rollback prior to 30-minute timer expiry.",
+            report.consecutive_healthy_probes, report.required_healthy_probes
+        );
+        let updated = disarm_killchain_isolation(
+            "autonomous_health_probe_watchdog",
+            "Early automatic rollback: process tree telemetry integrity verified across consecutive health probes before 30-minute failsafe expiry",
+        )
+        .await?;
+        Ok((report, updated))
+    } else {
+        Ok((report, current))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2058,5 +2299,70 @@ mod tests {
                 sample
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_intermediate_health_probe_and_early_rollback_window() {
+        let _lock = TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let temp_dir = tempfile::tempdir().expect("Failed to create isolated temp database dir");
+        let orig_db_dir = std::env::var("OSOOSI_DATABASE_DIR").ok();
+        std::env::set_var("OSOOSI_DATABASE_DIR", temp_dir.path());
+
+        struct TestIsolationGuard {
+            orig_dir: Option<String>,
+        }
+        impl Drop for TestIsolationGuard {
+            fn drop(&mut self) {
+                let _ = execute_host_disarm_unauthenticated();
+                record_successful_auth();
+                if let Some(ref dir) = self.orig_dir {
+                    std::env::set_var("OSOOSI_DATABASE_DIR", dir);
+                } else {
+                    std::env::remove_var("OSOOSI_DATABASE_DIR");
+                }
+            }
+        }
+        let _guard = TestIsolationGuard {
+            orig_dir: orig_db_dir,
+        };
+
+        record_successful_auth();
+        reset_killchain_state_for_testing();
+
+        let engaged = engage_killchain_isolation(
+            "test_op",
+            "Verify Early Rollback",
+            false,
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(engaged.isolated);
+        assert_eq!(engaged.consecutive_healthy_probes, 0);
+
+        // Probe 1
+        let (rep1, st1) = evaluate_and_execute_intermediate_rollback().await.unwrap();
+        assert!(rep1.process_tree_integrity_ok, "Probe 1 should be healthy");
+        assert_eq!(rep1.consecutive_healthy_probes, 1);
+        assert!(!rep1.eligible_for_early_rollback);
+        assert!(st1.isolated, "Host must still be isolated after probe 1");
+
+        // Probe 2
+        let (rep2, st2) = evaluate_and_execute_intermediate_rollback().await.unwrap();
+        assert!(rep2.process_tree_integrity_ok, "Probe 2 should be healthy");
+        assert_eq!(rep2.consecutive_healthy_probes, 2);
+        assert!(!rep2.eligible_for_early_rollback);
+        assert!(st2.isolated, "Host must still be isolated after probe 2");
+
+        // Probe 3 (Threshold met -> early automatic rollback!)
+        let (rep3, st3) = evaluate_and_execute_intermediate_rollback().await.unwrap();
+        assert!(rep3.process_tree_integrity_ok, "Probe 3 should be healthy");
+        assert_eq!(rep3.consecutive_healthy_probes, 3);
+        assert!(rep3.eligible_for_early_rollback, "Must be eligible for early rollback on 3rd probe");
+        assert!(!st3.isolated, "Host must be automatically rolled back before 30-minute timer!");
+
+        let final_status = get_killchain_status();
+        assert!(!final_status.isolated, "Final status must confirm host is disarmed");
     }
 }

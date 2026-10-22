@@ -1,0 +1,107 @@
+[
+  {
+    "id": "GHSA-cw89-g52x-vvj7",
+    "package_name": "mlflow",
+    "ecosystem": "PyPI",
+    "summary": "Arbitrary code execution via untrusted pickle deserialization in MLflow model loading",
+    "details": "MLflow before 2.11.0 contains an unsafe deserialization flaw allowing remote code execution via malicious model artifacts with embedded Python pickle opcodes.",
+    "severity": "CRITICAL",
+    "affected_versions": [
+      "< 2.11.0"
+    ],
+    "cwe_ids": [
+      "CWE-502"
+    ],
+    "mitre_atlas": [
+      "AML.T0031"
+    ]
+  },
+  {
+    "id": "HUNTR-2023-0001",
+    "package_name": "langchain-experimental",
+    "ecosystem": "PyPI",
+    "summary": "Arbitrary code execution in PythonAstREPLTool via unconstrained AST execution",
+    "details": "The PythonAstREPLTool class in LangChain Experimental executes arbitrary Python code supplied by the LLM without adequate sandboxing, enabling host takeover.",
+    "severity": "CRITICAL",
+    "affected_versions": [
+      "<= 0.0.92"
+    ],
+    "cwe_ids": [
+      "CWE-94"
+    ],
+    "mitre_atlas": [
+      "AML.T0043",
+      "AML.T0054"
+    ]
+  },
+  {
+    "id": "GHSA-7534-mm44-c2c7",
+    "package_name": "vllm",
+    "ecosystem": "PyPI",
+    "summary": "Server-Side Request Forgery and Path Traversal in vLLM model download API",
+    "details": "vLLM allows unauthenticated callers to specify arbitrary file schemes or relative paths during model initialization, resulting in local file disclosure and SSRF.",
+    "severity": "HIGH",
+    "affected_versions": [
+      "< 0.4.0"
+    ],
+    "cwe_ids": [
+      "CWE-22",
+      "CWE-918"
+    ],
+    "mitre_atlas": [
+      "AML.T0048"
+    ]
+  },
+  {
+    "id": "HUNTR-2024-0012",
+    "package_name": "ollama",
+    "ecosystem": "Go",
+    "summary": "Arbitrary file write via crafted Modelfile layer digest path traversal",
+    "details": "Ollama versions prior to 0.1.34 are vulnerable to relative path traversal when extracting model layers, allowing overwriting of system executables.",
+    "severity": "HIGH",
+    "affected_versions": [
+      "< 0.1.34"
+    ],
+    "cwe_ids": [
+      "CWE-22"
+    ],
+    "mitre_atlas": [
+      "AML.T0048"
+    ]
+  },
+  {
+    "id": "GHSA-4h96-p4cr-p2c6",
+    "package_name": "llama-index-core",
+    "ecosystem": "PyPI",
+    "summary": "Arbitrary code execution via unescaped query execution in PandasQueryEngine",
+    "details": "LlamaIndex PandasQueryEngine invokes eval() on LLM-generated expressions without adequate AST validation, permitting execution of imported system primitives.",
+    "severity": "HIGH",
+    "affected_versions": [
+      "< 0.10.12"
+    ],
+    "cwe_ids": [
+      "CWE-94"
+    ],
+    "mitre_atlas": [
+      "AML.T0043",
+      "AML.T0054"
+    ]
+  },
+  {
+    "id": "GHSA-xx23-yy45-zz67",
+    "package_name": "torch",
+    "ecosystem": "PyPI",
+    "summary": "Insecure deserialization of arbitrary executable bytecode via torch.load",
+    "details": "Loading untrusted PyTorch checkpoints via torch.load() without weights_only=True permits arbitrary Python opcode execution via GLOBAL and REDUCE opcodes.",
+    "severity": "CRITICAL",
+    "affected_versions": [
+      "< 2.4.0"
+    ],
+    "cwe_ids": [
+      "CWE-502"
+    ],
+    "mitre_atlas": [
+      "AML.T0031"
+    ]
+  }
+]

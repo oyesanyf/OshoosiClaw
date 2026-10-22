@@ -24,6 +24,7 @@
 pub use osoosi_audit;
 pub use parking_lot;
 
+pub mod ai_feeds;
 pub mod attack_graph;
 pub mod backup;
 pub mod baseline;
@@ -1507,11 +1508,23 @@ pub struct EdrOrchestrator {
     pub siquery_last_telemetry: Arc<parking_lot::RwLock<Option<serde_json::Value>>>,
     /// Autonomous MITRE ATT&CK + MITRE ATLAS™ STIX 2.1 Refresh Synchronizer
     pub mitre_synchronizer: Arc<mitre::AutonomousMitreSynchronizer>,
+    /// Autonomous AI Threat Feed Ingestion & FeedPoisoningSanitizer Collector
+    pub ai_feed_collector: Arc<ai_feeds::AutonomousAiFeedCollector>,
     /// RL Adaptive Controller (SkyRL-aligned multi-technique containment & voter weight optimization)
     pub rl_controller: Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>>,
 }
 
 impl EdrOrchestrator {
+    /// Access the autonomous AI Threat Feed Collector.
+    pub fn ai_feed_collector(&self) -> &Arc<ai_feeds::AutonomousAiFeedCollector> {
+        &self.ai_feed_collector
+    }
+
+    /// Trigger on-demand sync of AI threat feeds.
+    pub async fn trigger_ai_feeds_sync(&self) -> anyhow::Result<ai_feeds::AiFeedStatus> {
+        self.ai_feed_collector.poll_and_compile_all_feeds().await
+    }
+
     /// Access the RL Adaptive Controller.
     pub fn rl_controller(&self) -> Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>> {
         self.rl_controller.clone()
@@ -3979,6 +3992,11 @@ impl EdrOrchestrator {
         mitre::AutonomousMitreSynchronizer::start_background_refresh_loop(mitre_synchronizer.clone());
         info!("[MITRE-STIX] Autonomous MITRE ATT&CK + ATLAS STIX 2.1 refresh loop started.");
 
+        let ai_feed_collector = Arc::new(ai_feeds::AutonomousAiFeedCollector::new(mesh_command_tx.clone()));
+        crate::ai_feeds::init_global_ai_feed_collector(ai_feed_collector.clone());
+        ai_feeds::AutonomousAiFeedCollector::start_background_loop(ai_feed_collector.clone());
+        info!("[AI-FEEDS] Autonomous AI Threat Feed Ingestion loop started (60m interval).");
+
         let rl_controller = Arc::new(parking_lot::RwLock::new(
             osoosi_agent_anomaly::RLAdaptiveController::new(),
         ));
@@ -4064,6 +4082,7 @@ impl EdrOrchestrator {
             siquery_engine,
             siquery_last_telemetry,
             mitre_synchronizer,
+            ai_feed_collector,
             rl_controller,
         };
 
@@ -12269,10 +12288,26 @@ impl EdrOrchestrator {
                     debug!("PeerThreatRx: Dropped unknown process threat {}", sig.id);
                     continue;
                 }
-                if crate::rea::is_rea_benign_system_or_dev_process(proc_clean, sig.reason.as_deref())
-                    || crate::rea::global_rea_engine().adjudicate_process_or_binary_alert(Some(proc_clean), None, sig.reason.as_deref()).0
-                {
-                    debug!("PeerThreatRx: Suppressed benign system/dev threat for {}", proc_clean);
+                if let Some(veto_reason) = crate::rea::veto_peer_kill_switch_candidate(
+                    sig.process_name.as_deref(),
+                    sig.hash_blake3.as_deref(),
+                    None,
+                    sig.reason.as_deref(),
+                ) {
+                    warn!(
+                        "PeerThreatRx [BYZANTINE_KILLSWITCH_VETOED]: Rejected peer threat {} from {}: {}",
+                        sig.id, sig.source_node, veto_reason
+                    );
+                    self_threat.audit.log(
+                        "BYZANTINE_KILLSWITCH_VETOED",
+                        serde_json::json!({
+                            "source_node": sig.source_node,
+                            "threat_id": sig.id,
+                            "process_name": sig.process_name,
+                            "hash_blake3": sig.hash_blake3,
+                            "veto_reason": veto_reason,
+                        }),
+                    );
                     continue;
                 }
 
@@ -12326,8 +12361,17 @@ impl EdrOrchestrator {
                 model.add_training_sample(&sig);
                 if sig.confidence >= 0.8 {
                     if let Some(rule) = crate::yara_gen::generate_yara_from_threat(&sig) {
-                        let _ = self_threat.yara_manager.hot_load_rule(&rule, &sig.id);
-                        info!("[YARA] Hot-loaded auto-generated YARA rule for peer threat '{}'. Engine updated.", sig.id);
+                        if crate::rea::veto_peer_kill_switch_candidate(
+                            sig.process_name.as_deref(),
+                            sig.hash_blake3.as_deref(),
+                            Some(&rule),
+                            sig.reason.as_deref(),
+                        ).is_none() {
+                            let _ = self_threat.yara_manager.hot_load_rule(&rule, &sig.id);
+                            info!("[YARA] Hot-loaded auto-generated YARA rule for peer threat '{}'. Engine updated.", sig.id);
+                        } else {
+                            warn!("[YARA] Suppressed poisoned auto-generated YARA rule for peer threat '{}'", sig.id);
+                        }
                     }
                 }
             }
