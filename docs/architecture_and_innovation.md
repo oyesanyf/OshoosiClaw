@@ -217,20 +217,20 @@ OpenỌ̀ṣọ́ọ̀sì unifies ten mathematical identities where **a benign s
 ```mermaid
 flowchart TD
     subgraph LAWS["The 10 Mathematical Laws of Zero (L(x) = 0 <=> Invariant Intact)"]
-        L1["Law 1: Homological Boundary Zero (∂² = 0, δ²φ = 0)\nDetects Confused-Deputy Circulation (H¹ ≠ 0)"]
-        L2["Law 2: Vanishing Polynomial Trace (C(t(x)) mod Z_H(x) = 0)\nOver Mersenne Prime Field F_{2^127 - 1}"]
-        L3["Law 3: Dirac-Delta Ephemeral Capability (Cap(t) = 0 outside [t0, t0+Δt])\nSingle-Use Atomic CAS + Epoch Pinning"]
-        L4["Law 4: Doob Martingale Zero-Drift (E[M_{t+1}-M_t | F_t] = 0)\nVille's Inequality E-Process (E_t >= 10^6)"]
-        L5["Law 5: Zero-Copy Immutable Page Projection (Δt_TOCTOU = 0)\n4096B VirtualProtect(PAGE_READONLY) + PinnedToolObjectBinding"]
-        L6["Law 6: Ihara Zeta Non-Backtracking Cycle Zero (det(I - u B_G) = 0)\nHashimoto Operator B_G on Provenance DAG"]
-        L7["Law 7: CFG Hadamard Zero-Product (||T_runtime ∘ Ā_CFG||_1 = 0)\nBlocks ROP / JOP / Indirect Branch Transfers"]
-        L8["Law 8: Zero Mutual Information Projection (I(Secret; Output) = 0)\nOrthogonal Subspace Scrubbing + High-Entropy Redaction"]
-        L9["Law 9: Pontryagin Zero-Sum Minimax Saddle Point (min_u max_v H = 0)\nOptimal Honeyfile & Ghost-Node Allocation"]
-        L10["Law 10: Zero-Knowledge BFT Proof & Two-Tier Zero-Exploit DLP\nFast-Path Aho-Corasick + Rolling BLAKE3 + Presidio + GLiNER ONNX"]
+        L1["Law 1: Homological Boundary Zero (∂² = 0, δ²φ = 0)<br/>Detects Confused-Deputy Circulation (H¹ ≠ 0)"]
+        L2["Law 2: Vanishing Polynomial Trace (C(t(x)) mod Z_H(x) = 0)<br/>Over Mersenne Prime Field F_{2^127 - 1}"]
+        L3["Law 3: Dirac-Delta Ephemeral Capability (Cap(t) = 0 outside [t0, t0+Δt])<br/>Single-Use Atomic CAS + Epoch Pinning"]
+        L4["Law 4: Doob Martingale Zero-Drift (E[M_{t+1}-M_t | F_t] = 0)<br/>Ville's Inequality E-Process (E_t >= 10^6)"]
+        L5["Law 5: Zero-Copy Immutable Page Projection (Δt_TOCTOU = 0)<br/>4096B VirtualProtect(PAGE_READONLY) + PinnedToolObjectBinding"]
+        L6["Law 6: Ihara Zeta Non-Backtracking Cycle Zero (det(I - u B_G) = 0)<br/>Hashimoto Operator B_G on Provenance DAG"]
+        L7["Law 7: CFG Hadamard Zero-Product (||T_runtime ∘ Ā_CFG||_1 = 0)<br/>Blocks ROP / JOP / Indirect Branch Transfers"]
+        L8["Law 8: Zero Mutual Information Projection (I(Secret; Output) = 0)<br/>Orthogonal Subspace Scrubbing + High-Entropy Redaction"]
+        L9["Law 9: Pontryagin Zero-Sum Minimax Saddle Point (min_u max_v H = 0)<br/>Optimal Honeyfile & Ghost-Node Allocation"]
+        L10["Law 10: Zero-Knowledge BFT Proof & Two-Tier Zero-Exploit DLP<br/>Fast-Path Aho-Corasick + Rolling BLAKE3 + Presidio + GLiNER ONNX"]
     end
-    L1 & L2 & L3 & L5 --> GATE["Multi-Ring Containment Gate (`ArmContainmentRing`)"]
+    L1 & L2 & L3 & L5 --> GATE["Multi-Ring Containment Gate (ArmContainmentRing)"]
     L4 & L6 & L7 & L9 --> CONS["Consensus Engine & Kernel/eBPF Enforcement"]
-    L8 & L10 --> DLP["Zero-Leakage Egress & P2P ZK-BFT Verification (`osoosi-dp`)"]
+    L8 & L10 --> DLP["Zero-Leakage Egress & P2P ZK-BFT Verification (osoosi-dp)"]
 ```
 
 | Law | Mathematical Identity | Implementation Module | Security Enforcement |

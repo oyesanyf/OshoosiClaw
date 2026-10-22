@@ -6,7 +6,6 @@
 <h3 align="center"><em>The Decentralized Immune System for the Modern Endpoint</em></h3>
 
 <p align="center">
-  <a href="#-features"><img src="https://img.shields.io/badge/Security%20Grade-100%25%20A%2B-emerald?style=for-the-badge" alt="Grade"/></a>
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
   <a href="#-technology--language-stack-rust--python"><img src="https://img.shields.io/badge/AI%20Swarm-Python%203.11%2B%20🐍-blue?style=for-the-badge" alt="Python"/></a>
   <a href="#-mitre-attck--atlas-enterprise-framework"><img src="https://img.shields.io/badge/MITRE%20ATT%26CK%20%26%20ATLAS-26%2C381%20Objects-blueviolet?style=for-the-badge" alt="MITRE"/></a>
@@ -19,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="#-nist-article--standards-alignment">🏛️ NIST Alignment</a> •
   <a href="#-what-is-oshoosiclaw-plain-english-overview">🎯 Overview</a> •
   <a href="#-60-second-quick-start">⚡ Quick Start</a> •
   <a href="#-continuous-self-updating-har-web-traffic-sensor-har-traffic">🌐 HAR Web Traffic</a> •
@@ -74,11 +74,37 @@ Unlike traditional antivirus platforms that rely on brittle cloud round-trips or
 | Capability | What It Does in Plain English | Where to Use It (WebUI / CLI / API) |
 | :--- | :--- | :--- |
 | **Real-Time Endpoint Detection & Response (EDR)** | Continuously audits process trees, thread creations, dynamic module injections, and eBPF/ETW kernel events; autonomously halts malicious processes, hollows memory, and isolates compromised network interfaces. | WebUI: [`#overview`](#overview), [`#threats`](#threats), [`#killchain`](#killchain)<br>CLI: `osoosi-cli status` |
+| **Two-Tier Zero-Exploit Data Loss Prevention (`#dlp`)** | Dedicated DLP engine combining `<50µs` Tier-1 $O(N)$ secret/PAN/SSN scanning (`Base64`/`Hex`/`URL` unwrapping + 4 KB Crown-Jewel Merkle fingerprinting) with Tier-2 Presidio/GLiNER Zero-PII `<ZK_PII>` scrubbing and `ML-DSA-65` ZK-BFT quarantine proofs (`0B` exfil). | WebUI: [`#dlp`](#dlp)<br>API: `GET /api/dlp/status`, `POST /api/dlp/inspect` |
+| **Autonomous Adversarial Test Suite & SkyRL Co-Evolution (`#adversarial-tests`)** | 34-suite red-teaming harness (2,250+ tests across ATLAS, PyRIT, Garak, Inspect AI) with continuous autonomous execution, `Stop` button, and closed-loop Generator-Discriminator prompt evolution persisting into `tests/corpus/adversarial_regression_corpus.json`. | WebUI: [`#adversarial-tests`](#adversarial-tests)<br>API: `GET /api/test-stream`, `POST /api/skyrl/v1/train` |
 | **Continuous Self-Updating HAR Web Traffic Sensor (`#har-traffic`)** | Passively monitors browser and application HTTP/HTTPS streams, WebSockets, and REST conduits; extracts live HTTP Archive (HAR) flows and intercepts SSRF, CL.0 framing desync, and credential exfiltration. | WebUI: [`#har-traffic`](#har-traffic)<br>API: `GET /api/har/stream` |
 | **101-Table SQL Host Telemetry (`Siquery`)** | An embedded SQLite-driven instrumentation engine exposing 101 virtual tables covering running processes, listening sockets, kernel drivers, browser extensions, scheduled tasks, and persistence registry keys. | WebUI: [`#siquery`](#siquery)<br>CLI: `osoosi-cli query "<SQL>"` |
 | **Autonomous Binary & Bytecode Reverse Engineering (`REA`)** | Automatically ingests untrusted executables, memory dumps, or quarantine targets; generates decompiled pseudo-code, extracts strings, identifies compiler toolchains, tags Magika MIME types, and outputs YARA rules. | WebUI: [`#rea`](#rea)<br>CLI: `osoosi-cli rea --target <path>` |
 | **AI Agent Containment & `CanaryCage` Sandbox** | Isolates autonomous AI worker agents within multi-ring AppContainer / Linux namespace boundaries; evaluates tool invocations against OWASP Top 10 for Agentic AI and thwarts prompt injection breakouts. | WebUI: [`#agent-anomalies`](#agent-anomalies)<br>Crate: `crates/osoosi-agent-anomaly` |
 | **Cryptographic Audit Ledger & P2P Threat Mesh** | Secures every detection, config change, and audit event in a tamper-evident BLAKE3 Merkle tree; securely syncs threat indicators across peer nodes using ML-KEM-768 and privacy-preserving TFHE voter consensus. | WebUI: [`#zone`](#zone), [`#otel-map`](#otel-map)<br>API: `GET /api/mesh/nodes` |
+
+---
+
+## 🏛️ NIST Article & Standards Alignment
+
+- [x] **NIST AI 100-2e2023 / 2025** ? Adversarial Machine Learning Taxonomy, Red-Teaming & Mitigations (`#adversarial-tests`)
+- [x] **NIST Closed-Loop Co-Evolution** ? Automated Generator-Discriminator Prompt Evolution & Self-Expanding Regression Corpus (`#skyrl`, `tests/corpus/`)
+- [x] **NIST AI RMF 1.0 & AI 600-1** ? Generative AI Risk Governance (`GOVERN`, `MAP`, `MEASURE`, `MANAGE`) & `CanaryCage` Containment (`#agent-anomalies`)
+- [x] **NIST SP 800-207** ? Zero Trust Architecture via Continuous Cedar PARC & Dogwood Temporal Policy Authorization (`#approvals`)
+- [x] **NIST SP 800-53 Rev. 5 (`SC-7`, `SC-28`, `SI-4`) & SP 800-88** ? Two-Tier Zero-Exploit Data Loss Prevention (`#dlp`) & Volatile RAM Scrubbing
+- [x] **NIST FIPS 203 (`ML-KEM-768`) & FIPS 204 (`ML-DSA-65`)** ? Post-Quantum Cryptography & Cryptographic Bill of Materials (`#mesh`)
+- [x] **NIST SP 800-193 / SP 800-155 & NIST NSRL RDS** ? TPM 2.0 Hardware-Signed BLAKE3 Merkle Roots & Autonomous REA Vetting (`#rea`)
+- [x] **NIST SP 800-218 (SSDF) & SLSA v1.0** ? Authenticode SHA-256 Signing, DSSE Provenance Attestations & Microsoft WDSI Submission
+
+| Status | NIST Standard / Article Pillar | How OshoosiClaw Matches the Specification | Module / Verification Path |
+| :---: | :--- | :--- | :--- |
+| ☑️ | **NIST AI 100-2e2023 / 2025**<br>*(Adversarial ML Taxonomy & Mitigations)* | Autonomous 34-suite red-teaming harness executing 2,250+ probes across **MITRE ATLAS**, **Microsoft PyRIT**, **NVIDIA Garak**, **UK AISI Inspect AI**, **DeepEval**, **Promptfoo**, **PentestGPT**, **RedAmon**, **Caido**, **Astra**, and **RESTler** with `Stop` and `Autonomous` controls. | WebUI: [`#adversarial-tests`](#adversarial-tests)<br>Script: `tests/strix_llm_adversarial_tester.py` |
+| ☑️ | **NIST Closed-Loop Co-Evolution**<br>*(Generator-Discriminator Prompt Evolution)* | `GeneratorDiscriminatorPromptEvolutionEngine` replays historical mutations (`Perimeter 0`), synthesizes genetic adversarial prompt mutations, trains the **SkyRL DeepQ Discriminator** (`POST /api/skyrl/v1/train`), and persists newly discovered mutations into a versioned Merkle-anchored regression corpus on disk. | WebUI: [`#skyrl`](#skyrl), [`#adversarial-tests`](#adversarial-tests)<br>Corpus: `tests/corpus/adversarial_regression_corpus.json` |
+| ☑️ | **NIST AI RMF 1.0 & AI 600-1**<br>*(Generative AI Profile: GOVERN, MAP, MEASURE, MANAGE)* | Enforces OWASP Top 10 for Agentic AI (2026) (`ASI01`–`ASI10`), `EmbeddingGemma 2` MRL trajectory drift detection, and `CanaryCage` honey-pipe / Win32 Job Object sandboxing with pre-execution `FileLineageTracker` BLAKE3 verification. | WebUI: [`#agent-anomalies`](#agent-anomalies), [`#approvals`](#approvals)<br>Crate: `crates/osoosi-agent-anomaly` |
+| ☑️ | **NIST SP 800-207**<br>*(Zero Trust Architecture)* | Continuous per-invocation **Cedar PARC** and **Dogwood Metric First-Order Temporal Logic (MFOTL)** authorization gating every agent tool call, network connection, and kernel enforcement action with fail-closed role isolation. | WebUI: [`#approvals`](#approvals)<br>Crate: `crates/osoosi-policy` |
+| ☑️ | **NIST SP 800-53 Rev. 5 (`SC-7`, `SC-28`, `SI-4`) & SP 800-88**<br>*(Data Loss Prevention & Media Sanitization)* | Dedicated **Data Loss Prevention (DLP)** menu (`#dlp`) combining `<50µs` Tier-1 $O(N)$ secret/PAN/SSN scanning (`Base64`/`Hex`/`URL` unwrapping + 4 KB Crown-Jewel Merkle chunks) with Tier-2 **Presidio + GLiNER (`urchade/gliner_multi_pii-v1`)** `<ZK_PII>` scrubbing, `write_volatile` RAM wiping, and ZK-BFT proofs. | WebUI: [`#dlp`](#dlp)<br>API: `GET /api/dlp/status`, `POST /api/dlp/inspect` |
+| ☑️ | **NIST FIPS 203 (`ML-KEM-768`) & FIPS 204 (`ML-DSA-65`)**<br>*(Post-Quantum Cryptography)* | Hybrid `X25519 + ML-KEM-768` lattice key encapsulation and hybrid `Ed25519 + ML-DSA-65` digital signatures securing P2P mesh gossip, hardware Merkle manifests, and Zero-Knowledge quarantine proofs. | WebUI: [`#mesh`](#mesh)<br>Crate: `crates/osoosi-audit/src/pqc_primitives.rs` |
+| ☑️ | **NIST SP 800-193 / SP 800-155 & NIST NSRL RDS**<br>*(Hardware Root of Trust & Provenance Vetting)* | Hardware-anchored 4 KB page-tree BLAKE3 Merkle roots signed by TPM 2.0 key `0x81010002` with NV monotonic anti-rollback counter `0x01800001`, paired with **NIST NSRL** known-good suppression and autonomous **REA** Authenticode / Windows Security Catalog vetting. | WebUI: [`#rea`](#rea), [`#gossip`](#gossip)<br>Crate: `crates/osoosi-core/src/rea.rs` |
+| ☑️ | **NIST SP 800-218 (SSDF) & SLSA v1.0**<br>*(Secure Software Development Framework)* | Native Windows SDK `signtool.exe` (SHA-256 + DigiCert RFC 3161 timestamp) across all PE binaries and `OshoosiClaw.msi`, DSSE `.intoto.jsonl` SLSA provenance attestations, rootless read-only Docker (`UID 65532:65532`), and automated Microsoft WDSI submission. | Script: `scripts/build_and_submit.ps1` |
 
 ---
 
@@ -241,24 +267,24 @@ flowchart TD
     end
 
     subgraph ZeroCrates["Twelve-Part Architecture of Zero (4 Crates)"]
-        Z1["zero-genesis-capacity\n• Pre-Exec Wavefunction ⟨ψ|Ĥ|ψ⟩ = 0\n• Euler-Lagrange Void Ω(t) = C_max - ∫r(τ)dτ\n• Radix Mahalanobis D_0(x)\n• Forbidden Adjacency ‖T ∘ Ā‖_F = 0"]
-        Z2["zero-algebraic-kernel\n• Poisson Silence Surprise I(Δt) = λΔt/ln2\n• Helmholtz IPC Lumen Harmonics R_lumen\n• Dynamic Givens Rotation R(θ) on ker(M)\n• Z_N Capability Zero Divisors (a·b) mod N = 0"]
-        Z3["zero-vacuum-lensing\n• Zero-Point Energy E_ZPE = ½ℏΣω_k\n• Casimir Confinement Pressure P(a) = -π²ℏc/(240a⁴)\n• Gravitational Lensing Dark-Mass Triangulation M_dark"]
-        Z4["zero-divine-equilibrium\n• Ornstein-Uhlenbeck Reflex J = -γx(t)\n• Latent Refusal Subspace ⟨h_t, u_refusal⟩ → 0\n• Quadratic Lyapunov Energy V(z) → 0\n• Noether Mesh Flux ∮ J_mesh · dS = 0"]
+        Z1["zero-genesis-capacity<br/>• Pre-Exec Wavefunction ⟨ψ|Ĥ|ψ⟩ = 0<br/>• Euler-Lagrange Void Ω(t) = C_max - ∫r(τ)dτ<br/>• Radix Mahalanobis D_0(x)<br/>• Forbidden Adjacency ‖T ∘ Ā‖_F = 0"]
+        Z2["zero-algebraic-kernel<br/>• Poisson Silence Surprise I(Δt) = λΔt/ln2<br/>• Helmholtz IPC Lumen Harmonics R_lumen<br/>• Dynamic Givens Rotation R(θ) on ker(M)<br/>• Z_N Capability Zero Divisors (a·b) mod N = 0"]
+        Z3["zero-vacuum-lensing<br/>• Zero-Point Energy E_ZPE = ½ℏΣω_k<br/>• Casimir Confinement Pressure P(a) = -π²ℏc/(240a⁴)<br/>• Gravitational Lensing Dark-Mass Triangulation M_dark"]
+        Z4["zero-divine-equilibrium<br/>• Ornstein-Uhlenbeck Reflex J = -γx(t)<br/>• Latent Refusal Subspace ⟨h_t, u_refusal⟩ → 0<br/>• Quadratic Lyapunov Energy V(z) → 0<br/>• Noether Mesh Flux ∮ J_mesh · dS = 0"]
     end
 
     subgraph PhysicsCrates["Nonlinear Dynamics, Statistical Mechanics & Silicon Shield (3 Crates)"]
-        P1["edr-phaselock\n• Takens Delay Embedding X(t)\n• Rosenstein Maximal Lyapunov Exponent λ_max"]
-        P2["agent-thermostat\n• Hamiltonian E_i & Ising Spin Lattice J_ij\n• Helmholtz Free Energy F = U - T·S\n• Langevin Damping γ & Phase Transition"]
-        P3["silicon-shield\n• SeqCst Hardware Memory Fences\n• Constant-Time BLAKE3 Text & Token Verification\n• Volatile Memory Scrubbing (write_volatile)"]
+        P1["edr-phaselock<br/>• Takens Delay Embedding X(t)<br/>• Rosenstein Maximal Lyapunov Exponent λ_max"]
+        P2["agent-thermostat<br/>• Hamiltonian E_i & Ising Spin Lattice J_ij<br/>• Helmholtz Free Energy F = U - T·S<br/>• Langevin Damping γ & Phase Transition"]
+        P3["silicon-shield<br/>• SeqCst Hardware Memory Fences<br/>• Constant-Time BLAKE3 Text & Token Verification<br/>• Volatile Memory Scrubbing (write_volatile)"]
     end
 
     subgraph CoreEDR["OpenỌ̀ṣọ́ọ̀sì Core Orchestration & Enforcement"]
-        V["PhaseLockAttractorVoter\n(crates/osoosi-policy)"]
-        E["Cross-Platform EbpfMonitor\n(crates/osoosi-behavioral)"]
-        B["BreakoutDefenseCoordinator & AgentContainmentRing\n(crates/osoosi-agent-anomaly)"]
-        S["Supervisor Sensor 10: Zero-Physics & Divine Order\n(crates/osoosi-core/src/supervisor.rs)"]
-        M["NSRL/ASLR Merkle Audit Verification\n(crates/osoosi-audit)"]
+        V["PhaseLockAttractorVoter<br/>(crates/osoosi-policy)"]
+        E["Cross-Platform EbpfMonitor<br/>(crates/osoosi-behavioral)"]
+        B["BreakoutDefenseCoordinator & AgentContainmentRing<br/>(crates/osoosi-agent-anomaly)"]
+        S["Supervisor Sensor 10: Zero-Physics & Divine Order<br/>(crates/osoosi-core/src/supervisor.rs)"]
+        M["NSRL/ASLR Merkle Audit Verification<br/>(crates/osoosi-audit)"]
     end
 
     L & W --> Z1 & Z2 & Z3 & P1
@@ -299,27 +325,27 @@ flowchart LR
     end
 
     subgraph Tier1["Tier 1: Envelope & MIME Identification"]
-        M["Google Magika ONNX Deep Learning\n(identify_with_magika)"]
-        H["Container Magic Verification\n(PE / ELF / Mach-O / WASM / SQLite / PCAP / ASAR / APK)"]
+        M["Google Magika ONNX Deep Learning<br/>(identify_with_magika)"]
+        H["Container Magic Verification<br/>(PE / ELF / Mach-O / WASM / SQLite / PCAP / ASAR / APK)"]
     end
 
     subgraph Tier2["Tier 2: Structural Compiler & Runtime Provenance"]
-        PE["goblin PE OptionalHeader\nDataDirectory[14] (CLR Runtime Header)"]
-        R["Rust Provenance\n(.dep-v0 cargo-auditable / rustc)"]
-        G["Go Provenance\n(\\xff Go buildinf: / go.buildid)"]
-        D[".NET CIL Provenance\n(ECMA-335 BSJB + #~ / #Strings Streams)"]
-        N["Native & Bytecode Disassemblers\n(x86_64 / ARM64 / WASM Section 1-3 WAT / EVM)"]
+        PE["goblin PE OptionalHeader<br/>DataDirectory[14] (CLR Runtime Header)"]
+        R["Rust Provenance<br/>(.dep-v0 cargo-auditable / rustc)"]
+        G["Go Provenance<br/>(\0xff Go buildinf: / go.buildid)"]
+        D[".NET CIL Provenance<br/>(ECMA-335 BSJB + #~ / #Strings Streams)"]
+        N["Native & Bytecode Disassemblers<br/>(x86_64 / ARM64 / WASM Section 1-3 WAT / EVM)"]
     end
 
     subgraph Output["Autonomous Defense Synthesis"]
-        E["Cryptographic Evidence Ledger\n(SHA-256 + BLAKE3 + Magika Identity)"]
-        C["Reconstructed Source Skeleton\n(Rust / Go / C# / C / WAT / Solidity)"]
-        Y["Verified YARA-X Signature\n(yara/rea_auto_rules.yar)"]
+        E["Cryptographic Evidence Ledger<br/>(SHA-256 + BLAKE3 + Magika Identity)"]
+        C["Reconstructed Source Skeleton<br/>(Rust / Go / C# / C / WAT / Solidity)"]
+        Y["Verified YARA-X Signature<br/>(yara/rea_auto_rules.yar)"]
     end
 
     subgraph Adjudication["Autonomous REA Alert Adjudication & Feed Drop-Off"]
-        AD1["adjudicate_process_or_binary_alert()\n• Authenticode / Security Catalog Verification\n• Trusted Vendor & Non-Vulnerable Veto Check\n• Synthetic BLAKE3 Benign Record Generation"]
-        AD2["run_autonomous_rea_threat_adjudication()\n• Automatic Benign Drop-Off from /api/threats\n• Mesh Gossip Feed Deselection & Drop-Off\n• Memory recent_threats_cache Invalidation"]
+        AD1["adjudicate_process_or_binary_alert()<br/>• Authenticode / Security Catalog Verification<br/>• Trusted Vendor & Non-Vulnerable Veto Check<br/>• Synthetic BLAKE3 Benign Record Generation"]
+        AD2["run_autonomous_rea_threat_adjudication()<br/>• Automatic Benign Drop-Off from /api/threats<br/>• Mesh Gossip Feed Deselection & Drop-Off<br/>• Memory recent_threats_cache Invalidation"]
     end
 
     F --> M & H
@@ -557,7 +583,7 @@ flowchart TD
 <a id="ring-0-windows-driver--linux-ebpf-parity"></a>
 <a id="-native-ring-0-windows-driver--linux-ebpf-parity"></a>
 <a id="native-ring-0-windows-driver--linux-ebpf-parity"></a>
-## 🛡️ Native Ring-0 Windows PPL / ELAM / Minifilter Driver & Linux `BPF_PROG_TYPE_LSM` Inline Kernel Blocking (100 / 100 A+)
+## 🛡️ Native Ring-0 Windows PPL / ELAM / Minifilter Driver & Linux `BPF_PROG_TYPE_LSM` Inline Kernel Blocking
 
 ### The Architectural Paradigm Shift: Pre-Operation Ring-0 Enforcement vs. Post-Execution Telemetry
 
@@ -567,7 +593,7 @@ Traditional endpoint security and user-mode EDR agents operate **reactively** (p
 3. Auxiliary telemetry subsystems (such as Microsoft Sysmon Event 1 or ETW providers) generate notification events **asynchronously** milliseconds or seconds after execution has already started.
 4. User-mode API hooks (e.g., in `ntdll.dll`) can be bypassed via direct system calls (`SysWhispers`, `Hell's Gate`), unhooking (`VirtualProtect`), or a Ring-0 BYOVD payload (`RTCore64.sys`, `gdrv.sys`, `mhyprot2.sys`) can open `PROCESS_TERMINATE` handles against a user-mode sensor.
 
-**OpenỌ̀ṣọ́ọ̀sì achieves 100 / 100 (A+) nation-state / Ring-0 resilience** through hardware- and kernel-enforced **pre-operation blocking, handle stripping, boot-start ELAM verification, and 3-hook inline eBPF LSM containment**:
+**OpenỌ̀ṣọ́ọ̀sì enforces nation-state / Ring-0 resilience** through hardware- and kernel-enforced **pre-operation blocking, handle stripping, boot-start ELAM verification, and 3-hook inline eBPF LSM containment**:
 - **Windows Ring-0 Minifilter + Object Callback Driver (`driver/windows/osoosi_driver.sys` v1.2.0)**:
   - **`PsSetCreateProcessNotifyRoutineEx`**: Synchronous pre-operation process interception (`CreateInfo->CreationStatus = STATUS_ACCESS_DENIED`).
   - **`ObRegisterCallbacks` (Altitude `385200`)**: Strips `PROCESS_TERMINATE`, `PROCESS_VM_WRITE`, `PROCESS_VM_OPERATION`, `PROCESS_SUSPEND_RESUME`, `PROCESS_DUP_HANDLE`, `THREAD_TERMINATE`, `THREAD_SUSPEND_RESUME`, and `THREAD_SET_CONTEXT` from `OpenProcess` / `OpenThread` / `DuplicateHandle` calls targeting protected `osoosi.exe` sensor PIDs and `lsass.exe`.
@@ -583,26 +609,26 @@ Traditional endpoint security and user-mode EDR agents operate **reactively** (p
 ```mermaid
 flowchart TD
     subgraph WIN["Windows Ring-0 PPL + ELAM + Kernel Minifilter (driver/windows/)"]
-        ELAM["osoosi_elam.sys (SERVICE_BOOT_START = 0x0)\nIoRegisterBootDriverCallback + MicrosoftElamCertificateInfo"]
-        PPL["Honest Runtime PPL Verification (NtQueryInformationProcess)\n+ SetKernelObjectSecurity DACL Hardening"]
-        OB["ObRegisterCallbacks (Altitude 385200)\nStrips PROCESS_TERMINATE / VM_WRITE / SUSPEND on osoosi.exe & lsass.exe"]
-        PS["PsSetCreateProcessNotifyRoutineEx\nPre-Operation STATUS_ACCESS_DENIED (0xC0000022)"]
-        BYOVD["FsRtlRegisterFileSystemFilterCallbacks (PreAcquireForSectionSync)\nBlocks 14 BYOVD Drivers Before MmCreateSection (HVCI/KPP Safe)"]
-        MF["Minifilter / IRP Self-Defense (OsoosiSelfDefenseDispatch)\nBlocks DELETE / RENAME / WRITE on OshoosiClaw Binaries & Configs"]
+        ELAM["osoosi_elam.sys (SERVICE_BOOT_START = 0x0)<br/>IoRegisterBootDriverCallback + MicrosoftElamCertificateInfo"]
+        PPL["Honest Runtime PPL Verification (NtQueryInformationProcess)<br/>+ SetKernelObjectSecurity DACL Hardening"]
+        OB["ObRegisterCallbacks (Altitude 385200)<br/>Strips PROCESS_TERMINATE / VM_WRITE / SUSPEND on osoosi.exe & lsass.exe"]
+        PS["PsSetCreateProcessNotifyRoutineEx<br/>Pre-Operation STATUS_ACCESS_DENIED (0xC0000022)"]
+        BYOVD["FsRtlRegisterFileSystemFilterCallbacks (PreAcquireForSectionSync)<br/>Blocks 14 BYOVD Drivers Before MmCreateSection (HVCI/KPP Safe)"]
+        MF["Minifilter / IRP Self-Defense (OsoosiSelfDefenseDispatch)<br/>Blocks DELETE / RENAME / WRITE on OshoosiClaw Binaries & Configs"]
         ELAM --> PPL --> OB
         OB --> PS & BYOVD & MF
     end
 
     subgraph LIN["Linux CO-RE eBPF, BPF_PROG_TYPE_LSM & 5-Sigma Quarantine (ebpf/)"]
-        BPRM["SEC('lsm/bprm_check_security')\nPre-Exec Path & SHA-256 Block (-EPERM) + OS Binary Immunity"]
-        FOPEN["SEC('lsm/file_open')\nBlocks FMODE_WRITE on /etc/osoosi & /etc/shadow Access (-EPERM)"]
-        SCONN["SEC('lsm/socket_connect')\nInline IPv4 / IPv6 / Port C2 & Lockdown Block (-EPERM)"]
-        PMU["SEC('perf_event') osoosi_pmu_watchdog + quarantine_targets\nStage 1 Kernel SIGSTOP (9-26ns) + Stage 2 Pre-Armed Cgroup v2 Freeze (5-15us)"]
-        TP["5 Tracepoints (exec, exit, connect, mprotect W^X, ptrace)\nZero-Drop RingBuf Telemetry (process_ring & network_ring)"]
+        BPRM["SEC('lsm/bprm_check_security')<br/>Pre-Exec Path & SHA-256 Block (-EPERM) + OS Binary Immunity"]
+        FOPEN["SEC('lsm/file_open')<br/>Blocks FMODE_WRITE on /etc/osoosi & /etc/shadow Access (-EPERM)"]
+        SCONN["SEC('lsm/socket_connect')<br/>Inline IPv4 / IPv6 / Port C2 & Lockdown Block (-EPERM)"]
+        PMU["SEC('perf_event') osoosi_pmu_watchdog + quarantine_targets<br/>Stage 1 Kernel SIGSTOP (9-26ns) + Stage 2 Pre-Armed Cgroup v2 Freeze (5-15us)"]
+        TP["5 Tracepoints (exec, exit, connect, mprotect W^X, ptrace)<br/>Zero-Drop RingBuf Telemetry (process_ring & network_ring)"]
         BPRM & FOPEN & SCONN & PMU --> TP
     end
 
-    ORCH["crates/osoosi-runtime/src/kernel_driver.rs & linux_ebpf.rs\nUnified Ring-0 / BPF LSM / QuarantineResponder Orchestrator"]
+    ORCH["crates/osoosi-runtime/src/kernel_driver.rs & linux_ebpf.rs<br/>Unified Ring-0 / BPF LSM / QuarantineResponder Orchestrator"]
     ORCH --> WIN & LIN
 ```
 
@@ -624,7 +650,7 @@ sequenceDiagram
     end
 
     rect rgb(235, 255, 235)
-        Note over A,D: OPENỌ̀ṢỌ́Ọ̀SÌ 100/100 (A+) HARDWARE & RING-0 PRE-OPERATION BLOCKING
+        Note over A,D: OPENỌ̀ṢỌ́Ọ̀SÌ HARDWARE & RING-0 PRE-OPERATION BLOCKING
         A->>K: OpenProcess(PROCESS_TERMINATE, osoosi.exe) / LoadDriver("RTCore64.sys") / execve() / connect()
         K->>D: Synchronous Hook (ObRegisterCallbacks / PreAcquireForSectionSync / PsSetCreateProcess / LSM bprm_check, file_open, socket_connect)
         D->>D: Sub-microsecond Spinlock / BPF Map Lookup + OS Shell Immunity Gate
@@ -667,23 +693,23 @@ On Linux endpoints (`x86_64-unknown-linux-gnu`, kernel $\ge 5.7$ with `CONFIG_BP
 ```mermaid
 flowchart LR
     subgraph Stage1["Stage 1: Kernel eBPF Immediate Freeze (9-26ns)"]
-        EBPF["Tracepoints & Hook 9\nSEC('perf_event') osoosi_pmu_watchdog"]
-        QMAP["BPF Hash Map\nquarantine_targets (24-byte directive)"]
-        STOP["bpf_send_signal(SIGSTOP)\nBlocks mprotect / ptrace / connect (-EPERM)"]
+        EBPF["Tracepoints & Hook 9<br/>SEC('perf_event') osoosi_pmu_watchdog"]
+        QMAP["BPF Hash Map<br/>quarantine_targets (24-byte directive)"]
+        STOP["bpf_send_signal(SIGSTOP)<br/>Blocks mprotect / ptrace / connect (-EPERM)"]
         EBPF --> QMAP --> STOP
     end
 
     subgraph Stage2["Stage 2: Pre-Armed Cgroup v2 Freezer (5-15us)"]
-        SCORE["HaloscopeFiveSigmaScorer\nz = (x - mu) / sigma >= 5.0"]
-        VETO["OS & Developer Immunity Veto\n(systemd, sshd, osoosi, cargo, rustc, python)"]
-        RESP["QuarantineResponder\nPre-Opened cgroup.procs + cgroup.freeze = '1'"]
+        SCORE["HaloscopeFiveSigmaScorer<br/>z = (x - mu) / sigma >= 5.0"]
+        VETO["OS & Developer Immunity Veto<br/>(systemd, sshd, osoosi, cargo, rustc, python)"]
+        RESP["QuarantineResponder<br/>Pre-Opened cgroup.procs + cgroup.freeze = '1'"]
         SCORE --> VETO --> RESP
     end
 
     subgraph Forensics["Stage 3: Frozen Process Forensic Collector"]
-        MEM["FrozenProcessForensicCollector\nReads /proc/pid/syscall (RIP) + 4KB /proc/pid/mem"]
-        YARA["synthesize_yara_from_raw_payload\nyara_x::Compiler Verified Rule"]
-        MESH["P2P GossipSub & Nostr Mesh\nBroadcast Signed 5-Sigma IOC"]
+        MEM["FrozenProcessForensicCollector<br/>Reads /proc/pid/syscall (RIP) + 4KB /proc/pid/mem"]
+        YARA["synthesize_yara_from_raw_payload<br/>yara_x::Compiler Verified Rule"]
+        MESH["P2P GossipSub & Nostr Mesh<br/>Broadcast Signed 5-Sigma IOC"]
         MEM --> YARA & MESH
     end
 
@@ -799,10 +825,10 @@ flowchart TD
     end
 
     subgraph IMMUNITY["5-Layer Cross-Platform Host OS Shell, Search & System Tray Immunity"]
-        P0["normalize_nt_device_path() (QueryDosDeviceW + POSIX-safe)\n+ is_protected_os_shell_or_desktop_binary()"]
-        P1["Windows 10/11: sihost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,\nShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,\nSecurityHealthSystray.exe, ctfmon.exe, OpenConsole.exe, WindowsTerminal.exe, dwm.exe"]
-        P2["Linux: systemd*, dbus-daemon, gnome-shell, plasmashell, kwin_*, Xorg, Xwayland,\nsway, Hyprland, pipewire, wireplumber, tracker-miner-fs*, localsearch*, baloo_file*,\nxdg-desktop-portal*, NetworkManager, sshd"]
-        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,\nNotificationCenter, Spotlight, corespotlightd, mds, mdworker*, coreservicesd, loginwindow"]
+        P0["normalize_nt_device_path() (QueryDosDeviceW + POSIX-safe)<br/>+ is_protected_os_shell_or_desktop_binary()"]
+        P1["Windows 10/11: sihost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,<br/>ShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,<br/>SecurityHealthSystray.exe, ctfmon.exe, OpenConsole.exe, WindowsTerminal.exe, dwm.exe"]
+        P2["Linux: systemd*, dbus-daemon, gnome-shell, plasmashell, kwin_*, Xorg, Xwayland,<br/>sway, Hyprland, pipewire, wireplumber, tracker-miner-fs*, localsearch*, baloo_file*,<br/>xdg-desktop-portal*, NetworkManager, sshd"]
+        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,<br/>NotificationCenter, Spotlight, corespotlightd, mds, mdworker*, coreservicesd, loginwindow"]
         L1["Layer 1: is_system_critical(), system_check.rs & Monitor-Mode Hard Gate"]
         L2["Layer 2: ActiveProcessTarpit & Child-PID Immunity"]
         L3["Layer 3: BlockingManager, AgentProvisioner & Native winreg IFEO Sanitizer"]
@@ -906,12 +932,12 @@ Rather than contending on a single global mutex for every microsecond telemetry 
 
 ```mermaid
 flowchart TD
-    A["Developer Build (`cargo build --release` / `rust-lld` / `signtool`)"] --> B["Non-Locking Reader (`open_shared_for_merkle`: FILE_SHARE_READ|WRITE|DELETE)"]
-    B --> C["Compute 4 KB Page-Tree BLAKE3 Merkle Root (`<binary>.b3`)"]
-    C --> D{"`AdaptiveDevMerkleGuard`\nVerify Provenance"}
-    D -- "Authorized Compiler/Linker + Policy 1 PIN + Policy 2 PCR 16/23 Unlocked" --> E["TPM 2.0 Handle `0x81010002` (`/dev/tpmrm0` / `MS_PLATFORM_CRYPTO_PROVIDER`)\nSign `SHA256(BLAKE3_Root)` + Increment NV Counter `0x01800001`"]
-    E --> F["Export `<binary>.merkle.sig.json` + Enable `fs-verity` (`BPF_PROG_TYPE_LSM`)"]
-    D -- "Unauthorized Mutation or Replay (`manifest_counter < nv_counter`)" --> G["Fail-Closed Tamper / Rollback Alert + Extend `PCR 23` Runtime Lockdown"]
+    A["Developer Build (cargo build --release / rust-lld / signtool)"] --> B["Non-Locking Reader (open_shared_for_merkle: FILE_SHARE_READ / WRITE / DELETE)"]
+    B --> C["Compute 4 KB Page-Tree BLAKE3 Merkle Root (binary.b3)"]
+    C --> D{"AdaptiveDevMerkleGuard<br/>Verify Provenance"}
+    D -- "Authorized Compiler/Linker + Policy 1 PIN + Policy 2 PCR 16/23 Unlocked" --> E["TPM 2.0 Handle 0x81010002 (/dev/tpmrm0 / MS_PLATFORM_CRYPTO_PROVIDER)<br/>Sign SHA256(BLAKE3_Root) + Increment NV Counter 0x01800001"]
+    E --> F["Export binary.merkle.sig.json + Enable fs-verity (BPF_PROG_TYPE_LSM)"]
+    D -- "Unauthorized Mutation or Replay (manifest_counter < nv_counter)" --> G["Fail-Closed Tamper / Rollback Alert + Extend PCR 23 Runtime Lockdown"]
 ```
 
 ### 4. Dual-Stage 5-Sigma Kernel Quarantine (`bpf_send_signal(SIGSTOP)` + Cgroup v2 Freezer + Forensic Memory Collector)
@@ -1125,38 +1151,38 @@ OpenỌ̀ṣọ́ọ̀sì implements an active deception and swarm pre-immunizat
 ```mermaid
 flowchart TD
     subgraph Ingestion["Input & Ingestion Stage"]
-        Doc["External Document / Untrusted Payload\n(PDF, Markdown, Git Clones)"]
-        HAR["Browser HTTP/HAR Traffic Lineage\n(crates/osoosi-policy/src/traffic_adapter.rs)"]
-        DetProbe["REA Dynamic Detonation Probe\n(crates/osoosi-core/src/rea.rs)"]
+        Doc["External Document / Untrusted Payload<br/>(PDF, Markdown, Git Clones)"]
+        HAR["Browser HTTP/HAR Traffic Lineage<br/>(crates/osoosi-policy/src/traffic_adapter.rs)"]
+        DetProbe["REA Dynamic Detonation Probe<br/>(crates/osoosi-core/src/rea.rs)"]
     end
 
     subgraph Lineage["Content-Addressed Lineage & Taint Engine (crates/osoosi-agent-anomaly)"]
-        BLAKE3["FileLineageTracker\n• BLAKE3 Content-Addressed Digest Index\n• 16,384-Entry Bounded Maps with FIFO Eviction\n• Hard Repository & Host Toolchain Immunity\n• Pre-Execution Rejection of Poisoned Digests"]
-        Taint["AgentjackingGuard\n• SessionTaintState Interception\n• Mandatory force_canary_cage Routing"]
-        Ticket["DiracDeltaCapabilityTicket\n• Ephemeral Canary Metadata Binding\n• canary_token_id & canary_trap_uri"]
+        BLAKE3["FileLineageTracker<br/>• BLAKE3 Content-Addressed Digest Index<br/>• 16,384-Entry Bounded Maps with FIFO Eviction<br/>• Hard Repository & Host Toolchain Immunity<br/>• Pre-Execution Rejection of Poisoned Digests"]
+        Taint["AgentjackingGuard<br/>• SessionTaintState Interception<br/>• Mandatory force_canary_cage Routing"]
+        Ticket["DiracDeltaCapabilityTicket<br/>• Ephemeral Canary Metadata Binding<br/>• canary_token_id & canary_trap_uri"]
     end
 
     subgraph Sandbox["Hardened Active Deception Sandbox (crates/osoosi-runtime)"]
-        Job["Win32 Job Object Sandbox (Windows)\n• CREATE_SUSPENDED Confinement\n• IsProcessInJob == TRUE Check before ResumeThread\n• Child-Only Isolated UTF-16 Environment Block\n• Zero Parent Environment Mutation"]
-        TrapPipe["Deterministic Overlapped Honey-Pipe Trap\n• \\\\.\\pipe\\osoosi_canary_<session>_<csprng>\n• FILE_FLAG_OVERLAPPED | PIPE_REJECT_REMOTE_CLIENTS\n• Manual-Reset Shutdown Event (<1ms Cleanup)\n• Zero Thread / Handle Leaks"]
-        LinuxMemfd["Linux Canary Sandbox (Linux)\n• memfd_create(c'edr_vault_key', MFD_CLOEXEC)\n• Dynamic High FD below RLIMIT_NOFILE via dup2"]
-        KillAction["Deterministic Decoy Trap Action\n• Instant Process Termination (Exit Code 137)\n• CanaryAlert Emission (Confidence = 1.00)"]
+        Job["Win32 Job Object Sandbox (Windows)<br/>• CREATE_SUSPENDED Confinement<br/>• IsProcessInJob == TRUE Check before ResumeThread<br/>• Child-Only Isolated UTF-16 Environment Block<br/>• Zero Parent Environment Mutation"]
+        TrapPipe["Deterministic Overlapped Honey-Pipe Trap<br/>• \\\\.\\pipe\\osoosi_canary_[session]_[csprng]<br/>• FILE_FLAG_OVERLAPPED | PIPE_REJECT_REMOTE_CLIENTS<br/>• Manual-Reset Shutdown Event (<1ms Cleanup)<br/>• Zero Thread / Handle Leaks"]
+        LinuxMemfd["Linux Canary Sandbox (Linux)<br/>• memfd_create(c'edr_vault_key', MFD_CLOEXEC)<br/>• Dynamic High FD below RLIMIT_NOFILE via dup2"]
+        KillAction["Deterministic Decoy Trap Action<br/>• Instant Process Termination (Exit Code 137)<br/>• CanaryAlert Emission (Confidence = 1.00)"]
     end
 
     subgraph Consensus["Zero-Trust Consensus & Reinforcement Learning (crates/osoosi-core)"]
-        Quorum["Consensus Quorum Execution\n• Agentic-Escape-Detector (1.00)\n• SpiderWeb-Containment (1.00)\n• Instant Consensus Decision Quorum"]
-        RL["RLAdaptiveController & SkyRL MDP\n• High-Priority Containment Reward (+100.0)\n• StixMdpStateVector (Discrete State 7)\n• Voter Weight Nudge (1.02x–2.50x Adaptation)"]
+        Quorum["Consensus Quorum Execution<br/>• Agentic-Escape-Detector (1.00)<br/>• SpiderWeb-Containment (1.00)<br/>• Instant Consensus Decision Quorum"]
+        RL["RLAdaptiveController & SkyRL MDP<br/>• High-Priority Containment Reward (+100.0)<br/>• StixMdpStateVector (Discrete State 7)<br/>• Voter Weight Nudge (1.02x–2.50x Adaptation)"]
     end
 
     subgraph Mesh["P2P Swarm Immunity & Hardware Attestation (crates/osoosi-wire)"]
-        P2P["P2P Mesh & Nostr Swarm Broadcast\n• Hybrid PQC (ML-DSA-65 + Ed25519)\n• DP Laplace Noise Timestamp Perturbation\n• Fleet-Wide Pre-Immunization of Ingested Hashes"]
-        STIX["Autonomous STIX 2.1 & MITRE ATLAS Refresh\n• 15-Minute Background Loop\n• Official Upstream: mitre-attack/attack-stix-data\n• Official Upstream: mitre-atlas/atlas-navigator-data"]
-        TPM["Hardware TPM 2.0 (NTC Nuvoton 1.3.2.8)\n• HKLM TPM\\WMI Decoding (0x4E544300 -> 'NTC')\n• Sub-1ms PCR 16 Non-Elevated Measurement"]
+        P2P["P2P Mesh & Nostr Swarm Broadcast<br/>• Hybrid PQC (ML-DSA-65 + Ed25519)<br/>• DP Laplace Noise Timestamp Perturbation<br/>• Fleet-Wide Pre-Immunization of Ingested Hashes"]
+        STIX["Autonomous STIX 2.1 & MITRE ATLAS Refresh<br/>• 15-Minute Background Loop<br/>• Official Upstream: mitre-attack/attack-stix-data<br/>• Official Upstream: mitre-atlas/atlas-navigator-data"]
+        TPM["Hardware TPM 2.0 (NTC Nuvoton 1.3.2.8)<br/>• HKLM TPM\\WMI Decoding (0x4E544300 -> 'NTC')<br/>• Sub-1ms PCR 16 Non-Elevated Measurement"]
     end
 
     subgraph WebUI["Forensic Observability & Parity Engine (crates/osoosi-dashboard)"]
-        Hist["Sub-5ms /api/history Cache\n• OnceLock<RwLock<...>> 2,000ms TTL Cache\n• 12,000ms Client fetchWithRetry Timeout\n• lastHistoryData Local Fallback (0 VIEW_RENDER_ERROR)"]
-        Decep["Live WebUI Telemetry\n• /api/deception/status (canary_cage metrics)\n• /api/agent-anomalies/summary (lineage graphs)\n• Byte-for-Byte SHA-256 0-Diff Parity"]
+        Hist["Sub-5ms /api/history Cache<br/>• OnceLock[RwLock] 2,000ms TTL Cache<br/>• 12,000ms Client fetchWithRetry Timeout<br/>• lastHistoryData Local Fallback (0 VIEW_RENDER_ERROR)"]
+        Decep["Live WebUI Telemetry<br/>• /api/deception/status (canary_cage metrics)<br/>• /api/agent-anomalies/summary (lineage graphs)<br/>• Byte-for-Byte SHA-256 0-Diff Parity"]
     end
 
     Doc & HAR & DetProbe --> BLAKE3
@@ -2994,24 +3020,24 @@ Recent hardening efforts have focused on the 12 security audit remediations, RAP
 ```mermaid
 flowchart TD
     subgraph Audit["1. RAPTOR Full-Suite Scan & Audit Remediation"]
-        A1["12 Security Audit Findings Remediated\n(Lock Poisoning, SRI, defusedxml, wss://, CSPRNG)"]
-        A2["RAPTOR Mode=all Scan\n(7 Stages: scan, crypto, sca, openant, agentic)"]
-        A3["Verification Gate\n• 0 Exploitable Findings\n• 0 Failed Semgrep Packs"]
+        A1["12 Security Audit Findings Remediated<br/>(Lock Poisoning, SRI, defusedxml, wss://, CSPRNG)"]
+        A2["RAPTOR Mode=all Scan<br/>(7 Stages: scan, crypto, sca, openant, agentic)"]
+        A3["Verification Gate<br/>• 0 Exploitable Findings<br/>• 0 Failed Semgrep Packs"]
         A1 --> A2 --> A3
     end
 
     subgraph Build["2. Multi-Platform Compilation & Signing"]
-        B1["Windows: cargo build --release -p osoosi-cli\nWiX v5: OshoosiClaw.msi (x64)"]
-        B2["Windows 10 SDK signtool.exe\n(SHA-256 + DigiCert RFC 3161 Timestamp)"]
-        B3["Linux: packaging/linux/build_packages.sh\n(.deb, .rpm, .tar.gz + eBPF CO-RE)"]
-        B4["Docker: ghcr.io/oyesanyf/oshoosiclaw:1.2.0\n(UID 65532:65532, --read-only, --cap-drop=ALL)"]
+        B1["Windows: cargo build --release -p osoosi-cli<br/>WiX v5: OshoosiClaw.msi (x64)"]
+        B2["Windows 10 SDK signtool.exe<br/>(SHA-256 + DigiCert RFC 3161 Timestamp)"]
+        B3["Linux: packaging/linux/build_packages.sh<br/>(.deb, .rpm, .tar.gz + eBPF CO-RE)"]
+        B4["Docker: ghcr.io/oyesanyf/oshoosiclaw:1.2.0<br/>(UID 65532:65532, --read-only, --cap-drop=ALL)"]
         B1 --> B2
     end
 
     subgraph Delivery["3. Trust & Cloud Delivery"]
-        D1["Microsoft WDSI Submission\n(scripts/submit_to_wdsi.py --all)"]
-        D2["GitHub Releases Sync\n(update_github_release_msi.py + DSSE SLSA Provenance)"]
-        D3["Solo-Developer PR Shipping\n(scripts/solo_pr_ship.ps1 + Auto-Review Bot Approval)"]
+        D1["Microsoft WDSI Submission<br/>(scripts/submit_to_wdsi.py --all)"]
+        D2["GitHub Releases Sync<br/>(update_github_release_msi.py + DSSE SLSA Provenance)"]
+        D3["Solo-Developer PR Shipping<br/>(scripts/solo_pr_ship.ps1 + Auto-Review Bot Approval)"]
         B2 --> D1
         B2 & B3 --> D2
         D1 & D2 & B4 --> D3
@@ -3029,38 +3055,28 @@ flowchart TD
 ```mermaid
 flowchart TD
     subgraph Ingestion["1. Multi-Source Ingestion & Enrichment (siquery.rs)"]
-        S1["Browser SQLite History & Downloads (Step 2c)
-(Chrome, Edge, Brave, Chromium)"]
-        S2["Active Web Sockets (Step 2d)
-(Ports 80, 443, 8080, 8443, 3000, 3030, 5000, 11434)"]
-        S3["DNS Cache Lookup (ipconfig /displaydns)
-& PID -> Process Name Mapping"]
+        S1["Browser SQLite History & Downloads (Step 2c)<br/>(Chrome, Edge, Brave, Chromium)"]
+        S2["Active Web Sockets (Step 2d)<br/>(Ports 80, 443, 8080, 8443, 3000, 3030, 5000, 11434)"]
+        S3["DNS Cache Lookup (ipconfig /displaydns)<br/>& PID -> Process Name Mapping"]
         S1 & S2 --> S3
     end
 
     subgraph Defense["2. Fast Deduplication & Swarm Poison Defense"]
-        D1["collect_live_har_entries_fast(limit)
-Deduplication on (method, url, source_file)"]
+        D1["collect_live_har_entries_fast(limit)<br/>Deduplication on (method, url, source_file)"]
         D2["BLAKE3 Cryptographic Digest Calculation"]
         D3{"is_swarm_poisoned_har_digest(digest)?"}
-        D4["Threat Score 0.99 Malicious
-Tag: SWARM_POISONED_LINEAGE"]
-        D5["Calibrated Threat Score (0.0 - 0.85)
-Verdict: Benign / Suspicious"]
+        D4["Threat Score 0.99 Malicious<br/>Tag: SWARM_POISONED_LINEAGE"]
+        D5["Calibrated Threat Score (0.0 - 0.85)<br/>Verdict: Benign / Suspicious"]
         S3 --> D1 --> D2 --> D3
         D3 -- Yes --> D4
         D3 -- No --> D5
     end
 
     subgraph Collector["3. Continuous Background Engine (crates/osoosi-dashboard)"]
-        C1["Thread: osoosi-har-collector
-Immediate sweep + 5-second recurring loop"]
-        C2["Global In-Memory LIVE_HAR_CACHE
-(RwLock, Sequence Counter)"]
-        C3["Atomic SQLite Transaction
-(database/osoosi.db har_entries table)"]
-        C4["W3C HAR 1.2 Export
-(logs/live_web_traffic.har)"]
+        C1["Thread: osoosi-har-collector<br/>Immediate sweep + 5-second recurring loop"]
+        C2["Global In-Memory LIVE_HAR_CACHE<br/>(RwLock, Sequence Counter)"]
+        C3["Atomic SQLite Transaction<br/>(database/osoosi.db har_entries table)"]
+        C4["W3C HAR 1.2 Export<br/>(logs/live_web_traffic.har)"]
         D4 & D5 --> C1
         C1 --> C2 & C3 & C4
     end
@@ -3069,8 +3085,7 @@ Immediate sweep + 5-second recurring loop"]
         R1["GET /api/har/entries (Filter, Search, Limit)"]
         R2["POST /api/har/refresh (Async Background Sweep)"]
         R3["GET /api/har/export (W3C HAR 1.2 JSON Attachment)"]
-        R4["Dedicated #har-traffic WebUI Menu
-(KPI Cards, Filter Pills, Real-Time Table)"]
+        R4["Dedicated #har-traffic WebUI Menu<br/>(KPI Cards, Filter Pills, Real-Time Table)"]
         C2 --> R1 & R2 & R3
         R1 & R2 & R3 --> R4
     end
@@ -3246,7 +3261,7 @@ flowchart LR
 ### 4. Community Peer Review and Usability
 - **Hacker News (`Show HN`)**: High-visibility technical launch demonstrating air-gapped Rust EDR, Siquery-RS 98-table relational engine, and zero-cloud local reasoning.
 - **Technical Subreddits**: Deep-dive discussions on `r/rust`, `r/netsec`, `r/opensource`, and `r/programming`.
-- **Product Hunt Maker Launch**: Interactive visual showcase of the zero-configuration Windows Service (`OshoosiClaw.msi`) and 100/100 supervisor WebUI.
+- **Product Hunt Maker Launch**: Interactive visual showcase of the zero-configuration Windows Service (`OshoosiClaw.msi`) and autonomous supervisor WebUI.
 
 ---
 

@@ -5924,6 +5924,7 @@ dependencies = [
  "osoosi-audit",
  "osoosi-behavioral",
  "osoosi-core",
+ "osoosi-dp",
  "osoosi-policy",
  "osoosi-types",
  "osoosi-wire",
