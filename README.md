@@ -86,14 +86,14 @@ Unlike traditional antivirus platforms that rely on brittle cloud round-trips or
 
 ## 🏛️ NIST Article & Standards Alignment
 
-- [x] **NIST AI 100-2e2023 / 2025** ? Adversarial Machine Learning Taxonomy, Red-Teaming & Mitigations (`#adversarial-tests`)
-- [x] **NIST Closed-Loop Co-Evolution** ? Automated Generator-Discriminator Prompt Evolution & Self-Expanding Regression Corpus (`#skyrl`, `tests/corpus/`)
-- [x] **NIST AI RMF 1.0 & AI 600-1** ? Generative AI Risk Governance (`GOVERN`, `MAP`, `MEASURE`, `MANAGE`) & `CanaryCage` Containment (`#agent-anomalies`)
-- [x] **NIST SP 800-207** ? Zero Trust Architecture via Continuous Cedar PARC & Dogwood Temporal Policy Authorization (`#approvals`)
-- [x] **NIST SP 800-53 Rev. 5 (`SC-7`, `SC-28`, `SI-4`) & SP 800-88** ? Two-Tier Zero-Exploit Data Loss Prevention (`#dlp`) & Volatile RAM Scrubbing
-- [x] **NIST FIPS 203 (`ML-KEM-768`) & FIPS 204 (`ML-DSA-65`)** ? Post-Quantum Cryptography & Cryptographic Bill of Materials (`#mesh`)
-- [x] **NIST SP 800-193 / SP 800-155 & NIST NSRL RDS** ? TPM 2.0 Hardware-Signed BLAKE3 Merkle Roots & Autonomous REA Vetting (`#rea`)
-- [x] **NIST SP 800-218 (SSDF) & SLSA v1.0** ? Authenticode SHA-256 Signing, DSSE Provenance Attestations & Microsoft WDSI Submission
+- [x] **NIST AI 100-2e2023 / 2025** — Adversarial Machine Learning Taxonomy, Red-Teaming & Mitigations (`#adversarial-tests`)
+- [x] **NIST Closed-Loop Co-Evolution** — Automated Generator-Discriminator Prompt Evolution & Self-Expanding Regression Corpus (`#skyrl`, `tests/corpus/`)
+- [x] **NIST AI RMF 1.0 & AI 600-1** — Generative AI Risk Governance (`GOVERN`, `MAP`, `MEASURE`, `MANAGE`) & `CanaryCage` Containment (`#agent-anomalies`)
+- [x] **NIST SP 800-207** — Zero Trust Architecture via Continuous Cedar PARC & Dogwood Temporal Policy Authorization (`#approvals`)
+- [x] **NIST SP 800-53 Rev. 5 (`SC-7`, `SC-28`, `SI-4`) & SP 800-88** — Two-Tier Zero-Exploit Data Loss Prevention (`#dlp`) & Volatile RAM Scrubbing
+- [x] **NIST FIPS 203 (`ML-KEM-768`) & FIPS 204 (`ML-DSA-65`)** — Post-Quantum Cryptography & Cryptographic Bill of Materials (`#mesh`)
+- [x] **NIST SP 800-193 / SP 800-155 & NIST NSRL RDS** — TPM 2.0 Hardware-Signed BLAKE3 Merkle Roots & Autonomous REA Vetting (`#rea`)
+- [x] **NIST SP 800-218 (SSDF) & SLSA v1.0** — Authenticode SHA-256 Signing, DSSE Provenance Attestations & Microsoft WDSI Submission
 
 | Status | NIST Standard / Article Pillar | How OshoosiClaw Matches the Specification | Module / Verification Path |
 | :---: | :--- | :--- | :--- |
