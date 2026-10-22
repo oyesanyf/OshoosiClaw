@@ -339,6 +339,14 @@ fn classify_vote(
             (EvidenceClass::Behavior, 0.95, true)
         }
         "Ai-Security-Audit-Voter" => (EvidenceClass::Behavior, 0.95, true),
+        "REA-Voter" => {
+            if reason_lc.contains("masquerade") || reason_lc.contains("prompt_injection") {
+                (EvidenceClass::Behavior, 0.98, true)
+            } else {
+                (EvidenceClass::StaticArtifact, 0.96, true)
+            }
+        }
+        "OpenJEV-Voter" => (EvidenceClass::Behavior, 0.96, true),
         "Sigma-Engine" => (EvidenceClass::Behavior, 0.90, true),
         "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
         name if name.contains("MalConv") || name.contains("ML") => {

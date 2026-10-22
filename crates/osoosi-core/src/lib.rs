@@ -4120,9 +4120,15 @@ impl EdrOrchestrator {
                 osoosi_policy::voters::DualChannelDiscriminationVoter::new(),
             ))
             .await;
+        self.policy
+            .add_voter(Box::new(crate::rea::ReaVoter::new()))
+            .await;
+        self.policy
+            .add_voter(Box::new(crate::rea::OpenJevVoter::new()))
+            .await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
-            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter + PhaseLockAttractorVoter + DualChannelDiscriminationVoter)"
+            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter + PhaseLockAttractorVoter + DualChannelDiscriminationVoter + REA-Voter + OpenJEV-Voter)"
         );
     }
 
@@ -7752,6 +7758,27 @@ impl EdrOrchestrator {
         };
 
         if let Some(mut signature) = signature {
+            let det_pipeline = match event.event_id {
+                3 | 22 => "HAR/Network",
+                7 | 8 | 10 | 25 => "Malware/YARA",
+                _ => "Process/ETW/CLI",
+            };
+            let target_proc = signature
+                .process_name
+                .as_deref()
+                .or_else(|| event.data.get("Image").and_then(|v| v.as_str()))
+                .unwrap_or("unknown");
+            let rea_eval = crate::rea::global_rea_engine().evaluate_detector_candidate(
+                det_pipeline,
+                target_proc,
+                signature.reason.as_deref().unwrap_or(""),
+                signature.confidence as f64,
+            );
+            if rea_eval.masquerade_escalated || rea_eval.prompt_injection_escalated {
+                signature.confidence = signature.confidence.max(rea_eval.adjusted_score as f32);
+                signature.add_reason(rea_eval.explanation);
+            }
+
             info!(
                 "Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})",
                 signature.id, signature.confidence, signature.detector_count
