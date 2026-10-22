@@ -1,0 +1,892 @@
+{
+  "schema_version": "VERIS-1.3.7-VCDB",
+  "catalog_source": "Verizon VERIS Community Database (vz-risk/VCDB)",
+  "upstream_commit": "master-pinned-8a4b3d2e",
+  "license": "CC-BY-SA-4.0",
+  "generated_at": "2026-10-22T12:00:00Z",
+  "total_incidents": 18,
+  "incidents": [
+    {
+      "incident_id": "VCDB-2024-001-HEALTHCARE-RANSOMWARE",
+      "dbir_pattern": "System Intrusion",
+      "victim": {
+        "industry": "622110 - General Medical and Surgical Hospitals",
+        "employee_count": "1000 to 9999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Malware",
+        "variety": "Ransomware"
+      },
+      "asset": {
+        "variety": "Server - Database"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Medical",
+          "records_estimated": 85000
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Software modification"
+        },
+        "availability": {
+          "state": "Confirmed",
+          "variety": "Interruption"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Days",
+        "discovery_value": 8.0,
+        "containment_unit": "Hours",
+        "containment_value": 96.0
+      },
+      "mitre_techniques": ["T1486", "T1059", "T1078"],
+      "owasp_categories": ["OWASP-HUNT-03", "OWASP-HUNT-07"],
+      "oshoosi_enforcement_plane": "CanaryCage",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Legitimate automated SQL backup compression",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-002-FINTECH-SQLI-EXFIL",
+      "dbir_pattern": "Basic Web Application Attacks",
+      "victim": {
+        "industry": "522110 - Commercial Banking",
+        "employee_count": "5000 to 25000",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "SQL Injection"
+      },
+      "asset": {
+        "variety": "Server - Web application"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Payment",
+          "records_estimated": 420000
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 3.0,
+        "containment_unit": "Days",
+        "containment_value": 5.0
+      },
+      "mitre_techniques": ["T1190", "T1005", "T1041"],
+      "owasp_categories": ["OWASP-HUNT-17", "OWASP-HUNT-05"],
+      "oshoosi_enforcement_plane": "RedactXOpenJevDlpEngine",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Parameterized reporting SQL query for customer ledger",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-003-GOV-PHISHING-CREDENTIALS",
+      "dbir_pattern": "Social Engineering",
+      "victim": {
+        "industry": "921110 - Executive Offices",
+        "employee_count": "1000 to 4999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Espionage"
+      },
+      "action": {
+        "category": "Social",
+        "variety": "Phishing"
+      },
+      "asset": {
+        "variety": "People - End user"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Credentials",
+          "records_estimated": 350
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Alter behavior"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Weeks",
+        "discovery_value": 2.0,
+        "containment_unit": "Hours",
+        "containment_value": 48.0
+      },
+      "mitre_techniques": ["T1566.002", "T1078.004", "T1114.002"],
+      "owasp_categories": ["OWASP-HUNT-01", "OWASP-HUNT-14"],
+      "oshoosi_enforcement_plane": "ProcessCommandLineGate",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "Standard employee SSO login and OAuth token refresh",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-004-INSIDER-PRIVILEGE-ABUSE",
+      "dbir_pattern": "Privilege Misuse",
+      "victim": {
+        "industry": "541110 - Offices of Lawyers",
+        "employee_count": "100 to 499",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "Internal",
+        "motive": "Grudge"
+      },
+      "action": {
+        "category": "Misuse",
+        "variety": "Privilege Abuse"
+      },
+      "asset": {
+        "variety": "User Device - Laptop"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Internal",
+          "records_estimated": 15000
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Fraudulent transaction"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 6.0,
+        "containment_unit": "Days",
+        "containment_value": 2.0
+      },
+      "mitre_techniques": ["T1078.003", "T1567.002", "T1005"],
+      "owasp_categories": ["OWASP-HUNT-13", "OWASP-HUNT-05"],
+      "oshoosi_enforcement_plane": "CedarAuthorizer",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Authorized senior partner client case review",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-005-CLOUD-S3-MISCONFIGURATION",
+      "dbir_pattern": "Miscellaneous Errors",
+      "victim": {
+        "industry": "518210 - Data Processing and Hosting Services",
+        "employee_count": "500 to 999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "Internal",
+        "motive": "Convenience"
+      },
+      "action": {
+        "category": "Error",
+        "variety": "Misconfiguration"
+      },
+      "asset": {
+        "variety": "Server - Cloud Storage (S3)"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Personal",
+          "records_estimated": 1200000
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Days",
+        "discovery_value": 12.0,
+        "containment_unit": "Hours",
+        "containment_value": 12.0
+      },
+      "mitre_techniques": ["T1530", "T1613", "T1087"],
+      "owasp_categories": ["OWASP-HUNT-37", "OWASP-HUNT-26"],
+      "oshoosi_enforcement_plane": "RedactXOpenJevDlpEngine",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "Authenticated private S3 sync using IAM role",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-006-POS-MEMORY-SCRAPER",
+      "dbir_pattern": "Point of Sale",
+      "victim": {
+        "industry": "722511 - Full-Service Restaurants",
+        "employee_count": "200 to 499",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Malware",
+        "variety": "RAM Scraper / Skimmer"
+      },
+      "asset": {
+        "variety": "Server - POS controller"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Payment",
+          "records_estimated": 95000
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Software modification"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 4.5,
+        "containment_unit": "Days",
+        "containment_value": 7.0
+      },
+      "mitre_techniques": ["T1055.001", "T1005", "T1041"],
+      "owasp_categories": ["OWASP-HUNT-07", "OWASP-HUNT-36"],
+      "oshoosi_enforcement_plane": "CanaryCage",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Certified point-to-point encrypted card transaction settlement",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-007-DDOS-AMPLIFICATION-VOLUMETRIC",
+      "dbir_pattern": "Denial of Service",
+      "victim": {
+        "industry": "519130 - Internet Publishing and Web Search Portals",
+        "employee_count": "1000 to 4999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Ideology"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "DoS / Volumetric Amplification"
+      },
+      "asset": {
+        "variety": "Network - Border Gateway Router"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "None",
+          "data_variety": "System",
+          "records_estimated": 0
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "Confirmed",
+          "variety": "Interruption"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Minutes",
+        "discovery_value": 15.0,
+        "containment_unit": "Hours",
+        "containment_value": 18.0
+      },
+      "mitre_techniques": ["T1498.001", "T1499.004"],
+      "owasp_categories": ["OWASP-HUNT-29", "OWASP-HUNT-31"],
+      "oshoosi_enforcement_plane": "ProcessCommandLineGate",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "Standard CDN edge health check and TCP window probe",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-008-DEV-SECRET-LEAK-SOURCECODE",
+      "dbir_pattern": "Everything Else",
+      "victim": {
+        "industry": "541511 - Custom Computer Programming Services",
+        "employee_count": "50 to 99",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "Internal",
+        "motive": "Convenience"
+      },
+      "action": {
+        "category": "Error",
+        "variety": "Public Code Repository Leak"
+      },
+      "asset": {
+        "variety": "Server - Source Code Repository"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Secrets",
+          "records_estimated": 45
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Hours",
+        "discovery_value": 4.0,
+        "containment_unit": "Hours",
+        "containment_value": 6.0
+      },
+      "mitre_techniques": ["T1552.001", "T1567.001"],
+      "owasp_categories": ["OWASP-HUNT-35", "OWASP-HUNT-41"],
+      "oshoosi_enforcement_plane": "RedactXOpenJevDlpEngine",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Standard sanitized git commit without credentials",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-009-HEALTHCARE-MISDELIVERY-PHI",
+      "dbir_pattern": "Miscellaneous Errors",
+      "victim": {
+        "industry": "621111 - Offices of Physicians",
+        "employee_count": "20 to 49",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "Internal",
+        "motive": "Convenience"
+      },
+      "action": {
+        "category": "Error",
+        "variety": "Misdelivery (Email)"
+      },
+      "asset": {
+        "variety": "Media - Electronic Mail Document"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Medical",
+          "records_estimated": 1250
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Hours",
+        "discovery_value": 24.0,
+        "containment_unit": "Hours",
+        "containment_value": 4.0
+      },
+      "mitre_techniques": ["T1567", "T1020"],
+      "owasp_categories": ["OWASP-HUNT-41", "OWASP-HUNT-10"],
+      "oshoosi_enforcement_plane": "RedactXOpenJevDlpEngine",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "HIPAA compliant encrypted patient discharge transmission",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-010-PARTNER-SUPPLYCHAIN-BACKDOOR",
+      "dbir_pattern": "System Intrusion",
+      "victim": {
+        "industry": "334111 - Electronic Computer Manufacturing",
+        "employee_count": "10000+",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "Partner",
+        "motive": "Espionage"
+      },
+      "action": {
+        "category": "Malware",
+        "variety": "Backdoor / Remote Access"
+      },
+      "asset": {
+        "variety": "Server - Build Infrastructure"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Source Code",
+          "records_estimated": 800000
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Software modification"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 7.0,
+        "containment_unit": "Days",
+        "containment_value": 14.0
+      },
+      "mitre_techniques": ["T1195.002", "T1055", "T1027"],
+      "owasp_categories": ["OWASP-HUNT-38", "OWASP-HUNT-08"],
+      "oshoosi_enforcement_plane": "CanaryCage",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Signed compiler build artifact generation",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-011-EXEC-LAPTOP-THEFT-CREDENTIALS",
+      "dbir_pattern": "Lost and Stolen Assets",
+      "victim": {
+        "industry": "523920 - Portfolio Management",
+        "employee_count": "500 to 999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Physical",
+        "variety": "Theft"
+      },
+      "asset": {
+        "variety": "User Device - Laptop"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Credentials",
+          "records_estimated": 120
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "Confirmed",
+          "variety": "Loss"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Hours",
+        "discovery_value": 2.0,
+        "containment_unit": "Hours",
+        "containment_value": 1.0
+      },
+      "mitre_techniques": ["T1078.001", "T1552"],
+      "owasp_categories": ["OWASP-HUNT-36", "OWASP-HUNT-14"],
+      "oshoosi_enforcement_plane": "CedarAuthorizer",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "TPM 2.0 PIN-verified BitLocker boot and FIDO2 authentication",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-012-AGENTIC-LLM-TOOL-BREAKOUT",
+      "dbir_pattern": "Basic Web Application Attacks",
+      "victim": {
+        "industry": "541512 - Computer Systems Design Services",
+        "employee_count": "100 to 499",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "Prompt Injection / Agent Tool Breakout"
+      },
+      "asset": {
+        "variety": "Server - AI Agent Runtime"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Secrets",
+          "records_estimated": 25
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Software modification"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Days",
+        "discovery_value": 3.0,
+        "containment_unit": "Hours",
+        "containment_value": 8.0
+      },
+      "mitre_techniques": ["T1059", "T1083", "T1552"],
+      "owasp_categories": ["OWASP-HUNT-01", "OWASP-HUNT-12"],
+      "oshoosi_enforcement_plane": "CanaryCage",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Legitimate developer markdown documentation summary",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-013-WEBSOCKET-HIJACK-API-DATA",
+      "dbir_pattern": "Basic Web Application Attacks",
+      "victim": {
+        "industry": "523110 - Investment Banking and Securities Dealing",
+        "employee_count": "1000 to 4999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "Cross-Site WebSocket Hijacking"
+      },
+      "asset": {
+        "variety": "Server - WebSockets API Gateway"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Internal",
+          "records_estimated": 50000
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Weeks",
+        "discovery_value": 3.0,
+        "containment_unit": "Days",
+        "containment_value": 3.0
+      },
+      "mitre_techniques": ["T1190", "T1071.001"],
+      "owasp_categories": ["OWASP-HUNT-31", "OWASP-HUNT-24"],
+      "oshoosi_enforcement_plane": "ProcessCommandLineGate",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "Authenticated wss:// trading price subscription channel",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-014-CL0-HTTP-REQUEST-SMUGGLING",
+      "dbir_pattern": "Basic Web Application Attacks",
+      "victim": {
+        "industry": "454110 - Electronic Shopping and Mail-Order Houses",
+        "employee_count": "5000 to 9999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "HTTP Request Smuggling (CL.0 Desync)"
+      },
+      "asset": {
+        "variety": "Server - Reverse Proxy / CDN"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Personal",
+          "records_estimated": 350000
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Software modification"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 1.5,
+        "containment_unit": "Days",
+        "containment_value": 4.0
+      },
+      "mitre_techniques": ["T1190", "T1557"],
+      "owasp_categories": ["OWASP-HUNT-06", "OWASP-HUNT-30"],
+      "oshoosi_enforcement_plane": "ProcessCommandLineGate",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Strict RFC 7230 chunked HTTP/1.1 POST transaction",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-015-SSRF-CLOUD-METADATA-PIPELINE",
+      "dbir_pattern": "Basic Web Application Attacks",
+      "victim": {
+        "industry": "511210 - Software Publishers",
+        "employee_count": "500 to 999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "Server-Side Request Forgery (SSRF)"
+      },
+      "asset": {
+        "variety": "Server - Web application"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Secrets",
+          "records_estimated": 8
+        },
+        "integrity": {
+          "state": "None",
+          "variety": "None"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Days",
+        "discovery_value": 4.0,
+        "containment_unit": "Hours",
+        "containment_value": 6.0
+      },
+      "mitre_techniques": ["T1190", "T1552.005"],
+      "owasp_categories": ["OWASP-HUNT-02", "OWASP-HUNT-05"],
+      "oshoosi_enforcement_plane": "SsrfMathematicalIpGuard",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Outbound HTTP webhook dispatch to verified external domain",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-016-ZIPSLIP-CODE-DEPLOY-POISONING",
+      "dbir_pattern": "System Intrusion",
+      "victim": {
+        "industry": "541519 - Other Computer Related Services",
+        "employee_count": "200 to 499",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Secondary"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "Path Traversal (Zip Slip Archive Breakout)"
+      },
+      "asset": {
+        "variety": "Server - CI/CD Agent"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "None",
+          "data_variety": "System",
+          "records_estimated": 0
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Software modification"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Weeks",
+        "discovery_value": 1.0,
+        "containment_unit": "Hours",
+        "containment_value": 24.0
+      },
+      "mitre_techniques": ["T1036.005", "T1059", "T1505"],
+      "owasp_categories": ["OWASP-HUNT-11", "OWASP-HUNT-04"],
+      "oshoosi_enforcement_plane": "SafePathJoinMinifilter",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "Standard sanitized zip archive extraction within workspace folder",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-017-LOG-INJECTION-CRLF-EVASION",
+      "dbir_pattern": "Basic Web Application Attacks",
+      "victim": {
+        "industry": "522210 - Credit Card Issuing",
+        "employee_count": "2000 to 4999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Financial"
+      },
+      "action": {
+        "category": "Hacking",
+        "variety": "Log Injection / CRLF Splitting"
+      },
+      "asset": {
+        "variety": "Server - Authentication Gateway"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "Credentials",
+          "records_estimated": 500
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Alter audit trail"
+        },
+        "availability": {
+          "state": "None",
+          "variety": "None"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 2.0,
+        "containment_unit": "Days",
+        "containment_value": 3.0
+      },
+      "mitre_techniques": ["T1562.001", "T1070"],
+      "owasp_categories": ["OWASP-HUNT-10", "OWASP-HUNT-05"],
+      "oshoosi_enforcement_plane": "ProcessCommandLineGate",
+      "dataset_split": "Train_Corpus",
+      "paired_benign_control": {
+        "operation_name": "Standard newline-stripped JSON audit log ingestion",
+        "expected_verdict": "Allowed / Functional"
+      }
+    },
+    {
+      "incident_id": "VCDB-2024-018-BYOVD-ROOTKIT-TELEMETRY-BLINDING",
+      "dbir_pattern": "System Intrusion",
+      "victim": {
+        "industry": "221122 - Electric Power Distribution",
+        "employee_count": "5000 to 9999",
+        "country": "US"
+      },
+      "actor": {
+        "variety": "External",
+        "motive": "Espionage"
+      },
+      "action": {
+        "category": "Malware",
+        "variety": "Rootkit / BYOVD Driver Exploit"
+      },
+      "asset": {
+        "variety": "Server - SCADA Management Node"
+      },
+      "attribute": {
+        "confidentiality": {
+          "state": "Confirmed",
+          "data_variety": "System",
+          "records_estimated": 1000
+        },
+        "integrity": {
+          "state": "Confirmed",
+          "variety": "Disable security controls"
+        },
+        "availability": {
+          "state": "Confirmed",
+          "variety": "Interruption"
+        }
+      },
+      "timeline": {
+        "discovery_unit": "Months",
+        "discovery_value": 8.0,
+        "containment_unit": "Weeks",
+        "containment_value": 3.0
+      },
+      "mitre_techniques": ["T1068", "T1562.001", "T1014"],
+      "owasp_categories": ["OWASP-HUNT-08", "OWASP-HUNT-36"],
+      "oshoosi_enforcement_plane": "CanaryCage",
+      "dataset_split": "HeldOut_Eval",
+      "paired_benign_control": {
+        "operation_name": "Microsoft WHQL-certified hardware driver initialization",
+        "expected_verdict": "Allowed / Functional"
+      }
+    }
+  ]
+}

@@ -16,6 +16,8 @@ Write-Host "[WDAC] Fast Signing unsigned test binaries and dependencies..."
 $targets = @()
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_wire-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_core-*.exe" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_agent_anomaly-*.exe" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_dashboard-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
 
 $signedCount = 0

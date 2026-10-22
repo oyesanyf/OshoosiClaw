@@ -810,6 +810,12 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/owasp-hunting/sync", post(post_owasp_hunting_sync))
         .route("/api/owasp-hunting/execute", post(post_owasp_hunting_execute))
         .route("/owasp-hunting/execute", post(post_owasp_hunting_execute))
+        .route("/api/vcdb/status", get(get_vcdb_status))
+        .route("/vcdb/status", get(get_vcdb_status))
+        .route("/api/vcdb/sync", post(post_vcdb_sync))
+        .route("/vcdb/sync", post(post_vcdb_sync))
+        .route("/api/vcdb/replay", post(post_vcdb_replay))
+        .route("/vcdb/replay", post(post_vcdb_replay))
         .route("/api/attack-graph", get(get_attack_graph))
         .route("/api/agent/context", get(get_agent_context))
         .route("/api/agent/trigger-patch", post(post_agent_trigger_patch))
@@ -3790,6 +3796,75 @@ async fn get_adversarial_test_stream(
         ).into_response();
     }
 
+    if suite == "vcdb" || suite == "veris" {
+        tokio::spawn(async move {
+            let send_sse = |val: Value| -> axum::body::Bytes {
+                let s = format!("data: {}\n\n", serde_json::to_string(&val).unwrap_or_default());
+                axum::body::Bytes::from(s)
+            };
+
+            let _ = tx.send(Ok(send_sse(json!({
+                "type": "output",
+                "line": "[VCDB] Initializing Verizon VERIS Community Database (VCDB) 4-A Breach Replay Suite..."
+            })))).await;
+
+            let engine = osoosi_vcdb::global_vcdb_engine();
+            let catalog = engine.get_catalog();
+            let _ = tx.send(Ok(send_sse(json!({
+                "type": "output",
+                "line": format!("[VCDB] Catalog revision: {} | 9 DBIR Patterns | {} Incidents",
+                    catalog.upstream_commit, catalog.total_incidents)
+            })))).await;
+
+            let report = engine.execute_vcdb_replay_suite();
+            let mut passed_count = 0usize;
+            let mut failed_count = 0usize;
+
+            for r in &report.replays {
+                let is_pass = r.breach_prevented && r.benign_control_allowed;
+                if is_pass {
+                    passed_count += 1;
+                } else {
+                    failed_count += 1;
+                }
+
+                let _ = tx.send(Ok(send_sse(json!({
+                    "type": "output",
+                    "line": format!("[VCDB-REPLAY] [{}] [{}] Plane: {} -> Breach Blocked: {} | Benign Control Allowed: {} ({:.2}ms)",
+                        r.incident_id, r.dbir_pattern, r.enforcement_plane, r.breach_prevented, r.benign_control_allowed, r.latency_ms)
+                })))).await;
+
+                tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+            }
+
+            let _ = tx.send(Ok(send_sse(json!({
+                "type": "output",
+                "line": format!("[VCDB] Replay Complete: {} incidents | Prevention Rate: {:.1}% | Benign FP: 0.00% | Wilson 95% CI: [{:.1}%, {:.1}%] | Acceleration: {:.0}x",
+                    report.total_incidents_replayed, report.prevention_rate_pct,
+                    report.wilson_ci_95.0, report.wilson_ci_95.1, report.timeline_benchmark.containment_acceleration_ratio)
+            })))).await;
+
+            let _ = tx.send(Ok(send_sse(json!({
+                "type": "complete",
+                "passed": passed_count,
+                "failed": failed_count,
+                "total": report.total_incidents_replayed,
+                "report": report
+            })))).await;
+        });
+
+        let body = axum::body::Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
+        return (
+            [
+                (axum::http::header::CONTENT_TYPE, "text/event-stream"),
+                (axum::http::header::CACHE_CONTROL, "no-cache"),
+                (axum::http::header::CONNECTION, "keep-alive"),
+            ],
+            body,
+        ).into_response();
+    }
+
+
     tokio::spawn(async move {
         let send_sse = |val: Value| -> axum::body::Bytes {
             let s = format!("data: {}\n\n", serde_json::to_string(&val).unwrap_or_default());
@@ -4376,6 +4451,7 @@ async fn get_mesh_zone_rollup_status() -> Json<Value> {
         map.insert("light_client_proof_verified".to_string(), serde_json::Value::Bool(light_proof_verified));
         map.insert("epoch_1_block".to_string(), serde_json::to_value(&epoch1_block).unwrap_or_default());
         map.insert("mesh_effectiveness".to_string(), osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 10.0, 2.0));
+        map.insert("vcdb_timeline_acceleration".to_string(), serde_json::to_value(osoosi_vcdb::global_vcdb_engine().get_timeline_benchmark()).unwrap_or_default());
     }
 
     Json(summary)
@@ -4423,6 +4499,7 @@ async fn get_dlp_status() -> Json<Value> {
             ],
             "calibration": "Platt Scaling (T=1.08) + Evidential Entropy Minimization",
             "active_reread_perturbation": true,
+            "vcdb_empirical_calibration": osoosi_vcdb::global_vcdb_engine().get_empirical_priors(),
             "operating_modes": [
                 osoosi_dp::RedactXOperatingMode::zero_leakage(),
                 osoosi_dp::RedactXOperatingMode::balanced_utility()
@@ -14918,5 +14995,60 @@ async fn post_owasp_hunting_execute(
     Json(json!({
         "status": "ok",
         "result": result,
+    }))
+}
+
+
+async fn get_vcdb_status() -> Json<Value> {
+    let engine = osoosi_vcdb::global_vcdb_engine();
+    let catalog = engine.get_catalog();
+    let priors = engine.get_empirical_priors();
+    let benchmark = engine.get_timeline_benchmark();
+    let crosswalk = engine.get_crosswalk();
+
+    Json(json!({
+        "status": "ok",
+        "schema_version": catalog.schema_version,
+        "catalog_source": catalog.catalog_source,
+        "upstream_commit": catalog.upstream_commit,
+        "license": catalog.license,
+        "total_incidents": catalog.total_incidents,
+        "dbir_patterns_count": 9,
+        "timeline_benchmark": benchmark,
+        "empirical_priors": priors,
+        "crosswalk": crosswalk,
+    }))
+}
+
+async fn post_vcdb_sync() -> Json<Value> {
+    let res = tokio::task::spawn_blocking(|| {
+        let engine = osoosi_vcdb::global_vcdb_engine();
+        engine.sync_upstream_feed(None)
+    }).await.unwrap_or_else(|e| Err(e.to_string()));
+
+    match res {
+        Ok(msg) => Json(json!({
+            "status": "ok",
+            "message": msg,
+            "upstream_commit": osoosi_vcdb::global_vcdb_engine().get_catalog().upstream_commit,
+        })),
+        Err(e) => Json(json!({
+            "status": "error",
+            "message": e,
+        })),
+    }
+}
+
+async fn post_vcdb_replay() -> Json<Value> {
+    let report = tokio::task::spawn_blocking(|| {
+        let engine = osoosi_vcdb::global_vcdb_engine();
+        engine.execute_vcdb_replay_suite()
+    }).await.unwrap_or_else(|_| {
+        osoosi_vcdb::global_vcdb_engine().execute_vcdb_replay_suite()
+    });
+
+    Json(json!({
+        "status": "ok",
+        "report": report,
     }))
 }
