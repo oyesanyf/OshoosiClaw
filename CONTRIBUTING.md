@@ -1,108 +1,141 @@
-# Contributing to OshoosiClaw
+# Contributing to OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw)
 
-Thank you for your interest in contributing to **OshoosiClaw**! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to **OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw)**! We welcome contributions from developers, security researchers, reverse engineers, and system architects.
 
-## 🏹 Code of Conduct
+This document provides technical instructions, coding standards, and architectural invariants for contributing to the repository.
 
-By participating in this project, you agree to uphold a respectful and inclusive environment. We follow the [Contributor Covenant](https://www.contributor-covenant.org/).
+---
 
-## 🚀 Getting Started
+## 📜 Code of Conduct
+
+By participating in this project, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md). Please read it before contributing.
+
+> [!IMPORTANT]
+> **Zero-Touch PATH Protection Protocol**  
+> Under NO circumstance may any script, installer definition (`.wxs`), code change, or test overwrite, reset, or truncate user or system environment variables (`PATH`, `HKCU\Environment`, `HKLM`). All environment operations must be strictly process-scoped or append-only (`Permanent="yes"` in WiX manifests).
+
+> [!IMPORTANT]
+> **Production Code Only (Zero-Mock Invariant)**  
+> Never fabricate dummy placeholders, mock security rules, or fake detection responses. All detection signatures, catalog lookups, and response actions must route through authentic decision models (Clef Decision Engine, Strands Decider, Byzantine Quorum).
+
+---
+
+## 🚀 Development Setup
 
 ### Prerequisites
 
-- **Rust 1.75+** — Install via [rustup](https://rustup.rs)
+- **Rust 1.75+** (MSRV) — Install via [rustup.rs](https://rustup.rs)
+- **Python 3.11+** — For AI defense swarm, SkyRL, and test harnesses
 - **Git** — Version control
-- **Visual Studio Build Tools 2022** (Windows only)
+- **Windows**: Visual Studio Build Tools 2022 (C++ workload) + Windows 10/11 SDK (`signtool.exe`)
+- **Linux (WSL / Ubuntu)**: `build-essential`, `llvm`, `clang`, `libelf-dev` (for eBPF probes)
 
-### Setting Up Your Development Environment
+### Setting Up Your Environment
 
 ```powershell
-# Fork the repository on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/OshoosiClaw.git
+# Clone the repository
+git clone https://github.com/oyesanyf/OshoosiClaw.git
 cd OshoosiClaw
 
-# Build everything
+# Build the entire workspace
 cargo build --all-features
 
-# Run tests
+# Run the test suite
 cargo test --all-features
 
-# Run linting
+# Run linter and formatting checks
 cargo clippy --all-features -- -D warnings
-
-# Format code
 cargo fmt --all -- --check
+
+# Verify repository language distribution and onboarding clarity
+python scripts/verify_repo_clarity_and_languages.py
 ```
 
-## 📝 How to Contribute
+> [!TIP]
+> **Fast Pre-Flight Verification**  
+> Running `python scripts/verify_repo_clarity_and_languages.py` verifies both Linguist language composition (Rust + Python $\ge 90\%$) and onboarding clarity before opening a PR.
 
-### Reporting Bugs
+---
 
-1. Check if the issue already exists in [GitHub Issues](https://github.com/oyesanyf/OshoosiClaw/issues)
-2. Create a new issue with:
-   - **Title**: Clear, descriptive summary
-   - **Steps to Reproduce**: Exact commands/actions
-   - **Expected Behavior**: What should happen
-   - **Actual Behavior**: What actually happens
-   - **Environment**: OS, Rust version, Sysmon version
-   - **Logs**: Relevant output from `logs/osoosi.log`
+## 🏛️ Workspace Architecture & Crate Map
 
-### Suggesting Features
+OshoosiClaw is structured as a high-assurance multi-crate Rust workspace complemented by Python research tools:
 
-Open a [Feature Request](https://github.com/oyesanyf/OshoosiClaw/issues/new?template=feature_request.md) with:
-- **Problem Statement**: What security gap does this address?
-- **Proposed Solution**: How should it work?
-- **MITRE ATT&CK Mapping**: Which technique(s) does this detect/prevent?
+| Functional Domain | Crates | Purpose |
+| :--- | :--- | :--- |
+| **Core & Daemon Engine** | `osoosi-core`, `osoosi-runtime`, `osoosi-cli`, `osoosi-types` | Central daemon supervisor, process lifecycle, event dispatcher, CLI commands, shared core types. |
+| **Telemetry & Host Forensics** | `osoosi-telemetry`, `osoosi-memory`, `osoosi-forensics`, `osoosi-dns`, `osoosi-inject`, `osoosi-hexpatch` | ETW/eBPF host sensors, memory analysis, process injection defenses, live binary hexpatching. |
+| **Reverse Engineering & Forensics** | `osoosi-behavioral`, `rea` | Autonomous binary/bytecode forensics, PE/ELF/WASM decompiler, YARA-X rules, behavioral anomaly detection. |
+| **Policy & Sandboxing** | `osoosi-policy`, `osoosi-sandbox`, `osoosi-agent-anomaly`, `agent-thermostat` | Cedar PARC & Dogwood MFOTL engines, Win32 Job Object CanaryCage, Agentic AI anomaly scanner, agent throttling. |
+| **AI Models & Active Defense** | `osoosi-model`, `compression-prompt`, `edr-phaselock`, `tools/defense_swarm` | ONNX runtime, SecureBERT, prompt compression, Phaselock defense, SkyRL RL co-evolution. |
+| **Zero-Process Quantum & Shield** | `silicon-shield`, `zero-genesis-capacity`, `zero-algebraic-kernel`, `zero-vacuum-lensing`, `zero-divine-equilibrium` | Zero-process algebraic kernel, hardware silicon shield, thermodynamic equilibrium defense models. |
+| **Cryptography, Mesh & Wire** | `osoosi-audit`, `osoosi-wire`, `osoosi-trust`, `osoosi-relay`, `osoosi-dp`, `test-peer` | BLAKE3 Merkle logchains, TPM 2.0 silicon signers, ML-KEM-768 PQC, differential privacy, Nostr relay, TFHE mesh. |
+| **Threat Intelligence & Feeds** | `osoosi-owasp-hunting`, `osoosi-vcdb`, `otx-taxii-rs`, `osoosi-exporter`, `osoosi-auditor` | OWASP hunting feed sync, Verizon VCDB breach replay, AlienVault OTX/TAXII client, telemetry exporter, auditor CLI. |
+| **WebUI & API Dashboard** | `osoosi-dashboard` | Embedded Axum HTTP/SSE server, continuous HAR web traffic sensor, zero-dependency WebUI on `127.0.0.1:3030`. |
 
-### Submitting Code
+---
 
-1. **Fork** the repository
-2. **Create a feature branch**: `git checkout -b feature/your-feature-name`
-3. **Write code** following our conventions (below)
-4. **Write tests** for all new functionality
-5. **Run CI locally**: `cargo build --all-features && cargo test --all-features && cargo clippy`
-6. **Commit** with clear messages: `feat(core): add memory forensics via HollowsHunter`
-7. **Push** and open a **Pull Request**
+## 🎨 Code Conventions & Rust Standards
 
-## 🎨 Code Conventions
+### Rust Style Guidelines
 
-### Rust Style
-
-- Follow `rustfmt` defaults (run `cargo fmt`)
-- All public items must have `///` doc comments
-- Use `tracing` macros (`info!`, `warn!`, `error!`, `debug!`) for logging
-- Prefer `anyhow::Result` for error handling
-- Use `Arc<T>` for shared ownership, `tokio::sync::Mutex` for async locking
-- Place `#[cfg(target_os = "...")]` blocks for platform-specific code
+- Follow standard `rustfmt` formatting (enforced via `cargo fmt --all -- --check`).
+- All public functions, structs, and traits must include doc comments (`///`).
+- Logging must use `tracing` macros (`info!`, `warn!`, `error!`, `debug!`) — never raw `println!`.
+- Error handling: prefer `anyhow::Result` for application logic and `thiserror` for library crates.
+- Async concurrency: use `Arc<T>` with `tokio::sync::RwLock` or `parking_lot::RwLock` where appropriate; **never** invoke `blocking_read()` or `blocking_write()` inside Tokio async tasks.
+- DashMap hygiene: explicitly drop mutable `.entry()` or `.get_mut()` guards before invoking iterator methods (`.iter()`, `.len()`).
 
 ### Commit Messages
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
+```text
+type(scope): concise description
+
+feat(mesh): add GossipSub Byzantine peer equivocation defense
+fix(telemetry): resolve ETW event subscription race condition
+docs(community): standardize issue and pull request templates
+refactor(dashboard): extract domain routes into dedicated modules
 ```
-type(scope): description
 
-feat(core): add HollowsHunter memory scanning
-fix(telemetry): resolve Sysmon event parsing for ID 25
-docs(readme): update architecture diagram
-refactor(policy): split NSRL download into streaming module
+---
+
+## 🔄 Contribution Workflow & Shipping
+
+### Branch Protection & Review Policy
+
+> [!NOTE]
+> **Collaborator Code Review Policy**  
+> GitHub Branch Protection enforces at least one approval (`required_approving_review_count = 1`) on `main`. Any repository collaborator or peer developer can review and approve pull requests.
+
+For maintainers and automated release builds, the repository includes an automated solo PR shipping mechanism:
+
+```powershell
+# Commit and ship increments with zero wait:
+powershell -ExecutionPolicy Bypass -File scripts/solo_pr_ship.ps1 -Title "feat(mesh): expand GossipSub benchmarks"
 ```
 
-### Crate Guidelines
+### Pre-Submission Checklist
 
-| When adding... | Put it in... |
-|:---------------|:-------------|
-| New detection logic | `osoosi-core/src/` |
-| New data types/schemas | `osoosi-types/src/` |
-| OS-level telemetry | `osoosi-telemetry/src/` |
-| ML models/scanning | `osoosi-model/src/` |
-| P2P mesh features | `osoosi-wire/src/` |
-| CLI commands | `osoosi-cli/src/main.rs` |
+Before opening a pull request, ensure:
+1. `cargo check --all-targets` compiles with 0 errors.
+2. `cargo test --all-features` passes.
+3. `python scripts/verify_repo_clarity_and_languages.py` exits with code `0`.
+4. `python scripts/verify_port_3030_e2e.py` passes if modifying backend endpoints or WebUI assets.
+5. `dashboard/tests/webui_parity.test.mjs` confirms 0-diff SHA-256 parity between `dashboard/src/` and `dashboard/dist/`.
+6. `git status -s` is 100% clean.
 
-## 🔒 Security
+---
 
-If you discover a security vulnerability, **DO NOT** open a public issue. See [SECURITY.md](SECURITY.md) for responsible disclosure instructions.
+## 🔒 Security Vulnerability Reporting
+
+> [!WARNING]
+> **Do NOT open public GitHub issues for security vulnerabilities.**  
+> Report vulnerabilities confidentially via [GitHub Private Security Advisories](https://github.com/oyesanyf/OshoosiClaw/security/advisories/new) or consult our [Security Policy](SECURITY.md).
+
+---
 
 ## 📜 License
 
-By contributing, you agree that your contributions will be licensed under the MIT License.
+By contributing to OshoosiClaw, you agree that your contributions are licensed under the [MIT License](LICENSE).

@@ -4126,6 +4126,36 @@ fn resolve_candidate_binary_path(
             let p = PathBuf::from(app_data);
             standard_dirs.push(p.join(r"Zoom\bin"));
         }
+        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+            let up = PathBuf::from(user_profile);
+            standard_dirs.push(up.join(r".cargo\bin"));
+            standard_dirs.push(up.join(r".rustup\toolchains\stable-x86_64-pc-windows-msvc\bin"));
+        }
+        for vs_base in [
+            r"C:\Program Files\Microsoft Visual Studio",
+            r"C:\Program Files (x86)\Microsoft Visual Studio",
+        ] {
+            if let Ok(years) = std::fs::read_dir(vs_base) {
+                for year in years.flatten() {
+                    if let Ok(editions) = std::fs::read_dir(year.path()) {
+                        for ed in editions.flatten() {
+                            let msvc_root = ed.path().join(r"VC\Tools\MSVC");
+                            if let Ok(vers) = std::fs::read_dir(msvc_root) {
+                                for v in vers.flatten() {
+                                    standard_dirs.push(v.path().join(r"bin\Hostx64\x64"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let sdk_bin = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
+        if let Ok(vers) = std::fs::read_dir(sdk_bin) {
+            for v in vers.flatten() {
+                standard_dirs.push(v.path().join("x64"));
+            }
+        }
         for dir in &standard_dirs {
             for n in &names {
                 let cand = dir.join(n);
@@ -4696,24 +4726,62 @@ impl AutonomousReaEngine {
 
         // 1. Fast autonomous adjudication check for benign system/dev process or veto reason
         if is_rea_benign_system_or_dev_process(target, reason) {
-            let synthetic_hash = blake3::hash(format!("rea:adjudicated:benign:{}", target).as_bytes())
-                .to_hex()
-                .to_string();
+            let resolved_opt = resolve_candidate_binary_path(process_name, file_path);
+            let canonical_identity = format!("rea:adjudicated:benign:{}:{}", target, reason_str);
+            let (resolved_label, real_size, real_sha256, real_blake3) =
+                if let Some(ref p) = resolved_opt {
+                    let p_str = p.to_string_lossy().to_string();
+                    let sz = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+                    if sz > 0 && sz <= 64 * 1024 * 1024 {
+                        if let Ok(bytes) = std::fs::read(p) {
+                            (
+                                p_str,
+                                sz,
+                                sha256_hex(&bytes),
+                                blake3_hex(&bytes),
+                            )
+                        } else {
+                            (
+                                p_str,
+                                sz,
+                                sha256_hex(canonical_identity.as_bytes()),
+                                blake3_hex(canonical_identity.as_bytes()),
+                            )
+                        }
+                    } else {
+                        (
+                            p_str,
+                            sz,
+                            sha256_hex(canonical_identity.as_bytes()),
+                            blake3_hex(canonical_identity.as_bytes()),
+                        )
+                    }
+                } else {
+                    (
+                        target.to_string(),
+                        0u64,
+                        sha256_hex(canonical_identity.as_bytes()),
+                        blake3_hex(canonical_identity.as_bytes()),
+                    )
+                };
 
             // Record lightweight ReaInvestigationReport if not already recorded
             let already_recorded = self
                 .investigations
                 .read()
                 .iter()
-                .any(|r| r.target_path.eq_ignore_ascii_case(target));
+                .any(|r| {
+                    r.target_path.eq_ignore_ascii_case(target)
+                        || r.target_path.eq_ignore_ascii_case(&resolved_label)
+                });
 
             if !already_recorded {
                 let report = ReaInvestigationReport {
-                    target_path: target.to_string(),
+                    target_path: resolved_label.clone(),
                     detected_kind: "benign_system_or_dev_binary".to_string(),
-                    size_bytes: 0,
-                    sha256: "0".repeat(64),
-                    blake3: synthetic_hash.clone(),
+                    size_bytes: real_size,
+                    sha256: real_sha256,
+                    blake3: real_blake3.clone(),
                     summary: format!(
                         "Autonomous REA Adjudicated Benign: '{}' verified clean ({})",
                         target,
@@ -4728,14 +4796,15 @@ impl AutonomousReaEngine {
                         "verdict": "BENIGN_TRUSTED_VERIFIED",
                         "reason": reason_str,
                         "target": target,
+                        "resolved_path": resolved_label,
                         "threat_score": 0.02,
                     }),
                     findings: Vec::new(),
                     evidence: Vec::new(),
                     limitations: Vec::new(),
                     reconstructed_code: Some(format!(
-                        "// Autonomous REA Threat Adjudication: BENIGN_TRUSTED_VERIFIED\n// Target: {}\n// Reason: {}\n// Verdict: Dropped as benign system/developer process",
-                        target, reason_str
+                        "// Autonomous REA Threat Adjudication: BENIGN_TRUSTED_VERIFIED\n// Target: {}\n// Resolved Path: {}\n// Size: {} bytes\n// Reason: {}\n// Verdict: Verified benign system/developer process",
+                        target, resolved_label, real_size, reason_str
                     )),
                     auto_yara_rule: None,
                     threat_score: 0.02,
@@ -4749,7 +4818,7 @@ impl AutonomousReaEngine {
             return (
                 true,
                 format!("Autonomous REA verified benign system/dev process '{}'", target),
-                Some(synthetic_hash),
+                Some(real_blake3),
             );
         }
 

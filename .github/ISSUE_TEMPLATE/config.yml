@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "🔒 Report a Security Vulnerability"
+    url: "https://github.com/oyesanyf/OshoosiClaw/security/advisories/new"
+    about: "Privately disclose a vulnerability to the OshoosiClaw security team."
+  - name: "💬 Community Discussions & Q&A"
+    url: "https://github.com/oyesanyf/OshoosiClaw/discussions"
+    about: "Ask questions, share threat hunting ideas, and connect with other users."
+  - name: "📖 Technical Documentation & Proofs"
+    url: "https://github.com/oyesanyf/OshoosiClaw#readme"
+    about: "Consult the technical overview, architecture diagrams, and mathematical proofs."
