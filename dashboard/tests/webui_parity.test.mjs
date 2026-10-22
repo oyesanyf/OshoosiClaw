@@ -44,6 +44,19 @@ describe('WebUI 0-Diff Parity Invariant (Feature 16)', () => {
         assert.strictEqual(srcHash, distHash, 'app.js in src and dist must have identical SHA-256');
     });
 
+    it('should assert byte-for-byte SHA256 equality for all modular views/*.js', () => {
+        const requiredViews = ['dlp.js', 'mesh.js', 'har.js', 'adversarial.js'];
+        for (const viewName of requiredViews) {
+            const srcPath = path.join(srcDir, 'views', viewName);
+            const distPath = path.join(distDir, 'views', viewName);
+            assert.ok(fs.existsSync(srcPath), `dashboard/src/views/${viewName} must exist`);
+            assert.ok(fs.existsSync(distPath), `dashboard/dist/views/${viewName} must exist`);
+            const srcHash = computeSha256(srcPath);
+            const distHash = computeSha256(distPath);
+            assert.strictEqual(srcHash, distHash, `views/${viewName} in src and dist must have identical SHA-256`);
+        }
+    });
+
     it('should assert byte-for-byte SHA256 equality for all style and asset files', () => {
         const srcFiles = getFilesRecursively(srcDir);
         const distFiles = getFilesRecursively(distDir);
