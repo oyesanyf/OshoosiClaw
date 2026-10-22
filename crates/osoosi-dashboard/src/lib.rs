@@ -733,6 +733,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/threats", get(get_threats))
         .route("/api/mesh-stats", get(get_mesh_stats))
         .route("/api/pending-joins", get(get_pending_joins))
+        .route("/api/pending-joins/clear", post(clear_pending_joins))
+        .route("/pending-joins/clear", post(clear_pending_joins))
         .route("/api/pending-joins/:peer_id/allow", post(allow_peer))
         .route("/api/pending-joins/:peer_id/deny", post(deny_peer))
         .route("/api/quarantined-peers", get(get_quarantined_peers))
@@ -2233,12 +2235,48 @@ fn format_uptime(d: Duration) -> String {
 }
 
 async fn get_pending_joins(State(state): State<DashboardState>) -> Json<Value> {
+    if let Some(gate) = &state.join_gate {
+        let _ = gate.auto_approve_backlog();
+    }
     match &state.join_gate {
         Some(gate) => match gate.pending_joins() {
             Ok(pending) => Json(serde_json::to_value(&pending).unwrap_or(json!([]))),
             Err(_) => Json(json!([])),
         },
         None => Json(json!([])),
+    }
+}
+
+async fn clear_pending_joins(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.join_gate {
+        Some(gate) => {
+            let _ = gate.auto_approve_backlog();
+            match gate.pending_joins() {
+                Ok(pending) => {
+                    let mut cleared = 0usize;
+                    for p in pending {
+                        if gate.deny(&p.peer_id).is_ok() {
+                            cleared += 1;
+                        }
+                    }
+                    Json(json!({
+                        "ok": true,
+                        "cleared_count": cleared,
+                        "message": "Pending joins backlog cleared"
+                    }))
+                }
+                Err(e) => api_error_json(
+                    "PENDING_JOINS_CLEAR_FAILED",
+                    e.to_string(),
+                    "Failed to clear pending joins backlog from local store.",
+                ),
+            }
+        }
+        None => api_error_json(
+            "JOIN_GATE_INACTIVE",
+            "Join gate not active (run agent with dashboard)",
+            "Start the agent daemon with the join gate enabled to clear pending joins.",
+        ),
     }
 }
 
@@ -3860,6 +3898,8 @@ pub struct DlpInspectionEventRecord {
     pub pqc_signature_prefix: String,
     pub pii_leakage_bits: usize,
     pub zk_verified: bool,
+    #[serde(default)]
+    pub openjev_decision: Option<osoosi_dp::OpenJevDecisionVerdict>,
 }
 
 pub struct DlpDashboardState {
@@ -3883,10 +3923,10 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
         let mut crown_jewels = Vec::new();
 
         let initial_crown_jewel_targets = [
-            ("Cargo.toml", "CRITICAL_WORKSPACE_CONFIG"),
-            ("crates/osoosi-dp/src/lib.rs", "PROPRIETARY_CRYPTO_CORE"),
-            ("config/default_policy.cedar", "AUTHORIZATION_POLICY"),
-            ("README.md", "SENSITIVE_ARCHITECTURE_SPEC"),
+            ("certs/OshoosiClaw_Signing.pfx", "CODE_SIGNING_PRIVATE_KEY_VAULT"),
+            (".env", "LOCAL_ENVIRONMENT_SECRETS"),
+            ("database/master_admin_token.key", "MASTER_ADMIN_AUTH_VAULT"),
+            ("database/tpm_attestation_seed.bin", "TPM_HARDWARE_ROOT_OF_TRUST"),
         ];
 
         for (path_str, classification) in initial_crown_jewel_targets {
@@ -3912,7 +3952,7 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
 
         let mut state = DlpDashboardState {
             engine,
-            policy_mode: "ENFORCE_STRICT".to_string(),
+            policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
             min_phi_threshold: 0.70,
             total_inspections: 0,
             blocked_exfiltrations: 0,
@@ -3923,6 +3963,13 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
         };
 
         // 4 real initial self-verification inspections through inspect_and_record_internal:
+        let _ = inspect_and_record_internal(
+            &mut state,
+            "git-remote-https.exe",
+            "https://github.com/oyesanyf/OshoosiClaw.git/info/refs?service=git-receive-pack",
+            "HTTPS_POST",
+            "POST /oyesanyf/OshoosiClaw.git/git-receive-pack refs/heads/main src/lib.rs (Clean source commit - 0 secrets)",
+        );
         let _ = inspect_and_record_internal(
             &mut state,
             "cargo.exe",
@@ -4013,6 +4060,13 @@ pub fn inspect_and_record_internal(
         proof.scrubbed_payload.clone()
     };
 
+    let openjev = state.engine.evaluate_openjev_hybrid(
+        actor_process,
+        destination_sink,
+        payload_str,
+        Some(&state.policy_mode),
+    );
+
     let event = DlpInspectionEventRecord {
         id: format!("dlp-{}", uuid::Uuid::new_v4().simple()),
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -4031,6 +4085,7 @@ pub fn inspect_and_record_internal(
         pqc_signature_prefix: pqc_prefix,
         pii_leakage_bits: proof.pii_leakage_bits,
         zk_verified: zk_ok,
+        openjev_decision: Some(openjev),
     };
 
     state.recent_events.insert(0, event.clone());
@@ -4099,21 +4154,55 @@ async fn get_mesh_validation_report() -> Json<Value> {
 }
 
 async fn get_mesh_effectiveness(
+    State(state): State<DashboardState>,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Json<Value> {
-    let n = params
-        .get("n")
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(1_000_000);
+    let live_peer_count = state
+        .backend
+        .as_ref()
+        .map(|orch| {
+            let topo_peers = orch
+                .mesh_topology()
+                .get("peer_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            orch.mesh_peer_count().max(topo_peers)
+        })
+        .unwrap_or(0);
+    let live_mesh_hosts = 1u64 + (live_peer_count as u64);
+
+    let n = match params.get("n") {
+        Some(v) if v.eq_ignore_ascii_case("live") => live_mesh_hosts,
+        Some(v) => v.parse::<u64>().unwrap_or(live_mesh_hosts),
+        None => live_mesh_hosts,
+    };
     let t = params
         .get("t")
         .and_then(|v| v.parse::<f64>().ok())
-        .unwrap_or(10.0);
+        .unwrap_or(1.0);
     let lambda = params
         .get("lambda")
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(2.0);
-    Json(osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(n, t, lambda))
+
+    let mut curve = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+        n, t, lambda,
+    );
+    let live_curve = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+        live_mesh_hosts,
+        t,
+        lambda,
+    );
+
+    if let Value::Object(ref mut map) = curve {
+        map.insert("live_mesh_hosts".to_string(), json!(live_mesh_hosts));
+        map.insert("live_peer_count".to_string(), json!(live_peer_count));
+        map.insert(
+            "live_point".to_string(),
+            live_curve.get("active_point").cloned().unwrap_or_default(),
+        );
+    }
+    Json(curve)
 }
 
 async fn get_mesh_zone_rollup_status() -> Json<Value> {
@@ -4187,11 +4276,32 @@ async fn get_dlp_status() -> Json<Value> {
         "GLINER_MULTI_PII_NER",
         "SCHNORR_FIAT_SHAMIR_ZK_PROOF",
         "NIST_FIPS_204_ML_DSA_65_SIGNER",
+        "REDACTX_CMS_NPI_LUHN",
+        "REDACTX_ISO7064_MOD11_MRN",
+        "REDACTX_NANP_PHONE_FAX",
+        "REDACTX_SSA_SSN_VOIDED",
+        "OPENJEV_NOUL_PRIMITIVE",
+        "OPENJEV_CHOICE_PRIMITIVE",
+        "OPENJEV_SCORE_PRIMITIVE",
     ];
 
     Json(json!({
         "status": "ok",
         "engine": "OsoosiTwoTierDlpEngine (Hot-Path Tier 1 + Microsoft Presidio / GLiNER Tier 2)",
+        "hybrid_decision_engine": {
+            "engine": "RedactX-v3 OpenJEV Hybrid",
+            "primitives": [
+                "Noul (Binary Hypothesis: Contains PHI/PII)",
+                "Choice (Categorical Action Routing)",
+                "Score (Ordinal Risk Expectation 1-5)"
+            ],
+            "calibration": "Platt Scaling (T=1.08) + Evidential Entropy Minimization",
+            "active_reread_perturbation": true,
+            "operating_modes": [
+                osoosi_dp::RedactXOperatingMode::zero_leakage(),
+                osoosi_dp::RedactXOperatingMode::balanced_utility()
+            ]
+        },
         "ner_model_id": osoosi_dp::PresidioGlinerPiiZeroGuard::GLINER_MULTI_PII_MODEL_ID,
         "pqc_signature_scheme": "NIST FIPS 204 ML-DSA-65 + Ed25519",
         "policy_mode": state.policy_mode,
@@ -7253,6 +7363,9 @@ async fn get_gossip(State(state): State<DashboardState>) -> Json<Value> {
 }
 
 async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
+    if let Some(gate) = &state.join_gate {
+        let _ = gate.auto_approve_backlog();
+    }
     let pending_joins = state
         .join_gate
         .as_ref()
@@ -7274,6 +7387,12 @@ async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
                 topo.get("peer_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
             let effective_peer_count = orch.mesh_peer_count().max(topo_peer_count);
             let nodes = topo.get("nodes").cloned().unwrap_or_else(|| json!([]));
+            let live_mesh_hosts = 1u64 + (effective_peer_count as u64);
+            let live_eff = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                live_mesh_hosts,
+                1.0,
+                2.0,
+            );
             Json(json!({
                 "peer_count": effective_peer_count,
                 "gossip_count": orch.mesh_gossip_count(),
@@ -7281,18 +7400,30 @@ async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
                 "pending_joins": pending_joins,
                 "quarantined_peers": quarantined_peers,
                 "trust_verified": chain_verified,
-                "live": true
+                "live": true,
+                "live_mesh_hosts": live_mesh_hosts,
+                "live_mesh_effectiveness": live_eff.get("active_point")
             }))
         }
-        None => Json(json!({
-            "peer_count": 0,
-            "gossip_count": 0,
-            "nodes": [],
-            "pending_joins": pending_joins,
-            "quarantined_peers": quarantined_peers,
-            "trust_verified": false,
-            "live": false
-        })),
+        None => {
+            let live_mesh_hosts = 1u64;
+            let live_eff = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                1,
+                1.0,
+                2.0,
+            );
+            Json(json!({
+                "peer_count": 0,
+                "gossip_count": 0,
+                "nodes": [],
+                "pending_joins": pending_joins,
+                "quarantined_peers": quarantined_peers,
+                "trust_verified": false,
+                "live": false,
+                "live_mesh_hosts": live_mesh_hosts,
+                "live_mesh_effectiveness": live_eff.get("active_point")
+            }))
+        }
     }
 }
 
@@ -14471,6 +14602,8 @@ mod tests {
         assert_eq!(inspect_res3["tier1_verdict"]["allowed"], false);
         assert_eq!(inspect_res3["zk_verified"], true);
         assert!(inspect_res3["event"]["redacted_entity_count"].as_u64().unwrap() >= 2);
+        assert!(inspect_res3["event"]["openjev_decision"].is_object());
+        assert_eq!(inspect_res3["event"]["openjev_decision"]["choice_routing_action"]["selection"], "BLOCK_AND_SCRUB");
 
         // 4. POST /api/dlp/crown-jewels/register
         let register_cj = serde_json::json!({
@@ -14525,7 +14658,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_tarpit_stats_and_killchain_health_probe_endpoints() {
-        let app = dashboard_router(None);
+        let state = DashboardState::new(None, None);
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_tarpit_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
 
         // 1. GET /api/tarpit-stats (Default JSON)
         let req1 = axum::http::Request::builder()
