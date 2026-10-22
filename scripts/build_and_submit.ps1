@@ -55,7 +55,8 @@ function Test-And-Handle-LockedFile {
             $tempLocked = "$FilePath.locked." + [System.Guid]::NewGuid().ToString("N")
             try {
                 Move-Item -Path $FilePath -Destination $tempLocked -Force
-                Write-Host "       Successfully moved locked file to temporary location: $tempLocked" -ForegroundColor Green
+                Copy-Item -Path $tempLocked -Destination $FilePath -Force -ErrorAction SilentlyContinue
+                Write-Host "       Successfully moved locked handle to $tempLocked and preserved unlocked binary at $FilePath" -ForegroundColor Green
             } catch {
                 Write-Warning "Failed to move locked file $FilePath : $_"
             }
