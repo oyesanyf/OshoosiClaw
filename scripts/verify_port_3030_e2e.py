@@ -50,6 +50,11 @@ def test_endpoints():
         "/api/siquery/edr-status",
         "/api/mitre/stix/status",
         "/api/har/entries",
+        "/api/tarpit-stats",
+        "/api/mesh/effectiveness",
+        "/api/mesh/validation-report",
+        "/api/mesh/zone-rollup-status",
+        "/api/ai-feeds/status",
     ]
 
     print("\n" + "="*70)
@@ -360,6 +365,7 @@ def test_endpoints():
         assert 'id="dlp-view"' in ui_html, 'Live index.html must contain id="dlp-view"'
         assert 'id="nist-compliance-top-card"' in ui_html, 'Live index.html must contain id="nist-compliance-top-card"'
         assert 'id="adv-btn-stop"' in ui_html, 'Live index.html must contain id="adv-btn-stop"'
+        assert 'id="adv-scientific-provenance-banner"' in ui_html, 'Live index.html must contain id="adv-scientific-provenance-banner"'
         print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic, #adversarial-tests, #dlp, Stop button, and NIST top checklist")
 
     # =========================================================================
@@ -376,7 +382,11 @@ def test_endpoints():
         assert resp.status == 200
         assert "total_tests_executed" in tarpit_data
         assert "passed_tests" in tarpit_data
-        print(f" [PASS] GET /api/tarpit-stats -> HTTP {resp.status}: {tarpit_data}")
+        assert "accounting_reconciliation" in tarpit_data, 'Missing accounting_reconciliation in /api/tarpit-stats'
+        assert "execution_tier_breakdown" in tarpit_data, 'Missing execution_tier_breakdown in /api/tarpit-stats'
+        assert "skyrl_heldout_ablation_study" in tarpit_data, 'Missing skyrl_heldout_ablation_study in /api/tarpit-stats'
+        assert "economic_cost_analysis" in tarpit_data, 'Missing economic_cost_analysis in /api/tarpit-stats'
+        print(f" [PASS] GET /api/tarpit-stats -> HTTP {resp.status}: accounting_reconciliation={tarpit_data.get('accounting_reconciliation', {}).get('status')}")
 
     for dl_ep in ["/api/download-run-log", "/api/download-test-json"]:
         dl_req = urllib.request.Request(f"{BASE_URL}{dl_ep}", headers=headers, method="GET")

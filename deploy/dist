@@ -6,7 +6,10 @@
     --glass-border-bright: rgba(255, 255, 255, 0.15);
     --text-primary: #e6edf3;
     --text-header: #ffffff;
-    --text-muted: #7d8590;
+    --text-muted: #94a3b8;
+    --text-secondary: #cbd5e1;
+    --border-color: rgba(255, 255, 255, 0.12);
+    --accent-cyan: #06b6d4;
     --accent-red: #ff4d4d;
     --accent-green: #00ff7f;
     --accent-blue: #00d2ff;
@@ -36,6 +39,22 @@ body {
     overflow: hidden;
 }
 
+button, input, select, textarea {
+    font-family: inherit;
+    color: var(--text-primary);
+}
+
+select {
+    background-color: rgba(13, 17, 23, 0.92);
+    color: var(--text-primary);
+    border: 1px solid var(--glass-border-bright);
+}
+
+select option, select optgroup {
+    background-color: #0d1117;
+    color: #e6edf3;
+}
+
 /* Scanline Effect Overlay */
 body::before {
     content: " ";
@@ -62,24 +81,27 @@ body::before {
 /* Sidebar Styling */
 .sidebar {
     width: var(--sidebar-width);
+    height: 100vh;
     background-color: var(--bg-sidebar);
     border-right: 1px solid var(--glass-border);
     display: flex;
     flex-direction: column;
-    padding: 24px;
+    padding: 12px 14px;
     z-index: 100;
+    overflow: hidden;
 }
 
 .logo-container {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 48px;
-    padding-left: 8px;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding-left: 6px;
+    flex-shrink: 0;
 }
 
 .logo-icon {
-    font-size: 24px;
+    font-size: 22px;
     filter: drop-shadow(0 0 10px var(--accent-blue));
     animation: pulse-glow 3s infinite alternate;
 }
@@ -91,7 +113,7 @@ body::before {
 
 .logo-text {
     font-family: 'Outfit', sans-serif;
-    font-size: 20px;
+    font-size: 19px;
     font-weight: 600;
     color: var(--text-header);
     letter-spacing: -0.5px;
@@ -105,39 +127,42 @@ body::before {
 .nav-menu {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 1px;
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding-right: 4px;
 }
 
 .nav-section-title {
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 700;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 1px;
-    margin: 20px 0 8px 16px;
+    margin: 6px 0 2px 10px;
     opacity: 0.6;
+    flex-shrink: 0;
 }
 
 .nav-item {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-radius: 12px;
+    gap: 8px;
+    padding: 5px 10px;
+    border-radius: 8px;
     color: var(--text-muted);
     text-decoration: none;
     transition: all var(--transition-speed);
-    font-size: 14px;
+    font-size: 12.5px;
     font-weight: 500;
     border: 1px solid transparent;
+    flex-shrink: 0;
 }
 
 .nav-item i {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     transition: transform 0.2s ease;
 }
 
@@ -158,20 +183,21 @@ body::before {
 }
 
 .sidebar-footer {
-    padding-top: 24px;
+    padding-top: 8px;
     border-top: 1px solid var(--glass-border);
+    flex-shrink: 0;
 }
 
 .status-indicator {
     display: flex;
     align-items: center;
-    gap: 10px;
-    font-size: 13px;
+    gap: 8px;
+    font-size: 11.5px;
     color: var(--text-muted);
-    margin-bottom: 8px;
+    margin-bottom: 4px;
     background: rgba(0, 0, 0, 0.2);
-    padding: 8px 12px;
-    border-radius: 8px;
+    padding: 4px 8px;
+    border-radius: 6px;
 }
 
 .status-dot {
@@ -550,6 +576,8 @@ body::before {
     font-size: 10px;
     font-weight: 700;
     text-transform: uppercase;
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.10);
 }
 
 .badge.blue { background: rgba(0, 210, 255, 0.15); color: var(--accent-blue); }
@@ -559,7 +587,7 @@ body::before {
 .badge.orange { background: rgba(255, 159, 67, 0.15); color: var(--accent-orange); }
 .badge.yellow { background: rgba(255, 170, 0, 0.15); color: #ffaa00; }
 .badge.cyan { background: rgba(0, 210, 255, 0.15); color: #00d2ff; }
-.badge.gray { background: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
+.badge.gray { background: rgba(148, 163, 184, 0.16); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.28); }
 
 /* Views & Containers */
 .view-content {
@@ -864,6 +892,8 @@ body::before {
 }
 
 .login-card {
+    position: relative;
+    overflow: hidden;
     width: 400px;
     padding: 40px;
     border-radius: 20px;
@@ -1104,6 +1134,35 @@ body::before {
     cursor: not-allowed;
 }
 
+.btn-secondary {
+    background: rgba(255, 255, 255, 0.07);
+    color: #e6edf3;
+    border: 1px solid var(--glass-border-bright);
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 7px 14px;
+    font-size: 12px;
+    transition: all var(--transition-speed);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background: rgba(0, 210, 255, 0.15);
+    border-color: var(--accent-blue);
+    color: #ffffff;
+    box-shadow: 0 2px 10px rgba(0, 210, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 .btn-sm {
     padding: 6px 14px;
     font-size: 12px;
@@ -1146,6 +1205,11 @@ body::before {
 .zone-rec-item.remediated {
     border-color: rgba(0, 255, 127, 0.25);
     background: rgba(0, 255, 127, 0.03);
+}
+
+.zone-rec-item.mitigated {
+    border-color: rgba(0, 217, 255, 0.25);
+    background: rgba(0, 217, 255, 0.03);
 }
 
 .zone-rec-info {
@@ -1574,3 +1638,158 @@ body::before {
 }
 
 
+/* ==========================================
+   Universal WebUI Loading Spinners & Status Banners
+   ========================================== */
+@keyframes oshoosi-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes oshoosi-progress-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+.oshoosi-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2.2px solid rgba(0, 210, 255, 0.25);
+    border-top-color: #00d2ff;
+    border-right-color: rgba(0, 210, 255, 0.75);
+    border-radius: 50%;
+    display: inline-block;
+    animation: oshoosi-spin 0.72s linear infinite;
+    flex-shrink: 0;
+    vertical-align: middle;
+}
+
+.oshoosi-spinner.dark {
+    border-color: rgba(7, 9, 13, 0.25);
+    border-top-color: #07090d;
+    border-right-color: rgba(7, 9, 13, 0.8);
+}
+
+.oshoosi-spinner.sm {
+    width: 13px;
+    height: 13px;
+    border-width: 2px;
+}
+
+.login-status-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 12px;
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: rgba(0, 210, 255, 0.1);
+    border: 1px solid rgba(0, 210, 255, 0.35);
+    color: #7dd3fc;
+    font-size: 12.5px;
+    font-weight: 500;
+    text-align: left;
+    line-height: 1.4;
+    box-shadow: 0 0 18px rgba(0, 210, 255, 0.12);
+}
+
+.global-ui-loading-pill {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: rgba(0, 210, 255, 0.12);
+    border: 1px solid rgba(0, 210, 255, 0.4);
+    color: #38bdf8;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 0 14px rgba(0, 210, 255, 0.15);
+    transition: opacity 0.2s ease;
+}
+
+.global-ui-progress-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    z-index: 10050;
+    display: none;
+    background: linear-gradient(90deg, rgba(0, 210, 255, 0.15) 0%, #00d2ff 45%, #10b981 55%, rgba(0, 210, 255, 0.15) 100%);
+    background-size: 200% 100%;
+    animation: oshoosi-progress-shimmer 1.2s linear infinite;
+    box-shadow: 0 0 10px rgba(0, 210, 255, 0.6);
+}
+
+.ui-panel-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 28px 20px;
+    color: #93c5fd;
+    font-size: 13px;
+    font-weight: 500;
+    background: rgba(0, 210, 255, 0.04);
+    border: 1px dashed rgba(0, 210, 255, 0.25);
+    border-radius: 10px;
+    margin: 8px 0;
+}
+
+/* Login Card Progress Bar */
+.login-card-progress {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 3px;
+    background: rgba(0, 210, 255, 0.15);
+    overflow: hidden;
+    display: block;
+    z-index: 10;
+}
+
+.login-card-progress-bar {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, rgba(0, 210, 255, 0.2) 0%, #00d2ff 45%, #10b981 55%, rgba(0, 210, 255, 0.2) 100%);
+    background-size: 200% 100%;
+    animation: oshoosi-progress-slide 1.4s ease-in-out infinite;
+}
+
+@keyframes oshoosi-progress-slide {
+    0% {
+        transform: translateX(-100%);
+    }
+    50% {
+        transform: translateX(0%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+/* Adversarial Test Suite UI Layout Enhancements */
+@media (max-width: 1024px) {
+    #adversarial-tests-view > div:first-child {
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)) !important;
+    }
+    #adversarial-tests-view > div:last-child {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+#adv-terminal::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+#adv-terminal::-webkit-scrollbar-track {
+    background: #080c14;
+}
+#adv-terminal::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 3px;
+}
