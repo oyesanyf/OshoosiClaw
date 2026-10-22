@@ -398,13 +398,15 @@ window.activateMeshHologram = async function(targetIp) {
 };
 
 window.renderMeshView = renderMeshView;
-window.updateMeshConnectionIndicators = updateMeshConnectionIndicators;
-window.renderPendingJoins = renderPendingJoins;
-window.renderQuarantinedPeers = renderQuarantinedPeers;
-window.allowPendingJoin = allowPendingJoin;
-window.denyPendingJoin = denyPendingJoin;
-window.releaseQuarantinePeer = releaseQuarantinePeer;
-window.markQuarantineFalsePositive = markQuarantineFalsePositive;
+if (typeof updateMeshConnectionIndicators === 'function') {
+    window.updateMeshConnectionIndicators = updateMeshConnectionIndicators;
+} else if (typeof window.updateMeshConnectionIndicators === 'function') {
+    // Preserve existing global function if already defined
+}
+window.allowPendingJoin = window.meshAllowPeer;
+window.denyPendingJoin = window.meshDenyPeer;
+window.releaseQuarantinePeer = window.meshReleasePeer;
+window.markQuarantineFalsePositive = window.markPeerFalsePositive;
 window.activateMeshHologram = activateMeshHologram;
 
 

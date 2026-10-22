@@ -42,6 +42,7 @@ pub struct AgentAnomalyDetector {
     pub rasp_engine: Arc<crate::rasp::AgentRaspEngine>,
     pub mercury_engine: Arc<crate::mercury_guard::MercuryContainmentEngine>,
     pub spider_web_engine: Arc<crate::spider_physics::OrbWebContainmentEngine>,
+    pub alignment_scanner: Arc<crate::alignment_scanner::RuntimeAlignmentScanner>,
 }
 
 impl AgentAnomalyDetector {
@@ -67,6 +68,7 @@ impl AgentAnomalyDetector {
         let rasp_engine = Arc::new(crate::rasp::AgentRaspEngine::default());
         let mercury_engine = Arc::new(crate::mercury_guard::MercuryContainmentEngine::new());
         let spider_web_engine = crate::spider_physics::global_spider_web_engine();
+        let alignment_scanner = crate::alignment_scanner::global_alignment_scanner();
 
         // Launch cleaner for dormant sessions (prune every 60s, TTL 300s)
         screener.clone().start_cleaner(Duration::from_secs(60), 300);
@@ -86,6 +88,7 @@ impl AgentAnomalyDetector {
             rasp_engine,
             mercury_engine,
             spider_web_engine,
+            alignment_scanner,
         };
 
         // Out-of-band asynchronous processing worker
@@ -331,6 +334,85 @@ impl AgentAnomalyDetector {
             });
         }
 
+        // 5. Runtime Trace-Alignment Scanner (AlignmentCheck Pattern: Tier-1 Rust + Tier-2 Local Ollama)
+        let mut alignment_finding = None;
+        let has_pinned_intent = self
+            .alignment_scanner
+            .pinned_sessions
+            .contains_key(&telemetry.session_id);
+        let explicit_user_intent = telemetry
+            .call_parameters
+            .get("user_intent")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let explicit_untrusted_input = telemetry
+            .call_parameters
+            .get("untrusted_input")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        if has_pinned_intent
+            || explicit_user_intent.is_some()
+            || explicit_untrusted_input.is_some()
+        {
+            let align_req = crate::alignment_scanner::AlignmentCheckRequest {
+                session_id: Some(telemetry.session_id.clone()),
+                agent_id: Some(telemetry.agent_id.clone()),
+                arm_id: Some(telemetry.agent_id.clone()),
+                model_name: None,
+                user_intent: explicit_user_intent,
+                untrusted_input: explicit_untrusted_input,
+                untrusted_source: None,
+                proposed_tool: Some(telemetry.tool_name.clone()),
+                proposed_action: None,
+                proposed_parameters: Some(telemetry.call_parameters.clone()),
+                is_simulation: Some(false),
+                scenario: None,
+            };
+            let align_verdict = self
+                .alignment_scanner
+                .evaluate_alignment_check(&align_req)
+                .await;
+            if !align_verdict.allowed {
+                let new_epoch = self
+                    .containment_ring
+                    .sever_rogue_agent_branch(&telemetry.agent_id, &align_verdict.rationale, None)
+                    .await;
+                self.containment_ring
+                    .record_mesh_watchout(
+                        &telemetry.agent_id,
+                        &telemetry.session_id,
+                        "ASI01",
+                        &align_verdict.rationale,
+                    )
+                    .await;
+                let conf = (1.0_f64 - align_verdict.intent_alignment_score).clamp(0.85, 0.99);
+                alignment_finding = Some(AnomalyFinding {
+                    id: format!(
+                        "aad-align-{}",
+                        uuid::Uuid::new_v4()
+                            .to_string()
+                            .chars()
+                            .take(8)
+                            .collect::<String>()
+                    ),
+                    session_id: telemetry.session_id.clone(),
+                    agent_id: telemetry.agent_id.clone(),
+                    risk_category: OwaspAgenticRisk::PromptInjectionASI01,
+                    severity: AlertSeverity::Critical,
+                    confidence_score: conf as f32,
+                    rationale: format!(
+                        "{}. Autotomy advanced epoch to Gen {}.",
+                        align_verdict.rationale, new_epoch
+                    ),
+                    recommended_mitigation:
+                        "Quarantine hijacked agent session, block unaligned tool invocation, and rotate capability epoch"
+                            .to_string(),
+                    flagged_at: Utc::now(),
+                    evidence: serde_json::to_value(&align_verdict).unwrap_or_default(),
+                });
+            }
+        }
+
         // Layer 1: Fast-path Screener (<5µs)
         let screener_res = self.screener.inspect(telemetry);
 
@@ -350,9 +432,10 @@ impl AgentAnomalyDetector {
             }
         }
 
-        // Prioritize critical breakout or spider-web fracture or chained abuse finding, otherwise reasoner finding
+        // Prioritize critical breakout or spider-web fracture or trace-alignment hijack or chained abuse finding, otherwise reasoner finding
         let active_finding = breakout_finding
             .or(spider_finding)
+            .or(alignment_finding)
             .or(aj_finding)
             .or(maybe_finding);
 
@@ -584,6 +667,7 @@ impl AgentAnomalyDetector {
             .sum();
 
         let containment = self.get_containment_status().await;
+        let alignment_status = self.alignment_scanner.get_status_summary();
 
         serde_json::json!({
             "monitored_sessions": total_sessions,
@@ -593,6 +677,7 @@ impl AgentAnomalyDetector {
             "owasp_distribution": owasp_counts,
             "severity_distribution": severity_counts,
             "containment_ring": containment,
+            "alignment_scanner": alignment_status,
             "timestamp": Utc::now(),
         })
     }
@@ -655,6 +740,10 @@ impl AgentAnomalyDetector {
             obj.insert(
                 "discovered_agent_count".to_string(),
                 serde_json::json!(discovered_agents.len()),
+            );
+            obj.insert(
+                "alignment_scanner".to_string(),
+                self.alignment_scanner.get_status_summary(),
             );
         }
         status

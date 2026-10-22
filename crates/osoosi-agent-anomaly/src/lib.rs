@@ -12,6 +12,7 @@
 )]
 
 pub mod agentjacking_guard;
+pub mod alignment_scanner;
 pub mod atlas_arm;
 pub mod breakout_defense;
 pub mod cedar_engine;
@@ -31,6 +32,11 @@ pub mod types;
 
 pub use agentjacking_guard::{
     AgentjackingGuard, AgentjackingPhase, AgentjackingVerdict, LogSanitizer, SessionTaintState,
+};
+pub use alignment_scanner::{
+    global_alignment_scanner, AlignmentCheckRequest, AlignmentCheckVerdict, DriftTraceRecord,
+    MultiTurnAlignmentSimulationResult, PinnedTaskIntent, RuntimeAlignmentScanner,
+    Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
 pub use file_lineage::{
     FileLineageTracker, IngestedFileEntry, LineageEntry, LineageError, PoisonMetadata,

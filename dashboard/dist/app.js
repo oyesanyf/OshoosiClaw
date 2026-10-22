@@ -350,7 +350,11 @@ function startApp() {
     renderActivity(state.activity);
     renderRepairView(state.repairStatus || null);
     renderMalwareView(state.malwareDetections || []);
-    renderMeshView(state.mesh);
+    if (typeof window.renderMeshView === 'function') {
+        window.renderMeshView(state.mesh);
+    } else if (typeof renderMeshView === 'function') {
+        renderMeshView(state.mesh);
+    }
     updateMeshConnectionIndicators(state.peer_count || 0, state.gossip_count || 0);
 
     // Primary Overview & Status - prioritize immediate load
@@ -921,7 +925,11 @@ function setupNav() {
                 } else if (view === 'mesh') {
                     document.getElementById('mesh-view').classList.add('active');
                     viewTitle.innerText = "Mesh Network";
-                    renderMeshView(state.mesh);
+                    if (typeof window.renderMeshView === 'function') {
+                        window.renderMeshView(state.mesh);
+                    } else if (typeof renderMeshView === 'function') {
+                        renderMeshView(state.mesh);
+                    }
                     fetchBootstrapPeers();
                 } else if (view === 'gossip') {
                     document.getElementById('gossip-view').classList.add('active');
@@ -996,7 +1004,11 @@ function setupNav() {
                 } else if (view === 'adversarial-tests') {
                     document.getElementById('adversarial-tests-view').classList.add('active');
                     viewTitle.innerText = "Adversarial & Defense Test Execution Suite";
-                    renderAdversarialTestsView();
+                    if (typeof window.renderAdversarialTestsView === 'function') {
+                        window.renderAdversarialTestsView();
+                    } else if (typeof renderAdversarialTestsView === 'function') {
+                        renderAdversarialTestsView();
+                    }
                 } else if (view === 'rea') {
                     document.getElementById('rea-view').classList.add('active');
                     viewTitle.innerText = "REA: Reverse Engineer Anything (Autonomous Inspector)";
@@ -1004,12 +1016,24 @@ function setupNav() {
                 } else if (view === 'dlp') {
                     document.getElementById('dlp-view').classList.add('active');
                     viewTitle.innerText = "Two-Tier Data Loss Prevention (DLP) & Crown-Jewel Guard";
-                    renderDlpView(true);
+                    if (typeof window.renderDlpView === 'function') {
+                        window.renderDlpView(true);
+                    } else if (typeof renderDlpView === 'function') {
+                        renderDlpView(true);
+                    }
                 } else if (view === 'har-traffic') {
                     document.getElementById('har-traffic-view').classList.add('active');
                     viewTitle.innerText = "Continuous HAR Web Traffic & Browser Lineage";
-                    renderHarTrafficView(true);
-                    ensureHarContinuousPolling();
+                    if (typeof window.renderHarTrafficView === 'function') {
+                        window.renderHarTrafficView(true);
+                    } else if (typeof renderHarTrafficView === 'function') {
+                        renderHarTrafficView(true);
+                    }
+                    if (typeof window.ensureHarContinuousPolling === 'function') {
+                        window.ensureHarContinuousPolling();
+                    } else if (typeof ensureHarContinuousPolling === 'function') {
+                        ensureHarContinuousPolling();
+                    }
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
                     if (otherView) {
@@ -1320,7 +1344,11 @@ async function updateDashboard() {
 
         const domPeerVal = document.getElementById('network-peer-count-val')?.innerText?.trim();
         if (state.current_view === 'mesh' && (meshChanged || domPeerVal !== String(state.peer_count ?? 0))) {
-            renderMeshView(state.mesh || mesh);
+            if (typeof window.renderMeshView === 'function') {
+                window.renderMeshView(state.mesh || mesh);
+            } else if (typeof renderMeshView === 'function') {
+                renderMeshView(state.mesh || mesh);
+            }
         }
 
         // Guard against clobbering active button spinners during background poll
@@ -1360,7 +1388,11 @@ async function updateDashboard() {
                 }
             }
             if (state.current_view === 'har-traffic' && state.harAutoUpdateEnabled) {
-                renderHarTrafficView(false);
+                if (typeof window.renderHarTrafficView === 'function') {
+                    window.renderHarTrafficView(false);
+                } else if (typeof renderHarTrafficView === 'function') {
+                    renderHarTrafficView(false);
+                }
             }
             const harBadge = document.getElementById('nav-har-count-badge');
             if (harBadge && state.harEntries && state.harEntries.length > 0) {
@@ -8563,6 +8595,7 @@ async function renderAgentAnomaliesView() {
         }
 
         await renderSpiderWebPanel();
+        await renderAlignmentDriftPanel();
     } catch (err) {
         console.error('Failed to render Agent Anomalies view:', err);
         renderViewFallbackCard('agent-anomalies-view', 'Agent Anomalies (AAD)', err);
@@ -8734,6 +8767,228 @@ async function simulateSpiderWebEmailExport() {
 
 window.renderSpiderWebPanel = renderSpiderWebPanel;
 window.simulateSpiderWebEmailExport = simulateSpiderWebEmailExport;
+
+async function renderAlignmentDriftPanel() {
+    try {
+        const data = await fetchAPI('/agent-anomalies/drift-traces?limit=40');
+        if (!data) return;
+
+        const pinnedEl = document.getElementById('align-kpi-pinned');
+        if (pinnedEl) pinnedEl.innerText = `${data.pinned_sessions_count || 0}`;
+
+        const meanScoreEl = document.getElementById('align-kpi-mean-score');
+        if (meanScoreEl) meanScoreEl.innerText = Number(data.mean_intent_alignment_score || 0).toFixed(3);
+
+        const driftVelEl = document.getElementById('align-kpi-drift-vel');
+        if (driftVelEl) {
+            const peakNeg = Number(data.peak_negative_drift_velocity || 0);
+            driftVelEl.innerText = `${peakNeg >= 0 ? '+' : ''}${peakNeg.toFixed(3)} / step`;
+        }
+
+        const tier1El = document.getElementById('align-kpi-tier1-blocks');
+        if (tier1El) tier1El.innerText = `${data.tier1_structural_blocks || 0}`;
+
+        const tier2El = document.getElementById('align-kpi-tier2-verdicts');
+        if (tier2El) tier2El.innerText = `${data.tier2_ollama_verdicts || 0} Audited`;
+
+        const traces = data.traces || data.recent_traces || [];
+        const countEl = document.getElementById('alignment-drift-traces-count');
+        if (countEl) {
+            countEl.innerText = `${traces.length} Traces · ${data.hijack_blocked_count || 0} Hijacks Blocked · 0 Cloud Calls`;
+        }
+
+        const tbody = document.getElementById('alignment-drift-traces-tbody');
+        if (tbody) {
+            if (traces.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-muted); padding: 20px 0;">No longitudinal drift traces recorded.</td></tr>`;
+            } else {
+                tbody.innerHTML = traces.map(t => {
+                    const isBlocked = t.verdict === 'HIJACK_BLOCKED_QUARANTINE';
+                    const isWarn = t.verdict === 'DRIFT_WARNING_STEP_UP';
+                    const verdictBadge = isBlocked
+                        ? '<span class="badge red" style="font-size: 10px;">BLOCKED &middot; QUARANTINE</span>'
+                        : (isWarn
+                            ? '<span class="badge yellow" style="font-size: 10px;">DRIFT STEP-UP</span>'
+                            : '<span class="badge green" style="font-size: 10px;">ALIGNED &middot; ALLOW</span>');
+
+                    const score = Number(t.intent_alignment_score || 0);
+                    const scoreColor = score >= 0.75 ? '#10b981' : (score >= 0.45 ? '#f59e0b' : '#ef4444');
+                    const vel = Number(t.drift_velocity || 0);
+                    const velColor = vel < -0.25 ? '#ef4444' : (vel < 0 ? '#f59e0b' : '#10b981');
+                    const hashShort = (t.intent_hash_blake3 || '').slice(0, 12);
+                    const taintBadge = t.untrusted_taint
+                        ? '<span class="badge orange" style="font-size: 9px; margin-left: 4px;">TAINTED</span>'
+                        : '<span class="badge blue" style="font-size: 9px; margin-left: 4px;">TRUSTED</span>';
+
+                    return `
+                        <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                            <td style="padding: 8px 10px;">
+                                <div style="font-family: monospace; font-weight: 600; color: var(--text-header); font-size: 11px;">${escapeHtml(t.trace_id)}</div>
+                                <div style="font-size: 10px; color: var(--text-muted);">Step #${t.step_index}</div>
+                            </td>
+                            <td style="padding: 8px 10px;">
+                                <div style="font-weight: 600; color: #38bdf8; font-size: 11px;">${escapeHtml(t.session_id)}</div>
+                                <div style="font-size: 10px; color: var(--text-muted);">${escapeHtml(t.arm_id)} &middot; <code>${escapeHtml(t.model_name)}</code></div>
+                            </td>
+                            <td style="padding: 8px 10px; max-width: 240px;">
+                                <div style="font-size: 11px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(t.user_intent)}">${escapeHtml(t.user_intent)}</div>
+                                <div style="font-size: 10px; font-family: monospace; color: var(--text-muted);">BLAKE3: ${escapeHtml(hashShort)}&hellip;</div>
+                            </td>
+                            <td style="padding: 8px 10px;">
+                                <div style="font-family: monospace; font-weight: 600; color: #f8fafc; font-size: 11px;">${escapeHtml(t.proposed_tool)} ${taintBadge}</div>
+                                <div style="font-size: 10px; color: var(--text-muted); max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Src: ${escapeHtml(t.untrusted_source || 'none')}</div>
+                            </td>
+                            <td style="padding: 8px 10px; text-align: center; font-family: monospace;">
+                                <span style="color: ${t.tier1_passed ? '#10b981' : '#ef4444'};">${Number(t.tier1_cosine_score || 0).toFixed(3)}</span>
+                            </td>
+                            <td style="padding: 8px 10px; text-align: center; font-size: 11px;">
+                                <div style="font-family: monospace; font-weight: 600;">${Number(t.tier2_judge_score || 0).toFixed(3)}</div>
+                                <div style="font-size: 9.5px; color: var(--text-muted);">${escapeHtml(t.tier2_judge_mode || 'local')}</div>
+                            </td>
+                            <td style="padding: 8px 10px; text-align: center; font-family: monospace; font-weight: 700; color: ${scoreColor};">
+                                ${score.toFixed(3)}
+                            </td>
+                            <td style="padding: 8px 10px; text-align: center; font-family: monospace; font-weight: 700; color: ${velColor};">
+                                ${vel >= 0 ? '+' : ''}${vel.toFixed(3)}
+                            </td>
+                            <td style="padding: 8px 10px; text-align: center;">
+                                ${verdictBadge}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        }
+    } catch (err) {
+        console.error('Failed to render alignment drift panel:', err);
+    }
+}
+
+async function simulateAlignmentHijackScenario() {
+    const btn = document.getElementById('alignment-sim-btn');
+    const scenarioSel = document.getElementById('alignment-scenario-selector');
+    const container = document.getElementById('alignment-sim-result-container');
+    const scenario = scenarioSel ? scenarioSel.value : 'har_goal_hijack';
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:14px;height:14px;"></i> Auditing 3-Turn Trace...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+    try {
+        const res = await postAPI('/agent-anomalies/alignment-check', {
+            session_id: `sim-align-${Date.now().toString(36)}`,
+            scenario,
+            is_simulation: true
+        });
+        if (container && res) {
+            container.style.display = 'block';
+            const steps = res.steps || [];
+            const s1 = steps[0] || {};
+            const s2 = steps[1] || {};
+            const s3 = steps[2] || {};
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid rgba(16, 185, 129, 0.25); padding-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="badge ${res.hijack_intercepted ? 'red' : 'green'}" style="font-size: 11px;">
+                            ${res.hijack_intercepted ? 'INDIRECT GOAL-HIJACK INTERCEPTED &amp; QUARANTINED' : 'TRACE ALIGNED'}
+                        </span>
+                        <span style="font-weight: 600; color: #10b981; font-size: 13px;">Scenario: ${escapeHtml(res.scenario)} &middot; Arm: ${escapeHtml(res.arm_id)} (${escapeHtml(res.model_name)})</span>
+                    </div>
+                    <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Intent BLAKE3: ${escapeHtml((res.pinned_intent_hash_blake3 || '').slice(0, 16))}&hellip;</span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+                    <div style="background: rgba(0,0,0,0.35); padding: 10px; border-radius: 6px; border-left: 3px solid #10b981;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Turn 1: Benign Pinned Task (${escapeHtml(s1.proposed_tool || '')})</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #10b981; font-family: monospace; margin-top: 3px;">Score: ${Number(s1.intent_alignment_score || 0).toFixed(3)} &middot; ALLOW</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.35); padding: 10px; border-radius: 6px; border-left: 3px solid #f59e0b;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Turn 2: Poisoned Payload Ingested (${escapeHtml(s2.proposed_tool || '')})</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #f59e0b; font-family: monospace; margin-top: 3px;">Score: ${Number(s2.intent_alignment_score || 0).toFixed(3)} &middot; d(s)/dt: ${Number(s2.drift_velocity || 0).toFixed(3)}</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.35); padding: 10px; border-radius: 6px; border-left: 3px solid #ef4444;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Turn 3: Hijacked Sink Attempt (${escapeHtml(s3.proposed_tool || '')})</div>
+                        <div style="font-size: 15px; font-weight: 700; color: #ef4444; font-family: monospace; margin-top: 3px;">Score: ${Number(s3.intent_alignment_score || 0).toFixed(3)} &middot; d(s)/dt: ${Number(s3.drift_velocity || 0).toFixed(3)} (BLOCKED)</div>
+                    </div>
+                </div>
+            `;
+            showSkyrlToast('Multi-turn goal-hijack trace audited and recorded to agent_drift_traces.', 'success');
+            await renderAlignmentDriftPanel();
+        }
+    } catch (err) {
+        console.error('Error running alignment hijack simulation:', err);
+        showUserError('Trace-Alignment Simulation', err);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="shield-alert" style="width:14px;height:14px;"></i> <span>Simulate Multi-Turn Goal-Hijack Chain</span>';
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+async function evaluateCustomAlignmentTuple() {
+    const intentInput = document.getElementById('align-input-intent');
+    const untrustedInput = document.getElementById('align-input-untrusted');
+    const toolInput = document.getElementById('align-input-tool');
+    const container = document.getElementById('alignment-sim-result-container');
+
+    const user_intent = intentInput ? intentInput.value : '';
+    const untrusted_input = untrustedInput ? untrustedInput.value : '';
+    const proposed_tool = toolInput ? toolInput.value : 'read_file';
+
+    try {
+        const res = await postAPI('/agent-anomalies/alignment-check', {
+            session_id: `custom-tuple-${Date.now().toString(36)}`,
+            user_intent,
+            untrusted_input,
+            proposed_tool,
+            untrusted_source: 'interactive_tuple_inspector',
+            is_simulation: false
+        });
+        if (container && res) {
+            container.style.display = 'block';
+            const t1 = res.tier1_structural || {};
+            const t2 = res.tier2_ollama_judge || {};
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+                    <div>
+                        <span class="badge ${res.allowed ? 'green' : 'red'}" style="font-size: 11px;">${escapeHtml(res.verdict || '')}</span>
+                        <strong style="margin-left: 8px; color: #f8fafc; font-size: 13px;">Proposed Tool: <code>${escapeHtml(res.proposed_tool || '')}</code> &middot; Alignment Score: ${Number(res.intent_alignment_score || 0).toFixed(3)} &middot; Drift Velocity: ${Number(res.drift_velocity || 0).toFixed(3)}</strong>
+                    </div>
+                    <span style="font-size: 11px; font-family: monospace; color: var(--text-muted);">Judge: ${escapeHtml(t2.judge_mode || '')} (${Number(t2.latency_ms || 0).toFixed(2)}ms)</span>
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary);">
+                    <strong>Rationale:</strong> ${escapeHtml(t2.rationale || res.rationale || '')}
+                    ${(t1.detected_markers && t1.detected_markers.length > 0) ? `<br/><span style="color: #f87171;">Detected Markers: ${escapeHtml(t1.detected_markers.join(', '))}</span>` : ''}
+                </div>
+            `;
+            await renderAlignmentDriftPanel();
+        }
+    } catch (err) {
+        console.error('Error evaluating custom alignment tuple:', err);
+        showUserError('Trace Tuple Audit', err);
+    }
+}
+
+function openDriftTracesInSiquery() {
+    const navItem = document.querySelector('.nav-item[data-view="siquery"]');
+    if (navItem) navItem.click();
+    setTimeout(() => {
+        const sqlInput = document.getElementById('siquery-sql-input');
+        if (sqlInput) {
+            sqlInput.value = 'SELECT * FROM agent_drift_traces ORDER BY id DESC LIMIT 100;';
+            if (typeof window.executeSiqueryQuery === 'function') {
+                window.executeSiqueryQuery();
+            }
+        }
+    }, 150);
+}
+
+window.renderAlignmentDriftPanel = renderAlignmentDriftPanel;
+window.simulateAlignmentHijackScenario = simulateAlignmentHijackScenario;
+window.evaluateCustomAlignmentTuple = evaluateCustomAlignmentTuple;
+window.openDriftTracesInSiquery = openDriftTracesInSiquery;
 
 /**
  * ============================================================================
@@ -10290,6 +10545,23 @@ window.runReaAutonomousSweep = runReaAutonomousSweep;
 // Verizon VCDB (VERIS Community Database) 4-A Breach Intelligence Functions
 // =========================================================================
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8000) {
+    const hasAbort = typeof AbortController !== 'undefined';
+    if (typeof fetchWithRetry === 'function' && hasAbort) {
+        return fetchWithRetry(url, { ...options, timeoutMs });
+    }
+    const controller = hasAbort ? new AbortController() : null;
+    const timer = (controller && typeof setTimeout === 'function') ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+        const fetchFn = typeof window.fetch === 'function' ? window.fetch : fetch;
+        const opts = controller ? { ...options, signal: controller.signal } : { ...options };
+        return await fetchFn(url, opts);
+    } finally {
+        if (timer && typeof clearTimeout === 'function') clearTimeout(timer);
+    }
+}
+window.fetchWithTimeout = fetchWithTimeout;
+
 async function renderVcdbPanel() {
     try {
         const res = await fetchWithTimeout('/api/vcdb/status');
@@ -10418,6 +10690,7 @@ window.renderVcdbPanel = renderVcdbPanel;
 window.syncVcdbFeed = syncVcdbFeed;
 window.executeVcdbReplaySuite = executeVcdbReplaySuite;
 window.openVcdbInSiquery = openVcdbInSiquery;
+window.updateMeshConnectionIndicators = updateMeshConnectionIndicators;
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
