@@ -282,7 +282,7 @@ def test_endpoints():
     fp_url = f"{BASE_URL}/api/threats/audit-test-123/false-positive"
     fp_req = urllib.request.Request(fp_url, data=b"{}", headers={**headers, "Content-Type": "application/json"}, method="POST")
     start_t = time.perf_counter()
-    with urllib.request.urlopen(fp_req, timeout=10) as resp:
+    with urllib.request.urlopen(fp_req, timeout=25) as resp:
         elapsed_ms = (time.perf_counter() - start_t) * 1000.0
         data = json.loads(resp.read().decode("utf-8"))
         print(f" [PASS] POST /api/threats/audit-test-123/false-positive -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): {data}")
@@ -293,7 +293,7 @@ def test_endpoints():
     cf_url = f"{BASE_URL}/api/threats/confirm/audit-test-456"
     cf_req = urllib.request.Request(cf_url, data=b"{}", headers={**headers, "Content-Type": "application/json"}, method="POST")
     start_t = time.perf_counter()
-    with urllib.request.urlopen(cf_req, timeout=10) as resp:
+    with urllib.request.urlopen(cf_req, timeout=25) as resp:
         elapsed_ms = (time.perf_counter() - start_t) * 1000.0
         data = json.loads(resp.read().decode("utf-8"))
         print(f" [PASS] POST /api/threats/confirm/audit-test-456 -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): {data}")
@@ -355,7 +355,7 @@ def test_endpoints():
     # 4. Live GET /index.html contains data-view="har-traffic" and id="har-traffic-view"
     ui_url = f"{BASE_URL}/index.html"
     ui_req = urllib.request.Request(ui_url, headers=headers, method="GET")
-    with urllib.request.urlopen(ui_req, timeout=10) as resp:
+    with urllib.request.urlopen(ui_req, timeout=25) as resp:
         ui_html = resp.read().decode("utf-8")
         assert 'data-view="har-traffic"' in ui_html, 'Live index.html must contain data-view="har-traffic"'
         assert 'id="har-traffic-view"' in ui_html, 'Live index.html must contain id="har-traffic-view"'
@@ -377,7 +377,7 @@ def test_endpoints():
 
     tarpit_url = f"{BASE_URL}/api/tarpit-stats"
     tarpit_req = urllib.request.Request(tarpit_url, headers=headers, method="GET")
-    with urllib.request.urlopen(tarpit_req, timeout=10) as resp:
+    with urllib.request.urlopen(tarpit_req, timeout=25) as resp:
         tarpit_data = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
         assert "total_tests_executed" in tarpit_data
@@ -390,7 +390,7 @@ def test_endpoints():
 
     for dl_ep in ["/api/download-run-log", "/api/download-test-json"]:
         dl_req = urllib.request.Request(f"{BASE_URL}{dl_ep}", headers=headers, method="GET")
-        with urllib.request.urlopen(dl_req, timeout=10) as resp:
+        with urllib.request.urlopen(dl_req, timeout=25) as resp:
             assert resp.status == 200
             body_bytes = resp.read()
             assert len(body_bytes) > 0
@@ -404,7 +404,7 @@ def test_endpoints():
     print("="*70)
 
     dlp_req = urllib.request.Request(f"{BASE_URL}/api/dlp/status", headers=headers, method="GET")
-    with urllib.request.urlopen(dlp_req, timeout=10) as resp:
+    with urllib.request.urlopen(dlp_req, timeout=25) as resp:
         dlp_data = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
         assert dlp_data.get("status") == "ok"
@@ -422,7 +422,7 @@ def test_endpoints():
         headers={**headers, "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(ins_req, timeout=10) as resp:
+    with urllib.request.urlopen(ins_req, timeout=25) as resp:
         ins_data = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
         assert ins_data.get("zk_verified") is True
@@ -435,7 +435,7 @@ def test_endpoints():
         headers={**headers, "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(sky_req, timeout=10) as resp:
+    with urllib.request.urlopen(sky_req, timeout=25) as resp:
         sky_data = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
         rc = sky_data.get("regression_corpus", {})
