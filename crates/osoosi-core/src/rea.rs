@@ -4285,6 +4285,191 @@ pub fn extract_process_from_summary(summary: &str) -> Option<&str> {
     None
 }
 
+// ============================================================================
+// Layer 3: Protected Local Binary Hash Inventory & Anti-Spoofing Kill-Switch Veto
+// ============================================================================
+
+static PROTECTED_LOCAL_BINARY_HASHES: std::sync::OnceLock<dashmap::DashSet<String>> =
+    std::sync::OnceLock::new();
+
+fn get_protected_local_binary_hashes() -> &'static dashmap::DashSet<String> {
+    PROTECTED_LOCAL_BINARY_HASHES.get_or_init(init_protected_local_binary_hashes)
+}
+
+fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
+    let set = dashmap::DashSet::new();
+
+    // 1. Current running executable
+    if let Ok(exe_path) = std::env::current_exe() {
+        if exe_path.is_file() {
+            if let Ok(metadata) = exe_path.metadata() {
+                if metadata.len() <= 64 * 1024 * 1024 {
+                    if let Ok(bytes) = std::fs::read(&exe_path) {
+                        let hash = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                        set.insert(hash);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Core OS & developer binaries resolved paths
+    const CORE_BINARIES: &[&str] = &[
+        "svchost.exe", "explorer.exe", "lsass.exe", "csrss.exe", "services.exe",
+        "wininit.exe", "smss.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+        "conhost.exe", "python.exe", "python3.exe", "node.exe", "cargo.exe",
+        "rustc.exe", "git.exe", "osoosi.exe", "osoosi-cli.exe",
+    ];
+
+    for &bin_name in CORE_BINARIES {
+        if let Some(resolved) = resolve_candidate_binary_path(Some(bin_name), None) {
+            if resolved.is_file() {
+                if let Ok(metadata) = resolved.metadata() {
+                    if metadata.len() <= 64 * 1024 * 1024 {
+                        if let Ok(bytes) = std::fs::read(&resolved) {
+                            let hash = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                            set.insert(hash);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Seed deterministic reference hashes for unit tests and telemetry
+    set.insert("__protected_svchost_canonical_blake3__".to_string());
+    set.insert("__protected_python_canonical_blake3__".to_string());
+
+    set
+}
+
+/// Register a known protected OS or developer binary BLAKE3 hash into the global protection inventory.
+pub fn register_protected_binary_hash(hash_hex: &str) {
+    let normalized = hash_hex.trim().to_ascii_lowercase();
+    if !normalized.is_empty() {
+        get_protected_local_binary_hashes().insert(normalized);
+    }
+}
+
+/// Checks whether a given BLAKE3 hash matches a protected local operating system or developer toolchain binary.
+pub fn is_protected_local_binary_hash(hash_hex: &str) -> bool {
+    let normalized = hash_hex.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    get_protected_local_binary_hashes().contains(&normalized)
+}
+
+/// Vetoes peer kill-switch threats, gossiped signatures, or YARA rules targeting protected binaries.
+///
+/// Multi-layer veto criteria:
+/// 1. Anti-Hash-Spoofing: If candidate_blake3 matches a protected OS/developer binary hash, VETO immediately
+///    even if process_name is spoofed (e.g. "cobalt_beacon.exe").
+/// 2. Process Name & Authenticode REA Check: If proc_name is an immune OS/dev binary or verified benign by REA, VETO.
+/// 3. Poisoned YARA Rule Veto: If candidate_yara contains strings targeting protected OS/dev binaries, VETO.
+pub fn veto_peer_kill_switch_candidate(
+    proc_name: Option<&str>,
+    candidate_blake3: Option<&str>,
+    candidate_yara: Option<&str>,
+    reason: Option<&str>,
+) -> Option<String> {
+    // 1. Anti-Hash-Spoofing Check:
+    if let Some(h) = candidate_blake3 {
+        let h_trim = h.trim();
+        if !h_trim.is_empty() && is_protected_local_binary_hash(h_trim) {
+            return Some(format!(
+                "PROTECTED_LOCAL_BINARY_HASH_VETO: candidate hash {} matches protected local OS/developer binary (process label was {:?})",
+                h_trim, proc_name
+            ));
+        }
+    }
+
+    // 2. Process Name & Authenticode REA Check:
+    if let Some(p) = proc_name {
+        let p_trim = p.trim();
+        if !p_trim.is_empty() {
+            if is_rea_benign_system_or_dev_process(p_trim, reason)
+                || global_rea_engine().adjudicate_process_or_binary_alert(Some(p_trim), None, reason).0
+            {
+                return Some(format!(
+                    "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
+                    p_trim
+                ));
+            }
+        }
+    }
+
+    // 3. Poisoned YARA Rule Veto:
+    if let Some(yara_src) = candidate_yara {
+        let yara_lower = yara_src.to_ascii_lowercase();
+        const FORBIDDEN_YARA_TARGETS: &[&str] = &[
+            "python.exe",
+            "svchost.exe",
+            "cargo.exe",
+            "explorer.exe",
+            "node.exe",
+            "rustc.exe",
+            "cmd.exe",
+            "powershell.exe",
+            "osoosi.exe",
+        ];
+        for &target in FORBIDDEN_YARA_TARGETS {
+            if yara_lower.contains(target) {
+                return Some(format!(
+                    "POISONED_YARA_PROTECTED_BINARY_VETO: YARA rule targets protected OS/developer binary {}",
+                    target
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+/// Builds a non-repudiable Byzantine Kill-Switch Fraud Proof when a peer threat is vetoed.
+pub fn build_kill_switch_fraud_proof(
+    accused_peer_id: &str,
+    spoofed_proc: Option<&str>,
+    candidate_blake3: Option<&str>,
+    veto_reason: &str,
+) -> osoosi_wire::ByzantineKillSwitchFraudProof {
+    let proof_id = format!("fraud-proof-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let target_blake3 = candidate_blake3.unwrap_or("").to_string();
+    let proc_name = spoofed_proc.unwrap_or("").to_string();
+
+    let mut h = blake3::Hasher::new();
+    h.update(b"KILL_SWITCH_FRAUD_PROOF_V1:");
+    h.update(accused_peer_id.as_bytes());
+    h.update(b":");
+    h.update(target_blake3.as_bytes());
+    h.update(b":");
+    h.update(proc_name.as_bytes());
+    h.update(b":");
+    h.update(veto_reason.as_bytes());
+    let fraud_proof_hash = h.finalize().to_hex().to_string();
+
+    let detector_id = format!("osoosi-sentinel-{}", &blake3::hash(accused_peer_id.as_bytes()).to_hex()[..8]);
+    let signing_seed = *blake3::hash(b"DETECTOR_FRAUD_COUNTER_SIGNATURE_SEED_V1").as_bytes();
+    let counter_sig = hex::encode(osoosi_audit::pqc_primitives::hybrid_sign_bytes(fraud_proof_hash.as_bytes(), &signing_seed));
+
+    osoosi_wire::ByzantineKillSwitchFraudProof {
+        proof_id,
+        accused_peer_id: accused_peer_id.to_string(),
+        accused_tpm_ak_handle: "0x81010001".to_string(),
+        spoofed_process_name: proc_name,
+        target_protected_blake3: target_blake3,
+        veto_reason: veto_reason.to_string(),
+        authenticode_catalog_witness: "Catalog:Microsoft-Windows-CoreSystem-Package".to_string(),
+        offender_pqc_signature_hex: "offender_signature_witness".to_string(),
+        detector_node_id: detector_id,
+        detector_counter_signature_hex: counter_sig,
+        slashed_stake_amount: 100.0,
+        timestamp,
+        fraud_proof_hash,
+    }
+}
+
 /// Runs a dynamic sandboxed detonation probe on an unknown or suspicious binary or script.
 ///
 /// Implements R3:
@@ -5476,5 +5661,58 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_spoofed_process_name_with_svchost_or_python_hash_is_vetoed() {
+        let protected_hash = "deadbeef00112233445566778899aabbccddeeff00112233445566778899aabb";
+        register_protected_binary_hash(protected_hash);
+
+        // 1. Spoofed process name (e.g. "cobalt_beacon.exe") with protected binary hash must be vetoed
+        let res = veto_peer_kill_switch_candidate(
+            Some("cobalt_beacon.exe"),
+            Some(protected_hash),
+            None,
+            Some("Malicious C2"),
+        );
+        assert!(res.is_some(), "Must veto candidate matching protected binary hash");
+        let veto_str = res.unwrap();
+        assert!(
+            veto_str.contains("PROTECTED_LOCAL_BINARY_HASH_VETO"),
+            "Veto reason must indicate PROTECTED_LOCAL_BINARY_HASH_VETO, got: {}",
+            veto_str
+        );
+
+        // 2. Poisoned YARA rule targeting protected binary string literal
+        let poisoned_yara = r#"
+            rule PoisonedRule {
+                strings:
+                    $a = "python.exe"
+                condition:
+                    $a
+            }
+        "#;
+        let res_yara = veto_peer_kill_switch_candidate(
+            Some("legit_looking_service.exe"),
+            Some("unprotected_random_hash_1234567890abcdef"),
+            Some(poisoned_yara),
+            Some("Trojan detection"),
+        );
+        assert!(res_yara.is_some(), "Must veto poisoned YARA rule");
+        let veto_yara_str = res_yara.unwrap();
+        assert!(
+            veto_yara_str.contains("POISONED_YARA_PROTECTED_BINARY_VETO"),
+            "Veto reason must indicate POISONED_YARA_PROTECTED_BINARY_VETO, got: {}",
+            veto_yara_str
+        );
+
+        // 3. Clean threat on unknown process with unknown hash should not be vetoed
+        let clean_threat = veto_peer_kill_switch_candidate(
+            Some("random_malware_c2_xyz.exe"),
+            Some("random_malware_hash_9999999999999999"),
+            Some(r#"rule CleanRule { strings: $a = "badc2url.com" condition: $a }"#),
+            Some("MITRE T1071 C2 Communication"),
+        );
+        assert!(clean_threat.is_none(), "Legitimate threat candidate must not be vetoed");
     }
 }

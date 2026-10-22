@@ -1,0 +1,121 @@
+[
+  {
+    "avid_id": "AVID-2024-V001",
+    "title": "Indirect Prompt Injection in Autonomous Agent Tool Execution",
+    "description": "Adversarial prompt injection embedded in untrusted Markdown, web page bodies, and pull requests manipulates autonomous coding agents into executing arbitrary system commands via tool closures.",
+    "vuln_type": "IndirectPromptInjection",
+    "affected_components": [
+      "langchain",
+      "llama-index",
+      "auto-gpt",
+      "crewai"
+    ],
+    "severity": "CRITICAL",
+    "mitre_atlas": [
+      "AML.T0043",
+      "AML.T0051",
+      "AML.T0054"
+    ],
+    "published_date": "2024-03-15T00:00:00Z"
+  },
+  {
+    "avid_id": "AVID-2024-V002",
+    "title": "Arbitrary Code Execution via Insecure Python REPL in LLM Frameworks",
+    "description": "Unsanitized LLM-generated code passed directly to PythonAstREPLTool or exec() leads to remote code execution and host environment compromise.",
+    "vuln_type": "ArbitraryCodeExecution",
+    "affected_components": [
+      "langchain-experimental",
+      "llama-index-core"
+    ],
+    "severity": "CRITICAL",
+    "mitre_atlas": [
+      "AML.T0043",
+      "AML.T0054"
+    ],
+    "published_date": "2024-04-02T12:00:00Z"
+  },
+  {
+    "avid_id": "AVID-2024-V003",
+    "title": "Model Context Protocol (MCP) Configuration and Tool Manifest Poisoning",
+    "description": "Malicious repositories plant poisoned mcp.json or .cursorrules configuration files directing local MCP clients to spawn rogue subprocesses with elevated privileges.",
+    "vuln_type": "ConfigPoisoning",
+    "affected_components": [
+      "model-context-protocol",
+      "cursor",
+      "cline"
+    ],
+    "severity": "HIGH",
+    "mitre_atlas": [
+      "AML.T0048",
+      "AML.T0054"
+    ],
+    "published_date": "2024-06-20T08:30:00Z"
+  },
+  {
+    "avid_id": "AVID-2023-V004",
+    "title": "Training Data Extraction via Adversarial Suffixes",
+    "description": "Greedy Coordinate Gradient (GCG) adversarial suffix optimization induces aligned foundation models to bypass safety alignments and regurgitate copyrighted or private training data.",
+    "vuln_type": "DataExtraction",
+    "affected_components": [
+      "llama-2",
+      "gpt-3.5-turbo",
+      "claude-instant"
+    ],
+    "severity": "HIGH",
+    "mitre_atlas": [
+      "AML.T0043",
+      "AML.T0024"
+    ],
+    "published_date": "2023-08-01T15:00:00Z"
+  },
+  {
+    "avid_id": "AVID-2024-V005",
+    "title": "Blind Database Extraction via Text-to-SQL Agent Injection",
+    "description": "Attacker crafts inputs causing the text-to-SQL translator to generate union-based queries exfiltrating credential tables and system catalog metadata.",
+    "vuln_type": "SqlInjection",
+    "affected_components": [
+      "vanna",
+      "langchain-community",
+      "sql-agent"
+    ],
+    "severity": "HIGH",
+    "mitre_atlas": [
+      "AML.T0043",
+      "AML.T0054"
+    ],
+    "published_date": "2024-05-11T10:15:00Z"
+  },
+  {
+    "avid_id": "AVID-2024-V006",
+    "title": "Steganographic Cross-Domain Context Hijacking via Exif and Invisible Unicode",
+    "description": "Adversarial prompts concealed within image metadata, zero-width spaces, or homoglyphs bypass input DLP filters and hijack downstream LLM context windows.",
+    "vuln_type": "ContextHijacking",
+    "affected_components": [
+      "multimodal-rag",
+      "gemini-pro-vision",
+      "gpt-4-vision"
+    ],
+    "severity": "MEDIUM",
+    "mitre_atlas": [
+      "AML.T0048",
+      "AML.T0051"
+    ],
+    "published_date": "2024-07-04T18:00:00Z"
+  },
+  {
+    "avid_id": "AVID-2024-V007",
+    "title": "Unsafe Deserialization of Untrusted Machine Learning Model Checkpoints",
+    "description": "Deserialization of PyTorch .pth, pickle, or corrupted GGUF/Safetensors headers triggers arbitrary opcode evaluation during model weight instantiation.",
+    "vuln_type": "InsecureDeserialization",
+    "affected_components": [
+      "torch",
+      "transformers",
+      "safetensors"
+    ],
+    "severity": "CRITICAL",
+    "mitre_atlas": [
+      "AML.T0031"
+    ],
+    "published_date": "2024-09-18T14:20:00Z"
+  }
+]

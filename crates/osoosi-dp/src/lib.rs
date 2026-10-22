@@ -359,20 +359,24 @@ pub fn volatile_scrub_bytes(buf: &mut [u8]) {
     std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Zero-Plaintext 4 KB Chunk Fingerprinter for Crown-Jewel assets.
+/// Zero-Plaintext 4 KB Chunk & Semantic Shingle Fingerprinter for Crown-Jewel assets.
 /// Stores only 32-byte cryptographic chunk digests (`SHA256("OSOOSI_DLP_CROWN_JEWEL_V1:" || chunk)`)
-/// so the DLP engine never holds raw crown-jewel plaintext in memory.
+/// and normalized 32-byte semantic shingle digests so the DLP engine never holds raw crown-jewel
+/// plaintext in memory while catching reformatted and paraphrased excerpts.
 #[derive(Debug, Clone, Default)]
 pub struct CrownJewelMerkleFingerprinter {
     pub chunk_hashes: std::collections::HashMap<[u8; 32], String>,
+    pub semantic_shingle_hashes: std::collections::HashMap<[u8; 32], String>,
 }
 
 impl CrownJewelMerkleFingerprinter {
     pub const CHUNK_SIZE: usize = 4096;
+    pub const SHINGLE_TOKEN_WINDOW: usize = 32;
 
     pub fn new() -> Self {
         Self {
             chunk_hashes: std::collections::HashMap::with_capacity(64),
+            semantic_shingle_hashes: std::collections::HashMap::with_capacity(128),
         }
     }
 
@@ -388,7 +392,25 @@ impl CrownJewelMerkleFingerprinter {
         out
     }
 
+    /// Extracts ASCII alphanumeric bytes converted to lowercase (`b.to_ascii_lowercase()`),
+    /// stripping whitespace, punctuation, and formatting variations so paraphrased/reformatted
+    /// excerpts preserve normalized shingle sequences.
+    #[inline]
+    pub fn normalize_semantic_bytes(bytes: &[u8]) -> Vec<u8> {
+        bytes
+            .iter()
+            .filter_map(|&b| {
+                if b.is_ascii_alphanumeric() {
+                    Some(b.to_ascii_lowercase())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     /// Indexes a crown-jewel byte stream into 4 KB chunk digests and returns the hex Merkle root.
+    /// Also computes normalized semantic shingles (32-byte windows strided by 8) and indexes them.
     pub fn register_crown_jewel_bytes(&mut self, asset_label: &str, bytes: &[u8]) -> String {
         use sha2::{Digest, Sha256};
         if bytes.is_empty() {
@@ -401,15 +423,32 @@ impl CrownJewelMerkleFingerprinter {
             self.chunk_hashes.insert(digest, asset_label.to_string());
             root_hasher.update(&digest);
         }
+
+        // Semantic shingle indexing over normalized bytes
+        let norm = Self::normalize_semantic_bytes(bytes);
+        if norm.len() >= Self::SHINGLE_TOKEN_WINDOW {
+            for win in norm.windows(Self::SHINGLE_TOKEN_WINDOW).step_by(8) {
+                let digest = Self::compute_chunk_digest(win);
+                self.semantic_shingle_hashes
+                    .insert(digest, asset_label.to_string());
+            }
+        } else if !norm.is_empty() {
+            let digest = Self::compute_chunk_digest(&norm);
+            self.semantic_shingle_hashes
+                .insert(digest, asset_label.to_string());
+        }
+
         hex::encode(root_hasher.finalize())
     }
 
-    /// Scans `payload` in $O(N)$ time for any registered 4 KB crown-jewel chunk digest.
+    /// Scans `payload` in $O(N)$ time for any registered 4 KB crown-jewel chunk digest,
+    /// and also checks normalized 32-byte windows against `self.semantic_shingle_hashes`.
     pub fn match_chunks(&self, payload: &[u8]) -> Vec<String> {
-        if self.chunk_hashes.is_empty() || payload.is_empty() {
+        if (self.chunk_hashes.is_empty() && self.semantic_shingle_hashes.is_empty()) || payload.is_empty() {
             return Vec::new();
         }
         let mut matched = Vec::new();
+        // 1. Exact 4 KB chunk matching
         for chunk in payload.chunks(Self::CHUNK_SIZE) {
             let digest = Self::compute_chunk_digest(chunk);
             if let Some(label) = self.chunk_hashes.get(&digest) {
@@ -419,6 +458,29 @@ impl CrownJewelMerkleFingerprinter {
                 }
             }
         }
+
+        // 2. Normalized 32-byte semantic shingle matching (step_by 4)
+        let norm = Self::normalize_semantic_bytes(payload);
+        if norm.len() >= Self::SHINGLE_TOKEN_WINDOW {
+            for win in norm.windows(Self::SHINGLE_TOKEN_WINDOW).step_by(4) {
+                let digest = Self::compute_chunk_digest(win);
+                if let Some(label) = self.semantic_shingle_hashes.get(&digest) {
+                    let tag = format!("CROWN_JEWEL({})", label);
+                    if !matched.contains(&tag) {
+                        matched.push(tag);
+                    }
+                }
+            }
+        } else if !norm.is_empty() {
+            let digest = Self::compute_chunk_digest(&norm);
+            if let Some(label) = self.semantic_shingle_hashes.get(&digest) {
+                let tag = format!("CROWN_JEWEL({})", label);
+                if !matched.contains(&tag) {
+                    matched.push(tag);
+                }
+            }
+        }
+
         matched
     }
 }
@@ -446,6 +508,7 @@ pub struct OsoosiTwoTierDlpEngine {
 
 impl OsoosiTwoTierDlpEngine {
     pub const MAX_DLP_HOT_SCAN_BYTES: usize = 262_144; // 256 KB hard ceiling (Zero OOM / Zero ReDoS)
+    pub const MAX_UNWRAP_ENCODING_DEPTH: usize = 8;
 
     pub fn new() -> Self {
         Self {
@@ -545,48 +608,498 @@ impl OsoosiTwoTierDlpEngine {
         String::from_utf8(out).ok()
     }
 
-    /// Unwraps bounded depth ($\le 2$) URL `%XX`, Hex, and Base64 encoded layers so obfuscated
-    /// PII, credentials, or Crown Jewel tokens cannot bypass Tier-1 or Tier-2 DLP inspection.
+    /// Decodes hex `\xHH` and Unicode `\uHHHH` escape sequences into UTF-8 characters.
+    pub fn decode_escape_sequences(input: &str) -> Option<String> {
+        if !input.contains("\\x") && !input.contains("\\u") {
+            return None;
+        }
+        let bytes = input.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        let mut changed = false;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' && i + 3 < bytes.len() && bytes[i + 1] == b'x' {
+                let hi = (bytes[i + 2] as char).to_digit(16);
+                let lo = (bytes[i + 3] as char).to_digit(16);
+                if let (Some(h), Some(l)) = (hi, lo) {
+                    out.push(((h << 4) | l) as u8);
+                    i += 4;
+                    changed = true;
+                    continue;
+                }
+            } else if bytes[i] == b'\\' && i + 5 < bytes.len() && bytes[i + 1] == b'u' {
+                let d0 = (bytes[i + 2] as char).to_digit(16);
+                let d1 = (bytes[i + 3] as char).to_digit(16);
+                let d2 = (bytes[i + 4] as char).to_digit(16);
+                let d3 = (bytes[i + 5] as char).to_digit(16);
+                if let (Some(c0), Some(c1), Some(c2), Some(c3)) = (d0, d1, d2, d3) {
+                    let code = (c0 << 12) | (c1 << 8) | (c2 << 4) | c3;
+                    if let Some(ch) = char::from_u32(code) {
+                        let mut buf = [0u8; 4];
+                        let encoded = ch.encode_utf8(&mut buf);
+                        out.extend_from_slice(encoded.as_bytes());
+                        i += 6;
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        if changed {
+            String::from_utf8(out).ok()
+        } else {
+            None
+        }
+    }
+
+    /// Applies ROT13 substitution when ROT13-shifted secret prefixes are detected:
+    /// `NXVN` -> `AKIA`, `NFVN` -> `ASIA`, `tuc_` -> `ghp_`, `fx-cebw-` -> `sk-proj-`, `fx-yvir-` -> `sk-live-`.
+    pub fn decode_rot13(input: &str) -> Option<String> {
+        if !input.contains("NXVN")
+            && !input.contains("NFVN")
+            && !input.contains("tuc_")
+            && !input.contains("fx-cebw-")
+            && !input.contains("fx-yvir-")
+        {
+            return None;
+        }
+        let decoded: String = input
+            .chars()
+            .map(|c| match c {
+                'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
+                'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
+                other => other,
+            })
+            .collect();
+        Some(decoded)
+    }
+
+    /// Collapses single-character separated tokens (e.g. `A-K-I-A-I-O-S-F...`, `A.K.I.A...`,
+    /// `A K I A I O S F...`, `s_k_-_p_r_o_j...`, or zero-width characters `\u{200B}`..`\u{200F}`, `\u{FEFF}`).
+    pub fn decode_delimiter_interleaved(input: &str) -> Option<String> {
+        // 1. Strip zero-width Unicode characters
+        let mut stripped_zero = String::with_capacity(input.len());
+        let mut had_zero = false;
+        for ch in input.chars() {
+            let code = ch as u32;
+            if matches!(
+                code,
+                0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0xFEFF | 0xE0000..=0xE007F
+            ) {
+                had_zero = true;
+            } else {
+                stripped_zero.push(ch);
+            }
+        }
+        if had_zero {
+            return Some(stripped_zero);
+        }
+
+        // 2. Space-separated single character runs (e.g. "A K I A I O S F...")
+        let words: Vec<&str> = input.split_whitespace().collect();
+        let mut current_space_run = Vec::new();
+        let mut longest_space_collapsed = String::new();
+        for &w in &words {
+            if w.chars().count() == 1 {
+                current_space_run.push(w);
+            } else {
+                if current_space_run.len() >= 4 {
+                    let collapsed = current_space_run.concat();
+                    if collapsed.len() > longest_space_collapsed.len() {
+                        longest_space_collapsed = collapsed;
+                    }
+                }
+                current_space_run.clear();
+            }
+        }
+        if current_space_run.len() >= 4 {
+            let collapsed = current_space_run.concat();
+            if collapsed.len() > longest_space_collapsed.len() {
+                longest_space_collapsed = collapsed;
+            }
+        }
+        if !longest_space_collapsed.is_empty() {
+            return Some(longest_space_collapsed);
+        }
+
+        // 3. Delimiter-separated tokens (e.g. '-', '.', '_')
+        for raw_tok in input.split(|c: char| c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';')) {
+            let tok = raw_tok.trim();
+            for &delim in &['-', '.', '_'] {
+                if tok.contains(delim) {
+                    let parts: Vec<&str> = tok.split(delim).filter(|s| !s.is_empty()).collect();
+                    if parts.len() >= 4 && parts.iter().all(|p| p.chars().count() == 1) {
+                        let collapsed = parts.concat();
+                        return Some(collapsed);
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Scans for sequences of 8+ comma/space-separated decimal integers in `32..=126`
+    /// (e.g. `[65, 75, 73, 65, ...]` or `65,75,73,65,...`) and reconstructs the ASCII string.
+    pub fn decode_ascii_code_array(input: &str) -> Option<String> {
+        let clean = input.replace(['[', ']', '{', '}'], " ");
+        let mut current_seq = Vec::new();
+        let mut longest_decoded = String::new();
+
+        for tok in clean.split(|c: char| c == ',' || c == ';' || c.is_whitespace()) {
+            let trimmed = tok.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Ok(val) = trimmed.parse::<u8>() {
+                if (32..=126).contains(&val) {
+                    current_seq.push(val);
+                    continue;
+                }
+            }
+            if current_seq.len() >= 8 {
+                let s: String = current_seq.iter().map(|&b| b as char).collect();
+                if s.len() > longest_decoded.len() {
+                    longest_decoded = s;
+                }
+            }
+            current_seq.clear();
+        }
+        if current_seq.len() >= 8 {
+            let s: String = current_seq.iter().map(|&b| b as char).collect();
+            if s.len() > longest_decoded.len() {
+                longest_decoded = s;
+            }
+        }
+        if longest_decoded.len() >= 8 {
+            Some(longest_decoded)
+        } else {
+            None
+        }
+    }
+
+    /// Maps NATO phonetic words to reconstructed characters when 4+ consecutive phonetic tokens appear.
+    pub fn decode_nato_phonetic_and_spelled(input: &str) -> Option<String> {
+        let mut current_seq = String::new();
+        let mut longest_seq = String::new();
+
+        for raw_tok in input.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '"' | '\'')) {
+            let lower = raw_tok.trim().to_ascii_lowercase();
+            let clean = lower.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+            let mapped_char = match clean {
+                "alpha" | "alfa" => Some('A'),
+                "bravo" => Some('B'),
+                "charlie" => Some('C'),
+                "delta" => Some('D'),
+                "echo" => Some('E'),
+                "foxtrot" => Some('F'),
+                "golf" => Some('G'),
+                "hotel" => Some('H'),
+                "india" => Some('I'),
+                "juliet" | "juliett" => Some('J'),
+                "kilo" => Some('K'),
+                "lima" => Some('L'),
+                "mike" => Some('M'),
+                "november" => Some('N'),
+                "oscar" => Some('O'),
+                "papa" => Some('P'),
+                "quebec" => Some('Q'),
+                "romeo" => Some('R'),
+                "sierra" => Some('S'),
+                "tango" => Some('T'),
+                "uniform" => Some('U'),
+                "victor" => Some('V'),
+                "whiskey" => Some('W'),
+                "xray" | "x-ray" => Some('X'),
+                "yankee" => Some('Y'),
+                "zulu" => Some('Z'),
+                "zero" => Some('0'),
+                "one" => Some('1'),
+                "two" => Some('2'),
+                "three" => Some('3'),
+                "four" => Some('4'),
+                "five" => Some('5'),
+                "six" => Some('6'),
+                "seven" => Some('7'),
+                "eight" => Some('8'),
+                "nine" => Some('9'),
+                "dash" | "hyphen" => Some('-'),
+                "underscore" => Some('_'),
+                _ => None,
+            };
+
+            if let Some(ch) = mapped_char {
+                current_seq.push(ch);
+            } else {
+                if current_seq.len() >= 4 && current_seq.len() > longest_seq.len() {
+                    longest_seq = current_seq.clone();
+                }
+                current_seq.clear();
+            }
+        }
+
+        if current_seq.len() >= 4 && current_seq.len() > longest_seq.len() {
+            longest_seq = current_seq;
+        }
+
+        if longest_seq.len() >= 4 {
+            Some(longest_seq)
+        } else {
+            None
+        }
+    }
+
+    /// Sweeps single-byte XOR keys 1..=255 checking for known secret markers.
+    pub fn decode_single_byte_xor_candidates(raw_bytes: &[u8]) -> Option<String> {
+        if raw_bytes.len() < 12 || raw_bytes.len() > 4096 {
+            return None;
+        }
+        const TARGET_MARKERS: [&[u8; 4]; 7] = [
+            b"AKIA",
+            b"ASIA",
+            b"ghp_",
+            b"sk-p",
+            b"sk-l",
+            b"xoxb",
+            b"----",
+        ];
+
+        for key in 1u8..=255u8 {
+            let mut found_marker = false;
+            for win in raw_bytes.windows(4) {
+                let xored = [
+                    win[0] ^ key,
+                    win[1] ^ key,
+                    win[2] ^ key,
+                    win[3] ^ key,
+                ];
+                if TARGET_MARKERS.contains(&&xored) {
+                    found_marker = true;
+                    break;
+                }
+            }
+            if found_marker {
+                let decrypted: Vec<u8> = raw_bytes.iter().map(|&b| b ^ key).collect();
+                if decrypted.iter().all(|&c| (0x20..=0x7E).contains(&c) || c == b'\n' || c == b'\r' || c == b'\t') {
+                    if let Ok(s) = String::from_utf8(decrypted) {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Decodes raw binary Base64 without enforcing printable ASCII on decoded bytes.
+    pub fn decode_raw_base64_bytes(tok: &str) -> Option<Vec<u8>> {
+        let clean = tok.trim_end_matches('=');
+        if clean.len() < 12
+            || !clean.bytes().all(|b| {
+                b.is_ascii_alphanumeric() || b == b'+' || b == b'/' || b == b'-' || b == b'_'
+            })
+        {
+            return None;
+        }
+        let mut out = Vec::with_capacity((clean.len() * 3) / 4 + 1);
+        let mut buf = 0u32;
+        let mut bits = 0u8;
+        for b in clean.bytes() {
+            let val = match b {
+                b'A'..=b'Z' => b - b'A',
+                b'a'..=b'z' => b - b'a' + 26,
+                b'0'..=b'9' => b - b'0' + 52,
+                b'+' | b'-' => 62,
+                b'/' | b'_' => 63,
+                _ => return None,
+            } as u32;
+            buf = (buf << 6) | val;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push(((buf >> bits) & 0xFF) as u8);
+            }
+        }
+        if out.is_empty() {
+            None
+        } else {
+            Some(out)
+        }
+    }
+
+    #[inline]
+    pub fn compute_shannon_entropy(bytes: &[u8]) -> f64 {
+        if bytes.is_empty() {
+            return 0.0;
+        }
+        let mut counts = [0usize; 256];
+        for &b in bytes {
+            counts[b as usize] += 1;
+        }
+        let total = bytes.len() as f64;
+        let mut entropy = 0.0;
+        for &c in &counts {
+            if c > 0 {
+                let p = (c as f64) / total;
+                entropy -= p * p.log2();
+            }
+        }
+        entropy
+    }
+
+    /// Detects custom multi-round cipher payloads or un-decodable high-entropy ciphertext exfiltration.
+    pub fn detect_custom_multi_round_cipher_exfil(text: &str, is_external_sink: bool) -> bool {
+        let lower = text.to_ascii_lowercase();
+        let has_cipher_marker = lower.contains("cipher=")
+            || lower.contains("enc=")
+            || lower.contains("aes256:")
+            || lower.contains("chacha20:")
+            || lower.contains("ciphertext");
+
+        if !is_external_sink && !has_cipher_marker {
+            return false;
+        }
+
+        for raw_tok in text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';')) {
+            let tok = raw_tok.trim();
+            if tok.len() < 64 {
+                continue;
+            }
+
+            // 1. Raw string byte entropy
+            let raw_h = Self::compute_shannon_entropy(tok.as_bytes());
+            if raw_h >= 5.65 {
+                return true;
+            }
+
+            // 2. Hex decoded binary entropy
+            if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
+                if let Ok(bytes) = hex::decode(tok) {
+                    if bytes.len() >= 32 {
+                        let bin_h = Self::compute_shannon_entropy(&bytes);
+                        if bin_h >= 5.2 {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            // 3. Base64 decoded binary entropy
+            if let Some(bytes) = Self::decode_raw_base64_bytes(tok) {
+                if bytes.len() >= 32 {
+                    let bin_h = Self::compute_shannon_entropy(&bytes);
+                    if bin_h >= 5.2 {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Unwraps bounded depth ($\le 8$) URL `%XX`, Hex, Base64, ROT13, escape sequences,
+    /// delimiter-interleaved, NATO phonetic, ASCII code arrays, and single-byte XOR layers.
     pub fn unwrap_encoded_layers(input: &str) -> Vec<String> {
-        let mut layers = Vec::with_capacity(4);
+        let mut layers = Vec::with_capacity(16);
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(input.to_string());
         let mut frontier = vec![input.to_string()];
 
-        for _depth in 0..2 {
+        for _depth in 0..Self::MAX_UNWRAP_ENCODING_DEPTH {
             let mut next_frontier = Vec::new();
             for current in &frontier {
+                // 1. URL percent decode
                 if let Some(url_dec) = Self::decode_url_percent(current) {
-                    if !layers.contains(&url_dec) {
+                    if seen.insert(url_dec.clone()) {
                         layers.push(url_dec.clone());
                         next_frontier.push(url_dec);
                     }
                 }
+
+                // 2. Escape sequences (\xHH, \uHHHH)
+                if let Some(esc_dec) = Self::decode_escape_sequences(current) {
+                    if seen.insert(esc_dec.clone()) {
+                        layers.push(esc_dec.clone());
+                        next_frontier.push(esc_dec);
+                    }
+                }
+
+                // 3. ROT13
+                if let Some(rot_dec) = Self::decode_rot13(current) {
+                    if seen.insert(rot_dec.clone()) {
+                        layers.push(rot_dec.clone());
+                        next_frontier.push(rot_dec);
+                    }
+                }
+
+                // 4. Delimiter interleaved (e.g. A-K-I-A-..., zero-width)
+                if let Some(delim_dec) = Self::decode_delimiter_interleaved(current) {
+                    if seen.insert(delim_dec.clone()) {
+                        layers.push(delim_dec.clone());
+                        next_frontier.push(delim_dec);
+                    }
+                }
+
+                // 5. ASCII code array (e.g. [65, 75, 73, ...])
+                if let Some(ascii_dec) = Self::decode_ascii_code_array(current) {
+                    if seen.insert(ascii_dec.clone()) {
+                        layers.push(ascii_dec.clone());
+                        next_frontier.push(ascii_dec);
+                    }
+                }
+
+                // 6. NATO phonetic (e.g. alpha kilo india alpha...)
+                if let Some(nato_dec) = Self::decode_nato_phonetic_and_spelled(current) {
+                    if seen.insert(nato_dec.clone()) {
+                        layers.push(nato_dec.clone());
+                        next_frontier.push(nato_dec);
+                    }
+                }
+
+                // 7. Token-level Hex and Base64 (including single-byte XOR sweep)
                 for raw_tok in current.split(|c: char| {
                     c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':')
                 }) {
                     let tok = raw_tok.trim();
                     if tok.len() >= 16 && tok.len() <= 4096 {
-                        if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit())
-                        {
+                        if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
                             if let Ok(bytes) = hex::decode(tok) {
                                 if bytes.iter().all(|&c| (0x20..=0x7E).contains(&c)) {
-                                    if let Ok(s) = String::from_utf8(bytes) {
-                                        if !layers.contains(&s) {
+                                    if let Ok(s) = String::from_utf8(bytes.clone()) {
+                                        if seen.insert(s.clone()) {
                                             layers.push(s.clone());
                                             next_frontier.push(s);
                                         }
                                     }
+                                } else if let Some(xor_s) = Self::decode_single_byte_xor_candidates(&bytes) {
+                                    if seen.insert(xor_s.clone()) {
+                                        layers.push(xor_s.clone());
+                                        next_frontier.push(xor_s);
+                                    }
                                 }
                             }
-                        } else if let Some(b64_dec) = Self::decode_base64_token(tok) {
-                            if !layers.contains(&b64_dec) {
-                                layers.push(b64_dec.clone());
-                                next_frontier.push(b64_dec);
+                        } else {
+                            if let Some(b64_dec) = Self::decode_base64_token(tok) {
+                                if seen.insert(b64_dec.clone()) {
+                                    layers.push(b64_dec.clone());
+                                    next_frontier.push(b64_dec);
+                                }
+                            }
+                            if let Some(raw_b64) = Self::decode_raw_base64_bytes(tok) {
+                                if let Some(xor_s) = Self::decode_single_byte_xor_candidates(&raw_b64) {
+                                    if seen.insert(xor_s.clone()) {
+                                        layers.push(xor_s.clone());
+                                        next_frontier.push(xor_s);
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
-            if next_frontier.is_empty() {
+            if next_frontier.is_empty() || layers.len() >= 32 {
                 break;
             }
             frontier = next_frontier;
@@ -594,8 +1107,9 @@ impl OsoosiTwoTierDlpEngine {
         layers
     }
 
-    /// Linear-time $O(N)$ Tier-1 hot-path DLP scan (`< 50 us`), including depth $\le 2$
-    /// Base64, Hex, and URL `%XX` encoded layer unwrapping.
+    /// Linear-time $O(N)$ Tier-1 hot-path DLP scan (`< 50 us`), including depth $\le 8$
+    /// Base64, Hex, URL `%XX`, ROT13, escape sequences, delimiter-interleaving, NATO phonetic,
+    /// ASCII code array, single-byte XOR, and high-entropy custom cipher unwrapping.
     pub fn inspect_hot_tier1(
         &self,
         actor_process: &str,
@@ -611,9 +1125,46 @@ impl OsoosiTwoTierDlpEngine {
         let mut scratch = slice.to_vec();
         scratch.shrink_to_fit();
         let text = String::from_utf8_lossy(&scratch).into_owned();
+
+        // Respect trusted local developer/OS workflows when sink is local workspace
+        let sink_lower = destination_sink.to_ascii_lowercase();
+        let is_external_sink = sink_lower.starts_with("http://")
+            || sink_lower.starts_with("https://")
+            || sink_lower.contains("exfil")
+            || sink_lower.contains("webhook")
+            || sink_lower.contains("upload");
+
+        // High-entropy / custom multi-round cipher exfil detection
+        let is_cipher_exfil = Self::detect_custom_multi_round_cipher_exfil(&text, is_external_sink)
+            || (is_external_sink
+                && text
+                    .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';'))
+                    .any(|tok| {
+                        let trimmed = tok.trim();
+                        if trimmed.len() >= 32 {
+                            if let Ok(b) = hex::decode(trimmed) {
+                                if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
+                                    return true;
+                                }
+                            }
+                            if let Some(b) = Self::decode_raw_base64_bytes(trimmed) {
+                                if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    }));
+
+        if is_cipher_exfil
+            && !detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string())
+        {
+            detected_categories.push("CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string());
+        }
+
         let mut decoded_layers = Self::unwrap_encoded_layers(&text);
         let mut all_views = Vec::with_capacity(1 + decoded_layers.len());
-        all_views.push(text);
+        all_views.push(text.clone());
         for layer in &decoded_layers {
             for cj in self.crown_jewels.match_chunks(layer.as_bytes()) {
                 if !detected_categories.contains(&cj) {
@@ -622,6 +1173,14 @@ impl OsoosiTwoTierDlpEngine {
             }
             all_views.push(layer.clone());
         }
+
+        let nato_cand = Self::decode_nato_phonetic_and_spelled(&text);
+        let delim_cand = Self::decode_delimiter_interleaved(&text);
+        let ascii_cand = Self::decode_ascii_code_array(&text);
+
+        let initial_cat_count = detected_categories.len();
+        let mut hit_in_deep_layer = false;
+        let mut hit_via_semantic = false;
 
         // 1. O(N) prefix / credential marker scan (zero backtracking regexes)
         let secret_markers: &[(&str, &str)] = &[
@@ -641,7 +1200,8 @@ impl OsoosiTwoTierDlpEngine {
             ("OPENAI_API_KEY=", "ENV_OPENAI_SECRET"),
         ];
 
-        for view in &all_views {
+        for (idx, view) in all_views.iter().enumerate() {
+            let before_count = detected_categories.len();
             for &(prefix, category) in secret_markers {
                 if view.contains(prefix) && !detected_categories.contains(&category.to_string()) {
                     detected_categories.push(category.to_string());
@@ -686,6 +1246,53 @@ impl OsoosiTwoTierDlpEngine {
                     }
                 }
             }
+
+            let after_count = detected_categories.len();
+            if after_count > before_count {
+                if idx >= 3 {
+                    hit_in_deep_layer = true;
+                }
+                if let Some(ref s) = nato_cand {
+                    if view == s {
+                        hit_via_semantic = true;
+                    }
+                }
+                if let Some(ref s) = delim_cand {
+                    if view == s {
+                        hit_via_semantic = true;
+                    }
+                }
+                if let Some(ref s) = ascii_cand {
+                    if view == s {
+                        hit_via_semantic = true;
+                    }
+                }
+            }
+        }
+
+        if (decoded_layers.len() >= 3 && hit_in_deep_layer)
+            || (decoded_layers.len() >= 3
+                && detected_categories.len() > initial_cat_count
+                && !all_views[0].contains("AKIA")
+                && !all_views[0].contains("ASIA")
+                && !all_views[0].contains("ghp_")
+                && !all_views[0].contains("sk-"))
+        {
+            if !detected_categories.contains(&"DEEP_NESTED_ENCODING_EVASION".to_string()) {
+                detected_categories.push("DEEP_NESTED_ENCODING_EVASION".to_string());
+            }
+        }
+
+        if hit_via_semantic
+            || (detected_categories.len() > initial_cat_count
+                && (nato_cand.is_some() || delim_cand.is_some() || ascii_cand.is_some())
+                && !all_views[0].contains("AKIA")
+                && !all_views[0].contains("ASIA")
+                && !all_views[0].contains("ghp_"))
+        {
+            if !detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()) {
+                detected_categories.push("SEMANTIC_PARAPHRASE_EVASION".to_string());
+            }
         }
 
         for s in &mut all_views {
@@ -712,14 +1319,6 @@ impl OsoosiTwoTierDlpEngine {
         } else {
             0.0
         };
-
-        // Respect trusted local developer/OS workflows when sink is local workspace
-        let sink_lower = destination_sink.to_ascii_lowercase();
-        let is_external_sink = sink_lower.starts_with("http://")
-            || sink_lower.starts_with("https://")
-            || sink_lower.contains("exfil")
-            || sink_lower.contains("webhook")
-            || sink_lower.contains("upload");
 
         let allowed = detected_categories.is_empty()
             || (!is_external_sink
@@ -813,12 +1412,28 @@ impl PresidioGlinerPiiZeroGuard {
         let mut scrubbed = String::with_capacity(raw_text.len());
         let mut token_buf = String::with_capacity(64);
 
+        let has_obfuscated_secret = {
+            let unwrapped = OsoosiTwoTierDlpEngine::unwrap_encoded_layers(raw_text);
+            unwrapped.iter().any(|layer| {
+                layer.contains("AKIA")
+                    || layer.contains("ASIA")
+                    || layer.contains("ghp_")
+                    || layer.contains("github_pat_")
+                    || layer.contains("glpat-")
+                    || layer.contains("sk-proj-")
+                    || layer.contains("sk-live-")
+                    || layer.contains("xoxb-")
+                    || layer.contains("AIza")
+                    || layer.contains("-----BEGIN")
+            })
+        };
+
         let classify_and_redact =
             |tok: &mut String, out: &mut String, cats: &mut Vec<String>, count: &mut usize| {
                 if tok.is_empty() {
                     return;
                 }
-                let detected_type: Option<&'static str> =
+                let mut detected_type: Option<&'static str> =
                     if tok.starts_with("AKIA") || tok.starts_with("ASIA") {
                         Some("AWS_ACCESS_KEY")
                     } else if tok.starts_with("ghp_") || tok.starts_with("github_pat_") {
@@ -847,6 +1462,42 @@ impl PresidioGlinerPiiZeroGuard {
                             None
                         }
                     };
+
+                if detected_type.is_none() {
+                    // Check if token unwraps to a secret via depth-8 Base64, Hex, ROT13, XOR, etc.
+                    let tok_unwrapped = OsoosiTwoTierDlpEngine::unwrap_encoded_layers(tok);
+                    let is_obf = tok_unwrapped.iter().any(|u| {
+                        u.contains("AKIA")
+                            || u.contains("ASIA")
+                            || u.contains("ghp_")
+                            || u.contains("sk-proj-")
+                            || u.contains("sk-live-")
+                            || u.contains("xoxb-")
+                    });
+                    if is_obf {
+                        detected_type = Some("OBFUSCATED_SECRET");
+                    } else if has_obfuscated_secret {
+                        // In an obfuscated secret payload, redact constituent phonetic, code array, or delimiter tokens
+                        let lower = tok.to_ascii_lowercase();
+                        let clean = lower.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+                        let is_nato_word = matches!(
+                            clean,
+                            "alpha" | "alfa" | "bravo" | "charlie" | "delta" | "echo" | "foxtrot"
+                                | "golf" | "hotel" | "india" | "juliet" | "juliett" | "kilo"
+                                | "lima" | "mike" | "november" | "oscar" | "papa" | "quebec"
+                                | "romeo" | "sierra" | "tango" | "uniform" | "victor" | "whiskey"
+                                | "xray" | "x-ray" | "yankee" | "zulu" | "zero" | "one" | "two"
+                                | "three" | "four" | "five" | "six" | "seven" | "eight" | "nine"
+                                | "dash" | "hyphen" | "underscore"
+                        );
+                        let is_ascii_int = tok.parse::<u8>().map(|v| (32..=126).contains(&v)).unwrap_or(false);
+                        let is_delim_token = tok.len() >= 4 && (tok.contains('-') || tok.contains('.') || tok.contains('_'));
+
+                        if is_nato_word || is_ascii_int || is_delim_token {
+                            detected_type = Some("OBFUSCATED_SECRET");
+                        }
+                    }
+                }
 
                 if let Some(etype) = detected_type {
                     let tag = Self::compute_zk_pii_tag(etype, tok);
@@ -972,5 +1623,141 @@ impl PresidioGlinerPiiZeroGuard {
         }
 
         true
+    }
+}
+
+#[cfg(test)]
+mod tests_dlp_evasion {
+    use super::*;
+
+    #[test]
+    fn test_depth_5_nested_encoding_evasion() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let raw_secret = "AKIAIOSFODNN7EXAMPLE";
+
+        // Depth 1: Base64
+        let d1 = {
+            let mut out = String::new();
+            let b = raw_secret.as_bytes();
+            for chunk in b.chunks(3) {
+                let mut n = (chunk[0] as u32) << 16;
+                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
+                if chunk.len() > 2 { n |= chunk[2] as u32; }
+                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                out.push(B64[((n >> 18) & 63) as usize] as char);
+                out.push(B64[((n >> 12) & 63) as usize] as char);
+                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+            }
+            out
+        };
+
+        // Depth 2: Base64
+        let d2 = {
+            let mut out = String::new();
+            let b = d1.as_bytes();
+            for chunk in b.chunks(3) {
+                let mut n = (chunk[0] as u32) << 16;
+                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
+                if chunk.len() > 2 { n |= chunk[2] as u32; }
+                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                out.push(B64[((n >> 18) & 63) as usize] as char);
+                out.push(B64[((n >> 12) & 63) as usize] as char);
+                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+            }
+            out
+        };
+
+        // Depth 3: URL percent encode
+        let d3: String = d2.bytes().map(|b| format!("%{:02X}", b)).collect();
+
+        // Depth 4: Hex
+        let d4 = hex::encode(d3.as_bytes());
+
+        // Depth 5: Base64
+        let d5 = {
+            let mut out = String::new();
+            let b = d4.as_bytes();
+            for chunk in b.chunks(3) {
+                let mut n = (chunk[0] as u32) << 16;
+                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
+                if chunk.len() > 2 { n |= chunk[2] as u32; }
+                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                out.push(B64[((n >> 18) & 63) as usize] as char);
+                out.push(B64[((n >> 12) & 63) as usize] as char);
+                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+            }
+            out
+        };
+
+        let verdict = engine.inspect_hot_tier1("evil_agent.exe", "https://api.external.com/leak", d5.as_bytes());
+        assert!(!verdict.allowed, "Depth-5 encoded payload must be blocked!");
+        assert!(verdict.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict.detected_categories.contains(&"DEEP_NESTED_ENCODING_EVASION".to_string()));
+    }
+
+    #[test]
+    fn test_semantic_paraphrasing_evasion() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+
+        // 1. NATO phonetic spelled out AWS Key
+        let nato_payload = "alpha kilo india alpha india oscar sierra foxtrot oscar delta november november seven echo x-ray alpha mike papa lima echo";
+        let verdict_nato = engine.inspect_hot_tier1("agent", "https://api.external.com", nato_payload.as_bytes());
+        assert!(!verdict_nato.allowed, "NATO phonetic secret must be blocked!");
+        assert!(verdict_nato.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict_nato.detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
+
+        // 2. Delimiter interleaved
+        let delim_payload = "A-K-I-A-I-O-S-F-O-D-N-N-7-E-X-A-M-P-L-E";
+        let verdict_delim = engine.inspect_hot_tier1("agent", "https://api.external.com", delim_payload.as_bytes());
+        assert!(!verdict_delim.allowed, "Delimiter-interleaved secret must be blocked!");
+        assert!(verdict_delim.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict_delim.detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
+
+        // 3. ASCII decimal array
+        let ascii_payload = "[65, 75, 73, 65, 73, 79, 83, 70, 79, 68, 78, 78, 55, 69, 88, 65, 77, 80, 76, 69]";
+        let verdict_ascii = engine.inspect_hot_tier1("agent", "https://api.external.com", ascii_payload.as_bytes());
+        assert!(!verdict_ascii.allowed, "ASCII code array secret must be blocked!");
+        assert!(verdict_ascii.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict_ascii.detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
+    }
+
+    #[test]
+    fn test_crown_jewel_semantic_shingle_fingerprinting() {
+        let mut engine = OsoosiTwoTierDlpEngine::new();
+        let original_crown_jewel = b"SECRET_PROPRIETARY_TRADING_ALGORITHM_SIGNATURE_MATRIX_CONFIDENTIAL_ALPHA_BETA";
+        engine.crown_jewels.register_crown_jewel_bytes("PROPRIETARY_MODEL", original_crown_jewel);
+
+        // Paraphrased excerpt: reformatted with whitespace, commas, mixed casing, extra symbols
+        let reformatted_excerpt = b"Secret Proprietary Trading Algorithm, Signature Matrix: Confidential Alpha Beta!";
+        let verdict = engine.inspect_hot_tier1("agent", "https://api.external.com", reformatted_excerpt);
+        assert!(!verdict.allowed, "Reformatted semantic crown jewel excerpt must be blocked!");
+        assert!(verdict.detected_categories.iter().any(|c| c.contains("CROWN_JEWEL(PROPRIETARY_MODEL)")));
+    }
+
+    #[test]
+    fn test_custom_multi_round_cipher_and_xor_exfiltration() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+
+        // 1. Single byte XOR encrypted secret hex-encoded
+        let secret = b"AKIAIOSFODNN7EXAMPLE";
+        let xor_key = 0x5a_u8;
+        let xor_bytes: Vec<u8> = secret.iter().map(|&b| b ^ xor_key).collect();
+        let hex_payload = hex::encode(&xor_bytes);
+        let verdict_xor = engine.inspect_hot_tier1("agent", "https://paste.external.org/upload", hex_payload.as_bytes());
+        assert!(!verdict_xor.allowed, "Single-byte XOR secret exfiltration must be blocked!");
+        assert!(verdict_xor.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+
+        // 2. High-entropy unstructured custom cipher sent to external sink
+        let mut rng_bytes = [0u8; 96];
+        for (i, b) in rng_bytes.iter_mut().enumerate() {
+            *b = ((i * 137 + 43) % 256) as u8;
+        }
+        let high_entropy_hex = hex::encode(rng_bytes);
+        let verdict_cipher = engine.inspect_hot_tier1("agent", "https://paste.external.org/upload", high_entropy_hex.as_bytes());
+        assert!(!verdict_cipher.allowed, "High-entropy cipher exfiltration to external sink must be blocked!");
+        assert!(verdict_cipher.detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string()));
     }
 }

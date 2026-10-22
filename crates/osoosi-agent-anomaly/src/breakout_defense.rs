@@ -925,10 +925,110 @@ impl ZeroMutualInformationProjector {
         }
     }
 
+    /// Redacts NATO phonetic, delimiter-interleaved, or depth-8 encoded secrets with `<ZK_MI_REDACTED>`.
+    pub fn redact_covert_secrets(text: &str) -> (String, bool) {
+        let secret_markers = ["AKIA", "ASIA", "ghp_", "sk-proj-", "sk-live-"];
+        let mut had_redaction = false;
+        let mut result = text.to_string();
+
+        // 1. Check NATO phonetic sequences
+        if let Some(decoded_nato) = osoosi_dp::OsoosiTwoTierDlpEngine::decode_nato_phonetic_and_spelled(&result) {
+            if secret_markers.iter().any(|m| decoded_nato.contains(m)) || decoded_nato.len() >= 16 {
+                let words: Vec<&str> = result.split_whitespace().collect();
+                let mut start_idx = None;
+                let mut run_len = 0;
+                let mut max_start = None;
+                let mut max_len = 0;
+
+                for (i, &w) in words.iter().enumerate() {
+                    let lower = w.to_ascii_lowercase();
+                    let clean = lower.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
+                    let is_nato = matches!(
+                        clean,
+                        "alpha" | "alfa" | "bravo" | "charlie" | "delta" | "echo" | "foxtrot"
+                            | "golf" | "hotel" | "india" | "juliet" | "juliett" | "kilo"
+                            | "lima" | "mike" | "november" | "oscar" | "papa" | "quebec"
+                            | "romeo" | "sierra" | "tango" | "uniform" | "victor" | "whiskey"
+                            | "xray" | "x-ray" | "yankee" | "zulu" | "zero" | "one" | "two"
+                            | "three" | "four" | "five" | "six" | "seven" | "eight" | "nine"
+                            | "dash" | "hyphen" | "underscore"
+                    );
+                    if is_nato {
+                        if start_idx.is_none() {
+                            start_idx = Some(i);
+                        }
+                        run_len += 1;
+                    } else {
+                        if run_len >= 4 && run_len > max_len {
+                            max_start = start_idx;
+                            max_len = run_len;
+                        }
+                        start_idx = None;
+                        run_len = 0;
+                    }
+                }
+                if run_len >= 4 && run_len > max_len {
+                    max_start = start_idx;
+                    max_len = run_len;
+                }
+
+                if let Some(s) = max_start {
+                    let nato_slice = words[s..s + max_len].join(" ");
+                    result = result.replace(&nato_slice, "<ZK_MI_REDACTED>");
+                    had_redaction = true;
+                }
+            }
+        }
+
+        // 2. Check token-level secrets (encoded layers up to depth 8, delimiter-interleaved tokens, raw secrets)
+        let tokens: Vec<String> = result
+            .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | ':' | '='))
+            .filter(|s| !s.trim().is_empty())
+            .map(|s| s.trim().to_string())
+            .collect();
+
+        for tok in tokens {
+            if tok == "<ZK_MI_REDACTED>" {
+                continue;
+            }
+            let mut is_secret_bearing = false;
+
+            // Direct match
+            if secret_markers.iter().any(|m| tok.contains(m)) {
+                is_secret_bearing = true;
+            }
+
+            // Delimiter interleaved token match (e.g. A-K-I-A-..., s-k---p-r-o-j-..., etc.)
+            if !is_secret_bearing {
+                if let Some(delim_dec) = osoosi_dp::OsoosiTwoTierDlpEngine::decode_delimiter_interleaved(&tok) {
+                    if secret_markers.iter().any(|m| delim_dec.contains(m)) {
+                        is_secret_bearing = true;
+                    }
+                }
+            }
+
+            // Deep nested encoding layers match (up to depth 8)
+            if !is_secret_bearing && tok.len() >= 16 {
+                let layers = osoosi_dp::OsoosiTwoTierDlpEngine::unwrap_encoded_layers(&tok);
+                if layers.iter().any(|l| secret_markers.iter().any(|m| l.contains(m))) {
+                    is_secret_bearing = true;
+                }
+            }
+
+            if is_secret_bearing {
+                result = result.replace(&tok, "<ZK_MI_REDACTED>");
+                had_redaction = true;
+            }
+        }
+
+        (result, had_redaction)
+    }
+
     /// Applies the idempotent canonical projection $\Pi_0(\Pi_0(Y)) = \Pi_0(Y)$ to an outbound payload:
     /// 1. Strips zero-width Unicode steganography (`U+200B`..`U+200F`, `U+202A`..`U+202E`, `U+2060`..`U+2064`, `U+FEFF`).
     /// 2. Normalizes line-ending/trailing whitespace modulation.
     /// 3. If the payload is JSON, canonicalizes key ordering into deterministic compact form.
+    /// 4. Normalizes NATO phonetic, delimiter-interleaved, and depth-8 encoded secrets into `<ZK_MI_REDACTED>`.
     pub fn project_agent_output(&self, raw_output: &str, now_ms: u64) -> ZeroMiProjectionResult {
         let mut stripped_zero_width_chars = 0usize;
         let mut filtered = String::with_capacity(raw_output.len());
@@ -966,12 +1066,14 @@ impl ZeroMutualInformationProjector {
             (trimmed, false)
         };
 
+        let (final_output, secret_redacted) = Self::redact_covert_secrets(&canonical_output);
+
         let quantized_release_ms = self.quantize_release_time_ms(now_ms);
         let covert_channel_neutralized =
-            stripped_zero_width_chars > 0 || had_whitespace_modulation || json_reordered;
+            stripped_zero_width_chars > 0 || had_whitespace_modulation || json_reordered || secret_redacted;
 
         ZeroMiProjectionResult {
-            canonical_output,
+            canonical_output: final_output,
             quantized_release_ms,
             stripped_zero_width_chars,
             residual_mutual_information_bits: 0.0,
@@ -1071,5 +1173,72 @@ mod tests {
         assert_eq!(res_a.stripped_zero_width_chars, 2);
         assert_eq!(res_a.residual_mutual_information_bits, 0.0);
         assert!(res_a.covert_channel_neutralized);
+    }
+
+    #[test]
+    fn test_law8_deep_encoding_and_semantic_paraphrase_projection() {
+        let projector = ZeroMutualInformationProjector::new(100);
+
+        // 1. Steganographic channel with zero-width spaces
+        let stego_payload = "Agent status: normal\u{200B}\u{200C}\u{FEFF} execution.";
+        let res_stego = projector.project_agent_output(stego_payload, 1000);
+        assert_eq!(res_stego.residual_mutual_information_bits, 0.0);
+        assert!(res_stego.covert_channel_neutralized);
+        assert!(!res_stego.canonical_output.contains('\u{200B}'));
+
+        // 2. Delimiter-interleaved secret sequence
+        let delim_payload = "Agent credential: A-K-I-A-I-O-S-F-O-D-N-N-7-E-X-A-M-P-L-E authorized";
+        let res_delim = projector.project_agent_output(delim_payload, 1000);
+        assert_eq!(res_delim.residual_mutual_information_bits, 0.0);
+        assert!(res_delim.covert_channel_neutralized);
+        assert!(res_delim.canonical_output.contains("<ZK_MI_REDACTED>"));
+        assert!(!res_delim.canonical_output.contains("A-K-I-A"));
+
+        // 3. Deep-encoded secret (Hex of Base64 of Base64 of secret)
+        let raw_secret = "AKIAIOSFODNN7EXAMPLE";
+        let hex_s = hex::encode(raw_secret.as_bytes());
+        let b64_1 = {
+            let mut out = String::new();
+            let b = hex_s.as_bytes();
+            for chunk in b.chunks(3) {
+                let mut n = (chunk[0] as u32) << 16;
+                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
+                if chunk.len() > 2 { n |= chunk[2] as u32; }
+                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                out.push(B64[((n >> 18) & 63) as usize] as char);
+                out.push(B64[((n >> 12) & 63) as usize] as char);
+                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+            }
+            out
+        };
+        let b64_2 = {
+            let mut out = String::new();
+            let b = b64_1.as_bytes();
+            for chunk in b.chunks(3) {
+                let mut n = (chunk[0] as u32) << 16;
+                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
+                if chunk.len() > 2 { n |= chunk[2] as u32; }
+                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                out.push(B64[((n >> 18) & 63) as usize] as char);
+                out.push(B64[((n >> 12) & 63) as usize] as char);
+                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+            }
+            out
+        };
+
+        let encoded_payload = format!("Config token: {}", b64_2);
+        let res_enc = projector.project_agent_output(&encoded_payload, 1000);
+        assert_eq!(res_enc.residual_mutual_information_bits, 0.0);
+        assert!(res_enc.covert_channel_neutralized);
+        assert!(res_enc.canonical_output.contains("<ZK_MI_REDACTED>"));
+
+        // 4. NATO phonetic secret sequence
+        let nato_payload = "Key is alpha kilo india alpha india oscar sierra foxtrot oscar delta november november seven echo x-ray alpha mike papa lima echo confirmed";
+        let res_nato = projector.project_agent_output(nato_payload, 1000);
+        assert_eq!(res_nato.residual_mutual_information_bits, 0.0);
+        assert!(res_nato.covert_channel_neutralized);
+        assert!(res_nato.canonical_output.contains("<ZK_MI_REDACTED>"));
     }
 }

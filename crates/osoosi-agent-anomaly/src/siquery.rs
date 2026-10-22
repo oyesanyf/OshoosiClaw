@@ -999,6 +999,7 @@ impl SiqueryEngine {
                 "response_bytes": item.response_bytes,
                 "duration_ms": item.duration_ms,
                 "threat_score": threat_score,
+                "risk_score": threat_score,
                 "threat_tags": threat_tags,
                 "verdict": verdict,
                 "hash_blake3": digest,
@@ -4461,64 +4462,399 @@ impl SiqueryEngine {
         out
     }
 
-    /// Discovers Chrome, Edge, and Brave browser profiles (Default, Profile 1, etc.) across all users.
-    fn get_browser_profiles() -> Vec<(&'static str, String, std::path::PathBuf)> {
+    /// Copies a locked browser SQLite database (`History`, `places.sqlite`, `History.db`) along with
+    /// any active `-wal`, `-shm`, or `-journal` companion files so queries capture live open-browser traffic.
+    fn copy_sqlite_with_wal(src_db: &std::path::Path, temp_db: &std::path::Path) -> bool {
+        if std::fs::copy(src_db, temp_db).is_err() {
+            return false;
+        }
+        if let (Some(src_name), Some(temp_name)) = (
+            src_db.file_name().and_then(|n| n.to_str()),
+            temp_db.file_name().and_then(|n| n.to_str()),
+        ) {
+            for suffix in ["-wal", "-shm", "-journal"] {
+                let src_companion = src_db.with_file_name(format!("{}{}", src_name, suffix));
+                if src_companion.exists() {
+                    let temp_companion = temp_db.with_file_name(format!("{}{}", temp_name, suffix));
+                    let _ = std::fs::copy(&src_companion, &temp_companion);
+                }
+            }
+        }
+        true
+    }
+
+    fn cleanup_sqlite_temp(temp_db: &std::path::Path) {
+        let _ = std::fs::remove_file(temp_db);
+        if let Some(temp_name) = temp_db.file_name().and_then(|n| n.to_str()) {
+            for suffix in ["-wal", "-shm", "-journal"] {
+                let temp_companion = temp_db.with_file_name(format!("{}{}", temp_name, suffix));
+                let _ = std::fs::remove_file(temp_companion);
+            }
+        }
+    }
+
+    /// Discovers Chromium/Blink/WebView2 browser profiles across all users and dynamic locations.
+    fn get_browser_profiles() -> Vec<(String, String, std::path::PathBuf)> {
         let mut profiles = Vec::new();
+        let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         let user_dirs = Self::get_user_local_appdata_dirs();
 
-        for (_user, base_dir) in user_dirs {
-            let browser_roots: [(&'static str, std::path::PathBuf); 10] = [
-                // Windows paths (via local appdata)
-                ("Chrome", base_dir.join(r"Google\Chrome\User Data")),
-                ("Edge", base_dir.join(r"Microsoft\Edge\User Data")),
-                (
-                    "Brave",
-                    base_dir.join(r"BraveSoftware\Brave-Browser\User Data"),
-                ),
-                // Linux paths
-                ("Chrome", base_dir.join(".config/google-chrome")),
-                ("Chromium", base_dir.join(".config/chromium")),
-                (
-                    "Brave",
-                    base_dir.join(".config/BraveSoftware/Brave-Browser"),
-                ),
-                ("Edge", base_dir.join(".config/microsoft-edge")),
-                // macOS paths
-                (
-                    "Chrome",
-                    base_dir.join("Library/Application Support/Google/Chrome"),
-                ),
-                (
-                    "Brave",
-                    base_dir.join("Library/Application Support/BraveSoftware/Brave-Browser"),
-                ),
-                (
-                    "Edge",
-                    base_dir.join("Library/Application Support/Microsoft Edge"),
-                ),
-            ];
+        let mut register_chromium_user_data = |browser: &str, user_data_dir: &std::path::Path| {
+            if !user_data_dir.exists() || !user_data_dir.is_dir() {
+                return;
+            }
 
-            for (browser, user_data_dir) in browser_roots {
-                if !user_data_dir.exists() {
-                    continue;
+            // Direct profile (e.g. Opera stores History directly in user_data_dir or Default)
+            if user_data_dir.join("History").exists() {
+                let key = user_data_dir.to_string_lossy().to_ascii_lowercase();
+                if seen_dirs.insert(key) {
+                    profiles.push((browser.to_string(), "Default".to_string(), user_data_dir.to_path_buf()));
                 }
+            }
 
-                // Check Default profile
-                let default_dir = user_data_dir.join("Default");
-                if default_dir.exists() && default_dir.is_dir() {
-                    profiles.push((browser, "Default".to_string(), default_dir));
+            // Check Default profile
+            let default_dir = user_data_dir.join("Default");
+            if default_dir.exists() && default_dir.is_dir() {
+                let key = default_dir.to_string_lossy().to_ascii_lowercase();
+                if seen_dirs.insert(key) {
+                    profiles.push((browser.to_string(), "Default".to_string(), default_dir));
                 }
+            }
 
-                // Check numbered profiles (Profile 1, Profile 2, etc.)
-                if let Ok(entries) = std::fs::read_dir(&user_data_dir) {
-                    for entry in entries.filter_map(|e| e.ok()) {
-                        let file_name = entry.file_name().to_string_lossy().to_string();
-                        if (file_name.starts_with("Profile ") || file_name.starts_with("profile "))
-                            && entry.path().is_dir()
-                        {
-                            profiles.push((browser, file_name, entry.path()));
+            // Check numbered and named profiles (Profile 1, Profile 2, Guest Profile, etc.)
+            if let Ok(entries) = std::fs::read_dir(user_data_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let p = entry.path();
+                    if !p.is_dir() {
+                        continue;
+                    }
+                    let file_name = entry.file_name().to_string_lossy().to_string();
+                    if file_name.starts_with("Profile ")
+                        || file_name.starts_with("profile ")
+                        || file_name.starts_with("Profile_")
+                        || file_name.eq_ignore_ascii_case("Guest Profile")
+                        || file_name.eq_ignore_ascii_case("System Profile")
+                    {
+                        let key = p.to_string_lossy().to_ascii_lowercase();
+                        if seen_dirs.insert(key) {
+                            profiles.push((browser.to_string(), file_name, p));
                         }
                     }
+                }
+            }
+        };
+
+        for (_user, base_dir) in &user_dirs {
+            let roaming_dir = base_dir.parent().map(|p| p.join("Roaming"));
+
+            // 1. Static known Chromium-family paths on Windows (base_dir is AppData\Local)
+            let known_windows_local = [
+                ("Chrome", base_dir.join(r"Google\Chrome\User Data")),
+                ("Chrome Beta", base_dir.join(r"Google\Chrome Beta\User Data")),
+                ("Chrome Dev", base_dir.join(r"Google\Chrome Dev\User Data")),
+                ("Chrome Canary", base_dir.join(r"Google\Chrome SxS\User Data")),
+                ("Chromium", base_dir.join(r"Chromium\User Data")),
+                ("Chromium", base_dir.join(r"ungoogled-chromium\User Data")),
+                ("Thorium", base_dir.join(r"Thorium\User Data")),
+                ("Edge", base_dir.join(r"Microsoft\Edge\User Data")),
+                ("Edge Beta", base_dir.join(r"Microsoft\Edge Beta\User Data")),
+                ("Edge Dev", base_dir.join(r"Microsoft\Edge Dev\User Data")),
+                ("Edge Canary", base_dir.join(r"Microsoft\Edge SxS\User Data")),
+                ("WebView2", base_dir.join(r"Microsoft\EdgeWebView\User Data")),
+                ("Brave", base_dir.join(r"BraveSoftware\Brave-Browser\User Data")),
+                ("Brave Beta", base_dir.join(r"BraveSoftware\Brave-Browser-Beta\User Data")),
+                ("Brave Nightly", base_dir.join(r"BraveSoftware\Brave-Browser-Nightly\User Data")),
+                ("Vivaldi", base_dir.join(r"Vivaldi\User Data")),
+                ("Arc", base_dir.join(r"Arc\User Data")),
+                ("Comet", base_dir.join(r"Comet\User Data")),
+                ("Comet", base_dir.join(r"Perplexity\Comet\User Data")),
+                ("DuckDuckGo", base_dir.join(r"DuckDuckGo\User Data")),
+                ("Yandex", base_dir.join(r"Yandex\YandexBrowser\User Data")),
+                ("Whale", base_dir.join(r"Naver\Naver Whale\User Data")),
+                ("Opera", base_dir.join(r"Opera Software\Opera Stable")),
+                ("Opera GX", base_dir.join(r"Opera Software\Opera GX Stable")),
+                ("CentBrowser", base_dir.join(r"CentBrowser\User Data")),
+                ("Maxthon", base_dir.join(r"Maxthon\User Data")),
+                ("Epic", base_dir.join(r"Epic Privacy Browser\User Data")),
+                ("Avast", base_dir.join(r"AVAST Software\Browser\User Data")),
+                ("AVG", base_dir.join(r"AVG\Browser\User Data")),
+                ("CCleaner", base_dir.join(r"CCleaner Browser\User Data")),
+                ("Sidekick", base_dir.join(r"Sidekick\User Data")),
+                ("Wavebox", base_dir.join(r"WaveboxApp\User Data")),
+                ("Island", base_dir.join(r"Island\User Data")),
+                ("Slimjet", base_dir.join(r"Slimjet\User Data")),
+                ("Iron", base_dir.join(r"SRWare Iron\User Data")),
+            ];
+
+            for (browser, path) in known_windows_local {
+                register_chromium_user_data(browser, &path);
+            }
+
+            // Roaming paths (Opera and others)
+            if let Some(ref roaming) = roaming_dir {
+                let known_windows_roaming = [
+                    ("Opera", roaming.join(r"Opera Software\Opera Stable")),
+                    ("Opera GX", roaming.join(r"Opera Software\Opera GX Stable")),
+                    ("Opera Next", roaming.join(r"Opera Software\Opera Next")),
+                ];
+                for (browser, path) in known_windows_roaming {
+                    register_chromium_user_data(browser, &path);
+                }
+            }
+
+            // Linux paths (.config/*)
+            let known_linux = [
+                ("Chrome", base_dir.join(".config/google-chrome")),
+                ("Chrome Beta", base_dir.join(".config/google-chrome-beta")),
+                ("Chromium", base_dir.join(".config/chromium")),
+                ("Thorium", base_dir.join(".config/thorium")),
+                ("Brave", base_dir.join(".config/BraveSoftware/Brave-Browser")),
+                ("Edge", base_dir.join(".config/microsoft-edge")),
+                ("Vivaldi", base_dir.join(".config/vivaldi")),
+                ("Opera", base_dir.join(".config/opera")),
+                ("Yandex", base_dir.join(".config/yandex-browser")),
+                ("Sidekick", base_dir.join(".config/sidekick")),
+            ];
+            for (browser, path) in known_linux {
+                register_chromium_user_data(browser, &path);
+            }
+
+            // macOS paths (Library/Application Support/*)
+            let known_macos = [
+                ("Chrome", base_dir.join("Library/Application Support/Google/Chrome")),
+                ("Brave", base_dir.join("Library/Application Support/BraveSoftware/Brave-Browser")),
+                ("Edge", base_dir.join("Library/Application Support/Microsoft Edge")),
+                ("Vivaldi", base_dir.join("Library/Application Support/Vivaldi")),
+                ("Arc", base_dir.join("Library/Application Support/Arc/User Data")),
+                ("Opera", base_dir.join("Library/Application Support/com.operasoftware.Opera")),
+            ];
+            for (browser, path) in known_macos {
+                register_chromium_user_data(browser, &path);
+            }
+
+            // Dynamic Universal Chromium / UWP / Electron Browser Discovery
+            let scan_roots: Vec<std::path::PathBuf> = {
+                let mut v = vec![base_dir.clone()];
+                if let Some(ref r) = roaming_dir {
+                    v.push(r.clone());
+                }
+                let cfg = base_dir.join(".config");
+                if cfg.is_dir() {
+                    v.push(cfg);
+                }
+                v
+            };
+
+            for root in scan_roots {
+                if let Ok(entries) = std::fs::read_dir(&root) {
+                    for entry1 in entries.filter_map(|e| e.ok()) {
+                        let path1 = entry1.path();
+                        if !path1.is_dir() {
+                            continue;
+                        }
+                        let name1 = entry1.file_name().to_string_lossy().to_string();
+
+                        // Check <vendor_or_app>/User Data
+                        let ud1 = path1.join("User Data");
+                        if ud1.is_dir() {
+                            let browser = if name1.eq_ignore_ascii_case("User Data") || name1.eq_ignore_ascii_case("Browser") {
+                                "Chromium"
+                            } else {
+                                &name1
+                            };
+                            register_chromium_user_data(browser, &ud1);
+                        }
+
+                        // Check <vendor>/<app>/User Data (depth 2)
+                        if let Ok(entries2) = std::fs::read_dir(&path1) {
+                            for entry2 in entries2.filter_map(|e| e.ok()) {
+                                let path2 = entry2.path();
+                                if !path2.is_dir() {
+                                    continue;
+                                }
+                                let name2 = entry2.file_name().to_string_lossy().to_string();
+                                let ud2 = path2.join("User Data");
+                                if ud2.is_dir() {
+                                    let browser = if name2.eq_ignore_ascii_case("User Data") || name2.eq_ignore_ascii_case("Browser") {
+                                        &name1
+                                    } else {
+                                        &name2
+                                    };
+                                    register_chromium_user_data(browser, &ud2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Microsoft Store / UWP packages under AppData\Local\Packages
+            let packages_dir = base_dir.join("Packages");
+            if packages_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
+                    for pkg in entries.filter_map(|e| e.ok()) {
+                        let local_cache = pkg.path().join("LocalCache").join("Local");
+                        if local_cache.is_dir() {
+                            if let Ok(lc_entries) = std::fs::read_dir(&local_cache) {
+                                for entry1 in lc_entries.filter_map(|e| e.ok()) {
+                                    let path1 = entry1.path();
+                                    if !path1.is_dir() {
+                                        continue;
+                                    }
+                                    let name1 = entry1.file_name().to_string_lossy().to_string();
+                                    let ud1 = path1.join("User Data");
+                                    if ud1.is_dir() {
+                                        register_chromium_user_data(&name1, &ud1);
+                                    }
+                                    if let Ok(entries2) = std::fs::read_dir(&path1) {
+                                        for entry2 in entries2.filter_map(|e| e.ok()) {
+                                            let path2 = entry2.path();
+                                            if !path2.is_dir() {
+                                                continue;
+                                            }
+                                            let name2 = entry2.file_name().to_string_lossy().to_string();
+                                            let ud2 = path2.join("User Data");
+                                            if ud2.is_dir() {
+                                                let browser = if name2.eq_ignore_ascii_case("User Data") || name2.eq_ignore_ascii_case("Browser") {
+                                                    &name1
+                                                } else {
+                                                    &name2
+                                                };
+                                                register_chromium_user_data(browser, &ud2);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        profiles
+    }
+
+    /// Discovers all Firefox / Gecko / Goanna browser profiles containing `places.sqlite`
+    /// across all user directories (Firefox, Zen, LibreWolf, Waterfox, Floorp, Pale Moon, Tor, etc.).
+    fn get_gecko_firefox_profiles() -> Vec<(String, String, std::path::PathBuf)> {
+        let mut profiles = Vec::new();
+        let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let user_dirs = Self::get_user_local_appdata_dirs();
+
+        let mut register_gecko_profiles_dir = |browser: &str, profiles_container: &std::path::Path| {
+            if !profiles_container.exists() || !profiles_container.is_dir() {
+                return;
+            }
+
+            // Check if profiles_container itself contains places.sqlite
+            if profiles_container.join("places.sqlite").exists() {
+                let key = profiles_container.to_string_lossy().to_ascii_lowercase();
+                if seen_dirs.insert(key) {
+                    let pname = profiles_container
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Default")
+                        .to_string();
+                    profiles.push((browser.to_string(), pname, profiles_container.to_path_buf()));
+                }
+            }
+
+            // Check subdirectories for places.sqlite
+            if let Ok(entries) = std::fs::read_dir(profiles_container) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let p = entry.path();
+                    if p.is_dir() && p.join("places.sqlite").exists() {
+                        let key = p.to_string_lossy().to_ascii_lowercase();
+                        if seen_dirs.insert(key) {
+                            let pname = entry.file_name().to_string_lossy().to_string();
+                            profiles.push((browser.to_string(), pname, p));
+                        }
+                    }
+                }
+            }
+        };
+
+        for (_user, base_dir) in &user_dirs {
+            let roaming_dir = base_dir.parent().map(|p| p.join("Roaming"));
+
+            // 1. Known Gecko roots under Roaming on Windows
+            if let Some(ref roaming) = roaming_dir {
+                let known_gecko_roaming = [
+                    ("Firefox", roaming.join(r"Mozilla\Firefox\Profiles")),
+                    ("Zen", roaming.join(r"Zen\Profiles")),
+                    ("Zen", roaming.join(r"zen\Profiles")),
+                    ("LibreWolf", roaming.join(r"librewolf\Profiles")),
+                    ("LibreWolf", roaming.join(r"LibreWolf\Profiles")),
+                    ("Waterfox", roaming.join(r"Waterfox\Profiles")),
+                    ("Floorp", roaming.join(r"Floorp\Profiles")),
+                    ("Floorp", roaming.join(r"Ablaze\Floorp\Profiles")),
+                    ("PaleMoon", roaming.join(r"Moonchild Productions\Pale Moon\Profiles")),
+                    ("Basilisk", roaming.join(r"Moonchild Productions\Basilisk\Profiles")),
+                    ("Mullvad", roaming.join(r"Mullvad\MullvadBrowser\Profiles")),
+                    ("SeaMonkey", roaming.join(r"Mozilla\SeaMonkey\Profiles")),
+                ];
+                for (browser, path) in known_gecko_roaming {
+                    register_gecko_profiles_dir(browser, &path);
+                }
+
+                // Dynamic Gecko Scanner: Roaming\*\Profiles and Roaming\*\*\Profiles
+                if let Ok(entries1) = std::fs::read_dir(roaming) {
+                    for entry1 in entries1.filter_map(|e| e.ok()) {
+                        let path1 = entry1.path();
+                        if !path1.is_dir() {
+                            continue;
+                        }
+                        let name1 = entry1.file_name().to_string_lossy().to_string();
+
+                        // Check <vendor_or_app>\Profiles
+                        let prof1 = path1.join("Profiles");
+                        if prof1.is_dir() {
+                            register_gecko_profiles_dir(&name1, &prof1);
+                        }
+
+                        // Check <vendor>\<app>\Profiles (depth 2)
+                        if let Ok(entries2) = std::fs::read_dir(&path1) {
+                            for entry2 in entries2.filter_map(|e| e.ok()) {
+                                let path2 = entry2.path();
+                                if !path2.is_dir() {
+                                    continue;
+                                }
+                                let name2 = entry2.file_name().to_string_lossy().to_string();
+                                let prof2 = path2.join("Profiles");
+                                if prof2.is_dir() {
+                                    let bname = if name2.eq_ignore_ascii_case("Profiles") { &name1 } else { &name2 };
+                                    register_gecko_profiles_dir(bname, &prof2);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Linux & macOS Gecko paths
+            let known_unix_gecko = [
+                ("Firefox", base_dir.join(".mozilla/firefox")),
+                ("Firefox", base_dir.join("Library/Application Support/Firefox/Profiles")),
+                ("Zen", base_dir.join(".zen")),
+                ("LibreWolf", base_dir.join(".librewolf")),
+                ("Waterfox", base_dir.join(".waterfox")),
+                ("Floorp", base_dir.join(".floorp")),
+                ("PaleMoon", base_dir.join(".moonchild productions/pale moon")),
+            ];
+            for (browser, path) in known_unix_gecko {
+                register_gecko_profiles_dir(browser, &path);
+            }
+
+            // 3. Tor Browser locations under user profile root
+            if let Some(user_root) = base_dir.parent().and_then(|p| p.parent()) {
+                let tor_candidates = [
+                    user_root.join(r"Desktop\Tor Browser\Browser\TorBrowser\Data\Browser"),
+                    user_root.join(r"Downloads\Tor Browser\Browser\TorBrowser\Data\Browser"),
+                    base_dir.join(r"Tor Browser\Browser\TorBrowser\Data\Browser"),
+                ];
+                for tor_path in tor_candidates {
+                    register_gecko_profiles_dir("Tor Browser", &tor_path);
                 }
             }
         }
@@ -4715,6 +5051,7 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO browser_history (browser, profile, url, title, visit_count, last_visit_time, threat_score, verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
+        // 1. Chromium profiles (History database)
         let profiles = Self::get_browser_profiles();
         for (browser, profile_name, profile_dir) in profiles {
             let history_file = profile_dir.join("History");
@@ -4723,13 +5060,13 @@ impl SiqueryEngine {
             }
             let temp_name = format!(
                 "osoosi_hist_{}_{}_{}.db",
-                browser,
+                browser.replace(' ', "_"),
                 profile_name.replace(' ', "_"),
                 uuid::Uuid::new_v4()
             );
             let temp_path = std::env::temp_dir().join(temp_name);
 
-            if std::fs::copy(&history_file, &temp_path).is_ok() {
+            if Self::copy_sqlite_with_wal(&history_file, &temp_path) {
                 if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
                     &temp_path,
                     rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -4760,9 +5097,60 @@ impl SiqueryEngine {
                         }
                     }
                 }
-                let _ = std::fs::remove_file(&temp_path);
+                Self::cleanup_sqlite_temp(&temp_path);
             }
         }
+
+        // 2. Gecko/Firefox profiles (places.sqlite database)
+        let gecko_profiles = Self::get_gecko_firefox_profiles();
+        for (browser, profile_name, profile_dir) in gecko_profiles {
+            let places_file = profile_dir.join("places.sqlite");
+            if !places_file.exists() {
+                continue;
+            }
+            let temp_name = format!(
+                "osoosi_hist_gecko_{}_{}_{}.db",
+                browser.replace(' ', "_"),
+                profile_name.replace(' ', "_"),
+                uuid::Uuid::new_v4()
+            );
+            let temp_path = std::env::temp_dir().join(temp_name);
+
+            if Self::copy_sqlite_with_wal(&places_file, &temp_path) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    &temp_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
+                    if let Ok(mut src_stmt) = src_conn.prepare("SELECT url, COALESCE(title, ''), COALESCE(visit_count, 0), CASE WHEN last_visit_date IS NOT NULL AND last_visit_date > 0 THEN datetime(last_visit_date / 1000000, 'unixepoch') ELSE '' END FROM moz_places WHERE url LIKE 'http%' ORDER BY COALESCE(last_visit_date, 0) DESC, id DESC LIMIT 100;") {
+                        if let Ok(rows) = src_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, i64>(2).unwrap_or(0),
+                                row.get::<_, String>(3).unwrap_or_default(),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (url, title, visit_count, last_visit) = r;
+                                let (score, verdict) = Self::score_url_risk(&url);
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    browser,
+                                    profile_name,
+                                    url,
+                                    title,
+                                    visit_count,
+                                    last_visit,
+                                    score,
+                                    verdict
+                                ]);
+                            }
+                        }
+                    }
+                }
+                Self::cleanup_sqlite_temp(&temp_path);
+            }
+        }
+
         Ok(())
     }
 
@@ -4772,6 +5160,7 @@ impl SiqueryEngine {
             .prepare_cached("INSERT INTO browser_downloads (browser, profile, target_path, tab_url, mime_type, total_bytes, start_time, danger_type, verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
+        // 1. Chromium downloads (History database)
         let profiles = Self::get_browser_profiles();
         for (browser, profile_name, profile_dir) in profiles {
             let history_file = profile_dir.join("History");
@@ -4780,13 +5169,13 @@ impl SiqueryEngine {
             }
             let temp_name = format!(
                 "osoosi_dl_{}_{}_{}.db",
-                browser,
+                browser.replace(' ', "_"),
                 profile_name.replace(' ', "_"),
                 uuid::Uuid::new_v4()
             );
             let temp_path = std::env::temp_dir().join(temp_name);
 
-            if std::fs::copy(&history_file, &temp_path).is_ok() {
+            if Self::copy_sqlite_with_wal(&history_file, &temp_path) {
                 if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
                     &temp_path,
                     rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -4830,9 +5219,65 @@ impl SiqueryEngine {
                         }
                     }
                 }
-                let _ = std::fs::remove_file(&temp_path);
+                Self::cleanup_sqlite_temp(&temp_path);
             }
         }
+
+        // 2. Gecko/Firefox downloads (places.sqlite database via moz_annos)
+        let gecko_profiles = Self::get_gecko_firefox_profiles();
+        for (browser, profile_name, profile_dir) in gecko_profiles {
+            let places_file = profile_dir.join("places.sqlite");
+            if !places_file.exists() {
+                continue;
+            }
+            let temp_name = format!(
+                "osoosi_dl_gecko_{}_{}_{}.db",
+                browser.replace(' ', "_"),
+                profile_name.replace(' ', "_"),
+                uuid::Uuid::new_v4()
+            );
+            let temp_path = std::env::temp_dir().join(temp_name);
+
+            if Self::copy_sqlite_with_wal(&places_file, &temp_path) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    &temp_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
+                    if let Ok(mut dl_stmt) = src_conn.prepare("SELECT p.url, COALESCE(p.title, ''), CASE WHEN a.dateAdded IS NOT NULL AND a.dateAdded > 0 THEN datetime(a.dateAdded / 1000000, 'unixepoch') ELSE '' END FROM moz_annos a JOIN moz_places p ON a.place_id = p.id WHERE p.url LIKE 'http%' ORDER BY a.dateAdded DESC LIMIT 50;") {
+                        if let Ok(rows) = dl_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, String>(2).unwrap_or_default(),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (tab_url, title, start_time) = r;
+                                let target_path = title.clone();
+                                let target_lower = target_path.to_ascii_lowercase();
+                                let is_executable = [".exe", ".msi", ".dll", ".ps1", ".bat", ".vbs", ".cmd", ".hta", ".iso", ".scr"]
+                                    .iter()
+                                    .any(|ext| target_lower.ends_with(ext));
+                                let verdict = if is_executable { "suspicious" } else { "clean" };
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    browser,
+                                    profile_name,
+                                    target_path,
+                                    tab_url,
+                                    "application/octet-stream",
+                                    0i64,
+                                    start_time,
+                                    0i64,
+                                    verdict
+                                ]);
+                            }
+                        }
+                    }
+                }
+                Self::cleanup_sqlite_temp(&temp_path);
+            }
+        }
+
         Ok(())
     }
 
@@ -4982,15 +5427,15 @@ impl SiqueryEngine {
             }
         }
 
-        // 2c. Discover recent browser history entries from local profiles (Chrome, Edge, Brave)
+        // 2c. Discover recent browser history entries from local profiles (Chrome, Edge, Brave, etc.)
         for (browser, _profile_name, profile_dir) in Self::get_browser_profiles() {
             let history_file = profile_dir.join("History");
             if !history_file.exists() {
                 continue;
             }
-            let temp_name = format!("osoosi_har_hist_{}_{}.db", browser, uuid::Uuid::new_v4());
+            let temp_name = format!("osoosi_har_hist_{}_{}.db", browser.replace(' ', "_"), uuid::Uuid::new_v4());
             let temp_path = std::env::temp_dir().join(temp_name);
-            if std::fs::copy(&history_file, &temp_path).is_ok() {
+            if Self::copy_sqlite_with_wal(&history_file, &temp_path) {
                 if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
                     &temp_path,
                     rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
@@ -5099,14 +5544,137 @@ impl SiqueryEngine {
                         }
                     }
                 }
-                let _ = std::fs::remove_file(&temp_path);
+                Self::cleanup_sqlite_temp(&temp_path);
             }
         }
 
-        // 2d. Ingest active web socket connections on port 80, 443, 8080, 8443, 3000, 3030, 5000, 11434
+        // 2c (cont). Discover recent browser history & downloads from Gecko/Firefox profiles
+        for (browser, _profile_name, profile_dir) in Self::get_gecko_firefox_profiles() {
+            let places_file = profile_dir.join("places.sqlite");
+            if !places_file.exists() {
+                continue;
+            }
+            let temp_name = format!("osoosi_har_gecko_{}_{}.db", browser.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_path = std::env::temp_dir().join(temp_name);
+            if Self::copy_sqlite_with_wal(&places_file, &temp_path) {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                    &temp_path,
+                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                ) {
+                    if let Ok(mut src_stmt) = src_conn.prepare("SELECT url, COALESCE(title, ''), COALESCE(visit_count, 0), CASE WHEN last_visit_date IS NOT NULL AND last_visit_date > 0 THEN datetime(last_visit_date / 1000000, 'unixepoch') ELSE '' END FROM moz_places WHERE url LIKE 'http%' ORDER BY COALESCE(last_visit_date, 0) DESC, id DESC LIMIT 50;") {
+                        if let Ok(rows) = src_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, i64>(2).unwrap_or(0),
+                                row.get::<_, String>(3).unwrap_or_default(),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (url, _title, _vc, last_visit) = r;
+                                if url.is_empty() {
+                                    continue;
+                                }
+                                let (score, verdict) = Self::score_url_risk(&url);
+                                let host = if let Ok(parsed) = url::Url::parse(&url) {
+                                    parsed.host_str().unwrap_or("").to_string()
+                                } else {
+                                    url.split("://").nth(1).unwrap_or(&url).split('/').next().unwrap_or("").split(':').next().unwrap_or("").to_string()
+                                };
+                                let started_at = if last_visit.is_empty() {
+                                    chrono::Utc::now().to_rfc3339()
+                                } else {
+                                    last_visit
+                                };
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    format!("browser_history:{}", browser.to_ascii_lowercase()),
+                                    started_at,
+                                    "GET",
+                                    url,
+                                    host,
+                                    200i64,
+                                    "text/html",
+                                    "",
+                                    512i64,
+                                    2048i64,
+                                    25.0f64,
+                                    score,
+                                    if score > 0.0 { "SUSPICIOUS_URL" } else { "" },
+                                    verdict,
+                                ]);
+                                count += 1;
+                            }
+                        }
+                    }
+
+                    // Ingest downloads from moz_annos
+                    if let Ok(mut dl_stmt) = src_conn.prepare("SELECT p.url, COALESCE(p.title, ''), CASE WHEN a.dateAdded IS NOT NULL AND a.dateAdded > 0 THEN datetime(a.dateAdded / 1000000, 'unixepoch') ELSE '' END FROM moz_annos a JOIN moz_places p ON a.place_id = p.id WHERE p.url LIKE 'http%' ORDER BY a.dateAdded DESC LIMIT 20;") {
+                        if let Ok(rows) = dl_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, String>(2).unwrap_or_default(),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (tab_url, _title, start_time) = r;
+                                if tab_url.is_empty() {
+                                    continue;
+                                }
+                                let host = if let Ok(parsed) = url::Url::parse(&tab_url) {
+                                    parsed.host_str().unwrap_or("").to_string()
+                                } else {
+                                    tab_url.split("://").nth(1).unwrap_or(&tab_url).split('/').next().unwrap_or("").split(':').next().unwrap_or("").to_string()
+                                };
+                                let (score, verdict) = Self::score_url_risk(&tab_url);
+                                let started_at = if start_time.is_empty() {
+                                    chrono::Utc::now().to_rfc3339()
+                                } else {
+                                    start_time
+                                };
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    format!("browser_download:{}", browser.to_ascii_lowercase()),
+                                    started_at,
+                                    "GET",
+                                    tab_url,
+                                    host,
+                                    200i64,
+                                    "application/octet-stream",
+                                    "",
+                                    0i64,
+                                    0i64,
+                                    10.0f64,
+                                    score,
+                                    if score > 0.0 { "SUSPICIOUS_DOWNLOAD" } else { "" },
+                                    verdict,
+                                ]);
+                                count += 1;
+                            }
+                        }
+                    }
+                }
+                Self::cleanup_sqlite_temp(&temp_path);
+            }
+        }
+
+        // 2d. Ingest active web socket connections on port 80, 443, 8000, 8080, 8443, 8888, 3000, 3030, 5000, 5173, 9000, 11434
+        // or ANY remote connection for active browser processes.
         #[cfg(target_os = "windows")]
         {
             use std::collections::HashMap;
+
+            fn is_browser_process_name(pname: &str) -> bool {
+                let lower = pname.to_ascii_lowercase();
+                let browser_keywords = [
+                    "chrome", "msedge", "brave", "firefox", "opera", "vivaldi", "arc", "comet",
+                    "zen", "waterfox", "librewolf", "floorp", "palemoon", "basilisk", "seamonkey",
+                    "tor", "mullvad", "duckduckgo", "yandex", "whale", "thorium", "chromium",
+                    "maxthon", "centbrowser", "epic", "avastbrowser", "avgbrowser", "ccleanerbrowser",
+                    "sidekick", "wavebox", "island", "slimjet", "iron", "falkon", "safari",
+                    "msedgewebview2", "webview2",
+                ];
+                browser_keywords.iter().any(|k| lower.contains(k))
+            }
 
             // 1. Lightweight DNS cache lookup map (IP -> domain)
             let mut dns_map: HashMap<String, String> = HashMap::new();
@@ -5149,24 +5717,31 @@ impl SiqueryEngine {
                 proc_map.insert(pid.as_u32(), format!("{}", process.name()));
             }
 
-            let candidate_ports = [80, 443, 8080, 8443, 3000, 3030, 5000, 11434];
+            let candidate_ports = [80, 443, 8000, 8080, 8443, 8888, 3000, 3030, 5000, 5173, 9000, 11434];
+
+            // Ingest IPv4 TCP sockets
             let tcp4 = get_tcp_ipv4_table();
             for row in tcp4 {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
                 let local_port = u16::from_be(row.dwLocalPort as u16);
+                let proc_name = proc_map.get(&(row.dwOwningPid as u32));
+                let is_browser = proc_name.map(|pn| is_browser_process_name(pn)).unwrap_or(false);
+
                 let web_port = if candidate_ports.contains(&remote_port) {
                     remote_port
                 } else if candidate_ports.contains(&local_port) {
                     local_port
+                } else if is_browser && remote_port > 0 {
+                    remote_port
                 } else {
                     continue;
                 };
+
                 let remote_ip = Ipv4Addr::from(u32::from_be(row.dwRemoteAddr)).to_string();
                 if remote_ip == "0.0.0.0" {
                     continue;
                 }
                 let host = dns_map.get(&remote_ip).cloned().unwrap_or_else(|| remote_ip.clone());
-                let proc_name = proc_map.get(&(row.dwOwningPid as u32));
                 let source_file = match proc_name {
                     Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
                     _ => "active_socket:tcp".to_string(),
@@ -5177,6 +5752,65 @@ impl SiqueryEngine {
                 // For local loopback 127.0.0.1:3030 or 127.0.0.1:11434 on active local sockets,
                 // keep score 0.0 / "benign" unless path has suspicious tokens.
                 if (remote_ip == "127.0.0.1" || host == "localhost") && (web_port == 3030 || web_port == 11434 || web_port == 3000 || web_port == 5000) {
+                    score = 0.0;
+                    verdict = "benign";
+                }
+                let threat_tags = if score > 0.0 { "SUSPICIOUS_SOCKET" } else { "" };
+                let _ = insert_stmt.execute(rusqlite::params![
+                    source_file,
+                    chrono::Utc::now().to_rfc3339(),
+                    "CONNECT",
+                    url,
+                    host,
+                    200i64,
+                    "application/octet-stream",
+                    remote_ip,
+                    1024i64,
+                    4096i64,
+                    10.0f64,
+                    score,
+                    threat_tags,
+                    verdict,
+                ]);
+                count += 1;
+            }
+
+            // Ingest IPv6 TCP sockets
+            let tcp6 = get_tcp_ipv6_table();
+            for row in tcp6 {
+                let remote_port = u16::from_be(row.dwRemotePort as u16);
+                let local_port = u16::from_be(row.dwLocalPort as u16);
+                let proc_name = proc_map.get(&(row.dwOwningPid as u32));
+                let is_browser = proc_name.map(|pn| is_browser_process_name(pn)).unwrap_or(false);
+
+                let web_port = if candidate_ports.contains(&remote_port) {
+                    remote_port
+                } else if candidate_ports.contains(&local_port) {
+                    local_port
+                } else if is_browser && remote_port > 0 {
+                    remote_port
+                } else {
+                    continue;
+                };
+
+                let remote_ip = Ipv6Addr::from(row.ucRemoteAddr).to_string();
+                if remote_ip == "::" || remote_ip == "0000:0000:0000:0000:0000:0000:0000:0000" {
+                    continue;
+                }
+                let host = dns_map.get(&remote_ip).cloned().unwrap_or_else(|| remote_ip.clone());
+                let source_file = match proc_name {
+                    Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
+                    _ => "active_socket:tcp6".to_string(),
+                };
+                let scheme = if web_port == 443 || web_port == 8443 { "https" } else { "http" };
+                let host_bracketed = if host.contains(':') && !host.starts_with('[') {
+                    format!("[{}]", host)
+                } else {
+                    host.clone()
+                };
+                let url = format!("{}://{}:{}/", scheme, host_bracketed, web_port);
+                let (mut score, mut verdict) = Self::score_url_risk(&url);
+                if (remote_ip == "::1" || host == "localhost") && (web_port == 3030 || web_port == 11434 || web_port == 3000 || web_port == 5000) {
                     score = 0.0;
                     verdict = "benign";
                 }
