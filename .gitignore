@@ -4,6 +4,7 @@
 
 # ---------- Rust / Cargo ----------
 /target/
+/target_*/
 /target_alt/
 /target_ci_check/
 /target_test_wire/
