@@ -32,6 +32,7 @@ members = [
     "crates/zero-vacuum-lensing",
     "crates/zero-divine-equilibrium",
     "crates/osoosi-hexpatch",
+    "crates/osoosi-owasp-hunting",
 ]
 
 [workspace.package]
@@ -41,6 +42,7 @@ license = "Apache-2.0 OR MIT"
 rust-version = "1.75"
 
 [workspace.dependencies]
+osoosi-owasp-hunting = { path = "crates/osoosi-owasp-hunting" }
 edr-phaselock = { path = "crates/edr-phaselock" }
 agent-thermostat = { path = "crates/agent-thermostat" }
 silicon-shield = { path = "crates/silicon-shield" }
