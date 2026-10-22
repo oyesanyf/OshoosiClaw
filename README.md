@@ -18,6 +18,22 @@
 </p>
 
 <p align="center">
+  <strong>OshoosiClaw (OpenỌ̀ṣọ́ọ̀sì)</strong> is an enterprise-grade, decentralized Endpoint Detection & Response (EDR) immune system engineered in high-assurance Rust and Python.<br/>
+  It combines pre-execution kernel blocking, post-quantum P2P mesh consensus, and multi-agent AI defense to hunt threats and contain adversaries with zero cloud dependencies.
+</p>
+
+<p align="center">
+  <a href="#about">About</a> •
+  <a href="#key-features">Key Features</a> •
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#architecture">Architecture</a> •
+  <a href="#documentation">Documentation</a> •
+  <a href="#contributing">Contributing</a> •
+  <a href="#security">Security</a> •
+  <a href="#license">License</a>
+</p>
+
+<p align="center">
   <a href="#-nist-article--standards-alignment">🏛️ NIST Alignment</a> •
   <a href="#-what-is-oshoosiclaw-plain-english-overview">🎯 Overview</a> •
   <a href="#-60-second-quick-start">⚡ Quick Start</a> •
@@ -65,16 +81,19 @@
 
 ---
 
+<a id="about"></a>
+<a id="overview"></a>
 ## 🎯 What is OshoosiClaw? (Plain-English Overview)
-
 **OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw)** is an open-source, enterprise-grade **Endpoint Detection & Response (EDR)**, **Continuous HAR Web Traffic Inspector**, **101-Table SQL Host Telemetry Engine (`Siquery`)**, **Autonomous Binary & Bytecode Reverse Engineering Platform (`REA`)**, and **Multi-Agent AI Defense Swarm** engineered in **Rust** and **Python**. It operates as a decentralized, autonomous immune system for modern Windows and Linux environments, fusing low-level kernel sensors (Windows ETW / Ring-0 minifilters and Linux eBPF), solid-state cryptographic proofs (TPM 2.0, BLAKE3 Merkle chains, ML-KEM-768 post-quantum key exchange), and an adaptive LangGraph multi-agent defense swarm.
 
 Unlike traditional antivirus platforms that rely on brittle cloud round-trips or static signature feeds, OshoosiClaw conducts all threat reasoning, fully homomorphic evaluations (TFHE), and autonomous binary analysis locally on the endpoint. It equips security analysts and incident responders with instant, rich visibility through a zero-dependency embedded WebUI running on `http://127.0.0.1:3030`, high-speed interactive SQL host telemetry queries across 101 live system tables, continuous HTTP Archive (HAR) browser/API surveillance, and autonomous containment mechanisms that sever adversary kill-chains in microseconds.
 
 ---
 
-## 🛠️ Core Capabilities at a Glance
+---
 
+<a id="key-features"></a>
+## 🛠️ Core Capabilities at a Glance
 | Capability | What It Does in Plain English | Where to Use It (WebUI / CLI / API) |
 | :--- | :--- | :--- |
 | **Real-Time Endpoint Detection & Response (EDR)** | Continuously audits process trees, thread creations, dynamic module injections, and eBPF/ETW kernel events; autonomously halts malicious processes, hollows memory, and isolates compromised network interfaces. | WebUI: [`#overview`](#overview), [`#threats`](#threats), [`#killchain`](#killchain)<br>CLI: `osoosi-cli status` |
@@ -90,8 +109,10 @@ Unlike traditional antivirus platforms that rely on brittle cloud round-trips or
 
 ---
 
-## 🏛️ NIST Article & Standards Alignment
+---
 
+<a id="-nist-article--standards-alignment"></a>
+## 🏛️ NIST Article & Standards Alignment
 - [x] **NIST AI 100-2e2023 / 2025** — Adversarial Machine Learning Taxonomy, Red-Teaming & Mitigations (`#adversarial-tests`) with exportable **"Attacker Compute Burn vs. Defender Mitigation Cost"** economic asymmetry ($R_T/T \to 0$ sublinear regret convergence) and **Real-Time Econometric Equilibrium Gauge** (`Estimated Attacker Token/Compute Burn ($)` vs. `Local Defender Overhead (CPU ms / RAM MB)`) via `GET /api/tarpit-stats` (`json`, `csv`, `prometheus`)
 - [x] **NIST Closed-Loop Co-Evolution** — Automated Generator-Discriminator Prompt Evolution & Self-Expanding Regression Corpus (`#skyrl`, `tests/corpus/`)
 - [x] **NIST AI RMF 1.0 & AI 600-1** — Generative AI Risk Governance (`GOVERN`, `MAP`, `MEASURE`, `MANAGE`) & `CanaryCage` Containment (`#agent-anomalies`)
@@ -116,8 +137,10 @@ Unlike traditional antivirus platforms that rely on brittle cloud round-trips or
 
 ---
 
-## 🦀🐍 Technology & Language Stack (Rust + Python)
+---
 
+<a id="-technology--language-stack-rust--python"></a>
+## 🦀🐍 Technology & Language Stack (Rust + Python)
 OshoosiClaw is architected around a dual-language synergy optimized for extreme speed, memory safety, and cognitive adaptability: **~77% Rust** for the mission-critical core engine and **~19% Python** for the AI agent defense swarm and adversarial research tooling.
 
 | 🦀 Rust Core Engine (`crates/*` — 31 Crates) | 🐍 Python AI Swarm & Security Lab (`tools/*`, `scripts/*`, `tests/*`) |
@@ -134,8 +157,10 @@ OshoosiClaw is architected around a dual-language synergy optimized for extreme 
 
 ---
 
-## ⚡ 60-Second Quick Start
+---
 
+<a id="quick-start"></a>
+## ⚡ 60-Second Quick Start
 Get OshoosiClaw running on your endpoint in under one minute:
 
 ### Windows (MSI Installer or Standalone Binary)
@@ -188,8 +213,9 @@ osoosi-cli rea --target suspicious_payload.exe
 
 ---
 
-## 🖥️ WebUI Navigation Guide (http://127.0.0.1:3030)
+---
 
+## 🖥️ WebUI Navigation Guide (http://127.0.0.1:3030)
 When you access the dashboard on port `3030`, navigate directly to any primary security view using the top navigation bar or sidebar:
 
 | Route Anchor | View Name | Key Features & Defender Actions |
@@ -204,8 +230,11 @@ When you access the dashboard on port `3030`, navigate directly to any primary s
 
 ---
 
-## 🏗️ High-Level System Architecture
+---
 
+<a id="architecture"></a>
+<a id="otel-map"></a>
+## 🏗️ High-Level System Architecture
 The following diagram illustrates how telemetry flows from kernel and browser sensors into the Rust core engine, Python AI swarm, persistent storage, and defender interfaces:
 
 ```mermaid
@@ -255,7 +284,550 @@ flowchart TD
 
 <a id="-twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
 <a id="twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
+
+---
+
+## 🏛️ Architecture
+OshoosiClaw is built as a **modular monolith** — 20 specialized crates that compile into a single, high-performance binary.
+
+```mermaid
+flowchart TD
+    subgraph Spirits["1. Core Yoruba Subsystem Pillars"]
+        S1["Osoosi Scanner (User-Space & File Inspection)"]
+        S2["Ogun Kernel Layer (Sysmon ETW / Linux eBPF)"]
+        S3["Erinle Healer (Autonomous Repair & Rollback)"]
+        S4["Ode Orchestrator (Core Daemon Service)"]
+    end
+
+    subgraph Orchestrator["2. EdrOrchestrator & Multi-Engine Pipeline"]
+        D1["Detection Pipeline (12 Engines)<br/>Magika • ClamAV • YARA-X • EMBER ML • CAPA • FLOSS • Hayabusa • Chainsaw"]
+        D2["Memory Forensics (HollowsHunter & VAD)<br/>Sysmon ETW / eBPF → ProcessAccess / lsass → Memory Scan → Alert"]
+        D3["Behavioral AI & Decision Cascade<br/>CoLog Anomaly → EmbeddingGemma 2 MRL → Clef Flash → Strands Decider 2B"]
+    end
+
+    subgraph Sinks["3. Persistence, Mesh & Active Containment"]
+        K1["SQLite Memory Store & 101-Table Siquery"]
+        K2["libp2p GossipSub Mesh (ML-KEM-768 / ML-DSA-65)"]
+        K3["Hardware-Signed BLAKE3 Merkle Audit Trail"]
+        K4["Active Response (CanaryCage / Tarpit / KillChain)"]
+    end
+
+    S1 & S2 & S3 & S4 --> D1 & D2 & D3
+    D1 & D2 & D3 --> K1 & K2 & K3 & K4
+```
+
+### Crate Map
+
+| Crate | Yoruba Spirit | Responsibility |
+|:------|:-------------|:---------------|
+| `osoosi-cli` | — | CLI interface for managing and running the agent |
+| `osoosi-core` | **Ode** *(Orchestrator)* | Coordinates telemetry, policy, mesh, and response |
+| `osoosi-telemetry` | **Ogun** *(Iron Layer)* | Cross-platform event ingestion (Sysmon/Auditd/ESF) + FIM |
+| `osoosi-policy` | — | Detection engines (STGC, Sigma, KEV, NSRL feeds) |
+| `osoosi-model` | — | ML model training, Magika/ClamAV malware scanning |
+| `osoosi-behavioral` | — | SecureBERT + Gemma 4 + OpenAI behavioral AI |
+| `osoosi-wire` | — | P2P mesh (libp2p Gossipsub), peer join gate, reputation |
+| `osoosi-trust` | — | Identity (DID), Merkle Proofs, certificate issuing |
+| `osoosi-audit` | — | Tamper-evident Merkle Logchain |
+| `osoosi-repair` | **Erinle** *(Healer)* | Patch discovery and transactional patch engine |
+| `osoosi-runtime` | — | Active response: deception (ghost files) and tarpit |
+| `osoosi-memory` | — | Local SQLite persistence and threat intelligence store |
+| `osoosi-dashboard` | — | Web dashboard UI and API endpoints (Axum) |
+| `osoosi-sandbox` | — | WASM sandbox for isolated tool execution |
+| `osoosi-dp` | — | Differential privacy + Fully Homomorphic Encryption |
+| `osoosi-hexpatch` | — | Dynamic binary self-healing (HexPatch) |
+| `osoosi-exporter` | — | Telemetry exporter (SIEM/Webhook integration) |
+| `osoosi-types` | — | Unified data schemas for all crate communication |
+| `hex-patch` | — | Binary patching utility |
+| `test-peer` | — | P2P mesh testing utility |
+
+---
+
+---
+
+## 📸 Interactive WebUI Visual Gallery
+OpenỌ̀ṣọ́ọ̀sì features an integrated, real-time security operations dashboard (`http://127.0.0.1:3030/` or `http://oshoosi.duckdns.org:3030/`). Full high-resolution screenshots and detailed architecture descriptions are available in the **[Visual Screenshots Gallery](docs/screenshots/README.md)**.
+
+| View | Screenshot Preview | Description |
+|---|---|---|
+| **Detection Overview** (`#dashboard`) | <a href="docs/screenshots/README.md#1-detection-overview-dashboard"><img src="docs/screenshots/01_dashboard.png" width="320" alt="Dashboard" /></a> | 25-card Detection Engine grid with voter weights, live telemetry charts, and system status counters. |
+| **Threat Intelligence** (`#threats`) | <a href="docs/screenshots/README.md#2-threat-intelligence--containment-threats"><img src="docs/screenshots/02_threats.png" width="320" alt="Threats" /></a> | Granular threat list with MITRE technique numbers (`[T1033]`, `[T1622]`), confidence scores, and instant isolation actions. |
+| **ATT&CK® + ATLAS™ Matrix** (`#mitre`) | <a href="docs/screenshots/README.md#3-mitre-attck--atlas-matrix-navigator-mitre"><img src="docs/screenshots/03_mitre_matrix.png" width="320" alt="MITRE Matrix" /></a> | 15-column heatmap matrix visualizer across 26,381 STIX objects, 323 techniques, 79 mitigations, and 177 APT profiles. |
+| **Technique Inspector** (`#mitre-modal`) | <a href="docs/screenshots/README.md#4-mitre-technique-inspector-modal-mitre-modal"><img src="docs/screenshots/04_mitre_inspector.png" width="320" alt="Technique Inspector" /></a> | Deep-dive modal showing telemetry sources (Sysmon 1, Security 4688), correlated Sigma rules, and APT threat groups. |
+| **Zone Gateway & RoT** (`#zone`) | <a href="docs/screenshots/README.md#5-zone-security-gateway--hardware-attestation-zone"><img src="docs/screenshots/05_zone_gateway.png" width="320" alt="Zone Gateway" /></a> | 100% Security Score posture, TPM 2.0 hardware attestation, and sub-millisecond node cluster telemetry. |
+| **Action Approvals** (`#approvals`) | <a href="docs/screenshots/README.md#6-autonomous-action-approval-queue-approvals"><img src="docs/screenshots/06_approvals.png" width="320" alt="Action Approvals" /></a> | Autonomous response triage mode, Byzantine consensus quorum (0.70 threshold), and instant containment policy. |
+| **Attack Graph** (`#process-map`) | <a href="docs/screenshots/README.md#7-process-map--attack-graph-process-map"><img src="docs/screenshots/07_process_map.png" width="320" alt="Process Map" /></a> | Force-directed graph canvas mapping relationships (`executes`, `monitors`, `guards`, `mesh sync`) across protected subsystems. |
+| **P2P Wire Mesh** (`#mesh`) | <a href="docs/screenshots/README.md#8-high-throughput-p2p-wire-mesh-network-mesh"><img src="docs/screenshots/08_mesh_network.png" width="320" alt="Mesh Network" /></a> | libp2p GossipSub v1.2 cluster status, peer reputation scoring, and round-trip ping latencies. |
+| **Forensic History** (`#history`) | <a href="docs/screenshots/README.md#9-forensic-audit--threat-history-history"><img src="docs/screenshots/09_forensic_history.png" width="320" alt="Forensic History" /></a> | Permanent tamper-evident event ledger indexing 110,400+ events with multi-criteria filtering and CSV export. |
+| **Inbound Gossip Feed** (`#gossip`) | <a href="docs/screenshots/README.md#10-inter-node-gossip-feed-gossip"><img src="docs/screenshots/10_gossip_feed.png" width="320" alt="Gossip Feed" /></a> | Cryptographic P2P threat broadcast feed with decentralized analyst feedback and consensus voting. |
+
+*Explore the complete guided walkthrough in the **[docs/screenshots/README.md](docs/screenshots/README.md)** guide.*
+
+---
+
+---
+
+<a id="threats"></a>
+## 🔬 Detection Arsenal
+OshoosiClaw uses a **six-engine detection pipeline** — a depth of analysis that exceeds most commercial EDR products.
+
+### The Mandiant Forensic Trio
+
+| Tool | What It Does | Detects |
+|:-----|:-------------|:--------|
+| **CAPA** | Extracts binary *capabilities* | What can this file DO? (keylogging, C2, exfiltration) |
+| **FLOSS** | De-obfuscates hidden strings | Hidden C2 domains, IPs, API keys, config data |
+| **HollowsHunter** | Scans live process memory | Process hollowing, DLL injection, shellcode, API hooks |
+
+### Full Detection Stack
+
+| Layer | Engine | Technique | Coverage |
+|:------|:-------|:----------|:---------|
+| 1️⃣ | **Magika** (Google) | AI file-type identification | Prevents extension spoofing |
+| 2️⃣ | **ClamAV** | Signature-based AV | 8M+ known malware signatures |
+| 3️⃣ | **YARA** | Pattern matching rules | Custom + community threat rules |
+| 4️⃣ | **EMBER ML** | 54-feature PE static analysis | Zero-day malware classification |
+| 5️⃣ | **Mandiant CAPA** | Capability extraction | Behavioral intent analysis |
+| 6️⃣ | **Mandiant FLOSS** | String de-obfuscation | Hidden C2/config extraction |
+| 7️⃣ | **HollowsHunter** | Live memory forensics | In-memory implant detection |
+| 8️⃣ | **Hayabusa** | Sigma Rule Engine | Host-based C2 log analysis (Post-Execution) |
+| 9️⃣ | **Chainsaw** | Fast Forensic Triage | MFT anomalies & triage artifacts |
+| 🔟 | **Xori** | Shellcode Emulator | Static capability detection (Pre-Execution) |
+| 1️⃣1️⃣ | **RedBPF** | eBPF Network Monitor | Real-time C2 beacon detection (Linux Kernel) |
+| 1️⃣2️⃣ | **yara-x** | Native Rust YARA | High-speed pattern matching (Unified C2 + Signatures) |
+| 1️⃣3️⃣ | **Sigma-X** | LogSource-Aware Sigma | 10x faster rule matching via product/service indexing |
+| 1️⃣4️⃣ | **Atomic IOC** | O(1) Indicator Scanner | High-fidelity hash/IP/domain matching |
+| 🧠 | **Gemma 4 / Ollama** | LLM Consensus | Context-aware reasoning with resilient Ollama fallback |
+
+### Sysmon Event Coverage (Complete)
+
+OshoosiClaw processes **ALL 25+ Sysmon event types**:
+
+| Category | Event IDs | Detection Purpose |
+|:---------|:----------|:------------------|
+| **Execution & Memory** | 1, 5, 8, 10, 25 | Process creation, injection, LSASS access, tampering |
+| **File System** | 2, 11, 15, 23, 26, 27, 28, 29 | Timestomping, file drops, ADS, ransomware, shredding |
+| **Registry** | 12, 13, 14 | Persistence mechanisms (Run keys, services) |
+| **Network** | 3, 17, 18, 22 | C2 beaconing, lateral movement, DNS exfiltration |
+| **System** | 4, 6, 7, 9, 16, 19-21, 24, 255 | Rootkits, DLL sideloading, WMI persistence, clipboard |
+
+### Behavioral AI Cascade
+
+```
+Event → CoLog Autonomous Sequence Anomaly Detection
+          ↓ (if score > 0.7)
+        SecureBERT Classification (local model)
+          ↓ (if suspicious)
+        Gemma 3 4B Reasoning (via Ollama)
+          ↓ (fallback)
+        OpenAI GPT Analysis (cloud API)
+```
+
+---
+
+<a id="-features"></a>
+
+---
+
+## 🛡️ Active Defense Features
+### Ghost Trap Canary System
+Deploys realistic decoy files across the filesystem:
+- `CEO_Private_Strategy_2025.docx`
+- `Production_DB_Keys.env`
+- `Backup_Credentials_FINAL.xlsx`
+
+Any unauthorized access triggers an **immediate alert** with full forensic context.
+
+### Egress Tarpitting
+Instead of blocking suspicious connections outright, OshoosiClaw **throttles** them — slowing data exfiltration to a crawl while gathering intelligence on the attacker's C2 infrastructure.
+
+### Holographic Deception Sharding (HDS)
+When an attacker IP is flagged, the P2P mesh creates a **distributed hallucination**: the SSH service appears on Node A in Tokyo, the database on Node B in Berlin, and the web server on Node C in NYC. The attacker perceives a single target; the mesh perceives a harvest.
+
+### 🛡️ Nexus-Shield: The Reality-Distortion Field
+OshoosiClaw evolves beyond passive detection with **Nexus-Shield**, an active execution layer that dictates the "physics" of the operating system for suspicious processes.
+
+| Capability | Defensive Action |
+|:-----------|:-----------------|
+| **Self-Defense** | Intercepts and denies `TerminateProcess` or `SuspendThread` requests directed at the agent. |
+| **LSASS Guard** | Rings-fences `lsass.exe` to prevent credential dumping (Mimikatz, etc.). |
+| **DNS Sinkholing** | Redirects malicious C2 domains to a local loopback/tarpit "void" instead of a hard block. |
+| **JIT Anti-Injection** | Scans memory allocation buffers with **YARA-X** in real-time to detect shellcode/NOP-sleds. |
+| **Mesh Immunization** | Automatically broadcasts shield violations to the P2P mesh for global threat neutralization. |
+
+### Einsteinian Relativistic Guard
+Treats the system as a **Causal Manifold**:
+- **Light-Cone Integrity**: Every event is hashed with its causal parent. Mismatches indicate code injection.
+- **Temporal Dilation**: Detects discrepancies between local CPU time and mesh time, catching backdating and sleeper malware.
+
+---
+
+<a id="-mesh-networking"></a>
+<a id="mesh-networking"></a>
+
+---
+
+<details>
+<summary><b>⚡ Detailed Multi-Platform Deployment Guide (Windows MSI, Linux Packages, Docker)</b> (Click to expand)</summary>
+
+## ⚡ Quick Start
+
+
+### Prerequisites
+
+| Component | Version | Purpose |
+|:----------|:--------|:--------|
+| **Rust** | 1.75+ | Core compilation |
+| **Sysmon** | 15.0+ | Kernel-level telemetry (Windows) |
+| **ClamAV** | 1.0+ | Signature-based AV scanning |
+| **Ollama** | 0.1.0+ | Local LLM inference (optional) |
+
+### Windows Installer (MSI)
+
+OshoosiClaw provides a standalone, production-ready Windows Installer (`OshoosiClaw.msi`, ~25MB) built with WiX v5 that bundles all necessary dependencies for immediate zero-touch deployment:
+- `osoosi.exe`: Release binary automatically registered to the system `PATH`.
+- `onnxruntime.dll`: Root ONNX Runtime (1.22.x) engine for local ML inference.
+- Signed Configurations: Cryptographically signed policies (`osoosi.toml` + `osoosi.toml.sign`, `openshell-policy.yaml`, `firewall_allowlist.txt`).
+- Sysmon 4.91 Profiles: Production ETW profiles (`sysmon-dns.xml` and `sysmonconfig-export.xml`).
+- Web UI Assets: Complete dashboard distribution assets (`dashboard/dist/*`).
+
+#### Installation Methods
+
+```powershell
+# Interactive installation
+msiexec /i OshoosiClaw.msi
+
+# Silent / unattended background deployment
+msiexec /i OshoosiClaw.msi /quiet /qn
+```
+
+#### Building the MSI from Source (WiX v5)
+
+```powershell
+# 1. Compile release binary and sign configurations
+cargo build --release -p osoosi-cli
+.\target\release\osoosi.exe sign-configs
+
+# 2. Build standalone MSI directly using WiX v5
+wix build wix\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi
+
+# Or run the automated deployment packager
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1
+```
+
+### Build From Source
+
+```powershell
+# Clone the repository
+git clone https://github.com/oyesanyf/OshoosiClaw.git
+cd OshoosiClaw
+
+# Build with all features
+cargo build --release --all-features
+
+# One-time setup: install dependencies + grant permissions
+.\target\release\osoosi.exe grant-access
+
+# Start the autonomous security loop
+.\target\release\osoosi.exe start
+
+# Optional: grant-access and start in one go (flag works before or after subcommand)
+.\target\release\osoosi.exe start --grant-access
+# .\target\release\osoosi.exe --grant-access start
+```
+
+On each `start`, the agent **discovers** `git` and `openshell` from `PATH` and standard locations, then **persists** absolute paths under `%APPDATA%\osoosi\tool_paths.json` (see [Environment Variables](#environment-variables)). This avoids repeated lookups on later runs.
+
+The **osoosi-dashboard** crate is a workspace member and a direct dependency of **osoosi-cli** (Axum web UI for `start --dashboard` and the `dashboard` subcommand). Standard `cargo build --release` compiles it; you should not exclude it from release builds.
+
+### 🛡️ Windows Smart App Control (SAC) & Code Integrity Notes
+
+On Windows 11 systems with **Smart App Control (SAC)** or AppLocker / Windows Defender Application Control (WDAC) enabled in evaluation or enforcement mode, policy enforcement events may be recorded in Event Viewer under `Microsoft-Windows-CodeIntegrity/Operational` (Event IDs **3077** or **3118**: `An Application Control policy has blocked this file`).
+
+- **Procedural Macro DLL Reputation Delays**: During release compilation on fresh checkouts, the Rust compiler links and executes host procedural macro dynamic libraries (such as `zeroize_derive-*.dll` in `target/release/deps`). Windows Smart App Control submits newly compiled procedural macro binaries to cloud reputation services. If cloud verification is still resolving, SAC may temporarily block the DLL from loading, causing `rustc` to emit cascading compilation errors:
+  ```text
+  error[E0463]: can't find crate for `zeroize_derive` which `zeroize` depends on
+  ```
+- **Remediation**: This is a transient cloud reputation lookup delay on unsigned host build artifacts. Once the local reputation cache settles (typically within 10–30 seconds), simply query or re-run compilation to proceed cleanly:
+  ```powershell
+  # Query the built binary or re-run release compilation once reputation settles
+  cargo run --release -p osoosi-cli -- --help
+  cargo build --release
+  ```
+
+### Linux Packages (`v1.2.0` — `.deb`, `.rpm`, `.tar.gz`)
+
+Every release ships GPG-signed (`PUBLIC_KEY.asc`) and SLSA in-toto DSSE-attested Linux packages for Debian/Ubuntu (`.deb`), RHEL/Fedora/Rocky (`.rpm`), and portable x86_64 systems (`.tar.gz`):
+
+```bash
+# 1. Verify OpenPGP detached signature against PUBLIC_KEY.asc
+gpg --import PUBLIC_KEY.asc
+gpg --verify oshoosiclaw_1.2.0_amd64.deb.asc oshoosiclaw_1.2.0_amd64.deb
+
+# 2a. Debian / Ubuntu (.deb)
+sudo dpkg -i oshoosiclaw_1.2.0_amd64.deb
+osoosi --version
+
+# 2b. RHEL / Fedora / Rocky / AlmaLinux (.rpm)
+sudo rpm -Uvh oshoosiclaw-1.2.0-1.x86_64.rpm
+osoosi --version
+
+# 2c. Portable Linux Tarball (.tar.gz)
+tar -xzf oshoosiclaw-1.2.0-linux-x86_64.tar.gz
+sudo ./install.sh
+```
+
+### 🐳 Hardened Docker & Docker Compose (`CIS Docker Benchmark Level 2`)
+
+OpenỌ̀ṣọ́ọ̀sì ships a multi-stage, zero-trust container image (`ghcr.io/oyesanyf/oshoosiclaw:1.2.0`) engineered to satisfy **OpenSSF Scorecard `Pinned-Dependencies` (10/10)** and **CIS Docker Benchmark v1.6 Level 2**:
+
+- **Immutable SHA-256 Base Digests**: Both `builder` and `runtime` stages pin `ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac`.
+- **Non-Root Execution (`UID 65532:65532`)**: Executes under a dedicated unprivileged `osoosi:osoosi` account (`/usr/sbin/nologin`) with the `root` account locked (`passwd -l root`).
+- **Immutable Code & Read-Only RootFS**: `/app/osoosi` (`0555`) and `/app/dashboard/dist` (`0444`) are owned by `0:0` (`root:root`), preventing runtime binary or WebUI self-modification even under a hypothetical RCE.
+- **Zero SUID/SGID & Package Manager Purge**: All `SUID`/`SGID` bits are stripped across the filesystem and `apt`/`dpkg` are removed from the runtime image.
+- **Kernel Capability Drop & Seccomp Filtering**: Drops all Linux capabilities (`--cap-drop=ALL`), enforces `no-new-privileges:true`, and applies a custom 52-syscall blocklist (`docker/seccomp-oshoosi.json`).
+
+```mermaid
+flowchart TD
+    subgraph Stage1["Stage 1: Builder (Digest-Pinned)"]
+        S1A["Rust Workspace / Pre-Built ELF"] --> S1B["strip --strip-unneeded"]
+        S1B --> S1C["chmod 0555 /out/app/osoosi"]
+        S1C --> S1D["chmod 0444 /out/app/dashboard/dist"]
+    end
+
+    subgraph Stage2["Stage 2: Hardened Runtime (UID 65532:65532)"]
+        S2A["Purge apt/dpkg & Strip All SUID/SGID"] --> S2B["Immutable 0:0 /app/osoosi & /app/dashboard"]
+        S2B --> S2C["Isolated 65532:65532 Volumes (/app/database, /app/logs, /app/quarantine)"]
+    end
+
+    subgraph Confinement["Runtime Kernel Confinement"]
+        C1["--read-only RootFS + noexec /tmp tmpfs"]
+        C2["--cap-drop=ALL + no-new-privileges:true"]
+        C3["docker/seccomp-oshoosi.json (52 Syscalls Blocked)"]
+    end
+
+    Stage1 --> Stage2 --> Confinement
+```
+
+```bash
+# Build the hardened multi-stage image locally
+docker build -t ghcr.io/oyesanyf/oshoosiclaw:1.2.0 .
+
+# Run with read-only rootfs, dropped capabilities, and seccomp confinement
+docker run -d \
+  --name oshoosi-edr \
+  --user 65532:65532 \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  --security-opt seccomp=docker/seccomp-oshoosi.json \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
+  -p 127.0.0.1:3031:3030 \
+  ghcr.io/oyesanyf/oshoosiclaw:1.2.0
+
+# Or launch via the hardened docker-compose.yml profile
+docker compose up -d --build
+```
+
+---
+
+<a id="-architecture"></a>
+<a id="architecture"></a>
+
+</details>
+
+<details>
+<summary><b>⚙️ Native Cross-Platform Service Lifecycle (OsoosiEDR) & Desktop Immunity</b> (Click to expand)</summary>
+
+## ⚙️ Native Cross-Platform Service Lifecycle (`OsoosiEDR`) & Host OS Desktop/Search Immunity
+
+
+OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background service execution via native **Win32 Service Control Manager (SCM)** integration (`crates/osoosi-cli/src/service.rs`) and **Linux `systemd`** (`osoosi-edr.service`), paired with a **5-Layer Cross-Platform Host OS Desktop, Search & System Tray Immunity Gate** across **Windows, Linux, and macOS**.
+
+```mermaid
+flowchart TD
+    subgraph STOP["Sub-2-Second Deterministic Service Stop (Windows SCM & Linux systemd)"]
+        S1["osoosi service stop / sc stop OsoosiEDR / systemctl stop osoosi-edr"] --> S2["Clear SCM Failure Auto-Respawn<br/>(sc failure OsoosiEDR reset= 0 actions= '')"]
+        S2 --> S3["SERVICE_STOP_PENDING (dwWaitHint: 2000ms)<br/>+ 1.5s Dedicated Shutdown Watchdog Thread"]
+        S3 --> S4["Fast In-Memory Tarpit Release + Native winreg IFEO & FirewallRules Purge (< 20ms)<br/>(Purges OpenOsoosi-Block-* registry keys without spawning slow netsh loops)"]
+        S4 --> S5["SERVICE_STOPPED (PID : 0 in < 1.5s, Zero Auto-Respawn)"]
+    end
+
+    subgraph IMMUNITY["5-Layer Cross-Platform Host OS Shell, Search & System Tray Immunity"]
+        P0["normalize_nt_device_path() (QueryDosDeviceW + POSIX-safe)<br/>+ is_protected_os_shell_or_desktop_binary()"]
+        P1["Windows 10/11: sihost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,<br/>ShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,<br/>SecurityHealthSystray.exe, ctfmon.exe, OpenConsole.exe, WindowsTerminal.exe, dwm.exe"]
+        P2["Linux: systemd*, dbus-daemon, gnome-shell, plasmashell, kwin_*, Xorg, Xwayland,<br/>sway, Hyprland, pipewire, wireplumber, tracker-miner-fs*, localsearch*, baloo_file*,<br/>xdg-desktop-portal*, NetworkManager, sshd"]
+        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,<br/>NotificationCenter, Spotlight, corespotlightd, mds, mdworker*, coreservicesd, loginwindow"]
+        L1["Layer 1: is_system_critical(), system_check.rs & Monitor-Mode Hard Gate"]
+        L2["Layer 2: ActiveProcessTarpit & Child-PID Immunity"]
+        L3["Layer 3: BlockingManager, AgentProvisioner & Native winreg IFEO Sanitizer"]
+        L4["Layer 4: Firewall Autoblock Deduplication & Native Registry Sanitizer"]
+        L5["Layer 5: RemediationController Process-Tree Shield (Name + Exe Path)"]
+
+        P1 & P2 & P3 --> P0
+        P0 --> L1 & L2 & L3 & L4 & L5
+    end
+```
+
+### Core Architecture & Operating Invariants
+
+1. **Sub-2-Second Deterministic Service Shutdown & Zero Auto-Respawn**:
+   - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW` and registers `RegisterServiceCtrlHandlerExW` for `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
+   - On `stop`, `service_control_handler` immediately reports `SERVICE_STOP_PENDING` (`dwWaitHint: 2000`) and spawns a **1.5-second hardware/OS watchdog thread** (`crates/osoosi-cli/src/service.rs` and `crates/osoosi-cli/src/main.rs`) that guarantees the daemon releases in-memory tarpits, reports `SERVICE_STOPPED`, and exits cleanly within 1.5 seconds even if external firewall utilities stall.
+   - `execute_host_disarm_unauthenticated()` only spawns `netsh.exe` quarantine-rule cleanup commands if the host was actually placed into `HOST_ISOLATED_STATE`, and invokes `remove_all_autoblock_rules()` (`purge_windows_firewall_autoblock_rules_native`) to delete all `OpenOsoosi-Block-*` values directly from `HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules` via `winreg` in `< 20ms`.
+   - Service installation and startup explicitly clear SCM forced failure auto-restart actions (`sc.exe failure OsoosiEDR reset= 0 actions= ""`), and Linux `osoosi-edr.service` enforces `Restart=on-failure` with `TimeoutStopSec=5s`, ensuring an operator-requested stop never auto-respawns the daemon.
+2. **Cross-Platform Host OS Shell, Search, System Tray & Init Immunity (`Windows`, `Linux`, `macOS`)**:
+   - Kernel ETW device paths (`\Device\HarddiskVolume<N>\...`, `\Device\Mup\...`, `\\?\`, `\??\`) are normalized via `osoosi_types::normalize_nt_device_path` (using Win32 `QueryDosDeviceW` volume resolution while preserving POSIX `/` paths on Linux and macOS) before WinVerifyTrust, Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`), ELF/Mach-O inspection, or path policy evaluation so catalog-signed `SystemApps` binaries (such as `SearchHost.exe`) are never misclassified as unsigned.
+   - `osoosi_types::is_protected_os_shell_or_desktop_binary` enforces an immutable cross-platform protection list across **Windows** (`sihost.exe`, `explorer.exe`, `SearchHost.exe`, `SearchFilterHost.exe`, `SearchProtocolHost.exe`, `ShellHost.exe`, `ShellExperienceHost.exe`, `StartMenuExperienceHost.exe`, `SecurityHealthSystray.exe`, `ctfmon.exe`, `OpenConsole.exe`, `WindowsTerminal.exe`), **Linux** (`systemd*`, `dbus-daemon`, `gnome-shell`, `plasmashell`, `kwin_*`, `Xorg`, `Xwayland`, `sway`, `Hyprland`, `pipewire`, `tracker-miner-fs*`, `localsearch*`, `baloo_file*`, `xdg-desktop-portal*`), and **macOS** (`launchd`, `WindowServer`, `Finder`, `Dock`, `SystemUIServer`, `ControlCenter`, `NotificationCenter`, `Spotlight`, `corespotlightd`, `mds`, `mdworker*`)—while explicitly excluding script interpreters and LOLBins (`powershell.exe`, `cmd.exe`, `bash`, `python`, `nc`, `curl`).
+   - Startup automatically purges any legacy `HKLM\...\Image File Execution Options\<exe>\Debugger` hijacks (`systray.exe` and any hijacks targeting protected OS shell, search, tray, or accessibility binaries) via native `winreg` (`purge_ifeo_systray_debugger_hooks_native`), purges `OpenOsoosi-Block-*` registry firewall rules (`purge_windows_firewall_autoblock_rules_native`), prevents duplicate firewall rule creation (`windows_firewall_rule_exists_native`), and sanitizes `config/firewall_rules.json` and `blocking_rules.json`.
+3. **Clone-Path-Agnostic Working-Directory Resolution**:
+   - The Windows SCM always executes background services with the working directory set to `C:\Windows\System32`.
+   - `osoosi` inspects `std::env::current_exe()` at startup and walks up to 5 parent directories (`find_project_root_from(&exe)`) to locate `osoosi.toml`, `models/`, `rules/`, and `dashboard/dist/`.
+4. **Dedicated WebUI Tokio Runtime & Auto-Launch (`http://127.0.0.1:3030/`)**:
+   - Starting the service (`osoosi service install` or `osoosi service start`) binds the WebUI on a dedicated 4-worker multi-thread Tokio runtime (`osoosi-dashboard-rt`) at `http://127.0.0.1:3030/`—isolated from file-scanner and baseline-hashing workloads.
+
+### Windows & Linux Service Management Commands (`OsoosiEDR` / `osoosi-edr.service`)
+
+| Management Action | OpenỌ̀ṣọ́ọ̀sì CLI (Windows & Linux) | Windows PowerShell / `sc.exe` | Linux `systemd` (`systemctl`) | Description |
+|:---|:---|:---|:---|:---|
+| **Install Service** | `osoosi service install` | `sc.exe create OsoosiEDR ...` | Installs `/usr/lib/systemd/system/osoosi-edr.service` + `systemctl enable --now osoosi-edr` | Registers automatic startup on both Windows SCM and Linux `systemd`. |
+| **Start Service** | `osoosi service start` | `Start-Service OsoosiEDR` | `systemctl start osoosi-edr.service` | Transitions service to `RUNNING` / `active (running)` (or detaches via `setsid()` when `systemd` is absent). |
+| **Stop Service** | `osoosi service stop` | `Stop-Service OsoosiEDR` | `systemctl stop osoosi-edr.service` | Dispatches deterministic `< 1.5s` stop signal, releases tarpits, and flushes SQLite WAL. |
+| **Restart Service** | `osoosi service restart` | `Restart-Service OsoosiEDR` | `systemctl restart osoosi-edr.service` | Safely cycles the daemon, reloading rules, configs, and models. |
+| **Query Status** | `osoosi service status` | `Get-Service OsoosiEDR` | `systemctl status osoosi-edr.service` | Displays PID, current state, and memory usage. |
+| **Delete / Remove** | `osoosi service delete` | `sc.exe delete OsoosiEDR` | `systemctl disable --now osoosi-edr && rm /etc/systemd/system/osoosi-edr.service` | Stops the daemon and unregisters the service definition. |
+
+```powershell
+# Complete Administrative Service Lifecycle (Windows PowerShell or Linux Root)
+
+# 1. Install OpenỌ̀ṣọ́ọ̀sì as an automatic Service (Windows SCM or Linux systemd)
+osoosi service install
+
+# 2. Start the service
+osoosi service start
+
+# 3. Verify operational status and running PID
+osoosi service status
+
+# 4. Stop the service cleanly in < 1.5 seconds
+osoosi service stop
+```
+
+---
+
+<a id="-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection"></a>
+<a id="hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection"></a>
+
+</details>
+
+<details>
+<summary><b>🔍 DNS Client & Sysmon Telemetry Setup Guide</b> (Click to expand)</summary>
+
+<a id="-dns-telemetry-setup"></a>
+<a id="dns-telemetry-setup"></a>
+## 🔍 DNS & Sysmon Telemetry Setup
+
+
+OshoosiClaw actively inspects DNS queries using process-attributed domain analysis (`SysmonDnsQueryVoter`) to detect DGA domains, DNS tunneling, and C2 beacons.
+
+### Why Sysmon May Not Capture DNS Traffic By Default
+Sysmon **Event ID 22 (DnsQuery)** is disabled by default in vanilla Sysmon installations to prevent high event volume. To capture DNS traffic, use either **Method A** (Zero Install) or **Method B** (Sysmon Event ID 22):
+
+#### Method A: Native Windows DNS Client Logging (Instant, Zero Installs)
+Enable Windows native DNS Client operational logging. OshoosiClaw ingests this channel automatically:
+```powershell
+# Run in Administrator PowerShell:
+wevtutil sl Microsoft-Windows-DNS-Client/Operational /e:true
+```
+
+#### Method B: Deploy Sysmon with Event ID 22 Configuration
+Use the included [`config/sysmon-dns.xml`](config/sysmon-dns.xml) configuration:
+```powershell
+# Install Sysmon with DNS Query capture enabled:
+.\Sysmon64.exe -i config\sysmon-dns.xml -accepteula
+
+# Or update an existing Sysmon installation:
+.\Sysmon64.exe -c config\sysmon-dns.xml
+```
+
+---
+
+<a id="-two-host-mesh-consensus"></a>
+
+</details>
+
+<details>
+<summary><b>📋 System, Hardware & Build Requirements Matrix</b> (Click to expand)</summary>
+
+## 📋 Requirements
+
+
+### System Requirements
+
+| Platform | Minimum | Recommended |
+|:---------|:--------|:------------|
+| **OS** | Windows 10/11, Ubuntu 20.04+, macOS 12+ | Windows Server 2022, Ubuntu 22.04 |
+| **RAM** | 4 GB | 8 GB+ |
+| **Disk** | 2 GB (agent) + 130 GB (NSRL) | 256 GB SSD |
+| **CPU** | x86_64, 2 cores | 4+ cores |
+| **Network** | Internet (threat feeds) | Static IP (mesh stability) |
+
+### Build Requirements
+
+| Dependency | Version | Install |
+|:-----------|:--------|:--------|
+| **Rust** | 1.75+ | [rustup.rs](https://rustup.rs) |
+| **Visual Studio Build Tools** | 2022 | [Visual Studio](https://visualstudio.microsoft.com/downloads/) (Windows) |
+| **OpenSSL** | 3.0+ | Auto-provisioned via `grant-access` |
+| **pkg-config** | Latest | `apt install pkg-config` (Linux) |
+
+### Optional Dependencies
+
+| Tool | Purpose | Auto-Provisioned? |
+|:-----|:--------|:------------------|
+| **Sysmon** | Kernel-level telemetry (Windows) | ✅ Yes |
+| **ClamAV** | Signature-based antivirus | ✅ Yes |
+| **Ollama** | Local LLM inference | ✅ Yes |
+| **FLOSS** | String de-obfuscation | ✅ Yes |
+| **HollowsHunter** | Memory forensics | ✅ Yes |
+
+<a id="environment-variables"></a>
+### Environment Variables
+
+| Variable | Default | Description |
+|:---------|:--------|:------------|
+| `OSOOSI_LLM_AGENT_ENABLED` | `0` | Enable LLM agent auto-spawn |
+| `ORT_DYLIB_PATH` | Auto-detect | Path to ONNX Runtime DLL |
+| `OSOOSI_MODELS_DIR` | `models/` | ML model directory |
+| `OSOOSI_SIGMA_DIR` | `sigma/` | Sigma rules directory |
+| `OSOOSI_DATABASE_DIR` | `database/` | Centralized database directory (Memory, Learning, Audit) |
+| `OSOOSI_OFFLINE_MODE` | `false` | Disable external API calls |
+| `OTX_API_KEY` | — | AlienVault OTX API key |
+| `NVD_API_KEY` | — | NIST NVD API key (optional; higher rate limits) |
+| `OPENAI_API_KEY` | — | OpenAI API key (behavioral fallback) |
+| `OSOOSI_NO_AI` / `OSOOSI_NO_ORT` | `false` | Disable AI / ONNX Runtime |
+| `OPENSHELL_CLI_PATH` | — | Full path to `openshell` / `openshell.exe` |
+| `OPENSHELL_SANDBOX_POLICY` | `config/openshell-policy.yaml` | OpenShell policy YAML path |
+| `OSOOSI_GIT_PATH` | — | Full path to `git.exe` when pip needs VCS installs |
+| `HF_TOKEN` / `HUGGINGFACE_HUB_TOKEN` | — | Hugging Face auth for private or rate-limited model downloads |
+| `OSOOSI_MALCONV_WEIGHTS_URL` | — | Direct URL for `malconv.safetensors` (skips broken public mirrors) |
+| `OSOOSI_MALCONV_ONNX_URL` | — | Direct URL for `malconv.onnx` |
+| `OSOOSI_KEV_QUIET_SYSTEM_TOOLS` | on | Set to `0` / `false` / `off` to re-enable CISA-KEV on noisy process create/terminate for common tools |
+| `OSOOSI_LOG_DIR` | repo `logs/` | File log directory |
+
+**Tool path cache (written on `start`):** `{config_dir}/osoosi/tool_paths.json` (e.g. Windows `%APPDATA%\osoosi\tool_paths.json`) stores resolved `git` and `openshell_cli` paths. Explicit env vars above still take precedence.
+
+---
+
+</details>
+
+<details>
+<summary><b>⚛️ Twelve-Part Architecture of Zero & 7-Crate Physics Defense Engine</b> (Click to expand)</summary>
+
+<a id="-twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
+<a id="twelve-part-architecture-of-zero--7-crate-physics-defense-engine"></a>
 ## ⚛️ Advanced Architecture & Theoretical Foundations
+
 ### ⚛️ Twelve-Part Architecture of Zero & 7-Crate Physics Defense Engine (Cross-Platform Linux & Windows)
 
 Rather than treating runtime security solely as a heuristic search for static strings, **OpenỌ̀ṣọ́ọ̀sì** embeds a **7-crate mathematical and physical defense workspace** that operationalizes nonlinear dynamics, statistical mechanics, constant-time solid-state cryptography, and the **Twelve-Part Architecture of Zero** across both **Linux** (`/proc` kernel socket/memory introspection, eBPF ring buffers) and **Windows** (ETW, Win32 process/conduit telemetry, WDAC):
@@ -314,7 +886,14 @@ flowchart TD
 
 ---
 
+</details>
+
+<details>
+<summary><b>📐 Falsifiable Non-Stationary Mesh Defense Model ($E(N, t)$) & Mathematical Proofs</b> (Click to expand)</summary>
+
+<a id="zone"></a>
 ## 📐 Falsifiable Non-Stationary Mesh Defense Model ($E(N, t)$) & 3-Tier "Blockchain of Ledgers"
+
 
 OpenỌ̀ṣọ́ọ̀sì formulates cyber defense as a closed-form dynamical system where collective immunity
 outpaces machine-speed automated exploitation. Rather than treating security as probabilistic
@@ -508,7 +1087,16 @@ $$\mathcal{O}\!\left(\frac{\ln N}{N^{3/2}} \cdot \frac{1}{\sqrt{t}}\right) \long
 
 <a id="-autonomous-rea-reverse-engineer-anything-forensic-engine"></a>
 <a id="autonomous-rea-reverse-engineer-anything-forensic-engine"></a>
+
+</details>
+
+<details>
+<summary><b>🔬 Autonomous REA (Reverse Engineer Anything) Forensic Engine</b> (Click to expand)</summary>
+
+<a id="rea"></a>
+<a id="-autonomous-rea-reverse-engineer-anything-forensic-engine"></a>
 ## 🔬 Autonomous REA (`Reverse Engineer Anything`) Forensic Engine
+
 
 OpenỌ̀ṣọ́ọ̀sì includes a built-in **Autonomous Reverse Engineer Anything (`REA`)** subsystem ([`crates/osoosi-core/src/rea.rs`](crates/osoosi-core/src/rea.rs)) inspired by [`morluto/rea`](https://github.com/morluto/rea), powered by a **2-Tier Classification Pipeline**:
 
@@ -572,7 +1160,16 @@ flowchart TD
 
 <a id="-emergency-kill-chain--reversible-host-containment-engine"></a>
 <a id="emergency-kill-chain--reversible-host-containment-engine"></a>
+
+</details>
+
+<details>
+<summary><b>🚨 Emergency Defend-in-Place Kill Chain & Reversible Host Containment Engine</b> (Click to expand)</summary>
+
+<a id="killchain"></a>
+<a id="-emergency-kill-chain--reversible-host-containment-engine"></a>
 ## 🚨 Emergency Kill Chain & Reversible Host Containment Engine
+
 
 ### The Defend-in-Place Reversible Containment Paradigm
 
@@ -667,7 +1264,15 @@ osoosi killchain history --limit 20
 
 <a id="-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture"></a>
 <a id="4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture"></a>
+
+</details>
+
+<details>
+<summary><b>🔒 4-Pillar Fully Homomorphic Encryption (TFHE) & Cryptographic Merkle Architecture</b> (Click to expand)</summary>
+
+<a id="-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture"></a>
 ## 🔒 4-Pillar Fully Homomorphic Encryption (TFHE) & Cryptographic Merkle Architecture
+
 
 ### The Privacy-Preserving Federated Defense Challenge
 
@@ -738,7 +1343,15 @@ osoosi fhe verify-merkle --seq 0
 
 <a id="-http-framing-defense--request-queue-poisoning-cl0-remediation"></a>
 <a id="http-framing-defense--request-queue-poisoning-cl0-remediation"></a>
+
+</details>
+
+<details>
+<summary><b>🛡️ HTTP Framing Defense & Request Queue Poisoning (CL.0) Remediation</b> (Click to expand)</summary>
+
+<a id="-http-framing-defense--request-queue-poisoning-cl0-remediation"></a>
 ## 🛡️ HTTP Framing Defense & Request Queue Poisoning (CL.0) Remediation
+
 
 ### RFC 9110 & RFC 9112 Strict Framing Middleware
 
@@ -779,7 +1392,15 @@ flowchart TD
 <a id="ring-0-windows-driver--linux-ebpf-parity"></a>
 <a id="-native-ring-0-windows-driver--linux-ebpf-parity"></a>
 <a id="native-ring-0-windows-driver--linux-ebpf-parity"></a>
+
+</details>
+
+<details>
+<summary><b>🛡️ Native Ring-0 Windows Driver (ELAM/Minifilter) & Linux CO-RE eBPF Parity</b> (Click to expand)</summary>
+
+<a id="-ring-0-windows-driver--linux-ebpf-parity"></a>
 ## 🛡️ Native Ring-0 Windows PPL / ELAM / Minifilter Driver & Linux `BPF_PROG_TYPE_LSM` Inline Kernel Blocking
+
 
 ### The Architectural Paradigm Shift: Pre-Operation Ring-0 Enforcement vs. Post-Execution Telemetry
 
@@ -1008,84 +1629,15 @@ OpenỌ̀ṣọ́ọ̀sì exposes a dedicated `osoosi driver` subcommand suite f
 
 <a id="-native-windows-service-lifecycle-osoosiedr"></a>
 <a id="native-windows-service-lifecycle-osoosiedr"></a>
-## ⚙️ Native Cross-Platform Service Lifecycle (`OsoosiEDR`) & Host OS Desktop/Search Immunity
 
-OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background service execution via native **Win32 Service Control Manager (SCM)** integration (`crates/osoosi-cli/src/service.rs`) and **Linux `systemd`** (`osoosi-edr.service`), paired with a **5-Layer Cross-Platform Host OS Desktop, Search & System Tray Immunity Gate** across **Windows, Linux, and macOS**.
+</details>
 
-```mermaid
-flowchart TD
-    subgraph STOP["Sub-2-Second Deterministic Service Stop (Windows SCM & Linux systemd)"]
-        S1["osoosi service stop / sc stop OsoosiEDR / systemctl stop osoosi-edr"] --> S2["Clear SCM Failure Auto-Respawn<br/>(sc failure OsoosiEDR reset= 0 actions= '')"]
-        S2 --> S3["SERVICE_STOP_PENDING (dwWaitHint: 2000ms)<br/>+ 1.5s Dedicated Shutdown Watchdog Thread"]
-        S3 --> S4["Fast In-Memory Tarpit Release + Native winreg IFEO & FirewallRules Purge (< 20ms)<br/>(Purges OpenOsoosi-Block-* registry keys without spawning slow netsh loops)"]
-        S4 --> S5["SERVICE_STOPPED (PID : 0 in < 1.5s, Zero Auto-Respawn)"]
-    end
-
-    subgraph IMMUNITY["5-Layer Cross-Platform Host OS Shell, Search & System Tray Immunity"]
-        P0["normalize_nt_device_path() (QueryDosDeviceW + POSIX-safe)<br/>+ is_protected_os_shell_or_desktop_binary()"]
-        P1["Windows 10/11: sihost.exe, explorer.exe, SearchHost.exe, SearchIndexer.exe,<br/>ShellHost.exe, ShellExperienceHost.exe, StartMenuExperienceHost.exe,<br/>SecurityHealthSystray.exe, ctfmon.exe, OpenConsole.exe, WindowsTerminal.exe, dwm.exe"]
-        P2["Linux: systemd*, dbus-daemon, gnome-shell, plasmashell, kwin_*, Xorg, Xwayland,<br/>sway, Hyprland, pipewire, wireplumber, tracker-miner-fs*, localsearch*, baloo_file*,<br/>xdg-desktop-portal*, NetworkManager, sshd"]
-        P3["macOS: launchd, WindowServer, Finder, Dock, SystemUIServer, ControlCenter,<br/>NotificationCenter, Spotlight, corespotlightd, mds, mdworker*, coreservicesd, loginwindow"]
-        L1["Layer 1: is_system_critical(), system_check.rs & Monitor-Mode Hard Gate"]
-        L2["Layer 2: ActiveProcessTarpit & Child-PID Immunity"]
-        L3["Layer 3: BlockingManager, AgentProvisioner & Native winreg IFEO Sanitizer"]
-        L4["Layer 4: Firewall Autoblock Deduplication & Native Registry Sanitizer"]
-        L5["Layer 5: RemediationController Process-Tree Shield (Name + Exe Path)"]
-
-        P1 & P2 & P3 --> P0
-        P0 --> L1 & L2 & L3 & L4 & L5
-    end
-```
-
-### Core Architecture & Operating Invariants
-
-1. **Sub-2-Second Deterministic Service Shutdown & Zero Auto-Respawn**:
-   - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW` and registers `RegisterServiceCtrlHandlerExW` for `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
-   - On `stop`, `service_control_handler` immediately reports `SERVICE_STOP_PENDING` (`dwWaitHint: 2000`) and spawns a **1.5-second hardware/OS watchdog thread** (`crates/osoosi-cli/src/service.rs` and `crates/osoosi-cli/src/main.rs`) that guarantees the daemon releases in-memory tarpits, reports `SERVICE_STOPPED`, and exits cleanly within 1.5 seconds even if external firewall utilities stall.
-   - `execute_host_disarm_unauthenticated()` only spawns `netsh.exe` quarantine-rule cleanup commands if the host was actually placed into `HOST_ISOLATED_STATE`, and invokes `remove_all_autoblock_rules()` (`purge_windows_firewall_autoblock_rules_native`) to delete all `OpenOsoosi-Block-*` values directly from `HKLM\SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules` via `winreg` in `< 20ms`.
-   - Service installation and startup explicitly clear SCM forced failure auto-restart actions (`sc.exe failure OsoosiEDR reset= 0 actions= ""`), and Linux `osoosi-edr.service` enforces `Restart=on-failure` with `TimeoutStopSec=5s`, ensuring an operator-requested stop never auto-respawns the daemon.
-2. **Cross-Platform Host OS Shell, Search, System Tray & Init Immunity (`Windows`, `Linux`, `macOS`)**:
-   - Kernel ETW device paths (`\Device\HarddiskVolume<N>\...`, `\Device\Mup\...`, `\\?\`, `\??\`) are normalized via `osoosi_types::normalize_nt_device_path` (using Win32 `QueryDosDeviceW` volume resolution while preserving POSIX `/` paths on Linux and macOS) before WinVerifyTrust, Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`), ELF/Mach-O inspection, or path policy evaluation so catalog-signed `SystemApps` binaries (such as `SearchHost.exe`) are never misclassified as unsigned.
-   - `osoosi_types::is_protected_os_shell_or_desktop_binary` enforces an immutable cross-platform protection list across **Windows** (`sihost.exe`, `explorer.exe`, `SearchHost.exe`, `SearchFilterHost.exe`, `SearchProtocolHost.exe`, `ShellHost.exe`, `ShellExperienceHost.exe`, `StartMenuExperienceHost.exe`, `SecurityHealthSystray.exe`, `ctfmon.exe`, `OpenConsole.exe`, `WindowsTerminal.exe`), **Linux** (`systemd*`, `dbus-daemon`, `gnome-shell`, `plasmashell`, `kwin_*`, `Xorg`, `Xwayland`, `sway`, `Hyprland`, `pipewire`, `tracker-miner-fs*`, `localsearch*`, `baloo_file*`, `xdg-desktop-portal*`), and **macOS** (`launchd`, `WindowServer`, `Finder`, `Dock`, `SystemUIServer`, `ControlCenter`, `NotificationCenter`, `Spotlight`, `corespotlightd`, `mds`, `mdworker*`)—while explicitly excluding script interpreters and LOLBins (`powershell.exe`, `cmd.exe`, `bash`, `python`, `nc`, `curl`).
-   - Startup automatically purges any legacy `HKLM\...\Image File Execution Options\<exe>\Debugger` hijacks (`systray.exe` and any hijacks targeting protected OS shell, search, tray, or accessibility binaries) via native `winreg` (`purge_ifeo_systray_debugger_hooks_native`), purges `OpenOsoosi-Block-*` registry firewall rules (`purge_windows_firewall_autoblock_rules_native`), prevents duplicate firewall rule creation (`windows_firewall_rule_exists_native`), and sanitizes `config/firewall_rules.json` and `blocking_rules.json`.
-3. **Clone-Path-Agnostic Working-Directory Resolution**:
-   - The Windows SCM always executes background services with the working directory set to `C:\Windows\System32`.
-   - `osoosi` inspects `std::env::current_exe()` at startup and walks up to 5 parent directories (`find_project_root_from(&exe)`) to locate `osoosi.toml`, `models/`, `rules/`, and `dashboard/dist/`.
-4. **Dedicated WebUI Tokio Runtime & Auto-Launch (`http://127.0.0.1:3030/`)**:
-   - Starting the service (`osoosi service install` or `osoosi service start`) binds the WebUI on a dedicated 4-worker multi-thread Tokio runtime (`osoosi-dashboard-rt`) at `http://127.0.0.1:3030/`—isolated from file-scanner and baseline-hashing workloads.
-
-### Windows & Linux Service Management Commands (`OsoosiEDR` / `osoosi-edr.service`)
-
-| Management Action | OpenỌ̀ṣọ́ọ̀sì CLI (Windows & Linux) | Windows PowerShell / `sc.exe` | Linux `systemd` (`systemctl`) | Description |
-|:---|:---|:---|:---|:---|
-| **Install Service** | `osoosi service install` | `sc.exe create OsoosiEDR ...` | Installs `/usr/lib/systemd/system/osoosi-edr.service` + `systemctl enable --now osoosi-edr` | Registers automatic startup on both Windows SCM and Linux `systemd`. |
-| **Start Service** | `osoosi service start` | `Start-Service OsoosiEDR` | `systemctl start osoosi-edr.service` | Transitions service to `RUNNING` / `active (running)` (or detaches via `setsid()` when `systemd` is absent). |
-| **Stop Service** | `osoosi service stop` | `Stop-Service OsoosiEDR` | `systemctl stop osoosi-edr.service` | Dispatches deterministic `< 1.5s` stop signal, releases tarpits, and flushes SQLite WAL. |
-| **Restart Service** | `osoosi service restart` | `Restart-Service OsoosiEDR` | `systemctl restart osoosi-edr.service` | Safely cycles the daemon, reloading rules, configs, and models. |
-| **Query Status** | `osoosi service status` | `Get-Service OsoosiEDR` | `systemctl status osoosi-edr.service` | Displays PID, current state, and memory usage. |
-| **Delete / Remove** | `osoosi service delete` | `sc.exe delete OsoosiEDR` | `systemctl disable --now osoosi-edr && rm /etc/systemd/system/osoosi-edr.service` | Stops the daemon and unregisters the service definition. |
-
-```powershell
-# Complete Administrative Service Lifecycle (Windows PowerShell or Linux Root)
-
-# 1. Install OpenỌ̀ṣọ́ọ̀sì as an automatic Service (Windows SCM or Linux systemd)
-osoosi service install
-
-# 2. Start the service
-osoosi service start
-
-# 3. Verify operational status and running PID
-osoosi service status
-
-# 4. Stop the service cleanly in < 1.5 seconds
-osoosi service stop
-```
-
----
+<details>
+<summary><b>🌳 Hierarchical BLAKE3 Merkle Hash Chains & NSRL / ASLR Protection</b> (Click to expand)</summary>
 
 <a id="-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection"></a>
-<a id="hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection"></a>
 ## 🌳 Hierarchical (Two-Tier) BLAKE3 Merkle Hash Chains & NSRL / ASLR Merkle Protection (`crates/osoosi-audit`)
+
 
 OpenỌ̀ṣọ́ọ̀sì implements a lock-free **Two-Tier Hierarchical BLAKE3 Merkle Architecture** across every arm, tarpit, and containment ring alongside **NSRL Demand-Paged 4 KB Binary Merkle Proofs** and **ASLR-Invariant Process Code-Segment Merkle Verification**.
 
@@ -1149,7 +1701,16 @@ flowchart TD
 
 <a id="-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl"></a>
 <a id="agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl"></a>
+
+</details>
+
+<details>
+<summary><b>🤖 Agent Anomaly Detection (OWASP Top 10 Agentic 2026) & EmbeddingGemma 2 MRL</b> (Click to expand)</summary>
+
+<a id="agent-anomalies"></a>
+<a id="-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl"></a>
 ## 🤖 Agent Anomaly Detection (OWASP Top 10 Agentic 2026) & EmbeddingGemma 2 MRL
+
 
 With the widespread enterprise deployment of autonomous AI agents (Devin, AutoGPT, Claude Computer Use, OpenHands), attackers increasingly target agentic loops rather than traditional binaries. OpenỌ̀ṣọ́ọ̀sì embeds an on-device **Agent Anomaly Detection (AAD)** engine (`crates/osoosi-agent-anomaly`) designed after **Google DeepMind's Gemini Enterprise Agent AAD Specification** and mapped directly to the **OWASP Top 10 for Agentic Applications (2026)**.
 
@@ -1225,7 +1786,17 @@ During multi-gigabyte model downloads from Hugging Face or Cloudflare R2, dual-s
 <a id="siquery-rs-98-table-engine"></a>
 <a id="-siquery-rs-101-table-engine"></a>
 <a id="siquery-rs-101-table-engine"></a>
+
+</details>
+
+<details>
+<summary><b>🔍 Native Rust siquery-rs 101-Table Relational SQL Telemetry Engine</b> (Click to expand)</summary>
+
+<a id="siquery"></a>
+<a id="siquery-view"></a>
+<a id="-siquery-rs-101-table-engine"></a>
 ## 🔍 Native Rust `siquery-rs` 101-Table SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)
+
 
 OpenỌ̀ṣọ́ọ̀sì embeds a 100% native Rust, in-process relational SQL telemetry engine modeled after Devolutions' `siquery-rs`. Operating entirely via an in-memory SQLite virtual database (`PRAGMA query_only = ON` and statement-level `stmt.readonly()` enforcement) with zero external dependencies (no external `osqueryi.exe` binary or MSI required), it provides real-time visibility across **101 operating system, cryptographic Merkle, & AI agent security tables**:
 
@@ -1263,7 +1834,15 @@ During daemon runtime, `EdrOrchestrator::run_siquery_edr_audit_sweep()` automati
 
 <a id="-spider-web-continuum-mechanics--exposure-bounded-containment"></a>
 <a id="spider-web-continuum-mechanics--exposure-bounded-containment"></a>
+
+</details>
+
+<details>
+<summary><b>🕸️ Nonlinear Spider-Web Continuum Mechanics & Exposure-Bounded Containment Engine</b> (Click to expand)</summary>
+
+<a id="-spider-web-continuum-mechanics--exposure-bounded-containment"></a>
 ## 🕸️ Nonlinear Spider-Web Continuum Mechanics & Exposure-Bounded Containment Engine
+
 
 Inspired by the landmark MIT study on spider orb-webs (Cranford & Buehler, *Nature* 2012), OpenỌ̀ṣọ́ọ̀sì implements a non-linear continuum mechanics containment engine (`crates/osoosi-agent-anomaly/src/spider_physics.rs`). Traditional boundary firewalls either permit 100% of traffic or trigger catastrophic binary termination of entire swarms. The spider-web continuum model provides continuous non-linear strain response and localized sacrificial failure.
 
@@ -1304,7 +1883,15 @@ OpenỌ̀ṣọ́ọ̀sì enforces an **Out-of-Model Business Authorization Gate
 
 <a id="-agentoctopus-multi-ring-containment"></a>
 <a id="agentoctopus-multi-ring-containment"></a>
+
+</details>
+
+<details>
+<summary><b>🐙 AgentOctopus Multi-Ring Containment & Zero-Hardcode Agent Discovery</b> (Click to expand)</summary>
+
+<a id="-agentoctopus-multi-ring-containment"></a>
 ## 🐙 AgentOctopus Multi-Ring Containment & Zero-Hardcode Agent Discovery
+
 
 Built within `crates/osoosi-agent-anomaly`, the **AgentOctopus** containment architecture enforces mathematical, cryptographic, and operational guardrails around local AI workflows:
 
@@ -1318,7 +1905,15 @@ Built within `crates/osoosi-agent-anomaly`, the **AgentOctopus** containment arc
 
 <a id="-hardened-canarycage-filelineage-and-swarm-pre-immunization"></a>
 <a id="hardened-canarycage-filelineage-and-swarm-pre-immunization"></a>
+
+</details>
+
+<details>
+<summary><b>🕊️ Hardened Ephemeral CanaryCage, FileLineageTracker & Swarm Pre-Immunization (R1–R15)</b> (Click to expand)</summary>
+
+<a id="-hardened-canarycage-filelineage-and-swarm-pre-immunization"></a>
 ## 🕊️ Hardened Ephemeral CanaryCage, FileLineageTracker & Swarm Pre-Immunization (R1–R15)
+
 
 OpenỌ̀ṣọ́ọ̀sì implements an active deception and swarm pre-immunization architecture across user-space, kernel boundaries, and mesh consensus, delivering 15 tightly integrated capabilities (R1–R15) that guarantee fail-closed sandboxing, cryptographic lineage, and zero-timeout forensic observability:
 
@@ -1439,7 +2034,14 @@ flowchart TD
 
 <a id="-10-mathematical-laws-of-zero--two-tier-zero-exploit-dlp-engine"></a>
 <a id="10-mathematical-laws-of-zero--two-tier-zero-exploit-dlp-engine"></a>
+
+</details>
+
+<details>
+<summary><b>📐 The 10 Mathematical Laws of Zero, Two-Tier Zero-Exploit DLP & Adversarial Red-Team Gauntlet</b> (Click to expand)</summary>
+
 ## 📐 The 10 Mathematical Laws of Zero, Two-Tier Zero-Exploit DLP (`Presidio` + `GLiNER`) & Adversarial Red-Team Gauntlet
+
 
 OpenỌ̀ṣọ́ọ̀sì unifies ten mathematical zero-invariant detectors ($\mathcal{L}(x) = 0 \iff \text{Invariant Intact}$) across agent containment, control-flow integrity, and data loss prevention, paired with an explicit separation of **Exact Algebraic Identities in the Model** vs. **Operational Trust Assumptions** and a built-in **16-Vector Adversarial Red-Team Gauntlet (`osoosi redteam`)**.
 
@@ -1535,7 +2137,16 @@ flowchart TD
 
 <a id="-owasp-hunting-integration--41-category-verification-pipeline"></a>
 <a id="owasp-hunting-integration--41-category-verification-pipeline"></a>
+
+</details>
+
+<details>
+<summary><b>🛡️ OWASP Hunting Integration: 41-Category Verification Pipeline & Independent Outcome Oracle</b> (Click to expand)</summary>
+
+<a id="owasp-hunting"></a>
+<a id="-owasp-hunting-integration--41-category-verification-pipeline"></a>
 ## 🛡️ OWASP Hunting Integration: 41-Category Verification Pipeline & Independent Outcome Oracle
+
 
 To provide continuous, rigorous verification against real-world adversary exploitation patterns, OpenỌ̀ṣọ́ọ̀sì integrates **`crates/osoosi-owasp-hunting`**, a dedicated sub-crate synchronized against the upstream **`OWASP/OWASP-Hunting`** project (pinned commit `f48d979af53f`), preserving full MIT License copyright attribution in `rules/owasp-hunting/LICENSE`.
 
@@ -1607,7 +2218,15 @@ Combined with the 34-suite adversarial test gauntlet (2,117 tests + 82 OWASP tes
 
 <a id="-verizon-vcdb-integration--empirical-breach-intelligence-4-a-schema--containment-benchmark"></a>
 <a id="verizon-vcdb-integration--empirical-breach-intelligence-4-a-schema--containment-benchmark"></a>
+
+</details>
+
+<details>
+<summary><b>📊 Verizon VCDB VERIS Breach Intelligence, 4-A Schema & Containment Benchmark</b> (Click to expand)</summary>
+
+<a id="-verizon-vcdb-integration--empirical-breach-intelligence-4-a-schema--containment-benchmark"></a>
 ## 📊 Verizon VERIS Community Database (VCDB) Integration: Empirical Breach Intelligence, 4-A Schema &amp; Containment Benchmark
+
 
 To ground autonomous defense and data loss prevention in real-world empirical breach telemetry, OshoosiClaw integrates **`crates/osoosi-vcdb`**, a dedicated engine synchronized with the **Verizon VERIS Community Database (`vz-risk/VCDB`)**, preserving full Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0) license attribution in [`rules/vcdb/LICENSE`](rules/vcdb/LICENSE).
 
@@ -1688,7 +2307,16 @@ $$	ext{Acceleration Factor} = rac{73.0 	imes 3,600,000	ext{ ms}}{482.53	ext{ ms
 
 <a id="-redactx-v3-openjev-hybrid-dlp-engine"></a>
 <a id="redactx-v3-openjev-hybrid-dlp-engine"></a>
+
+</details>
+
+<details>
+<summary><b>🔒 RedactX-v3 OpenJEV Hybrid DLP Engine: Platt-Calibrated Logit Scoring & HIPAA Safe Harbor Redaction</b> (Click to expand)</summary>
+
+<a id="dlp"></a>
+<a id="-redactx-v3-openjev-hybrid-dlp-engine"></a>
 ## 🔒 RedactX-v3 OpenJEV Hybrid DLP Engine: Platt-Calibrated Logit Scoring & HIPAA Safe Harbor Redaction
+
 
 OshoosiClaw features an integrated, high-assurance Data Loss Prevention (DLP) engine fusing sub-50µs deterministic pattern matching with the **RedactX-v3 OpenJEV** non-autoregressive decision model (`crates/osoosi-dp`, `crates/osoosi-behavioral`).
 
@@ -1740,28 +2368,13 @@ Whenever sensitive data is intercepted:
 
 ---
 
-## 📸 Interactive WebUI Visual Gallery
+</details>
 
-OpenỌ̀ṣọ́ọ̀sì features an integrated, real-time security operations dashboard (`http://127.0.0.1:3030/` or `http://oshoosi.duckdns.org:3030/`). Full high-resolution screenshots and detailed architecture descriptions are available in the **[Visual Screenshots Gallery](docs/screenshots/README.md)**.
-
-| View | Screenshot Preview | Description |
-|---|---|---|
-| **Detection Overview** (`#dashboard`) | <a href="docs/screenshots/README.md#1-detection-overview-dashboard"><img src="docs/screenshots/01_dashboard.png" width="320" alt="Dashboard" /></a> | 25-card Detection Engine grid with voter weights, live telemetry charts, and system status counters. |
-| **Threat Intelligence** (`#threats`) | <a href="docs/screenshots/README.md#2-threat-intelligence--containment-threats"><img src="docs/screenshots/02_threats.png" width="320" alt="Threats" /></a> | Granular threat list with MITRE technique numbers (`[T1033]`, `[T1622]`), confidence scores, and instant isolation actions. |
-| **ATT&CK® + ATLAS™ Matrix** (`#mitre`) | <a href="docs/screenshots/README.md#3-mitre-attck--atlas-matrix-navigator-mitre"><img src="docs/screenshots/03_mitre_matrix.png" width="320" alt="MITRE Matrix" /></a> | 15-column heatmap matrix visualizer across 26,381 STIX objects, 323 techniques, 79 mitigations, and 177 APT profiles. |
-| **Technique Inspector** (`#mitre-modal`) | <a href="docs/screenshots/README.md#4-mitre-technique-inspector-modal-mitre-modal"><img src="docs/screenshots/04_mitre_inspector.png" width="320" alt="Technique Inspector" /></a> | Deep-dive modal showing telemetry sources (Sysmon 1, Security 4688), correlated Sigma rules, and APT threat groups. |
-| **Zone Gateway & RoT** (`#zone`) | <a href="docs/screenshots/README.md#5-zone-security-gateway--hardware-attestation-zone"><img src="docs/screenshots/05_zone_gateway.png" width="320" alt="Zone Gateway" /></a> | 100% Security Score posture, TPM 2.0 hardware attestation, and sub-millisecond node cluster telemetry. |
-| **Action Approvals** (`#approvals`) | <a href="docs/screenshots/README.md#6-autonomous-action-approval-queue-approvals"><img src="docs/screenshots/06_approvals.png" width="320" alt="Action Approvals" /></a> | Autonomous response triage mode, Byzantine consensus quorum (0.70 threshold), and instant containment policy. |
-| **Attack Graph** (`#process-map`) | <a href="docs/screenshots/README.md#7-process-map--attack-graph-process-map"><img src="docs/screenshots/07_process_map.png" width="320" alt="Process Map" /></a> | Force-directed graph canvas mapping relationships (`executes`, `monitors`, `guards`, `mesh sync`) across protected subsystems. |
-| **P2P Wire Mesh** (`#mesh`) | <a href="docs/screenshots/README.md#8-high-throughput-p2p-wire-mesh-network-mesh"><img src="docs/screenshots/08_mesh_network.png" width="320" alt="Mesh Network" /></a> | libp2p GossipSub v1.2 cluster status, peer reputation scoring, and round-trip ping latencies. |
-| **Forensic History** (`#history`) | <a href="docs/screenshots/README.md#9-forensic-audit--threat-history-history"><img src="docs/screenshots/09_forensic_history.png" width="320" alt="Forensic History" /></a> | Permanent tamper-evident event ledger indexing 110,400+ events with multi-criteria filtering and CSV export. |
-| **Inbound Gossip Feed** (`#gossip`) | <a href="docs/screenshots/README.md#10-inter-node-gossip-feed-gossip"><img src="docs/screenshots/10_gossip_feed.png" width="320" alt="Gossip Feed" /></a> | Cryptographic P2P threat broadcast feed with decentralized analyst feedback and consensus voting. |
-
-*Explore the complete guided walkthrough in the **[docs/screenshots/README.md](docs/screenshots/README.md)** guide.*
-
----
+<details>
+<summary><b>🤖 Agentic Architecture: Autonomous Decision Matrix & Lineage Discovery</b> (Click to expand)</summary>
 
 ## 🎯 What Is OshoosiClaw?
+
 
 **OshoosiClaw** is a next-generation, autonomous **Endpoint Detection & Response (EDR)** agent built entirely in **Rust**. It implements a **Decentralized Immune System** model where:
 
@@ -1801,7 +2414,9 @@ OshoosiClaw does not rely on a single ML model. It uses a **cascading AI pipelin
 
 ---
 
+
 ## 🤖 Agentic Architecture — True Autonomous Security
+
 
 OshoosiClaw is not just a telemetry collector that sends logs to a cloud console for humans to review. It is a **true autonomous agent** with a real **Observe → Think → Act** loop:
 
@@ -1945,47 +2560,39 @@ OshoosiClaw 1.2 introduces **Autonomous Lineage Auditing**, allowing the agent t
 ---
 
 <a id="-dns-telemetry-setup"></a>
-## 🔍 DNS & Sysmon Telemetry Setup
 
-OshoosiClaw actively inspects DNS queries using process-attributed domain analysis (`SysmonDnsQueryVoter`) to detect DGA domains, DNS tunneling, and C2 beacons.
+## 🧠 LLM Agent (Autonomous Reasoning)
 
-### Why Sysmon May Not Capture DNS Traffic By Default
-Sysmon **Event ID 22 (DnsQuery)** is disabled by default in vanilla Sysmon installations to prevent high event volume. To capture DNS traffic, use either **Method A** (Zero Install) or **Method B** (Sysmon Event ID 22):
 
-#### Method A: Native Windows DNS Client Logging (Instant, Zero Installs)
-Enable Windows native DNS Client operational logging. OshoosiClaw ingests this channel automatically:
+OshoosiClaw integrates a local LLM agent that embodies Ọ̀ṣọ́ọ̀sì's role as the divine tracker:
+
+| Ọ̀ṣọ́ọ̀sì Attribute | Agent Capability |
+|:-------------------|:----------------|
+| **Observation** — reads the forest | Polls live context: peers, threats, malware, patches |
+| **Tracking** — follows the trail | Reasons about reputation scores, confidence levels, patterns |
+| **Judgment** — aims the arrow | Decides: approve peer, deny peer, trigger patch, release quarantine |
+| **Precision** — never misses | Conservative by default; only acts when confidence is high |
+
 ```powershell
-# Run in Administrator PowerShell:
-wevtutil sl Microsoft-Windows-DNS-Client/Operational /e:true
-```
-
-#### Method B: Deploy Sysmon with Event ID 22 Configuration
-Use the included [`config/sysmon-dns.xml`](config/sysmon-dns.xml) configuration:
-```powershell
-# Install Sysmon with DNS Query capture enabled:
-.\Sysmon64.exe -i config\sysmon-dns.xml -accepteula
-
-# Or update an existing Sysmon installation:
-.\Sysmon64.exe -c config\sysmon-dns.xml
+# Auto-spawn with the main agent
+$env:OSOOSI_LLM_AGENT_ENABLED="1"
+.\osoosi.exe start
 ```
 
 ---
 
-<a id="-two-host-mesh-consensus"></a>
-## 🌐 Two-Host BFT Mesh & Hardware Attestation
+<a id="-autonomous-agent-skill-evolution--wikiskill"></a>
+<a id="autonomous-agent-skill-evolution--wikiskill"></a>
 
-OshoosiClaw supports multi-node clustering and edge deployments down to a strict **2-host cluster** ($N=2$):
+</details>
 
-* **Adaptive 2-Host BFT Quorum**: When both nodes are high-trust ($r \ge 0.85$, configured via `two_host_reputation_threshold`), unweighted quorum adapts to `2` to ensure consensus proceeds smoothly.
-* **1-vs-1 Stalemate Detection**: A 1-vs-1 split vote (`optimal: 1, critical: 1`) is formally recognized as `stalemate_conflict = true`.
-* **Designated Witness Arbiter**: An optional lightweight cloud observer or local witness can sign a `WitnessVote` over `SHA256(policy_id | witness_id | status | timestamp)` to break ties deterministically.
-* **TPM 2.0 Silicon Attestation**: Evaluates remote PCR quotes and authenticates the manufacturer's silicon Endorsement Key (EK) certificate chain (Intel, AMD, Infineon, STMicro) before admitting nodes into the mesh.
-* **Whole-Chain Revocation Checking**: Windows PE validation enforces `WTD_REVOKE_WHOLECHAIN` with graceful offline fallback (`WTD_CACHE_ONLY_URL_RETRIEVAL`).
+<details>
+<summary><b>🧠 6-Pillar Reinforcement Learning Adaptive Controller (SkyRL)</b> (Click to expand)</summary>
 
----
-
+<a id="skyrl"></a>
 <a id="-rl-adaptive-controller"></a>
 ## 🧠 6-Pillar Reinforcement Learning Adaptive Controller
+
 
 OshoosiClaw incorporates an autonomous **6-Pillar Reinforcement Learning Adaptive Controller** (`osoosi-behavioral::rl_engine`) designed for real-time endpoint mitigation, contextual alert prioritization, and self-improving threat response. The architecture provides mathematical stability, continuous risk feedback, and hard OS safety invariants:
 
@@ -2103,7 +2710,16 @@ flowchart TD
 ---
 
 <a id="-adversarial-verification"></a>
+
+</details>
+
+<details>
+<summary><b>⚡ Adversarial & Comprehensive Verification (205+ Tests Passed)</b> (Click to expand)</summary>
+
+<a id="adversarial-tests"></a>
+<a id="-adversarial-verification"></a>
 ## ⚡ Adversarial & Comprehensive Verification (148+ Tests Passed)
+
 
 OshoosiClaw includes 148+ automated adversarial attack simulation and security verification tests evaluating host, peer, telemetry anti-blinding, policy engine sandbox, MITRE ATLAS voters, in-memory evasion resilience, and the 6-pillar RL adaptive controller:
 
@@ -2139,7 +2755,15 @@ cargo test -p osoosi-behavioral --test rl_tests
 ---
 
 <a id="-synthetic-telemetry-canaries--anti-blinding-engine"></a>
+
+</details>
+
+<details>
+<summary><b>🕊️ Synthetic Telemetry Canaries & Active Anti-Blinding Engine</b> (Click to expand)</summary>
+
+<a id="-synthetic-telemetry-canaries--anti-blinding-engine"></a>
 ## 🕊️ Synthetic Telemetry Canaries & Anti-Blinding Engine
+
 
 To defend against advanced Bring Your Own Vulnerable Driver (BYOVD) rootkits, kernel-mode callback unhooking, and silent Event Tracing for Windows (ETW) blinding, OshoosiClaw incorporates an autonomous **Synthetic Telemetry Canary & Anti-Blinding Engine** (`osoosi-telemetry`).
 
@@ -2166,7 +2790,15 @@ Passive EDR sensors fail when an adversary loads a vulnerable kernel driver to z
 ---
 
 <a id="-mitre-attck--atlas-enterprise-framework"></a>
+
+</details>
+
+<details>
+<summary><b>🛡️ MITRE ATT&CK® Enterprise & MITRE ATLAS™ Framework (26,381 STIX Objects)</b> (Click to expand)</summary>
+
+<a id="-mitre-attck--atlas-enterprise-framework"></a>
 ## 🛡️ MITRE ATT&CK® Enterprise & MITRE ATLAS™ Framework (26,381 STIX Objects)
+
 
 OshoosiClaw incorporates an authoritative, unified **MITRE ATT&CK® Enterprise** and **MITRE ATLAS™** (Adversarial Threat Landscape for Artificial-Intelligence Systems) knowledge base. By anchoring behavioral detection, kernel telemetry, AI agent defense, and peer-to-peer wire intelligence to standard STIX 2.1 taxonomy, the agent bridges classic OS-level endpoint detection with autonomous AI application security.
 
@@ -2224,7 +2856,15 @@ OshoosiClaw embeds an authoritative STIX 2.1 bundle (`config/stix-atlas-attack-e
 
 <a id="-autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds"></a>
 <a id="autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds"></a>
+
+</details>
+
+<details>
+<summary><b>🧬 Autonomous AI Threat Compiler (5 Public AI Threat Feeds & ATLAS Consensus)</b> (Click to expand)</summary>
+
+<a id="-autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds"></a>
 ## 🧬 Autonomous AI Threat Compiler (`osoosi-ai-feed-collector` — 5 Public AI Threat Feeds)
+
 
 While **MITRE ATLAS™** provides a foundational taxonomy for adversarial machine learning, emerging real-world agentic exploits, jailbreak mutations, and AI supply-chain vulnerabilities evolve daily across open community repositories that do not natively emit STIX 2.1 bundles.
 
@@ -2333,7 +2973,15 @@ The built-in web dashboard provides an interactive **MITRE ATT&CK & ATLAS Matrix
 ---
 
 <a id="-active-process--memory-tarpit-hollowing-containment"></a>
+
+</details>
+
+<details>
+<summary><b>🪤 Active Process & Memory Tarpit, Hollowing Interception & T1136 Containment</b> (Click to expand)</summary>
+
+<a id="-active-process--memory-tarpit-hollowing-containment"></a>
 ## 🪤 Active Process & Memory Tarpit, Hollowing Interception & T1136 Containment
+
 
 To prevent adversaries and penetration testing automation (such as Atomic Red Team / `edr_tester.py`) from executing system-altering persistence, tampering, or process hollowing, OpenỌ̀ṣọ́ọ̀sì implements low-level thread interception, memory tampering defenses, differential privacy telemetry perturbation, and autonomous rollback across all 266 MITRE ATT&CK patterns:
 
@@ -2375,7 +3023,33 @@ flowchart TD
 ---
 
 <a id="-high-throughput-p2p-mesh--consensus-stability"></a>
+
+</details>
+
+<details>
+<summary><b>🌐 P2P Mesh Networking, libp2p GossipSub & Nostr Multi-Transport Relay</b> (Click to expand)</summary>
+
+<a id="mesh"></a>
+<a id="gossip"></a>
+<a id="-mesh-networking"></a>
+<a id="-two-host-mesh-consensus"></a>
+## 🌐 Two-Host BFT Mesh & Hardware Attestation
+
+
+OshoosiClaw supports multi-node clustering and edge deployments down to a strict **2-host cluster** ($N=2$):
+
+* **Adaptive 2-Host BFT Quorum**: When both nodes are high-trust ($r \ge 0.85$, configured via `two_host_reputation_threshold`), unweighted quorum adapts to `2` to ensure consensus proceeds smoothly.
+* **1-vs-1 Stalemate Detection**: A 1-vs-1 split vote (`optimal: 1, critical: 1`) is formally recognized as `stalemate_conflict = true`.
+* **Designated Witness Arbiter**: An optional lightweight cloud observer or local witness can sign a `WitnessVote` over `SHA256(policy_id | witness_id | status | timestamp)` to break ties deterministically.
+* **TPM 2.0 Silicon Attestation**: Evaluates remote PCR quotes and authenticates the manufacturer's silicon Endorsement Key (EK) certificate chain (Intel, AMD, Infineon, STMicro) before admitting nodes into the mesh.
+* **Whole-Chain Revocation Checking**: Windows PE validation enforces `WTD_REVOKE_WHOLECHAIN` with graceful offline fallback (`WTD_CACHE_ONLY_URL_RETRIEVAL`).
+
+---
+
+<a id="-rl-adaptive-controller"></a>
+
 ## 🌐 High-Throughput P2P Mesh & Consensus Stability
+
 
 To sustain enterprise throughput under high-volume event bursts without saturating peer-to-peer network bandwidth or stalling real-time threat response, OshoosiClaw incorporates dedicated mesh deduplication, asynchronous consensus optimization, and correlator alarm debouncing:
 
@@ -2399,321 +3073,9 @@ To sustain enterprise throughput under high-volume event bursts without saturati
 
 <a id="-quick-start"></a>
 <a id="quick-start"></a>
-## ⚡ Quick Start
 
-### Prerequisites
-
-| Component | Version | Purpose |
-|:----------|:--------|:--------|
-| **Rust** | 1.75+ | Core compilation |
-| **Sysmon** | 15.0+ | Kernel-level telemetry (Windows) |
-| **ClamAV** | 1.0+ | Signature-based AV scanning |
-| **Ollama** | 0.1.0+ | Local LLM inference (optional) |
-
-### Windows Installer (MSI)
-
-OshoosiClaw provides a standalone, production-ready Windows Installer (`OshoosiClaw.msi`, ~25MB) built with WiX v5 that bundles all necessary dependencies for immediate zero-touch deployment:
-- `osoosi.exe`: Release binary automatically registered to the system `PATH`.
-- `onnxruntime.dll`: Root ONNX Runtime (1.22.x) engine for local ML inference.
-- Signed Configurations: Cryptographically signed policies (`osoosi.toml` + `osoosi.toml.sign`, `openshell-policy.yaml`, `firewall_allowlist.txt`).
-- Sysmon 4.91 Profiles: Production ETW profiles (`sysmon-dns.xml` and `sysmonconfig-export.xml`).
-- Web UI Assets: Complete dashboard distribution assets (`dashboard/dist/*`).
-
-#### Installation Methods
-
-```powershell
-# Interactive installation
-msiexec /i OshoosiClaw.msi
-
-# Silent / unattended background deployment
-msiexec /i OshoosiClaw.msi /quiet /qn
-```
-
-#### Building the MSI from Source (WiX v5)
-
-```powershell
-# 1. Compile release binary and sign configurations
-cargo build --release -p osoosi-cli
-.\target\release\osoosi.exe sign-configs
-
-# 2. Build standalone MSI directly using WiX v5
-wix build wix\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi
-
-# Or run the automated deployment packager
-powershell -ExecutionPolicy Bypass -File scripts\package.ps1
-```
-
-### Build From Source
-
-```powershell
-# Clone the repository
-git clone https://github.com/oyesanyf/OshoosiClaw.git
-cd OshoosiClaw
-
-# Build with all features
-cargo build --release --all-features
-
-# One-time setup: install dependencies + grant permissions
-.\target\release\osoosi.exe grant-access
-
-# Start the autonomous security loop
-.\target\release\osoosi.exe start
-
-# Optional: grant-access and start in one go (flag works before or after subcommand)
-.\target\release\osoosi.exe start --grant-access
-# .\target\release\osoosi.exe --grant-access start
-```
-
-On each `start`, the agent **discovers** `git` and `openshell` from `PATH` and standard locations, then **persists** absolute paths under `%APPDATA%\osoosi\tool_paths.json` (see [Environment Variables](#environment-variables)). This avoids repeated lookups on later runs.
-
-The **osoosi-dashboard** crate is a workspace member and a direct dependency of **osoosi-cli** (Axum web UI for `start --dashboard` and the `dashboard` subcommand). Standard `cargo build --release` compiles it; you should not exclude it from release builds.
-
-### 🛡️ Windows Smart App Control (SAC) & Code Integrity Notes
-
-On Windows 11 systems with **Smart App Control (SAC)** or AppLocker / Windows Defender Application Control (WDAC) enabled in evaluation or enforcement mode, policy enforcement events may be recorded in Event Viewer under `Microsoft-Windows-CodeIntegrity/Operational` (Event IDs **3077** or **3118**: `An Application Control policy has blocked this file`).
-
-- **Procedural Macro DLL Reputation Delays**: During release compilation on fresh checkouts, the Rust compiler links and executes host procedural macro dynamic libraries (such as `zeroize_derive-*.dll` in `target/release/deps`). Windows Smart App Control submits newly compiled procedural macro binaries to cloud reputation services. If cloud verification is still resolving, SAC may temporarily block the DLL from loading, causing `rustc` to emit cascading compilation errors:
-  ```text
-  error[E0463]: can't find crate for `zeroize_derive` which `zeroize` depends on
-  ```
-- **Remediation**: This is a transient cloud reputation lookup delay on unsigned host build artifacts. Once the local reputation cache settles (typically within 10–30 seconds), simply query or re-run compilation to proceed cleanly:
-  ```powershell
-  # Query the built binary or re-run release compilation once reputation settles
-  cargo run --release -p osoosi-cli -- --help
-  cargo build --release
-  ```
-
-### Linux Packages (`v1.2.0` — `.deb`, `.rpm`, `.tar.gz`)
-
-Every release ships GPG-signed (`PUBLIC_KEY.asc`) and SLSA in-toto DSSE-attested Linux packages for Debian/Ubuntu (`.deb`), RHEL/Fedora/Rocky (`.rpm`), and portable x86_64 systems (`.tar.gz`):
-
-```bash
-# 1. Verify OpenPGP detached signature against PUBLIC_KEY.asc
-gpg --import PUBLIC_KEY.asc
-gpg --verify oshoosiclaw_1.2.0_amd64.deb.asc oshoosiclaw_1.2.0_amd64.deb
-
-# 2a. Debian / Ubuntu (.deb)
-sudo dpkg -i oshoosiclaw_1.2.0_amd64.deb
-osoosi --version
-
-# 2b. RHEL / Fedora / Rocky / AlmaLinux (.rpm)
-sudo rpm -Uvh oshoosiclaw-1.2.0-1.x86_64.rpm
-osoosi --version
-
-# 2c. Portable Linux Tarball (.tar.gz)
-tar -xzf oshoosiclaw-1.2.0-linux-x86_64.tar.gz
-sudo ./install.sh
-```
-
-### 🐳 Hardened Docker & Docker Compose (`CIS Docker Benchmark Level 2`)
-
-OpenỌ̀ṣọ́ọ̀sì ships a multi-stage, zero-trust container image (`ghcr.io/oyesanyf/oshoosiclaw:1.2.0`) engineered to satisfy **OpenSSF Scorecard `Pinned-Dependencies` (10/10)** and **CIS Docker Benchmark v1.6 Level 2**:
-
-- **Immutable SHA-256 Base Digests**: Both `builder` and `runtime` stages pin `ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac`.
-- **Non-Root Execution (`UID 65532:65532`)**: Executes under a dedicated unprivileged `osoosi:osoosi` account (`/usr/sbin/nologin`) with the `root` account locked (`passwd -l root`).
-- **Immutable Code & Read-Only RootFS**: `/app/osoosi` (`0555`) and `/app/dashboard/dist` (`0444`) are owned by `0:0` (`root:root`), preventing runtime binary or WebUI self-modification even under a hypothetical RCE.
-- **Zero SUID/SGID & Package Manager Purge**: All `SUID`/`SGID` bits are stripped across the filesystem and `apt`/`dpkg` are removed from the runtime image.
-- **Kernel Capability Drop & Seccomp Filtering**: Drops all Linux capabilities (`--cap-drop=ALL`), enforces `no-new-privileges:true`, and applies a custom 52-syscall blocklist (`docker/seccomp-oshoosi.json`).
-
-```mermaid
-flowchart TD
-    subgraph Stage1["Stage 1: Builder (Digest-Pinned)"]
-        S1A["Rust Workspace / Pre-Built ELF"] --> S1B["strip --strip-unneeded"]
-        S1B --> S1C["chmod 0555 /out/app/osoosi"]
-        S1C --> S1D["chmod 0444 /out/app/dashboard/dist"]
-    end
-
-    subgraph Stage2["Stage 2: Hardened Runtime (UID 65532:65532)"]
-        S2A["Purge apt/dpkg & Strip All SUID/SGID"] --> S2B["Immutable 0:0 /app/osoosi & /app/dashboard"]
-        S2B --> S2C["Isolated 65532:65532 Volumes (/app/database, /app/logs, /app/quarantine)"]
-    end
-
-    subgraph Confinement["Runtime Kernel Confinement"]
-        C1["--read-only RootFS + noexec /tmp tmpfs"]
-        C2["--cap-drop=ALL + no-new-privileges:true"]
-        C3["docker/seccomp-oshoosi.json (52 Syscalls Blocked)"]
-    end
-
-    Stage1 --> Stage2 --> Confinement
-```
-
-```bash
-# Build the hardened multi-stage image locally
-docker build -t ghcr.io/oyesanyf/oshoosiclaw:1.2.0 .
-
-# Run with read-only rootfs, dropped capabilities, and seccomp confinement
-docker run -d \
-  --name oshoosi-edr \
-  --user 65532:65532 \
-  --read-only \
-  --cap-drop=ALL \
-  --security-opt=no-new-privileges:true \
-  --security-opt seccomp=docker/seccomp-oshoosi.json \
-  --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m \
-  -p 127.0.0.1:3031:3030 \
-  ghcr.io/oyesanyf/oshoosiclaw:1.2.0
-
-# Or launch via the hardened docker-compose.yml profile
-docker compose up -d --build
-```
-
----
-
-<a id="-architecture"></a>
-<a id="architecture"></a>
-## 🏛️ Architecture
-
-OshoosiClaw is built as a **modular monolith** — 20 specialized crates that compile into a single, high-performance binary.
-
-```mermaid
-flowchart TD
-    subgraph Spirits["1. Core Yoruba Subsystem Pillars"]
-        S1["Osoosi Scanner (User-Space & File Inspection)"]
-        S2["Ogun Kernel Layer (Sysmon ETW / Linux eBPF)"]
-        S3["Erinle Healer (Autonomous Repair & Rollback)"]
-        S4["Ode Orchestrator (Core Daemon Service)"]
-    end
-
-    subgraph Orchestrator["2. EdrOrchestrator & Multi-Engine Pipeline"]
-        D1["Detection Pipeline (12 Engines)<br/>Magika • ClamAV • YARA-X • EMBER ML • CAPA • FLOSS • Hayabusa • Chainsaw"]
-        D2["Memory Forensics (HollowsHunter & VAD)<br/>Sysmon ETW / eBPF → ProcessAccess / lsass → Memory Scan → Alert"]
-        D3["Behavioral AI & Decision Cascade<br/>CoLog Anomaly → EmbeddingGemma 2 MRL → Clef Flash → Strands Decider 2B"]
-    end
-
-    subgraph Sinks["3. Persistence, Mesh & Active Containment"]
-        K1["SQLite Memory Store & 101-Table Siquery"]
-        K2["libp2p GossipSub Mesh (ML-KEM-768 / ML-DSA-65)"]
-        K3["Hardware-Signed BLAKE3 Merkle Audit Trail"]
-        K4["Active Response (CanaryCage / Tarpit / KillChain)"]
-    end
-
-    S1 & S2 & S3 & S4 --> D1 & D2 & D3
-    D1 & D2 & D3 --> K1 & K2 & K3 & K4
-```
-
-### Crate Map
-
-| Crate | Yoruba Spirit | Responsibility |
-|:------|:-------------|:---------------|
-| `osoosi-cli` | — | CLI interface for managing and running the agent |
-| `osoosi-core` | **Ode** *(Orchestrator)* | Coordinates telemetry, policy, mesh, and response |
-| `osoosi-telemetry` | **Ogun** *(Iron Layer)* | Cross-platform event ingestion (Sysmon/Auditd/ESF) + FIM |
-| `osoosi-policy` | — | Detection engines (STGC, Sigma, KEV, NSRL feeds) |
-| `osoosi-model` | — | ML model training, Magika/ClamAV malware scanning |
-| `osoosi-behavioral` | — | SecureBERT + Gemma 4 + OpenAI behavioral AI |
-| `osoosi-wire` | — | P2P mesh (libp2p Gossipsub), peer join gate, reputation |
-| `osoosi-trust` | — | Identity (DID), Merkle Proofs, certificate issuing |
-| `osoosi-audit` | — | Tamper-evident Merkle Logchain |
-| `osoosi-repair` | **Erinle** *(Healer)* | Patch discovery and transactional patch engine |
-| `osoosi-runtime` | — | Active response: deception (ghost files) and tarpit |
-| `osoosi-memory` | — | Local SQLite persistence and threat intelligence store |
-| `osoosi-dashboard` | — | Web dashboard UI and API endpoints (Axum) |
-| `osoosi-sandbox` | — | WASM sandbox for isolated tool execution |
-| `osoosi-dp` | — | Differential privacy + Fully Homomorphic Encryption |
-| `osoosi-hexpatch` | — | Dynamic binary self-healing (HexPatch) |
-| `osoosi-exporter` | — | Telemetry exporter (SIEM/Webhook integration) |
-| `osoosi-types` | — | Unified data schemas for all crate communication |
-| `hex-patch` | — | Binary patching utility |
-| `test-peer` | — | P2P mesh testing utility |
-
----
-
-## 🔬 Detection Arsenal
-
-OshoosiClaw uses a **six-engine detection pipeline** — a depth of analysis that exceeds most commercial EDR products.
-
-### The Mandiant Forensic Trio
-
-| Tool | What It Does | Detects |
-|:-----|:-------------|:--------|
-| **CAPA** | Extracts binary *capabilities* | What can this file DO? (keylogging, C2, exfiltration) |
-| **FLOSS** | De-obfuscates hidden strings | Hidden C2 domains, IPs, API keys, config data |
-| **HollowsHunter** | Scans live process memory | Process hollowing, DLL injection, shellcode, API hooks |
-
-### Full Detection Stack
-
-| Layer | Engine | Technique | Coverage |
-|:------|:-------|:----------|:---------|
-| 1️⃣ | **Magika** (Google) | AI file-type identification | Prevents extension spoofing |
-| 2️⃣ | **ClamAV** | Signature-based AV | 8M+ known malware signatures |
-| 3️⃣ | **YARA** | Pattern matching rules | Custom + community threat rules |
-| 4️⃣ | **EMBER ML** | 54-feature PE static analysis | Zero-day malware classification |
-| 5️⃣ | **Mandiant CAPA** | Capability extraction | Behavioral intent analysis |
-| 6️⃣ | **Mandiant FLOSS** | String de-obfuscation | Hidden C2/config extraction |
-| 7️⃣ | **HollowsHunter** | Live memory forensics | In-memory implant detection |
-| 8️⃣ | **Hayabusa** | Sigma Rule Engine | Host-based C2 log analysis (Post-Execution) |
-| 9️⃣ | **Chainsaw** | Fast Forensic Triage | MFT anomalies & triage artifacts |
-| 🔟 | **Xori** | Shellcode Emulator | Static capability detection (Pre-Execution) |
-| 1️⃣1️⃣ | **RedBPF** | eBPF Network Monitor | Real-time C2 beacon detection (Linux Kernel) |
-| 1️⃣2️⃣ | **yara-x** | Native Rust YARA | High-speed pattern matching (Unified C2 + Signatures) |
-| 1️⃣3️⃣ | **Sigma-X** | LogSource-Aware Sigma | 10x faster rule matching via product/service indexing |
-| 1️⃣4️⃣ | **Atomic IOC** | O(1) Indicator Scanner | High-fidelity hash/IP/domain matching |
-| 🧠 | **Gemma 4 / Ollama** | LLM Consensus | Context-aware reasoning with resilient Ollama fallback |
-
-### Sysmon Event Coverage (Complete)
-
-OshoosiClaw processes **ALL 25+ Sysmon event types**:
-
-| Category | Event IDs | Detection Purpose |
-|:---------|:----------|:------------------|
-| **Execution & Memory** | 1, 5, 8, 10, 25 | Process creation, injection, LSASS access, tampering |
-| **File System** | 2, 11, 15, 23, 26, 27, 28, 29 | Timestomping, file drops, ADS, ransomware, shredding |
-| **Registry** | 12, 13, 14 | Persistence mechanisms (Run keys, services) |
-| **Network** | 3, 17, 18, 22 | C2 beaconing, lateral movement, DNS exfiltration |
-| **System** | 4, 6, 7, 9, 16, 19-21, 24, 255 | Rootkits, DLL sideloading, WMI persistence, clipboard |
-
-### Behavioral AI Cascade
-
-```
-Event → CoLog Autonomous Sequence Anomaly Detection
-          ↓ (if score > 0.7)
-        SecureBERT Classification (local model)
-          ↓ (if suspicious)
-        Gemma 3 4B Reasoning (via Ollama)
-          ↓ (fallback)
-        OpenAI GPT Analysis (cloud API)
-```
-
----
-
-<a id="-features"></a>
-## 🛡️ Active Defense Features
-
-### Ghost Trap Canary System
-Deploys realistic decoy files across the filesystem:
-- `CEO_Private_Strategy_2025.docx`
-- `Production_DB_Keys.env`
-- `Backup_Credentials_FINAL.xlsx`
-
-Any unauthorized access triggers an **immediate alert** with full forensic context.
-
-### Egress Tarpitting
-Instead of blocking suspicious connections outright, OshoosiClaw **throttles** them — slowing data exfiltration to a crawl while gathering intelligence on the attacker's C2 infrastructure.
-
-### Holographic Deception Sharding (HDS)
-When an attacker IP is flagged, the P2P mesh creates a **distributed hallucination**: the SSH service appears on Node A in Tokyo, the database on Node B in Berlin, and the web server on Node C in NYC. The attacker perceives a single target; the mesh perceives a harvest.
-
-### 🛡️ Nexus-Shield: The Reality-Distortion Field
-OshoosiClaw evolves beyond passive detection with **Nexus-Shield**, an active execution layer that dictates the "physics" of the operating system for suspicious processes.
-
-| Capability | Defensive Action |
-|:-----------|:-----------------|
-| **Self-Defense** | Intercepts and denies `TerminateProcess` or `SuspendThread` requests directed at the agent. |
-| **LSASS Guard** | Rings-fences `lsass.exe` to prevent credential dumping (Mimikatz, etc.). |
-| **DNS Sinkholing** | Redirects malicious C2 domains to a local loopback/tarpit "void" instead of a hard block. |
-| **JIT Anti-Injection** | Scans memory allocation buffers with **YARA-X** in real-time to detect shellcode/NOP-sleds. |
-| **Mesh Immunization** | Automatically broadcasts shield violations to the P2P mesh for global threat neutralization. |
-
-### Einsteinian Relativistic Guard
-Treats the system as a **Causal Manifold**:
-- **Light-Cone Integrity**: Every event is hashed with its causal parent. Mismatches indicate code injection.
-- **Temporal Dilation**: Detects discrepancies between local CPU time and mesh time, catching backdating and sleeper malware.
-
----
-
-<a id="-mesh-networking"></a>
-<a id="mesh-networking"></a>
 ## 🌐 Mesh Networking
+
 
 OshoosiClaw agents form a **decentralized P2P mesh** using libp2p Gossipsub:
 
@@ -2730,7 +3092,15 @@ OshoosiClaw agents form a **decentralized P2P mesh** using libp2p Gossipsub:
 ---
 
 <a id="-cli-reference"></a>
+
+</details>
+
+<details>
+<summary><b>⌨️ Complete Command-Line Interface (CLI) Reference & Administration</b> (Click to expand)</summary>
+
+<a id="-cli-reference"></a>
 ## ⌨️ CLI Reference
+
 
 Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, `--no-ai`, `--grant-access`.
 
@@ -2993,28 +3363,14 @@ Executes automated adversary emulation procedures mapped to MITRE ATT&CK techniq
 
 ---
 
-## 🧠 LLM Agent (Autonomous Reasoning)
+</details>
 
-OshoosiClaw integrates a local LLM agent that embodies Ọ̀ṣọ́ọ̀sì's role as the divine tracker:
-
-| Ọ̀ṣọ́ọ̀sì Attribute | Agent Capability |
-|:-------------------|:----------------|
-| **Observation** — reads the forest | Polls live context: peers, threats, malware, patches |
-| **Tracking** — follows the trail | Reasons about reputation scores, confidence levels, patterns |
-| **Judgment** — aims the arrow | Decides: approve peer, deny peer, trigger patch, release quarantine |
-| **Precision** — never misses | Conservative by default; only acts when confidence is high |
-
-```powershell
-# Auto-spawn with the main agent
-$env:OSOOSI_LLM_AGENT_ENABLED="1"
-.\osoosi.exe start
-```
-
----
+<details>
+<summary><b>🧠 Autonomous Agent Skill Evolution & WikiSkill Framework</b> (Click to expand)</summary>
 
 <a id="-autonomous-agent-skill-evolution--wikiskill"></a>
-<a id="autonomous-agent-skill-evolution--wikiskill"></a>
 ## 🧠 Autonomous Agent Skill Evolution & WikiSkill Framework
+
 
 OpenỌ̀ṣọ́ọ̀sì integrates the complete **[WikiSkill](https://github.com/Stahl-G/wikiskill)** framework (`tools/wikiskill/`, `.agents/skills/wikiskill/`, `.agents/subagents/`), empowering security agents to autonomously compile operational experience, raw telemetry, and analyst feedback into persistent, reusable skills with automated validation and strict improvement gating.
 
@@ -3058,7 +3414,15 @@ An end-to-end self-evolution cycle is implemented in `examples/edr-skill-evoluti
 
 <a id="-autonomous-defense-swarm--langgraph"></a>
 <a id="autonomous-defense-swarm--langgraph"></a>
+
+</details>
+
+<details>
+<summary><b>🐝 Autonomous Multi-Agent Defense Swarm (LangGraph)</b> (Click to expand)</summary>
+
+<a id="-autonomous-defense-swarm--langgraph"></a>
 ## 🐝 Autonomous Multi-Agent Defense Swarm (LangGraph)
+
 
 ### The Decoupled Dual-Ring Architecture
 
@@ -3150,7 +3514,15 @@ python -m defense_swarm.cli serve --host 127.0.0.1 --port 4002
 
 <a id="-hybrid-decision-engine--strands-decider-2b--clef-flash"></a>
 <a id="hybrid-decision-engine--strands-decider-2b--clef-flash"></a>
+
+</details>
+
+<details>
+<summary><b>⚡ Multi-Tiered Hybrid Decision Engine (Strands Decider 2B & Clef Flash)</b> (Click to expand)</summary>
+
+<a id="-hybrid-decision-engine--strands-decider-2b--clef-flash"></a>
 ## ⚡ Multi-Tiered Hybrid Decision Engine (Strands Decider 2B & Clef Flash)
+
 
 OpenỌ̀ṣọ́ọ̀sì implements a **non-autoregressive hybrid decision fabric** combining edge cloud intelligence with local, air-gapped small decision models (SLMs).
 
@@ -3225,7 +3597,15 @@ auto_escalate_to_swarm = true
 
 <a id="-embedded-velociraptor-forensic-extraction-service"></a>
 <a id="embedded-velociraptor-forensic-extraction-service"></a>
+
+</details>
+
+<details>
+<summary><b>🔍 Embedded Velociraptor Forensic Extraction Service</b> (Click to expand)</summary>
+
+<a id="-embedded-velociraptor-forensic-extraction-service"></a>
 ## 🔍 Embedded Velociraptor Forensic Extraction Service
+
 
 OpenỌ̀ṣọ́ọ̀sì features an embedded **Velociraptor Forensic Extraction Service** (`crates/osoosi-forensics`), providing deep digital forensics and incident response (DFIR) without third-party server infrastructure.
 
@@ -3253,193 +3633,13 @@ OpenỌ̀ṣọ́ọ̀sì features an embedded **Velociraptor Forensic Extractio
 
 ---
 
-## 📋 Requirements
+</details>
 
-### System Requirements
-
-| Platform | Minimum | Recommended |
-|:---------|:--------|:------------|
-| **OS** | Windows 10/11, Ubuntu 20.04+, macOS 12+ | Windows Server 2022, Ubuntu 22.04 |
-| **RAM** | 4 GB | 8 GB+ |
-| **Disk** | 2 GB (agent) + 130 GB (NSRL) | 256 GB SSD |
-| **CPU** | x86_64, 2 cores | 4+ cores |
-| **Network** | Internet (threat feeds) | Static IP (mesh stability) |
-
-### Build Requirements
-
-| Dependency | Version | Install |
-|:-----------|:--------|:--------|
-| **Rust** | 1.75+ | [rustup.rs](https://rustup.rs) |
-| **Visual Studio Build Tools** | 2022 | [Visual Studio](https://visualstudio.microsoft.com/downloads/) (Windows) |
-| **OpenSSL** | 3.0+ | Auto-provisioned via `grant-access` |
-| **pkg-config** | Latest | `apt install pkg-config` (Linux) |
-
-### Optional Dependencies
-
-| Tool | Purpose | Auto-Provisioned? |
-|:-----|:--------|:------------------|
-| **Sysmon** | Kernel-level telemetry (Windows) | ✅ Yes |
-| **ClamAV** | Signature-based antivirus | ✅ Yes |
-| **Ollama** | Local LLM inference | ✅ Yes |
-| **FLOSS** | String de-obfuscation | ✅ Yes |
-| **HollowsHunter** | Memory forensics | ✅ Yes |
-
-<a id="environment-variables"></a>
-### Environment Variables
-
-| Variable | Default | Description |
-|:---------|:--------|:------------|
-| `OSOOSI_LLM_AGENT_ENABLED` | `0` | Enable LLM agent auto-spawn |
-| `ORT_DYLIB_PATH` | Auto-detect | Path to ONNX Runtime DLL |
-| `OSOOSI_MODELS_DIR` | `models/` | ML model directory |
-| `OSOOSI_SIGMA_DIR` | `sigma/` | Sigma rules directory |
-| `OSOOSI_DATABASE_DIR` | `database/` | Centralized database directory (Memory, Learning, Audit) |
-| `OSOOSI_OFFLINE_MODE` | `false` | Disable external API calls |
-| `OTX_API_KEY` | — | AlienVault OTX API key |
-| `NVD_API_KEY` | — | NIST NVD API key (optional; higher rate limits) |
-| `OPENAI_API_KEY` | — | OpenAI API key (behavioral fallback) |
-| `OSOOSI_NO_AI` / `OSOOSI_NO_ORT` | `false` | Disable AI / ONNX Runtime |
-| `OPENSHELL_CLI_PATH` | — | Full path to `openshell` / `openshell.exe` |
-| `OPENSHELL_SANDBOX_POLICY` | `config/openshell-policy.yaml` | OpenShell policy YAML path |
-| `OSOOSI_GIT_PATH` | — | Full path to `git.exe` when pip needs VCS installs |
-| `HF_TOKEN` / `HUGGINGFACE_HUB_TOKEN` | — | Hugging Face auth for private or rate-limited model downloads |
-| `OSOOSI_MALCONV_WEIGHTS_URL` | — | Direct URL for `malconv.safetensors` (skips broken public mirrors) |
-| `OSOOSI_MALCONV_ONNX_URL` | — | Direct URL for `malconv.onnx` |
-| `OSOOSI_KEV_QUIET_SYSTEM_TOOLS` | on | Set to `0` / `false` / `off` to re-enable CISA-KEV on noisy process create/terminate for common tools |
-| `OSOOSI_LOG_DIR` | repo `logs/` | File log directory |
-
-**Tool path cache (written on `start`):** `{config_dir}/osoosi/tool_paths.json` (e.g. Windows `%APPDATA%\osoosi\tool_paths.json`) stores resolved `git` and `openshell_cli` paths. Explicit env vars above still take precedence.
-
----
-
-## 🔒 Security
-
-> **OshoosiClaw takes security seriously.**
-
-- **Configuration Integrity**: `osoosi.toml` and policy files are **OpenSSL-signed**. The agent **hard refuses** to start if signatures are invalid.
-- **Sandboxed Execution**: 
-    - **Endpoints (Million-Node Scale)**: Uses zero-dependency **Native OS Sandboxing** (Landlock for Linux, Job Objects/AppContainer for Windows). **NO DOCKER REQUIRED** on endpoint nodes.
-    - **Central Gateway**: Supports **NVIDIA OpenShell** for heavyweight forensics and policy orchestration. Docker is only required if you choose to deploy a Central OpenShell Gateway.
-- **Tamper-Evident Logging**: All events are recorded in a Merkle Logchain. Any modification is cryptographically detectable.
-- **Differential Privacy**: Threat intelligence shared across the mesh includes Laplacian noise to prevent fingerprinting.
-
-For vulnerability reports, see [SECURITY.md](SECURITY.md).
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Development Setup
-
-```powershell
-git clone https://github.com/oyesanyf/OshoosiClaw.git
-cd OshoosiClaw
-cargo build --all-features
-cargo test --all-features
-```
-
-### Code Style
-
-- Follow `rustfmt` defaults
-- Run `cargo clippy` before submitting PRs
-- All public APIs must have doc comments
-
----
-
-## 📜 License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🌱 Inspired By OpenFang
-
-OshoosiClaw stands on the shoulders of the [**OpenFang**](https://github.com/OpenFang) project — a pioneering open-source EDR framework that demonstrated what community-driven endpoint security could look like. OpenFang's groundbreaking work in **lattice-based taint tracking**, **decentralized trust models**, and **autonomous response patterns** directly shaped the architecture of OshoosiClaw.
-
-Where OpenFang laid the theoretical foundation, OshoosiClaw extends it with:
-- A **Rust-native** implementation for memory safety and performance
-- The **Mandiant Forensic Trio** (CAPA + FLOSS + HollowsHunter) for deep binary analysis
-- **Behavioral AI cascading** (SecureBERT → Gemma 3 → OpenAI) for intelligent classification
-- **Active deception** (Ghost Traps, Tarpitting, Holographic Sharding) for adversary frustration
-- A **P2P mesh** with differential privacy for decentralized threat intelligence
-
-We honour OpenFang's vision by building upon it and pushing it further — into the next generation of autonomous, decentralized security.
-
----
-
-## 🙏 Acknowledgments
-
-The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and the Orisha of the Hunt, whose qualities of precision, justice, and relentless pursuit define the spirit of this project.
-
-### Third-Party Tools & Integrations
-
-| Tool | Author | License | Purpose |
-|:-----|:-------|:--------|:--------|
-| [CAPA](https://github.com/mandiant/capa) | Mandiant / Google | Apache 2.0 | Binary capability extraction |
-| [FLOSS](https://github.com/mandiant/flare-floss) | Mandiant / Google | Apache 2.0 | Obfuscated string de-obfuscation |
-| [HollowsHunter](https://github.com/hasherezade/hollows_hunter) | hasherezade / Google | BSD 2-Clause | Live process memory forensics |
-| [PE-sieve](https://github.com/hasherezade/pe-sieve) | hasherezade / Google | BSD 2-Clause | In-memory PE scanning engine |
-| [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) | Microsoft Sysinternals | Sysinternals EULA | Kernel-level ETW telemetry driver |
-| [ClamAV](https://www.clamav.net/) | Cisco Talos | GPL 2.0 | Signature-based antivirus scanning |
-| [Ollama](https://ollama.com/) | Ollama Inc. | MIT | Local LLM inference (Llama 3.1 8B, Gemma 4)  |
-| [OpenSSL](https://www.openssl.org/) | OpenSSL Project | Apache 2.0 | Cryptographic operations & TLS |
-| [YARA](https://virustotal.github.io/yara/) | VirusTotal / Google | BSD 3-Clause | Pattern matching for threat detection |
-| [Sigma](https://sigmahq.io/) | SigmaHQ Community | LGPL 2.1 | Generic log detection rules |
-| [NSRL RDS](https://www.nist.gov/itl/ssd/software-quality-group/national-software-reference-library-nsrl) | NIST | Public Domain | Known-good software hash database (121 GB) |
-| [Magika](https://github.com/google/magika) | Google | Apache 2.0 | AI-powered file type identification |
-| [AlienVault OTX](https://otx.alienvault.com/) | AT&T Cybersecurity | Free API | Open threat intelligence indicators |
-| [Hayabusa](https://github.com/Yamato-Security/hayabusa) | Yamato Security | MIT | Sigma rules-based threat hunting engine |
-| [Chainsaw](https://github.com/WithSecureLabs/chainsaw) | WithSecureLabs | GPL 3.0 | Fast forensic triage and MFT analysis |
-| [Xori](https://github.com/CheckPointSW/xori) | Check Point | Apache 2.0 | Static analysis and shellcode emulation |
-| [RedBPF](https://github.com/redsift/redbpf) | Red Sift | MIT | eBPF monitoring and analysis |
-| [yara-x](https://github.com/VirusTotal/yara-x) | VirusTotal | Apache 2.0 | Pure Rust implementation of YARA |
-| [Velociraptor](https://github.com/Velocidex/velociraptor) | Rapid7 / Velocidex | AGPL 3.0 | Advanced digital forensics & endpoint visibility (VQL) |
-| [WikiSkill](https://github.com/Stahl-G/wikiskill) | Stahl-G | MIT | Autonomous agent skill compilation and self-evolution |
-| [LangGraph](https://github.com/langchain-ai/langgraph) | LangChain Inc. | MIT | Multi-agent cyclical stategraph orchestration |
-| [siquery-rs](https://github.com/Devolutions/siquery-rs) | Devolutions | MIT / Apache 2.0 | Native Rust in-process 41-table relational SQL system information & EDR telemetry engine |
-
-### Rust Crate Dependencies
-
-| Crate | Author | Purpose |
-|:------|:-------|:--------|
-| [tokio](https://tokio.rs/) | Tokio Contributors | Async runtime for concurrent event processing |
-| [libp2p](https://github.com/libp2p/rust-libp2p) | Protocol Labs | P2P mesh networking (Gossipsub, Kademlia) |
-| [axum](https://github.com/tokio-rs/axum) | Tokio Contributors | Web dashboard HTTP server |
-| [reqwest](https://github.com/seanmonstar/reqwest) | Sean McArthur | HTTP client for threat feed downloads |
-| [serde](https://serde.rs/) | David Tolnay | Serialization / deserialization framework |
-| [rusqlite](https://github.com/rusqlite/rusqlite) | rusqlite Contributors | SQLite database bindings |
-| [goblin](https://github.com/m4b/goblin) | m4b | PE/ELF/Mach-O binary parsing (EMBER features) |
-| [ort](https://github.com/pykeio/ort) | pyke.io | ONNX Runtime bindings for ML inference |
-| [ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) | Dalek Cryptography | Ed25519 signing (DID trust model) |
-| [sha2](https://github.com/RustCrypto/hashes) | RustCrypto | SHA-256 hashing (config integrity) |
-| [chrono](https://github.com/chronotope/chrono) | Chronotope | Date/time handling (temporal analysis) |
-| [tracing](https://github.com/tokio-rs/tracing) | Tokio Contributors | Structured logging framework |
-| [sysinfo](https://github.com/GuillaumeGomez/sysinfo) | Guillaume Gomez | System/process resource monitoring |
-| [walkdir](https://github.com/BurntSushi/walkdir) | Andrew Gallant | Recursive directory traversal |
-| [dashmap](https://github.com/xacrimon/dashmap) | Joel Wejdenstål | Concurrent hashmap (NSRL cache) |
-| [wasmtime](https://wasmtime.dev/) | Bytecode Alliance | WASM sandbox runtime |
-| [regex](https://github.com/rust-lang/regex) | Rust Project | Pattern matching (FLOSS output parsing) |
-| [anyhow](https://github.com/dtolnay/anyhow) | David Tolnay | Ergonomic error handling |
-| [clap](https://github.com/clap-rs/clap) | clap Contributors | CLI argument parsing |
-
-### AI Models & Frameworks
-
-| Model / Framework | Provider | Purpose |
-|:-------------------|:---------|:--------|
-| [Strands Decider 2B](https://huggingface.co/StrandsAgents/strands-decider-2B-hobson-v19) | AWS Strands Agents | Local open-source pointer-head decision model (~115ms) |
-| [Clef Flash](https://developers.cloudflare.com/workers-ai/) | Cloudflare | Serverless edge non-autoregressive decision model (~38ms) |
-| [SecureBERT](https://huggingface.co/ehsanaghaei/SecureBERT) | Ehsan Aghaei | Security-domain NLP classification |
-| [Gemma 4 9B](https://ai.google.dev/gemma) | Google DeepMind | Local behavioral reasoning (via Ollama) |
-| [Llama 3.1 8B](https://llama.meta.com/) | Meta AI | Autonomous agent reasoning (via Ollama) |
-| [EMBER](https://github.com/elastic/ember) | Elastic / Endgame | PE feature extraction methodology (54 features) |
-| [LangGraph](https://github.com/langchain-ai/langgraph) | LangChain Inc. | Stateful cyclical multi-agent defense swarm |
-| [ONNX Runtime](https://onnxruntime.ai/) | Microsoft | ML model inference engine |
-
----
+<details>
+<summary><b>🏗️ Production Stability, RAPTOR Audit & Hardening Changelog (v1.2.0)</b> (Click to expand)</summary>
 
 ## 🏗️ Production Stability & Hardening (v1.2.0)
+
 
 Recent hardening efforts have focused on the 12 security audit remediations, RAPTOR autonomous full-suite verification, the 7-crate Physics of Zero multi-OS architecture, autonomous reverse engineering (REA), hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
 
@@ -3512,6 +3712,8 @@ flowchart TD
     end
 ```
 
+<a id="-continuous-self-updating-har-web-traffic-sensor-har-traffic"></a>
+<a id="har-traffic"></a>
 - **Continuous Self-Updating HAR Web Traffic Sensor & Dedicated `#har-traffic` WebUI Menu (`crates/osoosi-agent-anomaly/src/siquery.rs`, `crates/osoosi-dashboard/src/lib.rs`, `dashboard/`)**:
   - **Multi-Source Browser & Socket Ingestion**: Implemented Step 2c browser `downloads` ingestion directly from Chrome, Edge, Brave, and Chromium SQLite user-data stores, parsing download completion, URL, MIME type, size, and elevating risk score to `0.85` / `"suspicious"` if `danger_type > 0`. Enhanced Step 2d Windows socket telemetry with live `ipconfig /displaydns` DNS cache resolution, process name mapping via `sysinfo`, port filtering (`[80, 443, 8080, 8443, 3000, 3030, 5000, 11434]`), and benign loopback exemptions for internal microservices (`3030`, `11434`, `3000`, `5000`).
   - **Cryptographic BLAKE3 Swarm Poison Gate**: Added `collect_live_har_entries_fast(&self, limit: usize) -> Vec<serde_json::Value>` in `SiqueryEngine`, deduplicating records on `(method, url, source_file)` while preserving recency. Computes BLAKE3 cryptographic digests and verifies against `osoosi_policy::traffic_adapter::is_swarm_poisoned_har_digest(&digest)` to flag compromised traffic lineages with tag `"SWARM_POISONED_LINEAGE"` and elevate threat score to `0.99` / `"malicious"`.
@@ -3695,8 +3897,59 @@ flowchart TD
 - **Atomic IOC Engine**: New high-speed indicator scanner providing O(1) constant-time lookups for millions of malicious hashes, IPs, and domains using `HashSet` and `RegexSet`.
 <a id="-open-source-security-governance--community-roadmap"></a>
 <a id="open-source-security-governance--community-roadmap"></a>
-## 🌐 Open-Source Security, Governance & Community Roadmap
 
+</details>
+
+---
+
+<a id="documentation"></a>
+## 📚 Documentation Index
+
+OshoosiClaw maintains an exhaustive documentation library spanning high-level architectural manuals, kernel sensor implementations, operations runbooks, and formal verification proofs:
+
+| Documentation Manual | Target Scope & Subject Matter | Direct Access |
+|:---------------------|:------------------------------|:--------------|
+| **System Architecture Manual** | Complete multi-tier EDR pipeline, kernel sensors, decision voters, storage engines | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| **Sovereign Mesh & Innovation** | Decentralized P2P mesh, $E(N,t)$ effectiveness model, holographic deception | [`docs/architecture_and_innovation.md`](docs/architecture_and_innovation.md) |
+| **Kernel Sensor Implementation** | Windows minifilter (`osoosi_driver.c`), WFP callbacks, Linux eBPF LSM hooks | [`docs/EDR_SENSOR_IMPLEMENTATION.md`](docs/EDR_SENSOR_IMPLEMENTATION.md) |
+| **Incident Response & Operations Manual** | Live triage, sensor diagnostics, alert investigations, daemon tuning | [`docs/operations_manual.md`](docs/operations_manual.md) |
+| **Cross-Compilation Guide** | Compiling for Linux x86_64 and aarch64 via `cross` and Docker | [`docs/cross_compile.md`](docs/cross_compile.md) |
+| **WebUI Visual Tour & Screenshots** | Interactive walkthrough of all 10 dashboard screens (`http://127.0.0.1:3030`) | [`docs/screenshots/README.md`](docs/screenshots/README.md) |
+| **OpenSSF Sandbox Application** | Security self-assessment, CII badge criteria, supply-chain verification | [`docs/openssf/OshoosiClaw_sandbox_stage.md`](docs/openssf/OshoosiClaw_sandbox_stage.md) |
+| **Community Contributing Guide** | Development setup, PR shipping workflow, code style, testing requirements | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| **Code of Conduct** | Contributor Covenant v2.1 community health standard | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) |
+| **Security Policy & Vulnerability Disclosure** | Supported versions, private reporting SLA, security boundaries | [`SECURITY.md`](SECURITY.md) |
+| **Community Support Pathways** | Documentation, issue reporting, troubleshooting channels | [`SUPPORT.md`](SUPPORT.md) |
+
+---
+
+<a id="contributing"></a>
+<a id="approvals"></a>
+## 🤝 Contributing
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+
+```powershell
+git clone https://github.com/oyesanyf/OshoosiClaw.git
+cd OshoosiClaw
+cargo build --all-features
+cargo test --all-features
+```
+
+### Code Style
+
+- Follow `rustfmt` defaults
+- Run `cargo clippy` before submitting PRs
+- All public APIs must have doc comments
+
+---
+
+---
+
+<a id="-open-source-security-governance--community-roadmap"></a>
+<a id="open-source-security-governance--community-roadmap"></a>
+## 🌐 Open-Source Security, Governance & Community Roadmap
 OpenỌ̀ṣọ́ọ̀sì follows a transparent, community-governed foundation roadmap to establish verifiable security, reproducible supply-chain integrity, and foundation incubation.
 
 For the full, actionable checklist and tracking criteria, see [TODO.md](TODO.md) and [MAINTAINERS.md](MAINTAINERS.md).
@@ -3728,6 +3981,161 @@ flowchart TD
 - **Hacker News (`Show HN`)**: High-visibility technical launch demonstrating air-gapped Rust EDR, Siquery-RS 98-table relational engine, and zero-cloud local reasoning.
 - **Technical Subreddits**: Deep-dive discussions on `r/rust`, `r/netsec`, `r/opensource`, and `r/programming`.
 - **Product Hunt Maker Launch**: Interactive visual showcase of the zero-configuration Windows Service (`OshoosiClaw.msi`) and autonomous supervisor WebUI.
+
+---
+
+<p align="center">
+  <strong>Built with ❤️ in Rust for the next generation of decentralized security.</strong>
+  <br/>
+  <em>"Like Ọ̀ṣọ́ọ̀sì, it is both patient and decisive."</em>
+</p>
+
+---
+
+<a id="security"></a>
+## 🔒 Security
+> **OshoosiClaw takes security seriously.**
+
+- **Configuration Integrity**: `osoosi.toml` and policy files are **OpenSSL-signed**. The agent **hard refuses** to start if signatures are invalid.
+- **Sandboxed Execution**: 
+    - **Endpoints (Million-Node Scale)**: Uses zero-dependency **Native OS Sandboxing** (Landlock for Linux, Job Objects/AppContainer for Windows). **NO DOCKER REQUIRED** on endpoint nodes.
+    - **Central Gateway**: Supports **NVIDIA OpenShell** for heavyweight forensics and policy orchestration. Docker is only required if you choose to deploy a Central OpenShell Gateway.
+- **Tamper-Evident Logging**: All events are recorded in a Merkle Logchain. Any modification is cryptographically detectable.
+- **Differential Privacy**: Threat intelligence shared across the mesh includes Laplacian noise to prevent fingerprinting.
+
+For vulnerability reports, see [SECURITY.md](SECURITY.md).
+
+---
+
+---
+
+<a id="license"></a>
+## 📜 License
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+---
+
+---
+
+## 🌱 Inspired By OpenFang
+OshoosiClaw stands on the shoulders of the [**OpenFang**](https://github.com/OpenFang) project — a pioneering open-source EDR framework that demonstrated what community-driven endpoint security could look like. OpenFang's groundbreaking work in **lattice-based taint tracking**, **decentralized trust models**, and **autonomous response patterns** directly shaped the architecture of OshoosiClaw.
+
+Where OpenFang laid the theoretical foundation, OshoosiClaw extends it with:
+- A **Rust-native** implementation for memory safety and performance
+- The **Mandiant Forensic Trio** (CAPA + FLOSS + HollowsHunter) for deep binary analysis
+- **Behavioral AI cascading** (SecureBERT → Gemma 3 → OpenAI) for intelligent classification
+- **Active deception** (Ghost Traps, Tarpitting, Holographic Sharding) for adversary frustration
+- A **P2P mesh** with differential privacy for decentralized threat intelligence
+
+We honour OpenFang's vision by building upon it and pushing it further — into the next generation of autonomous, decentralized security.
+
+---
+
+---
+
+## 🙏 Acknowledgements, Credits & Integrated Open-Source Tools
+
+The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and the Orisha of the Hunt, Tracking, and Justice, whose qualities of unerring accuracy, vigilance, and proportionate response define this project.
+
+OshoosiClaw stands on the shoulders of the open-source security community, academic researchers, and foundational tooling. We gratefully acknowledge and credit all integrated and adapted tools across six primary engineering domains:
+
+### 1. Threat Intelligence & Empirical Breach Corpora
+
+| Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
+|:---------------|:--------------------|:--------|:--------------------|
+| [OWASP Hunting](https://github.com/OWASP/OWASP-Hunting) | OWASP Foundation | MIT | 41-category adversarial payload & methodology catalog evaluated via 4-stage verification in `crates/osoosi-owasp-hunting` |
+| [OWASP GitHub Template](https://github.com/OWASP/github-template) | OWASP Foundation | CC-BY-4.0 / Apache 2.0 | Documentation layout, community health files, and executive repository presentation standard |
+| [Verizon VERIS Community Database (VCDB)](https://github.com/vz-risk/VCDB) | Verizon Risk Team / VCDB Contributors | CC BY-SA 4.0 | Empirical breach incident corpus & 4-A (`Actor`, `Action`, `Asset`, `Attribute`) schema in `crates/osoosi-vcdb` |
+| [MITRE ATT&CK®](https://attack.mitre.org/) | MITRE Corporation | MITRE Terms | Enterprise adversarial tactics, techniques, and procedures (TTP) knowledge base (26,381 STIX objects) |
+| [MITRE ATLAS™](https://atlas.mitre.org/) | MITRE Corporation | Apache 2.0 | Adversarial Threat Landscape for Artificial-Intelligence Systems matrix for AI security auditing |
+| [AlienVault OTX / OpenTAXII](https://otx.alienvault.com/) | AT&T Cybersecurity / AlienVault | Free API / Apache 2.0 | Real-time threat indicator stream integrated via `otx-taxii-rs` and evaluated by `OtxVoter` |
+| [Google OSV-Scanner](https://github.com/google/osv-scanner) | Google | Apache 2.0 | Vulnerability database integration for open-source dependency auditing |
+| [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) | CISA | Public Domain | Known Exploited Vulnerabilities catalog cross-referenced in EDR policy engines |
+| [abuse.ch (URLhaus / MalwareBazaar / ThreatFox)](https://abuse.ch/) | abuse.ch Community | CC0 1.0 | Active malicious URL, payload hash, and indicator of compromise (IOC) telemetry feeds |
+
+### 2. Adversarial Red-Teaming, Fuzzing & Agent Alignment Frameworks
+
+| Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
+|:---------------|:--------------------|:--------|:--------------------|
+| [Microsoft PyRIT](https://github.com/Azure/PyRIT) | Microsoft Azure | MIT | Python Risk Identification Tool for automated generative AI red-teaming |
+| [NVIDIA Garak](https://github.com/NVIDIA/garak) | NVIDIA | Apache 2.0 | LLM vulnerability scanner probe packs for jailbreak and hallucination detection |
+| [Promptfoo](https://github.com/promptfoo/promptfoo) | Promptfoo Contributors | MIT | Multi-turn goal-hijacking evaluation chains and LLM prompt safety testing |
+| [UK AISI Inspect AI](https://github.com/UKGovernmentBEIS/inspect_ai) | UK AI Safety Institute | MIT | Framework for large-scale evaluation of autonomous agent capabilities and safety |
+| [Confident AI DeepEval](https://github.com/confident-ai/deepeval) | Confident AI | Apache 2.0 | Production-grade LLM testing and hallucination evaluation framework |
+| [Strix LLM Adversarial Tester](tests/strix_llm_adversarial_tester.py) | OshoosiClaw Project | MIT | Autonomous red-teaming harness executing 2,250+ probes across 34 security suites |
+| [PentestGPT](https://github.com/Geek-AI/PentestGPT) | Geek-AI | MIT | LLM-driven automated penetration testing harness for simulated offensive triage |
+| [RedAmon](https://github.com/RedAmon-AI) | RedAmon Community | Apache 2.0 | Autonomous red-teaming agent for active system defense validation |
+| [Caido](https://caido.io/) | Caido Security | Proprietary / Free Tier | Lightweight security testing proxy for HTTP traffic inspection and manipulation |
+| [Astra](https://github.com/falldog/astra) | Astra Security | GPL 3.0 | Automated REST API security testing tool for endpoint API attack simulation |
+| [Microsoft RESTler](https://github.com/microsoft/restler-fuzzer) | Microsoft Research | MIT | Stateful REST API fuzzing compiler and driver for protocol vulnerability discovery |
+| [Google OSS-Fuzz](https://github.com/google/oss-fuzz) | Google | Apache 2.0 | Continuous fuzzing methodology for C/C++ and Rust kernel memory safety |
+| [Microsoft CyberBattleSim](https://github.com/microsoft/CyberBattleSim) | Microsoft Defender Research | MIT | Gamified reinforcement learning simulation for cyber defense policy benchmarking |
+| [AlignmentCheck / LlamaFirewall Pattern](crates/osoosi-agent-anomaly) | Meta / Alignment Research | MIT / Apache 2.0 | 2-tier runtime trace-alignment scanner preventing agent cognitive drift |
+| [Langfuse / Arize Phoenix Pattern](crates/osoosi-telemetry) | Langfuse / Arize AI | Apache 2.0 | Longitudinal drift telemetry (`agent_drift_traces`) for AI agent operations |
+
+### 3. Data Loss Prevention (DLP), Privacy & Policy Engines
+
+| Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
+|:---------------|:--------------------|:--------|:--------------------|
+| [RedactX-v3 / OpenJEV Hybrid Decision Engine](crates/osoosi-dp) | OpenJEV / OshoosiClaw | MIT | Non-autoregressive Platt-calibrated logit scoring ($P(\text{PHI}) \in [0, 1]$), ISO 7064 Mod-11 NPI/DEA/CMS claims validation, `<ZK_PII>` scrubbing |
+| [Microsoft Presidio](https://github.com/microsoft/presidio) | Microsoft | MIT | Context-aware PII detection, entity identification, and anonymization engine |
+| [GLiNER](https://github.com/urchade/gliner) | Urchade Zaratiana | Apache 2.0 | Generalist Bidirectional NER (`urchade/gliner_multi_pii-v1`) for token-level PII extraction |
+| [AWS Cedar Policy](https://github.com/cedar-policy/cedar) | Amazon Web Services | Apache 2.0 | Fast, expressible authorization engine and policy-as-code verifier in `crates/osoosi-policy` |
+| [Dogwood Temporal Policy](https://github.com/awslabs/dogwood) | AWS Labs | Apache 2.0 | Metric First-Order Temporal Logic (MFOTL) policy authorization over agent history traces |
+
+### 4. Reverse Engineering (`REA`), SQL Telemetry (`Siquery`) & DFIR
+
+| Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
+|:---------------|:--------------------|:--------|:--------------------|
+| [REA (`Reverse Engineer Anything`)](crates/osoosi-core/src/rea.rs) | OshoosiClaw Project | MIT | Autonomous binary decompiler, PE/ELF/Mach-O inspector, and YARA generator (`ReaVoter`) |
+| [Goblin](https://github.com/m4b/goblin) | m4b | MIT / Apache 2.0 | Cross-platform binary parsing for PE, ELF, Mach-O, and archive formats |
+| [Capstone](https://github.com/capstone-engine/capstone) / [Iced-x86](https://github.com/icedland/iced) | Capstone Team / icedland | BSD 3-Clause / MIT | Multi-architecture and high-performance x86/x64 instruction disassembly |
+| [cargo-auditable](https://github.com/rust-secure-code/cargo-auditable) | Rust Secure Code WG | MIT / Apache 2.0 | Embeds dependency audit manifests directly into compiled Rust binaries |
+| [YARA](https://github.com/VirusTotal/yara) / [yara-x](https://github.com/VirusTotal/yara-x) | VirusTotal | BSD 3-Clause / Apache 2.0 | Pattern-matching engine for malware identification and live process memory scanning |
+| [wasmparser](https://github.com/bytecodealliance/wasm-tools) | Bytecode Alliance | Apache 2.0 | Low-level streaming WebAssembly binary parser for inspecting sandboxed modules |
+| [EVM Disassembler](crates/osoosi-core/src/rea.rs) | Ethereum Foundation Contributors | MIT / Apache 2.0 | Bytecode analysis engine for evaluating EVM smart contract and bytecode artifacts |
+| [SQLite / rusqlite](https://github.com/rusqlite/rusqlite) | D. Richard Hipp / rusqlite Team | Public Domain / MIT | In-process relational database engine powering local telemetry and threat stores |
+| [siquery-rs](https://github.com/Devolutions/siquery-rs) | Devolutions | MIT / Apache 2.0 | In-process SQL system information engine, expanded to 103 virtual tables (`SiqueryEngine`) |
+| [Velociraptor](https://github.com/Velocidex/velociraptor) | Rapid7 / Velocidex | AGPL 3.0 | Advanced digital forensics, VQL query engine, and Linux VAD memory inspection |
+| [CAPA](https://github.com/mandiant/capa) | Mandiant / Google | Apache 2.0 | Identifies executable capabilities in unknown PE/ELF binary files |
+| [FLOSS](https://github.com/mandiant/flare-floss) | Mandiant / Google | Apache 2.0 | Automatically extracts and de-obfuscates obfuscated strings from malware |
+| [HollowsHunter / PE-sieve](https://github.com/hasherezade/hollows_hunter) | hasherezade | BSD 2-Clause | In-memory scanner detecting process hollowing, hooks, and injected code |
+| [Hayabusa](https://github.com/Yamato-Security/hayabusa) | Yamato Security | MIT | Fast Windows event log threat hunting engine using Sigma rules |
+| [Chainsaw](https://github.com/WithSecureLabs/chainsaw) | WithSecureLabs | GPL 3.0 | Forensic artifact triage and Windows Master File Table (MFT) analysis |
+| [Xori](https://github.com/CheckPointSW/xori) | Check Point | Apache 2.0 | Static analysis and shellcode emulation for binary risk profiling |
+| [Google Magika](https://github.com/google/magika) | Google | Apache 2.0 | Deep-learning file type detection for instant payload identification |
+
+### 5. Reinforcement Learning, Local AI & Swarm Orchestration
+
+| Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
+|:---------------|:--------------------|:--------|:--------------------|
+| [SkyRL](crates/osoosi-skyrl) | OshoosiClaw Project | MIT | DeepQ active defense policy inference, gym environment, and LoRA adapter co-evolution |
+| [Ollama](https://github.com/ollama/ollama) | Ollama Inc. | MIT | On-device local-only LLM runner (`127.0.0.1:11434`) powering offline cognitive reasoning |
+| [LangGraph](https://github.com/langchain-ai/langgraph) | LangChain Inc. | MIT | Cyclical multi-agent stategraph framework coordinating the autonomous defense swarm |
+| [Strands Decider 2B](https://huggingface.co/StrandsAgents/strands-decider-2B-hobson-v19) | AWS Strands Agents | Apache 2.0 | Local open-source pointer-head decision model (~115ms latency) |
+| [Clef Flash](https://developers.cloudflare.com/workers-ai/) | Cloudflare | Apache 2.0 | Serverless edge non-autoregressive decision model (~38ms latency) |
+| [EmbeddingGemma 2](https://ai.google.dev/gemma) | Google DeepMind | Apache 2.0 | Matryoshka Representation Learning (MRL) for agent trajectory drift embeddings |
+| [SecureBERT](https://huggingface.co/ehsanaghaei/SecureBERT) | Ehsan Aghaei | MIT | Domain-specific BERT model for classifying CLI commands, PowerShell, and log text |
+| [EMBER / SOREL-20M](https://github.com/elastic/ember) | Elastic / Sophos AI | Apache 2.0 | Machine learning PE malware feature extraction (2,381-D) and triple-model consensus |
+| [WikiSkill](https://github.com/Stahl-G/wikiskill) | Stahl-G | MIT | Dynamic skill synthesis and lifelong agent capability compilation |
+| [ONNX Runtime](https://onnxruntime.ai/) | Microsoft | MIT | High-performance inference engine for local ML models (`ort` crate) |
+
+### 6. Cryptography, P2P Mesh & Kernel/Packaging Infrastructure
+
+| Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
+|:---------------|:--------------------|:--------|:--------------------|
+| [libp2p](https://github.com/libp2p/rust-libp2p) | Protocol Labs | MIT / Apache 2.0 | Modular P2P networking: GossipSub v1.2, Kademlia DHT, and Noise transport encryption |
+| [Nostr Protocol](https://github.com/nostr-protocol/nostr) | Nostr Community | Public Domain / MIT | Censorship-resistant relay protocol for decentralized multi-transport threat telemetry |
+| [NIST FIPS 203 (ML-KEM-768)](https://csrc.nist.gov/pubs/fips/203/final) | NIST | Public Domain | Post-quantum lattice-based key encapsulation securing inter-node wire mesh sessions |
+| [NIST FIPS 204 (ML-DSA-65)](https://csrc.nist.gov/pubs/fips/204/final) | NIST | Public Domain | Post-quantum lattice-based digital signatures authenticating threat indicators |
+| [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) | BLAKE3 Team | Apache 2.0 / CC0 1.0 | High-speed cryptographic tree hashing for tamper-evident Merkle hash chains |
+| [Ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) | Dalek Cryptography | BSD 3-Clause / Apache 2.0 | Fast, constant-time Edwards-curve digital signatures for node identity |
+| [TFHE-rs](https://github.com/zama-ai/tfhe-rs) | Zama | BSD-3-Clause-Clear | Fully Homomorphic Encryption over the Torus for privacy-preserving voter consensus |
+| [Tokio](https://github.com/tokio-rs/tokio) | Tokio Contributors | MIT | Asynchronous runtime powering high-concurrency event loops and microsecond I/O |
+| [Axum](https://github.com/tokio-rs/axum) | Tokio Contributors | MIT | Modular async web application framework serving the dashboard and REST APIs |
+| [Windows ETW & Kernel Infrastructure](https://learn.microsoft.com/windows/win32/etw/about-event-tracing) | Microsoft | Proprietary / Windows SDK | Event Tracing for Windows, AMSI, WDAC, AppContainer, and `signtool.exe` Authenticode |
+| [Linux eBPF & Landlock LSM](https://docs.kernel.org/bpf/) | Linux Kernel Developers | GPL 2.0 | Kernel-space inline blocking, CO-RE `BPF_PROG_TYPE_LSM`, cgroups v2, and Landlock |
+| [WiX Toolset](https://wixtoolset.org/) | .NET Foundation | MS-RL | Declarative Windows Installer (MSI) build system for enterprise deployment |
 
 ---
 
