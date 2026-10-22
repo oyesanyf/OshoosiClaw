@@ -10927,6 +10927,21 @@ impl EdrOrchestrator {
     /// Broadcast a detected threat to the P2P wire mesh and Nostr with debouncing and cryptographic signing.
     pub async fn broadcast_threat_to_mesh(&self, mut sig: osoosi_types::ThreatSignature) {
         let reason_str = sig.reason.as_deref().unwrap_or("");
+        let mesh_verdict = crate::rea::global_rea_engine().inspect_and_vet_mesh_frame(
+            "outbound",
+            Some(&sig.source_node),
+            sig.process_name.as_deref().unwrap_or(reason_str),
+            sig.hash_blake3.as_deref(),
+            None,
+            sig.reason.as_deref(),
+        );
+        if mesh_verdict.vetoed || !mesh_verdict.allowed {
+            debug!(
+                "[Mesh] Threat suppressed from outbound gossip broadcast by REA/OpenJEV: {}",
+                mesh_verdict.summary
+            );
+            return;
+        }
         if reason_str.contains("Veto Trusted Vendor")
             || reason_str.contains("outside the vulnerable")
             || reason_str.contains("CVE None")
@@ -12306,6 +12321,35 @@ impl EdrOrchestrator {
                     || proc_clean.eq_ignore_ascii_case("unknown process")
                 {
                     debug!("PeerThreatRx: Dropped unknown process threat {}", sig.id);
+                    continue;
+                }
+                let inbound_mesh_verdict = crate::rea::global_rea_engine().inspect_and_vet_mesh_frame(
+                    "inbound",
+                    Some(&sig.source_node),
+                    sig.process_name.as_deref().unwrap_or(""),
+                    sig.hash_blake3.as_deref(),
+                    None,
+                    sig.reason.as_deref(),
+                );
+                if inbound_mesh_verdict.vetoed || !inbound_mesh_verdict.allowed {
+                    let veto_reason = inbound_mesh_verdict
+                        .veto_reason
+                        .unwrap_or_else(|| inbound_mesh_verdict.summary.clone());
+                    warn!(
+                        "PeerThreatRx [BYZANTINE_KILLSWITCH_VETOED]: Rejected peer threat {} from {}: {}",
+                        sig.id, sig.source_node, veto_reason
+                    );
+                    self_threat.audit.log(
+                        "BYZANTINE_KILLSWITCH_VETOED",
+                        serde_json::json!({
+                            "source_node": sig.source_node,
+                            "threat_id": sig.id,
+                            "process_name": sig.process_name,
+                            "hash_blake3": sig.hash_blake3,
+                            "veto_reason": veto_reason,
+                            "rea_seal_blake3": inbound_mesh_verdict.rea_seal_blake3,
+                        }),
+                    );
                     continue;
                 }
                 if let Some(veto_reason) = crate::rea::veto_peer_kill_switch_candidate(
