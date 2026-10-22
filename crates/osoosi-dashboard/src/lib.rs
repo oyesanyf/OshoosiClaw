@@ -3248,6 +3248,70 @@ async fn get_har_export() -> impl IntoResponse {
     )
 }
 
+fn resolve_adversarial_audit_path() -> std::path::PathBuf {
+    let mut candidates = Vec::new();
+    candidates.push(std::path::PathBuf::from("logs").join("adversarial_audit.json"));
+    candidates.push(std::path::PathBuf::from("../logs").join("adversarial_audit.json"));
+    candidates.push(std::path::PathBuf::from("../../logs").join("adversarial_audit.json"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(p1) = exe.parent() {
+            candidates.push(p1.join("logs").join("adversarial_audit.json"));
+            if let Some(p2) = p1.parent() {
+                candidates.push(p2.join("logs").join("adversarial_audit.json"));
+                if let Some(p3) = p2.parent() {
+                    candidates.push(p3.join("logs").join("adversarial_audit.json"));
+                }
+            }
+        }
+    }
+    candidates.push(std::path::PathBuf::from(r"D:\harfile\OshoosiClaw\logs\adversarial_audit.json"));
+
+    for cand in &candidates {
+        if cand.exists() {
+            if let Ok(txt) = std::fs::read_to_string(cand) {
+                if txt.contains("accounting_reconciliation") {
+                    return cand.clone();
+                }
+            }
+        }
+    }
+
+    for cand in &candidates {
+        if cand.exists() {
+            return cand.clone();
+        }
+    }
+
+    std::path::PathBuf::from("logs").join("adversarial_audit.json")
+}
+
+fn resolve_adversarial_log_path() -> std::path::PathBuf {
+    let mut candidates = Vec::new();
+    candidates.push(std::path::PathBuf::from("logs").join("adversarial_execution.log"));
+    candidates.push(std::path::PathBuf::from("../logs").join("adversarial_execution.log"));
+    candidates.push(std::path::PathBuf::from("../../logs").join("adversarial_execution.log"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(p1) = exe.parent() {
+            candidates.push(p1.join("logs").join("adversarial_execution.log"));
+            if let Some(p2) = p1.parent() {
+                candidates.push(p2.join("logs").join("adversarial_execution.log"));
+                if let Some(p3) = p2.parent() {
+                    candidates.push(p3.join("logs").join("adversarial_execution.log"));
+                }
+            }
+        }
+    }
+    candidates.push(std::path::PathBuf::from(r"D:\harfile\OshoosiClaw\logs\adversarial_execution.log"));
+
+    for cand in &candidates {
+        if cand.exists() {
+            return cand.clone();
+        }
+    }
+
+    std::path::PathBuf::from("logs").join("adversarial_execution.log")
+}
+
 async fn get_tarpit_stats(
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> impl IntoResponse {
@@ -3258,7 +3322,15 @@ async fn get_tarpit_stats(
     let mut trapped_callers = 0i64;
     let mut tokens_burned = 0i64;
 
-    let audit_path = std::path::Path::new("logs").join("adversarial_audit.json");
+    let mut accounting_reconciliation: Option<Value> = None;
+    let mut execution_tier_breakdown: Option<Value> = None;
+    let mut skyrl_heldout_ablation_study: Option<Value> = None;
+    let mut explicit_economic_analysis: Option<Value> = None;
+    let mut explicit_attacker_usd: Option<f64> = None;
+    let mut explicit_defender_usd: Option<f64> = None;
+    let mut explicit_cost_ratio: Option<f64> = None;
+
+    let audit_path = resolve_adversarial_audit_path();
     if audit_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&audit_path) {
             if let Ok(val) = serde_json::from_str::<Value>(&content) {
@@ -3296,13 +3368,43 @@ async fn get_tarpit_stats(
                 if let Some(tb) = val.get("tokens_burned").and_then(|v| v.as_i64()) {
                     tokens_burned = tb;
                 }
+
+                if let Some(ar) = val.get("accounting_reconciliation") {
+                    accounting_reconciliation = Some(ar.clone());
+                }
+                if let Some(et) = val.get("execution_tier_breakdown") {
+                    execution_tier_breakdown = Some(et.clone());
+                }
+                if let Some(sa) = val.get("skyrl_heldout_ablation_study") {
+                    skyrl_heldout_ablation_study = Some(sa.clone());
+                }
+                if let Some(ec) = val.get("economic_cost_analysis") {
+                    explicit_economic_analysis = Some(ec.clone());
+                    if let Some(tb) = ec.get("tokens_burned").and_then(|v| v.as_i64()) {
+                        tokens_burned = tb;
+                    }
+                    if let Some(tc) = ec.get("trapped_callers").and_then(|v| v.as_i64()) {
+                        trapped_callers = tc;
+                    }
+                    if let Some(a_usd) = ec.get("attacker_compute_burn_usd").and_then(|v| v.as_f64()) {
+                        explicit_attacker_usd = Some(a_usd);
+                    }
+                    if let Some(d_usd) = ec.get("defender_mitigation_cost_usd").and_then(|v| v.as_f64()) {
+                        explicit_defender_usd = Some(d_usd);
+                    }
+                    if let Some(cr) = ec.get("attacker_vs_defender_cost_ratio").and_then(|v| v.as_f64()) {
+                        explicit_cost_ratio = Some(cr);
+                    }
+                }
             }
         }
     }
 
-    let active_traps_len = osoosi_runtime::tarpit::ActiveProcessTarpit::new().active_traps.len();
-    trapped_callers = trapped_callers.max(active_traps_len as i64).max(14);
-    tokens_burned = tokens_burned.max(total_tests * 850 + trapped_callers * 4096);
+    if explicit_economic_analysis.is_none() {
+        let active_traps_len = osoosi_runtime::tarpit::ActiveProcessTarpit::new().active_traps.len();
+        trapped_callers = trapped_callers.max(active_traps_len as i64).max(14);
+        tokens_burned = tokens_burned.max(total_tests * 850 + trapped_callers * 4096);
+    }
 
     let mut corpus_epoch = 1i64;
     let mut skyrl_td_loss = 0.042f64;
@@ -3337,15 +3439,30 @@ async fn get_tarpit_stats(
     // NIST Economic Cost Asymmetry & Metric Convergence Calculations
     let attacker_compute_burn_flops = (tokens_burned as f64) * 1.4e11;
     let attacker_time_wasted_sec = (trapped_callers as f64) * 45.0 + (total_tests as f64) * 0.35;
-    let raw_burn_usd = (tokens_burned as f64 / 1_000_000.0) * 15.0 + (trapped_callers as f64) * 0.42;
-    let attacker_compute_burn_usd = ((raw_burn_usd * 10000.0).round()) / 10000.0;
+
+    let attacker_compute_burn_usd = if let Some(a_usd) = explicit_attacker_usd {
+        a_usd
+    } else {
+        let raw_burn_usd = (tokens_burned as f64 / 1_000_000.0) * 15.0 + (trapped_callers as f64) * 0.42;
+        ((raw_burn_usd * 10000.0).round()) / 10000.0
+    };
 
     let defender_mitigation_latency_us = 42.5f64;
     let defender_mitigation_cpu_ms = (total_tests as f64) * 0.0425;
-    let raw_def_usd = ((total_tests as f64) * 0.00000012).max(0.0001);
-    let defender_mitigation_cost_usd = ((raw_def_usd * 1_000_000.0).round()) / 1_000_000.0;
 
-    let cost_ratio = ((attacker_compute_burn_usd / defender_mitigation_cost_usd) * 10.0).round() / 10.0;
+    let defender_mitigation_cost_usd = if let Some(d_usd) = explicit_defender_usd {
+        d_usd
+    } else {
+        let raw_def_usd = ((total_tests as f64) * 0.00000012).max(0.0001);
+        ((raw_def_usd * 1_000_000.0).round()) / 1_000_000.0
+    };
+
+    let cost_ratio = if let Some(cr) = explicit_cost_ratio {
+        cr
+    } else {
+        ((attacker_compute_burn_usd / defender_mitigation_cost_usd) * 100.0).round() / 100.0
+    };
+
     let raw_regret = (0.42 / ((corpus_epoch.max(1) as f64) + 8.0)).sqrt();
     let rl_regret_per_step = ((raw_regret * 10000.0).round()) / 10000.0;
     let rl_advantage_score = 0.942f64;
@@ -3357,8 +3474,7 @@ async fn get_tarpit_stats(
 
     if format_req == "csv" {
         let csv_content = format!(
-            "metric,attacker_compute_burn_usd,defender_mitigation_cost_usd,attacker_vs_defender_cost_ratio,attacker_tokens_burned,defender_cpu_ms,rl_regret_per_step,rl_advantage_score,converged\n\
-            Attacker Compute Burn vs. Defender Mitigation Cost,{:.4},{:.6},{:.1},{},{:.4},{:.4},{:.3},true\n",
+            "metric,attacker_compute_burn_usd,defender_mitigation_cost_usd,attacker_vs_defender_cost_ratio,attacker_tokens_burned,defender_cpu_ms,rl_regret_per_step,rl_advantage_score,converged\nAttacker Compute Burn vs. Defender Mitigation Cost,{:.4},{:.6},{:.1},{},{:.4},{:.4},{:.3},true\n",
             attacker_compute_burn_usd,
             defender_mitigation_cost_usd,
             cost_ratio,
@@ -3382,21 +3498,7 @@ async fn get_tarpit_stats(
 
     if format_req == "prometheus" {
         let prom_content = format!(
-            "# HELP oshoosi_attacker_compute_burn_usd Attacker compute burn in USD\n\
-            # TYPE oshoosi_attacker_compute_burn_usd gauge\n\
-            oshoosi_attacker_compute_burn_usd {:.4}\n\
-            # HELP oshoosi_defender_mitigation_cost_usd Defender mitigation cost in USD\n\
-            # TYPE oshoosi_defender_mitigation_cost_usd gauge\n\
-            oshoosi_defender_mitigation_cost_usd {:.6}\n\
-            # HELP oshoosi_attacker_vs_defender_cost_ratio Asymmetric economic cost ratio (Attacker/Defender)\n\
-            # TYPE oshoosi_attacker_vs_defender_cost_ratio gauge\n\
-            oshoosi_attacker_vs_defender_cost_ratio {:.2}\n\
-            # HELP oshoosi_rl_regret_per_step Reinforcement learning sublinear regret per step\n\
-            # TYPE oshoosi_rl_regret_per_step gauge\n\
-            oshoosi_rl_regret_per_step {:.6}\n\
-            # HELP oshoosi_rl_advantage_score SkyRL defensive advantage score\n\
-            # TYPE oshoosi_rl_advantage_score gauge\n\
-            oshoosi_rl_advantage_score {:.4}\n",
+            "# HELP oshoosi_attacker_compute_burn_usd Attacker compute burn in USD\n# TYPE oshoosi_attacker_compute_burn_usd gauge\noshoosi_attacker_compute_burn_usd {:.4}\n# HELP oshoosi_defender_mitigation_cost_usd Defender mitigation cost in USD\n# TYPE oshoosi_defender_mitigation_cost_usd gauge\noshoosi_defender_mitigation_cost_usd {:.6}\n# HELP oshoosi_attacker_vs_defender_cost_ratio Asymmetric economic cost ratio (Attacker/Defender)\n# TYPE oshoosi_attacker_vs_defender_cost_ratio gauge\noshoosi_attacker_vs_defender_cost_ratio {:.2}\n# HELP oshoosi_rl_regret_per_step Reinforcement learning sublinear regret per step\n# TYPE oshoosi_rl_regret_per_step gauge\noshoosi_rl_regret_per_step {:.6}\n# HELP oshoosi_rl_advantage_score SkyRL defensive advantage score\n# TYPE oshoosi_rl_advantage_score gauge\noshoosi_rl_advantage_score {:.4}\n",
             attacker_compute_burn_usd,
             defender_mitigation_cost_usd,
             cost_ratio,
@@ -3410,7 +3512,7 @@ async fn get_tarpit_stats(
             .into_response();
     }
 
-    Json(json!({
+    let mut resp_json = json!({
         "status": "ok",
         "total_tests_executed": total_tests,
         "passed_tests": passed_tests,
@@ -3444,12 +3546,26 @@ async fn get_tarpit_stats(
                 "prometheus": "/api/tarpit-stats?format=prometheus"
             }
         }
-    }))
-    .into_response()
+    });
+
+    if let Some(ar) = accounting_reconciliation {
+        resp_json["accounting_reconciliation"] = ar;
+    }
+    if let Some(et) = execution_tier_breakdown {
+        resp_json["execution_tier_breakdown"] = et;
+    }
+    if let Some(sa) = skyrl_heldout_ablation_study {
+        resp_json["skyrl_heldout_ablation_study"] = sa;
+    }
+    if let Some(ec) = explicit_economic_analysis {
+        resp_json["economic_cost_analysis"] = ec;
+    }
+
+    Json(resp_json).into_response()
 }
 
 async fn get_download_run_log() -> impl IntoResponse {
-    let log_path = std::path::Path::new("logs").join("adversarial_execution.log");
+    let log_path = resolve_adversarial_log_path();
     let content = if log_path.exists() {
         std::fs::read_to_string(&log_path).unwrap_or_else(|_| "[INFO] No execution log available yet.\n".to_string())
     } else {
@@ -3469,7 +3585,7 @@ async fn get_download_run_log() -> impl IntoResponse {
 }
 
 async fn get_download_test_json() -> impl IntoResponse {
-    let json_path = std::path::Path::new("logs").join("adversarial_audit.json");
+    let json_path = resolve_adversarial_audit_path();
     let content = if json_path.exists() {
         std::fs::read_to_string(&json_path).unwrap_or_else(|_| {
             serde_json::to_string_pretty(&json!({
@@ -3675,12 +3791,12 @@ async fn get_adversarial_test_stream(
             let _ = std::fs::write(&log_file, collected_lines.join("\n"));
         }
 
-        let audit_file = logs_dir.join("adversarial_audit.json");
-        let has_evolution_report = audit_file.exists()
+        let audit_file = resolve_adversarial_audit_path();
+        let has_detailed_report = audit_file.exists()
             && std::fs::read_to_string(&audit_file)
-                .map(|c| c.contains("skyrl_prompt_evolution"))
+                .map(|c| c.contains("skyrl_prompt_evolution") || c.contains("accounting_reconciliation") || c.contains("total_evaluations"))
                 .unwrap_or(false);
-        if !has_evolution_report {
+        if !has_detailed_report {
             let total = passed_count + failed_count;
             let audit_data = json!({
                 "status": "complete",
@@ -9154,7 +9270,7 @@ fn evolve_and_persist_skyrl_regression_corpus(
     if let Some(parent) = corpus_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let mut doc: Value = if corpus_path.exists() {
+    let doc: Value = if corpus_path.exists() {
         std::fs::read_to_string(&corpus_path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())

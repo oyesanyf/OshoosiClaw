@@ -399,6 +399,17 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
     & sc.exe start OsoosiEDR | Out-Null
     Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
 }
+# Synchronize adversarial audit log across all log directories
+$AuditLog = Join-Path $ProjectRoot "logs\adversarial_audit.json"
+if (Test-Path $AuditLog) {
+    $trLogs = Join-Path $ProjectRoot "target\release\logs"
+    $dpLogs = Join-Path $DeployDir "logs"
+    if (-not (Test-Path $trLogs)) { New-Item -ItemType Directory -Path $trLogs -Force | Out-Null }
+    if (-not (Test-Path $dpLogs)) { New-Item -ItemType Directory -Path $dpLogs -Force | Out-Null }
+    Copy-Item -Path $AuditLog -Destination (Join-Path $trLogs "adversarial_audit.json") -Force
+    Copy-Item -Path $AuditLog -Destination (Join-Path $dpLogs "adversarial_audit.json") -Force
+}
+
 
 # =============================================================================
 # Step 4: Build WiX MSI Installer (wix build wix\OshoosiClaw.wxs -arch x64 ...)
@@ -578,6 +589,16 @@ if (Test-Path $VerifyScript) {
         if ($tcp.TcpTestSucceeded) { break }
         Start-Sleep -Seconds 1
     }
+    # Synchronize adversarial audit log across all log directories
+$AuditLog = Join-Path $ProjectRoot "logs\adversarial_audit.json"
+if (Test-Path $AuditLog) {
+    $trLogs = Join-Path $ProjectRoot "target\release\logs"
+    $dpLogs = Join-Path $DeployDir "logs"
+    if (-not (Test-Path $trLogs)) { New-Item -ItemType Directory -Path $trLogs -Force | Out-Null }
+    if (-not (Test-Path $dpLogs)) { New-Item -ItemType Directory -Path $dpLogs -Force | Out-Null }
+    Copy-Item -Path $AuditLog -Destination (Join-Path $trLogs "adversarial_audit.json") -Force
+    Copy-Item -Path $AuditLog -Destination (Join-Path $dpLogs "adversarial_audit.json") -Force
+}
     Write-Host "       Running Port 3030 E2E Verification & Latency SLA (< 200ms)..." -ForegroundColor Cyan
     & python $VerifyScript
     if ($LASTEXITCODE -ne 0) {
