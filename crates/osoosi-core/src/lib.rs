@@ -3369,67 +3369,60 @@ impl EdrOrchestrator {
 
         // --- 2. NOSTR GLOBAL INTELLIGENCE (BitChat Style) ---
         // Uses decentralized relays for cross-organization threat sharing with Differential Privacy.
-        let mut nostr_relays = mesh_config.nostr_relays.clone();
+        // Always initialize the orchestrator non-blockingly and perform geo-relay HTTP bootstrap
+        // and WebSocket connection in a background task so port 3030 binds immediately on startup.
+        let initial_nostr_relays = mesh_config.nostr_relays.clone();
+        let allow_public_nostr = mesh_config.allow_public_relays;
+        let nostr_orch = Arc::new(crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?);
+        let connect_orch = nostr_orch.clone();
+        tokio::spawn(async move {
+            let mut nostr_relays = initial_nostr_relays;
+            if nostr_relays.is_empty()
+                || (nostr_relays.len() == 1
+                    && (nostr_relays[0].contains("localhost")
+                        || nostr_relays[0].contains("127.0.0.1")))
+            {
+                if allow_public_nostr {
+                    info!("Nostr Mesh: No public relays configured or only localhost found. Bootstrapping global public relays in background...");
+                    let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
+                    let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
 
-        if nostr_relays.is_empty()
-            || (nostr_relays.len() == 1
-                && (nostr_relays[0].contains("localhost") || nostr_relays[0].contains("127.0.0.1")))
-        {
-            if mesh_config.allow_public_relays {
-                info!("Nostr Mesh: No public relays configured or only localhost found. Bootstrapping global public relays...");
-                let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
-                let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
-
-                info!(
-                    "Nostr Mesh: Fetching geo-relay directory from {}...",
-                    geo_csv_url
-                );
-                let client = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(5))
-                    .build()?;
-
-                if let Ok(resp) = client.get(geo_csv_url).send().await {
-                    if let Ok(csv) = resp.text().await {
-                        geo_dir.load_csv(&csv).await;
-                        nostr_relays = geo_dir.auto_bootstrap().await;
+                    if let Ok(client) = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(5))
+                        .build()
+                    {
+                        if let Ok(resp) = client.get(geo_csv_url).send().await {
+                            if let Ok(csv) = resp.text().await {
+                                geo_dir.load_csv(&csv).await;
+                                nostr_relays = geo_dir.auto_bootstrap().await;
+                            }
+                        }
                     }
+                    if nostr_relays.is_empty() {
+                        info!("Nostr Mesh: Geo-bootstrap skipped/empty. P2P libp2p swarm active.");
+                    }
+                } else {
+                    info!("Nostr Mesh: Public Nostr relays disabled by configuration. Running in pure P2P libp2p mesh mode.");
                 }
-                if nostr_relays.is_empty() {
-                    info!("Nostr Mesh: Geo-bootstrap skipped/empty. P2P libp2p swarm active.");
-                }
-            } else {
-                info!("Nostr Mesh: Public Nostr relays disabled by configuration. Running in pure P2P libp2p mesh mode.");
-            }
-        }
-
-        // Sanitize: Filter out localhost if not explicitly requested or if it's the ONLY relay
-        if nostr_relays.len() > 1 {
-            nostr_relays.retain(|r| !r.contains("localhost") && !r.contains("127.0.0.1"));
-        }
-
-        let nostr_mesh = if !nostr_relays.is_empty() {
-            info!(
-                "Initializing Nostr Mesh with {} relays...",
-                nostr_relays.len()
-            );
-            let nostr_orch = crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?;
-            for relay in nostr_relays {
-                let _ = nostr_orch.add_relay(&relay).await;
             }
 
-            // Spawn connection in background to prevent hang if relays are unreachable
-            let orch_clone = Arc::new(nostr_orch);
-            let connect_orch = orch_clone.clone();
-            tokio::spawn(async move {
+            if nostr_relays.len() > 1 {
+                nostr_relays.retain(|r| !r.contains("localhost") && !r.contains("127.0.0.1"));
+            }
+
+            if !nostr_relays.is_empty() {
+                info!(
+                    "Initializing Nostr Mesh with {} relays...",
+                    nostr_relays.len()
+                );
+                for relay in nostr_relays {
+                    let _ = connect_orch.add_relay(&relay).await;
+                }
                 connect_orch.connect().await;
                 info!("Nostr Mesh: Connection task completed.");
-            });
-            orch_clone
-        } else {
-            // Create an empty/disabled orchestrator placeholder or handle via Option
-            // For now, we create a disconnected one to satisfy the type system
-            Arc::new(crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?)
-        };
+            }
+        });
+        let nostr_mesh = nostr_orch;
 
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());

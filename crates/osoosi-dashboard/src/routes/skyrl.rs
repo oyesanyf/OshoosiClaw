@@ -577,12 +577,20 @@ pub async fn post_skyrl_train(
     } else {
         0.0
     };
-    let loss = if !batch.is_empty() {
-        let l = skyrl.dqn.train_batch(&batch, gamma, lr);
-        skyrl.mean_loss = l;
-        l
-    } else {
-        0.0
+    let (loss, total_episodes, active_lora, replay_buffer_len, total_steps) = {
+        let loss = if !batch.is_empty() {
+            let l = skyrl.dqn.train_batch(&batch, gamma, lr);
+            skyrl.mean_loss = l;
+            l
+        } else {
+            0.0
+        };
+        let ep = skyrl.total_episodes;
+        let lora = skyrl.active_lora.clone();
+        let buf_len = skyrl.replay_buffer.len();
+        let steps = skyrl.total_steps;
+        drop(skyrl);
+        (loss, ep, lora, buf_len, steps)
     };
 
     if let Some(orch) = &state.backend {
@@ -590,12 +598,12 @@ pub async fn post_skyrl_train(
             .await;
     }
 
-    // Persist & co-evolve synthetic adversarial prompt mutations in tests/corpus/adversarial_regression_corpus.json
+    // Persist & co-evolve synthetic adversarial prompt mutations in logs/adversarial_regression_corpus.json
     let corpus_meta = evolve_and_persist_skyrl_regression_corpus(
-        skyrl.total_episodes,
+        total_episodes,
         loss,
         mean_reward,
-        &skyrl.active_lora,
+        &active_lora,
     );
 
     let checkpoint = json!({
@@ -603,10 +611,10 @@ pub async fn post_skyrl_train(
         "loss": loss,
         "mean_reward": mean_reward,
         "samples_trained": samples_trained,
-        "buffer_size": skyrl.replay_buffer.len(),
-        "total_episodes": skyrl.total_episodes,
-        "total_steps": skyrl.total_steps,
-        "active_lora": skyrl.active_lora,
+        "buffer_size": replay_buffer_len,
+        "total_episodes": total_episodes,
+        "total_steps": total_steps,
+        "active_lora": active_lora,
         "regression_corpus": corpus_meta,
     });
     if std::fs::create_dir_all("runs").is_ok() {
@@ -618,7 +626,7 @@ pub async fn post_skyrl_train(
         "loss": loss,
         "mean_reward": mean_reward,
         "samples_trained": samples_trained,
-        "buffer_size": skyrl.replay_buffer.len(),
+        "buffer_size": replay_buffer_len,
         "regression_corpus": corpus_meta,
     }))
 }
@@ -761,14 +769,8 @@ pub fn evolve_and_persist_skyrl_regression_corpus(
     let _ = std::fs::create_dir_all(&write_log_dir);
     let resolved_write_path = write_log_dir.join("adversarial_regression_corpus.json");
 
-    let rel_write_path = std::path::Path::new("logs/adversarial_regression_corpus.json");
-    if let Some(parent) = rel_write_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
     if let Ok(pretty) = serde_json::to_string_pretty(&updated_doc) {
         let _ = std::fs::write(&resolved_write_path, &pretty);
-        let _ = std::fs::write(rel_write_path, &pretty);
     }
 
     json!({
@@ -844,3 +846,33 @@ pub fn routes() -> Router<DashboardState> {
         .route("/api/skyrl/v1/adapter", post(post_skyrl_adapter))
         .route("/skyrl/v1/adapter", post(post_skyrl_adapter))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_regression_corpus_overlay_path_resolution() {
+        let path = resolve_regression_corpus_path();
+        let path_str = path.to_string_lossy();
+        assert!(
+            path_str.contains("logs") || path_str.contains("corpus"),
+            "Corpus path must point to logs overlay or seed corpus, got: {}",
+            path_str
+        );
+    }
+
+    #[test]
+    fn test_evolve_and_persist_writes_to_logs_overlay_only() {
+        let meta = evolve_and_persist_skyrl_regression_corpus(1, 0.05, 0.95, "test-adapter");
+        assert!(meta["corpus_epoch"].as_i64().unwrap_or(0) >= 1);
+        assert!(meta["total_mutations_persisted"].as_u64().unwrap_or(0) >= 1);
+        let corpus_path = meta["corpus_path"].as_str().unwrap_or("");
+        assert!(
+            corpus_path.contains("logs"),
+            "Corpus write must target logs/ overlay, got: {}",
+            corpus_path
+        );
+    }
+}
+

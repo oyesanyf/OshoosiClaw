@@ -3472,6 +3472,46 @@ flowchart TD
     A3 --> Build
 ```
 
+- **Runtime Trace-Alignment Scanner (`AlignmentCheck` Pattern), Longitudinal Drift Telemetry (`agent_drift_traces` / 103-Table Siquery), & Multi-Turn Goal-Hijacking Regression Suite (`crates/osoosi-agent-anomaly/src/alignment_scanner.rs`, `siquery.rs`, `tests/strix_llm_adversarial_tester.py`, `dashboard/`)**:
+  - **Session Intent Pinning & Cumulative Taint Tracking**: Pins the user's original task intent at session initialization (`PinnedTaskIntent`: `intent_hash_blake3`, 128-dimensional L2-normalized semantic projection vector, and allowed tool envelope) and accumulates all ingested untrusted documents/HAR snippets across turns (`accumulated_untrusted_inputs`) to defeat multi-document taint laundering and split-payload prompt injections (`split_payload_multi_doc`).
+  - **Two-Stage Runtime Alignment Gate (`evaluate_tool_call`)**: Intercepts every proposed tool invocation after untrusted data ingestion (`untrusted_taint = true` or `taint_state.force_canary_cage()`):
+    - **Tier 1 (Sub-Millisecond Rust Structural & Causal Intent Gate)**: Evaluates goal-override markers across the cumulative untrusted context, parses inline tool call arguments (`split_tool_and_inline_args`), measures `snake_case`-aware intent alignment and privilege/exfiltration sink shifts (`exec_shell`, `http_post_external`, `write_ledger`, `chmod_permissions`), and preserves `0%` false-positive rates on benign multi-turn summarization and entity extraction tasks (`MT-CONTROL-013..016`).
+    - **Tier 2 (Local Loopback Ollama Judge + Deterministic Enclave Fallback)**: Invokes the local Ollama judge (`http://127.0.0.1:11434/api/generate`, zero Together AI or external cloud dependency) with a 5-second cached `350ms` health probe and `3.5s` generation budget, falling back seamlessly to a deterministic local enclave classifier when Ollama is offline.
+  - **Longitudinal Drift Telemetry (`Langfuse / Phoenix` Pattern)**: Computes per-step `intent_alignment_score ∈ [0.0, 1.0]` and `drift_velocity` (`d(alignment)/dt`), persists trajectories to SQLite (`database/osoosi.db` `agent_drift_traces` table), exposes `agent_drift_traces` in the 103-table `SiqueryEngine` (`SELECT * FROM agent_drift_traces ORDER BY timestamp DESC;`), and renders a real-time SVG alignment trajectory & drift velocity sparkline in `#agent-anomalies`.
+  - **Multi-Turn Goal-Hijacking Regression Suite (`Promptfoo` Pattern)**: Implements Perimeter 7B (`--suite multiturn_goal_hijack` in `tests/strix_llm_adversarial_tester.py` and `#adversarial-tests`) with 17 multi-turn indirect goal-redirection chains (`benign user task -> poisoned document/HAR -> hijacked tool call attempt`, including 13 attack chains and 4 benign multi-turn controls), feeding `Train_Corpus` outcomes into SkyRL (`logs/adversarial_regression_corpus.json`) while enforcing zero `HeldOut_Eval` contamination (`holdout_leakage == 0`).
+
+```mermaid
+flowchart TD
+    subgraph Pin["1. Session Intent Pinning & Cumulative Taint (alignment_scanner.rs)"]
+        P1["POST /api/agent-anomalies/intent-pin<br/>Pin User Task + Allowed Tool Envelope"]
+        P2["BLAKE3 Intent Hash + 128-Dim L2 Semantic Vector"]
+        P3["Cumulative Multi-Turn Taint Accumulator<br/>(accumulated_untrusted_inputs)"]
+        P1 --> P2 & P3
+    end
+
+    subgraph Gate["2. Two-Stage Runtime Trace-Alignment Gate (AlignmentCheck)"]
+        T1["Tier 1: Sub-ms Rust Structural & Causal Check<br/>• Cumulative Override Marker Scan<br/>• Inline Arg Parser & Sink Escalation Check<br/>• Benign Summarization / Entity FP Immunity"]
+        T2["Tier 2: Local Loopback Ollama Judge<br/>(127.0.0.1:11434/api/generate, 350ms Cached Probe)<br/>+ Deterministic Local Enclave Fallback"]
+        V1["Verdict: ALIGNED_ALLOW / DRIFT_WARN / HIJACK_BLOCKED_QUARANTINE"]
+        P2 & P3 --> T1 --> T2 --> V1
+    end
+
+    subgraph Drift["3. Longitudinal Drift Telemetry (Langfuse / Phoenix Pattern)"]
+        D1["Compute intent_alignment_score in [0.0, 1.0]<br/>& drift_velocity = d(alignment)/dt"]
+        D2["Persist to SQLite database/osoosi.db<br/>& Siquery Table #103: agent_drift_traces"]
+        D3["WebUI #agent-anomalies<br/>Live SVG Trajectory & Drift Velocity Sparkline"]
+        V1 --> D1 --> D2 --> D3
+    end
+
+    subgraph Suite["4. Multi-Turn Goal-Hijacking Regression (Promptfoo Pattern)"]
+        S1["Perimeter 7B: --suite multiturn_goal_hijack<br/>(13 Attack Chains + 4 Benign Controls)"]
+        S2["SkyRL Closed-Loop Feedback<br/>(Train_Corpus -> logs/adversarial_regression_corpus.json)"]
+        S3["Strict Holdout Isolation<br/>(HeldOut_Eval holdout_leakage == 0)"]
+        S1 --> Gate
+        V1 --> S2 & S3
+    end
+```
+
 - **Continuous Self-Updating HAR Web Traffic Sensor & Dedicated `#har-traffic` WebUI Menu (`crates/osoosi-agent-anomaly/src/siquery.rs`, `crates/osoosi-dashboard/src/lib.rs`, `dashboard/`)**:
   - **Multi-Source Browser & Socket Ingestion**: Implemented Step 2c browser `downloads` ingestion directly from Chrome, Edge, Brave, and Chromium SQLite user-data stores, parsing download completion, URL, MIME type, size, and elevating risk score to `0.85` / `"suspicious"` if `danger_type > 0`. Enhanced Step 2d Windows socket telemetry with live `ipconfig /displaydns` DNS cache resolution, process name mapping via `sysinfo`, port filtering (`[80, 443, 8080, 8443, 3000, 3030, 5000, 11434]`), and benign loopback exemptions for internal microservices (`3030`, `11434`, `3000`, `5000`).
   - **Cryptographic BLAKE3 Swarm Poison Gate**: Added `collect_live_har_entries_fast(&self, limit: usize) -> Vec<serde_json::Value>` in `SiqueryEngine`, deduplicating records on `(method, url, source_file)` while preserving recency. Computes BLAKE3 cryptographic digests and verifies against `osoosi_policy::traffic_adapter::is_swarm_poisoned_har_digest(&digest)` to flag compromised traffic lineages with tag `"SWARM_POISONED_LINEAGE"` and elevate threat score to `0.99` / `"malicious"`.
@@ -3562,7 +3602,7 @@ flowchart TD
 - **Cross-Platform NSRL (Windows, Linux, macOS), Demand-Paged 4 KB Binary Allowlist Merkle Tree, & PE64/ELF64 ASLR Code-Segment Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs` & `crates/osoosi-memory/`)**: Indexed SQLite NSRL lookups (`idx_nsrl_sha256`, `idx_nsrl_md5`) + Linux `dpkg -S` / `rpm -Vf` + ELF64 trust + cross-platform 4 KB block-level `fs-verity` Merkle digests (`measure_linux_fs_verity`), paired with both PE64 (`extract_pe64_code_segment`) and ELF64 (`extract_elf64_code_segment`) relocation-normalized `.text` code-segment anchoring (`anchor_current_process`).
 - **OpenJev ("System One") Non-Autoregressive Single-Forward-Pass Decision Engine (`crates/osoosi-behavioral/src/decision_model/openjev_client.rs`)**: Sub-40ms non-autoregressive decision classification extracting exact boolean (`Yes`/`No`) and ordinal (`1..5`) logit probabilities in a single forward pass with Shannon entropy uncertainty quantification and 1 MB bounded stream protection.
 - **Full-Stack Native Linux (`x86_64-unknown-linux-gnu`) Support & GPG-Signed Release Packages (`v1.2.0`)**: Native CO-RE eBPF probes (`sched_process_exec`, `sched_process_exit`, `sys_enter_connect`, `sys_enter_mprotect` $W \oplus X$, `sys_enter_ptrace` process tampering, `lsm/bprm_check_security`), Linux `systemd` (`osoosi-edr.service`) CLI management, `/proc/<pid>/maps` VAD forensics, `dpkg -S` / `rpm -Vf` + ELF64 trust & `fs-verity`, and pre-built `.deb` (`oshoosiclaw_1.2.0_amd64.deb`), `.rpm` (`oshoosiclaw-1.2.0-1.x86_64.rpm`), and `.tar.gz` (`oshoosiclaw-1.2.0-linux-x86_64.tar.gz`) packages alongside the Authenticode-signed Windows `OshoosiClaw.msi` (`50.5 MB`).
-- **100% Native Rust `siquery-rs` 101-Table Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**: In-memory `rusqlite` SQL engine (`PRAGMA query_only = ON` and statement-level `stmt.readonly()` enforcement) with zero external `osqueryi.exe` dependencies. Implements 101 OS, cryptographic Merkle (`hierarchical_merkle_anchors`), and AI agent security tables, 45-second continuous `EdrOrchestrator::run_siquery_edr_audit_sweep()` sweeps, `osoosi siquery` CLI, and the interactive `#siquery-view` WebUI SQL Console.
+- **100% Native Rust `siquery-rs` 103-Table Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**: In-memory `rusqlite` SQL engine (`PRAGMA query_only = ON` and statement-level `stmt.readonly()` enforcement) with zero external `osqueryi.exe` dependencies. Implements 103 OS, cryptographic Merkle (`hierarchical_merkle_anchors`), HAR web traffic (`har_entries`), longitudinal drift (`agent_drift_traces`), and AI agent security tables, 45-second continuous `EdrOrchestrator::run_siquery_edr_audit_sweep()` sweeps, `osoosi siquery` CLI, and the interactive `#siquery-view` WebUI SQL Console.
 - **AgentOctopus Multi-Ring Breakout Defense & Zero-Hardcode Bayesian Agent Discovery (`crates/osoosi-agent-anomaly/`)**: Ported 4-Ring Agent Containment (`ArmContainmentRing`, `MeshGuard` HMAC-SHA256 epoch verification, `BreakoutDefenseCoordinator` with mathematical IPv4/IPv6 SSRF & `Path::join`/ADS guards, 3-Phase `AgentjackingGuard`, 16-Tactic MITRE ATLAS STIX 2.1 Arm, and 5-Layer RASP). Zero-hardcode `DynamicAgentClassifier` discovers AI agents (e.g. Antigravity, MCP servers, OpenAI Codex, Ollama) purely from relational `siquery` SQL joins (`processes` JOIN `process_open_sockets` JOIN `pipes` JOIN `process_envs`) and ETW 3-second spawn velocity without disrupting normal developer workflows, broadcasting `[AI AGENT WATCH-OUT]` alerts across the libp2p GossipSub and Nostr mesh.
 - **Native Windows Service (`OsoosiEDR`) & Linux `systemd` (`osoosi-edr.service`)**: Full service lifecycle (`install`, `start`, `stop`, `restart`, `delete`, `status`, `run`) with automatic working-directory resolution and dual `Ctrl+C` / `SERVICE_CONTROL_STOP` shutdown multiplexing.
 - **Closed-Loop RL Per-Voter Weight Calibration & SQLite Persistence**: Persistent `voter_weights` table, automatic local YARA rule hot-synthesis on multi-detector consensus findings, and `SkyRL` DQN checkpoint restoration (`runs/skyrl_checkpoint.json`).

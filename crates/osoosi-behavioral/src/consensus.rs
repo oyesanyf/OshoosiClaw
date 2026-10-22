@@ -83,7 +83,7 @@ impl EnsembleOrchestrator {
         // 1. Soft Clustering: Determine the dominant cluster for the threat
         let cluster = self.determine_threat_cluster(&insights);
 
-        info!(
+        tracing::debug!(
             "⚖️ [ENSEMBLE] Deliberating in {:?} cluster context...",
             cluster
         );

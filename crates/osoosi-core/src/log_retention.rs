@@ -147,12 +147,9 @@ impl LogRetentionManager {
         let mut newly_rotated = Vec::new();
         if max_single_bytes > 0 {
             for entry in entries_found.iter_mut() {
-                if entry.is_active
-                    && entry.filename.eq_ignore_ascii_case("osoosi.log")
-                    && entry.size_bytes > max_single_bytes
-                {
+                if entry.is_active && entry.size_bytes > max_single_bytes {
                     let ts = Utc::now().format("%Y%m%d_%H%M%S").to_string();
-                    let rotated_name = format!("osoosi.log.{}.rotated", ts);
+                    let rotated_name = format!("{}.{}.rotated", entry.filename, ts);
                     let rotated_path = log_dir.join(&rotated_name);
                     match fs::rename(&entry.path, &rotated_path) {
                         Ok(_) => {
@@ -422,15 +419,38 @@ impl LogRetentionManager {
             }
         }
 
-        let file = fs::File::open(&target_path)?;
-        let reader = BufReader::new(file);
-
+        let mut file = fs::File::open(&target_path)?;
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
         let search_pattern = search.map(|s| s.trim().to_ascii_lowercase());
         let cap = max_lines.clamp(1, 5000);
+        // Bound read window so huge log files never block web worker threads
+        let max_tail_bytes: u64 = if search_pattern.is_some() {
+            2 * 1024 * 1024 // 2 MB max scan window for search
+        } else {
+            ((cap as u64) * 512).clamp(256 * 1024, 2 * 1024 * 1024)
+        };
+        let mut sought_mid_file = false;
+        if file_len > max_tail_bytes {
+            use std::io::{Seek, SeekFrom};
+            if file.seek(SeekFrom::End(-(max_tail_bytes as i64))).is_ok() {
+                sought_mid_file = true;
+            }
+        }
+
+        let mut reader = BufReader::new(file);
+        if sought_mid_file {
+            // Discard partial first line after seeking into the middle of the file
+            let mut discard = Vec::new();
+            let _ = reader.read_until(b'\n', &mut discard);
+        }
+
         let mut buffer = VecDeque::with_capacity(cap);
 
         for line_res in reader.lines() {
-            let line = line_res?;
+            let line = match line_res {
+                Ok(l) => l,
+                Err(_) => continue,
+            };
             if let Some(ref pattern) = search_pattern {
                 if !line.to_ascii_lowercase().contains(pattern) {
                     continue;
