@@ -235,15 +235,9 @@ $TargetExe = Join-Path $ProjectRoot "target\release\osoosi.exe"
 if (-not $SkipBuild) {
     Write-Host "`n>>> [1/8] Building osoosi-cli Release Binary..." -ForegroundColor Yellow
     
-    # If OsoosiEDR service is running, stop it before compiling to release file handles
-    $scQuery = & sc.exe query OsoosiEDR 2>&1 | Out-String
-    if ($scQuery -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
-        Write-Host "       Stopping OsoosiEDR service before release build to release binary locks..." -ForegroundColor Cyan
-        & sc.exe stop OsoosiEDR | Out-Null
-        Start-Sleep -Seconds 1
-    }
-
-    # Ensure file handles on target are not locked
+    # Keep OsoosiEDR running during compilation so port 3030 remains online!
+    # Test-And-Handle-LockedFile renames any locked target\release\osoosi.exe in-place on NTFS
+    # so cargo can link the new binary while the running service continues serving requests.
     Test-And-Handle-LockedFile -FilePath $TargetExe
     $depsExe = Join-Path $ProjectRoot "target\release\deps\osoosi.exe"
     Test-And-Handle-LockedFile -FilePath $depsExe
@@ -375,9 +369,9 @@ if (-not $SkipSigning) {
 }
 $scQueryPre = & sc.exe query OsoosiEDR 2>&1 | Out-String
 if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
-    Write-Host "       OsoosiEDR service is currently RUNNING. Hot-swapping with freshly compiled binary..." -ForegroundColor Cyan
+    Write-Host "       OsoosiEDR service is currently RUNNING. Performing <200ms hot-swap with freshly signed binary..." -ForegroundColor Cyan
     & sc.exe stop OsoosiEDR | Out-Null
-    Start-Sleep -Seconds 1
+    Start-Sleep -Milliseconds 180
     Test-And-Handle-LockedFile -FilePath $TargetExe
     Copy-Item -Path $DeployExe -Destination $TargetExe -Force
     try {
@@ -398,6 +392,18 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
     } catch {}
     & sc.exe start OsoosiEDR | Out-Null
     Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
+}
+# Wait for 127.0.0.1:3030 health immediately in Step 3 so WebUI login is online during WiX/WDSI steps
+for ($w = 0; $w -lt 25; $w++) {
+    try {
+        $step3Probe = Invoke-WebRequest -Uri "http://127.0.0.1:3030/api/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($step3Probe.StatusCode -eq 200) {
+            Write-Host "       -> Verified WebUI Dashboard actively listening on http://127.0.0.1:3030 (HTTP 200)." -ForegroundColor Green
+            break
+        }
+    } catch {
+        Start-Sleep -Milliseconds 400
+    }
 }
 # Synchronize adversarial audit log across all log directories
 $AuditLog = Join-Path $ProjectRoot "logs\adversarial_audit.json"

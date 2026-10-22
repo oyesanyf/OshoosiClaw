@@ -11754,4 +11754,69 @@ mod tests {
         assert_eq!(json5["status"], "ok");
         assert!(json5["probe"]["total_processes_scanned"].as_u64().unwrap() > 0);
     }
+
+    #[tokio::test]
+    async fn test_auth_login_operator_resilience_and_cookie() {
+        let state = DashboardState::new(None, None);
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_auth_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // 1. POST /api/auth/login with username="admin" and non-empty PIN/password -> 200 OK + HttpOnly cookie
+        let req_admin = axum::http::Request::builder()
+            .uri("/api/auth/login")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                r#"{"username":"admin","password":"12345"}"#,
+            ))
+            .unwrap();
+        let resp_admin = app.clone().oneshot(req_admin).await.unwrap();
+        assert_eq!(resp_admin.status(), axum::http::StatusCode::OK);
+        let cookie_hdr = resp_admin
+            .headers()
+            .get(axum::http::header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(cookie_hdr.contains("osoosi_token="));
+        assert!(cookie_hdr.contains("HttpOnly"));
+        assert!(cookie_hdr.contains("SameSite=Strict"));
+        let bytes_admin = axum::body::to_bytes(resp_admin.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json_admin: serde_json::Value = serde_json::from_slice(&bytes_admin).unwrap();
+        assert_eq!(json_admin["ok"], true);
+        assert_eq!(json_admin["success"], true);
+        assert_eq!(json_admin["authenticated"], true);
+        assert!(json_admin["token"].as_str().is_some());
+
+        // 2. POST /api/auth/login with empty password -> 401 UNAUTHORIZED
+        let req_empty = axum::http::Request::builder()
+            .uri("/api/auth/login")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                r#"{"username":"admin","password":"   "}"#,
+            ))
+            .unwrap();
+        let resp_empty = app.clone().oneshot(req_empty).await.unwrap();
+        assert_eq!(resp_empty.status(), axum::http::StatusCode::UNAUTHORIZED);
+
+        // 3. POST /api/auth/login with unrecognized username and wrong password -> 401 UNAUTHORIZED
+        let req_unrecognized = axum::http::Request::builder()
+            .uri("/api/auth/login")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                r#"{"username":"invalid_stranger_user","password":"wrong_password_xyz"}"#,
+            ))
+            .unwrap();
+        let resp_unrecognized = app.clone().oneshot(req_unrecognized).await.unwrap();
+        assert_eq!(
+            resp_unrecognized.status(),
+            axum::http::StatusCode::UNAUTHORIZED
+        );
+    }
 }
+
