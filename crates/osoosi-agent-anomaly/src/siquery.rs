@@ -94,6 +94,7 @@ impl SiqueryEngine {
     pub fn list_tables() -> &'static [&'static str] {
         &[
             "agent_containment_rings",
+            "agent_drift_traces",
             "agent_mercury_physics",
             "agent_octopus_arms",
             "api_endpoints",
@@ -344,6 +345,8 @@ impl SiqueryEngine {
             !is_pragma && (is_metadata || lower.contains("kernel_object_conservation"));
         let need_vcdb_incidents =
             !is_pragma && (is_metadata || lower.contains("vcdb_incidents"));
+        let need_drift_traces =
+            !is_pragma && (is_metadata || lower.contains("agent_drift_traces"));
 
         let any_table_needed = need_processes
             || need_sockets
@@ -424,7 +427,8 @@ impl SiqueryEngine {
             || need_containment_rings
             || need_merkle_anchors
             || need_kernel_conservation
-            || need_vcdb_incidents;
+            || need_vcdb_incidents
+            || need_drift_traces;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -696,6 +700,9 @@ impl SiqueryEngine {
             }
             if need_vcdb_incidents {
                 Self::populate_vcdb_incidents(&tx)?;
+            }
+            if need_drift_traces {
+                Self::populate_agent_drift_traces(&tx)?;
             }
 
             tx.commit()
@@ -1660,6 +1667,31 @@ impl SiqueryEngine {
             oshoosi_enforcement_plane TEXT,
             empirical_breach_prob REAL,
             redactx_openjev_prior_score REAL
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_drift_traces (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trace_id TEXT,
+            session_id TEXT,
+            agent_id TEXT,
+            arm_id TEXT,
+            model_name TEXT,
+            step_index INTEGER,
+            intent_hash_blake3 TEXT,
+            user_intent TEXT,
+            untrusted_source TEXT,
+            untrusted_taint INTEGER,
+            proposed_tool TEXT,
+            proposed_parameters TEXT,
+            tier1_passed INTEGER,
+            tier1_cosine_score REAL,
+            tier2_judge_mode TEXT,
+            tier2_judge_score REAL,
+            intent_alignment_score REAL,
+            drift_velocity REAL,
+            verdict TEXT,
+            rationale TEXT,
+            timestamp TEXT
         );
 
         CREATE VIEW IF NOT EXISTS disk_encryption AS SELECT drive_letter, encryption_method, conversion_status, protection_status, lock_status FROM bitlocker_info;
@@ -8255,6 +8287,51 @@ impl SiqueryEngine {
 
         Ok(())
     }
+
+    /// Populates `agent_drift_traces` table from `RuntimeAlignmentScanner` (in-memory + SQLite `database/osoosi.db`).
+    fn populate_agent_drift_traces(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached(
+                "INSERT INTO agent_drift_traces (
+                    trace_id, session_id, agent_id, arm_id, model_name, step_index,
+                    intent_hash_blake3, user_intent, untrusted_source, untrusted_taint,
+                    proposed_tool, proposed_parameters, tier1_passed, tier1_cosine_score,
+                    tier2_judge_mode, tier2_judge_score, intent_alignment_score,
+                    drift_velocity, verdict, rationale, timestamp
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            )
+            .map_err(|e| format!("Failed to prepare agent_drift_traces insert: {}", e))?;
+
+        let scanner = crate::alignment_scanner::global_alignment_scanner();
+        let traces = scanner.get_drift_traces(500);
+        for rec in traces {
+            let _ = insert_stmt.execute(rusqlite::params![
+                rec.trace_id,
+                rec.session_id,
+                rec.agent_id,
+                rec.arm_id,
+                rec.model_name,
+                rec.step_index as i64,
+                rec.intent_hash_blake3,
+                rec.user_intent,
+                rec.untrusted_source,
+                if rec.untrusted_taint { 1i64 } else { 0i64 },
+                rec.proposed_tool,
+                rec.proposed_parameters,
+                if rec.tier1_passed { 1i64 } else { 0i64 },
+                rec.tier1_cosine_score,
+                rec.tier2_judge_mode,
+                rec.tier2_judge_score,
+                rec.intent_alignment_score,
+                rec.drift_velocity,
+                rec.verdict,
+                rec.rationale,
+                rec.timestamp,
+            ]);
+        }
+
+        Ok(())
+    }
 }
 
 /// Deterministic Memory & Kernel Object Conservation record for a single PID.
@@ -9150,8 +9227,8 @@ mod tests {
         let tables = SiqueryEngine::list_tables();
         assert_eq!(
             tables.len(),
-            101,
-            "Must contain exactly 101 tables and views for comprehensive siquery host discovery"
+            103,
+            "Must contain exactly 103 tables and views for comprehensive siquery host discovery"
         );
 
         for table in tables {
@@ -9164,6 +9241,21 @@ mod tests {
                 result.err()
             );
         }
+    }
+
+    #[test]
+    fn test_agent_drift_traces_query() {
+        let engine = SiqueryEngine::new();
+        let rows = engine
+            .execute_query("SELECT trace_id, session_id, arm_id, model_name, step_index, intent_alignment_score, drift_velocity, tier2_judge_mode, verdict FROM agent_drift_traces ORDER BY id DESC LIMIT 10;")
+            .expect("agent_drift_traces query must succeed");
+        assert!(
+            !rows.is_empty(),
+            "agent_drift_traces must return seeded or live longitudinal drift rows"
+        );
+        let first = &rows[0];
+        assert!(first.get("intent_alignment_score").is_some());
+        assert!(first.get("drift_velocity").is_some());
     }
 
     #[test]

@@ -1083,6 +1083,7 @@ function renderOpenJevDecisionPanel(oj, verdict, sensitivityPhi) {
     `;
 }
 
+window.renderDlpView = renderDlpView;
 window.submitDlpInspection = submitDlpInspection;
 window.loadDlpSamplePayload = loadDlpSamplePayload;
 window.handleDlpInspectFileUpload = handleDlpInspectFileUpload;
