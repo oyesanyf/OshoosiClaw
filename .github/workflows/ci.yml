@@ -83,6 +83,18 @@ jobs:
           OSOOSI_NO_AI: "1"
         run: cargo test --workspace
 
+      - name: Run Multi-Node GossipSub Fault-Injection Benchmark
+        run: python scripts/run_multi_node_mesh_benchmark.py --fast
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+
+      - name: Upload Fault-Injection Benchmark Report
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: mesh-fault-injection-report
+          path: logs/multi_node_mesh_benchmark_report.json
+
   # ── Format check ─────────────────────────────────────────────────────────────
   fmt:
     name: Format Check (rustfmt)
