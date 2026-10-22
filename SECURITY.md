@@ -2,87 +2,93 @@
 
 ## Supported Versions
 
-| Version | Supported |
-|---------|-----------|
-| `main` branch | ✅ Active security patches |
-| Tagged releases (`v0.1.x`) | ✅ Critical patches only |
-| Older releases | ❌ Not supported |
+OshoosiClaw releases follow Semantic Versioning (`vMAJOR.MINOR.PATCH`). Security updates and critical patches are actively maintained for the following branches and release lines:
+
+| Version Line | Status | Security Patch Support |
+| :--- | :---: | :--- |
+| `main` branch | Active | Continuous daily patches and vulnerability remediation |
+| `v1.2.x` (Current) | Active | Critical vulnerabilities, parser bugs, and mesh security fixes |
+| `v1.1.x` | Maintenance | Critical security fixes only |
+| `< v1.1.0` | End-of-Life | Unsupported; upgrade to `v1.2.x` immediately |
 
 ---
 
 ## Reporting a Vulnerability
 
-OshoosiClaw is an autonomous EDR agent. Security bugs — especially agent bypass, false-negative evasion, or privilege escalation via the mesh — are treated as **critical**.
+OshoosiClaw is a critical endpoint detection and response system. Security bugs — particularly agent bypasses, false-negative evasion, privilege escalation, or consensus poisoning — are treated as **critical security emergencies**.
 
-### How to Report
+> [!IMPORTANT]
+> **Do NOT open public GitHub issues or forum discussions for suspected security vulnerabilities.**  
+> Public disclosure exposes production environments before mitigations can be distributed.
 
-**Do NOT open a public GitHub issue for security vulnerabilities.**
+### Preferred Reporting Channel: GitHub Security Advisories
 
-1. **Email**: Send a detailed report to the maintainer via GitHub's private vulnerability reporting:
-   [https://github.com/oyesanyf/OshoosiClaw/security/advisories/new](https://github.com/oyesanyf/OshoosiClaw/security/advisories/new)
+Submit reports directly to the maintainers through GitHub's encrypted advisory portal:  
+👉 **[Open a Private Security Advisory](https://github.com/oyesanyf/OshoosiClaw/security/advisories/new)**
 
-2. **Include in your report**:
-   - OshoosiClaw version / commit hash
-   - Operating system and version
-   - Steps to reproduce
-   - Proof-of-concept (if available)
-   - Potential impact assessment
+### Alternative Channel: Encrypted Direct Email
 
-### Response Timeline
+If you cannot access GitHub Advisories, email your disclosure to:  
+📧 **[security@oshoosiclaw.dev](mailto:security@oshoosiclaw.dev)** (or maintainer [@oyesanyf](https://github.com/oyesanyf))  
+🔑 **PGP Public Key**: Available on GitHub at [https://github.com/oyesanyf.gpg](https://github.com/oyesanyf.gpg)
 
-| Stage | Target |
-|---|---|
-| Acknowledgement | Within 48 hours |
-| Severity assessment | Within 5 business days |
-| Patch release (Critical) | Within 14 days |
-| Patch release (High) | Within 30 days |
-| Public disclosure | After patch is released |
+Please include:
+1. **Component / Subsystem**: Affected crate, binary, script, or API endpoint.
+2. **Environment & Version**: Operating system (Windows/Linux), OshoosiClaw version / git commit hash.
+3. **Vulnerability Type**: Agent bypass, memory corruption, privilege escalation, DLP leak, or consensus spoofing.
+4. **Steps to Reproduce & Proof of Concept (PoC)**: Minimal reproduction code, network trace, or test script.
+5. **Impact Assessment**: Consequences of exploitation in an enterprise deployment.
 
 ---
 
-## Scope
+## Response Timeline & SLA Commitments
 
-### In-scope (please report)
+The maintenance team commits to the following Service Level Agreements for reported vulnerabilities:
 
-| Category | Examples |
-|---|---|
-| **Agent Bypass** | Evading detection of malware by exploiting parser, scoring, or consensus logic |
-| **Privilege Escalation** | Abusing the agent's admin/SYSTEM context to escape sandbox or escalate |
-| **Mesh Poisoning** | Injecting false consensus votes or corrupting Merkle audit entries |
-| **Model Poisoning** | Adversarial inputs that cause the ONNX model to misclassify malware as benign |
-| **Dependency Vulnerabilities** | Known CVEs in crates used by OshoosiClaw (`cargo audit` findings) |
-| **Secret Exposure** | API keys, mesh node private keys, or certificates committed to the repo |
-
-### Out-of-scope
-
-- Bugs in third-party tools (Sysmon, Hayabusa, Chainsaw) — report to their projects
-- UI cosmetic issues in the dashboard
-- Performance issues that do not affect security decisions
+| Incident Stage | Target Window | Action |
+| :--- | :---: | :--- |
+| **Initial Acknowledgement** | Within **48 hours** | Confirm receipt and establish a private coordination channel. |
+| **Triage & Reproducibility** | Within **5 business days** | Validate reproducibility and assign initial CVSS v3.1 / v4.0 severity. |
+| **Critical Patch Release** | Within **14 calendar days** | Release hotfix binary, signed MSI, and GitHub Security Advisory. |
+| **High Severity Patch** | Within **30 calendar days** | Release patch in the regular release train. |
+| **Public Coordinated Disclosure** | Coordinated | Published after users and downstream swarms have patched. |
 
 ---
 
-## Security Design Principles
+## Vulnerability Scope
 
-- **Zero shell execution on detection hot-paths**: Detection, telemetry, and pre-operation enforcement hot-paths strictly execute via native Win32/ETW/eBPF/Siquery APIs without spawning shells or external script hosts.
-- **Strictly controlled administrative CLI operations**: Administrative CLI maintenance commands (`osoosi service`, `osoosi repair`) resolve system binaries solely from verified `%SystemRoot%\System32` paths (`osoosi_types::resolve_system_binary`) with `CREATE_NO_WINDOW` and strict argument arrays (never `cmd /c` string interpolation or unescaped shell invocations).
-- **Multi-voter consensus & human-in-the-loop gating**: Destructive containment (`Isolate`, `Tarpit`) requires multi-voter corroboration (`detector_count >= 2`, confidence `>= 0.90`) and respects `human_escalation_required` as a hard stop gate before autonomous containment can be applied.
-- **Air-gapped & privacy-first networking defaults**: Public WAN relays (Nostr / DuckDNS) and remote LLM providers are strictly **opt-in** (`allow_public_relays = false`, `duckdns_domain = ""`, and `OSOOSI_ENABLE_REMOTE_LLM=0` by default); all threat detection and voting operate fully local and air-gapped out of the box.
-- **Tamper-evident logging**: All security decisions are recorded in a Merkle-chained audit trail (`osoosi merkle`).
-- **Least privilege**: The agent separates host-maintenance (requires admin) from analysis tasks (runs in AppContainer/OpenShell sandbox).
-- **Cargo.lock tracked**: Exact dependency versions are pinned and committed — reproducible builds and SLSA provenance are enforced.
+### In-Scope Vulnerabilities (Eligible for Coordinated Disclosure)
+
+| Category | Description & Examples |
+| :--- | :--- |
+| **Agent Bypass & False Negatives** | Novel evasion techniques that bypass Ring-0/ETW sensors, SiQuery telemetry, or decision models without detection. |
+| **Privilege Escalation** | Escaping AppContainer / CanaryCage sandbox, Win32 Job Object confinement, or Linux namespace barriers. |
+| **Mesh & Consensus Poisoning** | Forging `ML-DSA-65` signatures, byzantine peer equivocation, or corrupting Merkle audit ledgers. |
+| **Data Loss Prevention (DLP) Exfiltration** | Techniques that evade RedactX-v3 OpenJEV hybrid logit scoring, secret unwrappers, or crown-jewel Merkle chunks. |
+| **AI Agentic Exploitation (ASI01–ASI10)** | Indirect prompt injections escaping agent boundary, unauthorized tool invocation, or memory trajectory hijacking. |
+| **Cryptographic Flaws** | Broken lattice implementations in ML-KEM-768 / ML-DSA-65, TFHE ciphertext leakage, or weak RNG seeds. |
+| **Supply Chain & Dependencies** | Exploitable CVEs in workspace crates identified via `cargo audit`. |
+
+### Out-of-Scope
+
+- Attacks requiring physical device theft with unencrypted bitlocker and compromised physical TPM.
+- Cosmetic styling issues in the WebUI that do not impact security state.
+- Bugs in upstream, third-party standalone tools (e.g. Sysmon, Hayabusa) without an OshoosiClaw integration vulnerability.
+- Denial of Service attacks originating from an attacker who already possesses root/SYSTEM privileges on the target host.
 
 ---
 
-## Dependency Security
+## Security Architecture & Invariant Principles
 
-We run `cargo audit` on every pull request via our CI pipeline. If a dependency vulnerability is discovered:
+- **Zero Shell Hot-Paths**: Telemetry, inspection, and enforcement paths execute exclusively via native Win32/ETW/eBPF APIs without spawning external shells (`cmd.exe`, `powershell.exe`, `/bin/sh`).
+- **Multi-Voter Consensus**: High-impact containment (`Isolate`, `Tarpit`) requires multi-voter consensus (`detector_count >= 2`, confidence $\ge 0.90$) and respects human-in-the-loop gates.
+- **Fail-Closed Isolation**: Boundary violations in AppContainer profiles or Job Objects immediately fail closed and terminate child handles.
+- **Air-Gapped by Default**: External WAN relays (Nostr/DuckDNS) and remote LLMs are strictly opt-in; all threat analysis operates fully local.
+- **Signed Authenticode & SLSA Attestations**: All Windows executables, libraries, and MSI packages are Authenticode signed with native `signtool.exe` (SHA-256 + RFC 3161 timestamp) and verified via SLSA v1.0 DSSE attestations.
+- **Automated WDSI Submission**: All release artifacts are submitted to Microsoft Security Intelligence.
 
-1. We assess whether the vulnerable code path is reachable
-2. If reachable: patch is issued within 14 days
-3. If not reachable: documented in a GitHub Security Advisory
+---
 
-To check your local build:
-```bash
-cargo install cargo-audit
-cargo audit
-```
+## Security Hall of Fame & Acknowledgments
+
+We believe in recognizing security researchers who responsibly report vulnerabilities. Contributors will be credited in our GitHub Security Advisories, release notes, and our public security acknowledgments page (unless anonymity is requested).
