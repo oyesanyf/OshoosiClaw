@@ -2965,7 +2965,8 @@
                             <span>🚀 Adversarial &amp; Defense Test Execution Suite</span>
                         </h3>
                         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                            <button type="button" class="btn-secondary" id="adv-btn-stop" onclick="stopAdversarialTestRun()" disabled style="padding: 8px 14px; font-size: 12.5px;">⏹️ Cancel</button>
+                            <button type="button" id="adv-btn-auto-toggle" onclick="toggleAdversarialAutonomous()" style="background: rgba(16, 185, 129, 0.18); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.5); border-radius: 8px; padding: 8px 14px; font-size: 12.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">🤖 Autonomous: ON</button>
+                            <button type="button" id="adv-btn-stop" onclick="stopAdversarialTestRun(false)" style="background: #ef4444; color: #ffffff; border: 1px solid #f87171; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 14px rgba(239, 68, 68, 0.35);">🛑 Stop</button>
                             <button type="button" id="adv-btn-run-all" onclick="runAdversarialSuite('all')" style="background: #10b981; color: #ffffff; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);">⚡ Run ALL (2,250+ Tests Combined)</button>
                             <a href="/api/download-run-log" download="adversarial_execution.log" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none; display: inline-flex; align-items: center;">📥 Download Run Log</a>
                             <a href="/api/download-test-json" download="adversarial_audit.json" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none; display: inline-flex; align-items: center;">📥 Export JSON</a>
@@ -3016,6 +3017,7 @@
                         </div>
                         <div>
                             <button type="button" id="adv-btn-run-selected" onclick="runSelectedAdversarialSuite()" style="background: #3b82f6; color: #ffffff; border: none; border-radius: 8px; padding: 10px 20px; font-size: 13.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);">▶️ Run Selected Suite</button>
+                            <button type="button" id="adv-btn-stop-inline" onclick="stopAdversarialTestRun(false)" style="background: rgba(239, 68, 68, 0.22); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.6); border-radius: 8px; padding: 10px 18px; font-size: 13.5px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; margin-left: 8px;">🛑 Stop</button>
                         </div>
                     </div>
 
@@ -3431,7 +3433,7 @@
 
     <!-- Scripts -->
     <script type="text/javascript" src="https://unpkg.com/vis-network@10.1.2/standalone/umd/vis-network.min.js" integrity="sha384-RDdG1CLOxjNlTHh4JYx/rnAueaMHbkBHmeHwrEyljMQw3LF0it4SkuNotIY/FPxD" crossorigin="anonymous"></script>
-    <script src="app.js?v=20261021_04"></script>
+    <script src="app.js?v=20261021_06"></script>
     <script>
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();

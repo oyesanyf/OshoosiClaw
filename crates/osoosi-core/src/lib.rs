@@ -10505,11 +10505,7 @@ impl EdrOrchestrator {
             } else if item.is_threat {
                 let p_lower = item.process_name.as_deref().unwrap_or("").to_ascii_lowercase();
                 let tech = item.mitre_technique.as_deref().unwrap_or("");
-                let sum_pfx = if item.summary.len() > 48 {
-                    &item.summary[..48]
-                } else {
-                    &item.summary
-                };
+                let sum_pfx: String = item.summary.chars().take(48).collect();
                 let threat_key = format!("{}:{}:{}", p_lower, tech, sum_pfx);
                 if seen_threat_keys.contains(&threat_key) {
                     continue;

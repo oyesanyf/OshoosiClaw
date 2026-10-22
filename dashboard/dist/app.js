@@ -11371,8 +11371,7 @@ function runAdversarialSuite(suiteName) {
         if (timeEl) timeEl.innerText = `${elapsed}s`;
     }, 100);
 
-    const base = (typeof API_BASE !== 'undefined') ? API_BASE : '';
-    const streamUrl = `${base}/api/test-stream?suite=${encodeURIComponent(suiteName)}`;
+    const streamUrl = `/api/test-stream?suite=${encodeURIComponent(suiteName)}`;
     
     let es;
     try {
@@ -11441,12 +11440,20 @@ function runAdversarialSuite(suiteName) {
     es.onmessage = (event) => {
         try {
             const msg = JSON.parse(event.data);
-            if (msg.event === 'test_result' || msg.test !== undefined || msg.passed !== undefined) {
+            if (msg.type === 'test_result' || msg.event === 'test_result' || msg.test !== undefined || (msg.status !== undefined && msg.name !== undefined)) {
                 handleTestResult(msg);
-            } else if (msg.event === 'complete' || msg.completed) {
+            } else if (msg.type === 'complete' || msg.event === 'complete' || msg.completed) {
                 handleComplete(msg);
-            } else if (msg.output) {
-                appendAdvTerminal(msg.output);
+            } else if (msg.type === 'output' || msg.line !== undefined || msg.output !== undefined) {
+                const lineText = msg.line !== undefined ? msg.line : msg.output;
+                if (lineText) {
+                    let lType = 'info';
+                    if (lineText.includes('[PASS]') || lineText.includes('... ok')) lType = 'pass';
+                    else if (lineText.includes('[FAIL]') || lineText.includes('... FAILED') || lineText.includes('[ERROR]')) lType = 'fail';
+                    else if (lineText.includes('[WARN]')) lType = 'warn';
+                    else if (lineText.includes('[SPAWN]') || lineText.includes('[SUITE-SYNC]')) lType = 'exec';
+                    appendAdvTerminal(lineText, lType);
+                }
             } else {
                 appendAdvTerminal(event.data);
             }
