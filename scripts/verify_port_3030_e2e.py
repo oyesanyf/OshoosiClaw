@@ -443,9 +443,36 @@ def test_endpoints():
         assert rc.get("total_mutations_persisted", 0) >= 1
         print(f" [PASS] POST /api/skyrl/v1/train -> HTTP {resp.status}: Corpus Epoch #{rc.get('corpus_epoch')}, Total Mutations={rc.get('total_mutations_persisted')}, Merkle={str(rc.get('merkle_root_sha256'))[:16]}...")
 
+    # =========================================================================
+    # 12. OPERATOR LOGIN RESILIENCE (POST /api/auth/login WITH "admin")
+    # =========================================================================
+    print("\n" + "="*70)
+    print(" 12. OPERATOR LOGIN RESILIENCE (POST /api/auth/login WITH 'admin')")
+    print("="*70)
+
+    login_secret = token if token else "admin_operator_pin"
+    login_body = json.dumps({"username": "admin", "password": login_secret}).encode("utf-8")
+    login_req = urllib.request.Request(
+        f"{BASE_URL}/api/auth/login",
+        data=login_body,
+        headers={"Content-Type": "application/json", "User-Agent": "OshoosiClaw-Verifier/1.2.0"},
+        method="POST",
+    )
+    start_t = time.perf_counter()
+    with urllib.request.urlopen(login_req, timeout=5) as resp:
+        elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+        login_data = json.loads(resp.read().decode("utf-8"))
+        set_cookie = resp.headers.get("Set-Cookie", "")
+        assert resp.status == 200, f"Expected HTTP 200 for admin login, got {resp.status}"
+        assert login_data.get("status") == "ok" or login_data.get("ok") is True, f"Unexpected login payload: {login_data}"
+        assert login_data.get("token"), "Missing token in /api/auth/login response"
+        assert "osoosi_token=" in set_cookie and "HttpOnly" in set_cookie, f"Missing HttpOnly osoosi_token cookie: {set_cookie}"
+        print(f" [PASS] POST /api/auth/login (username='admin') -> HTTP {resp.status} ({elapsed_ms:6.2f} ms), Set-Cookie HttpOnly verified")
+
     print("\n" + "="*70)
     print(" ALL END-TO-END VERIFICATIONS PASSED (100% HEALTH, LATENCY SLA & PARITY)")
     print("="*70 + "\n")
 
 if __name__ == "__main__":
     test_endpoints()
+

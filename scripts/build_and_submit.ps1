@@ -253,17 +253,12 @@ if (-not $SkipBuild) {
     $buildSucceeded = $false
     $env:CARGO_REGISTRIES_CRATES_IO_PROTOCOL = "git"
     for ($attempt = 1; $attempt -le 10; $attempt++) {
-        # Clear ReadOnly attributes on release binaries and build directories to prevent autocfg / cargo output path errors
-        Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-            if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
-                $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
-            }
-        }
-        & cmd.exe /c "attrib -r target\release\build /s /d 2>nul & attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul" | Out-Null
+        # Clear ReadOnly attributes on top-level release binaries and depth-1 build script directories
+        & cmd.exe /c "attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul & attrib -r target\release\deps\*.dll 2>nul" | Out-Null
 
-        # Sign any unsigned build scripts and proc-macro DLLs to satisfy WDAC Application Control
+        # Sign any unsigned build scripts (depth-1) and proc-macro DLLs to satisfy WDAC Application Control
         if ($buildSigntool -and (-not $SkipSigning)) {
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe") -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {
@@ -288,7 +283,7 @@ if (-not $SkipBuild) {
         }
         if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
             Write-Host "       [WDAC] Signing newly compiled build scripts & proc-macro DLLs before retry ($attempt/10)..." -ForegroundColor Cyan
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build") -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue | Where-Object {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe") -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {
@@ -370,9 +365,14 @@ if (-not $SkipSigning) {
 }
 $scQueryPre = & sc.exe query OsoosiEDR 2>&1 | Out-String
 if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
-    Write-Host "       OsoosiEDR service is currently RUNNING. Performing <200ms hot-swap with freshly signed binary..." -ForegroundColor Cyan
+    Write-Host "       OsoosiEDR service is currently RUNNING. Performing hot-swap with freshly signed binary..." -ForegroundColor Cyan
     & sc.exe stop OsoosiEDR | Out-Null
-    Start-Sleep -Milliseconds 180
+    for ($s = 0; $s -lt 25; $s++) {
+        $svcState = (Get-Service OsoosiEDR -ErrorAction SilentlyContinue).Status
+        if ($svcState -eq "Stopped") { break }
+        if ($s -eq 8) { Stop-Process -Name "osoosi" -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Milliseconds 100
+    }
     Test-And-Handle-LockedFile -FilePath $TargetExe
     Copy-Item -Path $DeployExe -Destination $TargetExe -Force
     try {
@@ -380,7 +380,7 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
             Copy-Item -Path $DeployExe -Destination $ProgFilesExe -Force -ErrorAction Stop
         }
     } catch {}
-    & sc.exe start OsoosiEDR | Out-Null
+    Start-Service OsoosiEDR -ErrorAction SilentlyContinue
     Write-Host "       -> OsoosiEDR service hot-swapped and running with newly compiled binary." -ForegroundColor Green
 } elseif ($scQueryPre -match "SERVICE_NAME\s*:\s*OsoosiEDR") {
     Write-Host "       Starting OsoosiEDR service with freshly built binary..." -ForegroundColor Cyan
@@ -391,7 +391,7 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
             Copy-Item -Path $DeployExe -Destination $ProgFilesExe -Force -ErrorAction Stop
         }
     } catch {}
-    & sc.exe start OsoosiEDR | Out-Null
+    Start-Service OsoosiEDR -ErrorAction SilentlyContinue
     Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
 }
 # Wait for 127.0.0.1:3030 health immediately in Step 3 so WebUI login is online during WiX/WDSI steps

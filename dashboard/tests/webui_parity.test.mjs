@@ -359,7 +359,19 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                         `Expected window.${method} to be a function in dashboard/${targetDirName}`
                     );
                 }
+
+                // 6. Auth resilience & zero Failed-to-fetch exports
+                for (const authFn of ['sanitizeAuthNetworkError', 'authFetchWithFallback', 'activateLocalSessionFallback']) {
+                    assert.strictEqual(
+                        typeof env.mockWindow[authFn],
+                        'function',
+                        `Expected window.${authFn} to be a function in dashboard/${targetDirName}`
+                    );
+                }
+                const sanitized = env.mockWindow.sanitizeAuthNetworkError('TypeError: Failed to fetch');
+                assert.ok(!/failed to fetch/i.test(sanitized), 'sanitizeAuthNetworkError must never output Failed to fetch');
             });
         });
     });
 });
+
