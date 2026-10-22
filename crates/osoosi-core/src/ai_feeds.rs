@@ -485,6 +485,50 @@ impl AutonomousAiFeedCollector {
         collector
     }
 
+    /// Return the canonical path to the runtime feeds directory in logs/.
+    pub fn runtime_feeds_dir(&self) -> PathBuf {
+        osoosi_types::config::resolve_log_directory()
+            .join("runtime_feeds")
+            .join("ai_threat_feeds")
+    }
+
+    /// Resolve a feed snapshot file prioritizing the runtime overlay in logs/ and falling back to seed catalogs.
+    pub fn resolve_feed_snapshot_path(&self, filename: &str) -> PathBuf {
+        // 1. Check runtime overlay in resolved logs directory
+        let runtime_path = self.runtime_feeds_dir().join(filename);
+        if runtime_path.is_file() {
+            return runtime_path;
+        }
+
+        // 2. Check relative logs path
+        let rel_runtime = PathBuf::from("logs/runtime_feeds/ai_threat_feeds").join(filename);
+        if rel_runtime.is_file() {
+            return rel_runtime;
+        }
+
+        // 3. Check configured rules_dir (e.g., in unit tests or default seed)
+        let seed_dir = self.rules_dir.read().clone();
+        let seed_path = seed_dir.join(filename);
+        if seed_path.is_file() {
+            return seed_path;
+        }
+
+        // 4. Check workspace seed fallback paths
+        let candidates = [
+            PathBuf::from("rules/ai_threat_feeds"),
+            PathBuf::from("../rules/ai_threat_feeds"),
+            PathBuf::from("../../rules/ai_threat_feeds"),
+        ];
+        for cand in &candidates {
+            let p = cand.join(filename);
+            if p.is_file() {
+                return p;
+            }
+        }
+
+        runtime_path
+    }
+
     /// Retrieve the current status and metrics of all feeds.
     pub fn get_feed_status(&self) -> AiFeedStatus {
         let avid = self.cached_avid.read().len();
@@ -494,12 +538,11 @@ impl AutonomousAiFeedCollector {
         let osv = self.cached_osv.read().len();
         let total = avid + aiid + garak + hf + osv;
 
-        let rules_dir = self.rules_dir.read().clone();
-        let on_disk = rules_dir.join(AVID_SNAPSHOT_FILE).is_file()
-            && rules_dir.join(AIID_SNAPSHOT_FILE).is_file()
-            && rules_dir.join(GARAK_SNAPSHOT_FILE).is_file()
-            && rules_dir.join(HF_SNAPSHOT_FILE).is_file()
-            && rules_dir.join(PROTECTAI_OSV_SNAPSHOT_FILE).is_file();
+        let on_disk = self.resolve_feed_snapshot_path(AVID_SNAPSHOT_FILE).is_file()
+            && self.resolve_feed_snapshot_path(AIID_SNAPSHOT_FILE).is_file()
+            && self.resolve_feed_snapshot_path(GARAK_SNAPSHOT_FILE).is_file()
+            && self.resolve_feed_snapshot_path(HF_SNAPSHOT_FILE).is_file()
+            && self.resolve_feed_snapshot_path(PROTECTAI_OSV_SNAPSHOT_FILE).is_file();
 
         AiFeedStatus {
             last_poll_at: self.last_poll_at.read().clone(),
@@ -584,7 +627,7 @@ impl AutonomousAiFeedCollector {
         self.cached_osv.read().clone()
     }
 
-    /// Preload snapshots from the local rules directory without network access.
+    /// Preload snapshots prioritizing the runtime overlay in logs/ and falling back to seed catalogs.
     fn preload_local_snapshots(&self) {
         let dir = self.rules_dir.read().clone();
         if !dir.is_dir() {
@@ -602,11 +645,10 @@ impl AutonomousAiFeedCollector {
             }
         }
 
-        let dir = self.rules_dir.read().clone();
-        debug!("[AI-FEEDS] Preloading local snapshots from {:?}", dir);
+        debug!("[AI-FEEDS] Preloading local snapshots (runtime overlay first, falling back to seed)");
 
         // 1. AVID
-        let avid_path = dir.join(AVID_SNAPSHOT_FILE);
+        let avid_path = self.resolve_feed_snapshot_path(AVID_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&avid_path) {
             if let Ok(items) = serde_json::from_slice::<Vec<AvidVulnerability>>(&bytes) {
                 *self.cached_avid.write() = items;
@@ -614,7 +656,7 @@ impl AutonomousAiFeedCollector {
         }
 
         // 2. AIID
-        let aiid_path = dir.join(AIID_SNAPSHOT_FILE);
+        let aiid_path = self.resolve_feed_snapshot_path(AIID_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&aiid_path) {
             if let Ok(items) = serde_json::from_slice::<Vec<AiidIncident>>(&bytes) {
                 *self.cached_aiid.write() = items;
@@ -622,7 +664,7 @@ impl AutonomousAiFeedCollector {
         }
 
         // 3. Garak Probes (.jsonl)
-        let garak_path = dir.join(GARAK_SNAPSHOT_FILE);
+        let garak_path = self.resolve_feed_snapshot_path(GARAK_SNAPSHOT_FILE);
         if let Ok(content) = std::fs::read_to_string(&garak_path) {
             let mut probes = Vec::new();
             for line in content.lines() {
@@ -642,7 +684,7 @@ impl AutonomousAiFeedCollector {
         }
 
         // 4. HF Jailbreaks
-        let hf_path = dir.join(HF_SNAPSHOT_FILE);
+        let hf_path = self.resolve_feed_snapshot_path(HF_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&hf_path) {
             if let Ok(items) = serde_json::from_slice::<Vec<HfJailbreakRow>>(&bytes) {
                 for item in &items {
@@ -656,7 +698,7 @@ impl AutonomousAiFeedCollector {
         }
 
         // 5. Protect AI OSV
-        let osv_path = dir.join(PROTECTAI_OSV_SNAPSHOT_FILE);
+        let osv_path = self.resolve_feed_snapshot_path(PROTECTAI_OSV_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&osv_path) {
             if let Ok(items) = serde_json::from_slice::<Vec<OsvVulnerability>>(&bytes) {
                 *self.cached_osv.write() = items;
@@ -848,21 +890,40 @@ impl AutonomousAiFeedCollector {
         Ok(self.get_feed_status())
     }
 
-    /// Persist current in-memory snapshots to the rules directory on disk.
+    /// Persist current in-memory snapshots to the runtime feeds directory on disk.
     fn persist_snapshots_to_disk(&self) -> Result<()> {
-        let dir = self.rules_dir.read().clone();
+        let dir = self.runtime_feeds_dir();
         if !dir.exists() {
             std::fs::create_dir_all(&dir)
-                .with_context(|| format!("Failed to create rules directory {:?}", dir))?;
+                .with_context(|| format!("Failed to create runtime feeds directory {:?}", dir))?;
         }
+        let rel_dir = PathBuf::from("logs/runtime_feeds/ai_threat_feeds");
+        let _ = std::fs::create_dir_all(&rel_dir);
+
+        let explicit_temp = {
+            let rd = self.rules_dir.read().clone();
+            if rd.starts_with(std::env::temp_dir()) {
+                Some(rd)
+            } else {
+                None
+            }
+        };
 
         // 1. AVID
         let avid_bytes = serde_json::to_vec_pretty(&*self.cached_avid.read())?;
-        std::fs::write(dir.join(AVID_SNAPSHOT_FILE), avid_bytes)?;
+        std::fs::write(dir.join(AVID_SNAPSHOT_FILE), &avid_bytes)?;
+        let _ = std::fs::write(rel_dir.join(AVID_SNAPSHOT_FILE), &avid_bytes);
+        if let Some(ref t) = explicit_temp {
+            let _ = std::fs::write(t.join(AVID_SNAPSHOT_FILE), &avid_bytes);
+        }
 
         // 2. AIID
         let aiid_bytes = serde_json::to_vec_pretty(&*self.cached_aiid.read())?;
-        std::fs::write(dir.join(AIID_SNAPSHOT_FILE), aiid_bytes)?;
+        std::fs::write(dir.join(AIID_SNAPSHOT_FILE), &aiid_bytes)?;
+        let _ = std::fs::write(rel_dir.join(AIID_SNAPSHOT_FILE), &aiid_bytes);
+        if let Some(ref t) = explicit_temp {
+            let _ = std::fs::write(t.join(AIID_SNAPSHOT_FILE), &aiid_bytes);
+        }
 
         // 3. Garak Probes (.jsonl)
         let mut garak_lines = String::new();
@@ -873,14 +934,26 @@ impl AutonomousAiFeedCollector {
             }
         }
         std::fs::write(dir.join(GARAK_SNAPSHOT_FILE), garak_lines.as_bytes())?;
+        let _ = std::fs::write(rel_dir.join(GARAK_SNAPSHOT_FILE), garak_lines.as_bytes());
+        if let Some(ref t) = explicit_temp {
+            let _ = std::fs::write(t.join(GARAK_SNAPSHOT_FILE), garak_lines.as_bytes());
+        }
 
         // 4. HF Jailbreaks
         let hf_bytes = serde_json::to_vec_pretty(&*self.cached_hf.read())?;
-        std::fs::write(dir.join(HF_SNAPSHOT_FILE), hf_bytes)?;
+        std::fs::write(dir.join(HF_SNAPSHOT_FILE), &hf_bytes)?;
+        let _ = std::fs::write(rel_dir.join(HF_SNAPSHOT_FILE), &hf_bytes);
+        if let Some(ref t) = explicit_temp {
+            let _ = std::fs::write(t.join(HF_SNAPSHOT_FILE), &hf_bytes);
+        }
 
         // 5. Protect AI OSV
         let osv_bytes = serde_json::to_vec_pretty(&*self.cached_osv.read())?;
-        std::fs::write(dir.join(PROTECTAI_OSV_SNAPSHOT_FILE), osv_bytes)?;
+        std::fs::write(dir.join(PROTECTAI_OSV_SNAPSHOT_FILE), &osv_bytes)?;
+        let _ = std::fs::write(rel_dir.join(PROTECTAI_OSV_SNAPSHOT_FILE), &osv_bytes);
+        if let Some(ref t) = explicit_temp {
+            let _ = std::fs::write(t.join(PROTECTAI_OSV_SNAPSHOT_FILE), &osv_bytes);
+        }
 
         // 6. Compile and persist PQC-signed STIX 2.1 bundle
         let _ = self.compile_pqc_signed_stix21_bundle();
@@ -1050,9 +1123,19 @@ impl AutonomousAiFeedCollector {
             map.insert("pqc_signature_hex".to_string(), serde_json::Value::String(pqc_signature_hex));
         }
 
-        let bundle_path = self.rules_dir.read().join("oshoosi_pqc_ai_stix21_bundle.json");
+        let runtime_dir = self.runtime_feeds_dir();
+        let _ = std::fs::create_dir_all(&runtime_dir);
+        let bundle_path = runtime_dir.join("oshoosi_pqc_ai_stix21_bundle.json");
+        let rel_bundle_path = PathBuf::from("logs/runtime_feeds/ai_threat_feeds/oshoosi_pqc_ai_stix21_bundle.json");
+        if let Some(parent) = rel_bundle_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Ok(serialized) = serde_json::to_string_pretty(&final_bundle) {
-            let _ = std::fs::write(&bundle_path, serialized);
+            let _ = std::fs::write(&bundle_path, &serialized);
+            let _ = std::fs::write(&rel_bundle_path, &serialized);
+            if self.rules_dir.read().starts_with(std::env::temp_dir()) {
+                let _ = std::fs::write(self.rules_dir.read().join("oshoosi_pqc_ai_stix21_bundle.json"), &serialized);
+            }
         }
 
         final_bundle
@@ -1066,8 +1149,8 @@ impl AutonomousAiFeedCollector {
             return current;
         }
 
-        // If in-memory is empty, read from disk snapshot
-        let path = self.rules_dir.read().join(AVID_SNAPSHOT_FILE);
+        // If in-memory is empty, read from snapshot (runtime overlay first, falling back to seed)
+        let path = self.resolve_feed_snapshot_path(AVID_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(items) = serde_json::from_slice::<Vec<AvidVulnerability>>(&bytes) {
                 return items;
@@ -1082,7 +1165,7 @@ impl AutonomousAiFeedCollector {
             return current;
         }
 
-        let path = self.rules_dir.read().join(AIID_SNAPSHOT_FILE);
+        let path = self.resolve_feed_snapshot_path(AIID_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(items) = serde_json::from_slice::<Vec<AiidIncident>>(&bytes) {
                 return items;
@@ -1097,7 +1180,7 @@ impl AutonomousAiFeedCollector {
             return current;
         }
 
-        let path = self.rules_dir.read().join(GARAK_SNAPSHOT_FILE);
+        let path = self.resolve_feed_snapshot_path(GARAK_SNAPSHOT_FILE);
         if let Ok(content) = std::fs::read_to_string(&path) {
             let mut probes = Vec::new();
             for line in content.lines() {
@@ -1121,7 +1204,7 @@ impl AutonomousAiFeedCollector {
             return current;
         }
 
-        let path = self.rules_dir.read().join(HF_SNAPSHOT_FILE);
+        let path = self.resolve_feed_snapshot_path(HF_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(items) = serde_json::from_slice::<Vec<HfJailbreakRow>>(&bytes) {
                 return items;
@@ -1136,7 +1219,7 @@ impl AutonomousAiFeedCollector {
             return current;
         }
 
-        let path = self.rules_dir.read().join(PROTECTAI_OSV_SNAPSHOT_FILE);
+        let path = self.resolve_feed_snapshot_path(PROTECTAI_OSV_SNAPSHOT_FILE);
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(items) = serde_json::from_slice::<Vec<OsvVulnerability>>(&bytes) {
                 return items;

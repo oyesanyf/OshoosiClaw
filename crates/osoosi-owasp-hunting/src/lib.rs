@@ -9,7 +9,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -149,6 +149,35 @@ impl Default for OwaspHuntingEngine {
 }
 
 impl OwaspHuntingEngine {
+    /// Resolve OWASP hunting feed path prioritizing runtime overlay in logs/ and falling back to seed catalogs.
+    pub fn resolve_hunting_feed_path() -> PathBuf {
+        let runtime_candidates = [
+            "logs/runtime_feeds/owasp-hunting/owasp_hunting_feed.json",
+            "../logs/runtime_feeds/owasp-hunting/owasp_hunting_feed.json",
+            "../../logs/runtime_feeds/owasp-hunting/owasp_hunting_feed.json",
+        ];
+        for cand in runtime_candidates {
+            let p = Path::new(cand);
+            if p.is_file() {
+                return p.to_path_buf();
+            }
+        }
+        let seed_candidates = [
+            "rules/owasp-hunting/owasp_hunting_feed.json",
+            "../rules/owasp-hunting/owasp_hunting_feed.json",
+            "../../rules/owasp-hunting/owasp_hunting_feed.json",
+            "crates/osoosi-owasp-hunting/rules/owasp-hunting/owasp_hunting_feed.json",
+            "../crates/osoosi-owasp-hunting/rules/owasp-hunting/owasp_hunting_feed.json",
+        ];
+        for cand in seed_candidates {
+            let p = Path::new(cand);
+            if p.is_file() {
+                return p.to_path_buf();
+            }
+        }
+        PathBuf::from("logs/runtime_feeds/owasp-hunting/owasp_hunting_feed.json")
+    }
+
     /// Initializes the engine with all 41 categorized OWASP Hunting items.
     pub fn new() -> Self {
         let mut categories = HashMap::new();
@@ -158,7 +187,7 @@ impl OwaspHuntingEngine {
         }
 
         let pinned_commit = "467d0cf9b5b2a0957545b736780c1be782637a77".to_string();
-        let initial_sync = OwaspFeedSyncStatus {
+        let default_sync = OwaspFeedSyncStatus {
             upstream_url: "https://api.github.com/repos/OWASP/OWASP-Hunting/commits/main"
                 .to_string(),
             pinned_commit_sha: pinned_commit.clone(),
@@ -169,6 +198,16 @@ impl OwaspHuntingEngine {
                     .to_string(),
             integrity_blake3: blake3::hash(pinned_commit.as_bytes()).to_hex().to_string(),
             is_online: true,
+        };
+
+        let feed_path = Self::resolve_hunting_feed_path();
+        let initial_sync = if feed_path.is_file() {
+            std::fs::read_to_string(&feed_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<OwaspFeedSyncStatus>(&s).ok())
+                .unwrap_or(default_sync)
+        } else {
+            default_sync
         };
 
         Self {
@@ -252,10 +291,12 @@ impl OwaspHuntingEngine {
         }
         status.last_synced_utc = Utc::now();
 
-        // Persist feed cache to rules/owasp-hunting/owasp_hunting_feed.json
-        let feed_path = Path::new("rules/owasp-hunting/owasp_hunting_feed.json");
+        // Persist feed cache to logs/runtime_feeds/owasp-hunting/owasp_hunting_feed.json
+        let feed_path = Path::new("logs/runtime_feeds/owasp-hunting/owasp_hunting_feed.json");
+        if let Some(parent) = feed_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if let Ok(json_str) = serde_json::to_string_pretty(&*status) {
-            let _ = std::fs::create_dir_all("rules/owasp-hunting");
             let _ = std::fs::write(feed_path, json_str);
         }
 
