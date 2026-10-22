@@ -1299,6 +1299,7 @@ pub fn compute_128d_mrl_centroid(text: &str) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn test_feed_poisoning_sanitizer_dev_tool_immunity() {
