@@ -372,23 +372,23 @@
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px;">
                         <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">1. Propagation Latency</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #38bdf8; margin-top: 2px;">482.53 ms</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>prop</sub>(10⁶) • +116.26ms vs 10³</div>
+                            <div class="mesh-kpi-tau-val" style="font-size: 18px; font-weight: 800; color: #38bdf8; margin-top: 2px;">265.43 ms</div>
+                            <div class="mesh-kpi-tau-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>prop</sub>(2) • +0.00ms vs 1</div>
                         </div>
                         <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">2. Zero-Day Survival</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 2px;">99.9998%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">S<sub>fleet</sub>(10⁶) @ λ=2 hosts/s</div>
+                            <div class="mesh-kpi-survival-val" style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 2px;">23.46%</div>
+                            <div class="mesh-kpi-survival-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">S<sub>fleet</sub>(2) @ λ=2 hosts/s</div>
                         </div>
                         <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">3. RL Policy Immunity</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">97.79%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">I<sub>RL</sub>(10⁶, 1d) • Bound: 98.00%</div>
+                            <div class="mesh-kpi-irl-val" style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">16.36%</div>
+                            <div class="mesh-kpi-irl-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">I<sub>RL</sub>(2, 1d) • Bound: 98.00%</div>
                         </div>
                         <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">4. Unified Effectiveness</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #a855f7; margin-top: 2px;">99.9500%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">E(10⁶, 1d) • Asymptote 1−p<sub>corr</sub></div>
+                            <div class="mesh-kpi-eff-val" style="font-size: 18px; font-weight: 800; color: #a855f7; margin-top: 2px;">94.8289%</div>
+                            <div class="mesh-kpi-eff-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">E(2, 1d) • Asymptote 1−p<sub>corr</sub></div>
                         </div>
                         <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">5. Ledger Quorum Latency</div>
@@ -408,22 +408,43 @@
                             <span style="font-size: 12px; font-weight: 700; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.5px;">Interactive Fleet Scale Selector (Horizon t = 1.0 Day)</span>
                             <span style="font-size: 11px; color: var(--text-muted);">Exact 4-significant-figure closed-form evaluation</span>
                         </div>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+
+                        <!-- Live Mesh Effectiveness Banner -->
+                        <div class="mesh-live-effectiveness-banner" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;">
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <span class="badge green" style="font-size: 11px; font-weight: 700; padding: 3px 8px;">🟢 CURRENT LIVE MESH</span>
+                                <span style="font-size: 12.5px; color: #f8fafc; font-weight: 700;">Active Hosts in Mesh: <span class="mesh-live-host-count-val" style="color: #10b981; font-family: monospace;">2 Hosts (1 Local + 1 Peer)</span></span>
+                            </div>
+                            <div style="display: flex; gap: 14px; flex-wrap: wrap; font-family: monospace; font-size: 11.5px;">
+                                <span>τ<sub>prop</sub>: <strong class="mesh-live-tau-val" style="color: #38bdf8;">265.43 ms</strong></span>
+                                <span>S<sub>fleet</sub>: <strong class="mesh-live-survival-val" style="color: #10b981;">23.46%</strong></span>
+                                <span>I<sub>RL</sub>(1d): <strong class="mesh-live-irl-val" style="color: #a855f7;">16.36%</strong></span>
+                                <span>P<sub>comp</sub>: <strong class="mesh-live-pcomp-val" style="color: #f59e0b;">5.1711%</strong></span>
+                                <span>Current Effectiveness E(N<sub>live</sub>, 1d): <strong class="mesh-live-eff-val" style="color: #10b981; font-size: 13px;">94.8289%</strong></span>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center;">
+                            <button type="button" class="btn-mesh-scale active" data-n="live" onclick="window.selectMeshEffectivenessScale('live')" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #10b981;">🟢 Live Mesh (N = <span class="mesh-live-btn-n">2</span>)</button>
                             <button type="button" class="btn-mesh-scale" data-n="1" onclick="window.selectMeshEffectivenessScale(1)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1 (Standalone)</button>
                             <button type="button" class="btn-mesh-scale" data-n="10" onclick="window.selectMeshEffectivenessScale(10)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 10 (Small Cluster)</button>
                             <button type="button" class="btn-mesh-scale" data-n="1000" onclick="window.selectMeshEffectivenessScale(1000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000 (1 Regional Zone)</button>
                             <button type="button" class="btn-mesh-scale" data-n="100000" onclick="window.selectMeshEffectivenessScale(100000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 100,000 (100 Zones)</button>
-                            <button type="button" class="btn-mesh-scale active" data-n="1000000" onclick="window.selectMeshEffectivenessScale(1000000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(56, 189, 248, 0.2); border: 1px solid #38bdf8; color: #38bdf8;">N = 1,000,000 (1,000 Zones)</button>
+                            <button type="button" class="btn-mesh-scale" data-n="1000000" onclick="window.selectMeshEffectivenessScale(1000000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000,000 (1,000 Zones)</button>
+                            <div style="display: inline-flex; align-items: center; gap: 6px; margin-left: auto;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Custom Hosts N:</label>
+                                <input type="number" class="mesh-custom-n-input" min="1" max="100000000" step="1" placeholder="Enter N..." oninput="window.selectMeshEffectivenessScale(this.value)" style="width: 110px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--glass-border-bright); background: rgba(0,0,0,0.45); color: #38bdf8; font-family: monospace; font-size: 12px; font-weight: 700;">
+                            </div>
                         </div>
                         <!-- Live Readout Row -->
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 11px;">
-                            <div><span style="color:var(--text-muted);">Scale:</span> <strong class="mesh-eff-readout-n" style="color:#f8fafc;">1,000,000 nodes</strong></div>
-                            <div><span style="color:var(--text-muted);">τ_prop:</span> <strong class="mesh-eff-readout-tau" style="color:#38bdf8;">482.53 ms</strong></div>
-                            <div><span style="color:var(--text-muted);">Exposed:</span> <strong class="mesh-eff-readout-exposed" style="color:#f59e0b;">1.9651 hosts</strong></div>
-                            <div><span style="color:var(--text-muted);">Survival S<sub>fleet</sub>:</span> <strong class="mesh-eff-readout-survival" style="color:#10b981;">99.9998%</strong></div>
-                            <div><span style="color:var(--text-muted);">RL I<sub>RL</sub>(1d):</span> <strong class="mesh-eff-readout-bandit" style="color:#a855f7;">97.79%</strong></div>
-                            <div><span style="color:var(--text-muted);">P<sub>compromise</sub>:</span> <strong class="mesh-eff-readout-pcomp" style="color:#ef4444;">0.0500%</strong></div>
-                            <div><span style="color:var(--text-muted);">Effectiveness E:</span> <strong class="mesh-eff-readout-unified" style="color:#38bdf8;">99.9500%</strong></div>
+                            <div><span style="color:var(--text-muted);">Scale:</span> <strong class="mesh-eff-readout-n" style="color:#10b981;">2 nodes (Live Swarm)</strong></div>
+                            <div><span style="color:var(--text-muted);">τ_prop:</span> <strong class="mesh-eff-readout-tau" style="color:#38bdf8;">265.43 ms</strong></div>
+                            <div><span style="color:var(--text-muted);">Exposed:</span> <strong class="mesh-eff-readout-exposed" style="color:#f59e0b;">1.5309 hosts</strong></div>
+                            <div><span style="color:var(--text-muted);">Survival S<sub>fleet</sub>:</span> <strong class="mesh-eff-readout-survival" style="color:#10b981;">23.46%</strong></div>
+                            <div><span style="color:var(--text-muted);">RL I<sub>RL</sub>(1d):</span> <strong class="mesh-eff-readout-bandit" style="color:#a855f7;">16.36%</strong></div>
+                            <div><span style="color:var(--text-muted);">P<sub>compromise</sub>:</span> <strong class="mesh-eff-readout-pcomp" style="color:#f59e0b;">5.1711%</strong></div>
+                            <div><span style="color:var(--text-muted);">Effectiveness E:</span> <strong class="mesh-eff-readout-unified" style="color:#10b981;">94.8289%</strong></div>
                         </div>
                     </div>
 
@@ -443,6 +464,16 @@
                                 </tr>
                             </thead>
                             <tbody>
+                                <tr class="mesh-live-table-row" style="border-bottom: 1px solid rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08);">
+                                    <td style="padding: 8px 10px; font-weight: 700; color: #10b981;">🟢 Live Mesh: N = <span class="mesh-live-row-n">2</span> <span style="color:#a7f3d0; font-size:10px;">(t=1d current swarm)</span></td>
+                                    <td class="mesh-live-row-tau" style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">265.43 ms</td>
+                                    <td class="mesh-live-row-exposed" style="padding: 8px 10px; font-family: monospace;">1.5309</td>
+                                    <td class="mesh-live-row-survival" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 700;">23.46%</td>
+                                    <td class="mesh-live-row-teff" style="padding: 8px 10px; font-family: monospace;">114.4</td>
+                                    <td class="mesh-live-row-irl" style="padding: 8px 10px; font-family: monospace; color: #a855f7; font-weight: 700;">16.36%</td>
+                                    <td class="mesh-live-row-pcomp" style="padding: 8px 10px; font-family: monospace; color: #f59e0b;">5.1711%</td>
+                                    <td class="mesh-live-row-eff" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 800;">94.8289%</td>
+                                </tr>
                                 <tr style="border-bottom: 1px solid var(--glass-border);">
                                     <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1 <span style="color:var(--text-muted); font-size:10px;">(t=0 standalone)</span></td>
                                     <td style="padding: 8px 10px; font-family: monospace;">0.00 ms</td>
@@ -773,23 +804,23 @@
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px;">
                         <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">1. Propagation Latency</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #38bdf8; margin-top: 2px;">482.53 ms</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>prop</sub>(10⁶) • +116.26ms vs 10³</div>
+                            <div class="mesh-kpi-tau-val" style="font-size: 18px; font-weight: 800; color: #38bdf8; margin-top: 2px;">265.43 ms</div>
+                            <div class="mesh-kpi-tau-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">τ<sub>prop</sub>(2) • +0.00ms vs 1</div>
                         </div>
                         <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">2. Zero-Day Survival</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 2px;">99.9998%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">S<sub>fleet</sub>(10⁶) @ λ=2 hosts/s</div>
+                            <div class="mesh-kpi-survival-val" style="font-size: 18px; font-weight: 800; color: #10b981; margin-top: 2px;">23.46%</div>
+                            <div class="mesh-kpi-survival-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">S<sub>fleet</sub>(2) @ λ=2 hosts/s</div>
                         </div>
                         <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">3. RL Policy Immunity</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">97.79%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">I<sub>RL</sub>(10⁶, 1d) • Bound: 98.00%</div>
+                            <div class="mesh-kpi-irl-val" style="font-size: 18px; font-weight: 800; color: #f59e0b; margin-top: 2px;">16.36%</div>
+                            <div class="mesh-kpi-irl-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">I<sub>RL</sub>(2, 1d) • Bound: 98.00%</div>
                         </div>
                         <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">4. Unified Effectiveness</div>
-                            <div style="font-size: 18px; font-weight: 800; color: #a855f7; margin-top: 2px;">99.9500%</div>
-                            <div style="font-size: 10px; color: var(--text-muted); font-family: monospace;">E(10⁶, 1d) • Asymptote 1−p<sub>corr</sub></div>
+                            <div class="mesh-kpi-eff-val" style="font-size: 18px; font-weight: 800; color: #a855f7; margin-top: 2px;">94.8289%</div>
+                            <div class="mesh-kpi-eff-sub" style="font-size: 10px; color: var(--text-muted); font-family: monospace;">E(2, 1d) • Asymptote 1−p<sub>corr</sub></div>
                         </div>
                         <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.25); border-radius: 8px; padding: 10px 12px;">
                             <div style="font-size: 10.5px; text-transform: uppercase; color: var(--text-muted); font-weight: 600;">5. Ledger Quorum Latency</div>
@@ -809,22 +840,43 @@
                             <span style="font-size: 12px; font-weight: 700; color: #f8fafc; text-transform: uppercase; letter-spacing: 0.5px;">Interactive Fleet Scale Selector (Horizon t = 1.0 Day)</span>
                             <span style="font-size: 11px; color: var(--text-muted);">Exact 4-significant-figure closed-form evaluation</span>
                         </div>
-                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px;">
+
+                        <!-- Live Mesh Effectiveness Banner -->
+                        <div class="mesh-live-effectiveness-banner" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.35); border-radius: 8px; padding: 10px 14px; margin-bottom: 12px;">
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <span class="badge green" style="font-size: 11px; font-weight: 700; padding: 3px 8px;">🟢 CURRENT LIVE MESH</span>
+                                <span style="font-size: 12.5px; color: #f8fafc; font-weight: 700;">Active Hosts in Mesh: <span class="mesh-live-host-count-val" style="color: #10b981; font-family: monospace;">2 Hosts (1 Local + 1 Peer)</span></span>
+                            </div>
+                            <div style="display: flex; gap: 14px; flex-wrap: wrap; font-family: monospace; font-size: 11.5px;">
+                                <span>τ<sub>prop</sub>: <strong class="mesh-live-tau-val" style="color: #38bdf8;">265.43 ms</strong></span>
+                                <span>S<sub>fleet</sub>: <strong class="mesh-live-survival-val" style="color: #10b981;">23.46%</strong></span>
+                                <span>I<sub>RL</sub>(1d): <strong class="mesh-live-irl-val" style="color: #a855f7;">16.36%</strong></span>
+                                <span>P<sub>comp</sub>: <strong class="mesh-live-pcomp-val" style="color: #f59e0b;">5.1711%</strong></span>
+                                <span>Current Effectiveness E(N<sub>live</sub>, 1d): <strong class="mesh-live-eff-val" style="color: #10b981; font-size: 13px;">94.8289%</strong></span>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center;">
+                            <button type="button" class="btn-mesh-scale active" data-n="live" onclick="window.selectMeshEffectivenessScale('live')" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; background: rgba(16, 185, 129, 0.2); border: 1px solid #10b981; color: #10b981;">🟢 Live Mesh (N = <span class="mesh-live-btn-n">2</span>)</button>
                             <button type="button" class="btn-mesh-scale" data-n="1" onclick="window.selectMeshEffectivenessScale(1)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1 (Standalone)</button>
                             <button type="button" class="btn-mesh-scale" data-n="10" onclick="window.selectMeshEffectivenessScale(10)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 10 (Small Cluster)</button>
                             <button type="button" class="btn-mesh-scale" data-n="1000" onclick="window.selectMeshEffectivenessScale(1000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000 (1 Regional Zone)</button>
                             <button type="button" class="btn-mesh-scale" data-n="100000" onclick="window.selectMeshEffectivenessScale(100000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 100,000 (100 Zones)</button>
-                            <button type="button" class="btn-mesh-scale active" data-n="1000000" onclick="window.selectMeshEffectivenessScale(1000000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(56, 189, 248, 0.2); border: 1px solid #38bdf8; color: #38bdf8;">N = 1,000,000 (1,000 Zones)</button>
+                            <button type="button" class="btn-mesh-scale" data-n="1000000" onclick="window.selectMeshEffectivenessScale(1000000)" style="padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: #cbd5e1;">N = 1,000,000 (1,000 Zones)</button>
+                            <div style="display: inline-flex; align-items: center; gap: 6px; margin-left: auto;">
+                                <label style="font-size: 11px; color: var(--text-muted); font-weight: 600;">Custom Hosts N:</label>
+                                <input type="number" class="mesh-custom-n-input" min="1" max="100000000" step="1" placeholder="Enter N..." oninput="window.selectMeshEffectivenessScale(this.value)" style="width: 110px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--glass-border-bright); background: rgba(0,0,0,0.45); color: #38bdf8; font-family: monospace; font-size: 12px; font-weight: 700;">
+                            </div>
                         </div>
                         <!-- Live Readout Row -->
                         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: 11px;">
-                            <div><span style="color:var(--text-muted);">Scale:</span> <strong class="mesh-eff-readout-n" style="color:#f8fafc;">1,000,000 nodes</strong></div>
-                            <div><span style="color:var(--text-muted);">τ_prop:</span> <strong class="mesh-eff-readout-tau" style="color:#38bdf8;">482.53 ms</strong></div>
-                            <div><span style="color:var(--text-muted);">Exposed:</span> <strong class="mesh-eff-readout-exposed" style="color:#f59e0b;">1.9651 hosts</strong></div>
-                            <div><span style="color:var(--text-muted);">Survival S<sub>fleet</sub>:</span> <strong class="mesh-eff-readout-survival" style="color:#10b981;">99.9998%</strong></div>
-                            <div><span style="color:var(--text-muted);">RL I<sub>RL</sub>(1d):</span> <strong class="mesh-eff-readout-bandit" style="color:#a855f7;">97.79%</strong></div>
-                            <div><span style="color:var(--text-muted);">P<sub>compromise</sub>:</span> <strong class="mesh-eff-readout-pcomp" style="color:#ef4444;">0.0500%</strong></div>
-                            <div><span style="color:var(--text-muted);">Effectiveness E:</span> <strong class="mesh-eff-readout-unified" style="color:#38bdf8;">99.9500%</strong></div>
+                            <div><span style="color:var(--text-muted);">Scale:</span> <strong class="mesh-eff-readout-n" style="color:#10b981;">2 nodes (Live Swarm)</strong></div>
+                            <div><span style="color:var(--text-muted);">τ_prop:</span> <strong class="mesh-eff-readout-tau" style="color:#38bdf8;">265.43 ms</strong></div>
+                            <div><span style="color:var(--text-muted);">Exposed:</span> <strong class="mesh-eff-readout-exposed" style="color:#f59e0b;">1.5309 hosts</strong></div>
+                            <div><span style="color:var(--text-muted);">Survival S<sub>fleet</sub>:</span> <strong class="mesh-eff-readout-survival" style="color:#10b981;">23.46%</strong></div>
+                            <div><span style="color:var(--text-muted);">RL I<sub>RL</sub>(1d):</span> <strong class="mesh-eff-readout-bandit" style="color:#a855f7;">16.36%</strong></div>
+                            <div><span style="color:var(--text-muted);">P<sub>compromise</sub>:</span> <strong class="mesh-eff-readout-pcomp" style="color:#f59e0b;">5.1711%</strong></div>
+                            <div><span style="color:var(--text-muted);">Effectiveness E:</span> <strong class="mesh-eff-readout-unified" style="color:#10b981;">94.8289%</strong></div>
                         </div>
                     </div>
 
@@ -844,6 +896,16 @@
                                 </tr>
                             </thead>
                             <tbody>
+                                <tr class="mesh-live-table-row" style="border-bottom: 1px solid rgba(16, 185, 129, 0.35); background: rgba(16, 185, 129, 0.08);">
+                                    <td style="padding: 8px 10px; font-weight: 700; color: #10b981;">🟢 Live Mesh: N = <span class="mesh-live-row-n">2</span> <span style="color:#a7f3d0; font-size:10px;">(t=1d current swarm)</span></td>
+                                    <td class="mesh-live-row-tau" style="padding: 8px 10px; font-family: monospace; color: #38bdf8; font-weight: 700;">265.43 ms</td>
+                                    <td class="mesh-live-row-exposed" style="padding: 8px 10px; font-family: monospace;">1.5309</td>
+                                    <td class="mesh-live-row-survival" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 700;">23.46%</td>
+                                    <td class="mesh-live-row-teff" style="padding: 8px 10px; font-family: monospace;">114.4</td>
+                                    <td class="mesh-live-row-irl" style="padding: 8px 10px; font-family: monospace; color: #a855f7; font-weight: 700;">16.36%</td>
+                                    <td class="mesh-live-row-pcomp" style="padding: 8px 10px; font-family: monospace; color: #f59e0b;">5.1711%</td>
+                                    <td class="mesh-live-row-eff" style="padding: 8px 10px; font-family: monospace; color: #10b981; font-weight: 800;">94.8289%</td>
+                                </tr>
                                 <tr style="border-bottom: 1px solid var(--glass-border);">
                                     <td style="padding: 8px 10px; font-weight: 600; color: #cbd5e1;">N = 1 <span style="color:var(--text-muted); font-size:10px;">(t=0 standalone)</span></td>
                                     <td style="padding: 8px 10px; font-family: monospace;">0.00 ms</td>
@@ -3767,6 +3829,8 @@
                             <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('aws_pan')" style="padding: 5px 10px; font-size: 11.5px;">🔑 AWS Key + Luhn Card + Email</button>
                             <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('b64_ssn')" style="padding: 5px 10px; font-size: 11.5px;">🧬 Base64/Hex Obfuscated Secret + SSN</button>
                             <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('clean')" style="padding: 5px 10px; font-size: 11.5px;">✅ Benign Dev Build</button>
+                            <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('github_push_clean')" style="padding: 5px 10px; font-size: 11.5px; background: rgba(16, 185, 129, 0.15); border: 1px solid #10b981; color: #10b981; font-weight: 700;">🐙 GitHub Git Push (Source Code)</button>
+                            <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('clinical_openjev')" style="padding: 5px 10px; font-size: 11.5px; background: rgba(56, 189, 248, 0.15); border: 1px solid #38bdf8; color: #38bdf8; font-weight: 700;">🏥 Clinical PHI + MRN/NPI (RedactX OpenJEV)</button>
                             <button type="button" class="btn-secondary" onclick="loadDlpSamplePayload('deep_semantic_cipher')" style="font-size: 11.5px; padding: 5px 10px;">🌀 Depth-5 Nested + NATO Phonetic + Cipher</button>
                             <input type="file" id="dlp-inspect-file-input" accept=".txt,.json,.env,.md,.log,.csv,.py,.rs" style="display:none" onchange="handleDlpInspectFileUpload(event)">
                             <button type="button" class="btn-secondary" onclick="document.getElementById('dlp-inspect-file-input').click()" style="padding: 5px 10px; font-size: 11.5px;">📂 Upload File to Inspect</button>
@@ -4250,7 +4314,7 @@
 
     <!-- Scripts -->
     <script type="text/javascript" src="https://unpkg.com/vis-network@10.1.2/standalone/umd/vis-network.min.js" integrity="sha384-RDdG1CLOxjNlTHh4JYx/rnAueaMHbkBHmeHwrEyljMQw3LF0it4SkuNotIY/FPxD" crossorigin="anonymous"></script>
-    <script src="app.js?v=20261021_06"></script>
+    <script src="app.js?v=20261022_10"></script>
     <script>
         if (window.lucide && typeof window.lucide.createIcons === 'function') {
             window.lucide.createIcons();
