@@ -13,6 +13,7 @@ osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-agent-anomaly = { path = "../osoosi-agent-anomaly" }
 osoosi-audit = { path = "../osoosi-audit" }
 osoosi-dp = { path = "../osoosi-dp" }
+osoosi-owasp-hunting = { path = "../osoosi-owasp-hunting" }
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

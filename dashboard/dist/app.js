@@ -11854,6 +11854,7 @@ async function renderAdversarialTestsView() {
     }
     updateAdvAutonomousButtonUI();
     await syncAdvTarpitStats();
+    renderOwaspHuntingPanel();
     if (advAutonomousEnabled && !activeAdvEventSource) {
         const selector = document.getElementById('adv-suite-selector');
         const suite = selector ? selector.value : 'all';

@@ -5926,6 +5926,7 @@ dependencies = [
  "osoosi-behavioral",
  "osoosi-core",
  "osoosi-dp",
+ "osoosi-owasp-hunting",
  "osoosi-policy",
  "osoosi-runtime",
  "osoosi-types",
@@ -6093,6 +6094,24 @@ dependencies = [
  "walkdir",
  "yara-x",
  "yara-x-fmt",
+]
+
+[[package]]
+name = "osoosi-owasp-hunting"
+version = "1.2.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hex",
+ "once_cell",
+ "osoosi-dp",
+ "parking_lot",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
 ]
 
 [[package]]

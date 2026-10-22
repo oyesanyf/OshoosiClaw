@@ -1,0 +1,9 @@
+{
+  "upstream_url": "https://api.github.com/repos/OWASP/OWASP-Hunting/commits/main",
+  "pinned_commit_sha": "f48d979af53f8862e124fe5ca6aa55e068087b35",
+  "last_synced_utc": "2026-10-22T14:29:00.754816500Z",
+  "catalog_categories_count": 41,
+  "license_preserved": "MIT License - OWASP Foundation / OWASP Hunting Project (https://github.com/OWASP/OWASP-Hunting)",
+  "integrity_blake3": "fcc1915391fbe3b8c80809b245138917271be9a87784398cfeeb82fbe14330f1",
+  "is_online": true
+}
