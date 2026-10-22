@@ -1657,7 +1657,7 @@ class GeneratorDiscriminatorPromptEvolutionEngine:
 
             "skyrl_td_loss": skyrl_metrics.get("loss", 0.0),
 
-            "corpus_path": self.corpus_json_path,
+            "corpus_path": self.logs_corpus_json_path,
 
         }
 

@@ -4,7 +4,7 @@ use axum::{
     Router,
 };
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use osoosi_behavioral::{
@@ -624,17 +624,37 @@ pub async fn post_skyrl_train(
 }
 
 pub fn resolve_regression_corpus_path() -> std::path::PathBuf {
-    for candidate in [
-        "tests/corpus/adversarial_regression_corpus.json",
-        "../tests/corpus/adversarial_regression_corpus.json",
-        r"D:\harfile\OshoosiClaw\tests\corpus\adversarial_regression_corpus.json",
+    // 1. Check runtime overlay in logs/ first
+    for log_candidate in [
+        "logs/adversarial_regression_corpus.json",
+        "../logs/adversarial_regression_corpus.json",
+        "../../logs/adversarial_regression_corpus.json",
     ] {
-        let p = std::path::Path::new(candidate);
+        let p = std::path::Path::new(log_candidate);
         if p.exists() {
             return p.to_path_buf();
         }
     }
-    std::path::PathBuf::from("tests/corpus/adversarial_regression_corpus.json")
+    let resolved_log = osoosi_types::resolve_log_directory().join("adversarial_regression_corpus.json");
+    if resolved_log.exists() {
+        return resolved_log;
+    }
+
+    // 2. Fall back to immutable seed catalog in tests/corpus/
+    for seed_candidate in [
+        "tests/corpus/adversarial_regression_corpus.json",
+        "../tests/corpus/adversarial_regression_corpus.json",
+        "../../tests/corpus/adversarial_regression_corpus.json",
+        r"D:\harfile\OshoosiClaw\tests\corpus\adversarial_regression_corpus.json",
+    ] {
+        let p = std::path::Path::new(seed_candidate);
+        if p.exists() {
+            return p.to_path_buf();
+        }
+    }
+
+    // Default to runtime log path
+    resolved_log
 }
 
 pub fn evolve_and_persist_skyrl_regression_corpus(
@@ -643,12 +663,9 @@ pub fn evolve_and_persist_skyrl_regression_corpus(
     mean_reward: f32,
     active_lora: &str,
 ) -> Value {
-    let corpus_path = resolve_regression_corpus_path();
-    if let Some(parent) = corpus_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let doc: Value = if corpus_path.exists() {
-        std::fs::read_to_string(&corpus_path)
+    let read_corpus_path = resolve_regression_corpus_path();
+    let doc: Value = if read_corpus_path.exists() {
+        std::fs::read_to_string(&read_corpus_path)
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_else(|| json!({}))
@@ -739,10 +756,19 @@ pub fn evolve_and_persist_skyrl_regression_corpus(
         "mutations": mutations,
     });
 
+    // Write EXCLUSIVELY to runtime overlay in logs/ -- never mutate tests/corpus/
+    let write_log_dir = osoosi_types::resolve_log_directory();
+    let _ = std::fs::create_dir_all(&write_log_dir);
+    let resolved_write_path = write_log_dir.join("adversarial_regression_corpus.json");
+
+    let rel_write_path = std::path::Path::new("logs/adversarial_regression_corpus.json");
+    if let Some(parent) = rel_write_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
     if let Ok(pretty) = serde_json::to_string_pretty(&updated_doc) {
-        let _ = std::fs::write(&corpus_path, &pretty);
-        let _ = std::fs::create_dir_all("logs");
-        let _ = std::fs::write("logs/adversarial_regression_corpus.json", &pretty);
+        let _ = std::fs::write(&resolved_write_path, &pretty);
+        let _ = std::fs::write(rel_write_path, &pretty);
     }
 
     json!({
@@ -750,7 +776,7 @@ pub fn evolve_and_persist_skyrl_regression_corpus(
         "total_mutations_persisted": mutations.len(),
         "newly_persisted_mutations": newly_added,
         "merkle_root_sha256": merkle_root,
-        "corpus_path": corpus_path.to_string_lossy(),
+        "corpus_path": resolved_write_path.to_string_lossy(),
     })
 }
 
