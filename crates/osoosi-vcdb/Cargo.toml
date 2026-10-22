@@ -1,0 +1,20 @@
+[package]
+name = "osoosi-vcdb"
+version.workspace = true
+edition.workspace = true
+license = "CC-BY-SA-4.0"
+description = "Verizon VERIS Community Database (VCDB) feed sync, 4-A schema modeling, DBIR breach replay, empirical Bayesian DLP calibration, and independent outcome verification oracle"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
+blake3.workspace = true
+sha2.workspace = true
+hex.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+regex.workspace = true
+once_cell = "1.20"
+parking_lot.workspace = true
+tracing = "0.1"
+osoosi-dp = { path = "../osoosi-dp" }

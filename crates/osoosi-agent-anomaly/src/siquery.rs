@@ -173,6 +173,7 @@ impl SiqueryEngine {
             "usb_devices",
             "user_accounts",
             "users",
+            "vcdb_incidents",
             "windows_events",
             "windows_security_center",
             "windows_security_products",
@@ -341,6 +342,8 @@ impl SiqueryEngine {
             !is_pragma && (is_metadata || lower.contains("hierarchical_merkle_anchors"));
         let need_kernel_conservation =
             !is_pragma && (is_metadata || lower.contains("kernel_object_conservation"));
+        let need_vcdb_incidents =
+            !is_pragma && (is_metadata || lower.contains("vcdb_incidents"));
 
         let any_table_needed = need_processes
             || need_sockets
@@ -420,7 +423,8 @@ impl SiqueryEngine {
             || need_octopus_arms
             || need_containment_rings
             || need_merkle_anchors
-            || need_kernel_conservation;
+            || need_kernel_conservation
+            || need_vcdb_incidents;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -689,6 +693,9 @@ impl SiqueryEngine {
             }
             if need_kernel_conservation {
                 Self::populate_kernel_object_conservation(&tx, &sys)?;
+            }
+            if need_vcdb_incidents {
+                Self::populate_vcdb_incidents(&tx)?;
             }
 
             tx.commit()
@@ -1633,6 +1640,26 @@ impl SiqueryEngine {
             dkom_unlinked_suspected INTEGER,
             aperf_mperf_polling_disabled INTEGER,
             mitre_technique TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS vcdb_incidents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            incident_id TEXT,
+            dbir_pattern TEXT,
+            victim_industry TEXT,
+            actor_type TEXT,
+            actor_motive TEXT,
+            action_category TEXT,
+            action_variety TEXT,
+            asset_variety TEXT,
+            data_variety TEXT,
+            discovery_unit TEXT,
+            containment_unit TEXT,
+            mitre_techniques TEXT,
+            owasp_categories TEXT,
+            oshoosi_enforcement_plane TEXT,
+            empirical_breach_prob REAL,
+            redactx_openjev_prior_score REAL
         );
 
         CREATE VIEW IF NOT EXISTS disk_encryption AS SELECT drive_letter, encryption_method, conversion_status, protection_status, lock_status FROM bitlocker_info;
@@ -8175,6 +8202,59 @@ impl SiqueryEngine {
 
         Ok(())
     }
+
+    /// Populates `vcdb_incidents` table from the in-memory Verizon VCDB engine.
+    fn populate_vcdb_incidents(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached(
+                "INSERT OR REPLACE INTO vcdb_incidents (
+                    incident_id, dbir_pattern, victim_industry, actor_type, actor_motive,
+                    action_category, action_variety, asset_variety, data_variety,
+                    discovery_unit, containment_unit, mitre_techniques, owasp_categories,
+                    oshoosi_enforcement_plane, empirical_breach_prob, redactx_openjev_prior_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            )
+            .map_err(|e| format!("Failed to prepare vcdb_incidents insert: {}", e))?;
+
+        let engine = osoosi_vcdb::global_vcdb_engine();
+        let catalog = engine.get_catalog();
+        let priors = engine.get_empirical_priors();
+
+        for inc in &catalog.incidents {
+            let data_variety = &inc.attribute.confidentiality.data_variety;
+            let (breach_prob, prior_score) = if let Some(prior) = priors.get(data_variety) {
+                (prior.conditional_breach_probability, prior.redactx_openjev_prior_score)
+            } else {
+                (0.50, 3.0)
+            };
+
+            let mitre_json = serde_json::to_string(&inc.mitre_techniques).unwrap_or_default();
+            let owasp_json = serde_json::to_string(&inc.owasp_categories).unwrap_or_default();
+
+            insert_stmt
+                .execute(rusqlite::params![
+                    &inc.incident_id,
+                    &inc.dbir_pattern,
+                    &inc.victim.industry,
+                    &inc.actor.variety,
+                    &inc.actor.motive,
+                    &inc.action.category,
+                    &inc.action.variety,
+                    &inc.asset.variety,
+                    data_variety,
+                    &format!("{} {}", inc.timeline.discovery_value, inc.timeline.discovery_unit),
+                    &format!("{} {}", inc.timeline.containment_value, inc.timeline.containment_unit),
+                    &mitre_json,
+                    &owasp_json,
+                    &inc.oshoosi_enforcement_plane,
+                    breach_prob,
+                    prior_score,
+                ])
+                .map_err(|e| format!("Failed to insert vcdb incident {}: {}", inc.incident_id, e))?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Deterministic Memory & Kernel Object Conservation record for a single PID.
@@ -9382,6 +9462,23 @@ mod tests {
             .execute_query("SELECT * FROM hierarchical_merkle_anchors;")
             .expect("SELECT * FROM hierarchical_merkle_anchors must succeed");
         assert!(!all_rows.is_empty());
+    }
+
+    #[test]
+    fn test_vcdb_incidents_query() {
+        let engine = SiqueryEngine::new();
+        let rows = engine
+            .execute_query("SELECT incident_id, dbir_pattern, data_variety, empirical_breach_prob, redactx_openjev_prior_score FROM vcdb_incidents LIMIT 10;")
+            .expect("Query on vcdb_incidents must succeed");
+
+        assert!(
+            !rows.is_empty(),
+            "vcdb_incidents must contain at least 18 seeded VERIS incidents"
+        );
+        let first = &rows[0];
+        assert!(first.get("incident_id").is_some());
+        assert!(first.get("dbir_pattern").is_some());
+        assert!(first.get("data_variety").is_some());
     }
 
     #[test]

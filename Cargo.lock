@@ -5672,6 +5672,7 @@ dependencies = [
  "osoosi-dp",
  "osoosi-policy",
  "osoosi-types",
+ "osoosi-vcdb",
  "rand 0.8.6",
  "regex",
  "reqwest",
@@ -5930,6 +5931,7 @@ dependencies = [
  "osoosi-policy",
  "osoosi-runtime",
  "osoosi-types",
+ "osoosi-vcdb",
  "osoosi-wire",
  "rand 0.8.6",
  "regex",
@@ -6340,6 +6342,24 @@ dependencies = [
  "wmi",
  "x509-parser 0.16.0",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "osoosi-vcdb"
+version = "1.2.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "hex",
+ "once_cell",
+ "osoosi-dp",
+ "parking_lot",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tracing",
 ]
 
 [[package]]
