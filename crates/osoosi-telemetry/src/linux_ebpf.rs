@@ -1648,17 +1648,17 @@ impl EbpfTelemetryEngine {
                         if let Some(map) = bpf.map_mut("protected_sensor_pids") {
                             if let Ok(mut hm) = BpfHashMap::<_, u32, u32>::try_from(&mut *map) {
                                 for pid in &cfg.protected_pids {
-                                    let _ = hm.insert(pid, &OSOOSI_PID_ROLE_PROTECTED_SENSOR, 0);
+                                    let _ = hm.insert(pid, OSOOSI_PID_ROLE_PROTECTED_SENSOR, 0);
                                 }
                                 for pid in &cfg.quarantined_pids {
-                                    let _ = hm.insert(pid, &OSOOSI_PID_ROLE_QUARANTINED, 0);
+                                    let _ = hm.insert(pid, OSOOSI_PID_ROLE_QUARANTINED, 0);
                                 }
                             } else if let Ok(mut hm) = BpfHashMap::<_, u32, u8>::try_from(map) {
                                 for pid in &cfg.protected_pids {
-                                    let _ = hm.insert(pid, &1u8, 0);
+                                    let _ = hm.insert(pid, 1u8, 0);
                                 }
                                 for pid in &cfg.quarantined_pids {
-                                    let _ = hm.insert(pid, &2u8, 0);
+                                    let _ = hm.insert(pid, 2u8, 0);
                                 }
                             }
                         }
@@ -1680,7 +1680,7 @@ impl EbpfTelemetryEngine {
                                     let bytes = path.as_bytes();
                                     let len = bytes.len().min(OSOOSI_PATH_LEN - 1);
                                     key[..len].copy_from_slice(&bytes[..len]);
-                                    let _ = hm.insert(&key, &1u8, 0);
+                                    let _ = hm.insert(key, 1u8, 0);
                                 }
                             }
                         }
@@ -1688,21 +1688,21 @@ impl EbpfTelemetryEngine {
                             if let Ok(mut hm) = BpfHashMap::<_, u32, u8>::try_from(map) {
                                 for ip in &cfg.blocked_ipv4 {
                                     let addr_u32 = u32::from_ne_bytes(*ip);
-                                    let _ = hm.insert(&addr_u32, &1u8, 0);
+                                    let _ = hm.insert(addr_u32, 1u8, 0);
                                 }
                             }
                         }
                         if let Some(map) = bpf.map_mut("blocked_ipv6") {
                             if let Ok(mut hm) = BpfHashMap::<_, [u8; 16], u8>::try_from(map) {
                                 for ip6 in &cfg.blocked_ipv6 {
-                                    let _ = hm.insert(ip6, &1u8, 0);
+                                    let _ = hm.insert(ip6, 1u8, 0);
                                 }
                             }
                         }
                         if let Some(map) = bpf.map_mut("blocked_ports") {
                             if let Ok(mut hm) = BpfHashMap::<_, u16, u8>::try_from(map) {
                                 for port in &cfg.blocked_ports {
-                                    let _ = hm.insert(port, &1u8, 0);
+                                    let _ = hm.insert(port, 1u8, 0);
                                 }
                             }
                         }
@@ -1748,7 +1748,7 @@ impl EbpfTelemetryEngine {
                                                 if let Ok(mut hm) =
                                                     BpfHashMap::<_, u32, QuarantineDirective>::try_from(map)
                                                 {
-                                                    let _ = hm.insert(&raw_ev.pid, &directive, 0);
+                                                    let _ = hm.insert(raw_ev.pid, directive, 0);
                                                 }
                                             }
                                             let forensic_snapshot =

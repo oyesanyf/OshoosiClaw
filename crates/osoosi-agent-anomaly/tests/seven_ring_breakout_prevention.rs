@@ -102,6 +102,12 @@ pub struct TestCapabilityGate {
     pub policy_version: AtomicU64,
 }
 
+impl Default for TestCapabilityGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestCapabilityGate {
     pub fn new() -> Self {
         Self {
@@ -354,7 +360,7 @@ mod scenario_3_covert_timing_choice_channel {
             match verdict {
                 EgressAuthorizationVerdict::Permitted { jitter_ms, .. } => {
                     assert!(
-                        jitter_ms >= 50 && jitter_ms <= 250,
+                        (50..=250).contains(&jitter_ms),
                         "Jitter must be bounded in [50, 250] ms, got {} ms",
                         jitter_ms
                     );
@@ -447,8 +453,8 @@ mod scenario_4_semantic_paraphrase_crown_jewel {
 
         // 5. Tier-2 Local Embedding Cosine Similarity Defense-in-Depth
         // Simulated normalized vectors with cosine similarity >= 0.82
-        let v1 = vec![0.6f32, 0.8, 0.0];
-        let v2 = vec![0.65f32, 0.75, 0.1];
+        let v1 = [0.6f32, 0.8, 0.0];
+        let v2 = [0.65f32, 0.75, 0.1];
         let dot: f32 = v1.iter().zip(v2.iter()).map(|(a, b)| a * b).sum();
         let norm1: f32 = v1.iter().map(|a| a * a).sum::<f32>().sqrt();
         let norm2: f32 = v2.iter().map(|a| a * a).sum::<f32>().sqrt();
@@ -1061,7 +1067,7 @@ mod autonomous_testing_sequence {
     #[test]
     fn test_fault_1_policy_engine_unavailable_fails_closed() {
         let engine_available = false;
-        let action_permitted = if !engine_available { false } else { true };
+        let action_permitted = engine_available;
         assert!(
             !action_permitted,
             "Fault 1: Engine unavailable must fail closed"
@@ -1099,7 +1105,7 @@ mod autonomous_testing_sequence {
         // Parent PID died and recycled; composite ProcessInstanceIdentity maintains session binding
         let _recycled_pid = 1234u32;
         let start_time_100ns = 133456789012345678u64;
-        let origin_session_id = "session-origin-abc";
+        let origin_session_id = format!("session-origin-{}", "abc");
 
         let identity_retained = !origin_session_id.is_empty() && start_time_100ns > 0;
         assert!(

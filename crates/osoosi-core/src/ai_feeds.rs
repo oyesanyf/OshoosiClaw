@@ -1388,8 +1388,9 @@ pub fn compute_128d_mrl_centroid(text: &str) -> Vec<f32> {
 
     let mut vec = Vec::with_capacity(128);
     let mut sum_sq = 0.0f32;
-    for chunk in raw_bytes.chunks_exact(4) {
-        let val = (i32::from_le_bytes(chunk.try_into().unwrap()) as f32) / (i32::MAX as f32);
+    let (chunks, _) = raw_bytes.as_chunks::<4>();
+    for chunk in chunks {
+        let val = (i32::from_le_bytes(*chunk) as f32) / (i32::MAX as f32);
         sum_sq += val * val;
         vec.push(val);
     }

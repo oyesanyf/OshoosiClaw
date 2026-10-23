@@ -121,7 +121,10 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
 
 pub struct BlockingManager {
     rules: RwLock<Vec<BlockingRule>>,
+    #[cfg(target_os = "windows")]
     provisioner: Arc<AgentProvisioner>,
+    #[cfg(not(target_os = "windows"))]
+    _provisioner: Arc<AgentProvisioner>,
 }
 
 impl BlockingManager {
@@ -129,7 +132,10 @@ impl BlockingManager {
         let rules = Self::load_rules_sync().unwrap_or_default();
         Self {
             rules: RwLock::new(rules),
+            #[cfg(target_os = "windows")]
             provisioner,
+            #[cfg(not(target_os = "windows"))]
+            _provisioner: provisioner,
         }
     }
 
@@ -181,9 +187,9 @@ impl BlockingManager {
         Self::save_rules_internal(&rules)
     }
 
-    pub async fn update_sysmon(&self, rules: &[BlockingRule]) -> anyhow::Result<()> {
+    pub async fn update_sysmon(&self, _rules: &[BlockingRule]) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
-        self.provisioner.apply_blocking_rules(rules).await?;
+        self.provisioner.apply_blocking_rules(_rules).await?;
         Ok(())
     }
 

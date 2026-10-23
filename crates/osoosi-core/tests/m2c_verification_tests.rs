@@ -104,7 +104,7 @@ async fn test_swarm_poisoned_har_rejection_and_lineage() {
         osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&raw_str, "test_malicious.har")
             .expect("parsing succeeds");
 
-    assert!(report.entries.len() >= 1);
+    assert!(!report.entries.is_empty());
     let recent = osoosi_policy::traffic_adapter::get_recent_inspected_har_entries(10);
     assert!(
         recent.iter().any(|(src, _)| src == "test_malicious.har"),

@@ -56,7 +56,7 @@ impl osoosi_types::SecuredExecutor for DummyExecutor {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WireMessage {
     GossipThreat {
-        signature: ThreatSignature,
+        signature: Box<ThreatSignature>,
         pqc_signature_bytes: Vec<u8>,
         sender_pk: [u8; 32],
     },
@@ -269,7 +269,7 @@ impl FaultInjectionMesh {
                             .write()
                             .await
                             .insert(hash.clone(), Instant::now());
-                        node.received_threats.write().await.push(signature);
+                        node.received_threats.write().await.push(*signature);
                     }
                 }
             }
@@ -334,7 +334,7 @@ impl FaultInjectionMesh {
         let pqc_sig = hybrid_sign(canonical_bytes.as_bytes(), &sender.private_key);
 
         let msg = WireMessage::GossipThreat {
-            signature: signature.clone(),
+            signature: Box::new(signature.clone()),
             pqc_signature_bytes: pqc_sig,
             sender_pk: sender.public_key,
         };

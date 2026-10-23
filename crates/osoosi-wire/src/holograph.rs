@@ -506,7 +506,7 @@ impl HierarchicalRollupVerifier {
         let mut siblings = Vec::new();
 
         while current_level.len() > 1 {
-            let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+            let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
             for i in (0..current_level.len()).step_by(2) {
                 if i + 1 < current_level.len() {
                     let left = &current_level[i];

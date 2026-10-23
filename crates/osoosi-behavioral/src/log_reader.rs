@@ -86,9 +86,9 @@ pub struct BehavioralLogReader {
     #[cfg(target_os = "linux")]
     paths: Vec<String>,
     #[cfg(target_os = "linux")]
-    use_journald: bool,
+    _use_journald: bool,
     #[cfg(target_os = "macos")]
-    use_unified: bool,
+    _use_unified: bool,
     #[cfg(target_os = "macos")]
     paths: Vec<String>,
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -135,7 +135,7 @@ impl BehavioralLogReader {
                 });
             Self {
                 paths,
-                use_journald: true,
+                _use_journald: true,
             }
         }
 
@@ -152,7 +152,7 @@ impl BehavioralLogReader {
                 });
             Self {
                 paths,
-                use_unified: true,
+                _use_unified: true,
             }
         }
 

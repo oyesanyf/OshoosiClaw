@@ -1327,7 +1327,7 @@ impl HostEventReader for LinuxAuditReader {
 
         if self.is_audit_format {
             let mut current_record = String::new();
-            for line in reader.lines().flatten() {
+            for line in reader.lines().map_while(Result::ok) {
                 if line.starts_with("type=") {
                     if !current_record.is_empty() {
                         if let Some(ev) = self.parse_audit_line(&current_record) {
@@ -1346,7 +1346,7 @@ impl HostEventReader for LinuxAuditReader {
                 }
             }
         } else {
-            let lines: Vec<String> = reader.lines().flatten().collect();
+            let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
             for line in lines.into_iter().rev().take(50) {
                 if line.contains("Accepted") || line.contains("Failed") || line.contains("session")
                 {

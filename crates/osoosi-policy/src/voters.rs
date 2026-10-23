@@ -970,7 +970,7 @@ impl ThreatVoter for YaraXMemoryVoter {
     fn name(&self) -> String {
         "YaraX-Memory".to_string()
     }
-    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+    async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
             use windows::Win32::Foundation::CloseHandle;
@@ -979,7 +979,7 @@ impl ThreatVoter for YaraXMemoryVoter {
                 OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
             };
 
-            if let Some(pid) = event
+            if let Some(pid) = _event
                 .data
                 .get("ProcessId")
                 .and_then(|v| v.as_u64())
@@ -1234,7 +1234,18 @@ impl ThreatVoter for KevVoter {
                 // VERSION-AWARE LOGIC: If we have a resolved product version, and it looks like a modern/patched version,
                 // we down-rank the confidence significantly.
                 let mut confidence = if is_known_good { 0.45 } else { 0.85 };
+                #[cfg(target_os = "windows")]
                 let mut exact_version = event
+                    .data
+                    .get("ProductVersion")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|version| {
+                        !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
+                    })
+                    .map(|s| s.to_string());
+                #[cfg(not(target_os = "windows"))]
+                let exact_version = event
                     .data
                     .get("ProductVersion")
                     .and_then(|v| v.as_str())

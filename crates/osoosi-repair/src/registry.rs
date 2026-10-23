@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Result};
 #[cfg(target_os = "windows")]
 use std::process::Command;
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(target_os = "windows")]
+use tracing::warn;
 #[cfg(target_os = "windows")]
 use winreg::enums::*;
 #[cfg(target_os = "windows")]
@@ -81,13 +83,13 @@ impl RegistryRemediator {
                             let path = entry.path();
                             if path.is_file() {
                                 if let Ok(content) = std::fs::read_to_string(&path) {
-                                    if content.contains(image_path) || content.contains(basename) {
-                                        if std::fs::remove_file(&path).is_ok() {
-                                            changes.push(format!(
-                                                "Removed malicious persistence file: {:?}",
-                                                path
-                                            ));
-                                        }
+                                    if (content.contains(image_path) || content.contains(basename))
+                                        && std::fs::remove_file(&path).is_ok()
+                                    {
+                                        changes.push(format!(
+                                            "Removed malicious persistence file: {:?}",
+                                            path
+                                        ));
                                     }
                                 }
                             }

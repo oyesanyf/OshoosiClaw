@@ -168,10 +168,7 @@ impl MemoryScanner {
             Err(_) => return Ok(Vec::new()),
         };
 
-        let mut mem_file = match std::fs::File::open(&mem_path) {
-            Ok(f) => Some(f),
-            Err(_) => None,
-        };
+        let mut mem_file = std::fs::File::open(&mem_path).ok();
 
         let mut results = Vec::new();
         let mut buf: Vec<u8> = Vec::with_capacity(64 * 1024);

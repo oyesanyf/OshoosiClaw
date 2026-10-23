@@ -1,3 +1,4 @@
+#[cfg(target_os = "windows")]
 use tracing::info;
 
 /// RAII Guard that manages in-process IPv4 transport preference and prevents silent IPv6 routing

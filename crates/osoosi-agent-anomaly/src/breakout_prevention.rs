@@ -179,7 +179,9 @@ impl OsConfinementVerifier {
     fn run_caged_kernel_kill_verification(
         side_effect_counter: &AtomicUsize,
     ) -> (bool, u32, String) {
+        #[cfg(target_os = "windows")]
         use osoosi_runtime::canary_cage::CanaryCage;
+        #[cfg(target_os = "windows")]
         use std::time::Duration;
 
         #[cfg(target_os = "windows")]
@@ -188,7 +190,8 @@ impl OsConfinementVerifier {
                 .unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".to_string());
             let args = vec![
                 "/c".to_string(),
-                "echo probe > %OSOOSI_CANARY_PIPE%".to_string(),
+                // Variable name must match CANARY_HONEY_PIPE exported by CanaryCage::spawn_child
+                "echo probe > %CANARY_HONEY_PIPE%".to_string(),
             ];
             match CanaryCage::spawn_caged(
                 &comspec,
@@ -2319,8 +2322,10 @@ mod tests {
 
     #[test]
     fn test_untrusted_platform_attestation_withholds_sensitive_operations() {
-        let mut posture = PlatformAttestationPosture::default();
-        posture.iommu_vt_d_kernel_dma_protection_active = false;
+        let posture = PlatformAttestationPosture {
+            iommu_vt_d_kernel_dma_protection_active: false,
+            ..Default::default()
+        };
         let dec = PlatformAttestationGate::evaluate_high_impact_operation(
             &posture,
             "SignProductionArtifact",

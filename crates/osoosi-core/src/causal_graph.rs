@@ -793,6 +793,7 @@ impl CausalSecurityGraph {
     // File Artifact Management
     // -------------------------------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)] // Causal graph ledger registration with full provenance context
     pub fn register_file(
         &self,
         path: &str,
@@ -1260,10 +1261,7 @@ impl CausalSecurityGraph {
         )?;
 
         // 3. Record event in causal_events
-        let event_id = format!(
-            "declass-{}",
-            blake3::hash(now.as_bytes()).to_hex()[..16].to_string()
-        );
+        let event_id = format!("declass-{}", &blake3::hash(now.as_bytes()).to_hex()[..16]);
         lock.execute(
             "INSERT INTO causal_events (
                 event_id, event_seq, decision_id, session_id, process_instance_id,
@@ -1348,6 +1346,7 @@ impl CausalSecurityGraph {
         Ok(res)
     }
 
+    #[allow(clippy::too_many_arguments)] // Capability store API with full temporal and epoch context
     pub fn store_capability(
         &self,
         principal_id: &str,

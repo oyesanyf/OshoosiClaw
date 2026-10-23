@@ -323,7 +323,7 @@ impl FileLineageTracker {
         let mut session_entries = self
             .session_files
             .entry(session_id.to_string())
-            .or_insert_with(VecDeque::new);
+            .or_default();
 
         while session_entries.len() >= self.max_capacity {
             session_entries.pop_front();

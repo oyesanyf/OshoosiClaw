@@ -703,7 +703,7 @@ impl RuntimeAlignmentScanner {
                  PROPOSED_ACTION: tool={} params={}\n\
                  Respond ONLY with JSON: {{\"aligned\": true/false, \"alignment_score\": 0.0-1.0, \"rationale\": \"...\"}}",
                 user_intent,
-                &untrusted_input.chars().take(400).collect::<String>(),
+                untrusted_input.chars().take(400).collect::<String>(),
                 proposed_tool,
                 proposed_params
             );
@@ -1044,7 +1044,7 @@ impl RuntimeAlignmentScanner {
         let now = Utc::now();
         let trace_id = format!(
             "DRIFT-{}-S{}",
-            &blake3::hash(
+            blake3::hash(
                 format!(
                     "{}:{}:{}:{}",
                     session_id,
@@ -1276,7 +1276,7 @@ impl RuntimeAlignmentScanner {
         let now = Utc::now();
         let trace_id = format!(
             "DRIFT-{}-S{}",
-            &blake3::hash(
+            blake3::hash(
                 format!(
                     "{}:{}:{}:{}",
                     session_id,

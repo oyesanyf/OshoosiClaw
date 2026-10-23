@@ -965,7 +965,11 @@ mod tests {
         assert!(nudges.contains_key("Agentic-Escape-Detector"));
         assert!(nudges.contains_key("SpiderWeb-Containment"));
         for (&_, &w) in &nudges {
-            assert!(w >= 1.02 && w <= 2.50, "Weight {} outside [1.02, 2.50]", w);
+            assert!(
+                (1.02..=2.50).contains(&w),
+                "Weight {} outside [1.02, 2.50]",
+                w
+            );
         }
     }
 

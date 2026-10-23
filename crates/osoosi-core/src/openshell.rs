@@ -17,6 +17,7 @@ use std::process::Command;
 use tracing::{error, info, warn};
 
 /// `pip install git+https://...` (VCS) — pinned to immutable commit hash for supply-chain integrity.
+#[cfg(windows)]
 const OPENSHELL_PIP_GIT_URL: &str =
     "git+https://github.com/NVIDIA/OpenShell.git@e8c92a514c703196d110e81a549263834315463b";
 

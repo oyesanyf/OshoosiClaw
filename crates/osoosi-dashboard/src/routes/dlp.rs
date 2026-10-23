@@ -104,7 +104,7 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
             if path_str == "certs/OshoosiClaw_Signing.pfx" {
                 pfx_merkle_root_seed = merkle_root_hex.clone();
             }
-            let chunk_count = if byte_size == 0 { 0 } else { (byte_size + 4095) / 4096 };
+            let chunk_count = byte_size.div_ceil(4096);
             let rea_artifact_kind = if path_str.ends_with(".pfx") || path_str.ends_with(".p12") {
                 "PKCS12_PFX_KEYSTORE"
             } else if path_str.ends_with(".env") {
@@ -583,11 +583,7 @@ pub async fn post_dlp_register_crown_jewel(Json(body): Json<Value>) -> Json<Valu
 
     let bytes = content.as_bytes();
     let byte_size = bytes.len();
-    let chunk_count = if byte_size == 0 {
-        0
-    } else {
-        (byte_size + 4095) / 4096
-    };
+    let chunk_count = byte_size.div_ceil(4096);
 
     let mut state = get_global_dlp_state().write();
     let merkle_root_hex = state

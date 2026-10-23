@@ -7,7 +7,9 @@
 use clap::{Parser, Subcommand};
 use osoosi_core::{secured_executor::DirectExecutor, EdrOrchestrator};
 use osoosi_policy::ThreatFeedFetcher;
-use osoosi_types::{extract_zip, SecuredExecutor};
+#[cfg(target_os = "windows")]
+use osoosi_types::extract_zip;
+use osoosi_types::SecuredExecutor;
 
 pub mod service;
 use hf_hub::api::tokio::ApiBuilder;
@@ -2923,6 +2925,7 @@ fn windows_path_to_wsl(path: &Path) -> anyhow::Result<String> {
     ))
 }
 
+#[cfg(target_os = "windows")]
 fn sh_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
@@ -3328,7 +3331,7 @@ fn ort_dynamic_library_path() -> PathBuf {
     PathBuf::from(dylib_name)
 }
 
-async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
+async fn init_ort(_suppress_warning: bool) -> anyhow::Result<()> {
     if std::env::var("OSOOSI_NO_ORT")
         .map(|v| v == "1")
         .unwrap_or(false)
@@ -3370,7 +3373,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         }
         std::env::set_var("OSOOSI_NO_ORT", "1");
         std::env::remove_var("ORT_DYLIB_PATH");
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -3474,7 +3477,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         }
 
         if !success {
-            if !suppress_warning {
+            if !_suppress_warning {
                 error!("❌ FATAL: All ONNX Runtime initialization attempts failed. AI features will be disabled.");
             }
             std::env::set_var("OSOOSI_NO_ORT", "1");

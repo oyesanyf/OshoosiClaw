@@ -257,7 +257,7 @@ impl PatchDiscoverer {
             if out.status.success() {
                 let s = String::from_utf8_lossy(&out.stdout);
                 for line in s.lines() {
-                    if let Some(pkg_part) = line.splitn(2, '/').next() {
+                    if let Some(pkg_part) = line.split('/').next() {
                         let pkg = pkg_part.trim();
                         if !pkg.is_empty() && !pkg.starts_with("Listing") {
                             patches.push(PatchMetadata {

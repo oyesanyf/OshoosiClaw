@@ -1035,9 +1035,9 @@ pub async fn get_mesh_zone_rollup_status() -> Json<Value> {
             epoch: 1,
             prev_zone_merkle_root:
                 "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-            zone_merkle_root: osoosi_wire::HierarchicalRollupVerifier::compute_zone_merkle_root(&[
-                sample_indicator.clone(),
-            ]),
+            zone_merkle_root: osoosi_wire::HierarchicalRollupVerifier::compute_zone_merkle_root(
+                std::slice::from_ref(&sample_indicator),
+            ),
             indicator_digests: vec![sample_indicator.clone()],
             participating_nodes: nodes,
             bft_stake_ratio: stake,

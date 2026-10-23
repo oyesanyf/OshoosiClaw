@@ -1866,8 +1866,7 @@ pub fn inspect_rust_binary(
 
     for (offset, slice) in dep_v0_slices {
         let max_decompressed = (slice.len().saturating_mul(MAX_ARCHIVE_DECOMPRESSION_RATIO))
-            .max(65_536)
-            .min(MAX_DECOMPRESSED_BYTES);
+            .clamp(65_536, MAX_DECOMPRESSED_BYTES);
         let decoder = ZlibDecoder::new(slice);
         let mut json_str = String::new();
         if decoder
@@ -4505,10 +4504,10 @@ pub fn synthesize_rea_yara_rule(
 // ============================================================================
 
 /// Discover both built-in native Rust REA engines and optional external RE providers on the host.
+type ReaProvidersCache = parking_lot::RwLock<Option<(std::time::Instant, Vec<ReaProviderStatus>)>>;
+
 pub fn discover_rea_providers() -> Vec<ReaProviderStatus> {
-    static REA_PROVIDERS_CACHE: std::sync::OnceLock<
-        parking_lot::RwLock<Option<(std::time::Instant, Vec<ReaProviderStatus>)>>,
-    > = std::sync::OnceLock::new();
+    static REA_PROVIDERS_CACHE: std::sync::OnceLock<ReaProvidersCache> = std::sync::OnceLock::new();
     let cache = REA_PROVIDERS_CACHE.get_or_init(|| parking_lot::RwLock::new(None));
     if let Some((ts, ref list)) = *cache.read() {
         if ts.elapsed() < std::time::Duration::from_secs(300) {
@@ -5325,7 +5324,7 @@ pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
         || crate::blocking_manager::is_protected_or_benign_system_path(&path_str);
 
     if let Ok(meta) = path.metadata() {
-        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES as u64 {
+        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES {
             // Read up to 64 KiB header or full file if <= 16 MiB for BLAKE3 / .dep-v0 check
             if meta.len() <= 16 * 1024 * 1024 {
                 if let Ok(bytes) = std::fs::read(path) {
@@ -5767,7 +5766,7 @@ fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
     if let Ok(exe_path) = std::env::current_exe() {
         if exe_path.is_file() {
             if let Ok(metadata) = exe_path.metadata() {
-                if metadata.len() <= MAX_REA_FILE_BYTES as u64 {
+                if metadata.len() <= MAX_REA_FILE_BYTES {
                     if let Ok(bytes) = std::fs::read(&exe_path) {
                         let hash = blake3::hash(&bytes)
                             .to_hex()
@@ -6296,7 +6295,7 @@ impl AutonomousReaEngine {
                 if let Some(ref p) = resolved_opt {
                     let p_str = p.to_string_lossy().to_string();
                     let sz = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
-                    if sz > 0 && sz <= MAX_REA_FILE_BYTES as u64 {
+                    if sz > 0 && sz <= MAX_REA_FILE_BYTES {
                         if let Ok(bytes) = std::fs::read(p) {
                             (p_str, sz, sha256_hex(&bytes), blake3_hex(&bytes))
                         } else {
@@ -6809,6 +6808,7 @@ impl AutonomousReaEngine {
     /// Deep-inspects a single HAR HTTP transaction, live OS socket, or full `.har` archive using both
     /// `[REA-Voter]` and `[OpenJEV-Voter]`, separating live OS TCP/TLS socket sweeps from L7 `.har`
     /// captures and vetting the owning process and destination ASN.
+    #[allow(clippy::too_many_arguments)] // Full L7 HTTP transaction context inspection API
     pub fn analyze_har_entry_with_context(
         &self,
         source_file: &str,

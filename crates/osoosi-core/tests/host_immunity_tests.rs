@@ -20,6 +20,7 @@ use osoosi_core::killchain::{
 use osoosi_core::remediation::{is_administrative_or_ssh_session, RemediationController};
 use osoosi_runtime::kernel_driver::KernelDriverClient;
 use osoosi_runtime::tarpit::is_protected_system_or_security_process;
+#[cfg(target_os = "windows")]
 use osoosi_telemetry::AgentProvisioner;
 use std::collections::HashMap;
 use std::io::{Read, Write};

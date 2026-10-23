@@ -1590,7 +1590,7 @@ fn build_or_get_sbom_bundle() -> &'static (Vec<SbomComponentEntry>, String, Stri
                         continue;
                     }
                     let parts: Vec<&str> = line
-                        .split(|c: char| c == '=' || c == '>' || c == '<' || c == '~')
+                        .split(['=', '>', '<', '~'])
                         .filter(|s| !s.trim().is_empty())
                         .collect();
                     if let Some(pkg_name) = parts.first() {
@@ -2907,26 +2907,14 @@ async fn get_tarpit_stats(
     let attacker_compute_burn_flops = (tokens_burned as f64) * 1.4e11;
     let attacker_time_wasted_sec = (trapped_callers as f64) * 45.0 + (total_tests as f64) * 0.35;
 
-    let attacker_compute_burn_usd = if let Some(a_usd) = explicit_attacker_usd {
-        a_usd
-    } else {
-        3.5700f64
-    };
+    let attacker_compute_burn_usd = explicit_attacker_usd.unwrap_or(3.5700f64);
 
     let defender_mitigation_latency_us = 42.5f64;
     let defender_mitigation_cpu_ms = (total_tests as f64) * 0.0425;
 
-    let defender_mitigation_cost_usd = if let Some(d_usd) = explicit_defender_usd {
-        d_usd
-    } else {
-        0.000145f64
-    };
+    let defender_mitigation_cost_usd = explicit_defender_usd.unwrap_or(0.000145f64);
 
-    let cost_ratio = if let Some(cr) = explicit_cost_ratio {
-        cr
-    } else {
-        24620.69f64
-    };
+    let cost_ratio = explicit_cost_ratio.unwrap_or(24620.69f64);
 
     let raw_regret = (0.42 / ((corpus_epoch.max(1) as f64) + 8.0)).sqrt();
     let rl_regret_per_step = ((raw_regret * 10000.0).round()) / 10000.0;
@@ -5595,10 +5583,7 @@ async fn post_auth_login_endpoint(
             .trim()
             .to_ascii_lowercase();
         // Strip optional domain prefix like ".\admin" or "HOST\admin"
-        let short_user = req_user
-            .rsplit(|c| c == '\\' || c == '/')
-            .next()
-            .unwrap_or(&req_user);
+        let short_user = req_user.rsplit(['\\', '/']).next().unwrap_or(&req_user);
         let is_recognized_operator = short_user.is_empty()
             || short_user == "admin"
             || short_user == "oyesanyf"
