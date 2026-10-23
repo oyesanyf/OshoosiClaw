@@ -2828,9 +2828,9 @@ mod tests_dlp_evasion {
     fn test_multibyte_utf8_boundaries_in_mrn_and_nanp_phone_fax_scan() {
         let engine = OsoosiTwoTierDlpEngine::new();
         let multibyte_payload = "—•🔒✓×€ Patient Summary — MRN: 84729104 • TEL: (415) 555-2671 — FAX: 415-555-9876 • 92.7056% E(N,t)";
-        let mrns = OsoosiTwoTierDlpEngine::mrn_scan(multibyte_payload);
+        let mrns = RedactXStructuredValidator::mrn_scan(multibyte_payload);
         assert_eq!(mrns, vec!["84729104".to_string()]);
-        let phones = OsoosiTwoTierDlpEngine::nanp_phone_fax_scan(multibyte_payload);
+        let phones = RedactXStructuredValidator::nanp_phone_fax_scan(multibyte_payload);
         assert_eq!(phones.len(), 2);
         let tier1 = engine.inspect_hot_tier1("dlp_sensor", "https://example.org", multibyte_payload.as_bytes());
         assert!(tier1.detected_categories.contains(&"HIPAA_MRN".to_string()));

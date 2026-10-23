@@ -217,6 +217,19 @@ impl AgentContainmentRing {
         Ok(())
     }
 
+    /// Synchronously advances an agent's generation epoch (Gen N -> Gen N+1) and rotates
+    /// its HMAC-SHA256 signing key, invalidating any messages signed under stale epochs.
+    pub fn advance_epoch_sync(&self, agent_id: &str) -> u64 {
+        let old_epoch = self.get_current_epoch(agent_id);
+        let new_epoch = old_epoch + 1;
+        self.agent_epochs.insert(agent_id.to_string(), new_epoch);
+        let mut new_key = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut new_key);
+        self.agent_keys.insert(agent_id.to_string(), new_key);
+        self.autotomy_severances.fetch_add(1, Ordering::Relaxed);
+        new_epoch
+    }
+
     /// Surgical Autotomy: Monotonically advances the agent's generation epoch (Gen N -> Gen N+1),
     /// invalidating all pending messages and tokens bound to the compromised epoch.
     /// Optionally terminates a confirmed rogue child process.
@@ -226,6 +239,7 @@ impl AgentContainmentRing {
         reason: &str,
         target_child_pid: Option<u32>,
     ) -> u64 {
+
         let old_epoch = self.get_current_epoch(agent_id);
         let new_epoch = old_epoch + 1;
 

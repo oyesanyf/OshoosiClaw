@@ -367,8 +367,38 @@ impl NativeHost {
     }
 }
 
+/// Evaluates a URL string against scheme, hostname, and mathematical IPv4/IPv6 SSRF rules.
+pub fn is_ssrf_url(url: &str) -> Result<(), String> {
+    let url = url.trim();
+    if url.is_empty() || url.len() > 8192 {
+        return Err("Invalid URL: empty or exceeds max length".to_string());
+    }
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Invalid URL: only http and https schemes allowed".to_string());
+    }
+    let host = crate::security::extract_host_from_url(url);
+    if host.is_empty() {
+        return Err("Invalid URL: unable to extract host".to_string());
+    }
+    let blocked_hostnames = [
+        "localhost",
+        "metadata.google.internal",
+        "metadata.aws.internal",
+        "instance-data",
+    ];
+    if blocked_hostnames.contains(&host.as_str()) || host.ends_with(".localhost") {
+        return Err(format!("SSRF Violation: access to host '{}' is blocked", host));
+    }
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_ssrf_ip(ip) {
+            return Err(format!("SSRF Violation: access to IP '{}' is blocked", ip));
+        }
+    }
+    Ok(())
+}
+
 /// Evaluates an IP address mathematically to block all SSRF ranges.
-fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
+pub fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => is_ssrf_ipv4(v4),
         std::net::IpAddr::V6(v6) => {
@@ -406,7 +436,7 @@ fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
 }
 
 /// Evaluates an IPv4 address mathematically against RFC1918, loopback, CGNAT, link-local, broadcast, and multicast.
-fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
+pub fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
     let octets = v4.octets();
     if v4.is_loopback()       // 127.0.0.0/8
         || v4.is_unspecified() // 0.0.0.0
@@ -439,3 +469,4 @@ fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
     }
     false
 }
+

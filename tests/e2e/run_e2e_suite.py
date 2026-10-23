@@ -21,11 +21,13 @@ if hasattr(sys.stderr, 'reconfigure'):
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, str(PROJECT_ROOT / "tests" / "e2e"))
+sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
 import tier1_features_test
 import tier2_boundary_test
 import tier3_pairwise_test
 import tier4_scenarios_test
+import verify_15_breakout_and_edr_compromise_vectors
 
 
 def run_unittest_suite(test_module, name):
@@ -107,7 +109,13 @@ def main():
     # 4. Tier 4: Real-World Application Scenarios (5 tests)
     results.append(run_unittest_suite(tier4_scenarios_test, "Tier 4: Real-World Application Scenarios"))
 
-    # 5. Node.js WebUI Tests (12 tests)
+    # 5. Tier 5: 15-Vector Agent Breakout & EDR Compromise Suite (15 tests)
+    results.append(run_unittest_suite(
+        verify_15_breakout_and_edr_compromise_vectors,
+        "Tier 5: 15-Vector Breakout & EDR Compromise (15 Vectors)"
+    ))
+
+    # 6. Node.js WebUI Tests (21 tests)
     results.append(run_node_tests())
 
     # Aggregate Metrics

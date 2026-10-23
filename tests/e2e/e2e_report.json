@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-10-23 18:31:13 UTC",
-  "total_tests": 199,
-  "total_passed": 199,
+  "timestamp": "2026-10-23 20:03:31 UTC",
+  "total_tests": 214,
+  "total_passed": 214,
   "total_failed": 0,
   "total_errors": 0,
   "success": true,
@@ -12,7 +12,7 @@
       "passed": 150,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.274,
+      "duration_seconds": 0.663,
       "success": true
     },
     {
@@ -21,7 +21,7 @@
       "passed": 15,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.021,
+      "duration_seconds": 0.02,
       "success": true
     },
     {
@@ -30,7 +30,7 @@
       "passed": 8,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.027,
+      "duration_seconds": 0.029,
       "success": true
     },
     {
@@ -39,7 +39,16 @@
       "passed": 5,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.029,
+      "duration_seconds": 0.03,
+      "success": true
+    },
+    {
+      "suite": "Tier 5: 15-Vector Breakout & EDR Compromise (15 Vectors)",
+      "total": 15,
+      "passed": 15,
+      "failed": 0,
+      "errors": 0,
+      "duration_seconds": 2.085,
       "success": true
     },
     {
@@ -48,7 +57,7 @@
       "passed": 21,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.642,
+      "duration_seconds": 1.118,
       "success": true
     }
   ]
