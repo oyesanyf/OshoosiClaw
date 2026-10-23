@@ -32,6 +32,8 @@ static HAR_COLLECTOR_STARTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 static HAR_SWEEP_SEQUENCE: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
+static HAR_REFRESH_MUTEX: std::sync::OnceLock<osoosi_core::parking_lot::Mutex<()>> =
+    std::sync::OnceLock::new();
 
 pub fn build_w3c_har_document(entries: &[Value]) -> Value {
     let mut har_entries = Vec::with_capacity(entries.len());
@@ -103,6 +105,9 @@ pub fn build_w3c_har_document(entries: &[Value]) -> Value {
 
 /// Sweeps and refreshes the live HAR web traffic cache, persists entries to SQLite and logs/live_web_traffic.har.
 pub fn refresh_live_har_cache_now() -> Value {
+    let _refresh_guard = HAR_REFRESH_MUTEX
+        .get_or_init(|| osoosi_core::parking_lot::Mutex::new(()))
+        .lock();
     let engine = osoosi_agent_anomaly::SiqueryEngine::new();
     let mut entries = engine.collect_live_har_entries_fast(400);
     let rea_engine = osoosi_core::rea::global_rea_engine();
@@ -249,6 +254,7 @@ pub fn refresh_live_har_cache_now() -> Value {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.busy_timeout(std::time::Duration::from_millis(5000));
             let _ = conn.execute(
                 "CREATE TABLE IF NOT EXISTS har_entries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

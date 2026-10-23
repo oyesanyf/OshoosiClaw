@@ -137,13 +137,24 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
             return el;
         };
 
+        const elementRegistry = {};
         const mockDocument = {
             readyState: 'loading',
             body: mockElement('body'),
             getElementById(id) {
-                return mockElement(id);
+                if (!elementRegistry[id]) {
+                    elementRegistry[id] = mockElement(id);
+                }
+                return elementRegistry[id];
             },
             querySelector(sel) {
+                if (sel && sel.startsWith('#')) {
+                    const id = sel.slice(1);
+                    if (!elementRegistry[id]) {
+                        elementRegistry[id] = mockElement(id);
+                    }
+                    return elementRegistry[id];
+                }
                 return mockElement(sel);
             },
             querySelectorAll() {
@@ -371,7 +382,7 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                 const sanitized = env.mockWindow.sanitizeAuthNetworkError('TypeError: Failed to fetch');
                 assert.ok(!/failed to fetch/i.test(sanitized), 'sanitizeAuthNetworkError must never output Failed to fetch');
 
-                // 7. Collapsible 7-Category Sidebar & CI/CD Protection exports
+                // 7. Collapsible 7-Category Sidebar, CI/CD Protection & Collapsible Policy Detection Engines exports
                 const expectedSidebarAndCicdMethods = [
                     'toggleSidebarRailMode',
                     'toggleAllSidebarCategories',
@@ -382,7 +393,16 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                     'setCicdProtectionMaster',
                     'toggleCicdProtectionItem',
                     'toggleCicdProtectionAll',
-                    'runCicdProtectionVerification'
+                    'runCicdProtectionVerification',
+                    'toggleEnginesPanel',
+                    'togglePolicyEnginesCard',
+                    'toggleDashboardPanel',
+                    'toggleAllDashboardPanels',
+                    'toggleEngineCategory',
+                    'toggleAllEngineCategories',
+                    'toggleSingleVoterCard',
+                    'toggleAllVoterCardsCompact',
+                    'renderEngines'
                 ];
                 for (const method of expectedSidebarAndCicdMethods) {
                     assert.strictEqual(
@@ -391,8 +411,40 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                         `Expected window.${method} to be a function in dashboard/${targetDirName}`
                     );
                 }
+
+                // 8. Verify Policy Detection Engines collapse state persists across renderEngines / renderDetectionStats polling
+                env.mockWindow.renderEngines({});
+                const gridEl = env.mockDocument.getElementById('detection-engines-grid');
+                const bodyEl = env.mockDocument.getElementById('detection-engines-body');
+                const btnEl = env.mockDocument.getElementById('toggle-engines-btn');
+                assert.ok(gridEl.innerHTML.includes('data-engine-cat="ai-agentic"'), 'Must render AI, LLM & Agentic Security Voters category');
+                assert.ok(gridEl.innerHTML.includes('data-engine-cat="memory-kernel"'), 'Must render Kernel, Memory & Binary Forensics Voters category');
+                assert.ok(gridEl.innerHTML.includes('data-engine-cat="network-intel"'), 'Must render Threat Intelligence, C2 & CVE Voters category');
+                assert.ok(gridEl.innerHTML.includes('data-engine-cat="physics-containment"'), 'Must render Behavioral Physics, Sigma & Containment Voters category');
+                assert.ok(gridEl.innerHTML.includes('data-engine-cat="trust-reputation"'), 'Must render Zero-Trust Veto, Vendor & Noise Filter Voters category');
+
+                // Collapse Policy Detection Engines
+                env.mockWindow.togglePolicyEnginesCard();
+                assert.strictEqual(env.mockWindow.localStorage.getItem('oshoosi_collapse_policy_engines'), 'true', 'oshoosi_collapse_policy_engines must be true when collapsed');
+                assert.strictEqual(bodyEl.style.display, 'none', '#detection-engines-body must be hidden when collapsed');
+                assert.strictEqual(gridEl.style.display, 'none', '#detection-engines-grid must be hidden when collapsed');
+                assert.strictEqual(btnEl.textContent, 'Expand (39 Engines)', '#toggle-engines-btn must show Expand (39 Engines) when collapsed');
+
+                // Simulate background poll re-rendering engines
+                env.mockWindow.renderEngines({});
+                assert.strictEqual(bodyEl.style.display, 'none', '#detection-engines-body must remain hidden after renderEngines poll');
+                assert.strictEqual(gridEl.style.display, 'none', '#detection-engines-grid must remain hidden after renderEngines poll');
+                assert.strictEqual(btnEl.textContent, 'Expand (39 Engines)', '#toggle-engines-btn must remain Expand (39 Engines) after renderEngines poll');
+
+                // Expand back
+                env.mockWindow.toggleEnginesPanel();
+                assert.strictEqual(env.mockWindow.localStorage.getItem('oshoosi_collapse_policy_engines'), 'false', 'oshoosi_collapse_policy_engines must be false when expanded');
+                assert.strictEqual(bodyEl.style.display, 'block', '#detection-engines-body must be visible when expanded');
+                assert.strictEqual(gridEl.style.display, 'grid', '#detection-engines-grid must be grid when expanded');
+                assert.strictEqual(btnEl.textContent, 'Collapse', '#toggle-engines-btn must show Collapse when expanded');
             });
         });
     });
 });
+
 

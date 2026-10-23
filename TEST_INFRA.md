@@ -28,10 +28,10 @@ All documentation, verification reports, and user-facing endpoints MUST use the 
 
 ---
 
-## 2. Test Philosophy & Methodological Framework
+## 2. Test Philosophy & Methodological Framework (Opaque-Box & Requirement-Driven)
 
-### 2.1 4-Tier Test Framework
-The testing infrastructure follows a systematic 4-tier methodology:
+### 2.1 4-Tier Test Framework (Opaque-Box & Requirement-Driven)
+The testing infrastructure follows a systematic, **Opaque-Box & Requirement-Driven** 4-tier methodology:
 - **Tier 1: Feature Coverage (Category-Partition Testing)**: Functional verification of the primary behavior (happy path) for each inventoried feature under baseline conditions. Each feature must have at least 5 dedicated Tier 1 test cases ($N \times 5$).
 - **Tier 2: Boundary & Corner Cases (Boundary Value Analysis)**: Boundary condition testing, invalid inputs, edge states, empty buffers, extreme sizes (up to 256 MiB), permission errors, rapid state cycling, and failure recovery. Each feature must have at least 5 dedicated Tier 2 test cases ($N \times 5$).
 - **Tier 3: Cross-Feature Combinations (Pairwise Combinatorial Testing)**: Multi-component interactions evaluating concurrent conditions, state handoffs, and emergent behavior across feature boundaries ($N \times 1$ pairwise interaction tests).

@@ -25,6 +25,7 @@ def test_endpoints():
     headers = {
         "User-Agent": "OshoosiClaw-Verifier/1.2.0",
         "Accept": "application/json",
+        "Connection": "close",
     }
     if token:
         headers["X-Osoosi-Token"] = token

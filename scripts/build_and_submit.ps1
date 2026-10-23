@@ -84,16 +84,30 @@ Cleanup-OldLockedFiles
 # Helper: Cargo & WiX toolset auto-discovery in PATH and standard locations (Edge Case 2)
 # -----------------------------------------------------------------------------
 function Ensure-ToolchainInPath {
-    # 0. Rustup toolchain bin discovery (preserves Windows 11 Smart App Control origin claim)
-    $toolchainBin = "C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin"
-    if (Test-Path (Join-Path $toolchainBin "cargo.exe")) {
+    # 0. Rustup toolchain bin discovery (preserves Windows 11 Smart App Control origin claim via target\toolchain\bin)
+    $rustupToolchain = "C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
+    $stagedToolchain = Join-Path $ProjectRoot "target\toolchain"
+    $toolchainBin = Join-Path $stagedToolchain "bin"
+    $stagedLib = Join-Path $stagedToolchain "lib"
+    if (Test-Path (Join-Path $rustupToolchain "bin\cargo.exe")) {
+        if (-not (Test-Path (Join-Path $toolchainBin "cargo.exe"))) {
+            New-Item -ItemType Directory -Path $toolchainBin -Force | Out-Null
+            & "C:\Windows\System32\cmd.exe" /c "copy /y `"$rustupToolchain\bin\*.exe`" `"$toolchainBin\`" >nul & copy /y `"$rustupToolchain\bin\*.dll`" `"$toolchainBin\`" >nul"
+        }
+        if (-not (Test-Path $stagedLib)) {
+            & "C:\Windows\System32\cmd.exe" /c "mklink /J `"$stagedLib`" `"$rustupToolchain\lib`" >nul"
+        }
         $env:PATH = "$toolchainBin;$env:PATH"
+        $env:RUSTC = Join-Path $toolchainBin "rustc.exe"
+        $script:CargoExePath = Join-Path $toolchainBin "cargo.exe"
     }
 
     # 1. Cargo discovery
     $cargoCmd = Get-Command "cargo" -ErrorAction SilentlyContinue
     if (-not $cargoCmd) {
         $candidateCargoDirs = @(
+            $toolchainBin,
+            (Join-Path $rustupToolchain "bin"),
             (Join-Path $env:USERPROFILE ".cargo\bin"),
             "C:\Users\oyesanyf\.cargo\bin",
             (Join-Path $env:ProgramFiles "Rust\bin")
@@ -280,7 +294,11 @@ if (-not $SkipBuild) {
             }
         }
 
-        & cargo build --release -p osoosi-cli
+        if ($script:CargoExePath -and (Test-Path $script:CargoExePath)) {
+            & $script:CargoExePath build --release -p osoosi-cli
+        } else {
+            & cargo build --release -p osoosi-cli
+        }
         if ($LASTEXITCODE -eq 0) {
             $buildSucceeded = $true
             break
