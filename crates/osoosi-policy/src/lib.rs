@@ -20,11 +20,13 @@ pub mod verified;
 pub mod voters;
 
 pub mod admin;
+pub mod breakout_gate;
 pub mod ioc;
 pub mod mitre_kb;
 pub mod sandbox_surface;
 pub mod sigma;
 
+pub use breakout_gate::*;
 pub use mitre_kb::*;
 
 pub use crate::admin::*;

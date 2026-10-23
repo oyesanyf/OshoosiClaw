@@ -561,7 +561,7 @@ impl PolicyEngine {
         let voter_weight_multipliers = Arc::new(DashMap::new());
         if let Ok(weights) = memory.load_voter_weights() {
             for (voter_name, weight) in weights {
-                voter_weight_multipliers.insert(voter_name, weight.clamp(0.25, 2.5));
+                voter_weight_multipliers.insert(voter_name, weight.clamp(0.50, 2.5));
             }
         }
         Self {
@@ -626,6 +626,13 @@ impl PolicyEngine {
             total = guard.len(),
             "[CONSENSUS] registered threat voter"
         );
+    }
+
+    /// Evaluates any downstream operating-system or agent event (`HostSecurityEvent`) against the
+    /// 7-Ring Cedar Reference Monitor, `CausalSecurityGraph`, and `RevocationBoundCapabilityCache`.
+    /// Emits a deterministic `PolicyDecisionRecord` containing `(policy_decision_id, causal_event_id, policy_version)`.
+    pub fn evaluate(&self, event: &HostSecurityEvent) -> crate::breakout_gate::PolicyDecisionRecord {
+        crate::breakout_gate::global_ring7_authorizer().evaluate_os_event(event)
     }
 
     /// Spawns long-running background tasks for threat intelligence synchronization.
@@ -722,7 +729,7 @@ impl PolicyEngine {
                 .get(&voter.name())
                 .map(|v| *v)
                 .unwrap_or(1.0)
-                .clamp(0.25, 2.5);
+                .clamp(0.50, 2.5);
             if let serde_json::Value::Object(ref mut map) = s {
                 map.insert("weight_multiplier".to_string(), serde_json::json!(mult));
             } else {
@@ -736,7 +743,8 @@ impl PolicyEngine {
         serde_json::Value::Object(out)
     }
 
-    /// Adjust voter weights based on feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]) and persist to SQLite.
+    /// Adjust voter weights based on feedback (+delta for TP, -delta for FP, clamped to safe floor [0.50, 2.5]) and persist to SQLite.
+    /// Anti-Reward-Hacking Invariant: Negative RL rewards can never mute a voter below `0.50`.
     pub fn update_voter_weights_from_feedback(&self, is_true_positive: bool, delta: f32) {
         let mut names: std::collections::HashSet<String> = self
             .voter_weight_multipliers
@@ -755,16 +763,31 @@ impl PolicyEngine {
                 .map(|v| *v)
                 .unwrap_or(1.0);
             let next = if is_true_positive {
-                (current + delta).clamp(0.25, 2.5)
+                (current + delta).clamp(0.50, 2.5)
             } else {
-                (current - delta).clamp(0.25, 2.5)
+                (current - delta).clamp(0.50, 2.5)
             };
             self.voter_weight_multipliers.insert(name.clone(), next);
             let _ = self.memory.save_voter_weight(&name, next);
         }
     }
 
-    /// Calibrate specific voter weights based on consensus feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]) and persist to SQLite.
+    /// Updates voter weights ONLY when `observer_confidence == "VERIFIED"`, enforcing the
+    /// Separate-Learning-from-Authority anti-reward-hacking safeguard (`floor = 0.50`).
+    pub fn update_voter_weights_from_verified_feedback(
+        &self,
+        is_true_positive: bool,
+        delta: f32,
+        observer_confidence: &str,
+    ) -> bool {
+        if !observer_confidence.eq_ignore_ascii_case("VERIFIED") {
+            return false;
+        }
+        self.update_voter_weights_from_feedback(is_true_positive, delta);
+        true
+    }
+
+    /// Calibrate specific voter weights based on consensus feedback (+delta for TP, -delta for FP, clamped [0.50, 2.5]) and persist to SQLite.
     pub fn update_specific_voter_weights(
         &self,
         voter_names: &[String],
@@ -778,9 +801,9 @@ impl PolicyEngine {
                 .map(|v| *v)
                 .unwrap_or(1.0);
             let next = if is_true_positive {
-                (current + delta).clamp(0.25, 2.5)
+                (current + delta).clamp(0.50, 2.5)
             } else {
-                (current - delta).clamp(0.25, 2.5)
+                (current - delta).clamp(0.50, 2.5)
             };
             self.voter_weight_multipliers.insert(name.clone(), next);
             let _ = self.memory.save_voter_weight(name, next);
@@ -963,7 +986,7 @@ impl PolicyEngine {
                     .get(&vname)
                     .map(|v| *v)
                     .unwrap_or(1.0)
-                    .clamp(0.25, 2.5);
+                    .clamp(0.50, 2.5);
                 if res.weight > 0.0 {
                     res.weight *= mult;
                 }
@@ -1021,7 +1044,40 @@ impl PolicyEngine {
             }
         }
 
-        // Active behavioral threats (Sigma, memory, live network) override NSRL/Trusted-Vendor static known-good
+        // Mandatory Continuous Cedar & Ring 7 Capability Gate for agent-originated OS effects:
+        // A compromised, spoofed (weight < 0.0), or timed-out voter can NEVER turn a Cedar forbid into permission.
+        if event.data.get("SessionId").is_some()
+            || event.data.get("AgentSessionId").is_some()
+            || event
+                .data
+                .get("EnforceCedarGate")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            let cedar_dec = self.evaluate(event);
+            if !cedar_dec.allowed {
+                let reason = format!(
+                    "[Cedar-Ring7-Forbid ({} / {})]: {}",
+                    cedar_dec.policy_decision_id, cedar_dec.causal_event_id, cedar_dec.reason
+                );
+                total_score += 2.97;
+                vote_count += 1;
+                signature.add_reason(reason.clone());
+                is_threat = true;
+                evidence_votes.push(EvidenceVote {
+                    result: VoteResult {
+                        confidence: 0.99,
+                        reason,
+                        weight: 3.0,
+                    },
+                    class: EvidenceClass::Behavior,
+                    reliability: 1.0,
+                    strong_action: true,
+                });
+            }
+        }
+
+        // Active behavioral threats (Sigma, memory, live network, Cedar forbid) override NSRL/Trusted-Vendor static known-good
         let has_behavioral_or_active_threat = evidence_votes.iter().any(|v| {
             matches!(
                 v.class,

@@ -187,6 +187,9 @@ pub struct RuntimeAlignmentScanner {
     benign_analysis_tools: HashSet<String>,
 }
 
+/// Canonical alias for `RuntimeAlignmentScanner` used by the 7-Ring Breakout Prevention suite.
+pub type RuntimeTraceAlignmentScanner = RuntimeAlignmentScanner;
+
 static GLOBAL_ALIGNMENT_SCANNER: OnceLock<Arc<RuntimeAlignmentScanner>> = OnceLock::new();
 
 /// Returns the process-wide singleton `RuntimeAlignmentScanner`.

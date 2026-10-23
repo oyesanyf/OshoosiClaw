@@ -746,6 +746,10 @@ impl AgentAnomalyDetector {
                 "alignment_scanner".to_string(),
                 self.alignment_scanner.get_status_summary(),
             );
+            obj.insert(
+                "breakout_prevention".to_string(),
+                crate::breakout_prevention::get_breakout_prevention_summary(),
+            );
         }
         status
     }

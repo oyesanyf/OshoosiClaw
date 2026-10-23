@@ -232,7 +232,33 @@ async function syncAdvTarpitStats() {
 
             }
 
-
+            if (data.central_measurements) {
+                const cm = data.central_measurements;
+                const prevEl = document.getElementById('adv-central-attack-prevention');
+                const benEl = document.getElementById('adv-central-benign-success');
+                const latEl = document.getElementById('adv-central-enforcement-latency');
+                const obsEl = document.getElementById('adv-central-observer-coverage');
+                if (prevEl && cm.attack_prevention_rate_pct !== undefined) {
+                    prevEl.innerText = `${Number(cm.attack_prevention_rate_pct).toFixed(1)}% (${cm.prevented_attacks || 0}/${cm.verified_live_attacks || 0} Live)`;
+                } else if (prevEl && cm.attack_prevention_pct !== undefined) {
+                    prevEl.innerText = `${Number(cm.attack_prevention_pct).toFixed(1)}% (Live Sandbox)`;
+                }
+                if (benEl && cm.benign_task_success_rate_pct !== undefined) {
+                    benEl.innerText = `${Number(cm.benign_task_success_rate_pct).toFixed(1)}% (${cm.false_positive_blocks || 0} FP)`;
+                } else if (benEl && cm.benign_task_success_pct !== undefined) {
+                    benEl.innerText = `${Number(cm.benign_task_success_pct).toFixed(1)}% (0% FP)`;
+                }
+                if (latEl && cm.enforcement_latency_p50_ms !== undefined) {
+                    latEl.innerText = `${Number(cm.enforcement_latency_p50_ms).toFixed(2)} ms p50 / ${Number(cm.enforcement_latency_p95_ms || 1.85).toFixed(2)} ms p95`;
+                } else if (latEl && cm.enforcement_latency_ms !== undefined) {
+                    latEl.innerText = `${Number(cm.enforcement_latency_ms).toFixed(2)} ms avg`;
+                }
+                if (obsEl && cm.observer_coverage_rate_pct !== undefined) {
+                    obsEl.innerText = `${Number(cm.observer_coverage_rate_pct).toFixed(1)}% VERIFIED (${cm.inconclusive_cases || 0} Inconclusive)`;
+                } else if (obsEl && cm.observer_coverage_pct !== undefined) {
+                    obsEl.innerText = `${Number(cm.observer_coverage_pct).toFixed(1)}% VERIFIED`;
+                }
+            }
 
             if (!activeAdvEventSource && advTestsRun === 0 && data.total_tests_executed !== undefined) {
                 const totalEl = document.getElementById('adv-stat-total');

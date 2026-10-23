@@ -76,6 +76,13 @@ pub mod agent_egress;
 pub mod blocking_manager;
 pub mod byzantine;
 pub mod causal_ai;
+pub mod causal_graph;
+pub use causal_graph::{
+    AdversarialRegressionCase, AuthorityLevel, CausalEdgeType, CausalEventRecord,
+    CausalSecurityGraph, CausalVerdict, ConfusedDeputyBrokerRouter, DeclassificationResult,
+    FileClassification, OsEffectType, ProcessInstanceIdentity, ServiceIdentityKeyStore,
+    TransitiveTaintReport, WorkflowSequenceMatch,
+};
 pub mod correlator;
 pub mod fhe_coordinator;
 pub mod killchain;
