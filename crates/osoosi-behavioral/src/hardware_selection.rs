@@ -250,6 +250,17 @@ fn probe_native_windows_gpu() -> Option<(String, u64, u64)> {
 
 /// Windows GPU detection: tries native registry probe first, falls back to WMIC.
 #[cfg(target_os = "windows")]
+fn probe_native_windows_gpu_first() -> Option<(String, u64, u64)> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(gpu) = probe_native_windows_gpu() {
+            return Some(gpu);
+        }
+    }
+    None
+}
+
+#[allow(dead_code)]
 fn probe_windows_gpu() -> Option<(String, u64, u64)> {
     if let Some(gpu) = probe_native_windows_gpu() {
         return Some(gpu);
@@ -264,9 +275,11 @@ fn probe_windows_gpu() -> Option<(String, u64, u64)> {
 
 /// Query system resources (CPU, RAM, GPU, Disks).
 pub fn query_system_resources() -> SystemResourceSummary {
-    let mut sys = System::new_all();
-    sys.refresh_cpu();
-    sys.refresh_memory();
+    let sys = System::new_with_specifics(
+        sysinfo::RefreshKind::new()
+            .with_cpu(sysinfo::CpuRefreshKind::everything())
+            .with_memory(sysinfo::MemoryRefreshKind::everything()),
+    );
 
     let cpu_name = sys
         .cpus()
@@ -281,9 +294,9 @@ pub fn query_system_resources() -> SystemResourceSummary {
         ((sys.available_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
 
     let (gpu_name, total_vram_mb, free_vram_mb, has_gpu) =
-        if let Some((name, tot, free)) = probe_nvidia_gpu() {
+        if let Some((name, tot, free)) = probe_native_windows_gpu_first() {
             (name, tot, free, true)
-        } else if let Some((name, tot, free)) = probe_windows_gpu() {
+        } else if let Some((name, tot, free)) = probe_nvidia_gpu() {
             (name, tot, free, true)
         } else {
             ("No dedicated GPU detected".to_string(), 0, 0, false)
@@ -668,7 +681,8 @@ pub async fn query_installed_ollama_models(ollama_endpoint: &str) -> Vec<String>
 
     if !tags_url.is_empty() {
         if let Ok(client) = reqwest::Client::builder()
-            .timeout(Duration::from_secs(4))
+            .connect_timeout(Duration::from_millis(250))
+            .timeout(Duration::from_millis(400))
             .build()
         {
             if let Ok(resp) = client.get(&tags_url).send().await {

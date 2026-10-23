@@ -55,6 +55,10 @@ def test_endpoints():
         "/api/mesh/validation-report",
         "/api/mesh/zone-rollup-status",
         "/api/ai-feeds/status",
+        "/api/models/calibrated",
+        "/api/sbom",
+        "/api/disk-cleanup/status",
+        "/api/system/disk-status",
     ]
 
     print("\n" + "="*70)

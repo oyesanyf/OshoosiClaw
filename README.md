@@ -227,6 +227,7 @@ When you access the dashboard on port `3030`, navigate directly to any primary s
 | [`#killchain`](#killchain) | **Kill-Chain & Containment** | MITRE ATT&CK progression timeline, 1-click reversible network isolation, and process memory tarpit controls. |
 | [`#agent-anomalies`](#agent-anomalies) | **Agent Anomaly Defense** | Real-time monitoring for AI worker agents, OWASP Top 10 for Agentic AI violations, and CanaryCage sandbox confinement logs. |
 | [`#threats`](#threats) | **Threat Intelligence** | Multi-voter consensus findings matrix, Bayesian confidence scores, SQLite detection records, and quarantine file manager. |
+| [`#utilities`](#utilities) | **Utilities, Models, SBOM & Disk Cleanup** | Sub-500ms hardware-calibrated AI model selector, CycloneDX 1.5 / SPDX 2.3 SBOM exporter (`/api/sbom`), and 5-tier autonomous disk/WAL/Cargo cleanup engine (`/api/disk-cleanup/status`). |
 
 ---
 

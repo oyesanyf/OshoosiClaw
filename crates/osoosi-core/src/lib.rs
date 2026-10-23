@@ -38,6 +38,13 @@ pub mod gossip;
 pub mod hardened;
 pub mod hybrid_runtime;
 pub mod landlock;
+pub mod disk_cleanup;
+pub use disk_cleanup::{
+    evaluate_disk_pressure, get_disk_cleanup_policy, get_disk_cleanup_status_snapshot,
+    run_autonomous_disk_cleanup_sweep, spawn_autonomous_disk_cleanup_watchdog,
+    update_disk_cleanup_policy, DiskCleanupPolicy, DiskCleanupStatusSnapshot,
+    DiskCleanupSweepReport, DiskCleanupTierResult, DiskPressureLevel,
+};
 pub mod memory_watchdog;
 pub mod military;
 pub mod mitre;
@@ -4310,6 +4317,7 @@ impl EdrOrchestrator {
             "temp_cache_bytes": temp_cache_bytes,
             "temp_cache_count": temp_cache_count,
             "formatted_temp_cache": crate::log_retention::LogRetentionManager::format_bytes(temp_cache_bytes),
+            "autonomous_cleanup": crate::disk_cleanup::get_disk_cleanup_status_snapshot(),
         })
     }
 
@@ -4617,6 +4625,11 @@ impl EdrOrchestrator {
             bytes_freed += sum.bytes_freed;
         }
 
+        // 2f. 5-Tier Autonomous Build-Cache, WAL & Telemetry Cleanup Sweep
+        let sweep_mode = if effective_days == 0 { "deep_cargo" } else { "standard" };
+        let autonomous_sweep = crate::disk_cleanup::run_autonomous_disk_cleanup_sweep(sweep_mode);
+        bytes_freed = bytes_freed.saturating_add(autonomous_sweep.bytes_freed);
+
         // 3. OS Working-Set Trim
         let working_set_trimmed = crate::memory_watchdog::trim_process_working_set();
 
@@ -4655,8 +4668,9 @@ impl EdrOrchestrator {
     }
 
     pub async fn run_maintenance_loop(&self) {
-        info!("EDR Maintenance Loop started with dynamic pressure awareness (2-hour cycle).");
-        let mut interval = tokio::time::interval(Duration::from_secs(3600 * 2));
+        crate::disk_cleanup::spawn_autonomous_disk_cleanup_watchdog();
+        info!("EDR Maintenance Loop started with dynamic pressure awareness (15-minute autonomous cycle).");
+        let mut interval = tokio::time::interval(Duration::from_secs(900));
         loop {
             interval.tick().await;
             let disk_status = self.get_dynamic_disk_status();
