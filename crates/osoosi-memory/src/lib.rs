@@ -2145,40 +2145,45 @@ impl MemoryStore {
 
     /// Retrieve the most recent consensus findings up to `limit`.
     pub fn get_consensus_findings(&self, limit: usize) -> anyhow::Result<Vec<ConsensusFinding>> {
-        let conn = self.conn.lock();
-        let query_limit = (limit * 10).max(200) as i64;
-        let mut stmt = conn.prepare(
-            "SELECT id, hash_blake3, process_name, file_path, verdict,
-                    confidence, detector_count, voters_summary, action_taken, evaluated_at
-             FROM consensus_findings
-             ORDER BY evaluated_at DESC
-             LIMIT ?1",
-        )?;
-        let rows: Vec<ConsensusFinding> = stmt
-            .query_map(params![query_limit], |row| {
-                let evaluated_at_str: String = row.get(9)?;
-                let evaluated_at = chrono::DateTime::parse_from_rfc3339(&evaluated_at_str)
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
-                    .unwrap_or_else(|_| chrono::Utc::now());
-                Ok(ConsensusFinding {
-                    id: row.get(0)?,
-                    hash_blake3: row.get(1)?,
-                    process_name: row.get(2)?,
-                    file_path: row.get(3)?,
-                    verdict: row.get(4)?,
-                    confidence: row.get(5)?,
-                    detector_count: row.get(6)?,
-                    voters_summary: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
-                    action_taken: row.get(8)?,
-                    evaluated_at,
-                })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-        drop(stmt);
+        let query_limit = (limit * 3).max(60) as i64;
+        let rows: Vec<ConsensusFinding> = {
+            let conn = self.conn.lock();
+            let mut stmt = conn.prepare(
+                "SELECT id, hash_blake3, process_name, file_path, verdict,
+                        confidence, detector_count, voters_summary, action_taken, evaluated_at
+                 FROM consensus_findings
+                 ORDER BY evaluated_at DESC
+                 LIMIT ?1",
+            )?;
+            let mapped = stmt
+                .query_map(params![query_limit], |row| {
+                    let evaluated_at_str: String = row.get(9)?;
+                    let evaluated_at = chrono::DateTime::parse_from_rfc3339(&evaluated_at_str)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now());
+                    Ok(ConsensusFinding {
+                        id: row.get(0)?,
+                        hash_blake3: row.get(1)?,
+                        process_name: row.get(2)?,
+                        file_path: row.get(3)?,
+                        verdict: row.get(4)?,
+                        confidence: row.get(5)?,
+                        detector_count: row.get(6)?,
+                        voters_summary: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                        action_taken: row.get(8)?,
+                        evaluated_at,
+                    })
+                })?
+                .filter_map(|r| r.ok())
+                .collect();
+            mapped
+        };
 
         let mut seen = std::collections::HashSet::new();
         let mut out = Vec::new();
+        let mut pending_updates: Vec<ConsensusFinding> = Vec::new();
+        let mut pending_clean: Vec<(String, Option<String>, Option<String>, String)> = Vec::new();
+
         for mut finding in rows {
             let orig_hash = finding.hash_blake3.clone();
             let orig_proc = finding.process_name.clone();
@@ -2253,22 +2258,7 @@ impl MemoryStore {
                 || finding.verdict != orig_verdict
                 || finding.action_taken != orig_action
             {
-                let _ = conn.execute(
-                    "UPDATE consensus_findings
-                     SET hash_blake3 = ?1, process_name = ?2, file_path = ?3,
-                         verdict = ?4, confidence = ?5, voters_summary = ?6, action_taken = ?7
-                     WHERE id = ?8",
-                    params![
-                        finding.hash_blake3,
-                        finding.process_name,
-                        finding.file_path,
-                        finding.verdict,
-                        finding.confidence,
-                        finding.voters_summary,
-                        finding.action_taken,
-                        finding.id,
-                    ],
-                );
+                pending_updates.push(finding.clone());
             }
 
             if finding.verdict.eq_ignore_ascii_case("benign")
@@ -2300,17 +2290,13 @@ impl MemoryStore {
                         | "cscript.exe"
                         | "wscript.exe"
                 );
-                if !is_lolbin {
-                    let _ = conn.execute(
-                        "INSERT OR IGNORE INTO known_clean_hashes (hash_blake3, process_name, file_path, marked_at, source)
-                         VALUES (?1, ?2, ?3, ?4, 'consensus_benign')",
-                        params![
-                            finding.hash_blake3,
-                            finding.process_name,
-                            finding.file_path,
-                            finding.evaluated_at.to_rfc3339(),
-                        ],
-                    );
+                if !is_lolbin && !self.clean_hashes_cache.read().contains(&finding.hash_blake3) {
+                    pending_clean.push((
+                        finding.hash_blake3.clone(),
+                        finding.process_name.clone(),
+                        finding.file_path.clone(),
+                        finding.evaluated_at.to_rfc3339(),
+                    ));
                     self.clean_hashes_cache
                         .write()
                         .insert(finding.hash_blake3.clone());
@@ -2333,6 +2319,40 @@ impl MemoryStore {
                 }
             }
         }
+
+        if !pending_updates.is_empty() || !pending_clean.is_empty() {
+            if let Some(mut conn) = self.conn.try_lock_for(std::time::Duration::from_millis(15)) {
+                if let Ok(tx) = conn.transaction() {
+                    for u in &pending_updates {
+                        let _ = tx.execute(
+                            "UPDATE consensus_findings
+                             SET hash_blake3 = ?1, process_name = ?2, file_path = ?3,
+                                 verdict = ?4, confidence = ?5, voters_summary = ?6, action_taken = ?7
+                             WHERE id = ?8",
+                            params![
+                                u.hash_blake3,
+                                u.process_name,
+                                u.file_path,
+                                u.verdict,
+                                u.confidence,
+                                u.voters_summary,
+                                u.action_taken,
+                                u.id,
+                            ],
+                        );
+                    }
+                    for (h, p, fp, ts) in &pending_clean {
+                        let _ = tx.execute(
+                            "INSERT OR IGNORE INTO known_clean_hashes (hash_blake3, process_name, file_path, marked_at, source)
+                             VALUES (?1, ?2, ?3, ?4, 'consensus_benign')",
+                            params![h, p, fp, ts],
+                        );
+                    }
+                    let _ = tx.commit();
+                }
+            }
+        }
+
         Ok(out)
     }
 
@@ -2446,8 +2466,6 @@ impl MemoryStore {
 
     /// Retrieve list of clean ignored hashes up to `limit`.
     pub fn get_clean_ignored_hashes(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
-        // First ensure consensus_findings have been normalized/reclassified so benign entries are available
-        let _ = self.get_consensus_findings(limit.max(50));
 
         let conn = self.conn.lock();
         let _ = conn.execute(
@@ -2686,6 +2704,10 @@ pub fn resolve_bare_process_to_full_path(proc_name: &str) -> String {
 }
 
 /// Computes the real BLAKE3 file hash from disk when possible, or a deterministic 64-hex BLAKE3 digest.
+static FILE_BLAKE3_MEM_CACHE: std::sync::OnceLock<
+    parking_lot::RwLock<std::collections::HashMap<String, String>>,
+> = std::sync::OnceLock::new();
+
 pub fn compute_real_or_deterministic_hash(
     existing_hash: &str,
     file_path: Option<&str>,
@@ -2695,6 +2717,17 @@ pub fn compute_real_or_deterministic_hash(
     let h = existing_hash.trim();
     if !h.is_empty() && h != "no-hash" && h != "unknown" && h.len() >= 32 {
         return h.to_ascii_lowercase();
+    }
+    let cache = FILE_BLAKE3_MEM_CACHE.get_or_init(|| parking_lot::RwLock::new(std::collections::HashMap::new()));
+    let cache_key = format!(
+        "{}:{}:{}",
+        file_path.unwrap_or(""),
+        process_name.unwrap_or(""),
+        verdict
+    )
+    .to_ascii_lowercase();
+    if let Some(cached) = cache.read().get(&cache_key).cloned() {
+        return cached;
     }
     if let Some(fp) = file_path {
         let norm_fp = resolve_bare_process_to_full_path(&normalize_nt_device_path_in_memory(fp));
@@ -2720,9 +2753,11 @@ pub fn compute_real_or_deterministic_hash(
             .to_hex()
             .to_string();
     }
-    blake3::hash(format!("osoosi:consensus:system:{}", verdict).as_bytes())
+    let fallback = blake3::hash(format!("osoosi:consensus:system:{}", verdict).as_bytes())
         .to_hex()
-        .to_string()
+        .to_string();
+    cache.write().insert(cache_key, fallback.clone());
+    fallback
 }
 
 /// Determines whether a consensus finding was vetoed or belongs to a verified benign system/dev binary without active exploit markers.
