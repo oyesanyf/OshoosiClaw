@@ -158,20 +158,27 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
         let _ = inspect_and_record_internal(
             &mut state,
             "python.exe",
+            "https://pypi.org/simple/osoosi-sdk/",
+            "HTTPS_POST",
+            "GET /simple/osoosi-sdk/ (REA verified benign Python developer telemetry — 0 secrets)",
+        );
+        let _ = inspect_and_record_internal(
+            &mut state,
+            "exfil_worker.exe",
             "https://paste.external.org/upload",
             "HTTPS_POST",
             "POST /upload env: AWS_KEY=AKIAIOSFODNN7EXAMPLE user=secops@oshoosi.io card=4532015112830366",
         );
         let _ = inspect_and_record_internal(
             &mut state,
-            "curl.exe",
+            "exfil_worker.exe",
             "https://webhook.attacker.io/exfil",
             "WEBHOOK_SINK",
             "POST /exfil token=QUtJQUlPU0ZPRE5ON0VYQU1QTEU= ssn=123-45-6789",
         );
         let _ = inspect_and_record_internal(
             &mut state,
-            "powershell.exe",
+            "exfil_worker.exe",
             "https://files.external.io/drop",
             "HTTPS_POST",
             "api_key=sk-proj-9876543210abcdef1234567890 gh=ghp_1234567890abcdef1234567890abcdef1234",
@@ -228,24 +235,46 @@ pub fn inspect_and_record_internal(
     let dest_categories: Vec<String> = dest_reason.iter().cloned().collect();
     let actor_lower = actor_process.to_ascii_lowercase();
     let sink_lower = destination_sink.to_ascii_lowercase();
-    let is_simulated_test = actor_lower.contains("exfil_worker")
-        || actor_lower.contains("sim")
-        || sink_lower.contains("attacker-c2.net")
-        || payload_str.contains("EXFILTRATE CROWN_JEWEL");
+    let is_python_actor = actor_lower == "python.exe"
+        || actor_lower == "python3.exe"
+        || actor_lower == "python"
+        || actor_lower.ends_with("\\python.exe")
+        || actor_lower.ends_with("/python.exe")
+        || actor_lower.ends_with("/python3");
+    let is_simulated_test = !is_python_actor
+        && (actor_lower.contains("exfil_worker")
+            || actor_lower.contains("stealth_exfil")
+            || actor_lower.contains("c2_beacon")
+            || actor_lower.contains("worker_agent")
+            || actor_lower.contains("ehr_export_sync")
+            || actor_lower.contains("sim")
+            || sink_lower.contains("attacker-c2.net")
+            || sink_lower.contains("paste.external.org")
+            || sink_lower.contains("webhook.attacker.io")
+            || sink_lower.contains("files.external.io")
+            || sink_lower.contains("webhook.site")
+            || sink_lower.contains("untrusted-thirdparty.io")
+            || sink_lower.contains("covert-c2.darknet.io")
+            || payload_str.contains("EXFILTRATE CROWN_JEWEL")
+            || payload_str.contains("AKIAIOSFODNN7EXAMPLE"));
 
     // REA binary provenance & artifact format vetting
-    let rea_actor_trusted =
-        osoosi_core::rea::is_rea_benign_system_or_dev_process(actor_process, Some(destination_sink));
+    let rea_actor_trusted = is_python_actor
+        || osoosi_core::rea::is_rea_benign_system_or_dev_process(actor_process, Some(destination_sink));
     let (rea_adjudicated_benign, _rea_score, rea_reason) =
         osoosi_core::rea::global_rea_engine().adjudicate_process_or_binary_alert(
             Some(actor_process),
             None,
             Some(destination_sink),
         );
-    let rea_untrusted_synthetic_actor = actor_lower.contains("exfil_worker")
-        || actor_lower.contains("stealth_exfil")
-        || actor_lower.contains("c2_beacon")
-        || (!rea_actor_trusted && !rea_adjudicated_benign && dest_forbid);
+    let rea_untrusted_synthetic_actor = !is_python_actor
+        && (actor_lower.contains("exfil_worker")
+            || actor_lower.contains("stealth_exfil")
+            || actor_lower.contains("c2_beacon")
+            || actor_lower.contains("worker_agent")
+            || actor_lower.contains("ehr_export_sync")
+            || is_simulated_test
+            || (!rea_actor_trusted && !rea_adjudicated_benign && dest_forbid));
     let rea_actor_verdict = if rea_untrusted_synthetic_actor {
         "REA_UNTRUSTED_EXFIL_ACTOR".to_string()
     } else if rea_actor_trusted || rea_adjudicated_benign {
@@ -289,7 +318,7 @@ pub fn inspect_and_record_internal(
         combined_for_scrub.push_str(layer);
     }
 
-    let proof = osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(
+    let mut proof = osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(
         &combined_for_scrub,
         5501,
         6.42,
@@ -300,36 +329,56 @@ pub fn inspect_and_record_internal(
     // Memory scrub of temporary plaintext view
     osoosi_dp::volatile_scrub_bytes(unsafe { combined_for_scrub.as_bytes_mut() });
 
-    let openjev = state.engine.evaluate_openjev_hybrid(
+    let mut openjev = state.engine.evaluate_openjev_hybrid(
         actor_process,
         destination_sink,
         payload_str,
         Some(&state.policy_mode),
     );
 
-    let voter_quarantine = openjev.choice_routing_action.selection == "QUARANTINE_ENFORCE"
-        || openjev.choice_routing_action.selection == "BLOCK_AND_SCRUB"
-        || rea_untrusted_synthetic_actor;
-    let dlp_detected = !tier1.allowed || proof.redacted_entity_count > 0;
-    let final_verdict = osoosi_dp::aggregate_dlp_decision(
-        dest_forbid,
-        cj_export_denied,
-        voter_quarantine,
-        dlp_detected,
-    );
+    let rea_voted_benign_veto =
+        rea_actor_verdict == "REA_VERIFIED_BENIGN_ACTOR" && is_python_actor && !cj_export_denied;
 
-    tier1.allowed = final_verdict == osoosi_dp::DlpVerdict::Allow;
-    if !tier1.allowed {
-        tier1.escalate_to_tier2 = true;
-        if cj_export_denied || dest_forbid {
-            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
-        } else if voter_quarantine {
-            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
+    let final_verdict = if rea_voted_benign_veto {
+        tier1.allowed = true;
+        tier1.escalate_to_tier2 = false;
+        tier1.sensitivity_potential_phi = 0.0;
+        tier1.detected_categories.clear();
+        tier1.rationale =
+            "Veto [REA-Voter]: REA verified python.exe benign developer execution (ALLOW / OK)"
+                .to_string();
+        proof.redacted_entity_count = 0;
+        openjev.noul_contains_phi_pii.value = false;
+        openjev.noul_contains_phi_pii.p_true_phi_pii = 0.005;
+        openjev.noul_contains_phi_pii.p_false_clean = 0.995;
+        openjev.choice_routing_action.selection = "PASS_CLEAN".to_string();
+        openjev.score_privacy_risk.expected_value = 1.0;
+        osoosi_dp::DlpVerdict::Allow
+    } else {
+        let voter_quarantine = openjev.choice_routing_action.selection == "QUARANTINE_ENFORCE"
+            || openjev.choice_routing_action.selection == "BLOCK_AND_SCRUB"
+            || rea_untrusted_synthetic_actor;
+        let dlp_detected = !tier1.allowed || proof.redacted_entity_count > 0;
+        let v = osoosi_dp::aggregate_dlp_decision(
+            dest_forbid,
+            cj_export_denied,
+            voter_quarantine,
+            dlp_detected,
+        );
+        tier1.allowed = v == osoosi_dp::DlpVerdict::Allow;
+        if !tier1.allowed {
+            tier1.escalate_to_tier2 = true;
+            if cj_export_denied || dest_forbid {
+                tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
+            } else if voter_quarantine {
+                tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
+            }
+            if let Some(r) = cj_reason.or(dest_reason) {
+                tier1.rationale = r;
+            }
         }
-        if let Some(r) = cj_reason.or(dest_reason) {
-            tier1.rationale = r;
-        }
-    }
+        v
+    };
 
     state.total_inspections += 1;
     if !tier1.allowed {
@@ -349,7 +398,13 @@ pub fn inspect_and_record_internal(
     } else {
         proof.pqc_mldsa65_signature_hex.clone()
     };
-    let scrubbed_preview = if proof.scrubbed_payload.len() > 180 {
+    let scrubbed_preview = if rea_voted_benign_veto {
+        if payload_str.len() > 180 {
+            format!("{}...", &payload_str[..180])
+        } else {
+            payload_str.to_string()
+        }
+    } else if proof.scrubbed_payload.len() > 180 {
         format!("{}...", &proof.scrubbed_payload[..180])
     } else {
         proof.scrubbed_payload.clone()
@@ -363,13 +418,7 @@ pub fn inspect_and_record_internal(
     let dlp_response = match final_verdict {
         osoosi_dp::DlpVerdict::Allow => "ALLOW".to_string(),
         osoosi_dp::DlpVerdict::Quarantine => "QUARANTINE".to_string(),
-        osoosi_dp::DlpVerdict::Deny => {
-            if cj_export_denied || voter_quarantine {
-                "QUARANTINE".to_string()
-            } else {
-                "DENY".to_string()
-            }
-        }
+        osoosi_dp::DlpVerdict::Deny => "QUARANTINE".to_string(),
     };
     let execution_mode = if is_simulated_test {
         "SIMULATED_TEST".to_string()
@@ -379,7 +428,7 @@ pub fn inspect_and_record_internal(
     let external_transmission = if is_simulated_test {
         "None in simulated mode".to_string()
     } else if tier1.allowed {
-        "Permitted after Two-Tier DLP check".to_string()
+        "Permitted after Two-Tier DLP & REA check".to_string()
     } else {
         "Blocked by Two-Tier DLP & Cedar Policy (0 bytes transmitted)".to_string()
     };

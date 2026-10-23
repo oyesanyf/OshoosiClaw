@@ -5595,13 +5595,17 @@ impl SiqueryEngine {
                         for r in rows.filter_map(|r| r.ok()) {
                             let (mut score, mut verdict) = (r.11, r.13.clone());
                             // Re-verify persisted non-poisoned rows against calibrated URL & ASN rules
+                            let mut tags_out = r.12.clone();
                             if !r.12.contains("SWARM_POISONED_LINEAGE") {
                                 let (re_score, re_verdict) = Self::score_url_risk(&r.3);
                                 score = re_score;
                                 verdict = re_verdict.to_string();
+                                if score == 0.0 {
+                                    tags_out.clear();
+                                }
                             }
                             let _ = insert_stmt.execute(rusqlite::params![
-                                r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, score, r.12, verdict
+                                r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, score, tags_out, verdict
                             ]);
                             count += 1;
                         }
@@ -5785,7 +5789,9 @@ impl SiqueryEngine {
                                     tab_url.split("://").nth(1).unwrap_or(&tab_url).split('/').next().unwrap_or("").split(':').next().unwrap_or("").to_string()
                                 };
                                 let (mut score, mut verdict) = Self::score_url_risk(&tab_url);
-                                if danger_type > 0 {
+                                if matches!(danger_type, 2..=4)
+                                    && Self::classify_trusted_asn_or_local_endpoint(&host, "").is_none()
+                                {
                                     score = score.max(0.85);
                                     verdict = "suspicious";
                                 }

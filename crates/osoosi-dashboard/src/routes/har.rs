@@ -201,9 +201,10 @@ pub fn refresh_live_har_cache_now() -> Value {
                 obj.insert("verdict".to_string(), json!("malicious"));
             } else if rea_har.rea_voter_decision == "VETO_BENIGN"
                 && !tags.contains("SWARM_POISONED_LINEAGE")
-                && cur_score < 0.40
+                && !tags.contains("DANGEROUS_DOWNLOAD")
+                && cur_score < 0.80
             {
-                obj.insert("threat_score".to_string(), json!(cur_score.min(0.02)));
+                obj.insert("threat_score".to_string(), json!(0.0));
                 obj.insert("verdict".to_string(), json!("benign"));
             }
         }

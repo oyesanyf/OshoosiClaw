@@ -4,6 +4,7 @@ pub mod mesh;
 pub mod owasp;
 pub mod skyrl;
 pub mod vcdb;
+pub mod workflow_guard;
 
 use axum::Router;
 use crate::DashboardState;
@@ -18,4 +19,5 @@ pub fn mount_routes() -> Router<DashboardState> {
         .merge(owasp::routes())
         .merge(vcdb::routes())
         .merge(skyrl::routes())
+        .merge(workflow_guard::routes())
 }

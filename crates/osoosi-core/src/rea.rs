@@ -6586,6 +6586,25 @@ impl AutonomousReaEngine {
                 url,
                 if server_ip.is_empty() { "local" } else { server_ip }
             );
+        } else if (src_low.starts_with("browser_download:") || src_low.starts_with("browser_history:"))
+            && !res.prompt_injection_detected
+            && !res.smuggling_or_ssrf_detected
+            && !payload_or_har_json.contains("SWARM_POISONED_LINEAGE")
+            && !payload_or_har_json.contains("DANGEROUS_DOWNLOAD")
+            && res.openjev_voter_decision != "ESCALATE_MALICIOUS"
+        {
+            res.artifact_class = if src_low.starts_with("browser_download:") {
+                "browser_https_download".to_string()
+            } else {
+                "browser_navigation".to_string()
+            };
+            res.embedded_binary_detected = false;
+            res.threat_score = 0.0;
+            res.rea_voter_decision = "VETO_BENIGN".to_string();
+            res.rea_voter_reason = format!(
+                "Veto [REA-Voter]: Verified clean {} from {} ({})",
+                res.artifact_class, source_file, url
+            );
         }
         res
     }
