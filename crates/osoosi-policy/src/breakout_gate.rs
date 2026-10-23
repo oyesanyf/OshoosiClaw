@@ -1339,6 +1339,68 @@ pub struct LoopbackClassification {
 pub struct LoopbackIpcAuthorizer;
 
 impl LoopbackIpcAuthorizer {
+    /// Mathematically classifies a URL host as loopback/unspecified. Accepts bracketed IPv6 literals as
+    /// returned by `url::Url::host_str()` (e.g. `[::1]`), IPv4-mapped IPv6 (`::ffff:127.0.0.1`), the
+    /// whole `127.0.0.0/8` block, `0.0.0.0` / `::`, and the reserved `localhost` / `*.localhost` names
+    /// (RFC 6761). Never relies on partial string prefixes.
+    pub fn is_loopback_or_unspecified_host(host: &str) -> bool {
+        let h = host.trim().trim_end_matches('.').to_ascii_lowercase();
+        let h = h.trim_start_matches('[').trim_end_matches(']');
+        if h == "localhost" || h.ends_with(".localhost") {
+            return true;
+        }
+        match h.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback() || v4.is_unspecified(),
+            Ok(std::net::IpAddr::V6(v6)) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6
+                        .to_ipv4_mapped()
+                        .map(|v4| v4.is_loopback() || v4.is_unspecified())
+                        .unwrap_or(false)
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Builds a canonical `http://authority[:port]/path` endpoint from a telemetry destination field
+    /// (Sysmon `DestinationHostname` / `DestinationIp`) and port. The destination may already carry a
+    /// scheme, an explicit port, and/or a request path (e.g. `127.0.0.1:11434/api/generate`); the port
+    /// is only inserted when the authority has none, and is never appended after the path. Bare IPv6
+    /// literals are bracketed so the resulting URL parses unambiguously.
+    pub fn build_network_target(destination: &str, port: u16) -> String {
+        let dest = destination.trim();
+        if dest.contains("://") {
+            return dest.to_string();
+        }
+        if dest.parse::<std::net::Ipv6Addr>().is_ok() {
+            return if port > 0 {
+                format!("http://[{}]:{}", dest, port)
+            } else {
+                format!("http://[{}]", dest)
+            };
+        }
+        let (authority, path) = match dest.find('/') {
+            Some(idx) => (&dest[..idx], &dest[idx..]),
+            None => (dest, ""),
+        };
+        let has_explicit_port = if let Some(rest) = authority.strip_prefix('[') {
+            rest.split_once(']')
+                .map(|(_, after)| after.starts_with(':'))
+                .unwrap_or(false)
+        } else {
+            authority
+                .rsplit_once(':')
+                .map(|(_, p)| !p.is_empty() && p.parse::<u16>().is_ok())
+                .unwrap_or(false)
+        };
+        if has_explicit_port || port == 0 {
+            format!("http://{}{}", authority, path)
+        } else {
+            format!("http://{}:{}{}", authority, port, path)
+        }
+    }
+
     pub fn classify_target(target: &str, http_method_or_op: &str) -> LoopbackClassification {
         let lower = target.trim().to_ascii_lowercase();
         let op_upper = http_method_or_op.trim().to_ascii_uppercase();
@@ -1414,12 +1476,7 @@ impl LoopbackIpcAuthorizer {
             (h, p, path_part.to_string())
         };
 
-        let is_loopback = host == "localhost"
-            || host == "127.0.0.1"
-            || host.starts_with("127.")
-            || host == "::1"
-            || host == "0.0.0.0"
-            || host.starts_with("::ffff:127.");
+        let is_loopback = Self::is_loopback_or_unspecified_host(&host);
 
         if !is_loopback {
             let is_write = matches!(
@@ -1548,6 +1605,12 @@ pub struct CapabilityCacheKey {
     pub policy_version: String,
     pub taint_epoch: u64,
     pub revocation_seq: u64,
+    /// BLAKE3 fingerprint over every decision input read by `evaluate_cedar_request` (principal
+    /// session/authority, resource attributes, request context, live causal-graph state, and workload
+    /// degradation mode). A cached permit may only be replayed for a request whose complete decision
+    /// inputs are identical; any context that could produce a forbid (egress budget exhaustion, taint,
+    /// semantic similarity, missing capability, terminated session) yields a different key.
+    pub decision_input_fingerprint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2450,6 +2513,57 @@ impl Ring7CapabilityEffectAuthorizer {
         context.revocation_seq = revocation_seq;
         context.policy_version = active_policy_version.clone();
 
+        // Resolve live causal-graph state and workload mode BEFORE consulting the capability cache so a
+        // cached permit can never mask a session termination, capability revocation, or overload
+        // quarantine that happened without an epoch advance.
+        let graph_state = self.causal_graph.resolve_state(
+            Some(&principal.process_instance_key),
+            None,
+            &principal.session_id,
+        );
+        let workload_mode = self
+            .overload_controller
+            .workload_modes
+            .get(&principal.session_id)
+            .map(|m| *m.value());
+
+        let decision_input_fingerprint = blake3::hash(
+            format!(
+                "{}|{}|{:?}|{:?}|{}|{:?}|{}|{}|{}|{}|{:?}|{:?}|{}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
+                principal.session_id,
+                principal.process_instance_key,
+                principal.authority_level,
+                principal.approved_capabilities,
+                resource.resource_type,
+                resource.classification,
+                resource.is_signed_and_allowlisted,
+                resource.is_approved_child_binary,
+                resource.is_task_scoped_destination,
+                resource.is_declassified_approved_sink,
+                resource.service_identity,
+                resource.service_operation,
+                context.has_crown_jewel_taint,
+                context.highest_data_classification,
+                context.taint_level.to_bits(),
+                context.cumulative_salami_turns,
+                context.has_approved_capability,
+                context.has_cryptographic_declassification,
+                context.upward_authority_promotion_attempted,
+                context.egress_budget_exceeded,
+                context.semantic_cosine_similarity.to_bits(),
+                context.covert_jitter_applied_ms,
+                graph_state.session_terminated,
+                graph_state.capabilities_revoked,
+                graph_state.has_crown_jewel_taint,
+                graph_state.taint_level.to_bits(),
+                graph_state.cumulative_turns,
+                workload_mode,
+            )
+            .as_bytes(),
+        )
+        .to_hex()
+        .to_string();
+
         let cache_key = CapabilityCacheKey {
             principal_id: principal.principal_id.clone(),
             action,
@@ -2457,6 +2571,7 @@ impl Ring7CapabilityEffectAuthorizer {
             policy_version: active_policy_version.clone(),
             taint_epoch,
             revocation_seq,
+            decision_input_fingerprint,
         };
 
         if let Some(cached) = self.capability_cache.get_cached(&cache_key) {
@@ -2482,11 +2597,6 @@ impl Ring7CapabilityEffectAuthorizer {
         let mut matched_forbid = Vec::new();
         let mut matched_permit = Vec::new();
 
-        let graph_state = self.causal_graph.resolve_state(
-            Some(&principal.process_instance_key),
-            None,
-            &principal.session_id,
-        );
         if graph_state.session_terminated {
             matched_forbid.push("CEDAR-FORBID-SESSION-TERMINATED".to_string());
         }
@@ -2494,12 +2604,8 @@ impl Ring7CapabilityEffectAuthorizer {
             matched_forbid.push("CEDAR-FORBID-CAPABILITIES-REVOKED".to_string());
         }
 
-        if let Some(w_mode) = self
-            .overload_controller
-            .workload_modes
-            .get(&principal.session_id)
-        {
-            match *w_mode.value() {
+        if let Some(w_mode) = workload_mode {
+            match w_mode {
                 WorkloadDegradationMode::QuarantineAffectedWorkloadOnly => {
                     matched_forbid.push("CEDAR-FORBID-WORKLOAD-OVERLOAD-QUARANTINED".to_string());
                 }
@@ -3159,13 +3265,9 @@ impl Ring7CapabilityEffectAuthorizer {
             }
             3 | 5156 => {
                 let target_endpoint = if !dest_host.is_empty() {
-                    if dest_port > 0 {
-                        format!("http://{}:{}", dest_host, dest_port)
-                    } else {
-                        dest_host.clone()
-                    }
+                    LoopbackIpcAuthorizer::build_network_target(&dest_host, dest_port)
                 } else if !dest_ip.is_empty() {
-                    format!("http://{}:{}", dest_ip, dest_port.max(80))
+                    LoopbackIpcAuthorizer::build_network_target(&dest_ip, dest_port.max(80))
                 } else {
                     cmdline.clone()
                 };
@@ -3662,6 +3764,91 @@ impl PlatformAttestationGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_loopback_host_classification_is_mathematical_including_bracketed_ipv6() {
+        for host in [
+            "localhost",
+            "api.localhost",
+            "127.0.0.1",
+            "127.45.6.7",
+            "0.0.0.0",
+            "::1",
+            "[::1]",
+            "::",
+            "[::ffff:127.0.0.1]",
+            "::ffff:7f00:1",
+        ] {
+            assert!(
+                LoopbackIpcAuthorizer::is_loopback_or_unspecified_host(host),
+                "{host} must classify as loopback/unspecified"
+            );
+        }
+        for host in [
+            "github.com",
+            "128.0.0.1",
+            "[2001:db8::1]",
+            "127.example.com",
+            "localhost.evil.com",
+        ] {
+            assert!(
+                !LoopbackIpcAuthorizer::is_loopback_or_unspecified_host(host),
+                "{host} must not classify as loopback"
+            );
+        }
+
+        // IPv6-bracketed Chrome DevTools endpoint must be recognized as privileged local control.
+        let cdp_v6 =
+            LoopbackIpcAuthorizer::classify_target("http://[::1]:9333/devtools/browser/123", "GET");
+        assert!(cdp_v6.is_local_or_ipc);
+        assert!(cdp_v6.requires_privileged_capability);
+        assert_eq!(
+            cdp_v6.mapped_cedar_action,
+            CedarAction::PrivilegedLocalControl
+        );
+    }
+
+    #[test]
+    fn test_cached_permit_cannot_bypass_context_dependent_forbid() {
+        let auth = Ring7CapabilityEffectAuthorizer::new();
+        let principal = CedarPrincipal {
+            principal_id: "agent-cache-regression".to_string(),
+            session_id: "sess-cache-regression".to_string(),
+            process_instance_key: "proc:7100:1:agent:sess-cache-regression".to_string(),
+            authority_level: AuthorityLevel::L2AuthorizedUserObjective,
+            approved_capabilities: vec!["ExternalWrite".to_string()],
+        };
+        auth.set_session_egress_budget(&principal.session_id, 1, 1024);
+
+        let first = auth.execute_guarded_external_write(
+            &principal,
+            "https://github.com/oyesanyf/OshoosiClaw",
+            "ping",
+            true,
+            None,
+            || (),
+        );
+        assert!(matches!(first, GuardedEffectOutcome::Committed { .. }));
+
+        // Same principal/action/resource: the earlier permit is cached, but the exhausted egress budget
+        // changes the decision inputs, so the request must be evaluated afresh and denied.
+        let effects = std::sync::atomic::AtomicUsize::new(0);
+        let second = auth.execute_guarded_external_write(
+            &principal,
+            "https://github.com/oyesanyf/OshoosiClaw",
+            "covert-bit",
+            true,
+            None,
+            || {
+                effects.fetch_add(1, Ordering::SeqCst);
+            },
+        );
+        assert!(
+            matches!(second, GuardedEffectOutcome::DeniedPreExecution { .. }),
+            "cached permit replayed past CEDAR-FORBID-003C egress budget: {second:?}"
+        );
+        assert_eq!(effects.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn test_authority_hierarchy_and_signed_workspace_allowlist() {

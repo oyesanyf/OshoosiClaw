@@ -119,9 +119,12 @@ pub fn verify_escalation_ladder(action: &ResponseAction, confidence: f64) -> boo
 /// ∀ binary ∈ AGENT_BINARIES : scan_event(binary) = None
 pub fn is_agent_binary(process_name: &str) -> bool {
     let lower = process_name.to_lowercase();
-    let basename = std::path::Path::new(&lower)
-        .file_name()
-        .and_then(|f| f.to_str())
+    // Split on both separators: telemetry from Windows hosts (`C:\...\osoosi.exe`) may be evaluated
+    // on Linux mesh nodes, where `std::path::Path` does not treat `\` as a separator.
+    let basename = lower
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|b| !b.is_empty())
         .unwrap_or(&lower);
 
     AGENT_BINARIES.contains(&basename)
