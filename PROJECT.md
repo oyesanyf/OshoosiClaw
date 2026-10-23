@@ -124,3 +124,8 @@ OshoosiClaw (OpenỌ̀ṣọ́ọ̀sì) is upgraded from isolated heuristic ring
 - `tests/strix_llm_adversarial_tester.py`: Python end-to-end multi-turn adversarial test harness.
 - `.agents/skills/agent-breakout-prevention/SKILL.md`: Persistent WikiSkill compilation.
 - `scripts/build_and_submit.ps1` & `scripts/solo_pr_ship.ps1`: Release compilation, Authenticode signing, WDSI submission, and Git PR shipping.
+
+## 2-Tier Classification Pipeline Architecture (REA & Magika Provenance)
+- **Tier 1 Outer Envelope Detection**: High-speed file magic and Google Magika deep-learning MIME classification over a bounded `256 * 1024 * 1024` (256 MiB) inspection buffer.
+- **Tier 2 PE CLR DataDirectory[14] Provenance**: Structural PE header parsing via `get_clr_runtime_header()`. Any PE image where the CLR Runtime Header `virtual_address == 0` or `size == 0` is unequivocally classified as native (`NativePe`) rather than managed CIL (`.NET`), preventing false-positive `.NET` misclassifications on large native Rust/C++ binaries.
+

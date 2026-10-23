@@ -26,7 +26,11 @@ describe('WebUI 19 Views & 5 Operational Modals Verification (Feature 14)', () =
         'skyrl',
         'agent-anomalies',
         'siquery',
-        'rea'
+        'rea',
+        'har-traffic',
+        'adversarial-tests',
+        'dlp',
+        'cicd-protection'
     ];
 
     const expectedModals = [
@@ -37,16 +41,16 @@ describe('WebUI 19 Views & 5 Operational Modals Verification (Feature 14)', () =
         'supervisor-modal'
     ];
 
-    it('should assert that all 19 navigation views exist with data-view attributes', () => {
+    it('should assert that all 23 navigation views exist with data-view attributes', () => {
         const dataViewMatches = [...htmlContent.matchAll(/data-view=["']([^"']+)["']/g)].map(m => m[1]);
-        assert.strictEqual(dataViewMatches.length, 19, 'Must contain exactly 19 data-view navigation items');
+        assert.strictEqual(dataViewMatches.length, 23, 'Must contain all 23 data-view navigation items');
 
         for (const view of expectedViews) {
             assert.ok(dataViewMatches.includes(view), `View '${view}' must be defined in sidebar navigation`);
         }
     });
 
-    it('should assert that corresponding view content sections exist for all 19 views', () => {
+    it('should assert that corresponding view content sections exist for all 23 views', () => {
         for (const view of expectedViews) {
             // View sections use id="<view>-view" or id="view-<view>" or id="<view>"
             const patterns = [

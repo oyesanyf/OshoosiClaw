@@ -20,7 +20,14 @@ const state = {
     telemetryChart: null,
     expandedDetails: new Set(),
     collapsedPanels: new Set((() => {
-        try { return JSON.parse(localStorage.getItem('oshoosi_collapsed_panels_v1') || '[]'); } catch (_) { return []; }
+        try {
+            const arr = JSON.parse(localStorage.getItem('oshoosi_collapsed_panels_v1') || '[]');
+            const set = new Set(Array.isArray(arr) ? arr : []);
+            if (localStorage.getItem('oshoosi_collapse_policy_engines') === 'true') {
+                set.add('detection-engines-body');
+            }
+            return Array.from(set);
+        } catch (_) { return []; }
     })()),
     collapsedEngineCategories: new Set((() => {
         try { return JSON.parse(localStorage.getItem('oshoosi_collapsed_engine_cats_v1') || '[]'); } catch (_) { return []; }
@@ -2059,6 +2066,48 @@ const POLICY_ENGINE_CATEGORY_DEFS = [
 /**
  * Render detection engines voter cards with collapsible categories and compact voter toggles
  */
+const DEFAULT_POLICY_VOTER_STATS = {
+    'SemanticIntent': { active: true, weight: 1.00, description: 'Tier-1 MRL EmbeddingGemma 2 & intra-session semantic drift scanner' },
+    'Trusted-Vendor': { active: true, weight: 0.95, description: 'Authenticode SHA-256 & Windows Security Catalog (CryptCATAdmin) verification' },
+    'Git-Noise-Filter': { active: true, weight: 0.90, description: 'Canonical developer Git/Cargo toolchain lineage & build noise filter' },
+    'NSRL-Veto': { active: true, weight: 1.00, description: 'NIST NSRL RDSv3 known-good cryptographic hash veto engine' },
+    'OTX-C2': { active: true, weight: 0.95, description: 'AlienVault OTX & TAXII 2.1 real-time C2 infrastructure feed matcher' },
+    'LLM-Reasoning': { active: true, weight: 1.00, description: 'Deep cognitive threat reasoning & multi-turn intent alignment judge' },
+    'Foundation-Sec-Reasoning': { active: true, weight: 1.00, description: 'Foundation-Sec-8B security domain specialist reasoning voter' },
+    'CISA-KEV': { active: true, weight: 0.95, description: 'CISA Known Exploited Vulnerabilities (KEV) active exploitation matcher' },
+    'NVD-CVE-Lookup': { active: true, weight: 0.90, description: 'Hybrid NVD CVE & EPSS vulnerability reachability correlation voter' },
+    'Behavioral-Threat-Model': { active: true, weight: 0.90, description: 'Calibrated Bayesian & SkyRL behavioral anomaly classifier' },
+    'Ai-Security-Audit-Voter': { active: true, weight: 1.00, description: 'MITRE ATLAS™ AI Defense · AML.T0043, AML.T0044, AML.T0048, AML.T0040' },
+    'Sigma-Voter': { active: true, weight: 0.85, description: 'Host security event & Sysmon rule detection matching' },
+    'Yara-X-Voter': { active: true, weight: 0.90, description: 'High-speed binary pattern matching & C2 beacon detector' },
+    'Behavioral-ML-Voter': { active: true, weight: 0.80, description: 'SecureBERT ONNX neural classifier & process heuristics' },
+    'MalConv2-Voter': { active: true, weight: 0.88, description: 'Raw byte-stream deep convolutional PE malware detector' },
+    'HollowsHunter-Voter': { active: true, weight: 0.95, description: 'Process hollowing, PE header stomping & unbacked RWX memory scanner' },
+    'Decompiler-Voter': { active: true, weight: 0.92, description: 'Autonomous native x86_64/ARM64 control-flow & syscall reconstruction' },
+    'Capa-Capability-Voter': { active: true, weight: 0.90, description: 'Mandiant CAPA executable capability & ATT&CK behavior extractor' },
+    'Floss-Obfuscation-Voter': { active: true, weight: 0.88, description: 'FLARE FLOSS stackstring, tightstring & XOR deobfuscation engine' },
+    'DotScope-CIL-Voter': { active: true, weight: 0.90, description: '.NET CLR DataDirectory[14] & CIL bytecode reflection inspector' },
+    'Rea-Reverse-Engineer-Voter': { active: true, weight: 1.00, description: 'Autonomous 4-layer dynamic trust & binary provenance reverse engineer' },
+    'OpenJev-Judge-Voter': { active: true, weight: 0.95, description: 'OpenJEV & RedactX zero-exploit exfiltration & exploitability judge' },
+    'DNS-Shield-Voter': { active: true, weight: 0.88, description: ' Shannon entropy DNS tunneling, DGA & covert beacon interceptor' },
+    'Har-L7-Traffic-Voter': { active: true, weight: 0.92, description: 'Continuous W3C HAR 1.2 L7 HTTP/TLS payload & header framing sensor' },
+    'ZeroDay-Anomaly-Voter': { active: true, weight: 0.94, description: 'Out-of-distribution zero-day syscall & memory entropy detector' },
+    'IOC-Feed-Voter': { active: true, weight: 0.90, description: 'Multi-source STIX/TAXII indicator of compromise correlation voter' },
+    'Memory-Injection-Voter': { active: true, weight: 0.96, description: 'Cross-process VirtualAllocEx, WriteProcessMemory & thread hijack guard' },
+    'Native-PE-Integrity-Voter': { active: true, weight: 0.92, description: 'PE Authenticode digest, section entropy & import table verifier' },
+    'Sandbox-Detonation-Voter': { active: true, weight: 0.94, description: 'AppContainer & Job Object pre-execution behavioral detonation voter' },
+    'CredentialGuard-LSASS-Voter': { active: true, weight: 1.00, description: 'LSASS handle stripping, SAM/NTDS.dit & DPAPI credential theft guard' },
+    'EDR-PhaseLock-Voter': { active: true, weight: 0.95, description: 'Phase-locked temporal sequence & kill-chain stage progression detector' },
+    'SpiderWeb-Deception-Voter': { active: true, weight: 0.98, description: 'Morphic Hyper-Web canary trap & honey-credential tripwire voter' },
+    'Mercury-Fluid-Voter': { active: true, weight: 0.89, description: 'Navier-Stokes lateral movement & network flow turbulence analyzer' },
+    'Nexus-Graph-Voter': { active: true, weight: 0.93, description: 'Persistent Causal Security Graph lineage & transitive taint verifier' },
+    'Agent-Breakout-Voter': { active: true, weight: 1.00, description: '7-Ring Cedar PARC & Dogwood MFOTL autonomous agent containment guard' },
+    'Cortex-Fusion-Voter': { active: true, weight: 0.95, description: 'Dempster-Shafer multi-sensor belief fusion & conflict resolver' },
+    'Authenticode-Catalog-Voter': { active: true, weight: 0.96, description: 'Windows catroot2 catalog & driver signature provenance validator' },
+    'Lolbin-Lineage-Voter': { active: true, weight: 0.91, description: 'Living-off-the-Land binary (LOLBin) command-line & parent tree auditor' },
+    'Ransomware-Canary-Voter': { active: true, weight: 1.00, description: 'High-speed mass file encryption & shadow-copy deletion tripwire' }
+};
+
 function renderDetectionStats(stats) {
     try {
         const container = document.getElementById('detection-engines-grid');
@@ -2071,12 +2120,7 @@ function renderDetectionStats(stats) {
         }
 
         const effectiveStats = (!stats || typeof stats !== 'object' || Array.isArray(stats) || Object.keys(stats).length === 0)
-            ? {
-                'Ai-Security-Audit-Voter': { active: true, weight: 1.00, description: 'MITRE ATLAS™ AI Defense · AML.T0043, AML.T0044, AML.T0048, AML.T0040' },
-                'Sigma-Voter': { active: true, weight: 0.85, description: 'Host security event & Sysmon rule detection matching' },
-                'Yara-X-Voter': { active: true, weight: 0.90, description: 'High-speed binary pattern matching & C2 beacon detector' },
-                'Behavioral-ML-Voter': { active: true, weight: 0.80, description: 'SecureBERT ONNX neural classifier & process heuristics' }
-            }
+            ? DEFAULT_POLICY_VOTER_STATS
             : stats;
 
         state.lastDetectionStats = effectiveStats;
@@ -2175,6 +2219,9 @@ function renderDetectionStats(stats) {
 
         container.innerHTML = html;
         updateEngineHeaderToggleButtons();
+        if (typeof syncCollapsedPanelsDOM === 'function') {
+            syncCollapsedPanelsDOM();
+        }
         if (window.lucide) lucide.createIcons();
     } catch (err) {
         console.error('[renderDetectionStats] Error:', err);
@@ -2183,6 +2230,8 @@ function renderDetectionStats(stats) {
         renderViewFallbackCard('detection-engines-grid', 'Detection Engines', err);
     }
 }
+window.renderDetectionStats = renderDetectionStats;
+window.renderEngines = renderDetectionStats;
 
 /**
  * Format threat title with MITRE technique badge and descriptive title
@@ -5826,11 +5875,26 @@ const PANEL_BUTTON_MAP = {
 function persistCollapsedPanelsState() {
     try {
         localStorage.setItem('oshoosi_collapsed_panels_v1', JSON.stringify(Array.from(state.collapsedPanels || [])));
+        localStorage.setItem(
+            'oshoosi_collapse_policy_engines',
+            (state.collapsedPanels && state.collapsedPanels.has('detection-engines-body')) ? 'true' : 'false'
+        );
     } catch (_) {}
 }
 
 function syncCollapsedPanelsDOM() {
     if (!state.collapsedPanels) state.collapsedPanels = new Set();
+    try {
+        const legacyFlag = localStorage.getItem('oshoosi_collapse_policy_engines');
+        if (legacyFlag === 'true') {
+            state.collapsedPanels.add('detection-engines-body');
+        } else if (legacyFlag === 'false' && state.collapsedPanels.has('detection-engines-body')) {
+            const persistedArr = JSON.parse(localStorage.getItem('oshoosi_collapsed_panels_v1') || '[]');
+            if (!Array.isArray(persistedArr) || !persistedArr.includes('detection-engines-body')) {
+                state.collapsedPanels.delete('detection-engines-body');
+            }
+        }
+    } catch (_) {}
     for (const [panelId, btnId] of Object.entries(PANEL_BUTTON_MAP)) {
         const el = document.getElementById(panelId) ||
             (panelId === 'zone-rec-body' ? document.getElementById('zone-recommendations') : null) ||
@@ -5846,15 +5910,21 @@ function syncCollapsedPanelsDOM() {
             }
         }
         if (btn) {
-            const targetText = isCollapsed ? 'Expand' : 'Collapse';
-            if (btn.innerText !== targetText) {
+            const closedLabel = panelId === 'detection-engines-body' ? 'Expand (39 Engines)' : 'Expand';
+            const targetText = isCollapsed ? closedLabel : 'Collapse';
+            if (btn.innerText !== targetText || btn.textContent !== targetText) {
                 btn.innerText = targetText;
+                btn.textContent = targetText;
             }
         }
         if (panelId === 'detection-engines-body') {
             const summaryEl = document.getElementById('detection-engines-collapsed-summary');
             if (summaryEl) {
                 summaryEl.style.display = isCollapsed ? 'block' : 'none';
+            }
+            const gridEl = document.getElementById('detection-engines-grid');
+            if (gridEl) {
+                gridEl.style.display = isCollapsed ? 'none' : 'grid';
             }
         }
     }
@@ -5875,27 +5945,43 @@ function togglePanel(panelId, btnId, defaultOpenText = 'Collapse', defaultClosed
 
     const isCollapsed = state.collapsedPanels.has(panelId);
     const openDisplay = panelId === 'nist-checklist-grid-main' ? 'grid' : 'block';
+    const closedLabel = (panelId === 'detection-engines-body' && defaultClosedText === 'Expand')
+        ? 'Expand (39 Engines)'
+        : defaultClosedText;
     if (isCollapsed) {
         state.collapsedPanels.delete(panelId);
         el.style.display = openDisplay;
-        if (btn) btn.innerText = defaultOpenText;
+        if (btn) {
+            btn.innerText = defaultOpenText;
+            btn.textContent = defaultOpenText;
+        }
     } else {
         state.collapsedPanels.add(panelId);
         el.style.display = 'none';
-        if (btn) btn.innerText = defaultClosedText;
+        if (btn) {
+            btn.innerText = closedLabel;
+            btn.textContent = closedLabel;
+        }
     }
     if (panelId === 'detection-engines-body') {
+        const nowCollapsed = state.collapsedPanels.has(panelId);
         const summaryEl = document.getElementById('detection-engines-collapsed-summary');
         if (summaryEl) {
-            summaryEl.style.display = state.collapsedPanels.has(panelId) ? 'block' : 'none';
+            summaryEl.style.display = nowCollapsed ? 'block' : 'none';
+        }
+        const gridEl = document.getElementById('detection-engines-grid');
+        if (gridEl) {
+            gridEl.style.display = nowCollapsed ? 'none' : 'grid';
         }
     }
     persistCollapsedPanelsState();
 }
 window.togglePanel = togglePanel;
+window.toggleDashboardPanel = togglePanel;
 
 function toggleNistChecklistPanel() { togglePanel('nist-checklist-grid-main', 'toggle-nist-checklist-btn'); }
-function toggleEnginesPanel() { togglePanel('detection-engines-body', 'toggle-engines-btn'); }
+function toggleEnginesPanel() { togglePanel('detection-engines-body', 'toggle-engines-btn', 'Collapse', 'Expand (39 Engines)'); }
+function togglePolicyEnginesCard() { return toggleEnginesPanel(); }
 function toggleMeshEffectivenessPanel() { togglePanel('mesh-effectiveness-body', 'toggle-mesh-eff-btn'); }
 function toggleTelemetryPanel() { togglePanel('telemetry-chart-body', 'toggle-telemetry-btn'); }
 function toggleThreatTimelinePanel() { togglePanel('threat-timeline-body', 'toggle-threat-timeline-panel-btn'); }
@@ -6020,6 +6106,7 @@ function toggleAllVoterCardsCompact() {
 
 window.toggleNistChecklistPanel = toggleNistChecklistPanel;
 window.toggleEnginesPanel = toggleEnginesPanel;
+window.togglePolicyEnginesCard = togglePolicyEnginesCard;
 window.toggleMeshEffectivenessPanel = toggleMeshEffectivenessPanel;
 window.toggleTelemetryPanel = toggleTelemetryPanel;
 window.toggleThreatTimelinePanel = toggleThreatTimelinePanel;

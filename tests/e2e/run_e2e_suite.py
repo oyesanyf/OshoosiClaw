@@ -57,7 +57,14 @@ def run_node_tests():
     print(f" [*] EXECUTING: Node.js WebUI Native Test Suite (node --test dashboard/tests/*.test.mjs)")
     print(f"======================================================================")
     start = time.perf_counter()
-    cmd = ["node", "--test", "dashboard/tests/webui_parity.test.mjs", "dashboard/tests/webui_views.test.mjs", "dashboard/tests/webui_buttons.test.mjs"]
+    cmd = [
+        "node",
+        "--test",
+        "dashboard/tests/webui_parity.test.mjs",
+        "dashboard/tests/webui_views.test.mjs",
+        "dashboard/tests/webui_buttons.test.mjs",
+        "dashboard/tests/webui_loading_indicators.test.mjs",
+    ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     duration = time.perf_counter() - start
 
@@ -66,13 +73,13 @@ def run_node_tests():
         print(proc.stderr, file=sys.stderr)
 
     success = (proc.returncode == 0)
-    print(f" [+] Node.js WebUI Suite Complete in {duration:.3f}s: {'SUCCESS (12/12)' if success else 'FAILED'}")
+    print(f" [+] Node.js WebUI Suite Complete in {duration:.3f}s: {'SUCCESS (21/21)' if success else 'FAILED'}")
 
     return {
         "suite": "Node.js WebUI Suite",
-        "total": 12,
-        "passed": 12 if success else 0,
-        "failed": 0 if success else 12,
+        "total": 21,
+        "passed": 21 if success else 0,
+        "failed": 0 if success else 21,
         "errors": 0,
         "duration_seconds": round(duration, 3),
         "success": success
