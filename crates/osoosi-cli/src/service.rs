@@ -5,7 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
-use tracing::{error, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::error;
+use tracing::{info, warn};
 
 pub const SERVICE_NAME: &str = "OsoosiEDR";
 pub const SERVICE_DISPLAY_NAME: &str = "OpenOsoosi Autonomous EDR Service";
@@ -60,6 +62,7 @@ pub enum ServiceAction {
     Run,
 }
 
+#[cfg(target_os = "windows")]
 fn run_sc_cmd(args: &[&str]) -> anyhow::Result<std::process::Output> {
     let output = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
         .args(args)
@@ -154,6 +157,7 @@ pub fn ensure_service_working_directory() {
 
 /// Helper to ensure the command is running with elevated administrator privileges.
 /// If not elevated on Windows, requests UAC elevation via PowerShell `Start-Process -Verb RunAs`.
+#[cfg(target_os = "windows")]
 fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> {
     #[cfg(windows)]
     {

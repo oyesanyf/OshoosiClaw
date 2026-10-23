@@ -14,7 +14,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::debug;
+use tracing::{info, warn};
 
 // CTL_CODE calculation
 pub const FILE_DEVICE_UNKNOWN: u32 = 0x00000022;

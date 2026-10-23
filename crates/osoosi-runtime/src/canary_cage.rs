@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+#[cfg(target_os = "windows")]
 use tracing::error;
 
 /// High-priority alert emitted when a caged process touches an ephemeral canary trap.
@@ -150,7 +151,7 @@ pub struct CagedChild {
     #[cfg(not(windows))]
     memfd: i32,
     #[cfg(not(windows))]
-    target_fd: i32,
+    _target_fd: i32,
     #[cfg(not(windows))]
     shutdown: Arc<AtomicBool>,
     #[cfg(not(windows))]
@@ -238,7 +239,7 @@ impl CagedChild {
 
         #[cfg(not(windows))]
         {
-            let start = Instant::now();
+            let start = self.start_time;
             loop {
                 // Check if canary trap was touched
                 if self.canary_triggered.load(Ordering::SeqCst) {
@@ -906,11 +907,11 @@ impl CanaryCage {
 
                         // Check 2: Size modification on memfd
                         let mut st: libc::stat = unsafe { std::mem::zeroed() };
-                        if unsafe { libc::fstat(memfd, &mut st) } == 0 {
-                            if st.st_size != last_size {
-                                trap_hit = true;
-                                last_size = st.st_size;
-                            }
+                        if unsafe { libc::fstat(memfd, &mut st) } == 0
+                            && st.st_size != last_size
+                        {
+                            trap_hit = true;
+                            last_size = st.st_size;
                         }
 
                         // Check 3: Check /proc/<pid>/fdinfo/<target_fd> if accessible
@@ -980,7 +981,7 @@ impl CanaryCage {
                 start_time: Instant::now(),
                 child,
                 memfd,
-                target_fd: high_fd,
+                _target_fd: high_fd,
                 shutdown,
                 watcher_thread: Some(watcher_thread),
             })

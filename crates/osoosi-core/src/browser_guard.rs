@@ -136,6 +136,19 @@ impl BrowserGuard {
                 self.find_chrome_style_profiles(&chrome_path, BrowserType::Chrome, &mut profiles);
             }
 
+            let edge_path = Path::new(&home).join(".config").join("microsoft-edge");
+            if edge_path.exists() {
+                self.find_chrome_style_profiles(&edge_path, BrowserType::Edge, &mut profiles);
+            }
+
+            let brave_path = Path::new(&home)
+                .join(".config")
+                .join("BraveSoftware")
+                .join("Brave-Browser");
+            if brave_path.exists() {
+                self.find_chrome_style_profiles(&brave_path, BrowserType::Brave, &mut profiles);
+            }
+
             let firefox_path = Path::new(&home).join(".mozilla").join("firefox");
             if firefox_path.exists() {
                 // Parse profiles.ini (omitted for brevity, just scan dirs)

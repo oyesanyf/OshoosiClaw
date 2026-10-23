@@ -11,7 +11,9 @@ use osoosi_types::SecuredExecutor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::error;
+use tracing::{info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {

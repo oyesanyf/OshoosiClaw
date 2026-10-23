@@ -69,7 +69,7 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
                 dim_idx
             );
             assert!(
-                val >= -1.0 && val <= 1.0,
+                (-1.0..=1.0).contains(&val),
                 "Case {}, Dim {}: Feature value {:.4} violates bounds [-1.0, 1.0]",
                 case_idx,
                 dim_idx,
@@ -77,7 +77,7 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
             );
             // Normalized features should actually be in [0.0, 1.0]
             assert!(
-                val >= 0.0 && val <= 1.0,
+                (0.0..=1.0).contains(&val),
                 "Case {}, Dim {}: Feature value {:.4} outside [0.0, 1.0]",
                 case_idx,
                 dim_idx,
@@ -116,7 +116,7 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
         assert!(discrete_idx <= 7);
         for &feat in &gym {
             assert!(
-                feat >= 0.0 && feat <= 1.0,
+                (0.0..=1.0).contains(&feat),
                 "Iter {}: feature {:.4} out of bounds",
                 iter,
                 feat
@@ -181,7 +181,7 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
     assert_eq!(initial_nudges.len(), 6);
     for (voter, &weight) in &initial_nudges {
         assert!(
-            weight >= 1.02 && weight <= 2.50,
+            (1.02..=2.50).contains(&weight),
             "Initial weight for {} is {:.4}, outside [1.02, 2.50]",
             voter,
             weight
@@ -239,7 +239,7 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
             w
         );
         assert!(
-            w >= 1.02 && w <= 2.50,
+            (1.02..=2.50).contains(&w),
             "Voter {} weight {:.4} outside [1.02, 2.50]",
             voter,
             w
@@ -254,7 +254,7 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
     let converged_nudges = controller.nudge_voter_weights();
     for (voter, &w) in &converged_nudges {
         assert!(
-            w >= 1.02 && w <= 2.50,
+            (1.02..=2.50).contains(&w),
             "Converged voter {} weight {:.4} outside [1.02, 2.50]",
             voter,
             w
@@ -279,7 +279,7 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
     let negative_nudges = controller.nudge_voter_weights();
     for (voter, &w) in &negative_nudges {
         assert!(
-            w >= 1.02 && w <= 2.50,
+            (1.02..=2.50).contains(&w),
             "Adversarial negative Q: voter {} weight {:.4} outside [1.02, 2.50]",
             voter,
             w
@@ -435,7 +435,7 @@ fn challenge_4_dp_csprng_laplace_distribution_and_causality_preservation() {
         // Assert empirical std is within 12% of theoretical Laplace standard deviation
         let std_ratio = sample_std / theoretical_std;
         assert!(
-            std_ratio >= 0.88 && std_ratio <= 1.12,
+            (0.88..=1.12).contains(&std_ratio),
             "Empirical std {:.4} deviates from theoretical Laplace std {:.4} (ratio: {:.4})",
             sample_std,
             theoretical_std,

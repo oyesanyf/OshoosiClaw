@@ -8,9 +8,14 @@
 //!   permanent host lockout.
 //! - Strict RAII handle lifetime management (`FwpmEngineClose0`) and raw pointer null checks.
 
-use anyhow::{anyhow, Result};
+#[cfg(windows)]
+use anyhow::anyhow;
+use anyhow::Result;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(windows)]
+use tracing::warn;
 
 #[cfg(windows)]
 use std::ffi::c_void;

@@ -544,14 +544,14 @@ impl PatchEngine {
                 let ver = String::from_utf8_lossy(&q.stdout)
                     .lines()
                     .next()
-                    .and_then(|l| l.split('-').last())
+                    .and_then(|l| l.rsplit('-').next())
                     .unwrap_or("<unknown>")
                     .to_string();
                 format!("apk:{}={}", _patch.component, ver)
             } else {
                 format!("pkg:{}=<unknown>", _patch.component)
             };
-            return Ok(marker);
+            Ok(marker)
         }
         #[cfg(target_os = "macos")]
         {

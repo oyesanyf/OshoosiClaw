@@ -21,6 +21,7 @@ fn firewall_persistence_path() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("config").join("firewall_rules.json"))
 }
 
+#[cfg(target_os = "windows")]
 fn save_blocked_rule(target: BlockedTarget) {
     let path = firewall_persistence_path();
     let mut rules: Vec<BlockedTarget> = std::fs::read_to_string(&path)
@@ -721,7 +722,7 @@ pub fn block_dns_destinations(
     {
         let msg = block_linux_remote_ips(&targets)?;
         schedule_dns_unblock(targets.clone(), dns_block_ttl_secs());
-        return Ok(msg);
+        Ok(msg)
     }
     #[cfg(target_os = "macos")]
     {

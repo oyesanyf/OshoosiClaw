@@ -367,7 +367,7 @@ impl SpiderEyes {
         {
             use std::io::{BufRead, BufReader};
             let file = std::fs::File::open(format!("/proc/{}/maps", pid))?;
-            for line in BufReader::new(file).lines().flatten() {
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
                 if line.contains(" r-xp ") || line.contains(" rwxp ") {
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     let range: Vec<&str> = parts[0].split('-').collect();

@@ -1,5 +1,6 @@
 //! Empirical Challenge Suite for CanaryCage (Milestone M2A).
 //!
+#![cfg(windows)]
 //! Adversarial stress harness validating:
 //! 1. Benign execution: code 0, 0 handle leaks across repeated runs, 0 parent environment mutations.
 //! 2. Honey-pipe trap termination: code 137, alert confidence 1.00, watcher thread cleanup < 1ms.

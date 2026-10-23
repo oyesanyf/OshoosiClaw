@@ -268,7 +268,7 @@ pub fn refresh_live_har_cache_now() -> Value {
 
         if verdict == "malicious" || score >= 0.8 {
             malicious_count += 1;
-        } else if verdict == "suspicious" || (score >= 0.4 && score < 0.8) {
+        } else if verdict == "suspicious" || (0.4..0.8).contains(&score) {
             suspicious_count += 1;
         } else {
             benign_count += 1;

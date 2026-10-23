@@ -763,7 +763,7 @@ pub fn run_intermediate_process_tree_health_probe() -> KillChainHealthProbeRepor
         required_healthy_probes: required_probes,
         eligible_for_early_rollback,
         rollback_watchdog_max_secs: watchdog_max_secs,
-        probe_interval_secs: probe_interval_secs,
+        probe_interval_secs,
         probe_hash_blake3,
         summary,
     }
@@ -1744,10 +1744,7 @@ pub fn authenticate_hybrid_credentials(
             .unwrap_or_default()
             .to_ascii_lowercase();
         let req_user = raw_user.trim().to_ascii_lowercase();
-        let short_user = req_user
-            .rsplit(|c| c == '\\' || c == '/')
-            .next()
-            .unwrap_or(&req_user);
+        let short_user = req_user.rsplit(['\\', '/']).next().unwrap_or(&req_user);
         let is_recognized = short_user == "admin"
             || short_user == "oyesanyf"
             || short_user == "administrator"

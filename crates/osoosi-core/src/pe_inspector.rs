@@ -326,11 +326,6 @@ fn inspect_stack_spoof(pid: u32) -> Result<bool> {
     Ok(spoofed)
 }
 
-#[cfg(not(target_os = "windows"))]
-fn inspect_stack_spoof(_pid: u32) -> Result<bool> {
-    Ok(false)
-}
-
 #[cfg(target_os = "windows")]
 unsafe fn inspect_handle(
     _handle: windows::Win32::Foundation::HANDLE,

@@ -125,7 +125,7 @@ fn test_deep_process_ancestry_tree_stress_and_stack_safety() -> Result<()> {
         "Crown-Jewel taint flag MUST survive 64 process generations"
     );
     assert!(
-        report.causal_chain.len() >= depth + 1,
+        report.causal_chain.len() > depth,
         "Causal chain must contain at least {} nodes, actual: {}",
         depth + 1,
         report.causal_chain.len()

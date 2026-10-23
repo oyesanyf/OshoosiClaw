@@ -358,6 +358,7 @@ pub fn clean_tier1_scratch_and_debug_targets(
 
         let debug_dir = target_dir.join("debug");
         if prune_debug && debug_dir.exists() {
+            #[cfg(target_os = "windows")]
             let (approx_b, approx_f) = compute_path_footprint(&debug_dir, 10_000);
             let purge_dir = target_dir.join(format!(
                 ".purge_debug_{}_{}",

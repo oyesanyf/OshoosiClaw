@@ -9,7 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, trace, warn};
+#[cfg(target_os = "windows")]
+use tracing::trace;
+use tracing::{info, warn};
 
 static GLOBAL_TRAPS: OnceLock<Arc<dashmap::DashMap<u32, Arc<AtomicBool>>>> = OnceLock::new();
 

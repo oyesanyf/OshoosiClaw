@@ -1789,7 +1789,10 @@ impl SiqueryEngine {
                 .exe()
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
+            #[cfg(target_os = "windows")]
             let mut cmdline = proc.cmd().join(" ");
+            #[cfg(not(target_os = "windows"))]
+            let cmdline = proc.cmd().join(" ");
             #[cfg(target_os = "windows")]
             if cmdline.trim().is_empty()
                 || cmdline.eq_ignore_ascii_case(name)
@@ -2563,7 +2566,7 @@ impl SiqueryEngine {
 
         #[cfg(not(target_os = "windows"))]
         {
-            for (if_name, _net) in networks.iter() {
+            for if_name in networks.keys() {
                 let _ = stmt.execute(rusqlite::params![
                     if_name,
                     "127.0.0.1",
@@ -2650,6 +2653,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `os_version` table with genuine host OS version, build, and architecture details.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // Mutated under Windows registry query
     fn populate_os_version(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO os_version (name, version, major, minor, build, platform, codename, arch) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
@@ -2776,6 +2780,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `products` table from installed software in Windows Registry.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows registry enumeration; inactive on Linux
     fn populate_products(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO products (name, version, install_location, install_date, vendor) VALUES (?, ?, ?, ?, ?);")
@@ -2942,6 +2947,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `launchd` table with auto-start daemons and services.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // count incremented only under Windows SCM query
     fn populate_launchd(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO launchd (path, name, label, program, run_at_load, keep_alive, on_demand, disabled, username, groupname, stdout_path, stderr_path, start_interval, program_arguments, watch_paths, queue_directories, inetd_compatibility, start_on_mount, root_directory, working_directory, process_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3023,6 +3029,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `launchd_overrides` table with autostart and delayed-autostart overrides.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // count incremented only under Windows Run registry query
     fn populate_launchd_overrides(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO launchd_overrides (label, key, value, uid, path) VALUES (?, ?, ?, ?, ?);")
@@ -3085,6 +3092,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_computer_info` table with genuine hardware manufacturer, model, and domain.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // Mutated under Windows BIOS query
     fn populate_wmi_computer_info(conn: &Connection, sys: &System) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_computer_info (computer_name, domain, manufacturer, model, number_of_processors, system_type) VALUES (?, ?, ?, ?, ?, ?);")
@@ -3125,6 +3133,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_os_version` table with genuine Windows OS build numbers, version, and memory visible.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // Mutated under Windows CurrentVersion query
     fn populate_wmi_os_version(conn: &Connection, sys: &System) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_os_version (build_number, csname, caption, free_physical_mem, free_virtual_mem, platform, version, major, manufacturer, minor, name, service_pack_major, service_pack_minor, size_stored_in_paging_file, total_virtual_mem_size, total_visible_mem_size, win_directory, install_date, last_boot_up_time, locale, os_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3207,6 +3216,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_services` table with genuine Windows Services from registry.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows SCM services enumeration; inactive on Linux
     fn populate_wmi_services(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_services (accept_pause, accept_stop, caption, description, display_name, error_control, exit_code, name, path_name, process_id, service_type, started, start_mode, start_name, state, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3369,6 +3379,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_hotfixes` table with installed Windows updates from CBS packages and Defender definitions.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // CBS package enumeration is Windows-only
     fn populate_wmi_hotfixes(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_hotfixes (caption, cs_name, description, fix_comments, hotfix_id, installed_by, installed_on, name, service_pack_in_effect, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3470,6 +3481,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_shares` table with SMB shares from Windows LanmanServer.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // seen set updated only under Windows LanmanServer query
     fn populate_wmi_shares(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_shares (allow_maximum, caption, description, maximum_allowed, name, path, status, type) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3525,6 +3537,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_bios` table with genuine system BIOS release date, manufacturer, and version.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // Mutated under Windows BIOS registry query
     fn populate_wmi_bios(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_bios (caption, manufacturer, name, release_date, serial_number, smbios_version, version) VALUES (?, ?, ?, ?, ?, ?, ?);")
@@ -3574,6 +3587,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_motherboard` table with genuine baseboard manufacturer and product.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // Mutated under Windows BaseBoard query
     fn populate_wmi_motherboard(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_motherboard (manufacturer, name, product, serial_number, version) VALUES (?, ?, ?, ?, ?);")
@@ -3615,6 +3629,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_processor` table with genuine CPU architecture, speed, core counts, and identifiers.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // Mutated under Windows Processor query
     fn populate_wmi_processor(conn: &Connection, sys: &System) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_processor (address_width, Architecture, caption, cores, cpu_status, current_clock_speed, current_voltage, data_width, description, device_id, ext_clock, family, l2_cache_size, l3_cache_size, load_percentage, logical_processors, manufacturer, max_clock_speed, name, number_of_cores, number_of_logical_processors, processor_id, processor_type, revision, role, socket_designation, status, stepping, upgrade_method, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3746,6 +3761,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_printers` table from Windows installed print spoolers.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows print spooler enumeration; inactive on Linux
     fn populate_wmi_printers(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_printers (attributes, caption, is_default, device_id, driver_name, horizontal_resolution, local, location, name, network, port_name, printer_state, printer_status, print_job_data_type, print_processor, server_name, shared, share_name, spool_enabled, status, vertical_resolution, work_offline) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3795,6 +3811,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_sound` table with audio controllers from Windows device class.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows sound device class enumeration; inactive on Linux
     fn populate_wmi_sound(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_sound (caption, description, device_id, dma_buffer_size, manufacturer, mpu_401_address, name, pnp_device_id, product_name, status, status_info) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3827,6 +3844,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_video` table with display adapters and graphics hardware info.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows video device class enumeration; inactive on Linux
     fn populate_wmi_video(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_video (adapter_compatibility, adapter_dac_type, adapter_ram, availability, caption, current_bits_per_pixel, current_horizontal_resolution, current_number_of_colors, current_refresh_rate, current_scan_mode, current_vertical_resolution, description, device_id, driver_date, driver_version, installed_display_drivers, max_refresh_rate, min_refresh_rate, monochrome, name, pnp_device_id, status, video_architecture, video_memory_type, video_mode_description, video_processor) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3886,6 +3904,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_monitors` table with attached display devices.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows monitor device class enumeration; inactive on Linux
     fn populate_wmi_monitors(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_monitors (availability, bandwidth, caption, description, device_id, display_type, is_locked, manufacturer, name, pixels_per_x_logical_inch, pixels_per_y_logical_inch, pnp_device_id, screen_height, screen_width, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3932,6 +3951,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_keyboard` table with attached keyboard devices.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows keyboard device class enumeration; inactive on Linux
     fn populate_wmi_keyboard(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_keyboard (availability, caption, description, device_id, is_locked, layout, name, number_of_function_keys, password, pnp_device_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -3971,6 +3991,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `wmi_pointing_device` table with mouse and pointing hardware.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows mouse device class enumeration; inactive on Linux
     fn populate_wmi_pointing_device(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO wmi_pointing_device (availability, caption, description, device_id, device_interface, double_speed_threshold, handedness, hardware_type, inf_file_name, inf_section, is_locked, manufacturer, name, number_of_buttons, pnp_device_id, pointing_type, quad_speed_threshold, resolution, sample_rate, status, synch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -4228,6 +4249,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `authenticodes` table.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows Authenticode catalog verification; inactive on Linux
     fn populate_authenticodes(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO authenticodes (path, original_program_name, serial_number, issuer_name, subject_name, result) VALUES (?, ?, ?, ?, ?, ?);")
@@ -4414,6 +4436,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `bitlocker_info` table.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows BitLocker volume query; inactive on Linux
     fn populate_bitlocker_info(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO bitlocker_info (drive_letter, persistent_volume_id, conversion_status, protection_status, encryption_method, lock_status) VALUES (?, ?, ?, ?, ?, ?);")
@@ -7120,6 +7143,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `certificates` table.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows certificate store query; inactive on Linux
     fn populate_certificates(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO certificates (common_name, subject, issuer, not_valid_before, not_valid_after, sha1, store_location, store) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
@@ -7176,6 +7200,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `defender_status` table from Windows Defender registry keys.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows Defender registry query; inactive on Linux
     fn populate_defender_status(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO defender_status (antivirus_enabled, realtime_protection_enabled, antispyware_enabled, behavior_monitor_enabled, ioav_protection_enabled, nis_enabled, tamper_protection_enabled) VALUES (?, ?, ?, ?, ?, ?, ?);")
@@ -7234,6 +7259,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `dns_cache` table via `ipconfig /displaydns` and hosts resolution.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows DNS cache display; inactive on Linux
     fn populate_dns_cache(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached(
@@ -7377,6 +7403,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `drivers` table from Windows Service Control Manager driver services.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows driver service query; inactive on Linux
     fn populate_drivers(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO drivers (name, display_name, path, state, start_mode, signed) VALUES (?, ?, ?, ?, ?, ?);")
@@ -7442,6 +7469,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `firewall_rules` table from Windows Firewall registry database.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows Firewall registry query; inactive on Linux
     fn populate_firewall_rules(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO firewall_rules (name, app_name, action, direction, protocol, local_ports, remote_ports, remote_addresses, enabled, profile) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -7510,6 +7538,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `pnp_devices` table from Windows Enum registry subkeys.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows PnP Enum registry query; inactive on Linux
     fn populate_pnp_devices(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO pnp_devices (device_id, name, description, pnp_class, status) VALUES (?, ?, ?, ?, ?);")
@@ -7545,6 +7574,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `registry` table for standard baseline keys.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows standard registry query; inactive on Linux
     fn populate_registry(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO registry (key, path, name, type, data, mtime) VALUES (?, ?, ?, ?, ?, ?);")
@@ -7737,6 +7767,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `shimcache` table.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_variables, unused_mut))] // Windows AppCompatCache query; inactive on Linux
     fn populate_shimcache(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached(
@@ -7798,6 +7829,7 @@ impl SiqueryEngine {
     }
 
     /// Populates `tpm_info` table with real hardware TPM 2.0 telemetry.
+    #[cfg_attr(not(target_os = "windows"), allow(unused_mut))] // TPM manufacturer fields mutated only under Windows WMI query
     fn populate_tpm_info(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO tpm_info (spec_version, manufacturer_id, manufacturer_name, manufacturer_version, enabled, activated, owned, tpm_present, tpm_ready, device_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
@@ -8987,6 +9019,7 @@ fn enumerate_process_modules(pid: u32) -> Vec<(String, String, String, String)> 
 }
 
 /// Extracts a numeric PID from a pipe name like `crashpad_1234_xxx` or `1234.5678`.
+#[cfg(windows)]
 fn extract_pid_from_pipename(name: &str) -> Option<u32> {
     for part in name.split(|c: char| !c.is_ascii_digit()) {
         if !part.is_empty() {
@@ -9014,6 +9047,7 @@ fn extract_pid_hint(query: &str) -> Option<u32> {
 }
 
 /// Translates Win32 TCP MIB state integers to canonical RFC / osquery string names.
+#[cfg(windows)]
 fn tcp_state_name(state: u32) -> &'static str {
     match state {
         1 => "CLOSED",

@@ -2462,7 +2462,7 @@ impl Ring7CapabilityEffectAuthorizer {
                 0.0
             } else {
                 let shared = payload_words.intersection(&asset.concept_keywords).count();
-                (shared as f64) / (asset.concept_keywords.len().min(12).max(1) as f64)
+                (shared as f64) / (asset.concept_keywords.len().clamp(1, 12) as f64)
             };
             let combined = (cosine * 0.65 + overlap.min(1.0) * 0.55).clamp(0.0, 1.0);
             if combined > max_score {
@@ -2815,6 +2815,7 @@ impl Ring7CapabilityEffectAuthorizer {
         record
     }
 
+    #[allow(clippy::result_large_err)] // Public capability guard API returns PolicyDecisionRecord by value to prevent heap allocation on security fast-path
     pub fn execute_guarded_sensitive_read<F, R>(
         &self,
         principal: &CedarPrincipal,
@@ -3645,13 +3646,8 @@ impl AdvisoryModelJudgmentGuard {
     ) -> AdvisoryModelEvaluationResult {
         // Model can escalate a risk (turning `true` into `false` if `!model_claimed_benign && model_confidence >= 0.90`),
         // but can NEVER turn `deterministic_cedar_allowed == false` into `true`, nor grant capabilities or declassify taint!
-        let final_allowed = if !deterministic_cedar_allowed {
-            false
-        } else if !model_claimed_benign && model_confidence >= 0.90 {
-            false
-        } else {
-            true
-        };
+        let final_allowed =
+            deterministic_cedar_allowed && !(!model_claimed_benign && model_confidence >= 0.90);
 
         let override_rejected = !deterministic_cedar_allowed
             && (model_claimed_benign
