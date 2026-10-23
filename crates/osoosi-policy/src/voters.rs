@@ -1033,13 +1033,27 @@ impl ThreatVoter for YaraXMemoryVoter {
 /// KEV `product` text → compare **tokens** to the executable **stem** (e.g. `git.exe` ↔ "Git" / "Windows Git"),
 /// not loose `contains` (which turned every `git.exe` / `chrome.exe` into a KEV hit).
 fn kev_product_matches_stem(stem: &str, product: &str) -> bool {
-    let stem = stem.to_lowercase();
-    for token in product.split(|c: char| !c.is_alphanumeric()) {
-        let t = token.to_lowercase();
-        if t.len() < 3 {
+    let stem = stem.trim().to_lowercase();
+    let product_lower = product.trim().to_lowercase();
+    if stem.len() < 3 || product_lower.is_empty() {
+        return false;
+    }
+    if stem == product_lower {
+        return true;
+    }
+    const GENERIC_AMBIGUOUS_STEMS: &[&str] = &[
+        "setup", "file", "server", "client", "update", "updater", "install", "installer",
+        "service", "agent", "browser", "manager", "system", "windows", "linux", "action",
+        "http", "app", "host", "tool", "cli", "env", "expand", "unzip", "perl", "sed",
+    ];
+    if GENERIC_AMBIGUOUS_STEMS.contains(&stem.as_str()) {
+        return false;
+    }
+    for token in product_lower.split(|c: char| !c.is_alphanumeric()) {
+        if token.len() < 3 {
             continue;
         }
-        if stem == t {
+        if stem == token {
             return true;
         }
     }
@@ -1301,6 +1315,18 @@ impl ThreatVoter for CveLookupVoter {
             Some(m) => m,
             None => return None,
         };
+
+        let prod_trim = meta.product_name.trim();
+        let ver_trim = meta.version.trim();
+        if prod_trim.is_empty()
+            || prod_trim.eq_ignore_ascii_case("unknown")
+            || ver_trim.is_empty()
+            || ver_trim == "0.0.0"
+            || ver_trim == "0.0.0.0"
+            || ver_trim.eq_ignore_ascii_case("unknown")
+        {
+            return None;
+        }
 
         // NEW: Suppress NVD lookup for signed Microsoft binaries or system files to avoid Consensus Veto spam.
         // We also check if the hash is in the NSRL known-good set.
@@ -4176,3 +4202,26 @@ impl MartingaleZeroDriftDetector {
         }
     }
 }
+
+#[cfg(test)]
+mod hybrid_cve_and_kev_tests {
+    use super::kev_product_matches_stem;
+
+    #[test]
+    fn test_kev_product_rejects_generic_single_word_stem_collisions() {
+        assert!(!kev_product_matches_stem("setup", "action-setup"));
+        assert!(!kev_product_matches_stem("file", "HTTP File Server"));
+        assert!(!kev_product_matches_stem("server", "HTTP File Server"));
+        assert!(!kev_product_matches_stem("update", "Windows Update Service"));
+        assert!(!kev_product_matches_stem("client", "Enterprise Client Agent"));
+    }
+
+    #[test]
+    fn test_kev_product_matches_specific_products_accurately() {
+        assert!(kev_product_matches_stem("action-setup", "action-setup"));
+        assert!(kev_product_matches_stem("log4j", "log4j"));
+        assert!(kev_product_matches_stem("log4j", "Apache Log4j"));
+        assert!(kev_product_matches_stem("winrar", "WinRAR"));
+    }
+}
+

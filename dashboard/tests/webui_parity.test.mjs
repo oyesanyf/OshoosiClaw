@@ -370,6 +370,27 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                 }
                 const sanitized = env.mockWindow.sanitizeAuthNetworkError('TypeError: Failed to fetch');
                 assert.ok(!/failed to fetch/i.test(sanitized), 'sanitizeAuthNetworkError must never output Failed to fetch');
+
+                // 7. Collapsible 7-Category Sidebar & CI/CD Protection exports
+                const expectedSidebarAndCicdMethods = [
+                    'toggleSidebarRailMode',
+                    'toggleAllSidebarCategories',
+                    'filterSidebarMenu',
+                    'expandSidebarCategoryForItem',
+                    'initCollapsibleSidebar',
+                    'renderCicdProtectionView',
+                    'setCicdProtectionMaster',
+                    'toggleCicdProtectionItem',
+                    'toggleCicdProtectionAll',
+                    'runCicdProtectionVerification'
+                ];
+                for (const method of expectedSidebarAndCicdMethods) {
+                    assert.strictEqual(
+                        typeof env.mockWindow[method],
+                        'function',
+                        `Expected window.${method} to be a function in dashboard/${targetDirName}`
+                    );
+                }
             });
         });
     });

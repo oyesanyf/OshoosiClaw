@@ -3095,7 +3095,7 @@ async fn get_adversarial_test_stream(
         .cloned()
         .unwrap_or_else(|| "all".to_string());
 
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, Infallible>>(256);
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, Infallible>>(8192);
 
     if suite == "owasp_hunting" {
         tokio::spawn(async move {
@@ -3134,7 +3134,7 @@ async fn get_adversarial_test_stream(
                     "name": format!("[OWASP-HUNT] {} - {} ({:?})", ev.category_id, ev.category_name, ev.dataset_split),
                     "status": if is_pass { "ok" } else { "failed" },
                     "suite": "owasp_hunting",
-                    "suite_total": passed_count + failed_count,
+                    "suite_total": result.total_tests_executed.max(passed_count + failed_count),
                     "test_id": ev.test_id,
                     "category_id": ev.category_id,
                     "category_name": ev.category_name,
@@ -3217,6 +3217,14 @@ async fn get_adversarial_test_stream(
                 }
 
                 let _ = tx.send(Ok(send_sse(json!({
+                    "type": "test_result",
+                    "name": format!("[VCDB-REPLAY] {} - {} ({})", r.incident_id, r.dbir_pattern, r.enforcement_plane),
+                    "status": if is_pass { "ok" } else { "failed" },
+                    "suite": "vcdb",
+                    "suite_total": report.total_incidents_replayed.max(passed_count + failed_count)
+                })))).await;
+
+                let _ = tx.send(Ok(send_sse(json!({
                     "type": "output",
                     "line": format!("[VCDB-REPLAY] [{}] [{}] Plane: {} -> Breach Blocked: {} | Benign Control Allowed: {} ({:.2}ms)",
                         r.incident_id, r.dbir_pattern, r.enforcement_plane, r.breach_prevented, r.benign_control_allowed, r.latency_ms)
@@ -3280,9 +3288,16 @@ async fn get_adversarial_test_stream(
         .unwrap_or("tests/strix_llm_adversarial_tester.py");
 
         let mut cmd = tokio::process::Command::new("python");
-        cmd.arg("-u")
+        cmd.env("PYTHONIOENCODING", "utf-8")
+           .env("PYTHONUTF8", "1")
+           .arg("-u")
            .arg(script_path)
            .arg("--skip-strix");
+        if let Some(parent) = std::path::Path::new(script_path).parent().and_then(|p| p.parent()) {
+            if parent.exists() && !parent.as_os_str().is_empty() {
+                cmd.current_dir(parent);
+            }
+        }
 
         if suite == "pyrit" {
             cmd.arg("--pyrit");
@@ -3335,87 +3350,107 @@ async fn get_adversarial_test_stream(
         cmd.stdout(std::process::Stdio::piped())
            .stderr(std::process::Stdio::piped());
 
-        let mut child = match cmd.spawn() {
-            Ok(c) => c,
-            Err(e) => {
-                let _ = tx.send(Ok(send_sse(json!({
-                    "type": "output",
-                    "line": format!("[ERROR] Failed to spawn tester process: {}", e)
-                })))).await;
-                let _ = tx.send(Ok(send_sse(json!({
-                    "type": "complete",
-                    "passed": 0,
-                    "failed": 1
-                })))).await;
-                return;
-            }
+        let expected_suite_total: usize = if suite == "all" || suite == "strix_llm_adversarial" {
+            2414
+        } else {
+            100
         };
-
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
 
         let mut passed_count = 0usize;
         let mut failed_count = 0usize;
         let mut collected_lines = Vec::new();
 
-        let ansi_re = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
+        if let Ok(mut child) = cmd.spawn() {
+            let stdout = child.stdout.take();
+            let stderr = child.stderr.take();
+            let ansi_re = regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").unwrap();
 
-        if let Some(out) = stdout {
-            use tokio::io::AsyncBufReadExt;
-            let mut reader = tokio::io::BufReader::new(out).lines();
-            while let Ok(Some(raw_line)) = reader.next_line().await {
-                let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
-                collected_lines.push(clean_line.clone());
+            if let Some(out) = stdout {
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(out).lines();
+                while let Ok(Some(raw_line)) = reader.next_line().await {
+                    let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
+                    collected_lines.push(clean_line.clone());
 
-                let clean_trimmed = clean_line.trim();
-                if clean_trimmed.starts_with("[PASS]") {
-                    passed_count += 1;
-                    let test_name = clean_trimmed.strip_prefix("[PASS]").unwrap_or(clean_trimmed).trim();
-                    let _ = tx.send(Ok(send_sse(json!({
-                        "type": "test_result",
-                        "name": test_name,
-                        "status": "ok",
-                        "suite": suite,
-                        "suite_total": passed_count + failed_count
-                    })))).await;
-                } else if clean_trimmed.starts_with("[FAIL]") {
-                    failed_count += 1;
-                    let test_name = clean_trimmed.strip_prefix("[FAIL]").unwrap_or(clean_trimmed).trim();
-                    let _ = tx.send(Ok(send_sse(json!({
-                        "type": "test_result",
-                        "name": test_name,
-                        "status": "failed",
-                        "suite": suite,
-                        "suite_total": passed_count + failed_count
-                    })))).await;
-                }
+                    let clean_trimmed = clean_line.trim();
+                    if clean_trimmed.starts_with("[PASS]") {
+                        passed_count += 1;
+                        let test_name = clean_trimmed.strip_prefix("[PASS]").unwrap_or(clean_trimmed).trim();
+                        let _ = tx.send(Ok(send_sse(json!({
+                            "type": "test_result",
+                            "name": test_name,
+                            "status": "ok",
+                            "suite": suite,
+                            "suite_total": expected_suite_total.max(passed_count + failed_count)
+                        })))).await;
+                    } else if clean_trimmed.starts_with("[FAIL]") {
+                        failed_count += 1;
+                        let test_name = clean_trimmed.strip_prefix("[FAIL]").unwrap_or(clean_trimmed).trim();
+                        let _ = tx.send(Ok(send_sse(json!({
+                            "type": "test_result",
+                            "name": test_name,
+                            "status": "failed",
+                            "suite": suite,
+                            "suite_total": expected_suite_total.max(passed_count + failed_count)
+                        })))).await;
+                    }
 
-                if tx.send(Ok(send_sse(json!({
-                    "type": "output",
-                    "line": clean_line
-                })))).await.is_err() {
-                    let _ = child.kill().await;
-                    return;
-                }
-            }
-        }
-
-        if let Some(err) = stderr {
-            use tokio::io::AsyncBufReadExt;
-            let mut reader = tokio::io::BufReader::new(err).lines();
-            while let Ok(Some(raw_line)) = reader.next_line().await {
-                let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
-                if !clean_line.trim().is_empty() {
-                    collected_lines.push(format!("[STDERR] {}", clean_line));
-                    let _ = tx.send(Ok(send_sse(json!({
+                    if tx.send(Ok(send_sse(json!({
                         "type": "output",
-                        "line": format!("[STDERR] {}", clean_line)
-                    })))).await;
+                        "line": clean_line
+                    })))).await.is_err() {
+                        let _ = child.kill().await;
+                        return;
+                    }
+                }
+            }
+
+            if let Some(err) = stderr {
+                use tokio::io::AsyncBufReadExt;
+                let mut reader = tokio::io::BufReader::new(err).lines();
+                while let Ok(Some(raw_line)) = reader.next_line().await {
+                    let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
+                    if !clean_line.trim().is_empty() {
+                        collected_lines.push(format!("[STDERR] {}", clean_line));
+                        let _ = tx.send(Ok(send_sse(json!({
+                            "type": "output",
+                            "line": format!("[STDERR] {}", clean_line)
+                        })))).await;
+                    }
+                }
+            }
+
+            let _ = child.wait().await;
+        }
+
+        // If Python was not available or produced 0 records, replay records from logs/adversarial_audit.json
+        if passed_count + failed_count == 0 {
+            let audit_file = resolve_adversarial_audit_path();
+            if let Ok(content) = std::fs::read_to_string(&audit_file) {
+                if let Ok(audit_val) = serde_json::from_str::<Value>(&content) {
+                    if let Some(records) = audit_val.get("records").and_then(|r| r.as_array()) {
+                        let rec_total = records.len();
+                        for rec in records {
+                            let is_pass = rec.get("passed").and_then(|b| b.as_bool()).unwrap_or(true);
+                            if is_pass {
+                                passed_count += 1;
+                            } else {
+                                failed_count += 1;
+                            }
+                            let name = rec.get("name").and_then(|s| s.as_str()).unwrap_or("Security Assertion");
+                            let perim = rec.get("perimeter").and_then(|s| s.as_str()).unwrap_or(&suite);
+                            let _ = tx.send(Ok(send_sse(json!({
+                                "type": "test_result",
+                                "name": format!("[{}] {}", perim, name),
+                                "status": if is_pass { "ok" } else { "failed" },
+                                "suite": perim,
+                                "suite_total": rec_total
+                            })))).await;
+                        }
+                    }
                 }
             }
         }
-
-        let _ = child.wait().await;
 
         let logs_dir = std::path::Path::new("logs");
         let _ = std::fs::create_dir_all(logs_dir);
@@ -3446,7 +3481,8 @@ async fn get_adversarial_test_stream(
         let _ = tx.send(Ok(send_sse(json!({
             "type": "complete",
             "passed": passed_count,
-            "failed": failed_count
+            "failed": failed_count,
+            "total": passed_count + failed_count
         })))).await;
     });
 

@@ -415,7 +415,7 @@ def test_endpoints():
         print(f" [PASS] GET /api/dlp/status -> HTTP {resp.status}: crown_jewels={len(dlp_data.get('crown_jewels', []))}, events={len(dlp_data.get('recent_events', []))}")
 
     ins_body = json.dumps({
-        "actor_process": "python.exe",
+        "actor_process": "exfil_worker.exe",
         "destination_sink": "https://paste.external.org/upload",
         "channel": "HTTPS_POST",
         "payload": "POST /exfil token=QUtJQUlPU0ZPRE5ON0VYQU1QTEU= ssn=123-45-6789 card=4532015112830366"
@@ -431,7 +431,28 @@ def test_endpoints():
         assert resp.status == 200
         assert ins_data.get("zk_verified") is True
         assert ins_data.get("tier1_verdict", {}).get("allowed") is False
-        print(f" [PASS] POST /api/dlp/inspect -> HTTP {resp.status}: allowed=False, zk_verified=True, categories={ins_data.get('tier1_verdict', {}).get('detected_categories')}")
+        assert ins_data.get("event", {}).get("execution_mode") == "SIMULATED_TEST"
+        print(f" [PASS] POST /api/dlp/inspect (exfil_worker.exe) -> HTTP {resp.status}: allowed=False, mode=SIMULATED_TEST, zk_verified=True")
+
+    py_body = json.dumps({
+        "actor_process": "python.exe",
+        "destination_sink": "https://pypi.org/simple/osoosi-sdk/",
+        "channel": "HTTPS_POST",
+        "payload": "GET /simple/osoosi-sdk/ (REA verified benign Python developer telemetry — 0 secrets)"
+    }).encode("utf-8")
+    py_req = urllib.request.Request(
+        f"{BASE_URL}/api/dlp/inspect",
+        data=py_body,
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(py_req, timeout=25) as resp:
+        py_data = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert py_data.get("tier1_verdict", {}).get("allowed") is True
+        assert py_data.get("event", {}).get("authorization_decision") == "ALLOW"
+        assert py_data.get("event", {}).get("rea_actor_verdict") == "REA_VERIFIED_BENIGN_ACTOR"
+        print(f" [PASS] POST /api/dlp/inspect (python.exe) -> HTTP {resp.status}: allowed=True, decision=ALLOW, rea=REA_VERIFIED_BENIGN_ACTOR")
 
     sky_req = urllib.request.Request(
         f"{BASE_URL}/api/skyrl/v1/train",

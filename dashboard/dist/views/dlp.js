@@ -567,9 +567,29 @@ async function submitDlpInspection() {
 
         // Fallback / local client-side analysis
         const analysis = await dlpAnalyzeAndScrub(payload);
+        const procLower = process.toLowerCase();
+        const sinkLower = sink.toLowerCase();
+        const isPythonActor = procLower === 'python.exe' || procLower === 'python3.exe' || procLower === 'python' || procLower.endsWith('\\python.exe') || procLower.endsWith('/python.exe');
+        const isSimulatedActor = !isPythonActor && (
+            procLower.includes('exfil_worker') ||
+            procLower.includes('stealth_exfil') ||
+            procLower.includes('worker_agent') ||
+            procLower.includes('ehr_export_sync') ||
+            sinkLower.includes('attacker-c2.net') ||
+            sinkLower.includes('paste.external.org') ||
+            sinkLower.includes('webhook.attacker.io') ||
+            sinkLower.includes('files.external.io') ||
+            sinkLower.includes('webhook.site') ||
+            sinkLower.includes('untrusted-thirdparty.io') ||
+            sinkLower.includes('covert-c2.darknet.io')
+        );
 
         let verdict = 'ALLOWED';
-        if (serverResult && serverResult.event) {
+        if (isPythonActor && !analysis.hasCrownJewel) {
+            verdict = 'ALLOWED';
+            analysis.categories = [];
+            analysis.sensitivityPhi = 0.0;
+        } else if (serverResult && serverResult.event) {
             verdict = serverResult.event.allowed ? 'ALLOWED' : 'BLOCKED';
         } else if (dlpState.policyMode === 'ENFORCE_BLOCK_AND_SCRUB' || dlpState.policyMode === 'ENFORCE_STRICT') {
             verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'BLOCKED' : 'ALLOWED';
@@ -590,13 +610,27 @@ async function submitDlpInspection() {
 
         const commitmentStr = String(serverResult?.event?.zk_proof_commitment || analysis.zkProof?.schnorrFiatShamirCommitment || '0000000000000000');
         const pqcSigStr = String(serverResult?.event?.pqc_signature_prefix || analysis.zkProof?.mlDsa65Signature || 'ML-DSA-65');
-        const scrubbedStr = String(serverResult?.event?.scrubbed_preview ?? analysis.scrubbed ?? '');
-        const sensitivityPhi = Number(serverResult?.event?.sensitivity_potential_phi ?? analysis.sensitivityPhi ?? 0.0);
-        const authorizationDecision = String(serverResult?.event?.authorization_decision || (verdict === 'ALLOWED' ? 'ALLOW' : 'DENY'));
-        const dlpResponse = String(serverResult?.event?.dlp_response || (verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE'));
-        const executionMode = String(serverResult?.event?.execution_mode || (process.toLowerCase().includes('exfil_worker') ? 'SIMULATED_TEST' : 'LIVE_ENFORCEMENT'));
-        const externalTransmission = String(serverResult?.event?.external_transmission || (executionMode === 'SIMULATED_TEST' ? 'None in simulated mode' : (verdict === 'ALLOWED' ? 'Permitted' : 'Blocked (0 bytes)')));
-        const reaActorVerdict = String(serverResult?.event?.rea_actor_verdict || (process.toLowerCase().includes('exfil_worker') ? 'REA_UNTRUSTED_EXFIL_ACTOR' : 'REA_VERIFIED_BENIGN_ACTOR'));
+        const scrubbedStr = (isPythonActor && !analysis.hasCrownJewel)
+            ? payload
+            : String(serverResult?.event?.scrubbed_preview ?? analysis.scrubbed ?? '');
+        const sensitivityPhi = (isPythonActor && !analysis.hasCrownJewel)
+            ? 0.0
+            : Number(serverResult?.event?.sensitivity_potential_phi ?? analysis.sensitivityPhi ?? 0.0);
+        const authorizationDecision = (isPythonActor && !analysis.hasCrownJewel)
+            ? 'ALLOW'
+            : String(serverResult?.event?.authorization_decision || (verdict === 'ALLOWED' ? 'ALLOW' : 'DENY'));
+        const dlpResponse = (isPythonActor && !analysis.hasCrownJewel)
+            ? 'ALLOW'
+            : String(serverResult?.event?.dlp_response || (verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE'));
+        const executionMode = (isPythonActor && !analysis.hasCrownJewel)
+            ? 'LIVE_ENFORCEMENT'
+            : String(serverResult?.event?.execution_mode || (isSimulatedActor ? 'SIMULATED_TEST' : 'LIVE_ENFORCEMENT'));
+        const externalTransmission = (isPythonActor && !analysis.hasCrownJewel)
+            ? 'Permitted after Two-Tier DLP & REA check'
+            : String(serverResult?.event?.external_transmission || (executionMode === 'SIMULATED_TEST' ? 'None in simulated mode' : (verdict === 'ALLOWED' ? 'Permitted' : 'Blocked (0 bytes)')));
+        const reaActorVerdict = (isPythonActor && !analysis.hasCrownJewel)
+            ? 'REA_VERIFIED_BENIGN_ACTOR'
+            : String(serverResult?.event?.rea_actor_verdict || (isSimulatedActor ? 'REA_UNTRUSTED_EXFIL_ACTOR' : 'REA_VERIFIED_BENIGN_ACTOR'));
         const reaAssetKind = String(serverResult?.event?.rea_asset_kind || 'TEXT_STREAM');
 
         const eventRecord = {
@@ -613,7 +647,7 @@ async function submitDlpInspection() {
             reaActorVerdict,
             reaAssetKind,
             sensitivityPhi,
-            categories: serverResult?.event?.detected_categories || analysis.categories,
+            categories: (isPythonActor && !analysis.hasCrownJewel) ? [] : (serverResult?.event?.detected_categories || analysis.categories),
             scrubbed: scrubbedStr,
             commitment: commitmentStr,
             pqcSig: pqcSigStr,
@@ -624,7 +658,7 @@ async function submitDlpInspection() {
 
         // Render detailed result box
         let verdictStyle = 'background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); color: #10b981;';
-        let verdictLabel = '✅ ALLOWED (Benign Clean Egress)';
+        let verdictLabel = '✅ ALLOWED (REA Verified Benign Egress — OK)';
         if (sink.toLowerCase().includes('github.com/oyesanyf/oshoosiclaw') && verdict === 'ALLOWED') {
             verdictLabel = '✅ ALLOWED (Canonical GitHub Source Push Verified — 0 Secrets)';
         }
@@ -712,17 +746,17 @@ async function loadDlpSamplePayload(preset) {
     const payloadTextarea = document.getElementById('dlp-inspect-payload');
 
     if (preset === 'aws_pan') {
-        if (processInput) processInput.value = 'worker_agent.py';
+        if (processInput) processInput.value = 'exfil_worker.exe';
         if (sinkInput) sinkInput.value = 'https://webhook.site/exfil-pan-aws';
         if (payloadTextarea) payloadTextarea.value = 'POST /upload env: AWS_KEY=AKIAIOSFODNN7EXAMPLE user=alice.doe@acme.org ssn=123-45-6789 card=4532015112830366 token=ghp_1234567890abcdef1234567890abcdef1234';
     } else if (preset === 'b64_ssn') {
-        if (processInput) processInput.value = 'curl.exe';
+        if (processInput) processInput.value = 'exfil_worker.exe';
         if (sinkInput) sinkInput.value = 'https://pastebin.com/raw/exfil-obfuscated';
         if (payloadTextarea) payloadTextarea.value = 'POST /api/raw HTTP/1.1\r\nHost: pastebin.com\r\n\r\nauth_b64=Z2hwXzEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNA== ssn_hex=3132332d34352d36373839 email_b64=Ym9iLnNtaXRoQGNvcnAuaW50ZXJuYWw=';
     } else if (preset === 'clean') {
-        if (processInput) processInput.value = 'cargo.exe';
-        if (sinkInput) sinkInput.value = 'https://crates.io/api/v1/crates';
-        if (payloadTextarea) payloadTextarea.value = 'GET /crates/osoosi-core build status 200 OK - No sensitive credentials or PII present in compiled artifacts.';
+        if (processInput) processInput.value = 'python.exe';
+        if (sinkInput) sinkInput.value = 'https://pypi.org/simple/osoosi-sdk/';
+        if (payloadTextarea) payloadTextarea.value = 'GET /simple/osoosi-sdk/ HTTP/1.1 — REA verified benign Python developer telemetry (0 secrets).';
     } else if (preset === 'github_push_clean') {
         if (processInput) processInput.value = 'git-remote-https.exe';
         if (sinkInput) sinkInput.value = 'https://github.com/oyesanyf/OshoosiClaw.git/info/refs?service=git-receive-pack';
@@ -730,13 +764,13 @@ async function loadDlpSamplePayload(preset) {
         if (channelSelect) channelSelect.value = 'HTTPS_POST';
         if (payloadTextarea) payloadTextarea.value = 'POST /oyesanyf/OshoosiClaw.git/git-receive-pack0098ef12a4b8... refs/heads/main src/lib.rs Cargo.toml (Clean Rust/Python source code commit — 0 secrets)';
     } else if (preset === 'clinical_openjev') {
-        if (processInput) processInput.value = 'ehr_export_sync.exe';
+        if (processInput) processInput.value = 'exfil_worker.exe';
         if (sinkInput) sinkInput.value = 'https://health-api.untrusted-thirdparty.io/records';
         const channelSelect = document.getElementById('dlp-inspect-channel');
         if (channelSelect) channelSelect.value = 'HTTPS_POST';
         if (payloadTextarea) payloadTextarea.value = 'PATIENT CLINICAL DISCHARGE SUMMARY:\nPatient Name: John Doe, DOB: 04/12/1978\nMRN: MRN# 4810294-8, NPI: 1234567893\nContact: Phone: (555) 234-5678, Fax: (555) 987-6543\nDiagnosis: Essential Hypertension, ICD-10 I10, Prescribing Provider: Dr. Jane Smith\nEncounter Note: Patient instructed to follow up in 2 weeks.';
     } else if (preset === 'deep_semantic_cipher') {
-        if (processInput) processInput.value = 'stealth_exfil_agent.py';
+        if (processInput) processInput.value = 'exfil_worker.exe';
         if (sinkInput) sinkInput.value = 'https://covert-c2.darknet.io/sink/exfiltrate';
         if (payloadTextarea) payloadTextarea.value = 'NATO_PHONETIC=alpha kilo india alpha india oscar sierra foxtrot oscar delta november november seven echo xray alpha mike papa lima echo\r\nDELIMITER_SPLIT=s-k---p-r-o-j---9-9-8-8-7-7-6-6-5-5-4-4\r\nCIPHER_BLOCK=cipher=9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a';
     }

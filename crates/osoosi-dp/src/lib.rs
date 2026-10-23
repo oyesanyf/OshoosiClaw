@@ -2329,9 +2329,19 @@ impl RedactXStructuredValidator {
 
         for prefix in prefixes {
             let mut start_idx = 0;
-            while let Some(pos) = lower[start_idx..].find(prefix) {
+            while start_idx < lower.len() {
+                if !lower.is_char_boundary(start_idx) {
+                    start_idx += 1;
+                    continue;
+                }
+                let Some(pos) = lower[start_idx..].find(prefix) else {
+                    break;
+                };
                 let match_pos = start_idx + pos + prefix.len();
-                let remainder = &text[match_pos..];
+                if match_pos > lower.len() || !lower.is_char_boundary(match_pos) {
+                    break;
+                }
+                let remainder = &lower[match_pos..];
                 // Extract contiguous token
                 let token: String = remainder
                     .chars()
@@ -2347,10 +2357,7 @@ impl RedactXStructuredValidator {
                         }
                     }
                 }
-                start_idx = match_pos + 1;
-                if start_idx >= text.len() {
-                    break;
-                }
+                start_idx = match_pos;
             }
         }
         results
@@ -2390,6 +2397,10 @@ impl RedactXStructuredValidator {
 
         let mut i = 0;
         while i + 10 <= len {
+            if !text.is_char_boundary(i) {
+                i += 1;
+                continue;
+            }
             // Ensure we start on a token boundary (not in the middle of an IP address, hex string, or port)
             if i > 0 {
                 let prev = bytes[i - 1];
@@ -2438,7 +2449,8 @@ impl RedactXStructuredValidator {
                     if !(d4 == 1 && d5 == 1) {
                         let phone_str: String = digits.iter().collect();
                         let start_back = i.saturating_sub(32);
-                        let context_before = text[start_back..i].to_ascii_lowercase();
+                        let context_before =
+                            String::from_utf8_lossy(&bytes[start_back..i]).to_ascii_lowercase();
                         let cat = if context_before.contains("fax") {
                             "HIPAA_FAX"
                         } else {
@@ -2811,4 +2823,19 @@ mod tests_dlp_evasion {
         );
         assert!(tier1.allowed, "Clean HAR IPv4 CONNECT header must be allowed!");
     }
+
+    #[test]
+    fn test_multibyte_utf8_boundaries_in_mrn_and_nanp_phone_fax_scan() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let multibyte_payload = "—•🔒✓×€ Patient Summary — MRN: 84729104 • TEL: (415) 555-2671 — FAX: 415-555-9876 • 92.7056% E(N,t)";
+        let mrns = OsoosiTwoTierDlpEngine::mrn_scan(multibyte_payload);
+        assert_eq!(mrns, vec!["84729104".to_string()]);
+        let phones = OsoosiTwoTierDlpEngine::nanp_phone_fax_scan(multibyte_payload);
+        assert_eq!(phones.len(), 2);
+        let tier1 = engine.inspect_hot_tier1("dlp_sensor", "https://example.org", multibyte_payload.as_bytes());
+        assert!(tier1.detected_categories.contains(&"HIPAA_MRN".to_string()));
+        assert!(tier1.detected_categories.contains(&"HIPAA_PHONE".to_string()));
+        assert!(tier1.detected_categories.contains(&"HIPAA_FAX".to_string()));
+    }
 }
+
