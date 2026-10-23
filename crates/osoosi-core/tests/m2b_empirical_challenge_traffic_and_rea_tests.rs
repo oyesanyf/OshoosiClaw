@@ -1,6 +1,8 @@
 // Empirical Adversarial Challenger Test Suite
 // Milestone M2B: HAR Traffic Lineage, Swarm Poison Rejection, Caged REA Detonation, and Benign Immunity
 
+#[cfg(windows)]
+use osoosi_core::rea::ReaError;
 use osoosi_core::rea::{is_rea_benign_system_or_dev_process, run_caged_rea_detonation_probe};
 use osoosi_policy::traffic_adapter::{
     clear_har_lineage_hook, clear_swarm_poisoned_har_digests, is_swarm_poisoned_har_digest,
