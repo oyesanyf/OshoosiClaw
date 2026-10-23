@@ -1279,7 +1279,10 @@ pub fn run_15_breakout_and_edr_compromise_vectors_verification(master_enabled: b
     // the coordinator must catch any token of this shape, not one memorized fixture string.
     let ephemeral_pat: String = {
         use rand::distributions::{Alphanumeric, DistString};
-        format!("ghp_{}", Alphanumeric.sample_string(&mut rand::thread_rng(), 36))
+        format!(
+            "ghp_{}",
+            Alphanumeric.sample_string(&mut rand::thread_rng(), 36)
+        )
     };
     let wf_tamper_payload = format!("permissions: write-all\nGH_TOKEN={}", ephemeral_pat);
     let wf_tamper_eval = coordinator.evaluate_action(

@@ -49,7 +49,7 @@ impl DbirPattern {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_label(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "system intrusion" => Some(DbirPattern::SystemIntrusion),
             "basic web application attacks" | "basic web app" => {
@@ -94,7 +94,7 @@ impl DataVariety {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn from_label(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "medical" | "phi" => Some(DataVariety::Medical),
             "payment" | "pci" | "pan" => Some(DataVariety::Payment),
@@ -423,6 +423,12 @@ pub struct VcdbEngine {
     timeline_benchmark: TimelineBenchmark,
 }
 
+impl Default for VcdbEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VcdbEngine {
     pub fn new() -> Self {
         let catalog = Self::load_or_fallback();
@@ -541,7 +547,8 @@ impl VcdbEngine {
             let smoothed_prob = (disc as f64 + 1.0) / (obs as f64 + 2.0);
             let clamped_prob = smoothed_prob.clamp(0.01, 0.99);
 
-            let variety_enum = DataVariety::from_str(&variety_str).unwrap_or(DataVariety::Internal);
+            let variety_enum =
+                DataVariety::from_label(&variety_str).unwrap_or(DataVariety::Internal);
             let base_score = variety_enum.default_openjev_prior_score();
             // Refine score by empirical probability delta
             let prior_score = (base_score * 0.8 + (1.0 + clamped_prob * 4.0) * 0.2).clamp(1.0, 5.0);
@@ -639,7 +646,8 @@ impl VcdbEngine {
                         .to_string(),
                 )
             }
-            "ProcessCommandLineGate" | _ => {
+            // Default gate: ProcessCommandLineGate (and any unlisted control) is evaluated here.
+            _ => {
                 // Assert command injection / shell metacharacters intercepted
                 let cmd_sanitized = true;
                 (cmd_sanitized, "ProcessCommandLineGate intercepted metacharacter injection and halted execution".to_string())

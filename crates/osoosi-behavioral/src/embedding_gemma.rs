@@ -337,9 +337,7 @@ impl EmbeddingGemma2Engine {
             }
         } else {
             let uniform = 1.0 / (target_dim as f32).sqrt();
-            for x in &mut sliced_vec {
-                *x = uniform;
-            }
+            sliced_vec.fill(uniform);
         }
 
         sliced_vec
@@ -456,9 +454,7 @@ impl EmbeddingGemma2Engine {
                 }
             } else {
                 let uniform = 1.0 / (target_dim as f32).sqrt();
-                for x in &mut vec {
-                    *x = uniform;
-                }
+                vec.fill(uniform);
             }
             self.reference_threat_vectors.insert(name, vec);
         }
@@ -519,9 +515,7 @@ impl EmbeddingGemma2Engine {
             }
         } else {
             let uniform = 1.0 / (dim as f32).sqrt();
-            for s in &mut sum {
-                *s = uniform;
-            }
+            sum.fill(uniform);
         }
 
         Some(sum)

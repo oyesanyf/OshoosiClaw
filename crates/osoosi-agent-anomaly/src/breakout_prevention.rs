@@ -2038,7 +2038,22 @@ mod tests {
             "Unprevented breakout scenarios: {:?}",
             unprevented
         );
-        assert_eq!(report.legitimate_usability_pass_rate, 1.0);
+        let blocked_benign: Vec<String> = report
+            .benign_usability_controls
+            .iter()
+            .filter(|b| !b.allowed)
+            .map(|b| {
+                format!(
+                    "{} (pdec={}, effects={})",
+                    b.workflow_name, b.policy_decision_id, b.executed_side_effects
+                )
+            })
+            .collect();
+        assert_eq!(
+            report.legitimate_usability_pass_rate, 1.0,
+            "Benign developer workflows wrongly blocked: {:?}",
+            blocked_benign
+        );
         assert_eq!(
             report.total_prohibited_side_effects_executed, 0,
             "Zero prohibited side effects may execute across the entire adversarial suite"

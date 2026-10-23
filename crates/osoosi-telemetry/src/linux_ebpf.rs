@@ -1851,7 +1851,9 @@ mod tests {
             "lockdown,capability,landlock,yama,apparmor,bpf\n"
         ));
         assert!(kernel_lsm_list_contains_bpf("bpf"));
-        assert!(!kernel_lsm_list_contains_bpf("lockdown,capability,landlock,yama,apparmor"));
+        assert!(!kernel_lsm_list_contains_bpf(
+            "lockdown,capability,landlock,yama,apparmor"
+        ));
         // Substring tokens must not match (e.g. a hypothetical "bpfx" module).
         assert!(!kernel_lsm_list_contains_bpf("capability,bpfx,yama"));
         assert!(!kernel_lsm_list_contains_bpf(""));
