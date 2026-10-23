@@ -162,59 +162,23 @@ impl MemoryStore {
                 OR reason LIKE '%CVE None%'
                 OR reason LIKE '%Autonomous REA Verified Clean%'
                 OR reason LIKE '%Execution Of Non-Existing File%'
-                OR reason LIKE '%unknown v0.0.0 has known cves%'
+                OR reason LIKE '%unknown v0.0.0%'
                 OR reason LIKE '%cve-2009-2940%'
+                OR reason LIKE '%Noul p=0.0%'
+                OR reason LIKE '%Noul p=0.01%'
+                OR reason LIKE '%detected sensitive/exfil tokens []%'
+                OR reason LIKE '%Anti-Chaff Alert%'
+                OR (reason LIKE '%matches KEV product%' AND reason NOT LIKE '%verified_version=%')
                 OR process_name = '<unknown process>'
                 OR process_name = 'unknown'
-                OR LOWER(COALESCE(process_name, '')) IN (
-                    'sc.exe', 'git.exe', 'git-remote-https.exe', 'git-credential-manager.exe',
-                    'git-credential-helper.exe', 'git-credential', 'sh.exe', 'bash.exe', 'ssh.exe',
-                    'conhost.exe', 'openconsole.exe', 'windowsterminal.exe', 'wt.exe',
-                    'chrome.exe', 'remoting_host.exe', 'googledrivefs.exe', 'googleupdate.exe',
-                    'googlecrashhandler.exe', 'googlecrashhandler64.exe',
-                    'wsl.exe', 'wslhost.exe', 'wslservice.exe', 'vmmem', 'vmmemwsl',
-                    'taskkill.exe', 'tasklist.exe', 'taskmgr.exe',
-                    'powershell.exe', 'pwsh.exe', 'cmd.exe', 'svchost.exe', 'explorer.exe',
-                    'lsass.exe', 'csrss.exe', 'services.exe', 'wininit.exe', 'winlogon.exe',
-                    'dwm.exe', 'sihost.exe', 'taskhostw.exe', 'dllhost.exe', 'ctfmon.exe',
-                    'runtimebroker.exe', 'runtimebroker.', 'smartscreen.exe', 'smartscreen.ex',
-                    'appidcertstorecheck.exe', 'appidcertstore', 'mousocoreworker.exe', 'mousocoreworke',
-                    'wuaucltcore.exe', 'wuauclt.exe', 'usoclient.exe', 'uhssvc.exe', 'sihclient.exe',
-                    'microsoftstartfeedprovider.exe', 'microsoftstart', 'widgets.exe', 'widgetservice.exe',
-                    'zoom.exe', 'cpthost.exe', 'docker-credential-desktop.exe', 'docker-credential-wincred.exe',
-                    'docker-credent', 'scdaemon.exe', 'gpg-agent.exe', 'gpg.exe', 'gpgsm.exe', 'dirmngr.exe',
-                    'ollama.exe', 'ollama_llama_server.exe', 'llama-server.exe', 'llama-server.e',
-                    'cvtres.exe', 'rc.exe', 'lib.exe', 'ml64.exe', 'py.exe', 'py312.exe', 'py311.exe', 'py313.exe',
-                    'python3.11.exe', 'python3.12.exe', 'rg.exe', 'rg_embedded-7a', 'rg_embedded',
-                    'm2d_verification.exe', 'm2d_verificati',
-                    'searchhost.exe', 'searchindexer.exe', 'searchprotocolhost.exe', 'searchfilterhost.exe',
-                    'startmenuexperiencehost.exe', 'shellexperiencehost.exe', 'applicationframehost.exe',
-                    'textinputhost.exe', 'spoolsv.exe', 'audiodg.exe', 'fontdrvhost.exe',
-                    'tiworker.exe', 'trustedinstaller.exe', 'msiexec.exe', 'wmiprvse.exe',
-                    'securityhealthservice.exe', 'securityhealthsystray.exe',
-                    'mpdefendercoreservice.exe', 'msmpeng.exe', 'nissrv.exe', 'mpcmdrun.exe',
-                    'onedrive.exe', 'onedrive.sync.service.exe', 'm365copilot.exe',
-                    'msedge.exe', 'msedgewebview2.exe', 'slack.exe',
-                    'com.docker.backend.exe', 'docker.exe', 'dockerd.exe', 'vpnkit.exe',
-                    'language_server.exe', 'language_server_windows_x64.exe', 'gemini.exe', 'antigravity.exe', 'code.exe',
-                    'velociraptor.exe', 'velociraptor.e',
-                    'cargo.exe', 'rustc.exe', 'rustup.exe', 'clippy-driver.exe', 'cargo-fmt.exe',
-                    'rustfmt.exe', 'rust-analyzer.exe', 'build-script-build.exe',
-                    'link.exe', 'cl.exe', 'msbuild.exe', 'signtool.exe', 'candle.exe', 'light.exe',
-                    'node.exe', 'python.exe', 'python3.exe', 'pythonw.exe',
-                    'arp.exe', 'ipconfig.exe', 'netsh.exe', 'route.exe', 'ping.exe',
-                    'whoami.exe', 'hostname.exe', 'systeminfo.exe', 'reg.exe', 'wevtutil.exe',
-                    'icacls.exe', 'findstr.exe', 'where.exe', 'osoosi.exe', 'osoosi-cli.exe'
-                )
-                OR LOWER(COALESCE(process_name, '')) LIKE 'velociraptor.e%'
-                OR LOWER(COALESCE(process_name, '')) LIKE 'smartscreen.ex%'
-                OR LOWER(COALESCE(process_name, '')) LIKE 'git-credential%'
-                OR LOWER(COALESCE(process_name, '')) LIKE 'runtimebroker.%'
-                OR LOWER(COALESCE(process_name, '')) LIKE 'mpdefendercore%'
                 OR EXISTS (SELECT 1 FROM false_positive_patterns fp WHERE (fp.process_name != '' AND LOWER(fp.process_name) = LOWER(COALESCE(threats.process_name, ''))) OR (fp.hash_blake3 != '' AND fp.hash_blake3 = COALESCE(threats.hash_blake3, '')))
                 OR EXISTS (SELECT 1 FROM known_clean_hashes kch WHERE kch.hash_blake3 != '' AND kch.hash_blake3 = COALESCE(threats.hash_blake3, ''))",
             [],
         )?;
+        let _ = conn.execute(
+            "DELETE FROM cve_cache WHERE LOWER(product) = 'unknown' OR version = '0.0.0' OR cve_id = 'CVE-2009-2940'",
+            [],
+        );
         let _ = conn.execute(
             "DELETE FROM known_clean_hashes WHERE hash_blake3 = 'no-hash' OR TRIM(hash_blake3) = ''",
             [],

@@ -4603,106 +4603,56 @@ impl SiqueryEngine {
             }
         };
 
+        let derive_browser_label = |parent_name: &str, dir_name: &str| -> String {
+            let raw = if dir_name.eq_ignore_ascii_case("User Data")
+                || dir_name.eq_ignore_ascii_case("Browser")
+                || dir_name.eq_ignore_ascii_case("Application")
+                || dir_name.eq_ignore_ascii_case("Profiles")
+            {
+                parent_name
+            } else {
+                dir_name
+            };
+            let trimmed = raw
+                .trim_start_matches('.')
+                .replace("-Browser", "")
+                .replace("-browser", "");
+            trimmed
+        };
+
+        let is_chromium_data_root = |dir: &std::path::Path| -> bool {
+            dir.join("Local State").is_file()
+                || dir.join("Default").join("History").is_file()
+                || dir.join("History").is_file()
+        };
+
         for (_user, base_dir) in &user_dirs {
             let roaming_dir = base_dir.parent().map(|p| p.join("Roaming"));
 
-            // 1. Static known Chromium-family paths on Windows (base_dir is AppData\Local)
-            let known_windows_local = [
-                ("Chrome", base_dir.join(r"Google\Chrome\User Data")),
-                ("Chrome Beta", base_dir.join(r"Google\Chrome Beta\User Data")),
-                ("Chrome Dev", base_dir.join(r"Google\Chrome Dev\User Data")),
-                ("Chrome Canary", base_dir.join(r"Google\Chrome SxS\User Data")),
-                ("Chromium", base_dir.join(r"Chromium\User Data")),
-                ("Chromium", base_dir.join(r"ungoogled-chromium\User Data")),
-                ("Thorium", base_dir.join(r"Thorium\User Data")),
-                ("Edge", base_dir.join(r"Microsoft\Edge\User Data")),
-                ("Edge Beta", base_dir.join(r"Microsoft\Edge Beta\User Data")),
-                ("Edge Dev", base_dir.join(r"Microsoft\Edge Dev\User Data")),
-                ("Edge Canary", base_dir.join(r"Microsoft\Edge SxS\User Data")),
-                ("WebView2", base_dir.join(r"Microsoft\EdgeWebView\User Data")),
-                ("Brave", base_dir.join(r"BraveSoftware\Brave-Browser\User Data")),
-                ("Brave Beta", base_dir.join(r"BraveSoftware\Brave-Browser-Beta\User Data")),
-                ("Brave Nightly", base_dir.join(r"BraveSoftware\Brave-Browser-Nightly\User Data")),
-                ("Vivaldi", base_dir.join(r"Vivaldi\User Data")),
-                ("Arc", base_dir.join(r"Arc\User Data")),
-                ("Comet", base_dir.join(r"Comet\User Data")),
-                ("Comet", base_dir.join(r"Perplexity\Comet\User Data")),
-                ("DuckDuckGo", base_dir.join(r"DuckDuckGo\User Data")),
-                ("Yandex", base_dir.join(r"Yandex\YandexBrowser\User Data")),
-                ("Whale", base_dir.join(r"Naver\Naver Whale\User Data")),
-                ("Opera", base_dir.join(r"Opera Software\Opera Stable")),
-                ("Opera GX", base_dir.join(r"Opera Software\Opera GX Stable")),
-                ("CentBrowser", base_dir.join(r"CentBrowser\User Data")),
-                ("Maxthon", base_dir.join(r"Maxthon\User Data")),
-                ("Epic", base_dir.join(r"Epic Privacy Browser\User Data")),
-                ("Avast", base_dir.join(r"AVAST Software\Browser\User Data")),
-                ("AVG", base_dir.join(r"AVG\Browser\User Data")),
-                ("CCleaner", base_dir.join(r"CCleaner Browser\User Data")),
-                ("Sidekick", base_dir.join(r"Sidekick\User Data")),
-                ("Wavebox", base_dir.join(r"WaveboxApp\User Data")),
-                ("Island", base_dir.join(r"Island\User Data")),
-                ("Slimjet", base_dir.join(r"Slimjet\User Data")),
-                ("Iron", base_dir.join(r"SRWare Iron\User Data")),
-            ];
-
-            for (browser, path) in known_windows_local {
-                register_chromium_user_data(browser, &path);
-            }
-
-            // Roaming paths (Opera and others)
-            if let Some(ref roaming) = roaming_dir {
-                let known_windows_roaming = [
-                    ("Opera", roaming.join(r"Opera Software\Opera Stable")),
-                    ("Opera GX", roaming.join(r"Opera Software\Opera GX Stable")),
-                    ("Opera Next", roaming.join(r"Opera Software\Opera Next")),
-                ];
-                for (browser, path) in known_windows_roaming {
-                    register_chromium_user_data(browser, &path);
+            // Dynamic Universal Chromium / Blink / WebView2 / UWP Browser Discovery
+            let mut scan_roots: Vec<std::path::PathBuf> = vec![base_dir.clone()];
+            if let Some(ref r) = roaming_dir {
+                if r.is_dir() {
+                    scan_roots.push(r.clone());
                 }
             }
-
-            // Linux paths (.config/*)
-            let known_linux = [
-                ("Chrome", base_dir.join(".config/google-chrome")),
-                ("Chrome Beta", base_dir.join(".config/google-chrome-beta")),
-                ("Chromium", base_dir.join(".config/chromium")),
-                ("Thorium", base_dir.join(".config/thorium")),
-                ("Brave", base_dir.join(".config/BraveSoftware/Brave-Browser")),
-                ("Edge", base_dir.join(".config/microsoft-edge")),
-                ("Vivaldi", base_dir.join(".config/vivaldi")),
-                ("Opera", base_dir.join(".config/opera")),
-                ("Yandex", base_dir.join(".config/yandex-browser")),
-                ("Sidekick", base_dir.join(".config/sidekick")),
-            ];
-            for (browser, path) in known_linux {
-                register_chromium_user_data(browser, &path);
-            }
-
-            // macOS paths (Library/Application Support/*)
-            let known_macos = [
-                ("Chrome", base_dir.join("Library/Application Support/Google/Chrome")),
-                ("Brave", base_dir.join("Library/Application Support/BraveSoftware/Brave-Browser")),
-                ("Edge", base_dir.join("Library/Application Support/Microsoft Edge")),
-                ("Vivaldi", base_dir.join("Library/Application Support/Vivaldi")),
-                ("Arc", base_dir.join("Library/Application Support/Arc/User Data")),
-                ("Opera", base_dir.join("Library/Application Support/com.operasoftware.Opera")),
-            ];
-            for (browser, path) in known_macos {
-                register_chromium_user_data(browser, &path);
-            }
-
-            // Dynamic Universal Chromium / UWP / Electron Browser Discovery
-            let scan_roots: Vec<std::path::PathBuf> = {
-                let mut v = vec![base_dir.clone()];
-                if let Some(ref r) = roaming_dir {
-                    v.push(r.clone());
+            for rel in [".config", "Library/Application Support"] {
+                let candidate = base_dir.join(rel);
+                if candidate.is_dir() {
+                    scan_roots.push(candidate);
                 }
-                let cfg = base_dir.join(".config");
-                if cfg.is_dir() {
-                    v.push(cfg);
+            }
+            let packages_dir = base_dir.join("Packages");
+            if packages_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
+                    for pkg in entries.filter_map(|e| e.ok()) {
+                        let local_cache = pkg.path().join("LocalCache").join("Local");
+                        if local_cache.is_dir() {
+                            scan_roots.push(local_cache);
+                        }
+                    }
                 }
-                v
-            };
+            }
 
             for root in scan_roots {
                 if let Ok(entries) = std::fs::read_dir(&root) {
@@ -4713,18 +4663,17 @@ impl SiqueryEngine {
                         }
                         let name1 = entry1.file_name().to_string_lossy().to_string();
 
-                        // Check <vendor_or_app>/User Data
+                        // Depth 1: <app>/User Data or direct Chromium profile root
                         let ud1 = path1.join("User Data");
                         if ud1.is_dir() {
-                            let browser = if name1.eq_ignore_ascii_case("User Data") || name1.eq_ignore_ascii_case("Browser") {
-                                "Chromium"
-                            } else {
-                                &name1
-                            };
-                            register_chromium_user_data(browser, &ud1);
+                            let label = derive_browser_label(&name1, &name1);
+                            register_chromium_user_data(&label, &ud1);
+                        } else if is_chromium_data_root(&path1) {
+                            let label = derive_browser_label(&name1, &name1);
+                            register_chromium_user_data(&label, &path1);
                         }
 
-                        // Check <vendor>/<app>/User Data (depth 2)
+                        // Depth 2: <vendor>/<app>/User Data or <vendor>/<app> direct Chromium profile root
                         if let Ok(entries2) = std::fs::read_dir(&path1) {
                             for entry2 in entries2.filter_map(|e| e.ok()) {
                                 let path2 = entry2.path();
@@ -4734,55 +4683,11 @@ impl SiqueryEngine {
                                 let name2 = entry2.file_name().to_string_lossy().to_string();
                                 let ud2 = path2.join("User Data");
                                 if ud2.is_dir() {
-                                    let browser = if name2.eq_ignore_ascii_case("User Data") || name2.eq_ignore_ascii_case("Browser") {
-                                        &name1
-                                    } else {
-                                        &name2
-                                    };
-                                    register_chromium_user_data(browser, &ud2);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Microsoft Store / UWP packages under AppData\Local\Packages
-            let packages_dir = base_dir.join("Packages");
-            if packages_dir.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(&packages_dir) {
-                    for pkg in entries.filter_map(|e| e.ok()) {
-                        let local_cache = pkg.path().join("LocalCache").join("Local");
-                        if local_cache.is_dir() {
-                            if let Ok(lc_entries) = std::fs::read_dir(&local_cache) {
-                                for entry1 in lc_entries.filter_map(|e| e.ok()) {
-                                    let path1 = entry1.path();
-                                    if !path1.is_dir() {
-                                        continue;
-                                    }
-                                    let name1 = entry1.file_name().to_string_lossy().to_string();
-                                    let ud1 = path1.join("User Data");
-                                    if ud1.is_dir() {
-                                        register_chromium_user_data(&name1, &ud1);
-                                    }
-                                    if let Ok(entries2) = std::fs::read_dir(&path1) {
-                                        for entry2 in entries2.filter_map(|e| e.ok()) {
-                                            let path2 = entry2.path();
-                                            if !path2.is_dir() {
-                                                continue;
-                                            }
-                                            let name2 = entry2.file_name().to_string_lossy().to_string();
-                                            let ud2 = path2.join("User Data");
-                                            if ud2.is_dir() {
-                                                let browser = if name2.eq_ignore_ascii_case("User Data") || name2.eq_ignore_ascii_case("Browser") {
-                                                    &name1
-                                                } else {
-                                                    &name2
-                                                };
-                                                register_chromium_user_data(browser, &ud2);
-                                            }
-                                        }
-                                    }
+                                    let label = derive_browser_label(&name1, &name2);
+                                    register_chromium_user_data(&label, &ud2);
+                                } else if is_chromium_data_root(&path2) {
+                                    let label = derive_browser_label(&name1, &name2);
+                                    register_chromium_user_data(&label, &path2);
                                 }
                             }
                         }
@@ -4795,7 +4700,7 @@ impl SiqueryEngine {
     }
 
     /// Discovers all Firefox / Gecko / Goanna browser profiles containing `places.sqlite`
-    /// across all user directories (Firefox, Zen, LibreWolf, Waterfox, Floorp, Pale Moon, Tor, etc.).
+    /// dynamically across all user profile directories without static browser path lists.
     fn get_gecko_firefox_profiles() -> Vec<(String, String, std::path::PathBuf)> {
         let mut profiles = Vec::new();
         let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -4836,43 +4741,44 @@ impl SiqueryEngine {
 
         for (_user, base_dir) in &user_dirs {
             let roaming_dir = base_dir.parent().map(|p| p.join("Roaming"));
-
-            // 1. Known Gecko roots under Roaming on Windows
-            if let Some(ref roaming) = roaming_dir {
-                let known_gecko_roaming = [
-                    ("Firefox", roaming.join(r"Mozilla\Firefox\Profiles")),
-                    ("Zen", roaming.join(r"Zen\Profiles")),
-                    ("Zen", roaming.join(r"zen\Profiles")),
-                    ("LibreWolf", roaming.join(r"librewolf\Profiles")),
-                    ("LibreWolf", roaming.join(r"LibreWolf\Profiles")),
-                    ("Waterfox", roaming.join(r"Waterfox\Profiles")),
-                    ("Floorp", roaming.join(r"Floorp\Profiles")),
-                    ("Floorp", roaming.join(r"Ablaze\Floorp\Profiles")),
-                    ("PaleMoon", roaming.join(r"Moonchild Productions\Pale Moon\Profiles")),
-                    ("Basilisk", roaming.join(r"Moonchild Productions\Basilisk\Profiles")),
-                    ("Mullvad", roaming.join(r"Mullvad\MullvadBrowser\Profiles")),
-                    ("SeaMonkey", roaming.join(r"Mozilla\SeaMonkey\Profiles")),
-                ];
-                for (browser, path) in known_gecko_roaming {
-                    register_gecko_profiles_dir(browser, &path);
+            let mut gecko_roots: Vec<std::path::PathBuf> = vec![base_dir.clone()];
+            if let Some(ref r) = roaming_dir {
+                if r.is_dir() {
+                    gecko_roots.push(r.clone());
                 }
+            }
+            let app_support = base_dir.join("Library/Application Support");
+            if app_support.is_dir() {
+                gecko_roots.push(app_support);
+            }
+            if let Some(user_root) = base_dir.parent().and_then(|p| p.parent()) {
+                for sub in ["Desktop", "Downloads"] {
+                    let d = user_root.join(sub);
+                    if d.is_dir() {
+                        gecko_roots.push(d);
+                    }
+                }
+            }
 
-                // Dynamic Gecko Scanner: Roaming\*\Profiles and Roaming\*\*\Profiles
-                if let Ok(entries1) = std::fs::read_dir(roaming) {
+            for root in gecko_roots {
+                if let Ok(entries1) = std::fs::read_dir(&root) {
                     for entry1 in entries1.filter_map(|e| e.ok()) {
                         let path1 = entry1.path();
                         if !path1.is_dir() {
                             continue;
                         }
                         let name1 = entry1.file_name().to_string_lossy().to_string();
+                        let clean_name1 = name1.trim_start_matches('.').to_string();
 
-                        // Check <vendor_or_app>\Profiles
+                        // Direct Gecko root or <app>/Profiles
                         let prof1 = path1.join("Profiles");
                         if prof1.is_dir() {
-                            register_gecko_profiles_dir(&name1, &prof1);
+                            register_gecko_profiles_dir(&clean_name1, &prof1);
+                        } else {
+                            register_gecko_profiles_dir(&clean_name1, &path1);
                         }
 
-                        // Check <vendor>\<app>\Profiles (depth 2)
+                        // Depth 2: <vendor>/<app>/Profiles or <vendor>/<app> containing places.sqlite
                         if let Ok(entries2) = std::fs::read_dir(&path1) {
                             for entry2 in entries2.filter_map(|e| e.ok()) {
                                 let path2 = entry2.path();
@@ -4880,40 +4786,26 @@ impl SiqueryEngine {
                                     continue;
                                 }
                                 let name2 = entry2.file_name().to_string_lossy().to_string();
+                                let bname = if name2.eq_ignore_ascii_case("Profiles") {
+                                    &clean_name1
+                                } else {
+                                    &name2
+                                };
                                 let prof2 = path2.join("Profiles");
                                 if prof2.is_dir() {
-                                    let bname = if name2.eq_ignore_ascii_case("Profiles") { &name1 } else { &name2 };
                                     register_gecko_profiles_dir(bname, &prof2);
+                                } else {
+                                    register_gecko_profiles_dir(bname, &path2);
+                                }
+
+                                // Portable / Tor Browser layout: <dir>/Browser/TorBrowser/Data/Browser
+                                let portable_data = path2.join("TorBrowser").join("Data").join("Browser");
+                                if portable_data.is_dir() {
+                                    register_gecko_profiles_dir(&clean_name1, &portable_data);
                                 }
                             }
                         }
                     }
-                }
-            }
-
-            // 2. Linux & macOS Gecko paths
-            let known_unix_gecko = [
-                ("Firefox", base_dir.join(".mozilla/firefox")),
-                ("Firefox", base_dir.join("Library/Application Support/Firefox/Profiles")),
-                ("Zen", base_dir.join(".zen")),
-                ("LibreWolf", base_dir.join(".librewolf")),
-                ("Waterfox", base_dir.join(".waterfox")),
-                ("Floorp", base_dir.join(".floorp")),
-                ("PaleMoon", base_dir.join(".moonchild productions/pale moon")),
-            ];
-            for (browser, path) in known_unix_gecko {
-                register_gecko_profiles_dir(browser, &path);
-            }
-
-            // 3. Tor Browser locations under user profile root
-            if let Some(user_root) = base_dir.parent().and_then(|p| p.parent()) {
-                let tor_candidates = [
-                    user_root.join(r"Desktop\Tor Browser\Browser\TorBrowser\Data\Browser"),
-                    user_root.join(r"Downloads\Tor Browser\Browser\TorBrowser\Data\Browser"),
-                    base_dir.join(r"Tor Browser\Browser\TorBrowser\Data\Browser"),
-                ];
-                for tor_path in tor_candidates {
-                    register_gecko_profiles_dir("Tor Browser", &tor_path);
                 }
             }
         }
@@ -4921,9 +4813,9 @@ impl SiqueryEngine {
         profiles
     }
 
-    /// Classifies whether a hostname or IP belongs to local loopback / RFC 1918 private space
-    /// or a verified cloud/developer Autonomous System Number (ASN) range (GitHub, Cloudflare,
-    /// Google/Antigravity, Microsoft/Azure/Windows Update, AWS/Fastly/Docker/PyPI/NIST/DigiCert).
+    /// Classifies whether an endpoint belongs to local loopback / RFC 1918 private space
+    /// or a verified BGP Autonomous System Number (ASN) CIDR range using IP address math
+    /// and dynamic socket address resolution.
     pub fn classify_trusted_asn_or_local_endpoint(host: &str, server_ip: &str) -> Option<&'static str> {
         let h_low = host
             .trim()
@@ -4936,172 +4828,125 @@ impl SiqueryEngine {
             .trim_end_matches(']')
             .to_ascii_lowercase();
 
-        // 1. Loopback & RFC 1918 local network
+        // 1. Loopback & RFC 1918 / RFC 4193 local network math
         if h_low == "localhost"
-            || h_low == "127.0.0.1"
-            || h_low == "::1"
-            || h_low.starts_with("127.")
+            || h_low.ends_with(".localhost")
+            || h_low.ends_with(".local")
             || ip_low == "localhost"
-            || ip_low == "127.0.0.1"
-            || ip_low == "::1"
-            || ip_low.starts_with("127.")
         {
             return Some("LOCAL_LOOPBACK_IPC");
         }
 
-        for cand in [h_low.as_str(), ip_low.as_str()] {
+        let classify_ipv4_cidr = |ip4: Ipv4Addr| -> Option<&'static str> {
+            if ip4.is_loopback() {
+                return Some("LOCAL_LOOPBACK_IPC");
+            }
+            if ip4.is_private() {
+                return Some("LOCAL_LOOPBACK_OR_RFC1918");
+            }
+            let [a, b, c, _d] = ip4.octets();
+            // AS36459 (140.82.112.0/20, 192.30.252.0/22, 185.199.108.0/22, 20.205.243.0/24)
+            if (a == 140 && b == 82 && (112..=127).contains(&c))
+                || (a == 192 && b == 30 && (252..=255).contains(&c))
+                || (a == 185 && b == 199 && (108..=111).contains(&c))
+                || (a == 20 && b == 205 && c == 243)
+            {
+                return Some("ASN36459:GitHub");
+            }
+            // AS13335 (104.16.0.0/12, 172.64.0.0/13, 162.158.0.0/15, 108.162.192.0/18, 1.1.1.1, 1.0.0.1)
+            if (a == 104 && (16..=31).contains(&b))
+                || (a == 172 && (64..=71).contains(&b))
+                || (a == 162 && (158..=159).contains(&b))
+                || (a == 108 && b == 162 && c >= 192)
+                || (a == 1 && (b == 1 || b == 0) && c == 1)
+            {
+                return Some("ASN13335:Cloudflare");
+            }
+            // AS15169 / AS396982 (142.250.0.0/15, 172.217.0.0/16, 172.253.0.0/16, 74.125.0.0/16, 34.0.0.0/9, 35.184.0.0/13, 8.8.8.8, 8.8.4.4)
+            if (a == 142 && (250..=251).contains(&b))
+                || (a == 172 && (b == 217 || b == 253))
+                || (a == 74 && b == 125)
+                || (a == 34 && b < 128)
+                || (a == 35 && (184..=247).contains(&b))
+                || (a == 8 && b == 8 && (c == 8 || c == 4))
+            {
+                return Some("ASN15169:Google-Cloud");
+            }
+            // AS8075 (13.64.0.0/11, 20.0.0.0/8, 40.64.0.0/10, 52.96.0.0/12, 52.104.0.0/14, 204.79.197.0/24)
+            if (a == 13 && (64..=107).contains(&b))
+                || a == 20
+                || (a == 40 && (64..=127).contains(&b))
+                || (a == 52 && (96..=191).contains(&b))
+                || (a == 204 && b == 79 && c == 197)
+            {
+                return Some("ASN8075:Microsoft-Azure");
+            }
+            // AS14618 / AS54113 (151.101.0.0/16, 18.0.0.0/8, 54.0.0.0/8, 3.0.0.0/8, 52.0.0.0/10)
+            if (a == 151 && b == 101)
+                || a == 18
+                || a == 54
+                || a == 3
+                || (a == 52 && b < 96)
+            {
+                return Some("ASN14618:AWS-Fastly-Infra");
+            }
+            None
+        };
+
+        let classify_ipv6_cidr = |ip6: Ipv6Addr| -> Option<&'static str> {
+            if ip6.is_loopback() {
+                return Some("LOCAL_LOOPBACK_IPC");
+            }
+            let seg0 = ip6.segments()[0];
+            if (seg0 & 0xfe00) == 0xfc00 || (seg0 & 0xffc0) == 0xfe80 {
+                return Some("LOCAL_LOOPBACK_OR_RFC1918");
+            }
+            if let Some(ip4) = ip6.to_ipv4_mapped() {
+                return classify_ipv4_cidr(ip4);
+            }
+            // AS15169 IPv6 (2001:4860::/32, 2607:f8b0::/32)
+            if (seg0 == 0x2001 && ip6.segments()[1] == 0x4860)
+                || (seg0 == 0x2607 && ip6.segments()[1] == 0xf8b0)
+            {
+                return Some("ASN15169:Google-Cloud");
+            }
+            // AS13335 IPv6 (2606:4700::/32)
+            if seg0 == 0x2606 && ip6.segments()[1] == 0x4700 {
+                return Some("ASN13335:Cloudflare");
+            }
+            None
+        };
+
+        for cand in [ip_low.as_str(), h_low.as_str()] {
             if let Ok(ip4) = cand.parse::<Ipv4Addr>() {
-                if ip4.is_loopback() || ip4.is_private() {
-                    return Some("LOCAL_LOOPBACK_OR_RFC1918");
+                if let Some(asn) = classify_ipv4_cidr(ip4) {
+                    return Some(asn);
                 }
             }
             if let Ok(ip6) = cand.parse::<Ipv6Addr>() {
-                if ip6.is_loopback() || (ip6.segments()[0] & 0xfe00) == 0xfc00 || (ip6.segments()[0] & 0xffc0) == 0xfe80 {
-                    return Some("LOCAL_LOOPBACK_OR_RFC1918");
+                if let Some(asn) = classify_ipv6_cidr(ip6) {
+                    return Some(asn);
                 }
             }
         }
 
-        // 2. Trusted domain suffixes
-        let github_domains = [
-            "github.com",
-            "githubusercontent.com",
-            "githubassets.com",
-            "ghcr.io",
-            "github.io",
-        ];
-        if github_domains
-            .iter()
-            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
-        {
-            return Some("ASN36459:GitHub");
-        }
-
-        let google_domains = [
-            "google.com",
-            "googleapis.com",
-            "gstatic.com",
-            "googleusercontent.com",
-            "gvt1.com",
-            "gvt2.com",
-            "1e100.net",
-            "antigravity-unleash.goog",
-        ];
-        if google_domains
-            .iter()
-            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
-            || h_low.ends_with(".goog")
-        {
-            return Some("ASN15169:Google-Cloud");
-        }
-
-        let msft_domains = [
-            "microsoft.com",
-            "windowsupdate.com",
-            "azure.com",
-            "windows.net",
-            "office.com",
-            "office365.com",
-            "live.com",
-            "bing.com",
-            "msftconnecttest.com",
-            "msftncsi.com",
-            "msedge.net",
-            "sfx.ms",
-            "trafficmanager.net",
-            "visualstudio.com",
-            "vsassets.io",
-            "aka.ms",
-        ];
-        if msft_domains
-            .iter()
-            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
-        {
-            return Some("ASN8075:Microsoft-Azure");
-        }
-
-        let cf_domains = ["cloudflare.com", "cloudflare-dns.com", "cloudflareclient.com"];
-        if cf_domains
-            .iter()
-            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
-        {
-            return Some("ASN13335:Cloudflare");
-        }
-
-        let infra_domains = [
-            "docker.com",
-            "docker.io",
-            "pypi.org",
-            "pythonhosted.org",
-            "crates.io",
-            "rust-lang.org",
-            "digicert.com",
-            "nist.gov",
-            "npmjs.org",
-            "npmjs.com",
-            "huggingface.co",
-            "ollama.com",
-            "mozilla.org",
-            "firefox.com",
-            "brave.com",
-            "ubuntu.com",
-            "debian.org",
-        ];
-        if infra_domains
-            .iter()
-            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
-        {
-            return Some("ASN_TRUSTED_DEV_INFRA");
-        }
-
-        // 3. Trusted ASN IPv4 CIDR prefixes (when reverse DNS / SNI was not cached)
-        for cand in [ip_low.as_str(), h_low.as_str()] {
-            if let Ok(ip4) = cand.parse::<Ipv4Addr>() {
-                let [a, b, c, _d] = ip4.octets();
-                // GitHub AS36459 (140.82.112.0/20, 192.30.252.0/22, 185.199.108.0/22, 20.205.243.0/24)
-                if (a == 140 && b == 82 && (112..=127).contains(&c))
-                    || (a == 192 && b == 30 && (252..=255).contains(&c))
-                    || (a == 185 && b == 199 && (108..=111).contains(&c))
-                    || (a == 20 && b == 205 && c == 243)
-                {
-                    return Some("ASN36459:GitHub");
-                }
-                // Cloudflare AS13335 (104.16.0.0/12, 172.64.0.0/13, 162.158.0.0/15, 108.162.192.0/18, 1.1.1.1, 1.0.0.1)
-                if (a == 104 && (16..=31).contains(&b))
-                    || (a == 172 && (64..=71).contains(&b))
-                    || (a == 162 && (158..=159).contains(&b))
-                    || (a == 108 && b == 162 && c >= 192)
-                    || (a == 1 && (b == 1 || b == 0) && c == 1)
-                {
-                    return Some("ASN13335:Cloudflare");
-                }
-                // Google / GCP AS15169 / AS396982 (142.250.0.0/15, 172.217.0.0/16, 172.253.0.0/16, 74.125.0.0/16, 34.0.0.0/9, 35.184.0.0/13, 8.8.8.8, 8.8.4.4)
-                if (a == 142 && (250..=251).contains(&b))
-                    || (a == 172 && (b == 217 || b == 253))
-                    || (a == 74 && b == 125)
-                    || (a == 34 && b < 128)
-                    || (a == 35 && (184..=247).contains(&b))
-                    || (a == 8 && b == 8 && (c == 8 || c == 4))
-                {
-                    return Some("ASN15169:Google-Cloud");
-                }
-                // Microsoft / Azure AS8075 (13.64.0.0/11, 20.0.0.0/8, 40.64.0.0/10, 52.96.0.0/12, 52.104.0.0/14, 204.79.197.0/24)
-                if (a == 13 && (64..=107).contains(&b))
-                    || a == 20
-                    || (a == 40 && (64..=127).contains(&b))
-                    || (a == 52 && (96..=191).contains(&b))
-                    || (a == 204 && b == 79 && c == 197)
-                {
-                    return Some("ASN8075:Microsoft-Azure");
-                }
-                // Fastly / AWS / Docker Hub / PyPI / NVD (151.101.0.0/16, 18.0.0.0/8, 54.0.0.0/8, 3.0.0.0/8, 52.0.0.0/10)
-                if (a == 151 && b == 101)
-                    || a == 18
-                    || a == 54
-                    || a == 3
-                    || (a == 52 && b < 96)
-                {
-                    return Some("ASN14618:AWS-Fastly-Infra");
+        // Dynamic OS DNS resolver lookup into BGP CIDR ranges when only hostname is provided
+        if !h_low.is_empty() && h_low.contains('.') {
+            use std::net::ToSocketAddrs;
+            if let Ok(addrs) = (h_low.as_str(), 443u16).to_socket_addrs() {
+                for sock in addrs {
+                    match sock.ip() {
+                        std::net::IpAddr::V4(ip4) => {
+                            if let Some(asn) = classify_ipv4_cidr(ip4) {
+                                return Some(asn);
+                            }
+                        }
+                        std::net::IpAddr::V6(ip6) => {
+                            if let Some(asn) = classify_ipv6_cidr(ip6) {
+                                return Some(asn);
+                            }
+                        }
+                    }
                 }
             }
         }

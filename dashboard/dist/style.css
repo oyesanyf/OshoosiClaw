@@ -226,6 +226,196 @@ body::before {
     margin-top: 4px;
 }
 
+/* Collapsible 7-Category Sidebar & Compact Icon Rail */
+.sidebar {
+    transition: width 0.22s ease, padding 0.22s ease;
+}
+
+.sidebar-controls-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 8px;
+    padding: 0 2px;
+    flex-shrink: 0;
+}
+
+.sidebar-search-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--glass-border);
+    border-radius: 7px;
+    padding: 4px 8px;
+}
+
+.sidebar-search-row input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 11.5px;
+    width: 100%;
+}
+
+.sidebar-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.sidebar-ctrl-btn {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    color: var(--text-secondary);
+    font-size: 10.5px;
+    font-weight: 600;
+    padding: 4px 7px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    transition: all 0.18s ease;
+}
+
+.sidebar-ctrl-btn:hover {
+    background: rgba(0, 210, 255, 0.12);
+    border-color: rgba(0, 210, 255, 0.35);
+    color: #ffffff;
+}
+
+.sidebar-critical-pins {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    margin: 4px 0 8px 0;
+    flex-shrink: 0;
+}
+
+.sidebar-pin-pill {
+    background: rgba(15, 23, 42, 0.75);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    padding: 4px 4px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    cursor: pointer;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: all 0.18s ease;
+}
+
+.sidebar-pin-pill:hover {
+    border-color: var(--accent-blue);
+    color: #ffffff;
+    background: rgba(0, 210, 255, 0.12);
+}
+
+details.nav-category-group {
+    margin-bottom: 4px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.015);
+    border: 1px solid transparent;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+
+details.nav-category-group[open] {
+    background: rgba(13, 17, 23, 0.55);
+    border-color: rgba(255, 255, 255, 0.06);
+}
+
+details.nav-category-group.has-active-child {
+    border-color: rgba(0, 210, 255, 0.25);
+}
+
+summary.nav-category-summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 9px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+    border-radius: 7px;
+    transition: background 0.18s ease, color 0.18s ease;
+}
+
+summary.nav-category-summary::-webkit-details-marker {
+    display: none;
+}
+
+summary.nav-category-summary:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #ffffff;
+}
+
+summary.nav-category-summary .cat-chevron {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+}
+
+details.nav-category-group[open] > summary.nav-category-summary .cat-chevron {
+    transform: rotate(90deg);
+    color: var(--accent-blue);
+}
+
+.nav-category-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px 4px 6px 10px;
+}
+
+/* Compact Icon-Only Rail Mode (.sidebar.rail-collapsed) */
+.sidebar.rail-collapsed {
+    width: 68px;
+    padding: 12px 6px;
+}
+
+.sidebar.rail-collapsed .logo-text,
+.sidebar.rail-collapsed .sidebar-controls-bar,
+.sidebar.rail-collapsed .sidebar-critical-pins,
+.sidebar.rail-collapsed .nav-section-title,
+.sidebar.rail-collapsed summary.nav-category-summary,
+.sidebar.rail-collapsed .nav-item span,
+.sidebar.rail-collapsed .sidebar-footer .status-indicator span,
+.sidebar.rail-collapsed .sidebar-footer .node-id-label {
+    display: none !important;
+}
+
+.sidebar.rail-collapsed .logo-container {
+    justify-content: center;
+    padding-left: 0;
+}
+
+.sidebar.rail-collapsed .nav-category-items {
+    padding: 2px 0;
+}
+
+.sidebar.rail-collapsed .nav-item {
+    justify-content: center;
+    padding: 8px 0;
+}
+
+.sidebar.rail-collapsed .sidebar-footer .status-indicator {
+    justify-content: center;
+}
+
 /* Main Content Area */
 .content {
     flex: 1;
@@ -1793,3 +1983,74 @@ body::before {
     background: #1e293b;
     border-radius: 3px;
 }
+
+/* Collapsible Policy Detection Engines Categories & Compact Voter Cards */
+#detection-engines-grid.categorized-engines-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.engine-category-section {
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+}
+
+.engine-category-section:hover {
+    border-color: rgba(56, 189, 248, 0.35);
+}
+
+.engine-category-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+    background: rgba(13, 17, 23, 0.65);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.engine-category-section.collapsed .engine-category-header {
+    border-bottom: none;
+}
+
+.engine-category-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+    padding: 12px 14px;
+}
+
+.engine-category-section.collapsed .engine-category-grid {
+    display: none !important;
+}
+
+.voter-card.voter-collapsed {
+    padding: 10px 14px;
+}
+
+.voter-card.voter-collapsed .voter-header {
+    margin-bottom: 0;
+}
+
+.voter-card.voter-collapsed .voter-desc,
+.voter-card.voter-collapsed .voter-badges {
+    display: none !important;
+}
+
+.voter-collapse-chevron {
+    font-size: 11px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+    display: inline-block;
+    margin-left: 6px;
+}
+
+.voter-card.voter-collapsed .voter-collapse-chevron {
+    transform: rotate(-90deg);
+}
+

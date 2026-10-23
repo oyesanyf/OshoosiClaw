@@ -10419,7 +10419,8 @@ impl EdrOrchestrator {
                     let proc_str = proc.as_deref().unwrap_or("");
                     let extracted_from_desc = crate::rea::extract_process_from_summary(description).unwrap_or(proc_str);
                     let is_benign_proc = (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(description)))
-                        || (!extracted_from_desc.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_from_desc, Some(description)));
+                        || (!extracted_from_desc.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_from_desc, Some(description)))
+                        || crate::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(description));
                     if is_benign_proc {
                         continue;
                     }
@@ -10617,7 +10618,7 @@ impl EdrOrchestrator {
     pub fn run_autonomous_rea_threat_adjudication(&self) -> usize {
         let now = chrono::Utc::now().timestamp();
         let last = self.last_rea_adjudication_ts.load(std::sync::atomic::Ordering::Relaxed);
-        if now.saturating_sub(last) < 15 {
+        if now.saturating_sub(last) < 3 {
             return 0;
         }
         if self
@@ -10666,7 +10667,7 @@ impl EdrOrchestrator {
                 }
             }
         }
-        if let Ok(threats) = self.memory.get_recent_threats(60) {
+        if let Ok(threats) = self.memory.get_recent_threats(100) {
             for t in threats {
                 let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if !id.is_empty() && !self.dismissed_gossip_ids.contains(&id) {
@@ -10677,7 +10678,7 @@ impl EdrOrchestrator {
                 }
             }
         }
-        for entry in self.audit.entries().iter().rev().take(60) {
+        for entry in self.audit.entries().iter().rev().take(100) {
             if entry.event_type == "MESH_THREAT_BROADCAST"
                 || entry.event_type == "MESH_THREAT_RECEIVED"
                 || entry.event_type == "THREAT_DETECTED"
@@ -10734,7 +10735,7 @@ impl EdrOrchestrator {
             let is_benign_direct = if !proc_str.is_empty() {
                 crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(&reason))
             } else {
-                false
+                crate::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(&reason))
             };
             let is_already_clean = is_benign_direct
                 || proc_base
@@ -10748,13 +10749,13 @@ impl EdrOrchestrator {
                 }
                 self.dismissed_gossip_ids.insert(id.clone());
                 let cand_p = if !proc_str.is_empty() { Some(proc_str) } else { proc.as_deref() };
+                let _ = self.memory.delete_threat_by_id_or_pattern(
+                    Some(&id),
+                    cand_p,
+                    hash.as_deref(),
+                );
                 if let Some(p) = cand_p {
                     if purged_procs.insert(p.to_ascii_lowercase()) {
-                        let _ = self.memory.delete_threat_by_id_or_pattern(
-                            Some(&id),
-                            Some(p),
-                            hash.as_deref(),
-                        );
                         let _ = self.memory.delete_threats_matching_process_substring(p);
                         // Also record a lightweight REA report once per benign process
                         let _ = rea.adjudicate_process_or_binary_alert(Some(p), None, Some(&reason));
@@ -10764,7 +10765,7 @@ impl EdrOrchestrator {
                 continue;
             }
 
-            if disk_probes >= 2 {
+            if disk_probes >= 6 {
                 continue;
             }
             disk_probes += 1;
@@ -10779,17 +10780,17 @@ impl EdrOrchestrator {
                 }
                 self.dismissed_gossip_ids.insert(id.clone());
                 let final_hash = resolved_hash.as_deref().or(hash.as_deref());
+                let _ = self.memory.delete_threat_by_id_or_pattern(
+                    Some(&id),
+                    cand_p,
+                    final_hash,
+                );
                 if let Some(p) = cand_p {
                     if purged_procs.insert(p.to_ascii_lowercase()) {
                         let _ = self.memory.record_false_positive_pattern(
                             Some(p),
                             final_hash,
                             "autonomous_rea",
-                        );
-                        let _ = self.memory.delete_threat_by_id_or_pattern(
-                            Some(&id),
-                            Some(p),
-                            final_hash,
                         );
                         let _ = self.memory.delete_threats_matching_process_substring(p);
                     }

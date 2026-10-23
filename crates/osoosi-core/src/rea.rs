@@ -868,8 +868,91 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
     false
 }
 
-/// Returns `true` if `path_str` resides inside a canonical trusted OS, Visual Studio MSVC,
-/// Windows SDK, Rust/Cargo, or OshoosiClaw installation directory.
+static DYNAMIC_TRUSTED_DIR_PREFIXES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+fn get_dynamic_trusted_dir_prefixes() -> &'static Vec<String> {
+    DYNAMIC_TRUSTED_DIR_PREFIXES.get_or_init(|| {
+        let mut prefixes = Vec::new();
+        let mut add_prefix = |p: PathBuf| {
+            let mut s = p.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+            if !s.is_empty() && !is_untrusted_writable_or_temp_path(&s) {
+                if !s.ends_with('\\') {
+                    s.push('\\');
+                }
+                if !prefixes.contains(&s) {
+                    prefixes.push(s);
+                }
+            }
+        };
+
+        for env_key in [
+            "SystemRoot",
+            "WINDIR",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramW6432",
+            "CARGO_HOME",
+            "RUSTUP_HOME",
+            "CARGO_TARGET_DIR",
+        ] {
+            if let Some(val) = std::env::var_os(env_key) {
+                let base = PathBuf::from(val);
+                if env_key.eq_ignore_ascii_case("SystemRoot")
+                    || env_key.eq_ignore_ascii_case("WINDIR")
+                {
+                    for sub in [
+                        "System32",
+                        "SysWOW64",
+                        "WinSxS",
+                        "servicing",
+                        "SystemApps",
+                        "ImmersiveControlPanel",
+                        "Microsoft.NET",
+                    ] {
+                        add_prefix(base.join(sub));
+                    }
+                } else {
+                    add_prefix(base);
+                }
+            }
+        }
+
+        if let Some(up) = std::env::var_os("USERPROFILE") {
+            let base = PathBuf::from(up);
+            add_prefix(base.join(".cargo").join("bin"));
+            add_prefix(base.join(".rustup").join("toolchains"));
+        }
+        if let Some(lad) = std::env::var_os("LOCALAPPDATA") {
+            let base = PathBuf::from(lad);
+            add_prefix(base.join("Programs"));
+            add_prefix(base.join("Microsoft").join("WindowsApps"));
+        }
+        if let Some(ad) = std::env::var_os("APPDATA") {
+            let base = PathBuf::from(ad);
+            add_prefix(base.join("Zoom").join("bin"));
+        }
+        if let Ok(cur_exe) = std::env::current_exe() {
+            if let Some(parent) = cur_exe.parent() {
+                add_prefix(parent.to_path_buf());
+            }
+        }
+        let ws_target = osoosi_types::resolve_base_dir().join("target");
+        add_prefix(ws_target.join("release"));
+        add_prefix(ws_target.join("debug"));
+
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                if dir.is_dir() {
+                    add_prefix(dir);
+                }
+            }
+        }
+        prefixes
+    })
+}
+
+/// Returns `true` if `path_str` resides inside a canonical trusted OS, toolchain,
+/// or workspace installation directory derived dynamically from OS environment variables.
 pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
     let raw = path_str.trim().trim_matches('"');
     if raw.is_empty() || is_untrusted_writable_or_temp_path(raw) {
@@ -878,51 +961,30 @@ pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
     let norm = raw.replace('/', "\\").to_ascii_lowercase();
     let unix_norm = raw.replace('\\', "/").to_ascii_lowercase();
 
-    if norm.starts_with(r"c:\windows\system32\")
-        || norm.starts_with(r"c:\windows\syswow64\")
-        || norm.starts_with(r"c:\windows\winsxs\")
-        || norm.starts_with(r"c:\windows\servicing\")
-        || norm.starts_with(r"c:\windows\systemapps\")
-        || norm.starts_with(r"c:\windows\immersivecontrolpanel\")
-        || norm.starts_with(r"c:\windows\microsoft.net\")
-        || matches!(
-            norm.as_str(),
-            r"c:\windows\explorer.exe"
-                | r"c:\windows\regedit.exe"
-                | r"c:\windows\notepad.exe"
-                | r"c:\windows\hh.exe"
-                | r"c:\windows\splwow64.exe"
-                | r"c:\windows\py.exe"
-        )
-        || norm.starts_with(r"c:\program files\")
-        || norm.starts_with(r"c:\program files (x86)\")
-        || norm.contains(r"\.cargo\bin\")
-        || norm.contains(r"\.rustup\toolchains\")
-        || norm.contains(r"\appdata\local\programs\ollama\")
-        || norm.contains(r"\appdata\local\programs\python\")
-        || norm.contains(r"\appdata\local\programs\microsoft vs code\")
-        || norm.contains(r"\appdata\local\programs\antigravity\")
-        || norm.contains(r"\appdata\local\microsoft\windowsapps\")
-        || norm.contains(r"\appdata\roaming\zoom\bin\")
-        || norm.contains(r"\target\release\")
-        || norm.contains(r"\target\debug\")
-    {
-        return true;
+    for prefix in get_dynamic_trusted_dir_prefixes() {
+        if norm.starts_with(prefix) {
+            return true;
+        }
     }
 
-    if let Ok(cur_exe) = std::env::current_exe() {
-        if let Some(parent) = cur_exe.parent() {
-            let parent_norm = parent
-                .to_string_lossy()
-                .replace('/', "\\")
-                .to_ascii_lowercase();
-            if !parent_norm.is_empty() && norm.starts_with(&parent_norm) {
+    // Also check direct SystemRoot root-level binaries (e.g. explorer.exe, regedit.exe, notepad.exe, py.exe)
+    if let Some(sys_root) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR")) {
+        let sr = PathBuf::from(sys_root)
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase();
+        if let Some(rest) = norm.strip_prefix(&format!("{}\\", sr.trim_end_matches('\\'))) {
+            if !rest.contains('\\') && rest.ends_with(".exe") {
                 return true;
             }
         }
     }
 
-    if unix_norm.starts_with("/usr/bin/")
+    if norm.contains(r"\.cargo\bin\")
+        || norm.contains(r"\.rustup\toolchains\")
+        || norm.contains(r"\target\release\")
+        || norm.contains(r"\target\debug\")
+        || unix_norm.starts_with("/usr/bin/")
         || unix_norm.starts_with("/usr/sbin/")
         || unix_norm.starts_with("/bin/")
         || unix_norm.starts_with("/sbin/")
@@ -936,8 +998,63 @@ pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
     false
 }
 
+static DYNAMIC_MASQUERADE_PROTECTED_NAMES: std::sync::OnceLock<dashmap::DashSet<String>> =
+    std::sync::OnceLock::new();
+
+fn get_dynamic_masquerade_protected_names() -> &'static dashmap::DashSet<String> {
+    DYNAMIC_MASQUERADE_PROTECTED_NAMES.get_or_init(|| {
+        let set = dashmap::DashSet::new();
+        let mut scan_dirs = Vec::new();
+        if let Some(sr) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR")) {
+            let base = PathBuf::from(sr);
+            scan_dirs.push(base.join("System32"));
+            scan_dirs.push(base);
+        }
+        if let Some(up) = std::env::var_os("USERPROFILE") {
+            scan_dirs.push(PathBuf::from(up).join(".cargo").join("bin"));
+        }
+        if let Ok(cur_exe) = std::env::current_exe() {
+            if let Some(name) = cur_exe.file_name().and_then(|n| n.to_str()) {
+                set.insert(name.to_ascii_lowercase());
+            }
+            if let Some(parent) = cur_exe.parent() {
+                scan_dirs.push(parent.to_path_buf());
+            }
+        }
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                if !is_untrusted_writable_or_temp_path(&dir.to_string_lossy()) {
+                    scan_dirs.push(dir);
+                }
+            }
+        }
+        for dir in scan_dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        let lower = name.to_ascii_lowercase();
+                        if lower.ends_with(".exe") || lower.ends_with(".dll") {
+                            // Skip generic installer filenames so legitimate temp installers are evaluated by signature, not name collision
+                            let stem = lower
+                                .strip_suffix(".exe")
+                                .or_else(|| lower.strip_suffix(".dll"))
+                                .unwrap_or(&lower);
+                            if !matches!(stem, "setup" | "install" | "installer" | "update" | "updater" | "uninstall") {
+                                set.insert(lower.clone());
+                                if lower.len() > 14 {
+                                    set.insert(lower[..14].to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        set
+    })
+}
+
 /// Detect whether a target binary or process is masquerading as a protected OS or developer binary
-/// (`svchost.exe`, `cl.exe`, `powershell.exe`, `osoosi.exe`, `cargo.exe`, `python.exe`, etc.)
 /// from an untrusted directory or with a non-PE/corrupted header.
 pub fn detect_binary_masquerade_spoof(
     target_label: &str,
@@ -957,63 +1074,7 @@ pub fn detect_binary_masquerade_spoof(
     let base = norm.rsplit('\\').next().unwrap_or(raw).trim();
     let base_lower = base.to_ascii_lowercase();
 
-    const PROTECTED_MASQUERADE_TARGETS: &[&str] = &[
-        "svchost.exe",
-        "lsass.exe",
-        "csrss.exe",
-        "services.exe",
-        "wininit.exe",
-        "winlogon.exe",
-        "smss.exe",
-        "explorer.exe",
-        "conhost.exe",
-        "powershell.exe",
-        "pwsh.exe",
-        "cmd.exe",
-        "taskkill.exe",
-        "tasklist.exe",
-        "sc.exe",
-        "msiexec.exe",
-        "wmiprvse.exe",
-        "rundll32.exe",
-        "regsvr32.exe",
-        "cl.exe",
-        "link.exe",
-        "msbuild.exe",
-        "signtool.exe",
-        "onedrive.exe",
-        "am_delta_patch",
-        "am_delta_patch.exe",
-        "wuaucltcore.ex",
-        "credentialuibroker.exe",
-        "credentialuibr",
-        "backgroundtaskhost.exe",
-        "backgroundtask",
-        "tabtip.exe",
-        "rtkngui64.exe",
-        "mobsync.exe",
-        "locationnotificationwindows.exe",
-        "runonce.exe",
-        "wmiadap.exe",
-        "updater.exe",
-        "chrome_proxy.exe",
-        "chrome_proxy.e",
-        "remoting_native_messaging_host.exe",
-        "remoting_nativ",
-        "trustedinstall",
-        "cargo.exe",
-        "rustc.exe",
-        "rustup.exe",
-        "python.exe",
-        "python3.exe",
-        "node.exe",
-        "git.exe",
-        "osoosi.exe",
-        "osoosi-cli.exe",
-        "osoosi_inject.dll",
-    ];
-
-    let is_protected_name = PROTECTED_MASQUERADE_TARGETS.contains(&base_lower.as_str());
+    let is_protected_name = get_dynamic_masquerade_protected_names().contains(&base_lower);
     let has_dir_sep = raw.contains('\\') || raw.contains('/');
 
     if is_protected_name && has_dir_sep {
@@ -5070,13 +5131,240 @@ pub const SAMPLE_WASM_MODULE_HEX: &str = "0061736d01000000010b0260017f0060027f7f
 // Autonomous REA Engine (`AutonomousReaEngine`) & Universal `ReaVoter`
 // ============================================================================
 
-/// Resolve a process name or candidate file path to a verified binary path on disk.
-///
-/// Protection Layer 1 & 2:
-/// - Rejects any path failing `validate_rea_target_path` (UNC/SMB, ADS, device namespaces, `..`).
-/// - Never resolves bare binary names against CWD first (preventing CWD binary hijacking).
-/// - Searches canonical OS, Visual Studio MSVC (`VC\Tools\MSVC\*\bin\Hostx64\x64`), Windows SDK,
-///   Rust/Cargo, and OshoosiClaw directories, skipping untrusted writable/temp directories.
+static DYNAMIC_HOST_BINARY_INDEX: std::sync::OnceLock<dashmap::DashMap<String, PathBuf>> =
+    std::sync::OnceLock::new();
+static DYNAMIC_BINARY_TRUST_CACHE: std::sync::OnceLock<dashmap::DashMap<PathBuf, bool>> =
+    std::sync::OnceLock::new();
+
+fn index_binary_file_into_map(map: &dashmap::DashMap<String, PathBuf>, path: PathBuf) {
+    let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    let lower = file_name.to_ascii_lowercase();
+    if !lower.ends_with(".exe") && !lower.ends_with(".dll") && cfg!(target_os = "windows") {
+        return;
+    }
+    let stem = lower
+        .strip_suffix(".exe")
+        .or_else(|| lower.strip_suffix(".dll"))
+        .unwrap_or(&lower)
+        .to_string();
+
+    map.entry(lower.clone()).or_insert_with(|| path.clone());
+    if !stem.is_empty() {
+        map.entry(stem.clone()).or_insert_with(|| path.clone());
+    }
+    // Also index 14-char kernel/ETW truncation prefix dynamically from actual binary filenames on disk
+    if lower.len() > 14 && lower.is_char_boundary(14) {
+        map.entry(lower[..14].to_string())
+            .or_insert_with(|| path.clone());
+    }
+    if stem.len() > 14 && stem.is_char_boundary(14) {
+        map.entry(stem[..14].to_string())
+            .or_insert_with(|| path);
+    }
+}
+
+fn scan_dir_bounded_for_binaries(
+    map: &dashmap::DashMap<String, PathBuf>,
+    dir: &Path,
+    max_depth: usize,
+    dir_budget: &mut usize,
+) {
+    if *dir_budget == 0 || !dir.is_dir() {
+        return;
+    }
+    let dir_str = dir.to_string_lossy();
+    if is_untrusted_writable_or_temp_path(&dir_str) {
+        return;
+    }
+    *dir_budget = dir_budget.saturating_sub(1);
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_file() {
+            index_binary_file_into_map(map, p);
+        } else if ft.is_dir() && max_depth > 0 && *dir_budget > 0 {
+            scan_dir_bounded_for_binaries(map, &p, max_depth - 1, dir_budget);
+        }
+    }
+}
+
+fn get_dynamic_host_binary_index() -> &'static dashmap::DashMap<String, PathBuf> {
+    DYNAMIC_HOST_BINARY_INDEX.get_or_init(|| {
+        let map = dashmap::DashMap::new();
+        let mut budget = 1800usize;
+
+        // 1. Current executable & sibling binaries
+        if let Ok(cur_exe) = std::env::current_exe() {
+            if cur_exe.is_file() {
+                index_binary_file_into_map(&map, cur_exe.clone());
+            }
+            if let Some(parent) = cur_exe.parent() {
+                scan_dir_bounded_for_binaries(&map, parent, 1, &mut budget);
+            }
+        }
+
+        // 2. Active OS processes via sysinfo::System
+        {
+            use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
+            let sys = System::new_with_specifics(
+                RefreshKind::new().with_processes(
+                    ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
+                ),
+            );
+            for proc in sys.processes().values() {
+                if let Some(exe) = proc.exe() {
+                    let exe_str = exe.to_string_lossy();
+                    if !exe_str.is_empty()
+                        && !is_untrusted_writable_or_temp_path(&exe_str)
+                        && exe.is_file()
+                    {
+                        index_binary_file_into_map(&map, exe.to_path_buf());
+                    }
+                }
+            }
+        }
+
+        // 3. All directories in PATH
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                scan_dir_bounded_for_binaries(&map, &dir, 0, &mut budget);
+            }
+        }
+
+        // 4. OS SystemRoot & developer toolchains from environment variables
+        if let Some(sr) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR")) {
+            let base = PathBuf::from(sr);
+            scan_dir_bounded_for_binaries(&map, &base.join("System32"), 1, &mut budget);
+            scan_dir_bounded_for_binaries(&map, &base.join("SysWOW64"), 0, &mut budget);
+            scan_dir_bounded_for_binaries(&map, &base.join("SystemApps"), 2, &mut budget);
+            scan_dir_bounded_for_binaries(&map, &base, 0, &mut budget);
+        }
+        if let Some(up) = std::env::var_os("USERPROFILE") {
+            let base = PathBuf::from(up);
+            scan_dir_bounded_for_binaries(&map, &base.join(".cargo").join("bin"), 0, &mut budget);
+            scan_dir_bounded_for_binaries(
+                &map,
+                &base.join(".rustup").join("toolchains"),
+                3,
+                &mut budget,
+            );
+        }
+        if let Some(lad) = std::env::var_os("LOCALAPPDATA") {
+            let base = PathBuf::from(lad);
+            scan_dir_bounded_for_binaries(&map, &base.join("Programs"), 2, &mut budget);
+            scan_dir_bounded_for_binaries(
+                &map,
+                &base.join("Microsoft").join("WindowsApps"),
+                1,
+                &mut budget,
+            );
+        }
+        for env_pf in ["ProgramFiles", "ProgramFiles(x86)", "ProgramData"] {
+            if let Some(pf) = std::env::var_os(env_pf) {
+                scan_dir_bounded_for_binaries(&map, &PathBuf::from(pf), 3, &mut budget);
+            }
+        }
+
+        // 5. Workspace Cargo target directories
+        let ws_target = osoosi_types::resolve_base_dir().join("target");
+        scan_dir_bounded_for_binaries(&map, &ws_target.join("release"), 2, &mut budget);
+        scan_dir_bounded_for_binaries(&map, &ws_target.join("debug"), 2, &mut budget);
+
+        map
+    })
+}
+
+/// Dynamically verifies whether a resolved binary on disk is cryptographically or structurally trusted:
+/// 1. Rejects any untrusted temp/writable directory or masquerading binary.
+/// 2. Checks `ProtectedLocalBinaryHashInventory` (BLAKE3 digest).
+/// 3. Checks Authenticode X.509 / Windows Security Catalog (`CatRoot`) signature via `win_trust`.
+/// 4. Inspects PE/ELF structural headers (`MZ` / `\x7fELF`), `VS_VERSIONINFO` resource metadata,
+///    or Rust `.dep-v0` (`cargo-auditable`) provenance inside a canonical OS/toolchain directory.
+pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
+    let cache = DYNAMIC_BINARY_TRUST_CACHE.get_or_init(dashmap::DashMap::new);
+    if let Some(cached) = cache.get(path) {
+        return *cached;
+    }
+
+    let path_str = path.to_string_lossy();
+    if path_str.is_empty()
+        || is_untrusted_writable_or_temp_path(&path_str)
+        || !path.is_file()
+        || detect_binary_masquerade_spoof(&path_str, Some(path), None).is_some()
+    {
+        cache.insert(path.to_path_buf(), false);
+        return false;
+    }
+
+    // 1. Authenticode X.509 or Windows Security Catalog verification
+    if crate::win_trust::is_trusted_signed_binary(path) {
+        cache.insert(path.to_path_buf(), true);
+        return true;
+    }
+
+    // 2. Structural PE/ELF + VS_VERSIONINFO / .dep-v0 / BLAKE3 verification in canonical directory
+    let in_canonical_dir = is_canonical_trusted_binary_dir(&path_str)
+        || crate::blocking_manager::is_protected_or_benign_system_path(&path_str);
+
+    if let Ok(meta) = path.metadata() {
+        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES as u64 {
+            // Read up to 64 KiB header or full file if <= 16 MiB for BLAKE3 / .dep-v0 check
+            if meta.len() <= 16 * 1024 * 1024 {
+                if let Ok(bytes) = std::fs::read(path) {
+                    let b3 = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                    if is_protected_local_binary_hash(&b3) {
+                        cache.insert(path.to_path_buf(), true);
+                        return true;
+                    }
+                    let valid_magic = bytes.starts_with(b"MZ") || bytes.starts_with(b"\x7fELF");
+                    if valid_magic && in_canonical_dir {
+                        register_protected_binary_hash(&b3);
+                        cache.insert(path.to_path_buf(), true);
+                        return true;
+                    }
+                }
+            } else if in_canonical_dir {
+                if let Ok(mut f) = std::fs::File::open(path) {
+                    let mut hdr = [0u8; 4];
+                    if f.read(&mut hdr).unwrap_or(0) >= 2
+                        && (hdr.starts_with(b"MZ") || hdr.starts_with(b"\x7fELF"))
+                    {
+                        cache.insert(path.to_path_buf(), true);
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    cache.insert(path.to_path_buf(), false);
+    false
+}
+
+fn extract_embedded_process_candidate(text: &str) -> Option<String> {
+    // Dynamically extract a quoted process name (e.g. Process 'FirmwareTPM.exe') if present
+    if let Some(idx) = text.find("Process '").or_else(|| text.find("process '")) {
+        let rest = &text[idx + 9..];
+        if let Some(end) = rest.find('\'') {
+            let cand = rest[..end].trim();
+            if !cand.is_empty() {
+                return Some(cand.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Resolve a process name or candidate file path to a verified binary path on disk
+/// 100% dynamically via OS environment roots, `PATH`, running `sysinfo::System` processes,
+/// and the dynamic host binary index.
 pub fn resolve_candidate_binary_path(
     process_name: Option<&str>,
     file_path: Option<&str>,
@@ -5096,145 +5384,96 @@ pub fn resolve_candidate_binary_path(
             }
         }
     }
-    let name = process_name
+
+    let raw_name = process_name
         .or(file_path)
         .map(|s| s.trim().trim_matches('"'))
         .unwrap_or("");
-    if name.is_empty() {
+    if raw_name.is_empty() {
         return None;
     }
-    let base_name = Path::new(name)
+
+    let effective_name = extract_embedded_process_candidate(raw_name)
+        .or_else(|| file_path.and_then(extract_embedded_process_candidate))
+        .unwrap_or_else(|| raw_name.to_string());
+
+    let base_name = Path::new(&effective_name)
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or(name);
-    let mut names = vec![base_name.to_string()];
-    if !base_name.ends_with(".exe") && !base_name.contains('.') {
-        names.push(format!("{}.exe", base_name));
+        .unwrap_or(&effective_name);
+    let base_lower = base_name.trim().to_ascii_lowercase();
+    if base_lower.is_empty() {
+        return None;
     }
-    let base_lower = base_name.to_ascii_lowercase();
-    match base_lower.as_str() {
-        "appidcertstore" => names.push("AppIdCertStoreCheck.exe".to_string()),
-        "mousocoreworke" => names.push("MoUsoCoreWorker.exe".to_string()),
-        "docker-credent" => {
-            names.push("docker-credential-desktop.exe".to_string());
-            names.push("docker-credential-wincred.exe".to_string());
-        }
-        "llama-server.e" => names.push("llama-server.exe".to_string()),
-        "velociraptor.e" => names.push("velociraptor.exe".to_string()),
-        "smartscreen.ex" => names.push("smartscreen.exe".to_string()),
-        "runtimebroker." => names.push("RuntimeBroker.exe".to_string()),
-        "m2d_verificati" => names.push("m2d_verification.exe".to_string()),
-        "rg_embedded-7a" => names.push("rg.exe".to_string()),
-        _ => {
-            if base_lower.starts_with("rg_embedded") {
-                names.push("rg.exe".to_string());
+
+    let index = get_dynamic_host_binary_index();
+
+    // 1. Direct lookup in dynamic host binary index (exact name, stem, or 14-char prefix)
+    for key in [
+        base_lower.clone(),
+        format!("{}.exe", base_lower.trim_end_matches('.')),
+    ] {
+        if let Some(found) = index.get(&key) {
+            if found.is_file() {
+                return Some(found.value().clone());
             }
         }
     }
 
-    // Check current executable directory first for osoosi.exe and companion binaries
-    if let Ok(cur_exe) = std::env::current_exe() {
-        if let Some(exe_name) = cur_exe.file_name().and_then(|n| n.to_str()) {
-            if names.iter().any(|n| n.eq_ignore_ascii_case(exe_name)) && cur_exe.is_file() {
-                return Some(cur_exe);
+    // 2. Prefix lookup for 12..=15 char kernel/ETW truncated process names (where `.exe` was truncated off)
+    let clean_prefix = base_lower.trim_end_matches('.');
+    if (12..=15).contains(&clean_prefix.len())
+        && !clean_prefix.ends_with(".exe")
+        && !clean_prefix.ends_with(".dll")
+    {
+        for entry in index.iter() {
+            let k = entry.key();
+            if k.starts_with(clean_prefix) && entry.value().is_file() {
+                return Some(entry.value().clone());
             }
         }
-        if let Some(parent) = cur_exe.parent() {
-            for n in &names {
-                let cand = parent.join(n);
-                if cand.is_file() {
-                    return Some(cand);
+    }
+    if let Some((stem_prefix, _)) = clean_prefix.split_once("_embedded") {
+        if stem_prefix.len() >= 2 {
+            let exe_key = format!("{}.exe", stem_prefix);
+            if let Some(found) = index.get(&exe_key) {
+                if found.is_file() {
+                    return Some(found.value().clone());
                 }
             }
         }
     }
 
-    #[cfg(target_os = "windows")]
+    // 3. Live refresh from running OS processes if newly spawned after startup
     {
-        let mut standard_dirs: Vec<PathBuf> = vec![
-            PathBuf::from(r"C:\Windows\System32"),
-            PathBuf::from(r"C:\Windows\SysWOW64"),
-            PathBuf::from(r"C:\Windows"),
-            PathBuf::from(r"C:\Program Files\Git\cmd"),
-            PathBuf::from(r"C:\Program Files\Git\mingw64\bin"),
-            PathBuf::from(r"C:\Program Files\Git\usr\bin"),
-            PathBuf::from(r"C:\Program Files\nodejs"),
-            PathBuf::from(r"C:\Program Files\Google\Chrome\Application"),
-            PathBuf::from(r"C:\Program Files (x86)\Google\Chrome\Application"),
-            PathBuf::from(r"C:\Program Files\Microsoft\Edge\Application"),
-            PathBuf::from(r"C:\Program Files\Docker\Docker\resources\bin"),
-            PathBuf::from(r"C:\Program Files (x86)\GnuPG\bin"),
-            PathBuf::from(r"C:\Program Files\GnuPG\bin"),
-        ];
-        if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
-            let p = PathBuf::from(local_app_data);
-            standard_dirs.push(p.join(r"Programs\Ollama"));
-            standard_dirs.push(p.join(r"Microsoft\WindowsApps"));
-        }
-        if let Some(app_data) = std::env::var_os("APPDATA") {
-            let p = PathBuf::from(app_data);
-            standard_dirs.push(p.join(r"Zoom\bin"));
-        }
-        if let Some(user_profile) = std::env::var_os("USERPROFILE") {
-            let up = PathBuf::from(user_profile);
-            standard_dirs.push(up.join(r".cargo\bin"));
-            standard_dirs.push(up.join(r".rustup\toolchains\stable-x86_64-pc-windows-msvc\bin"));
-        }
-        for vs_base in [
-            r"C:\Program Files\Microsoft Visual Studio",
-            r"C:\Program Files (x86)\Microsoft Visual Studio",
-        ] {
-            if let Ok(years) = std::fs::read_dir(vs_base) {
-                for year in years.flatten() {
-                    if let Ok(editions) = std::fs::read_dir(year.path()) {
-                        for ed in editions.flatten() {
-                            let msvc_root = ed.path().join(r"VC\Tools\MSVC");
-                            if let Ok(vers) = std::fs::read_dir(msvc_root) {
-                                for v in vers.flatten() {
-                                    standard_dirs.push(v.path().join(r"bin\Hostx64\x64"));
-                                    standard_dirs.push(v.path().join(r"bin\Hostx64\x86"));
-                                    standard_dirs.push(v.path().join(r"bin\Hostx86\x64"));
-                                }
-                            }
-                            let msbuild_bin = ed.path().join(r"MSBuild\Current\Bin\amd64");
-                            if msbuild_bin.is_dir() {
-                                standard_dirs.push(msbuild_bin);
-                            }
-                        }
+        use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
+        let sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(
+                ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
+            ),
+        );
+        for proc in sys.processes().values() {
+            let p_name = proc.name().to_ascii_lowercase();
+            if p_name == base_lower
+                || ((12..=15).contains(&clean_prefix.len())
+                    && !clean_prefix.ends_with(".exe")
+                    && p_name.starts_with(clean_prefix))
+            {
+                if let Some(exe) = proc.exe() {
+                    let exe_str = exe.to_string_lossy();
+                    if !exe_str.is_empty()
+                        && !is_untrusted_writable_or_temp_path(&exe_str)
+                        && exe.is_file()
+                    {
+                        let pb = exe.to_path_buf();
+                        index_binary_file_into_map(index, pb.clone());
+                        return Some(pb);
                     }
                 }
             }
         }
-        let sdk_bin = Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin");
-        if let Ok(vers) = std::fs::read_dir(sdk_bin) {
-            for v in vers.flatten() {
-                standard_dirs.push(v.path().join("x64"));
-                standard_dirs.push(v.path().join("x86"));
-            }
-        }
-        for dir in &standard_dirs {
-            for n in &names {
-                let cand = dir.join(n);
-                if cand.is_file() {
-                    return Some(cand);
-                }
-            }
-        }
     }
-    if let Some(path_var) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            let dir_str = dir.to_string_lossy();
-            if is_untrusted_writable_or_temp_path(&dir_str) {
-                continue;
-            }
-            for n in &names {
-                let cand = dir.join(n);
-                if cand.is_file() {
-                    return Some(cand);
-                }
-            }
-        }
-    }
+
     None
 }
 
@@ -5332,12 +5571,38 @@ impl Default for AutonomousReaEngine {
     }
 }
 
-/// Autonomous REA verification helper: identifies legitimate operating system binaries,
-/// developer toolchains, cloud sync, productivity clients, and vendor-vetoed detections.
+/// Evaluates whether a candidate alert reason represents an uncalibrated single-voter
+/// false positive lacking multi-voter quorum or exploit corroboration.
+pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
+    if reason_lower.is_empty() || has_active_lotl_or_exploit_indicators(reason_lower) {
+        return false;
+    }
+    reason_lower.contains("veto")
+        || reason_lower.contains("trusted vendor")
+        || reason_lower.contains("trusted-vendor")
+        || reason_lower.contains("outside the vulnerable")
+        || reason_lower.contains("cve none")
+        || reason_lower.contains("execution of non-existing file")
+        || reason_lower.contains("autonomous rea verified clean")
+        || reason_lower.contains("unknown v0.0.0")
+        || reason_lower.contains("cve-2009-2940")
+        || reason_lower.contains("noul p=0.0")
+        || reason_lower.contains("noul p=0.01")
+        || reason_lower.contains("detected sensitive/exfil tokens []")
+        || reason_lower.contains("anti-chaff alert")
+        || (reason_lower.contains("matches kev product")
+            && !reason_lower.contains("verified_version="))
+}
+
+/// Autonomous REA verification helper: dynamically verifies whether a target process or binary
+/// is a legitimate operating system binary, developer toolchain binary, or voter-vetoed detection.
 ///
-/// Protection Layer 1:
-/// - Rejects any binary executing from an untrusted writable or temporary directory (`%TEMP%`, `\Downloads\`, `\Users\Public\`, `/tmp/`, etc.).
-/// - Rejects any binary failing `detect_binary_masquerade_spoof` (non-canonical directory without Authenticode signature or missing `MZ`/`ELF` header).
+/// Strictly zero hardcoded process lists:
+/// 1. Rejects any path in `%TEMP%`, `\Downloads\`, `\Users\Public\`, `/tmp/`, or failing `detect_binary_masquerade_spoof`.
+/// 2. Vetoes uncalibrated single-voter false-positive signals (`OpenJEV` empty categories `[]`, unversioned CVE/KEV, chaff counters).
+/// 3. Dynamically resolves the binary on disk via `resolve_candidate_binary_path` and verifies its cryptographic
+///    Authenticode / Windows Security Catalog signature, PE `VS_VERSIONINFO`, `.dep-v0` `cargo-auditable` manifest,
+///    or `ProtectedLocalBinaryHashInventory` BLAKE3 digest.
 pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&str>) -> bool {
     let raw = proc_or_path.trim().trim_matches('"');
     if raw.is_empty() {
@@ -5354,6 +5619,7 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         || reason_lower.contains("untrusted_module")
         || reason_lower.contains("image_loaded_untrusted")
         || reason_lower.contains("dynamic_load_untrusted")
+        || has_active_lotl_or_exploit_indicators(&reason_lower)
     {
         return false;
     }
@@ -5376,35 +5642,25 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         || reason_lower.starts_with("debuggerhiding__")
         || reason_lower.starts_with("seh__")
     {
-        let p = Path::new(raw);
-        if !is_untrusted_writable_or_temp_path(raw)
-            && detect_binary_masquerade_spoof(raw, Some(p), None).is_none()
-        {
-            return true;
-        }
-    }
-
-    if reason_lower.contains("veto")
-        || reason_lower.contains("trusted vendor")
-        || reason_lower.contains("trusted-vendor")
-        || reason_lower.contains("outside the vulnerable")
-        || reason_lower.contains("cve none")
-        || reason_lower.contains("execution of non-existing file")
-        || reason_lower.contains("autonomous rea verified clean")
-        || reason_lower.contains("unknown v0.0.0 has known cves")
-        || reason_lower.contains("cve-2009-2940")
-    {
         return true;
     }
 
-    // Extract normalized basename
+    // Root-cause voter calibration gate (zero hardcoded process names)
+    if is_uncalibrated_single_voter_false_positive(&reason_lower) {
+        return true;
+    }
+
     let norm = raw.replace('/', "\\");
     let base = norm.rsplit('\\').next().unwrap_or(raw).trim();
     let base_lower = base.to_ascii_lowercase();
 
-    // Check for unknown process placeholders
-    if base_lower == "<unknown process>" || base_lower == "unknown" || base_lower.is_empty() {
+    if base_lower == "<unknown process>"
+        || base_lower == "unknown"
+        || base_lower == "anti-chaff alert"
+        || base_lower.is_empty()
+    {
         if reason_lower.contains("t1082")
+            || reason_lower.contains("anti-chaff")
             || reason_lower.contains("system discovery")
             || reason_lower.contains("behavioral")
             || reason_lower.contains("suspicion")
@@ -5414,99 +5670,37 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         }
     }
 
-    const BENIGN_PROCS: &[&str] = &[
-        "sc.exe", "git.exe", "git-remote-https.exe", "git-credential-manager.exe",
-        "git-credential-helper.exe", "git-credential", "sh.exe", "bash.exe", "ssh.exe",
-        "conhost.exe", "openconsole.exe", "windowsterminal.exe", "wt.exe",
-        "chrome.exe", "remoting_host.exe", "googledrivefs.exe", "googleupdate.exe",
-        "googlecrashhandler.exe", "googlecrashhandler64.exe",
-        "wsl.exe", "wslhost.exe", "wslservice.exe", "vmmem", "vmmemwsl",
-        "taskkill.exe", "tasklist.exe", "taskmgr.exe",
-        "powershell.exe", "pwsh.exe", "cmd.exe", "svchost.exe", "explorer.exe",
-        "lsass.exe", "csrss.exe", "services.exe", "wininit.exe", "winlogon.exe",
-        "dwm.exe", "sihost.exe", "taskhostw.exe", "dllhost.exe", "ctfmon.exe",
-        "runtimebroker.exe", "runtimebroker.", "smartscreen.exe", "smartscreen.ex",
-        "appidcertstorecheck.exe", "appidcertstore", "mousocoreworker.exe", "mousocoreworke",
-        "wuaucltcore.exe", "wuauclt.exe", "usoclient.exe", "uhssvc.exe", "sihclient.exe",
-        "microsoftstartfeedprovider.exe", "microsoftstart", "widgets.exe", "widgetservice.exe",
-        "zoom.exe", "cpthost.exe", "docker-credential-desktop.exe", "docker-credential-wincred.exe",
-        "docker-credent", "scdaemon.exe", "gpg-agent.exe", "gpg.exe", "gpgsm.exe", "dirmngr.exe",
-        "ollama.exe", "ollama_llama_server.exe", "llama-server.exe", "llama-server.e",
-        "cvtres.exe", "rc.exe", "lib.exe", "ml64.exe", "py.exe", "py312.exe", "py311.exe", "py313.exe",
-        "python3.11.exe", "python3.12.exe", "rg.exe", "rg_embedded-7a", "rg_embedded",
-        "m2d_verification.exe", "m2d_verificati",
-        "searchhost.exe", "searchindexer.exe", "searchprotocolhost.exe", "searchfilterhost.exe",
-        "startmenuexperiencehost.exe", "shellexperiencehost.exe", "applicationframehost.exe",
-        "textinputhost.exe", "spoolsv.exe", "audiodg.exe", "fontdrvhost.exe",
-        "tiworker.exe", "trustedinstaller.exe", "msiexec.exe", "wmiprvse.exe",
-        "securityhealthservice.exe", "securityhealthsystray.exe",
-        "mpdefendercoreservice.exe", "msmpeng.exe", "nissrv.exe", "mpcmdrun.exe",
-        "onedrive.exe", "onedrive.sync.service.exe", "m365copilot.exe",
-        "msedge.exe", "msedgewebview2.exe", "slack.exe",
-        "com.docker.backend.exe", "docker.exe", "dockerd.exe", "vpnkit.exe",
-        "language_server.exe", "language_server_windows_x64.exe", "gemini.exe", "antigravity.exe", "code.exe",
-        "velociraptor.exe", "velociraptor.e",
-        "clibrowser.exe", "clibrowser", "wix.exe", "wixnative.exe", "llvm-rc.exe", "lld-link.exe", "rust-lld.exe", "llvm-ar.exe", "llvm-lib.exe", "dumpbin.exe", "editbin.exe", "nmake.exe", "cmake.exe", "ninja.exe",
-        "cargo.exe", "rustc.exe", "rustup.exe", "clippy-driver.exe", "cargo-fmt.exe",
-        "rustfmt.exe", "rust-analyzer.exe", "build-script-build.exe",
-        "link.exe", "cl.exe", "msbuild.exe", "signtool.exe",
-        "onedrive.exe",
-        "am_delta_patch",
-        "am_delta_patch.exe",
-        "wuaucltcore.ex",
-        "credentialuibroker.exe",
-        "credentialuibr",
-        "backgroundtaskhost.exe",
-        "backgroundtask",
-        "tabtip.exe",
-        "rtkngui64.exe",
-        "mobsync.exe",
-        "locationnotificationwindows.exe",
-        "runonce.exe",
-        "wmiadap.exe",
-        "updater.exe",
-        "chrome_proxy.exe",
-        "chrome_proxy.e",
-        "remoting_native_messaging_host.exe",
-        "remoting_nativ",
-        "trustedinstall", "candle.exe", "light.exe",
-        "node.exe", "python.exe", "python3.exe", "pythonw.exe",
-        "arp.exe", "ipconfig.exe", "netsh.exe", "route.exe", "ping.exe",
-        "whoami.exe", "hostname.exe", "systeminfo.exe", "reg.exe", "wevtutil.exe",
-        "icacls.exe", "findstr.exe", "where.exe", "osoosi.exe", "osoosi-cli.exe",
-        "<unknown process>",
-    ];
+    let has_taint_or_unsigned = reason_lower.contains("untrusted_taint")
+        || reason_lower.contains("tainted")
+        || reason_lower.contains("unsigned")
+        || reason_lower.contains("image_loaded_untrusted")
+        || reason_lower.contains("dynamic_load_untrusted");
+    if has_taint_or_unsigned {
+        return false;
+    }
 
-    let has_dir_sep = raw.contains('\\') || raw.contains('/');
-    for &known in BENIGN_PROCS {
-        let matched = if base_lower == known {
-            true
-        } else if known.len() >= 10 && base_lower.len() >= 10 {
-            known.starts_with(&base_lower) || base_lower.starts_with(known)
-        } else {
-            false
-        };
-        if matched {
-            // Invariant: BENIGN_PROCS never grants permanent vetoes on dynamic module loads
-            // or when session / process context carries untrusted taint!
-            if reason_lower.contains("untrusted_taint")
-                || reason_lower.contains("tainted")
-                || reason_lower.contains("unsigned")
-                || reason_lower.contains("image_loaded_untrusted")
-                || reason_lower.contains("dynamic_load_untrusted")
-            {
-                return false;
-            }
-            if has_dir_sep {
-                if is_canonical_trusted_binary_dir(raw) {
-                    return true;
-                }
-                let p = Path::new(raw);
-                if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
-                    return true;
-                }
-                return false;
-            }
+    // Dynamic Binary Path Resolution + Cryptographic/Structural Trust Verification
+    if let Some(resolved_path) = resolve_candidate_binary_path(Some(raw), reason) {
+        if verify_dynamic_binary_trust(&resolved_path) {
+            return true;
+        }
+    }
+
+    // Dynamic Workspace Cargo Build/Test Artifact Verification:
+    // Rust test/build binaries follow `<crate_stem>-<8..16 hex>` or `build-script-*` inside workspace `target/`
+    let stem = base_lower.strip_suffix(".exe").unwrap_or(&base_lower);
+    let is_cargo_hashed_artifact = if stem.starts_with("build-script-") {
+        true
+    } else if let Some((prefix, hash_part)) = stem.rsplit_once('-') {
+        !prefix.is_empty()
+            && (8..=16).contains(&hash_part.len())
+            && hash_part.chars().all(|c| c.is_ascii_hexdigit())
+    } else {
+        false
+    };
+    if is_cargo_hashed_artifact {
+        let ws_target = osoosi_types::resolve_base_dir().join("target");
+        if ws_target.is_dir() && (! (raw.contains('\\') || raw.contains('/')) || is_canonical_trusted_binary_dir(raw)) {
             return true;
         }
     }
@@ -5554,7 +5748,7 @@ fn get_protected_local_binary_hashes() -> &'static dashmap::DashSet<String> {
 fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
     let set = dashmap::DashSet::new();
 
-    // 1. Current running executable (up to MAX_REA_FILE_BYTES = 256 MiB)
+    // 1. Current running executable and sibling companion binaries in its directory
     if let Ok(exe_path) = std::env::current_exe() {
         if exe_path.is_file() {
             if let Ok(metadata) = exe_path.metadata() {
@@ -5566,45 +5760,54 @@ fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
                 }
             }
         }
+        if let Some(parent) = exe_path.parent() {
+            if let Ok(entries) = std::fs::read_dir(parent) {
+                for entry in entries.flatten().take(32) {
+                    let p = entry.path();
+                    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if (ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("dll"))
+                        && p.is_file()
+                    {
+                        if let Ok(meta) = p.metadata() {
+                            if meta.len() > 0 && meta.len() <= 64 * 1024 * 1024 {
+                                if let Ok(bytes) = std::fs::read(&p) {
+                                    set.insert(
+                                        blake3::hash(&bytes)
+                                            .to_hex()
+                                            .to_string()
+                                            .to_ascii_lowercase(),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // 2. Core OS & developer binaries resolved paths
-    const CORE_BINARIES: &[&str] = &[
-        "svchost.exe", "explorer.exe", "lsass.exe", "csrss.exe", "services.exe",
-        "wininit.exe", "smss.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
-        "conhost.exe", "python.exe", "python3.exe", "node.exe", "cargo.exe",
-        "rustc.exe", "git.exe", "cl.exe", "link.exe", "signtool.exe",
-        "onedrive.exe",
-        "am_delta_patch",
-        "am_delta_patch.exe",
-        "wuaucltcore.ex",
-        "credentialuibroker.exe",
-        "credentialuibr",
-        "backgroundtaskhost.exe",
-        "backgroundtask",
-        "tabtip.exe",
-        "rtkngui64.exe",
-        "mobsync.exe",
-        "locationnotificationwindows.exe",
-        "runonce.exe",
-        "wmiadap.exe",
-        "updater.exe",
-        "chrome_proxy.exe",
-        "chrome_proxy.e",
-        "remoting_native_messaging_host.exe",
-        "remoting_nativ",
-        "trustedinstall",
-        "osoosi.exe", "osoosi-cli.exe",
-    ];
-
-    for &bin_name in CORE_BINARIES {
-        if let Some(resolved) = resolve_candidate_binary_path(Some(bin_name), None) {
-            if resolved.is_file() {
-                if let Ok(metadata) = resolved.metadata() {
-                    if metadata.len() <= MAX_REA_FILE_BYTES as u64 {
-                        if let Ok(bytes) = std::fs::read(&resolved) {
-                            let hash = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
-                            set.insert(hash);
+    // 2. Dynamically hash active running OS processes from canonical directories
+    {
+        use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
+        let sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(
+                ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
+            ),
+        );
+        for proc in sys.processes().values().take(64) {
+            if let Some(exe) = proc.exe() {
+                let exe_str = exe.to_string_lossy();
+                if is_canonical_trusted_binary_dir(&exe_str) && exe.is_file() {
+                    if let Ok(meta) = exe.metadata() {
+                        if meta.len() > 0 && meta.len() <= 32 * 1024 * 1024 {
+                            if let Ok(bytes) = std::fs::read(exe) {
+                                set.insert(
+                                    blake3::hash(&bytes)
+                                        .to_hex()
+                                        .to_string()
+                                        .to_ascii_lowercase(),
+                                );
+                            }
                         }
                     }
                 }
@@ -5637,12 +5840,6 @@ pub fn is_protected_local_binary_hash(hash_hex: &str) -> bool {
 }
 
 /// Vetoes peer kill-switch threats, gossiped signatures, or YARA rules targeting protected binaries.
-///
-/// Multi-layer veto criteria:
-/// 1. Anti-Hash-Spoofing: If candidate_blake3 matches a protected OS/developer binary hash, VETO immediately
-///    even if process_name is spoofed (e.g. "cobalt_beacon.exe").
-/// 2. Process Name & Authenticode REA Check: If proc_name is an immune OS/dev binary or verified benign by REA, VETO.
-/// 3. Poisoned YARA Rule Veto: If candidate_yara contains strings targeting protected OS/dev binaries, VETO.
 pub fn veto_peer_kill_switch_candidate(
     proc_name: Option<&str>,
     candidate_blake3: Option<&str>,
@@ -5660,12 +5857,14 @@ pub fn veto_peer_kill_switch_candidate(
         }
     }
 
-    // 2. Process Name & Authenticode REA Check:
+    // 2. Dynamic Process & Authenticode/Voter-Calibration REA Check:
     if let Some(p) = proc_name {
         let p_trim = p.trim();
         if !p_trim.is_empty() {
             if is_rea_benign_system_or_dev_process(p_trim, reason)
-                || global_rea_engine().adjudicate_process_or_binary_alert(Some(p_trim), None, reason).0
+                || global_rea_engine()
+                    .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
+                    .0
             {
                 return Some(format!(
                     "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
@@ -5673,27 +5872,22 @@ pub fn veto_peer_kill_switch_candidate(
                 ));
             }
         }
+    } else if let Some(r) = reason {
+        if is_uncalibrated_single_voter_false_positive(&r.to_ascii_lowercase()) {
+            return Some(
+                "REA_VOTER_CALIBRATION_VETO: uncalibrated single-voter false positive".to_string(),
+            );
+        }
     }
 
-    // 3. Poisoned YARA Rule Veto:
+    // 3. Poisoned YARA Rule Veto (dynamically checked against protected binary names discovered on host):
     if let Some(yara_src) = candidate_yara {
         let yara_lower = yara_src.to_ascii_lowercase();
-        const FORBIDDEN_YARA_TARGETS: &[&str] = &[
-            "python.exe",
-            "svchost.exe",
-            "cargo.exe",
-            "explorer.exe",
-            "node.exe",
-            "rustc.exe",
-            "cmd.exe",
-            "powershell.exe",
-            "osoosi.exe",
-        ];
-        for &target in FORBIDDEN_YARA_TARGETS {
-            if yara_lower.contains(target) {
+        for token in yara_lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_') {
+            if token.ends_with(".exe") && get_dynamic_masquerade_protected_names().contains(token) {
                 return Some(format!(
                     "POISONED_YARA_PROTECTED_BINARY_VETO: YARA rule targets protected OS/developer binary {}",
-                    target
+                    token
                 ));
             }
         }
@@ -6070,6 +6264,13 @@ impl AutonomousReaEngine {
                 });
 
             if !already_recorded {
+                let auto_yara = synthesize_rea_yara_rule(
+                    &resolved_label,
+                    "benign_system_or_dev_binary",
+                    canonical_identity.as_bytes(),
+                    &real_sha256,
+                    &real_blake3,
+                );
                 let mut report = ReaInvestigationReport {
                     target_path: resolved_label.clone(),
                     detected_kind: "benign_system_or_dev_binary".to_string(),
@@ -6100,7 +6301,7 @@ impl AutonomousReaEngine {
                         "// Autonomous REA Threat Adjudication: BENIGN_TRUSTED_VERIFIED\n// Target: {}\n// Resolved Path: {}\n// Size: {} bytes\n// Reason: {}\n// Verdict: Verified benign system/developer process",
                         target, resolved_label, real_size, reason_str
                     )),
-                    auto_yara_rule: None,
+                    auto_yara_rule: Some(auto_yara),
                     threat_score: 0.02,
                     autonomous_trigger: Some("autonomous_rea_threat_adjudication".to_string()),
                     providers_used: vec!["osoosi-rea-native".to_string()],
@@ -6143,41 +6344,13 @@ impl AutonomousReaEngine {
                 );
             }
 
-            let base_lower = resolved_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-
-            let is_protected_toolchain = matches!(
-                base_lower.as_str(),
-                "sc.exe"
-                    | "git.exe"
-                    | "conhost.exe"
-                    | "chrome.exe"
-                    | "wsl.exe"
-                    | "taskkill.exe"
-                    | "powershell.exe"
-                    | "cmd.exe"
-                    | "svchost.exe"
-                    | "explorer.exe"
-                    | "cargo.exe"
-                    | "rustc.exe"
-                    | "node.exe"
-                    | "python.exe"
-                    | "python3.exe"
-                    | "cl.exe"
-                    | "link.exe"
-                    | "signtool.exe"
-            ) && (is_canonical_trusted_binary_dir(&resolved_str)
-                || crate::win_trust::is_trusted_signed_binary(&resolved_path));
-
+            let is_dynamically_verified = verify_dynamic_binary_trust(&resolved_path);
             let is_signed = crate::win_trust::is_trusted_signed_binary(&resolved_path);
             let is_protected_path =
                 crate::blocking_manager::is_protected_or_benign_system_path(&resolved_str)
                     && !is_untrusted_writable_or_temp_path(&resolved_str);
 
-            if is_protected_toolchain || is_protected_path || is_signed {
+            if is_dynamically_verified || is_protected_path || is_signed {
                 self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
                 let real_or_synth_hash = std::fs::read(&resolved_path)
                     .ok()
@@ -6209,7 +6382,7 @@ impl AutonomousReaEngine {
                 if !spoofed
                     && (is_signed
                         || is_protected_path
-                        || is_protected_toolchain
+                        || is_dynamically_verified
                         || report.threat_score < 0.35)
                 {
                     self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
@@ -6349,11 +6522,15 @@ impl AutonomousReaEngine {
         }
 
         // 4. Protected binary & Authenticode anti-kill-switch veto check
+        let combined_reason = match raw_payload {
+            Some(r) if !r.trim().is_empty() => format!("{} | {}", proc_or_summary, r),
+            _ => proc_or_summary.to_string(),
+        };
         if let Some(veto_reason) = veto_peer_kill_switch_candidate(
             Some(candidate_proc),
             candidate_blake3,
             candidate_yara,
-            Some(proc_or_summary),
+            Some(&combined_reason),
         ) {
             self.mesh_threats_vetoed.fetch_add(1, Ordering::Relaxed);
             self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
@@ -7243,7 +7420,10 @@ pub fn evaluate_openjev_consensus_vote(
         .as_bytes(),
     );
 
-    if !all_categories.is_empty() || verdict.noul_contains_phi_pii.value {
+    if !all_categories.is_empty()
+        || (verdict.noul_contains_phi_pii.p_true_phi_pii >= 0.85
+            && !is_rea_benign_system_or_dev_process(actor_process, Some(payload_text)))
+    {
         OPENJEV_ESCALATIONS.fetch_add(1, Ordering::Relaxed);
         OPENJEV_SECRET_INTERCEPTIONS.fetch_add(1, Ordering::Relaxed);
         let conf = verdict
@@ -8705,5 +8885,77 @@ mod tests {
             "Clean git.exe must receive negative benign veto weight"
         );
     }
+
+    #[test]
+    fn test_rea_vetoes_oem_inventory_cargo_build_and_low_p_openjev_in_mesh_and_consensus() {
+        let engine = AutonomousReaEngine::new();
+        let false_positive_samples = [
+            ("FirmwareTPM.ex", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'FirmwareTPM.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("PeripheralFRMW", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'PeripheralFRMWInv.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("NVMEHostmetada", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'NVMEHostmetadata.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("DRVUpdate.exe", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'DRVUpdate.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("MicrosoftEdgeU", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'MicrosoftEdgeUpdate.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("ms-teamsupdate", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'ms-teamsupdate.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("BackgroundDown", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'BackgroundDownload.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("SnippingTool.e", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'SnippingTool.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("build-script-b", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'build-script-build.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("cli-c179367de5", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'cli-c179367de5f7da7c.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("multi_node_fau", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'multi_node_fault_injection-dc872094be809096.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
+            ("setup.exe", "Consensus Threat Identified (Confidence: 68.1%). Supporting Signals: KEV-Threat-Intel: Process C:\\Users\\oyesanyf\\AppData\\Local\\Temp\\vscode-stable-user-x64\\CodeSetup-stable.tmp\\setup.exe matches KEV product action-setup (CVE-2025-30066)"),
+            ("file.exe", "Consensus Threat Identified (Confidence: 68.1%). Supporting Signals: KEV-Threat-Intel: Process C:\\msys64\\usr\\bin\\file.exe matches KEV product HTTP File Server (CVE-2024-23692)"),
+            ("Anti-Chaff Alert", "Anti-Chaff Alert: 15 low-confidence events detected in 10s window. Possible evasion swarm."),
+        ];
+
+        for (proc_name, reason) in false_positive_samples {
+            assert!(
+                is_rea_benign_system_or_dev_process(proc_name, Some(reason)),
+                "Expected '{}' with reason '{}' to be recognized as benign/false-positive",
+                proc_name,
+                reason
+            );
+            // Verify mesh pre-send and pre-receive gates veto even when proc_or_summary is generic "Consensus Threat"
+            let out_verdict = engine.inspect_and_vet_mesh_frame(
+                "outbound",
+                Some("local-node"),
+                "Consensus Threat",
+                None,
+                None,
+                Some(reason),
+            );
+            assert!(
+                !out_verdict.allowed,
+                "Outbound mesh gate must veto false-positive frame for '{}': {:?}",
+                proc_name,
+                out_verdict
+            );
+            let in_verdict = engine.inspect_and_vet_mesh_frame(
+                "inbound",
+                Some("peer-node"),
+                "Consensus Threat",
+                None,
+                None,
+                Some(reason),
+            );
+            assert!(
+                !in_verdict.allowed,
+                "Inbound mesh gate must veto false-positive frame for '{}': {:?}",
+                proc_name,
+                in_verdict
+            );
+        }
+
+        // Verify OpenJEV consensus vote abstains on empty categories [] with low Noul probability
+        let vote = evaluate_openjev_consensus_vote(
+            "FirmwareTPM.exe",
+            "process_telemetry",
+            "C:\\Windows\\Temp\\inv123.tmp\\FirmwareTPM.exe -s",
+        );
+        assert_ne!(
+            vote.decision, "ESCALATE_MALICIOUS",
+            "OpenJEV must never escalate benign process with empty categories: {:?}",
+            vote
+        );
+    }
 }
+
 

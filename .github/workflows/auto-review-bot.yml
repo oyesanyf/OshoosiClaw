@@ -56,7 +56,16 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Security invariants passed: Zero forbidden keys and PATH immutability preserved."
+          # Security Invariant 3: Cargo build.rs Supply-Chain Execution Guard (block network/shell hooks in build.rs)
+          BUILD_RS_PATCHES=$(echo "${FILES_JSON}" | jq -r '.[] | select(.filename | endswith("build.rs")) | .patch // empty')
+          if echo "${BUILD_RS_PATCHES}" | grep -E '^\+.*(TcpStream::connect|reqwest::|Invoke-WebRequest|curl\s+http|169\.254\.169\.254)' >/dev/null 2>&1; then
+            echo "::error::Unauthorized network or IMDS call detected in build.rs patch."
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body "❌ **CI/CD Supply-Chain Protection #3 Failed**: Unauthorized network/IMDS socket call detected in \`build.rs\`. Build scripts must remain hermetic."
+            exit 1
+          fi
+
+          echo "✅ Security invariants passed: Zero forbidden keys, PATH immutability preserved, and hermetic build.rs verified."
 
           # Peer Developer Review & Approval:
           # Repository branch protection enforces required_approving_review_count = 1 from any authorized developer.
