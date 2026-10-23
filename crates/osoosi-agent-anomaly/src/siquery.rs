@@ -5911,7 +5911,7 @@ impl SiqueryEngine {
                 sysinfo::RefreshKind::new().with_processes(sysinfo::ProcessRefreshKind::new()),
             );
             for (pid, process) in sys.processes() {
-                proc_map.insert(pid.as_u32(), format!("{}", process.name()));
+                proc_map.insert(pid.as_u32(), process.name().to_string());
             }
 
             let candidate_ports = [
@@ -5923,7 +5923,7 @@ impl SiqueryEngine {
             for row in tcp4 {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
                 let local_port = u16::from_be(row.dwLocalPort as u16);
-                let proc_name = proc_map.get(&(row.dwOwningPid as u32));
+                let proc_name = proc_map.get(&row.dwOwningPid);
                 let is_browser = proc_name
                     .map(|pn| is_browser_process_name(pn))
                     .unwrap_or(false);
@@ -5979,10 +5979,8 @@ impl SiqueryEngine {
                 }
                 let threat_tags = if score > 0.0 {
                     "SUSPICIOUS_SOCKET"
-                } else if let Some(tag) = asn_trust {
-                    tag
                 } else {
-                    "LIVE_OS_SOCKET"
+                    asn_trust.unwrap_or("LIVE_OS_SOCKET")
                 };
                 let _ = insert_stmt.execute(rusqlite::params![
                     source_file,
@@ -6008,7 +6006,7 @@ impl SiqueryEngine {
             for row in tcp6 {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
                 let local_port = u16::from_be(row.dwLocalPort as u16);
-                let proc_name = proc_map.get(&(row.dwOwningPid as u32));
+                let proc_name = proc_map.get(&row.dwOwningPid);
                 let is_browser = proc_name
                     .map(|pn| is_browser_process_name(pn))
                     .unwrap_or(false);
@@ -6069,10 +6067,8 @@ impl SiqueryEngine {
                 }
                 let threat_tags = if score > 0.0 {
                     "SUSPICIOUS_SOCKET"
-                } else if let Some(tag) = asn_trust {
-                    tag
                 } else {
-                    "LIVE_OS_SOCKET"
+                    asn_trust.unwrap_or("LIVE_OS_SOCKET")
                 };
                 let _ = insert_stmt.execute(rusqlite::params![
                     source_file,
