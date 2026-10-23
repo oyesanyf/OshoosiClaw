@@ -396,8 +396,14 @@ pub struct BreakoutPreventionReport {
     pub status: String,
     pub architectural_statement: String,
     pub covert_timing_channel_scope_note: String,
+    pub suite_version: String,
     pub policy_version: String,
     pub policy_version_num: u64,
+    pub all_invariants_verified: bool,
+    pub total_checks: usize,
+    pub passed_checks: usize,
+    pub failed_checks: usize,
+    pub false_positives_on_benign_dev_workflows: usize,
     pub breakout_prevention_rate: f64,
     pub legitimate_usability_pass_rate: f64,
     pub total_prohibited_side_effects_executed: usize,
@@ -1895,12 +1901,31 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         },
     ];
 
+    let total_checks = six_fault_injection_verifications.len()
+        + scenario_proofs.len()
+        + residual_risk_verification_suite.len()
+        + benign_controls.len();
+    let failed_checks = six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
+        + scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
+        + residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
+        + benign_controls.iter().filter(|b| !b.allowed).count();
+    let passed_checks = total_checks.saturating_sub(failed_checks);
+    let false_positives_on_benign_dev_workflows = benign_controls.iter().filter(|b| !b.allowed).count();
+    let total_prohibited = total_prohibited_effects.load(Ordering::SeqCst);
+    let all_invariants_verified = failed_checks == 0 && total_prohibited == 0;
+
     BreakoutPreventionReport {
         status: UNIFIED_CAPABILITY_ENFORCEMENT_STATUS.to_string(),
         architectural_statement: DEFENSIBLE_ARCHITECTURE_STATEMENT.to_string(),
         covert_timing_channel_scope_note: COVERT_TIMING_CHANNEL_SCOPE_NOTE.to_string(),
+        suite_version: auth.policy_store.active_version_label(),
         policy_version: auth.policy_store.active_version_label(),
         policy_version_num: auth.policy_store.active_version_num(),
+        all_invariants_verified,
+        total_checks,
+        passed_checks,
+        failed_checks,
+        false_positives_on_benign_dev_workflows,
         breakout_prevention_rate,
         legitimate_usability_pass_rate,
         total_prohibited_side_effects_executed: total_prohibited_effects.load(Ordering::SeqCst),

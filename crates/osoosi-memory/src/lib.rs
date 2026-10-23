@@ -2650,6 +2650,10 @@ pub fn normalize_truncated_process_name(proc_name: &str, file_path: Option<&str>
         "chrome_proxy.e" => "chrome_proxy.exe".to_string(),
         "remoting_nativ" => "remoting_native_messaging_host.exe".to_string(),
         "git-credential" => "git-credential-manager.exe".to_string(),
+        "wuaucltcore.ex" => "wuaucltcore.exe".to_string(),
+        "am_delta_patch" => "AM_Delta_Patch.exe".to_string(),
+        "credentialuibr" => "CredentialUIBroker.exe".to_string(),
+        "backgroundtask" => "backgroundTaskHost.exe".to_string(),
         _ => trimmed.to_string(),
     }
 }
@@ -2773,6 +2777,7 @@ pub fn is_consensus_finding_vetoed_or_benign(
         || summary_lower.contains("unknown v0.0.0 has known cves")
         || summary_lower.contains("cve-2009-2940")
         || summary_lower.contains("behavioral baseline: first outbound connection")
+        || summary_lower.contains("cve none scored")
     {
         return true;
     }
@@ -2904,6 +2909,27 @@ pub fn is_consensus_finding_vetoed_or_benign(
             | "antigravity.exe"
             | "gemini.exe"
             | "language_server_windows_x64.exe"
+            | "onedrive.exe"
+            | "onedrive.sync.service.exe"
+            | "mousocoreworker.exe"
+            | "mousocoreworke"
+            | "wuaucltcore.exe"
+            | "wuaucltcore.ex"
+            | "wuauclt.exe"
+            | "am_delta_patch.exe"
+            | "am_delta_patch"
+            | "cmd.exe"
+            | "updater.exe"
+            | "backgroundtaskhost.exe"
+            | "backgroundtask"
+            | "credentialuibroker.exe"
+            | "credentialuibr"
+            | "tabtip.exe"
+            | "rtkngui64.exe"
+            | "mobsync.exe"
+            | "locationnotificationwindows.exe"
+            | "runonce.exe"
+            | "wmiadap.exe"
     )
 }
 
