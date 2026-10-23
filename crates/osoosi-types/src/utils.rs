@@ -1077,10 +1077,8 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
             // FS_IOC_GETFLAGS: 0x80086601
             // FS_VERITY_FL: 0x00100000
             unsafe {
-                if libc::ioctl(fd, 0x80086601, &mut flags) == 0 {
-                    if (flags & 0x00100000) != 0 {
-                        return AuthenticodeStatus::ValidTrusted;
-                    }
+                if libc::ioctl(fd, 0x80086601, &mut flags) == 0 && (flags & 0x00100000) != 0 {
+                    return AuthenticodeStatus::ValidTrusted;
                 }
             }
         }
