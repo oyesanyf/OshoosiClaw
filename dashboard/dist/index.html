@@ -1602,9 +1602,10 @@
                         <div style="display:flex; align-items:center; gap:10px;">
                             <i data-lucide="hard-drive" style="width:18px; height:18px; color:var(--accent-cyan, #06b6d4);"></i>
                             <div>
-                                <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px;">
-                                    <span>Dynamic Host Disk &amp; Memory Cleanup Manager</span>
+                                <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                    <span>Autonomous Host Disk, Build-Cache &amp; Telemetry Cleanup Engine</span>
                                     <span id="disk-pressure-badge" class="badge green">NOMINAL</span>
+                                    <span id="disk-watchdog-badge" class="badge cyan" style="font-size:10.5px;">?? AUTONOMOUS WATCHDOG ACTIVE &bull; 15m</span>
                                 </h4>
                                 <div id="disk-free-summary-text" style="font-size:12px; color:var(--text-muted); margin-top:2px;">
                                     Analyzing host disk pressure...
@@ -1654,6 +1655,104 @@
                                 <div id="stat-disk-temp" style="font-size:20px; font-weight:700; color:var(--text-primary); margin-top:4px;">-- MB</div>
                                 <div id="stat-disk-temp-count" style="font-size:11px; color:var(--text-muted); margin-top:2px;">-- files</div>
                             </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Cargo &amp; Build Cache</div>
+                                <div id="stat-disk-build-cache" style="font-size:20px; font-weight:700; color:#38bdf8; margin-top:4px;">-- MB</div>
+                                <div id="stat-disk-build-cache-sub" style="font-size:11px; color:var(--text-muted); margin-top:2px;">Multi-Hash Pruned (Keep 2)</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Lifetime Space Reclaimed</div>
+                                <div id="stat-disk-lifetime-freed" style="font-size:20px; font-weight:700; color:#10b981; margin-top:4px;">0.00 GB</div>
+                                <div id="stat-disk-sweeps-count" style="font-size:11px; color:var(--text-muted); margin-top:2px;">Autonomous 5-Tier Sweeps</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Software Bill of Materials (SBOM) — CycloneDX 1.5 & SPDX 2.3 Supply-Chain Attestation -->
+                <div class="card glass shadow-glow" id="host-sbom-card" style="margin-top:16px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <i data-lucide="package-check" style="width:18px; height:18px; color:var(--accent-green, #10b981);"></i>
+                            <div>
+                                <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px;">
+                                    <span>Software Bill of Materials (SBOM) &amp; Supply-Chain Attestation</span>
+                                    <span id="sbom-status-badge" class="badge green">CYCLONEDX 1.5 &bull; SPDX 2.3</span>
+                                </h4>
+                                <div id="sbom-summary-subtitle" style="font-size:12px; color:var(--text-muted); margin-top:2px;">
+                                    Cryptographic inventory of all Rust workspace crates, crates.io dependencies, Python packages &amp; Authenticode-signed binaries (ML-DSA-65 + Ed25519 attested).
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="btn-secondary" onclick="loadHostSbom(true)" style="padding:6px 12px; font-size:12px; cursor:pointer;">
+                                🔄 Verify SBOM
+                            </button>
+                            <a href="/api/sbom/cyclonedx" download="oshoosiclaw-sbom.cdx.json" class="btn-primary" style="padding:6px 12px; font-size:12px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; font-weight:600;">
+                                📥 Export CycloneDX 1.5 (.cdx.json)
+                            </a>
+                            <a href="/api/sbom/spdx" download="oshoosiclaw-sbom.spdx.json" class="btn-secondary" style="padding:6px 12px; font-size:12px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; font-weight:600;">
+                                📥 Export SPDX 2.3 (.spdx.json)
+                            </a>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding:16px 20px;">
+                        <div class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap:12px; margin-bottom:14px;">
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Total SBOM Components</div>
+                                <div id="sbom-stat-total" style="font-size:20px; font-weight:700; color:#38bdf8; margin-top:4px;">1,028</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">PURL Indexed &amp; Hashed</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">OshoosiClaw Crates</div>
+                                <div id="sbom-stat-workspace" style="font-size:20px; font-weight:700; color:#10b981; margin-top:4px;">31</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">First-Party Rust Crates</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Rust Crates.io Deps</div>
+                                <div id="sbom-stat-rust-deps" style="font-size:20px; font-weight:700; color:#a855f7; margin-top:4px;">978</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Cargo.lock SHA-256 Pinned</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Python &amp; Signed Binaries</div>
+                                <div id="sbom-stat-artifacts" style="font-size:20px; font-weight:700; color:#f59e0b; margin-top:4px;">19</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">PyPI + Authenticode PE/MSI</div>
+                            </div>
+                            <div class="stat-card glass" style="padding:12px 14px; border-radius:8px;">
+                                <div style="font-size:11px; text-transform:uppercase; color:var(--text-muted); letter-spacing:0.5px;">Supply-Chain Merkle Root</div>
+                                <div id="sbom-stat-merkle" style="font-size:13px; font-weight:700; font-family:monospace; color:#10b981; margin-top:6px; word-break:break-all;">b0cd12a8c0d5ba0d...</div>
+                                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">ML-DSA-65 + Ed25519</div>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+                            <input type="text" id="sbom-search-input" oninput="filterSbomComponents()" placeholder="Search component name, version, PURL (pkg:cargo/...), or SHA-256 digest..." style="flex:1; min-width:240px; padding:8px 12px; border-radius:6px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); font-size:12.5px;">
+                            <select id="sbom-ecosystem-filter" onchange="filterSbomComponents()" style="padding:8px 12px; border-radius:6px; background:var(--bg-secondary); border:1px solid var(--border-color); color:var(--text-primary); font-size:12.5px;">
+                                <option value="all">All Ecosystems &amp; Scopes</option>
+                                <option value="workspace">OshoosiClaw Workspace Crates</option>
+                                <option value="binary">Signed Binary &amp; Driver Artifacts</option>
+                                <option value="cargo">Rust Crates.io Dependencies</option>
+                                <option value="pypi">Python Runtime Packages</option>
+                            </select>
+                        </div>
+
+                        <div style="max-height:320px; overflow-y:auto; border:1px solid rgba(255,255,255,0.06); border-radius:8px;">
+                            <table class="data-table" style="width:100%; border-collapse:collapse; font-size:12px;">
+                                <thead style="position:sticky; top:0; background:rgba(13,17,23,0.96); z-index:1;">
+                                    <tr>
+                                        <th style="padding:8px 12px; text-align:left;">Component</th>
+                                        <th style="padding:8px 12px; text-align:left;">Version</th>
+                                        <th style="padding:8px 12px; text-align:left;">Ecosystem / Scope</th>
+                                        <th style="padding:8px 12px; text-align:left;">Package URL (PURL)</th>
+                                        <th style="padding:8px 12px; text-align:left;">SHA-256 / BLAKE3 Digest</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sbom-components-tbody">
+                                    <tr>
+                                        <td colspan="5" style="text-align:center; padding:18px; color:var(--text-muted);">Loading SBOM inventory...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>

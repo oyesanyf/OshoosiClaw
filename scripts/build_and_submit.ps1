@@ -252,11 +252,14 @@ if (-not $SkipBuild) {
 
     $buildSucceeded = $false
     $env:CARGO_REGISTRIES_CRATES_IO_PROTOCOL = "git"
-    for ($attempt = 1; $attempt -le 10; $attempt++) {
-        # Clear ReadOnly attributes on top-level release binaries and depth-1 build script directories
+    for ($attempt = 1; $attempt -le 25; $attempt++) {
+        Get-Item (Join-Path $ProjectRoot "target"), (Join-Path $ProjectRoot "target\release"), (Join-Path $ProjectRoot "target\release\build"), (Join-Path $ProjectRoot "target\release\build\*"), (Join-Path $ProjectRoot "target\release\build\*\out") -Force -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Attributes -band [System.IO.FileAttributes]::ReadOnly) {
+                $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
+            }
+        }
         & cmd.exe /c "attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul & attrib -r target\release\deps\*.dll 2>nul" | Out-Null
 
-        # Sign any unsigned build scripts (depth-1) and proc-macro DLLs to satisfy WDAC Application Control
         if ($buildSigntool -and (-not $SkipSigning)) {
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe") -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
@@ -281,8 +284,8 @@ if (-not $SkipBuild) {
             $buildSucceeded = $true
             break
         }
-        if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
-            Write-Host "       [WDAC] Signing newly compiled build scripts & proc-macro DLLs before retry ($attempt/10)..." -ForegroundColor Cyan
+        if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 25) {
+            Write-Host "       [WDAC] Signing newly compiled build scripts & proc-macro DLLs before retry ($attempt/25)..." -ForegroundColor Cyan
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe") -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null)
@@ -554,6 +557,19 @@ if (-not $SkipSubmit) {
     }
 } else {
     Write-Host "       -> Skipping Microsoft submission (-SkipSubmit specified)" -ForegroundColor Gray
+}
+
+# =============================================================================
+# Step 6a: Generate CycloneDX 1.5 & SPDX 2.3 SBOM + Autonomous Disk Cleanup
+# =============================================================================
+Write-Host "`n>>> [6a/8] Generating CycloneDX 1.5 & SPDX 2.3 SBOM and Running Autonomous Disk Cleanup..." -ForegroundColor Yellow
+$SbomScript = Join-Path $ProjectRoot "scripts\generate_sbom.py"
+if (Test-Path $SbomScript) {
+    & python $SbomScript
+}
+$DiskCleanupScript = Join-Path $ProjectRoot "scripts\autonomous_disk_cleanup.py"
+if (Test-Path $DiskCleanupScript) {
+    & python $DiskCleanupScript
 }
 
 # =============================================================================
