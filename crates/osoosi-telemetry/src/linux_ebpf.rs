@@ -296,6 +296,37 @@ pub fn get_ebpf_lsm_stats() -> (u32, u64) {
     )
 }
 
+/// Live eBPF LSM confinement status: attached hook count and block counter from the loader, plus
+/// whether the running kernel has the `bpf` LSM enabled in its active stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EbpfLsmStatus {
+    pub hooks_attached: u32,
+    pub blocked_operations: u64,
+    pub kernel_lsm_bpf_supported: bool,
+}
+
+/// Returns `true` when `bpf` appears in the kernel's comma-separated active LSM list
+/// (`/sys/kernel/security/lsm`, e.g. `lockdown,capability,landlock,yama,apparmor,bpf`).
+pub fn kernel_lsm_list_contains_bpf(lsm_list: &str) -> bool {
+    lsm_list.trim().split(',').any(|m| m.trim() == "bpf")
+}
+
+/// Reads the live eBPF LSM status. On non-Linux targets `kernel_lsm_bpf_supported` is `false`.
+pub fn get_ebpf_lsm_status() -> EbpfLsmStatus {
+    let (hooks_attached, blocked_operations) = get_ebpf_lsm_stats();
+    #[cfg(target_os = "linux")]
+    let kernel_lsm_bpf_supported = std::fs::read_to_string("/sys/kernel/security/lsm")
+        .map(|s| kernel_lsm_list_contains_bpf(&s))
+        .unwrap_or(false);
+    #[cfg(not(target_os = "linux"))]
+    let kernel_lsm_bpf_supported = false;
+    EbpfLsmStatus {
+        hooks_attached,
+        blocked_operations,
+        kernel_lsm_bpf_supported,
+    }
+}
+
 /// Dual-Stage 5-Sigma Kernel `SIGSTOP` + Pre-Armed Cgroup v2 Freezer Responder.
 pub struct QuarantineResponder {
     pub cgroup_base_path: std::path::PathBuf,
@@ -1813,6 +1844,25 @@ impl EbpfTelemetryEngine {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_kernel_lsm_list_bpf_detection_and_live_status() {
+        assert!(kernel_lsm_list_contains_bpf(
+            "lockdown,capability,landlock,yama,apparmor,bpf\n"
+        ));
+        assert!(kernel_lsm_list_contains_bpf("bpf"));
+        assert!(!kernel_lsm_list_contains_bpf("lockdown,capability,landlock,yama,apparmor"));
+        // Substring tokens must not match (e.g. a hypothetical "bpfx" module).
+        assert!(!kernel_lsm_list_contains_bpf("capability,bpfx,yama"));
+        assert!(!kernel_lsm_list_contains_bpf(""));
+
+        let status = get_ebpf_lsm_status();
+        let (hooks, blocks) = get_ebpf_lsm_stats();
+        assert_eq!(status.hooks_attached, hooks);
+        assert_eq!(status.blocked_operations, blocks);
+        #[cfg(not(target_os = "linux"))]
+        assert!(!status.kernel_lsm_bpf_supported);
+    }
 
     #[test]
     fn test_ebpf_struct_sizes() {

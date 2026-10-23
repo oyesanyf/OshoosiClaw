@@ -248,8 +248,8 @@ fn probe_native_windows_gpu() -> Option<(String, u64, u64)> {
     None
 }
 
-/// Windows GPU detection: tries native registry probe first, falls back to WMIC.
-#[cfg(target_os = "windows")]
+/// Windows GPU detection: tries native registry probe first (returns `None` on non-Windows targets,
+/// where `query_system_resources` falls through to the cross-platform NVIDIA probe).
 fn probe_native_windows_gpu_first() -> Option<(String, u64, u64)> {
     #[cfg(target_os = "windows")]
     {
@@ -260,6 +260,7 @@ fn probe_native_windows_gpu_first() -> Option<(String, u64, u64)> {
     None
 }
 
+#[cfg(target_os = "windows")]
 #[allow(dead_code)]
 fn probe_windows_gpu() -> Option<(String, u64, u64)> {
     if let Some(gpu) = probe_native_windows_gpu() {
@@ -269,6 +270,7 @@ fn probe_windows_gpu() -> Option<(String, u64, u64)> {
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)]
 fn probe_windows_gpu() -> Option<(String, u64, u64)> {
     None
 }
