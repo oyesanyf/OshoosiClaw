@@ -10511,6 +10511,22 @@ async function renderReaView() {
                 </span>
             `).join('');
         }
+        const covBar = document.getElementById('rea-universal-coverage-bar');
+        const cov = (statusRes && statusRes.universal_coverage) || null;
+        if (covBar && cov) {
+            const rv = cov.voter_stats || {};
+            const jv = cov.openjev_voter || {};
+            const ds = cov.detector_stats || {};
+            const ms = cov.mesh_stats || {};
+            const sec = cov.security_posture || {};
+            covBar.innerHTML = `
+                <span class="badge green" style="font-size: 10px; padding: 4px 8px;">🛡️ [REA-Voter] Votes: ${Number(rv.total_votes_cast || 0)} (Vetoes: ${Number(rv.benign_vetoes || 0)} · Threats: ${Number(rv.malicious_confirmations || 0)})</span>
+                <span class="badge purple" style="font-size: 10px; padding: 4px 8px;">🧬 [OpenJEV-Voter] Votes: ${Number(jv.total_votes_cast || 0)} (Clean: ${Number(jv.clean_pass_votes || 0)} · DLP Escalations: ${Number(jv.dlp_escalations || 0)})</span>
+                <span class="badge blue" style="font-size: 10px; padding: 4px 8px;">🕸️ Mesh Vetted: ${Number(ms.frames_inspected || 0)} (Outbound: ${Number(ms.outbound_vetted || 0)} · Inbound: ${Number(ms.inbound_vetted || 0)})</span>
+                <span class="badge cyan" style="font-size: 10px; padding: 4px 8px;">🌐 HAR/Network Vetted: ${Number(ds.network_protocol || 0)} · DLP: ${Number(ds.dlp || 0)} · YARA: ${Number(ds.yara || 0)} · Behavioral: ${Number(ds.behavioral || 0)}</span>
+                <span class="badge green" style="font-size: 10px; padding: 4px 8px;" title="Layer 1 Anti-Masquerading, Layer 2 UNC/Traversal Sandbox, Layer 3 catch_unwind Bomb Guard, Layer 4 Prompt-Injection Redaction & BLAKE3 Seal">🔒 4-Layer Hardening Active (Seals: ${Number(sec.blake3_sealed_reports_emitted || 0)} · Redactions: ${Number(sec.counter_ai_prompt_injections_redacted || 0)})</span>
+            `;
+        }
         const recent = deduplicateReaReports((statusRes && (statusRes.investigations || statusRes.recent_reports)) || []);
         if (recent.length > 0) {
             window._reaRecentReports = recent;
@@ -10538,6 +10554,19 @@ function renderReaReport(report, activeIdx = 0) {
     const magikaBadgeHtml = magikaInfo && magikaInfo.label
         ? `<span class="badge purple" style="margin-left: 6px;" title="${escapeHtml(magikaInfo.description || '')}">Magika: ${escapeHtml(magikaInfo.label)} (${escapeHtml(magikaInfo.mime_type || '')})</span>`
         : '';
+    const reportSeal = report.report_integrity_hmac_blake3 || (report.metadata && report.metadata.report_integrity_hmac_blake3) || '';
+    const secPosture = (report.metadata && report.metadata.rea_security_posture) || {};
+    const openJevMeta = (report.metadata && report.metadata.openjev_voter) || null;
+    const postureStripHtml = `
+        <div style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:10px; padding:8px 10px; background:rgba(16,185,129,0.06); border:1px solid rgba(16,185,129,0.22); border-radius:8px; font-size:11px;">
+            <span class="badge green" style="font-size:10px;">🔒 4-Layer Hardened</span>
+            ${reportSeal ? `<span class="badge cyan" style="font-size:10px; font-family:monospace;" title="${escapeHtml(reportSeal)}">BLAKE3 Seal: ${escapeHtml(String(reportSeal).substring(0, 20))}...</span>` : ''}
+            ${secPosture.layer1_masquerade_spoof_detected ? `<span class="badge red" style="font-size:10px;">⚠️ Layer 1 Masquerade Spoof</span>` : `<span class="badge green" style="font-size:10px;">✓ Layer 1 Pinning OK</span>`}
+            <span class="badge blue" style="font-size:10px;">✓ Layer 3 catch_unwind Isolated</span>
+            ${Number(secPosture.layer4_counter_ai_redactions || 0) > 0 ? `<span class="badge orange" style="font-size:10px;">🛡️ Layer 4 Redacted (${Number(secPosture.layer4_counter_ai_redactions)})</span>` : `<span class="badge green" style="font-size:10px;">✓ Layer 4 Clean</span>`}
+            ${openJevMeta ? `<span class="badge ${openJevMeta.decision && openJevMeta.decision !== 'Allow' ? 'red' : 'purple'}" style="font-size:10px;">[OpenJEV-Voter]: ${escapeHtml(openJevMeta.decision || 'Allow')} (Platt p=${Number(openJevMeta.calibrated_probability || 0).toFixed(2)})</span>` : ''}
+        </div>
+    `;
 
     const recentList = deduplicateReaReports(Array.isArray(window._reaRecentReports) ? window._reaRecentReports : []);
     window._reaRecentReports = recentList;
@@ -10579,6 +10608,7 @@ function renderReaReport(report, activeIdx = 0) {
     `).join('');
     container.innerHTML = `
         ${recentSelectorHtml}
+        ${postureStripHtml}
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px;">
             <div>
                 <h4 style="margin: 0; font-size: 15px; color: var(--text-header);">${escapeHtml(targetLabel)} <span class="badge blue" style="margin-left: 8px;">${escapeHtml(report.detected_kind || 'auto')}</span>${magikaBadgeHtml}</h4>
@@ -10637,6 +10667,13 @@ async function runReaAnalysis() {
 }
 
 async function runReaPreset(preset) {
+    if (preset === 'live_har') {
+        const inputEl = document.getElementById('rea-target-input');
+        const kindEl = document.getElementById('rea-kind-select');
+        if (inputEl) inputEl.value = 'logs/live_web_traffic.har';
+        if (kindEl) kindEl.value = 'network_capture';
+        return runReaAnalysis();
+    }
     try {
         const res = await fetchWithRetry(`${API_BASE}/rea/v1/analyze`, {
             method: 'POST',

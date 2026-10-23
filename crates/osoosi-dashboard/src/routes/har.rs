@@ -104,7 +104,8 @@ pub fn build_w3c_har_document(entries: &[Value]) -> Value {
 /// Sweeps and refreshes the live HAR web traffic cache, persists entries to SQLite and logs/live_web_traffic.har.
 pub fn refresh_live_har_cache_now() -> Value {
     let engine = osoosi_agent_anomaly::SiqueryEngine::new();
-    let entries = engine.collect_live_har_entries_fast(400);
+    let mut entries = engine.collect_live_har_entries_fast(400);
+    let rea_engine = osoosi_core::rea::global_rea_engine();
 
     let total_entries = entries.len();
     let mut unique_hosts_set = std::collections::HashSet::new();
@@ -113,16 +114,85 @@ pub fn refresh_live_har_cache_now() -> Value {
     let mut malicious_count = 0usize;
     let mut suspicious_count = 0usize;
     let mut benign_count = 0usize;
+    let mut rea_escalated_count = 0usize;
+    let mut rea_vetoed_count = 0usize;
 
-    for e in &entries {
+    for e in &mut entries {
+        let url = e
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let method = e
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET")
+            .to_string();
+        let status = e.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
+        let mime_type = e
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let tags = e
+            .get("threat_tags")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let rea_har =
+            rea_engine.analyze_har_entry_or_archive(&url, &method, status, &mime_type, &tags);
+        if rea_har.rea_voter_decision == "ESCALATE_MALICIOUS" {
+            rea_escalated_count += 1;
+        } else {
+            rea_vetoed_count += 1;
+        }
+
+        if let Some(obj) = e.as_object_mut() {
+            obj.insert(
+                "rea_voter_decision".to_string(),
+                json!(rea_har.rea_voter_decision),
+            );
+            obj.insert(
+                "rea_voter_reason".to_string(),
+                json!(rea_har.rea_voter_reason),
+            );
+            obj.insert(
+                "openjev_voter_decision".to_string(),
+                json!(rea_har.openjev_voter_decision),
+            );
+            obj.insert(
+                "openjev_voter_reason".to_string(),
+                json!(rea_har.openjev_voter_reason),
+            );
+            obj.insert(
+                "rea_artifact_class".to_string(),
+                json!(rea_har.artifact_class),
+            );
+            obj.insert(
+                "rea_seal_blake3".to_string(),
+                json!(rea_har.rea_seal_blake3),
+            );
+            let cur_score = obj
+                .get("threat_score")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            if rea_har.rea_voter_decision == "ESCALATE_MALICIOUS"
+                && (rea_har.threat_score as f64) > cur_score
+            {
+                obj.insert("threat_score".to_string(), json!(rea_har.threat_score));
+                obj.insert("verdict".to_string(), json!("malicious"));
+            }
+        }
+
         if let Some(host) = e.get("host").and_then(|v| v.as_str()) {
             if !host.is_empty() {
-                unique_hosts_set.insert(host);
+                unique_hosts_set.insert(host.to_string());
             }
         }
         if let Some(src) = e.get("source_file").and_then(|v| v.as_str()) {
             if !src.is_empty() {
-                active_sources_set.insert(src);
+                active_sources_set.insert(src.to_string());
             }
         }
         let req_b = e.get("request_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -228,7 +298,16 @@ pub fn refresh_live_har_cache_now() -> Value {
             "total_bytes": total_bytes,
             "malicious_count": malicious_count,
             "suspicious_count": suspicious_count,
-            "benign_count": benign_count
+            "benign_count": benign_count,
+            "rea_escalated_count": rea_escalated_count,
+            "rea_vetoed_count": rea_vetoed_count
+        },
+        "rea_har_coverage": {
+            "rea_voter_active": true,
+            "openjev_voter_active": true,
+            "inspected_entries": total_entries,
+            "rea_escalated_count": rea_escalated_count,
+            "rea_vetoed_count": rea_vetoed_count
         },
         "entries": entries
     });
@@ -324,13 +403,17 @@ pub async fn post_har_inspect(
         .unwrap_or("API-Stream");
     let har_str = if let Some(p) = req.get("file_path").and_then(|v| v.as_str()) {
         let p_trimmed = p.trim();
-        // Path traversal, UNC, NTFS Alternate Data Streams (ADS) validation
-        if p_trimmed.contains("..") || p_trimmed.starts_with(r"\\") || p_trimmed.starts_with("//") {
+        // Path traversal, UNC, NTFS Alternate Data Streams (ADS), and REA Protection Layer 2 validation
+        if p_trimmed.contains("..")
+            || p_trimmed.starts_with(r"\\")
+            || p_trimmed.starts_with("//")
+            || osoosi_core::rea::validate_rea_target_path(p_trimmed).is_err()
+        {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
                     "status": "error",
-                    "message": "Path traversal or UNC paths are not permitted in file_path"
+                    "message": "Path traversal, UNC paths, device namespaces, or ADS are not permitted in file_path"
                 })),
             );
         }
@@ -396,8 +479,29 @@ pub async fn post_har_inspect(
 
     match osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&har_str, label) {
         Ok(report) => {
+            // Deep-inspect the HAR archive with AutonomousReaEngine + OpenJEV-Voter and record in REA investigations
+            let rea_engine = osoosi_core::rea::global_rea_engine();
+            let rea_har = rea_engine.analyze_har_entry_or_archive(
+                label,
+                "HAR_ARCHIVE",
+                200,
+                "application/har+json",
+                &har_str,
+            );
+            let rea_report = osoosi_core::rea::analyze_target_bytes(
+                label,
+                None,
+                har_str.as_bytes(),
+                osoosi_core::rea::ReaTargetKind::NetworkCapture,
+                Some("har_archive_inspect".to_string()),
+            );
+            rea_engine.record_report(rea_report.clone());
+
             if let Some(orch) = &state.backend {
-                if report.malicious_entries > 0 || report.highest_threat_score >= 0.75 {
+                if report.malicious_entries > 0
+                    || report.highest_threat_score >= 0.75
+                    || rea_har.rea_voter_decision == "ESCALATE_MALICIOUS"
+                {
                     let sec_event = osoosi_types::HostSecurityEvent {
                         source: osoosi_types::HostEventSource::WindowsEventLog,
                         event_id: 77,
@@ -406,7 +510,10 @@ pub async fn post_har_inspect(
                         data: serde_json::json!({
                             "TargetFilename": label,
                             "HarContent": har_str,
-                            "EventDescription": format!("Browser HAR Threat: {} malicious entries ({})", report.malicious_entries, report.detected_vectors.join(", ")),
+                            "ReaVoterDecision": rea_har.rea_voter_decision,
+                            "OpenJevVoterDecision": rea_har.openjev_voter_decision,
+                            "ReaSealBlake3": rea_har.rea_seal_blake3,
+                            "EventDescription": format!("Browser HAR Threat: {} malicious entries ({}) [REA: {}]", report.malicious_entries, report.detected_vectors.join(", "), rea_har.rea_voter_reason),
                         }),
                         causal_parent: None,
                     };
@@ -423,8 +530,10 @@ pub async fn post_har_inspect(
                 StatusCode::OK,
                 Json(json!({
                     "status": "ok",
-                    "total_findings": report.malicious_entries + report.suspicious_entries,
-                    "report": report
+                    "total_findings": report.malicious_entries + report.suspicious_entries + rea_har.findings.len(),
+                    "report": report,
+                    "rea_analysis": rea_har,
+                    "rea_report": rea_report
                 })),
             )
         }
