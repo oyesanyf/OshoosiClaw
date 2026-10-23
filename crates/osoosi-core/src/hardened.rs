@@ -261,7 +261,8 @@ fn detect_tpm_internal() -> TpmStatus {
             .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI")
         {
             status.available = true;
-            let fw = if let Ok(fw_s) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision") {
+            let fw = if let Ok(fw_s) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision")
+            {
                 fw_s
             } else if let Ok(fw_s) = hklm.get_value::<String, _>("TaskFirmwareVersion") {
                 fw_s
@@ -299,7 +300,8 @@ fn detect_tpm_internal() -> TpmStatus {
                 }
             }
             status.device_id = Some(dev_id.clone());
-            status.description = format!("Hardware TPM 2.0 ({} v{}) bound ({})", mfg_name, fw, dev_id);
+            status.description =
+                format!("Hardware TPM 2.0 ({} v{}) bound ({})", mfg_name, fw, dev_id);
         } else if let Ok(_hklm) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
             .open_subkey("SYSTEM\\CurrentControlSet\\Services\\TPM")
         {

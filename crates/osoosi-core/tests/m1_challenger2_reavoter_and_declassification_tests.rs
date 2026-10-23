@@ -15,9 +15,7 @@
 //!    - Verifies fail-closed rejection and proves SQLite taint is NEVER cleared upon rejection.
 
 use anyhow::Result;
-use osoosi_core::causal_graph::{
-    AuthorityLevel, CausalSecurityGraph, FileClassification,
-};
+use osoosi_core::causal_graph::{AuthorityLevel, CausalSecurityGraph, FileClassification};
 use osoosi_core::rea::{is_rea_benign_system_or_dev_process, ReaVoter};
 use osoosi_dp::PresidioGlinerPiiZeroGuard;
 use osoosi_policy::engine::ThreatVoter;
@@ -58,9 +56,13 @@ async fn test_adversarial_reavoter_sysmon_event_7_unsigned_dll_and_pyd_injection
         "Unsigned DLL load in cargo.exe must receive malicious escalation weight (> 1.0), got {}",
         vote.weight
     );
-    assert_eq!(vote.weight, 1.85, "Weight must match escalation tier (1.85)");
+    assert_eq!(
+        vote.weight, 1.85,
+        "Weight must match escalation tier (1.85)"
+    );
     assert!(
-        vote.reason.contains("Untrusted or unsigned dynamic module load"),
+        vote.reason
+            .contains("Untrusted or unsigned dynamic module load"),
         "Reason must state untrusted/unsigned dynamic load: {}",
         vote.reason
     );
@@ -173,7 +175,8 @@ async fn test_adversarial_reavoter_sysmon_event_7_unsigned_dll_and_pyd_injection
     let vote_clean = rea_voter.vote(&event_clean_system_dll).await;
     if let Some(v) = vote_clean {
         assert!(
-            !v.reason.contains("Untrusted or unsigned dynamic module load"),
+            !v.reason
+                .contains("Untrusted or unsigned dynamic module load"),
             "Clean system DLL load in cargo.exe must NOT be flagged as untrusted load! Got: {}",
             v.reason
         );
@@ -349,7 +352,10 @@ fn test_adversarial_zk_pii_declassification_tampered_proofs_fail_closed() -> Res
     // -------------------------------------------------------------------------
     let mut tampered_sig_proof = genuine_proof.clone();
     // Invert trailing bytes of the signature hex string
-    let mut sig_chars: Vec<char> = tampered_sig_proof.pqc_mldsa65_signature_hex.chars().collect();
+    let mut sig_chars: Vec<char> = tampered_sig_proof
+        .pqc_mldsa65_signature_hex
+        .chars()
+        .collect();
     if let Some(last) = sig_chars.last_mut() {
         *last = if *last == '0' { 'f' } else { '0' };
     }
@@ -372,7 +378,9 @@ fn test_adversarial_zk_pii_declassification_tampered_proofs_fail_closed() -> Res
         "Signature verification must be false"
     );
     assert!(
-        res_tampered_sig.reason.contains("proof verification failed"),
+        res_tampered_sig
+            .reason
+            .contains("proof verification failed"),
         "Reason must state proof verification failed: {}",
         res_tampered_sig.reason
     );
@@ -439,7 +447,9 @@ fn test_adversarial_zk_pii_declassification_tampered_proofs_fail_closed() -> Res
         "Declassification without mandatory <ZK_PII:...> tags MUST fail!"
     );
     assert!(
-        res_missing_tags.reason.contains("missing mandatory <ZK_PII:...> commitments"),
+        res_missing_tags
+            .reason
+            .contains("missing mandatory <ZK_PII:...> commitments"),
         "Reason must explicitly identify missing <ZK_PII:...> commitments: {}",
         res_missing_tags.reason
     );

@@ -17,9 +17,7 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use osoosi_memory::MemoryStore;
 use osoosi_trust::TrustManager;
-use osoosi_types::{
-    PeerRulesConfig, ResponseAction, ThreatSignature,
-};
+use osoosi_types::{PeerRulesConfig, ResponseAction, ThreatSignature};
 use osoosi_wire::holograph::{
     ByzantineKillSwitchFraudProof, HierarchicalRollupVerifier, MeshIndicatorEnforcementStage,
     ZoneMerkleRollup,
@@ -31,7 +29,6 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
-
 
 struct DummyExecutor;
 
@@ -294,10 +291,7 @@ impl FaultInjectionMesh {
                             .fetch_add(1, Ordering::Relaxed);
                     }
                 } else {
-                    prop_votes.insert(
-                        voter_id,
-                        format!("{}:seq_{}", vote_choice, sequence),
-                    );
+                    prop_votes.insert(voter_id, format!("{}:seq_{}", vote_choice, sequence));
                 }
             }
             WireMessage::RepairRequest {
@@ -315,29 +309,28 @@ impl FaultInjectionMesh {
 
     /// Broadcasts a threat signature across the GossipSub mesh.
     /// Honors packet loss injection, network partitions, and redundancy repair.
-    pub async fn broadcast_threat(
-        &self,
-        sender_idx: usize,
-        signature: ThreatSignature,
-    ) {
+    pub async fn broadcast_threat(&self, sender_idx: usize, signature: ThreatSignature) {
         let sender = &self.nodes[sender_idx];
         let hash = signature.hash_blake3.clone().unwrap_or_default();
 
         // Sender records its own indicator immediately
-        sender.received_indicators.write().await.insert(hash.clone());
+        sender
+            .received_indicators
+            .write()
+            .await
+            .insert(hash.clone());
         sender
             .received_timestamps
             .write()
             .await
             .insert(hash.clone(), Instant::now());
-        sender.received_threats.write().await.push(signature.clone());
+        sender
+            .received_threats
+            .write()
+            .await
+            .push(signature.clone());
 
-        let canonical_bytes = format!(
-            "THREAT:{}:{}:{}",
-            signature.id,
-            hash,
-            signature.source_node
-        );
+        let canonical_bytes = format!("THREAT:{}:{}:{}", signature.id, hash, signature.source_node);
         let pqc_sig = hybrid_sign(canonical_bytes.as_bytes(), &sender.private_key);
 
         let msg = WireMessage::GossipThreat {
@@ -370,7 +363,8 @@ impl FaultInjectionMesh {
             // Packet loss injection
             let should_drop = if loss_prob > 0.0 {
                 // Deterministic pseudo-random seed based on nodes and hash
-                let seed = ((sender_idx * 1337 + target_idx * 31 + offset * 7) % 1000) as f64 / 1000.0;
+                let seed =
+                    ((sender_idx * 1337 + target_idx * 31 + offset * 7) % 1000) as f64 / 1000.0;
                 seed < loss_prob
             } else {
                 false
@@ -383,8 +377,11 @@ impl FaultInjectionMesh {
                 tokio::spawn(async move {
                     // Delayed GossipSub repair hop
                     tokio::time::sleep(Duration::from_millis(35)).await;
-                    target_node_clone.repair_count.fetch_add(1, Ordering::Relaxed);
-                    if let Ok(mut stream) = TcpStream::connect(target_node_clone.socket_addr).await {
+                    target_node_clone
+                        .repair_count
+                        .fetch_add(1, Ordering::Relaxed);
+                    if let Ok(mut stream) = TcpStream::connect(target_node_clone.socket_addr).await
+                    {
                         let _ = stream.write_all(&framed_clone).await;
                     }
                 });
@@ -793,7 +790,10 @@ async fn test_suite_3_byzantine_peer_equivocation_and_anti_kill_switch_multi_nod
         FaultInjectionMesh::process_incoming_message(honest_node, vote_b).await;
 
         assert!(
-            honest_node.tampered_pqc_rejected_count.load(Ordering::Relaxed) >= 1,
+            honest_node
+                .tampered_pqc_rejected_count
+                .load(Ordering::Relaxed)
+                >= 1,
             "Conflicting votes for identical proposal must trigger equivocation rejection"
         );
 
@@ -810,7 +810,10 @@ async fn test_suite_3_byzantine_peer_equivocation_and_anti_kill_switch_multi_nod
 
             // Honest node REA checks inventory -> Flags PROTECTED_LOCAL_BINARY_HASH_VETO
             let is_vetoed = mesh.protected_binaries.contains(*protected);
-            assert!(is_vetoed, "Protected binary must be vetoed from autonomous killswitch");
+            assert!(
+                is_vetoed,
+                "Protected binary must be vetoed from autonomous killswitch"
+            );
 
             // Construct non-repudiable ByzantineKillSwitchFraudProof
             let fraud_proof = ByzantineKillSwitchFraudProof {
@@ -853,7 +856,10 @@ async fn test_suite_3_byzantine_peer_equivocation_and_anti_kill_switch_multi_nod
             );
 
             assert!(
-                honest_node.join_gate.is_quarantined(&byzantine_node.id).unwrap(),
+                honest_node
+                    .join_gate
+                    .is_quarantined(&byzantine_node.id)
+                    .unwrap(),
                 "Byzantine peer must be marked quarantined in memory store"
             );
 

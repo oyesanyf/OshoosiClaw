@@ -54,9 +54,7 @@ pub async fn post_vcdb_replay() -> Json<Value> {
         engine.execute_vcdb_replay_suite()
     })
     .await
-    .unwrap_or_else(|_| {
-        osoosi_vcdb::global_vcdb_engine().execute_vcdb_replay_suite()
-    });
+    .unwrap_or_else(|_| osoosi_vcdb::global_vcdb_engine().execute_vcdb_replay_suite());
 
     Json(json!({
         "status": "ok",

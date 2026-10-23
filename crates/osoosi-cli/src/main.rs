@@ -3048,8 +3048,11 @@ fn kill_port_holder(port: u16) {
         use std::os::windows::process::CommandExt;
 
         // Step 1: find PIDs LISTENING on this local port via netstat (ignore client ESTABLISHED connections)
-        let mut netstat_cmd = std::process::Command::new(osoosi_types::resolve_system_binary("netstat.exe"));
-        netstat_cmd.args(["-ano", "-p", "TCP"]).creation_flags(0x08000000);
+        let mut netstat_cmd =
+            std::process::Command::new(osoosi_types::resolve_system_binary("netstat.exe"));
+        netstat_cmd
+            .args(["-ano", "-p", "TCP"])
+            .creation_flags(0x08000000);
         let output = netstat_cmd.output();
         let Ok(out) = output else { return };
         let stdout = String::from_utf8_lossy(&out.stdout);
@@ -3092,9 +3095,9 @@ fn kill_port_holder(port: u16) {
                         "Killing stale osoosi.exe (PID {}) holding port {}...",
                         pid, port
                     );
-                    let mut taskkill_cmd = std::process::Command::new(osoosi_types::resolve_system_binary(
-                        "taskkill.exe",
-                    ));
+                    let mut taskkill_cmd = std::process::Command::new(
+                        osoosi_types::resolve_system_binary("taskkill.exe"),
+                    );
                     taskkill_cmd
                         .args(["/F", "/PID", &pid.to_string()])
                         .creation_flags(0x08000000);

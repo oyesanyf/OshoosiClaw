@@ -211,9 +211,10 @@ pub fn inspect_and_record_internal(
     osoosi_dp::ZkBftQuarantineProof,
     DlpInspectionEventRecord,
 ) {
-    let mut tier1 = state
-        .engine
-        .inspect_hot_tier1(actor_process, destination_sink, payload_str.as_bytes());
+    let mut tier1 =
+        state
+            .engine
+            .inspect_hot_tier1(actor_process, destination_sink, payload_str.as_bytes());
 
     let (cj_categories, cj_export_denied) = state
         .engine
@@ -227,11 +228,10 @@ pub fn inspect_and_record_internal(
     } else {
         None
     };
-    let (dest_forbid, dest_reason) = state.engine.evaluate_egress_destination_policy(
-        actor_process,
-        destination_sink,
-        channel,
-    );
+    let (dest_forbid, dest_reason) =
+        state
+            .engine
+            .evaluate_egress_destination_policy(actor_process, destination_sink, channel);
     let dest_categories: Vec<String> = dest_reason.iter().cloned().collect();
     let actor_lower = actor_process.to_ascii_lowercase();
     let sink_lower = destination_sink.to_ascii_lowercase();
@@ -260,13 +260,12 @@ pub fn inspect_and_record_internal(
 
     // REA binary provenance & artifact format vetting
     let rea_actor_trusted = is_python_actor
-        || osoosi_core::rea::is_rea_benign_system_or_dev_process(actor_process, Some(destination_sink));
-    let (rea_adjudicated_benign, _rea_score, rea_reason) =
-        osoosi_core::rea::global_rea_engine().adjudicate_process_or_binary_alert(
-            Some(actor_process),
-            None,
+        || osoosi_core::rea::is_rea_benign_system_or_dev_process(
+            actor_process,
             Some(destination_sink),
         );
+    let (rea_adjudicated_benign, _rea_score, rea_reason) = osoosi_core::rea::global_rea_engine()
+        .adjudicate_process_or_binary_alert(Some(actor_process), None, Some(destination_sink));
     let rea_untrusted_synthetic_actor = !is_python_actor
         && (actor_lower.contains("exfil_worker")
             || actor_lower.contains("stealth_exfil")
@@ -318,12 +317,8 @@ pub fn inspect_and_record_internal(
         combined_for_scrub.push_str(layer);
     }
 
-    let mut proof = osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(
-        &combined_for_scrub,
-        5501,
-        6.42,
-        4,
-    );
+    let mut proof =
+        osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(&combined_for_scrub, 5501, 6.42, 4);
     let zk_ok = osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&proof);
 
     // Memory scrub of temporary plaintext view
@@ -474,8 +469,7 @@ pub async fn get_dlp_status() -> Json<Value> {
     let tracker_len = crate::get_global_file_lineage_tracker().len();
     let canary_traps_triggered =
         crate::CANARY_CAGE_TRIGGERED_COUNT.load(std::sync::atomic::Ordering::SeqCst);
-    let canary_active =
-        crate::CANARY_CAGE_ACTIVE_COUNT.load(std::sync::atomic::Ordering::SeqCst);
+    let canary_active = crate::CANARY_CAGE_ACTIVE_COUNT.load(std::sync::atomic::Ordering::SeqCst);
 
     let supported_detectors = vec![
         "CROWN_JEWEL_MERKLE_CHUNKS",
@@ -554,10 +548,7 @@ pub async fn post_dlp_inspect(Json(body): Json<Value>) -> Json<Value> {
         .get("channel")
         .and_then(|v| v.as_str())
         .unwrap_or("HTTPS_POST");
-    let payload = body
-        .get("payload")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let payload = body.get("payload").and_then(|v| v.as_str()).unwrap_or("");
 
     let mut state = get_global_dlp_state().write();
     let (tier1, proof, event) = inspect_and_record_internal(
@@ -588,14 +579,15 @@ pub async fn post_dlp_register_crown_jewel(Json(body): Json<Value>) -> Json<Valu
         .and_then(|v| v.as_str())
         .unwrap_or("CRITICAL_CROWN_JEWEL")
         .to_string();
-    let content = body
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let content = body.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
     let bytes = content.as_bytes();
     let byte_size = bytes.len();
-    let chunk_count = if byte_size == 0 { 0 } else { (byte_size + 4095) / 4096 };
+    let chunk_count = if byte_size == 0 {
+        0
+    } else {
+        (byte_size + 4095) / 4096
+    };
 
     let mut state = get_global_dlp_state().write();
     let merkle_root_hex = state
@@ -658,22 +650,26 @@ pub async fn post_dlp_scan_har() -> Json<Value> {
 
     let mut state = get_global_dlp_state().write();
     for entry in entries.iter().take(30) {
-        let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or_default();
-        let host = entry.get("host").and_then(|v| v.as_str()).unwrap_or_default();
-        let method = entry.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
+        let url = entry
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let host = entry
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let method = entry
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET");
         let source_file = entry
             .get("source_file")
             .and_then(|v| v.as_str())
             .unwrap_or("har_collector");
         let payload = format!("{} {} HTTP/1.1\r\nHost: {}\r\n", method, url, host);
 
-        let (verdict, _, _) = inspect_and_record_internal(
-            &mut state,
-            source_file,
-            url,
-            "HAR_TRAFFIC",
-            &payload,
-        );
+        let (verdict, _, _) =
+            inspect_and_record_internal(&mut state, source_file, url, "HAR_TRAFFIC", &payload);
         scanned += 1;
         if !verdict.allowed {
             blocked += 1;

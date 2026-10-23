@@ -339,11 +339,12 @@ pub async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> 
             let effective_peer_count = orch.mesh_peer_count().max(topo_peer_count);
             let nodes = topo.get("nodes").cloned().unwrap_or_else(|| json!([]));
             let live_mesh_hosts = 1u64 + (effective_peer_count as u64);
-            let live_eff = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
-                live_mesh_hosts,
-                1.0,
-                2.0,
-            );
+            let live_eff =
+                osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                    live_mesh_hosts,
+                    1.0,
+                    2.0,
+                );
             Json(json!({
                 "peer_count": effective_peer_count,
                 "gossip_count": orch.mesh_gossip_count(),
@@ -358,11 +359,10 @@ pub async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> 
         }
         None => {
             let live_mesh_hosts = 1u64;
-            let live_eff = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
-                1,
-                1.0,
-                2.0,
-            );
+            let live_eff =
+                osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                    1, 1.0, 2.0,
+                );
             Json(json!({
                 "peer_count": 0,
                 "gossip_count": 0,
@@ -1033,13 +1033,17 @@ pub async fn get_mesh_zone_rollup_status() -> Json<Value> {
         let rollup = osoosi_wire::ZoneMerkleRollup {
             zone_id: zone_id.to_string(),
             epoch: 1,
-            prev_zone_merkle_root: "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
-            zone_merkle_root: osoosi_wire::HierarchicalRollupVerifier::compute_zone_merkle_root(&[sample_indicator.clone()]),
+            prev_zone_merkle_root:
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string(),
+            zone_merkle_root: osoosi_wire::HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                sample_indicator.clone(),
+            ]),
             indicator_digests: vec![sample_indicator.clone()],
             participating_nodes: nodes,
             bft_stake_ratio: stake,
             tpm_attested_quorum: true,
-            pqc_signature_hex: "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5".to_string(),
+            pqc_signature_hex: "d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5"
+                .to_string(),
         };
         verifier.ingest_zone_rollup(rollup);
     }
@@ -1049,16 +1053,40 @@ pub async fn get_mesh_zone_rollup_status() -> Json<Value> {
     let epoch1_block = verifier.seal_global_immunity_block();
 
     let light_proof = verifier.generate_light_client_proof(&sample_indicator);
-    let light_proof_verified = light_proof.as_ref().map(osoosi_wire::HierarchicalRollupVerifier::verify_light_client_proof).unwrap_or(false);
+    let light_proof_verified = light_proof
+        .as_ref()
+        .map(osoosi_wire::HierarchicalRollupVerifier::verify_light_client_proof)
+        .unwrap_or(false);
 
     let mut summary = verifier.get_topology_summary();
     if let Some(map) = summary.as_object_mut() {
-        map.insert("sample_verified_indicator".to_string(), serde_json::Value::String(sample_indicator));
-        map.insert("light_client_proof".to_string(), serde_json::to_value(&light_proof).unwrap_or_default());
-        map.insert("light_client_proof_verified".to_string(), serde_json::Value::Bool(light_proof_verified));
-        map.insert("epoch_1_block".to_string(), serde_json::to_value(&epoch1_block).unwrap_or_default());
-        map.insert("mesh_effectiveness".to_string(), osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 10.0, 2.0));
-        map.insert("vcdb_timeline_acceleration".to_string(), serde_json::to_value(osoosi_vcdb::global_vcdb_engine().get_timeline_benchmark()).unwrap_or_default());
+        map.insert(
+            "sample_verified_indicator".to_string(),
+            serde_json::Value::String(sample_indicator),
+        );
+        map.insert(
+            "light_client_proof".to_string(),
+            serde_json::to_value(&light_proof).unwrap_or_default(),
+        );
+        map.insert(
+            "light_client_proof_verified".to_string(),
+            serde_json::Value::Bool(light_proof_verified),
+        );
+        map.insert(
+            "epoch_1_block".to_string(),
+            serde_json::to_value(&epoch1_block).unwrap_or_default(),
+        );
+        map.insert(
+            "mesh_effectiveness".to_string(),
+            osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                1_000_000, 10.0, 2.0,
+            ),
+        );
+        map.insert(
+            "vcdb_timeline_acceleration".to_string(),
+            serde_json::to_value(osoosi_vcdb::global_vcdb_engine().get_timeline_benchmark())
+                .unwrap_or_default(),
+        );
     }
 
     Json(summary)
@@ -1096,9 +1124,8 @@ pub async fn get_mesh_effectiveness(
         .and_then(|v| v.parse::<f64>().ok())
         .unwrap_or(2.0);
 
-    let mut curve = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
-        n, t, lambda,
-    );
+    let mut curve =
+        osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(n, t, lambda);
     let live_curve = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
         live_mesh_hosts,
         t,
@@ -1147,19 +1174,28 @@ pub async fn get_mesh_validation_report() -> Json<Value> {
     let mut base_report = if report_path.exists() {
         if let Ok(content) = std::fs::read_to_string(&report_path) {
             serde_json::from_str::<Value>(&content).unwrap_or_else(|_| {
-                osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 1.0, 2.0)
+                osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                    1_000_000, 1.0, 2.0,
+                )
             })
         } else {
-            osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 1.0, 2.0)
+            osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+                1_000_000, 1.0, 2.0,
+            )
         }
     } else {
-        osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 1.0, 2.0)
+        osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+            1_000_000, 1.0, 2.0,
+        )
     };
 
     let fault_injection_val = get_mesh_fault_injection_report().await.0;
 
     if let Value::Object(ref mut map) = base_report {
-        map.insert("fault_injection_summary".to_string(), fault_injection_val.clone());
+        map.insert(
+            "fault_injection_summary".to_string(),
+            fault_injection_val.clone(),
+        );
         map.insert("fault_injection_benchmark".to_string(), fault_injection_val);
     }
     Json(base_report)
@@ -1175,12 +1211,11 @@ pub async fn get_mesh_fault_injection_report() -> Json<Value> {
         }
     }
     // Synthesize calibrated fallback curve via HierarchicalRollupVerifier::compute_mesh_effectiveness_curve
-    let mut curve = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 1.0, 2.0);
+    let mut curve = osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
+        1_000_000, 1.0, 2.0,
+    );
     if let Value::Object(ref mut map) = curve {
-        map.insert(
-            "status".to_string(),
-            json!("calibrated_model_fallback"),
-        );
+        map.insert("status".to_string(), json!("calibrated_model_fallback"));
         map.insert(
             "evaluation_backend".to_string(),
             json!("MULTI_NODE_GOSSIPSUB_FAULT_INJECTION_BENCHMARK_CALIBRATED_FALLBACK"),

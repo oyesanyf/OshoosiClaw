@@ -30,24 +30,50 @@ pub static LIVE_HAR_CACHE: std::sync::OnceLock<osoosi_core::parking_lot::RwLock<
     std::sync::OnceLock::new();
 static HAR_COLLECTOR_STARTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
-static HAR_SWEEP_SEQUENCE: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static HAR_SWEEP_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static HAR_REFRESH_MUTEX: std::sync::OnceLock<osoosi_core::parking_lot::Mutex<()>> =
     std::sync::OnceLock::new();
 
 pub fn build_w3c_har_document(entries: &[Value]) -> Value {
     let mut har_entries = Vec::with_capacity(entries.len());
     for entry in entries {
-        let started_at = entry.get("started_at").and_then(|v| v.as_str()).unwrap_or_default();
-        let method = entry.get("method").and_then(|v| v.as_str()).unwrap_or("GET");
-        let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or_default();
-        let host = entry.get("host").and_then(|v| v.as_str()).unwrap_or_default();
+        let started_at = entry
+            .get("started_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let method = entry
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET");
+        let url = entry
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let host = entry
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         let status = entry.get("status").and_then(|v| v.as_i64()).unwrap_or(200);
-        let mime_type = entry.get("mime_type").and_then(|v| v.as_str()).unwrap_or("text/html");
-        let server_ip = entry.get("server_ip").and_then(|v| v.as_str()).unwrap_or_default();
-        let req_bytes = entry.get("request_bytes").and_then(|v| v.as_i64()).unwrap_or(0);
-        let resp_bytes = entry.get("response_bytes").and_then(|v| v.as_i64()).unwrap_or(0);
-        let duration = entry.get("duration_ms").and_then(|v| v.as_f64()).unwrap_or(10.0);
+        let mime_type = entry
+            .get("mime_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("text/html");
+        let server_ip = entry
+            .get("server_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let req_bytes = entry
+            .get("request_bytes")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let resp_bytes = entry
+            .get("response_bytes")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let duration = entry
+            .get("duration_ms")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(10.0);
 
         har_entries.push(serde_json::json!({
             "startedDateTime": started_at,
@@ -225,11 +251,20 @@ pub fn refresh_live_har_cache_now() -> Value {
             }
         }
         let req_b = e.get("request_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-        let resp_b = e.get("response_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
+        let resp_b = e
+            .get("response_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         total_bytes += req_b + resp_b;
 
-        let verdict = e.get("verdict").and_then(|v| v.as_str()).unwrap_or("benign");
-        let score = e.get("threat_score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let verdict = e
+            .get("verdict")
+            .and_then(|v| v.as_str())
+            .unwrap_or("benign");
+        let score = e
+            .get("threat_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
 
         if verdict == "malicious" || score >= 0.8 {
             malicious_count += 1;
@@ -276,7 +311,10 @@ pub fn refresh_live_har_cache_now() -> Value {
                 );",
                 [],
             );
-            let _ = conn.execute("ALTER TABLE har_entries ADD COLUMN hash_blake3 TEXT DEFAULT '';", []);
+            let _ = conn.execute(
+                "ALTER TABLE har_entries ADD COLUMN hash_blake3 TEXT DEFAULT '';",
+                [],
+            );
             let _ = conn.execute_batch("BEGIN IMMEDIATE; DELETE FROM har_entries;");
             if let Ok(mut insert_stmt) = conn.prepare_cached(
                 "INSERT INTO har_entries (source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict, hash_blake3) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);"
@@ -605,28 +643,56 @@ pub async fn get_har_entries(
     let mut filtered_entries = Vec::with_capacity(raw_entries.len());
     for e in raw_entries {
         if let Some(ref s) = search_term {
-            let url = e.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_ascii_lowercase();
-            let host = e.get("host").and_then(|v| v.as_str()).unwrap_or_default().to_ascii_lowercase();
-            let src = e.get("source_file").and_then(|v| v.as_str()).unwrap_or_default().to_ascii_lowercase();
-            let tags = e.get("threat_tags").and_then(|v| v.as_str()).unwrap_or_default().to_ascii_lowercase();
+            let url = e
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let host = e
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let src = e
+                .get("source_file")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let tags = e
+                .get("threat_tags")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             if !url.contains(s) && !host.contains(s) && !src.contains(s) && !tags.contains(s) {
                 continue;
             }
         }
         if let Some(ref v) = verdict_filter {
-            let entry_verdict = e.get("verdict").and_then(|val| val.as_str()).unwrap_or_default().to_ascii_lowercase();
+            let entry_verdict = e
+                .get("verdict")
+                .and_then(|val| val.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             if entry_verdict != *v {
                 continue;
             }
         }
         if let Some(ref src) = source_filter {
-            let entry_src = e.get("source_file").and_then(|val| val.as_str()).unwrap_or_default().to_ascii_lowercase();
+            let entry_src = e
+                .get("source_file")
+                .and_then(|val| val.as_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
             if !entry_src.contains(src) {
                 continue;
             }
         }
         if let Some(ref m) = method_filter {
-            let entry_m = e.get("method").and_then(|val| val.as_str()).unwrap_or_default().to_ascii_uppercase();
+            let entry_m = e
+                .get("method")
+                .and_then(|val| val.as_str())
+                .unwrap_or_default()
+                .to_ascii_uppercase();
             if entry_m != *m {
                 continue;
             }
@@ -639,9 +705,18 @@ pub async fn get_har_entries(
         }
     }
 
-    let stats = base_payload.get("stats").cloned().unwrap_or_else(|| serde_json::json!({}));
-    let sweep_sequence = base_payload.get("sweep_sequence").and_then(|v| v.as_u64()).unwrap_or(0);
-    let last_updated = base_payload.get("last_updated").and_then(|v| v.as_str()).unwrap_or_default();
+    let stats = base_payload
+        .get("stats")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let sweep_sequence = base_payload
+        .get("sweep_sequence")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let last_updated = base_payload
+        .get("last_updated")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
 
     Json(serde_json::json!({
         "status": "ok",

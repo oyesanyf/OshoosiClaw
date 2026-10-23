@@ -44,10 +44,20 @@ fn challenge_benign_execution_code_zero() {
     )
     .expect("Benign command should spawn and exit cleanly");
 
-    assert_eq!(res.exit_code, Some(0), "Expected exit code 0 for benign command");
+    assert_eq!(
+        res.exit_code,
+        Some(0),
+        "Expected exit code 0 for benign command"
+    );
     assert!(res.success, "Expected success to be true");
-    assert!(!res.canary_triggered, "Canary should not be triggered for benign command");
-    assert!(res.alert.is_none(), "No alert should be emitted for benign command");
+    assert!(
+        !res.canary_triggered,
+        "Canary should not be triggered for benign command"
+    );
+    assert!(
+        res.alert.is_none(),
+        "No alert should be emitted for benign command"
+    );
 }
 
 /// Challenge 1B: Zero Handle Leaks across 25 repeated benign executions.
@@ -83,7 +93,10 @@ fn challenge_benign_zero_handle_leaks() {
     std::thread::sleep(Duration::from_millis(50));
 
     let final_handles = get_current_handle_count();
-    println!("Final handle count after {} runs: {}", iterations, final_handles);
+    println!(
+        "Final handle count after {} runs: {}",
+        iterations, final_handles
+    );
 
     let delta = (final_handles as i64) - (initial_handles as i64);
     println!("Handle count delta: {}", delta);
@@ -122,7 +135,9 @@ fn challenge_zero_parent_environment_modifications() {
     )
     .expect("Child should spawn");
 
-    let res = child.wait_timeout(Duration::from_secs(5)).expect("Child should exit");
+    let res = child
+        .wait_timeout(Duration::from_secs(5))
+        .expect("Child should exit");
     assert_eq!(res.exit_code, Some(0));
 
     // Verify parent environment is completely unchanged
@@ -169,10 +184,16 @@ fn challenge_honeypipe_trap_termination_code_137_and_confidence() {
         "Expected exit code 137 upon honey-pipe access"
     );
     assert!(!res.success, "Expected success == false");
-    assert!(alert_fired.load(Ordering::SeqCst), "on_alert callback must fire");
+    assert!(
+        alert_fired.load(Ordering::SeqCst),
+        "on_alert callback must fire"
+    );
 
     let alert = res.alert.expect("Expected CanaryAlert object");
-    assert_eq!(alert.confidence, 1.00, "Alert confidence must be exactly 1.00");
+    assert_eq!(
+        alert.confidence, 1.00,
+        "Alert confidence must be exactly 1.00"
+    );
     assert_eq!(alert.trap_kind, "NamedPipe", "Trap kind must be NamedPipe");
     assert_eq!(alert.session_id, session);
     assert!(
@@ -206,7 +227,8 @@ fn challenge_watcher_thread_cleanup_latency_under_1ms() {
         kill_cleanup_times.push(elapsed);
     }
 
-    let avg_elapsed: Duration = kill_cleanup_times.iter().sum::<Duration>() / (kill_cleanup_times.len() as u32);
+    let avg_elapsed: Duration =
+        kill_cleanup_times.iter().sum::<Duration>() / (kill_cleanup_times.len() as u32);
     println!("Average kill() + watcher join latency: {:?}", avg_elapsed);
 
     // Watcher thread must clean up in < 5ms (typically < 300us on local system)
@@ -252,15 +274,24 @@ fn challenge_suspended_pre_execution_confinement_invariant() {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::*;
 
-    let marker_path = std::env::temp_dir().join(format!("canary_suspended_test_{}.txt", uuid::Uuid::new_v4()));
+    let marker_path = std::env::temp_dir().join(format!(
+        "canary_suspended_test_{}.txt",
+        uuid::Uuid::new_v4()
+    ));
     if marker_path.exists() {
         let _ = fs::remove_file(&marker_path);
     }
 
     // Command that would write to marker_path IF executed
-    let cmd_str = format!("cmd.exe /c echo UNCONTAINED_EXECUTION > \"{}\"", marker_path.to_string_lossy());
+    let cmd_str = format!(
+        "cmd.exe /c echo UNCONTAINED_EXECUTION > \"{}\"",
+        marker_path.to_string_lossy()
+    );
     let mut wide_cmd: Vec<u16> = cmd_str.encode_utf16().chain(std::iter::once(0)).collect();
-    let wide_app: Vec<u16> = "C:\\Windows\\System32\\cmd.exe".encode_utf16().chain(std::iter::once(0)).collect();
+    let wide_app: Vec<u16> = "C:\\Windows\\System32\\cmd.exe"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
@@ -389,8 +420,16 @@ fn challenge_win32_quoting_oracle() {
 
         let mut num_args = 0i32;
         let argv = unsafe { CommandLineToArgvW(wide.as_ptr(), &mut num_args) };
-        assert!(!argv.is_null(), "CommandLineToArgvW failed for: {}", full_cmd);
-        assert_eq!(num_args, 2, "Expected exactly 2 parsed arguments for: {}", full_cmd);
+        assert!(
+            !argv.is_null(),
+            "CommandLineToArgvW failed for: {}",
+            full_cmd
+        );
+        assert_eq!(
+            num_args, 2,
+            "Expected exactly 2 parsed arguments for: {}",
+            full_cmd
+        );
 
         let parsed_ptr = unsafe { *argv.add(1) };
         let mut len = 0;
@@ -435,7 +474,11 @@ fn challenge_grandchild_process_tree_termination() {
         .expect("Wait should succeed");
 
     assert!(res.canary_triggered, "Tree trap should trigger canary");
-    assert_eq!(res.exit_code, Some(137), "Job termination must yield code 137");
+    assert_eq!(
+        res.exit_code,
+        Some(137),
+        "Job termination must yield code 137"
+    );
 }
 
 /// Challenge 4C: Concurrent Isolated Sessions Trap Attribution.
@@ -452,7 +495,11 @@ fn challenge_concurrent_sessions_trap_attribution() {
         let is_trap = i % 2 == 1;
         let alerts_ref = Arc::clone(&caught_alerts);
         let handle = std::thread::spawn(move || {
-            let session_id = format!("concurrent_sess_{}_{}", i, if is_trap { "TRAP" } else { "BENIGN" });
+            let session_id = format!(
+                "concurrent_sess_{}_{}",
+                i,
+                if is_trap { "TRAP" } else { "BENIGN" }
+            );
             if is_trap {
                 let mut child = CanaryCage::spawn_child(
                     "cmd.exe",
@@ -464,7 +511,9 @@ fn challenge_concurrent_sessions_trap_attribution() {
                     })),
                 )
                 .expect("Failed to spawn trap child");
-                let res = child.wait_timeout(Duration::from_secs(6)).expect("Wait failed");
+                let res = child
+                    .wait_timeout(Duration::from_secs(6))
+                    .expect("Wait failed");
                 assert_eq!(res.exit_code, Some(137));
                 assert!(res.canary_triggered);
             } else {

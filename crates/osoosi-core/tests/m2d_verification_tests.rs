@@ -63,7 +63,8 @@ async fn test_m2d_history_view_sub5ms_latency_and_bounds() {
 /// (b) Verify that all 9 Red Team Gauntlet vectors execute and pass with 100% prevention (R9).
 #[test]
 fn test_m2d_built_in_9_vector_adversarial_gauntlet_all_passed() {
-    let scorecard = osoosi_core::adversarial_gauntlet::AdversarialRedTeamGauntlet::run_full_gauntlet();
+    let scorecard =
+        osoosi_core::adversarial_gauntlet::AdversarialRedTeamGauntlet::run_full_gauntlet();
 
     // 1. Overall quantitative scorecard invariants
     assert_eq!(
@@ -135,7 +136,12 @@ fn test_m2d_built_in_9_vector_adversarial_gauntlet_all_passed() {
             .vector_results
             .iter()
             .find(|r| r.vector_id == *vid)
-            .unwrap_or_else(|| panic!("Required vector '{}' must be present in gauntlet results", vid));
+            .unwrap_or_else(|| {
+                panic!(
+                    "Required vector '{}' must be present in gauntlet results",
+                    vid
+                )
+            });
 
         assert!(
             v.prevented,
@@ -180,7 +186,11 @@ async fn test_m2d_deception_and_agent_anomaly_telemetry_structures() {
         .build()
         .unwrap();
 
-    if let Ok(resp) = client.get("http://127.0.0.1:3030/api/deception/status").send().await {
+    if let Ok(resp) = client
+        .get("http://127.0.0.1:3030/api/deception/status")
+        .send()
+        .await
+    {
         if resp.status().is_success() {
             let json: serde_json::Value = resp.json().await.unwrap();
             assert!(
@@ -190,7 +200,11 @@ async fn test_m2d_deception_and_agent_anomaly_telemetry_structures() {
         }
     }
 
-    if let Ok(resp) = client.get("http://127.0.0.1:3030/api/agent-anomalies/summary").send().await {
+    if let Ok(resp) = client
+        .get("http://127.0.0.1:3030/api/agent-anomalies/summary")
+        .send()
+        .await
+    {
         if resp.status().is_success() {
             let json: serde_json::Value = resp.json().await.unwrap();
             assert!(

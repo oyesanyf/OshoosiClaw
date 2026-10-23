@@ -25,8 +25,14 @@ fn test_challenge_har_blake3_hashing_and_lineage_edge_cases() {
 
     let clean_body_1 = "{\"status\": \"ok\", \"data\": [1, 2, 3]}";
     let clean_body_2 = "<html><body>Hello World Multi-Line\nWith Unicode: Ọ̀ṣọ́ọ̀sì</body></html>";
-    let expected_hash_1 = blake3::hash(clean_body_1.as_bytes()).to_hex().to_string().to_lowercase();
-    let expected_hash_2 = blake3::hash(clean_body_2.as_bytes()).to_hex().to_string().to_lowercase();
+    let expected_hash_1 = blake3::hash(clean_body_1.as_bytes())
+        .to_hex()
+        .to_string()
+        .to_lowercase();
+    let expected_hash_2 = blake3::hash(clean_body_2.as_bytes())
+        .to_hex()
+        .to_string()
+        .to_lowercase();
 
     // HAR with 4 entries:
     // Entry 0: Clean JSON body -> has body_blake3
@@ -86,10 +92,22 @@ fn test_challenge_har_blake3_hashing_and_lineage_edge_cases() {
     .expect("HAR JSON should parse cleanly");
 
     assert_eq!(report.total_entries, 4);
-    assert_eq!(report.entries[0].body_blake3.as_deref(), Some(expected_hash_1.as_str()));
-    assert_eq!(report.entries[1].body_blake3.as_deref(), Some(expected_hash_2.as_str()));
-    assert_eq!(report.entries[2].body_blake3, None, "Empty text must produce None body_blake3");
-    assert_eq!(report.entries[3].body_blake3, None, "Missing text field must produce None body_blake3");
+    assert_eq!(
+        report.entries[0].body_blake3.as_deref(),
+        Some(expected_hash_1.as_str())
+    );
+    assert_eq!(
+        report.entries[1].body_blake3.as_deref(),
+        Some(expected_hash_2.as_str())
+    );
+    assert_eq!(
+        report.entries[2].body_blake3, None,
+        "Empty text must produce None body_blake3"
+    );
+    assert_eq!(
+        report.entries[3].body_blake3, None,
+        "Missing text field must produce None body_blake3"
+    );
     assert_eq!(report.malicious_entries, 0);
     assert_eq!(report.primary_verdict, "BENIGN");
 }
@@ -103,7 +121,10 @@ fn test_challenge_swarm_poisoned_payload_rejection_and_registry_lifecycle() {
     let clean_body = "Regular unpoisoned search response payload";
     let poisoned_body = "POISONED_SWARM_PAYLOAD_WITH_EMBEDDED_MALICIOUS_WEIGHTS_42";
 
-    let clean_digest = blake3::hash(clean_body.as_bytes()).to_hex().to_string().to_lowercase();
+    let clean_digest = blake3::hash(clean_body.as_bytes())
+        .to_hex()
+        .to_string()
+        .to_lowercase();
     let poisoned_digest_raw = blake3::hash(poisoned_body.as_bytes()).to_hex().to_string();
     let poisoned_digest_upper = poisoned_digest_raw.to_uppercase();
     let poisoned_digest_lower = poisoned_digest_raw.to_lowercase();
@@ -148,7 +169,9 @@ fn test_challenge_swarm_poisoned_payload_rejection_and_registry_lifecycle() {
     assert_eq!(report_poisoned.malicious_entries, 1);
     assert_eq!(report_poisoned.highest_threat_score, 1.00);
     assert_eq!(report_poisoned.primary_verdict, "MALICIOUS");
-    assert!(report_poisoned.detected_vectors.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+    assert!(report_poisoned
+        .detected_vectors
+        .contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
 
     let entry_0 = &report_poisoned.entries[0];
     assert_eq!(entry_0.verdict, "benign");
@@ -157,7 +180,9 @@ fn test_challenge_swarm_poisoned_payload_rejection_and_registry_lifecycle() {
     let entry_1 = &report_poisoned.entries[1];
     assert_eq!(entry_1.verdict, "malicious");
     assert_eq!(entry_1.threat_score, 1.00);
-    assert!(entry_1.threat_tags.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+    assert!(entry_1
+        .threat_tags
+        .contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
     assert!(entry_1.threat_reasons[0].contains(&poisoned_digest_lower));
 
     // 3. Clear registry and re-inspect: must return to benign
@@ -182,7 +207,10 @@ fn test_challenge_har_lineage_callback_hook() {
     let hook_invoked_clone = hook_invoked.clone();
 
     let body = "callback test payload";
-    let expected_digest = blake3::hash(body.as_bytes()).to_hex().to_string().to_lowercase();
+    let expected_digest = blake3::hash(body.as_bytes())
+        .to_hex()
+        .to_string()
+        .to_lowercase();
     let expected_digest_clone = expected_digest.clone();
 
     set_har_lineage_hook(move |sess, url, domain, digest| {
@@ -215,15 +243,19 @@ fn test_challenge_har_lineage_callback_hook() {
     )
     .expect("parse should succeed");
 
-    assert!(hook_invoked.load(Ordering::SeqCst), "Lineage callback hook must be called");
+    assert!(
+        hook_invoked.load(Ordering::SeqCst),
+        "Lineage callback hook must be called"
+    );
     assert_eq!(report.malicious_entries, 1);
     assert_eq!(report.highest_threat_score, 1.00);
     assert_eq!(report.primary_verdict, "MALICIOUS");
-    assert!(report.entries[0].threat_tags.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+    assert!(report.entries[0]
+        .threat_tags
+        .contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
 
     clear_har_lineage_hook();
 }
-
 
 #[test]
 fn test_challenge_rea_benign_system_immunity_matrix() {
@@ -291,20 +323,32 @@ fn test_challenge_rea_detonation_honeypipe_and_benign_script_differential() {
     let rand_id = format!("{:016x}", rand::random::<u128>());
 
     // 1. Benign batch script: executes cleanly without touching honeypipe
-    let benign_bat = temp_dir.join(format!("benign_test_{}_{}.bat", std::process::id(), rand_id));
-    std::fs::write(&benign_bat, b"@echo off\r\necho BENIGN_OK\r\nexit /b 0\r\n").expect("write benign bat");
+    let benign_bat = temp_dir.join(format!(
+        "benign_test_{}_{}.bat",
+        std::process::id(),
+        rand_id
+    ));
+    std::fs::write(&benign_bat, b"@echo off\r\necho BENIGN_OK\r\nexit /b 0\r\n")
+        .expect("write benign bat");
 
     let benign_rep = run_caged_rea_detonation_probe(&benign_bat, "sess_benign_diff", 4000)
         .expect("benign probe should execute");
     let _ = std::fs::remove_file(&benign_bat);
 
-    assert!(!benign_rep.canary_triggered, "Benign script must NOT trigger canary");
+    assert!(
+        !benign_rep.canary_triggered,
+        "Benign script must NOT trigger canary"
+    );
     assert_eq!(benign_rep.verdict, "CLEAN");
     assert_eq!(benign_rep.threat_score, 0.05);
     assert_eq!(benign_rep.exit_code, Some(0));
 
     // 2. Malicious batch script: touches the honeypipe decoy
-    let trap_bat = temp_dir.join(format!("malicious_trap_test_{}_{}.bat", std::process::id(), rand_id));
+    let trap_bat = temp_dir.join(format!(
+        "malicious_trap_test_{}_{}.bat",
+        std::process::id(),
+        rand_id
+    ));
     std::fs::write(
         &trap_bat,
         b"@echo off\r\necho PROBE_MALICIOUS_CANARY > %CANARY_HONEY_PIPE%\r\n",
@@ -315,8 +359,15 @@ fn test_challenge_rea_detonation_honeypipe_and_benign_script_differential() {
         .expect("trap probe should execute and intercept");
     let _ = std::fs::remove_file(&trap_bat);
 
-    assert!(trap_rep.canary_triggered, "Touching honeypipe must trigger canary trap");
-    assert_eq!(trap_rep.exit_code, Some(137), "Caged child must be terminated with exit code 137");
+    assert!(
+        trap_rep.canary_triggered,
+        "Touching honeypipe must trigger canary trap"
+    );
+    assert_eq!(
+        trap_rep.exit_code,
+        Some(137),
+        "Caged child must be terminated with exit code 137"
+    );
     assert_eq!(trap_rep.threat_score, 1.00);
     assert_eq!(trap_rep.verdict, "MALICIOUS");
     assert!(trap_rep.mitre_attack_ids.contains(&"AML.T0043".to_string()));

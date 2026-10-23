@@ -145,11 +145,26 @@ fn test_adversarial_sanitizer_token_and_length_boundaries() {
 
     // C. Strings >= 12 chars with exactly 1 distinct adversarial token (must be rejected)
     let one_token_cases = [
-        ("Please bypass the security checkpoint during maintenance hours.", "bypass"),
-        ("The system administrator requested an override of this user profile.", "override"),
-        ("We should test this jailbreak attempt against the secondary gateway.", "jailbreak"),
-        ("Ensure the prompt structure adheres to corporate styling guidelines.", "prompt"),
-        ("Analyze this payload format for conformance with RFC 7230 standards.", "payload"),
+        (
+            "Please bypass the security checkpoint during maintenance hours.",
+            "bypass",
+        ),
+        (
+            "The system administrator requested an override of this user profile.",
+            "override",
+        ),
+        (
+            "We should test this jailbreak attempt against the secondary gateway.",
+            "jailbreak",
+        ),
+        (
+            "Ensure the prompt structure adheres to corporate styling guidelines.",
+            "prompt",
+        ),
+        (
+            "Analyze this payload format for conformance with RFC 7230 standards.",
+            "payload",
+        ),
     ];
 
     for (s, _kw) in one_token_cases {
@@ -158,7 +173,12 @@ fn test_adversarial_sanitizer_token_and_length_boundaries() {
         assert!(
             matches!(
                 res,
-                SanitizationResult::Rejected(SanitizationRejectionReason::InsufficientAdversarialTokens { actual: 1, required: 2 })
+                SanitizationResult::Rejected(
+                    SanitizationRejectionReason::InsufficientAdversarialTokens {
+                        actual: 1,
+                        required: 2
+                    }
+                )
             ),
             "1-token string '{}' must be rejected with InsufficientAdversarialTokens(1)",
             s
@@ -191,7 +211,10 @@ fn test_adversarial_sanitizer_token_and_length_boundaries() {
                 assert!(!blake3_digest.is_empty());
             }
             SanitizationResult::Rejected(reason) => {
-                panic!("Valid 2-token prompt '{}' should be accepted, but was rejected with: {:?}", s, reason);
+                panic!(
+                    "Valid 2-token prompt '{}' should be accepted, but was rejected with: {:?}",
+                    s, reason
+                );
             }
         }
     }
@@ -320,7 +343,10 @@ fn test_adversarial_probe_containment_inversion_audit() {
         }
     }
 
-    println!("Inverted probe substring matches detected: {:?}", inverted_matches);
+    println!(
+        "Inverted probe substring matches detected: {:?}",
+        inverted_matches
+    );
 
     // If "code" is flagged as adversarial by is_adversarial_prompt, this is a dangerous false positive!
     // A developer running `code` (VS Code) or typing the word "code" should not be marked as a jailbreak attack.

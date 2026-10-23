@@ -19,7 +19,7 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
     let test_cases = [
         // (tactic_phase, severity, lineage_depth, canary, trust, expected_discrete_state)
         (0, 0.0, 0, false, 0.0, 1),       // Minimum inputs
-        (13, 1.0, 16, true, 1.0, 7),     // Maximum bounded inputs with canary
+        (13, 1.0, 16, true, 1.0, 7),      // Maximum bounded inputs with canary
         (2, 0.95, 4, false, 0.0, 5),      // AML.T0043 prompt injection execution
         (6, 0.95, 2, false, 0.0, 3),      // Credential dumping
         (7, 0.20, 1, false, 1.0, 0),      // Benign signed OS binary in discovery
@@ -28,7 +28,9 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
         (100, 50.0, 100, false, 10.0, 3), // Extreme unbounded inputs clamped by constructor
     ];
 
-    for (case_idx, &(tactic, sev, lineage, canary, trust, expected_state)) in test_cases.iter().enumerate() {
+    for (case_idx, &(tactic, sev, lineage, canary, trust, expected_state)) in
+        test_cases.iter().enumerate()
+    {
         let vec = StixMdpStateVector::new(tactic, sev, lineage, canary, trust);
 
         // Verify discrete state index is strictly in 0..=7
@@ -36,7 +38,8 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
         assert!(
             discrete_idx <= 7,
             "Case {}: discrete state index {} exceeds bound 7",
-            case_idx, discrete_idx
+            case_idx,
+            discrete_idx
         );
         assert_eq!(
             discrete_idx, expected_state,
@@ -46,29 +49,39 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
 
         // Verify 16-dim gym features
         let gym = vec.to_gym_features();
-        assert_eq!(gym.len(), 16, "Gym feature vector must have exactly 16 dimensions");
+        assert_eq!(
+            gym.len(),
+            16,
+            "Gym feature vector must have exactly 16 dimensions"
+        );
 
         for (dim_idx, &val) in gym.iter().enumerate() {
             assert!(
                 !val.is_nan(),
                 "Case {}, Dim {}: Feature value is NaN!",
-                case_idx, dim_idx
+                case_idx,
+                dim_idx
             );
             assert!(
                 !val.is_infinite(),
                 "Case {}, Dim {}: Feature value is Infinite!",
-                case_idx, dim_idx
+                case_idx,
+                dim_idx
             );
             assert!(
                 val >= -1.0 && val <= 1.0,
                 "Case {}, Dim {}: Feature value {:.4} violates bounds [-1.0, 1.0]",
-                case_idx, dim_idx, val
+                case_idx,
+                dim_idx,
+                val
             );
             // Normalized features should actually be in [0.0, 1.0]
             assert!(
                 val >= 0.0 && val <= 1.0,
                 "Case {}, Dim {}: Feature value {:.4} outside [0.0, 1.0]",
-                case_idx, dim_idx, val
+                case_idx,
+                dim_idx,
+                val
             );
         }
 
@@ -77,7 +90,8 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
         assert!(
             (one_hot_sum - 1.0).abs() < 1e-5,
             "Case {}: One-hot phase sum must be exactly 1.0, got {:.4}",
-            case_idx, one_hot_sum
+            case_idx,
+            one_hot_sum
         );
     }
 
@@ -101,7 +115,12 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
 
         assert!(discrete_idx <= 7);
         for &feat in &gym {
-            assert!(feat >= 0.0 && feat <= 1.0, "Iter {}: feature {:.4} out of bounds", iter, feat);
+            assert!(
+                feat >= 0.0 && feat <= 1.0,
+                "Iter {}: feature {:.4} out of bounds",
+                iter,
+                feat
+            );
         }
     }
 
@@ -129,8 +148,16 @@ fn challenge_1_stix_mdp_state_vector_bounds_and_gym_features() {
 
     for (tech, exp_phase, exp_sev) in known_techniques {
         let v = StixMdpStateVector::from_stix_technique(tech, None, 2, false, 0.0);
-        assert_eq!(v.tactic_phase, exp_phase, "Technique {} phase mismatch", tech);
-        assert!((v.technique_severity - exp_sev).abs() < 1e-4, "Technique {} severity mismatch", tech);
+        assert_eq!(
+            v.tactic_phase, exp_phase,
+            "Technique {} phase mismatch",
+            tech
+        );
+        assert!(
+            (v.technique_severity - exp_sev).abs() < 1e-4,
+            "Technique {} severity mismatch",
+            tech
+        );
     }
 
     println!("PASS: StixMdpStateVector correctly maps all techniques, guarantees bounds [0.0, 1.0] across 5,000 trials.");
@@ -156,27 +183,46 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
         assert!(
             weight >= 1.02 && weight <= 2.50,
             "Initial weight for {} is {:.4}, outside [1.02, 2.50]",
-            voter, weight
+            voter,
+            weight
         );
     }
 
     // Call record_canary_containment_reward()
     let reward = controller.record_canary_containment_reward();
-    assert_eq!(reward, 100.0, "Canary containment reward must be exactly +100.0");
+    assert_eq!(
+        reward, 100.0,
+        "Canary containment reward must be exactly +100.0"
+    );
 
     // Verify Q-table updates:
     // State 7 (Canary active exploit) -> SurgicalAutotomyAndCgroupFreeze
-    let q7_autotomy = controller.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize];
-    assert!(q7_autotomy > 0.0, "Q(7, Autotomy) must be positive after containment reward, got {:.2}", q7_autotomy);
-    assert!((q7_autotomy - 28.0).abs() < 1e-6, "First step TD update: 0.28 * 100.0 = 28.0");
+    let q7_autotomy =
+        controller.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize];
+    assert!(
+        q7_autotomy > 0.0,
+        "Q(7, Autotomy) must be positive after containment reward, got {:.2}",
+        q7_autotomy
+    );
+    assert!(
+        (q7_autotomy - 28.0).abs() < 1e-6,
+        "First step TD update: 0.28 * 100.0 = 28.0"
+    );
 
     // State 5 (AML.T0043 prompt injection) -> SurgicalAutotomyAndCgroupFreeze
-    let q5_autotomy = controller.q_table[5][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize];
-    assert!((q5_autotomy - 28.0).abs() < 1e-6, "Q(5, Autotomy) must be 28.0");
+    let q5_autotomy =
+        controller.q_table[5][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize];
+    assert!(
+        (q5_autotomy - 28.0).abs() < 1e-6,
+        "Q(5, Autotomy) must be 28.0"
+    );
 
     // State 4 (Lateral movement) -> IsolateLateralEdgeAndHoneypot
     let q4_isolate = controller.q_table[4][DefenseAction::IsolateLateralEdgeAndHoneypot as usize];
-    assert!((q4_isolate - 28.0).abs() < 1e-6, "Q(4, Isolate) must be 28.0");
+    assert!(
+        (q4_isolate - 28.0).abs() < 1e-6,
+        "Q(4, Isolate) must be 28.0"
+    );
 
     // Total steps incremented by 3
     assert_eq!(controller.total_steps, 3);
@@ -188,12 +234,15 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
         assert!(
             w > initial_w,
             "Voter {} weight should increase after containment event (was {:.4}, now {:.4})",
-            voter, initial_w, w
+            voter,
+            initial_w,
+            w
         );
         assert!(
             w >= 1.02 && w <= 2.50,
             "Voter {} weight {:.4} outside [1.02, 2.50]",
-            voter, w
+            voter,
+            w
         );
     }
 
@@ -207,14 +256,16 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
         assert!(
             w >= 1.02 && w <= 2.50,
             "Converged voter {} weight {:.4} outside [1.02, 2.50]",
-            voter, w
+            voter,
+            w
         );
         // Under high Q-values, high-priority voters should reach the ceiling of 2.50
         if voter == "Agentic-Escape-Detector" || voter == "SpiderWeb-Containment" {
             assert!(
                 (w - 2.50).abs() < 1e-4,
                 "High-priority voter {} should saturate at 2.50, got {:.4}",
-                voter, w
+                voter,
+                w
             );
         }
     }
@@ -230,7 +281,8 @@ fn challenge_2_canary_containment_reward_and_voter_nudge_bounds() {
         assert!(
             w >= 1.02 && w <= 2.50,
             "Adversarial negative Q: voter {} weight {:.4} outside [1.02, 2.50]",
-            voter, w
+            voter,
+            w
         );
     }
 
@@ -242,7 +294,11 @@ fn challenge_3_stix_curriculum_generator_and_trajectory_synthesis() {
     println!("\n=== Challenge 3: StixCurriculumGenerator Trajectories & Learning Synthesis ===");
 
     let episodes = StixCurriculumGenerator::generate_attack_trajectories();
-    assert_eq!(episodes.len(), 3, "Curriculum must generate exactly 3 trajectories");
+    assert_eq!(
+        episodes.len(),
+        3,
+        "Curriculum must generate exactly 3 trajectories"
+    );
 
     // Trajectory 1: APT-Agent-Jacker-01
     // Initial Access -> AML.T0043 Indirect Prompt Injection -> T1059 Command Execution -> T1552.001 Credential Access
@@ -280,7 +336,11 @@ fn challenge_3_stix_curriculum_generator_and_trajectory_synthesis() {
             assert!(!step.technique_id.is_empty());
             assert!(!step.tactic.is_empty());
             assert!(step.severity >= 0.0 && step.severity <= 1.0);
-            assert!(!step.mitigations.is_empty(), "Step {} must have mitigations", step.technique_id);
+            assert!(
+                !step.mitigations.is_empty(),
+                "Step {} must have mitigations",
+                step.technique_id
+            );
         }
     }
 
@@ -297,12 +357,14 @@ fn challenge_3_stix_curriculum_generator_and_trajectory_synthesis() {
     // Verify learned action preferences:
     // State 7 (Canary triggered on credential access T1552.001 / AML.T0054)
     // Optimal action is SurgicalAutotomyAndCgroupFreeze
-    let q7_autotomy = controller.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize];
+    let q7_autotomy =
+        controller.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize];
     let q7_observe = controller.q_table[7][DefenseAction::ObserveOnly as usize];
     assert!(
         q7_autotomy > q7_observe,
         "Learned Q(7, Autotomy) ({:.2}) must exceed Q(7, Observe) ({:.2})",
-        q7_autotomy, q7_observe
+        q7_autotomy,
+        q7_observe
     );
     assert!(
         q7_autotomy > 50.0,
@@ -366,7 +428,8 @@ fn challenge_4_dp_csprng_laplace_distribution_and_causality_preservation() {
         assert!(
             (sample_mean - theoretical_mean).abs() < 4.0 * se,
             "Empirical mean {:.4} deviates significantly from theoretical 0.0 (SE = {:.4})",
-            sample_mean, se
+            sample_mean,
+            se
         );
 
         // Assert empirical std is within 12% of theoretical Laplace standard deviation
@@ -374,7 +437,9 @@ fn challenge_4_dp_csprng_laplace_distribution_and_causality_preservation() {
         assert!(
             std_ratio >= 0.88 && std_ratio <= 1.12,
             "Empirical std {:.4} deviates from theoretical Laplace std {:.4} (ratio: {:.4})",
-            sample_std, theoretical_std, std_ratio
+            sample_std,
+            theoretical_std,
+            std_ratio
         );
     }
 
@@ -398,16 +463,8 @@ fn challenge_4_dp_csprng_laplace_distribution_and_causality_preservation() {
         max_abs_perturbation = max_abs_perturbation.max(d1).max(d2);
 
         // Perturbation on any single timestamp must be well within 3600s
-        assert!(
-            d1 < 3600,
-            "Perturbation {} exceeds 3600s limit",
-            d1
-        );
-        assert!(
-            d2 < 3600,
-            "Perturbation {} exceeds 3600s limit",
-            d2
-        );
+        assert!(d1 < 3600, "Perturbation {} exceeds 3600s limit", d1);
+        assert!(d2 < 3600, "Perturbation {} exceeds 3600s limit", d2);
 
         // Temporal order must be strictly preserved
         if t2_perturbed > t1_perturbed {

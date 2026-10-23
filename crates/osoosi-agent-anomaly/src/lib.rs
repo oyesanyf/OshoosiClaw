@@ -39,10 +39,6 @@ pub use alignment_scanner::{
     MultiTurnAlignmentSimulationResult, PinnedTaskIntent, RuntimeAlignmentScanner,
     RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
-pub use file_lineage::{
-    FileLineageTracker, IngestedFileEntry, LineageEntry, LineageError, PoisonMetadata,
-    DEFAULT_MAX_CAPACITY,
-};
 pub use breakout_defense::{
     validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,
     UnifiedBreakoutEvaluation, ZeroMiProjectionResult, ZeroMutualInformationProjector,
@@ -62,6 +58,10 @@ pub use containment_ring::{
     ZeroCopyImmutableToolBuffer,
 };
 pub use detector::AgentAnomalyDetector;
+pub use file_lineage::{
+    FileLineageTracker, IngestedFileEntry, LineageEntry, LineageError, PoisonMetadata,
+    DEFAULT_MAX_CAPACITY,
+};
 pub use mercury_guard::{
     ActuationPoreClass, AmalgamRecord, DropletEvent, HostActuationPore, HostPoreInventory,
     MercuryContainmentEngine, MercuryLineageState, MercuryPhysicsVerdict, PassivationState,

@@ -31,6 +31,7 @@ pub mod baseline;
 pub mod browser_guard;
 pub mod canary;
 pub mod config_integrity;
+pub mod disk_cleanup;
 pub mod firewall;
 pub mod forensics;
 pub mod geo_mesh;
@@ -38,7 +39,6 @@ pub mod gossip;
 pub mod hardened;
 pub mod hybrid_runtime;
 pub mod landlock;
-pub mod disk_cleanup;
 pub use disk_cleanup::{
     evaluate_disk_pressure, get_disk_cleanup_policy, get_disk_cleanup_status_snapshot,
     run_autonomous_disk_cleanup_sweep, spawn_autonomous_disk_cleanup_watchdog,
@@ -1540,7 +1540,9 @@ impl EdrOrchestrator {
     }
 
     /// Access the RL Adaptive Controller.
-    pub fn rl_controller(&self) -> Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>> {
+    pub fn rl_controller(
+        &self,
+    ) -> Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>> {
         self.rl_controller.clone()
     }
 
@@ -1578,7 +1580,10 @@ impl EdrOrchestrator {
         // 1. Build HostSecurityEvent injecting Canary indicators directly into event.data
         let mut data = serde_json::Map::new();
         data.insert("CanaryTrapTripped".to_string(), serde_json::json!(true));
-        data.insert("CanaryAlertId".to_string(), serde_json::json!(alert.alert_id));
+        data.insert(
+            "CanaryAlertId".to_string(),
+            serde_json::json!(alert.alert_id),
+        );
         data.insert("ProcessId".to_string(), serde_json::json!(alert.pid));
         data.insert("SessionId".to_string(), serde_json::json!(alert.session_id));
         data.insert("TrapKind".to_string(), serde_json::json!(alert.trap_kind));
@@ -1586,7 +1591,10 @@ impl EdrOrchestrator {
         data.insert("Confidence".to_string(), serde_json::json!(1.00));
         data.insert("PromptInjectionExfil".to_string(), serde_json::json!(true));
         data.insert("SacrificialFracture".to_string(), serde_json::json!(true));
-        data.insert("SilkRegime".to_string(), serde_json::json!("SacrificialFracture"));
+        data.insert(
+            "SilkRegime".to_string(),
+            serde_json::json!("SacrificialFracture"),
+        );
         data.insert("StrainEpsilon".to_string(), serde_json::json!(1.0));
 
         let event = osoosi_types::HostSecurityEvent {
@@ -1617,7 +1625,8 @@ impl EdrOrchestrator {
         // 4. Attribute CanaryAlert to ingested file/HAR BLAKE3 digest in FileLineageTracker / broadcast
         if let Some(ref digest) = alert.attributed_file_digest {
             osoosi_policy::traffic_adapter::register_swarm_poisoned_har_digest(digest);
-            self.broadcast_poisoned_digest_to_mesh(digest, &alert.session_id).await;
+            self.broadcast_poisoned_digest_to_mesh(digest, &alert.session_id)
+                .await;
         }
 
         Ok(())
@@ -1640,11 +1649,14 @@ impl EdrOrchestrator {
         sig.mitre_tactic = Some("TA0006".to_string());
         sig.mitre_technique = Some("T1552.001".to_string());
         sig.mitre_technique_name = Some("Credentials In Files: Ephemeral Canary Trap".to_string());
-        sig.detected_at = chrono::DateTime::from_timestamp(perturbed_ts, 0).unwrap_or_else(chrono::Utc::now);
+        sig.detected_at =
+            chrono::DateTime::from_timestamp(perturbed_ts, 0).unwrap_or_else(chrono::Utc::now);
 
         // Sign with TrustManager Hybrid PQC
         let payload = format!("{}:{}:{}", sig.id, digest, perturbed_ts);
-        let pqc_sig = self.trust.generate_pqc_hybrid_attestation_signature(payload.as_bytes());
+        let pqc_sig = self
+            .trust
+            .generate_pqc_hybrid_attestation_signature(payload.as_bytes());
         sig.signature = Some(pqc_sig);
 
         // Record locally and broadcast over mesh command channels
@@ -1758,8 +1770,7 @@ impl EdrOrchestrator {
                     );
 
                     // BROADCAST to mesh: Share the disassembly and intent report
-                    let mut sig =
-                        osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                    let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                     sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
                     sig.process_name = Some(process_name.clone());
                     sig.hash_blake3 = Some(hash.clone());
@@ -3995,11 +4006,17 @@ impl EdrOrchestrator {
         let siquery_last_telemetry = Arc::new(parking_lot::RwLock::new(None));
         info!("[SIQUERY] Native in-process relational SQL engine initialized (41 tables).");
 
-        let mitre_synchronizer = Arc::new(mitre::AutonomousMitreSynchronizer::new(mesh_command_tx.clone()));
-        mitre::AutonomousMitreSynchronizer::start_background_refresh_loop(mitre_synchronizer.clone());
+        let mitre_synchronizer = Arc::new(mitre::AutonomousMitreSynchronizer::new(
+            mesh_command_tx.clone(),
+        ));
+        mitre::AutonomousMitreSynchronizer::start_background_refresh_loop(
+            mitre_synchronizer.clone(),
+        );
         info!("[MITRE-STIX] Autonomous MITRE ATT&CK + ATLAS STIX 2.1 refresh loop started.");
 
-        let ai_feed_collector = Arc::new(ai_feeds::AutonomousAiFeedCollector::new(mesh_command_tx.clone()));
+        let ai_feed_collector = Arc::new(ai_feeds::AutonomousAiFeedCollector::new(
+            mesh_command_tx.clone(),
+        ));
         crate::ai_feeds::init_global_ai_feed_collector(ai_feed_collector.clone());
         ai_feeds::AutonomousAiFeedCollector::start_background_loop(ai_feed_collector.clone());
         info!("[AI-FEEDS] Autonomous AI Threat Feed Ingestion loop started (60m interval).");
@@ -4626,7 +4643,11 @@ impl EdrOrchestrator {
         }
 
         // 2f. 5-Tier Autonomous Build-Cache, WAL & Telemetry Cleanup Sweep
-        let sweep_mode = if effective_days == 0 { "deep_cargo" } else { "standard" };
+        let sweep_mode = if effective_days == 0 {
+            "deep_cargo"
+        } else {
+            "standard"
+        };
         let autonomous_sweep = crate::disk_cleanup::run_autonomous_disk_cleanup_sweep(sweep_mode);
         bytes_freed = bytes_freed.saturating_add(autonomous_sweep.bytes_freed);
 
@@ -7567,39 +7588,41 @@ impl EdrOrchestrator {
                 if has_spider {
                     let mut engine = self.deception_engine.write().await;
                     if engine.get_spider(pid as u32).is_some() {
-                    match event.event_id {
-                        // 11: FileCreate, 23: FileDeleteArchived, 26: FileDeleteLogged
-                        11 | 23 | 26 => {
-                            let path = event
-                                .data
-                                .get("TargetFilename")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("");
-                            if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
-                                info!(
-                                    "🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}",
-                                    pid, res
-                                );
+                        match event.event_id {
+                            // 11: FileCreate, 23: FileDeleteArchived, 26: FileDeleteLogged
+                            11 | 23 | 26 => {
+                                let path = event
+                                    .data
+                                    .get("TargetFilename")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("");
+                                if let Some(res) =
+                                    engine.handle_event(pid as u32, "io_access", path)
+                                {
+                                    info!(
+                                        "🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}",
+                                        pid, res
+                                    );
+                                }
                             }
-                        }
-                        3 => {
-                            // NetworkConnect
-                            if engine
-                                .handle_event(pid as u32, "exfil", "network")
-                                .is_some()
-                            {
-                                info!(
+                            3 => {
+                                // NetworkConnect
+                                if engine
+                                    .handle_event(pid as u32, "exfil", "network")
+                                    .is_some()
+                                {
+                                    info!(
                                     "🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}",
                                     pid
                                 );
+                                }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
             }
         }
-    }
 
         // --- PROCESS HOLLOWING INTERCEPTION (T1055.012) ---
         {
@@ -10115,9 +10138,14 @@ impl EdrOrchestrator {
                     continue;
                 }
                 let cand_p = item.process_name.as_deref().unwrap_or("");
-                let extracted_p = crate::rea::extract_process_from_summary(&item.summary).unwrap_or(cand_p);
+                let extracted_p =
+                    crate::rea::extract_process_from_summary(&item.summary).unwrap_or(cand_p);
                 if crate::rea::is_rea_benign_system_or_dev_process(cand_p, Some(&item.summary))
-                    || (!extracted_p.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_p, Some(&item.summary)))
+                    || (!extracted_p.is_empty()
+                        && crate::rea::is_rea_benign_system_or_dev_process(
+                            extracted_p,
+                            Some(&item.summary),
+                        ))
                 {
                     continue;
                 }
@@ -10138,8 +10166,18 @@ impl EdrOrchestrator {
                         .to_ascii_lowercase();
                     if crate::rea::is_rea_benign_system_or_dev_process(p, Some(&item.summary))
                         || self.rea_adjudicated_clean_procs.contains(&b)
-                        || self.memory.is_false_positive_pattern(Some(p.as_str()), item.hash_blake3.as_deref()).unwrap_or(false)
-                        || item.hash_blake3.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
+                        || self
+                            .memory
+                            .is_false_positive_pattern(
+                                Some(p.as_str()),
+                                item.hash_blake3.as_deref(),
+                            )
+                            .unwrap_or(false)
+                        || item
+                            .hash_blake3
+                            .as_deref()
+                            .map(|h| self.memory.is_hash_clean_ignored(h))
+                            .unwrap_or(false)
                     {
                         continue;
                     }
@@ -10252,11 +10290,28 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     let proc_str = proc.as_deref().unwrap_or("");
-                    let extracted_from_sum = crate::rea::extract_process_from_summary(raw_summary).unwrap_or(proc_str);
-                    let is_benign_proc = (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(reason_str)))
-                        || (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(raw_summary)))
-                        || (!raw_summary.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(raw_summary, Some(raw_summary)))
-                        || (!extracted_from_sum.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_from_sum, Some(raw_summary)));
+                    let extracted_from_sum =
+                        crate::rea::extract_process_from_summary(raw_summary).unwrap_or(proc_str);
+                    let is_benign_proc = (proc.is_some()
+                        && crate::rea::is_rea_benign_system_or_dev_process(
+                            proc_str,
+                            Some(reason_str),
+                        ))
+                        || (proc.is_some()
+                            && crate::rea::is_rea_benign_system_or_dev_process(
+                                proc_str,
+                                Some(raw_summary),
+                            ))
+                        || (!raw_summary.is_empty()
+                            && crate::rea::is_rea_benign_system_or_dev_process(
+                                raw_summary,
+                                Some(raw_summary),
+                            ))
+                        || (!extracted_from_sum.is_empty()
+                            && crate::rea::is_rea_benign_system_or_dev_process(
+                                extracted_from_sum,
+                                Some(raw_summary),
+                            ));
                     if is_benign_proc {
                         continue;
                     }
@@ -10267,8 +10322,14 @@ impl EdrOrchestrator {
                             .unwrap_or(p)
                             .to_ascii_lowercase();
                         if self.rea_adjudicated_clean_procs.contains(&b)
-                            || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
-                            || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
+                            || self
+                                .memory
+                                .is_false_positive_pattern(Some(p.as_str()), hash.as_deref())
+                                .unwrap_or(false)
+                            || hash
+                                .as_deref()
+                                .map(|h| self.memory.is_hash_clean_ignored(h))
+                                .unwrap_or(false)
                         {
                             continue;
                         }
@@ -10373,7 +10434,10 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    if id.is_empty() || seen_ids.contains(&id) || self.dismissed_gossip_ids.contains(&id) {
+                    if id.is_empty()
+                        || seen_ids.contains(&id)
+                        || self.dismissed_gossip_ids.contains(&id)
+                    {
                         continue;
                     }
                     seen_ids.insert(id.clone());
@@ -10415,12 +10479,28 @@ impl EdrOrchestrator {
                     {
                         continue;
                     }
-                    let description = t.get("description").or_else(|| t.get("reason")).and_then(|v| v.as_str()).unwrap_or(reason);
+                    let description = t
+                        .get("description")
+                        .or_else(|| t.get("reason"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(reason);
                     let proc_str = proc.as_deref().unwrap_or("");
-                    let extracted_from_desc = crate::rea::extract_process_from_summary(description).unwrap_or(proc_str);
-                    let is_benign_proc = (proc.is_some() && crate::rea::is_rea_benign_system_or_dev_process(proc_str, Some(description)))
-                        || (!extracted_from_desc.is_empty() && crate::rea::is_rea_benign_system_or_dev_process(extracted_from_desc, Some(description)))
-                        || crate::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(description));
+                    let extracted_from_desc =
+                        crate::rea::extract_process_from_summary(description).unwrap_or(proc_str);
+                    let is_benign_proc = (proc.is_some()
+                        && crate::rea::is_rea_benign_system_or_dev_process(
+                            proc_str,
+                            Some(description),
+                        ))
+                        || (!extracted_from_desc.is_empty()
+                            && crate::rea::is_rea_benign_system_or_dev_process(
+                                extracted_from_desc,
+                                Some(description),
+                            ))
+                        || crate::rea::is_rea_benign_system_or_dev_process(
+                            "<unknown process>",
+                            Some(description),
+                        );
                     if is_benign_proc {
                         continue;
                     }
@@ -10431,8 +10511,14 @@ impl EdrOrchestrator {
                             .unwrap_or(p)
                             .to_ascii_lowercase();
                         if self.rea_adjudicated_clean_procs.contains(&b)
-                            || self.memory.is_false_positive_pattern(Some(p.as_str()), hash.as_deref()).unwrap_or(false)
-                            || hash.as_deref().map(|h| self.memory.is_hash_clean_ignored(h)).unwrap_or(false)
+                            || self
+                                .memory
+                                .is_false_positive_pattern(Some(p.as_str()), hash.as_deref())
+                                .unwrap_or(false)
+                            || hash
+                                .as_deref()
+                                .map(|h| self.memory.is_hash_clean_ignored(h))
+                                .unwrap_or(false)
                         {
                             continue;
                         }
@@ -10595,7 +10681,11 @@ impl EdrOrchestrator {
                 }
                 seen_routine.insert(key);
             } else if item.is_threat {
-                let p_lower = item.process_name.as_deref().unwrap_or("").to_ascii_lowercase();
+                let p_lower = item
+                    .process_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
                 let tech = item.mitre_technique.as_deref().unwrap_or("");
                 let sum_pfx: String = item.summary.chars().take(48).collect();
                 let threat_key = format!("{}:{}:{}", p_lower, tech, sum_pfx);
@@ -10617,7 +10707,9 @@ impl EdrOrchestrator {
     /// Drops benign toolchain / OS binaries, CVE version-mismatch alerts, and vendor-vetoed threats.
     pub fn run_autonomous_rea_threat_adjudication(&self) -> usize {
         let now = chrono::Utc::now().timestamp();
-        let last = self.last_rea_adjudication_ts.load(std::sync::atomic::Ordering::Relaxed);
+        let last = self
+            .last_rea_adjudication_ts
+            .load(std::sync::atomic::Ordering::Relaxed);
         if now.saturating_sub(last) < 3 {
             return 0;
         }
@@ -10633,26 +10725,34 @@ impl EdrOrchestrator {
         {
             return 0;
         }
-        let mut dropped = self.memory.purge_vetoed_and_false_positive_threats().unwrap_or(0);
+        let mut dropped = self
+            .memory
+            .purge_vetoed_and_false_positive_threats()
+            .unwrap_or(0);
         let rea_for_scanner = crate::rea::global_rea_engine();
-        let scanner_purged = self.malware_scanner.purge_false_positive_or_benign_detections(|d| {
-            if osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type) {
-                return true;
-            }
-            if crate::rea::is_rea_benign_system_or_dev_process(&d.file_path, Some(&d.malware_type)) {
-                return true;
-            }
-            let p = std::path::Path::new(&d.file_path);
-            if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
-                return true;
-            }
-            let (should_drop, _, _) = rea_for_scanner.adjudicate_process_or_binary_alert(
-                None,
-                Some(&d.file_path),
-                Some(&d.malware_type),
-            );
-            should_drop
-        });
+        let scanner_purged = self
+            .malware_scanner
+            .purge_false_positive_or_benign_detections(|d| {
+                if osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type) {
+                    return true;
+                }
+                if crate::rea::is_rea_benign_system_or_dev_process(
+                    &d.file_path,
+                    Some(&d.malware_type),
+                ) {
+                    return true;
+                }
+                let p = std::path::Path::new(&d.file_path);
+                if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
+                    return true;
+                }
+                let (should_drop, _, _) = rea_for_scanner.adjudicate_process_or_binary_alert(
+                    None,
+                    Some(&d.file_path),
+                    Some(&d.malware_type),
+                );
+                should_drop
+            });
         dropped += scanner_purged;
         let mut candidates = Vec::new();
         if let Ok(feed) = self.mesh_gossip_feed.read() {
@@ -10669,11 +10769,25 @@ impl EdrOrchestrator {
         }
         if let Ok(threats) = self.memory.get_recent_threats(100) {
             for t in threats {
-                let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let id = t
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !id.is_empty() && !self.dismissed_gossip_ids.contains(&id) {
-                    let proc = t.get("process_name").and_then(|v| v.as_str()).map(String::from);
-                    let hash = t.get("hash_blake3").and_then(|v| v.as_str()).map(String::from);
-                    let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let proc = t
+                        .get("process_name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let hash = t
+                        .get("hash_blake3")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let reason = t
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     candidates.push((id, proc, hash, reason));
                 }
             }
@@ -10719,7 +10833,9 @@ impl EdrOrchestrator {
         let mut purged_procs = std::collections::HashSet::new();
         let mut disk_probes = 0usize;
         for (id, proc, hash, reason) in candidates {
-            let extracted = proc.as_deref().or_else(|| crate::rea::extract_process_from_summary(&reason));
+            let extracted = proc
+                .as_deref()
+                .or_else(|| crate::rea::extract_process_from_summary(&reason));
             let proc_str = extracted.unwrap_or("").trim();
             let proc_base = if !proc_str.is_empty() {
                 Some(
@@ -10748,17 +10864,20 @@ impl EdrOrchestrator {
                     self.rea_adjudicated_clean_procs.insert(b.clone());
                 }
                 self.dismissed_gossip_ids.insert(id.clone());
-                let cand_p = if !proc_str.is_empty() { Some(proc_str) } else { proc.as_deref() };
-                let _ = self.memory.delete_threat_by_id_or_pattern(
-                    Some(&id),
-                    cand_p,
-                    hash.as_deref(),
-                );
+                let cand_p = if !proc_str.is_empty() {
+                    Some(proc_str)
+                } else {
+                    proc.as_deref()
+                };
+                let _ =
+                    self.memory
+                        .delete_threat_by_id_or_pattern(Some(&id), cand_p, hash.as_deref());
                 if let Some(p) = cand_p {
                     if purged_procs.insert(p.to_ascii_lowercase()) {
                         let _ = self.memory.delete_threats_matching_process_substring(p);
                         // Also record a lightweight REA report once per benign process
-                        let _ = rea.adjudicate_process_or_binary_alert(Some(p), None, Some(&reason));
+                        let _ =
+                            rea.adjudicate_process_or_binary_alert(Some(p), None, Some(&reason));
                     }
                 }
                 dropped += 1;
@@ -10770,7 +10889,11 @@ impl EdrOrchestrator {
             }
             disk_probes += 1;
 
-            let cand_p = if !proc_str.is_empty() { Some(proc_str) } else { proc.as_deref() };
+            let cand_p = if !proc_str.is_empty() {
+                Some(proc_str)
+            } else {
+                proc.as_deref()
+            };
             let (should_drop, _, resolved_hash) =
                 rea.adjudicate_process_or_binary_alert(cand_p, None, Some(&reason));
 
@@ -10780,11 +10903,9 @@ impl EdrOrchestrator {
                 }
                 self.dismissed_gossip_ids.insert(id.clone());
                 let final_hash = resolved_hash.as_deref().or(hash.as_deref());
-                let _ = self.memory.delete_threat_by_id_or_pattern(
-                    Some(&id),
-                    cand_p,
-                    final_hash,
-                );
+                let _ = self
+                    .memory
+                    .delete_threat_by_id_or_pattern(Some(&id), cand_p, final_hash);
                 if let Some(p) = cand_p {
                     if purged_procs.insert(p.to_ascii_lowercase()) {
                         let _ = self.memory.record_false_positive_pattern(
@@ -10843,10 +10964,7 @@ impl EdrOrchestrator {
                 || entry.event_type == "MESH_THREAT_RECEIVED"
                 || entry.event_type == "THREAT_DETECTED"
             {
-                let proc = entry
-                    .data
-                    .get("process_name")
-                    .and_then(|v| v.as_str());
+                let proc = entry.data.get("process_name").and_then(|v| v.as_str());
                 let summary = entry
                     .data
                     .get("summary")
@@ -10870,7 +10988,8 @@ impl EdrOrchestrator {
                         return false;
                     }
                 } else if let Some(s) = summary {
-                    if crate::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(s)) {
+                    if crate::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(s))
+                    {
                         return false;
                     }
                 }
@@ -10961,9 +11080,7 @@ impl EdrOrchestrator {
                         .or_else(|| entry.data.get("id"))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            format!("audit-{}", entry.timestamp.timestamp_micros())
-                        });
+                        .unwrap_or_else(|| format!("audit-{}", entry.timestamp.timestamp_micros()));
                     self.dismissed_gossip_ids.insert(e_id);
                 }
             }
@@ -11021,12 +11138,16 @@ impl EdrOrchestrator {
             || reason_str.contains("unknown v0.0.0 has known cves")
             || reason_str.contains("cve-2009-2940")
         {
-            debug!("[Mesh] Threat suppressed from gossip broadcast (vetoed or non-vulnerable version)");
+            debug!(
+                "[Mesh] Threat suppressed from gossip broadcast (vetoed or non-vulnerable version)"
+            );
             return;
         }
         if let Some(ref proc) = sig.process_name {
             if crate::rea::is_rea_benign_system_or_dev_process(proc, sig.reason.as_deref())
-                || crate::rea::global_rea_engine().adjudicate_process_or_binary_alert(Some(proc), None, sig.reason.as_deref()).0
+                || crate::rea::global_rea_engine()
+                    .adjudicate_process_or_binary_alert(Some(proc), None, sig.reason.as_deref())
+                    .0
             {
                 debug!(
                     "[Mesh] Threat suppressed from gossip broadcast (REA benign system/dev: {})",
@@ -12396,14 +12517,15 @@ impl EdrOrchestrator {
                     debug!("PeerThreatRx: Dropped unknown process threat {}", sig.id);
                     continue;
                 }
-                let inbound_mesh_verdict = crate::rea::global_rea_engine().inspect_and_vet_mesh_frame(
-                    "inbound",
-                    Some(&sig.source_node),
-                    sig.process_name.as_deref().unwrap_or(""),
-                    sig.hash_blake3.as_deref(),
-                    None,
-                    sig.reason.as_deref(),
-                );
+                let inbound_mesh_verdict = crate::rea::global_rea_engine()
+                    .inspect_and_vet_mesh_frame(
+                        "inbound",
+                        Some(&sig.source_node),
+                        sig.process_name.as_deref().unwrap_or(""),
+                        sig.hash_blake3.as_deref(),
+                        None,
+                        sig.reason.as_deref(),
+                    );
                 if inbound_mesh_verdict.vetoed || !inbound_mesh_verdict.allowed {
                     let veto_reason = inbound_mesh_verdict
                         .veto_reason
@@ -12503,7 +12625,9 @@ impl EdrOrchestrator {
                             sig.hash_blake3.as_deref(),
                             Some(&rule),
                             sig.reason.as_deref(),
-                        ).is_none() {
+                        )
+                        .is_none()
+                        {
                             let _ = self_threat.yara_manager.hot_load_rule(&rule, &sig.id);
                             info!("[YARA] Hot-loaded auto-generated YARA rule for peer threat '{}'. Engine updated.", sig.id);
                         } else {

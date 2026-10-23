@@ -239,7 +239,6 @@ impl AgentContainmentRing {
         reason: &str,
         target_child_pid: Option<u32>,
     ) -> u64 {
-
         let old_epoch = self.get_current_epoch(agent_id);
         let new_epoch = old_epoch + 1;
 
@@ -1121,7 +1120,8 @@ mod tests {
 
     #[test]
     fn test_dirac_delta_capability_ticket_canary_binding() {
-        let mut ticket = DiracDeltaCapabilityTicket::issue("agent_canary_test", "read_doc", 1, 10_000_000_000);
+        let mut ticket =
+            DiracDeltaCapabilityTicket::issue("agent_canary_test", "read_doc", 1, 10_000_000_000);
         assert!(ticket.canary_token_id.is_none());
         assert!(ticket.canary_trap_uri.is_none());
 
@@ -1141,7 +1141,10 @@ mod tests {
             Some("memfd://canary_trap".to_string()),
         );
         assert_eq!(ticket2.canary_token_id.as_deref(), Some("tok_abc"));
-        assert_eq!(ticket2.canary_trap_uri.as_deref(), Some("memfd://canary_trap"));
+        assert_eq!(
+            ticket2.canary_trap_uri.as_deref(),
+            Some("memfd://canary_trap")
+        );
     }
 
     #[test]
@@ -1185,7 +1188,10 @@ mod tests {
         });
 
         assert!(res.is_err());
-        assert!(!executed, "Tool closure must NOT run when parameters reference poisoned files");
+        assert!(
+            !executed,
+            "Tool closure must NOT run when parameters reference poisoned files"
+        );
         assert!(res.unwrap_err().contains("Lineage-Veto"));
 
         // 3. Telemetry pointing to an immune repository file must SUCCEED even if attempted to be poisoned
@@ -1208,16 +1214,21 @@ mod tests {
             error_message: None,
         };
 
-        let valid_ticket = DiracDeltaCapabilityTicket::issue("agent_42", "read_file", 1, 10_000_000_000);
+        let valid_ticket =
+            DiracDeltaCapabilityTicket::issue("agent_42", "read_file", 1, 10_000_000_000);
         let mut executed_immune = false;
-        let res_immune = ring.execute_contained_tool(&immune_telemetry, &valid_ticket, &tracker, || {
-            executed_immune = true;
-            "immune_success"
-        });
+        let res_immune =
+            ring.execute_contained_tool(&immune_telemetry, &valid_ticket, &tracker, || {
+                executed_immune = true;
+                "immune_success"
+            });
 
         assert!(res_immune.is_ok());
         assert_eq!(res_immune.unwrap(), "immune_success");
-        assert!(executed_immune, "Immune repository path must execute successfully");
+        assert!(
+            executed_immune,
+            "Immune repository path must execute successfully"
+        );
 
         let _ = std::fs::remove_file(poisoned_file);
     }

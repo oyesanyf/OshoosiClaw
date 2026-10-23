@@ -96,8 +96,6 @@ pub fn api_error_json(
     }))
 }
 
-
-
 /// Shared state for dashboard routes. When backend is set, uses real data.
 #[derive(Clone)]
 pub struct DashboardState {
@@ -135,8 +133,6 @@ impl DashboardState {
         }
     }
 }
-
-
 
 #[derive(Debug, Deserialize, Default)]
 struct AttackGraphQuery {
@@ -715,7 +711,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             post(post_deception_activate_hologram),
         )
         .route("/api/deception/entangle", post(post_deception_entangle))
-        .route("/api/redteam/run", post(post_redteam_run).get(post_redteam_run))
+        .route(
+            "/api/redteam/run",
+            post(post_redteam_run).get(post_redteam_run),
+        )
         .route("/redteam/run", post(post_redteam_run).get(post_redteam_run))
         .route("/api/detection-stats", get(get_detection_stats))
         .route("/api/supervisor/status", get(get_supervisor_status))
@@ -855,9 +854,18 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/rea/status", get(get_rea_status))
         .route("/api/rea/v1/status", get(get_rea_status))
         .route("/rea/v1/status", get(get_rea_status))
-        .route("/api/rea/universal-coverage", get(get_rea_universal_coverage))
-        .route("/api/rea/v1/universal-coverage", get(get_rea_universal_coverage))
-        .route("/rea/v1/universal-coverage", get(get_rea_universal_coverage))
+        .route(
+            "/api/rea/universal-coverage",
+            get(get_rea_universal_coverage),
+        )
+        .route(
+            "/api/rea/v1/universal-coverage",
+            get(get_rea_universal_coverage),
+        )
+        .route(
+            "/rea/v1/universal-coverage",
+            get(get_rea_universal_coverage),
+        )
         .route("/api/rea/providers", get(get_rea_providers))
         .route("/api/rea/v1/providers", get(get_rea_providers))
         .route("/rea/v1/providers", get(get_rea_providers))
@@ -1239,7 +1247,7 @@ pub async fn spawn_dashboard_with_backend(
         info!("Dashboard assets NOT found. API endpoints will work but no UI. Set OSOOSI_DASHBOARD_DIR or place files in dashboard/dist/");
     }
 
-        // Periodic OWASP Hunting Feed sync check (every 60 minutes)
+    // Periodic OWASP Hunting Feed sync check (every 60 minutes)
     tokio::spawn(async {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
         loop {
@@ -1247,7 +1255,9 @@ pub async fn spawn_dashboard_with_backend(
             tokio::task::spawn_blocking(|| {
                 let engine = global_owasp_hunting_engine();
                 engine.sync_from_upstream_feed();
-            }).await.ok();
+            })
+            .await
+            .ok();
         }
     });
 
@@ -1328,7 +1338,12 @@ async fn get_detection_stats(State(state): State<DashboardState>) -> Json<Value>
 
 fn get_cached_system_resources() -> osoosi_behavioral::hardware_selection::SystemResourceSummary {
     static HW_RESOURCES_CACHE: std::sync::OnceLock<
-        std::sync::RwLock<Option<(std::time::Instant, osoosi_behavioral::hardware_selection::SystemResourceSummary)>>,
+        std::sync::RwLock<
+            Option<(
+                std::time::Instant,
+                osoosi_behavioral::hardware_selection::SystemResourceSummary,
+            )>,
+        >,
     > = std::sync::OnceLock::new();
     let cache = HW_RESOURCES_CACHE.get_or_init(|| std::sync::RwLock::new(None));
     if let Ok(guard) = cache.read() {
@@ -1459,7 +1474,6 @@ pub struct ModelPullProgress {
 }
 
 static MODEL_PULL_TRACKER: Lazy<DashMap<String, ModelPullProgress>> = Lazy::new(DashMap::new);
-
 
 // ============================================================================
 // Software Bill of Materials (SBOM) — CycloneDX 1.5 & SPDX 2.3 Engine
@@ -1713,7 +1727,10 @@ async fn get_sbom_status() -> Json<Value> {
         .filter(|c| c.ecosystem == "cargo" && c.scope != "workspace")
         .count();
     let python_count = components.iter().filter(|c| c.ecosystem == "pypi").count();
-    let binary_count = components.iter().filter(|c| c.ecosystem == "binary").count();
+    let binary_count = components
+        .iter()
+        .filter(|c| c.ecosystem == "binary")
+        .count();
 
     Json(json!({
         "status": "ok",
@@ -1736,7 +1753,10 @@ async fn get_sbom_cyclonedx() -> impl IntoResponse {
     let (_, _, cdx_json, _) = build_or_get_sbom_bundle();
     Response::builder()
         .status(StatusCode::OK)
-        .header(axum::http::header::CONTENT_TYPE, "application/vnd.cyclonedx+json; charset=utf-8")
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/vnd.cyclonedx+json; charset=utf-8",
+        )
         .header(
             axum::http::header::CONTENT_DISPOSITION,
             "attachment; filename=\"oshoosiclaw-sbom.cdx.json\"",
@@ -1749,7 +1769,10 @@ async fn get_sbom_spdx() -> impl IntoResponse {
     let (_, _, _, spdx_json) = build_or_get_sbom_bundle();
     Response::builder()
         .status(StatusCode::OK)
-        .header(axum::http::header::CONTENT_TYPE, "application/spdx+json; charset=utf-8")
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/spdx+json; charset=utf-8",
+        )
         .header(
             axum::http::header::CONTENT_DISPOSITION,
             "attachment; filename=\"oshoosiclaw-sbom.spdx.json\"",
@@ -1768,19 +1791,23 @@ async fn get_calibrated_models(
     .await
     .ok()
     .and_then(|r| r.ok())
-    .unwrap_or_else(|| osoosi_behavioral::hardware_selection::SystemResourceSummary {
-        cpu_name: "Host CPU".to_string(),
-        logical_cores: std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8),
-        total_ram_gb: 16.0,
-        free_ram_gb: 8.0,
-        gpu_name: "Integrated / Host GPU".to_string(),
-        total_vram_mb: 0,
-        free_vram_mb: 0,
-        has_gpu: false,
-        free_disk_gb: 100.0,
-        total_disk_gb: 256.0,
-        disks: Vec::new(),
-    });
+    .unwrap_or_else(
+        || osoosi_behavioral::hardware_selection::SystemResourceSummary {
+            cpu_name: "Host CPU".to_string(),
+            logical_cores: std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(8),
+            total_ram_gb: 16.0,
+            free_ram_gb: 8.0,
+            gpu_name: "Integrated / Host GPU".to_string(),
+            total_vram_mb: 0,
+            free_vram_mb: 0,
+            has_gpu: false,
+            free_disk_gb: 100.0,
+            total_disk_gb: 256.0,
+            disks: Vec::new(),
+        },
+    );
     let tier = resources.determine_tier();
     let ai_cfg = osoosi_types::config::load_ai_config();
     let installed_models = tokio::time::timeout(
@@ -2670,8 +2697,6 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
     }
 }
 
-
-
 fn resolve_adversarial_audit_path() -> std::path::PathBuf {
     let mut candidates = Vec::new();
     candidates.push(std::path::PathBuf::from("logs").join("adversarial_audit.json"));
@@ -2688,7 +2713,9 @@ fn resolve_adversarial_audit_path() -> std::path::PathBuf {
             }
         }
     }
-    candidates.push(std::path::PathBuf::from(r"D:\harfile\OshoosiClaw\logs\adversarial_audit.json"));
+    candidates.push(std::path::PathBuf::from(
+        r"D:\harfile\OshoosiClaw\logs\adversarial_audit.json",
+    ));
 
     for cand in &candidates {
         if cand.exists() {
@@ -2725,7 +2752,9 @@ fn resolve_adversarial_log_path() -> std::path::PathBuf {
             }
         }
     }
-    candidates.push(std::path::PathBuf::from(r"D:\harfile\OshoosiClaw\logs\adversarial_execution.log"));
+    candidates.push(std::path::PathBuf::from(
+        r"D:\harfile\OshoosiClaw\logs\adversarial_execution.log",
+    ));
 
     for cand in &candidates {
         if cand.exists() {
@@ -2814,13 +2843,21 @@ async fn get_tarpit_stats(
                     if let Some(tc) = ec.get("trapped_callers").and_then(|v| v.as_i64()) {
                         trapped_callers = tc;
                     }
-                    if let Some(a_usd) = ec.get("attacker_compute_burn_usd").and_then(|v| v.as_f64()) {
+                    if let Some(a_usd) =
+                        ec.get("attacker_compute_burn_usd").and_then(|v| v.as_f64())
+                    {
                         explicit_attacker_usd = Some(a_usd);
                     }
-                    if let Some(d_usd) = ec.get("defender_mitigation_cost_usd").and_then(|v| v.as_f64()) {
+                    if let Some(d_usd) = ec
+                        .get("defender_mitigation_cost_usd")
+                        .and_then(|v| v.as_f64())
+                    {
                         explicit_defender_usd = Some(d_usd);
                     }
-                    if let Some(cr) = ec.get("attacker_vs_defender_cost_ratio").and_then(|v| v.as_f64()) {
+                    if let Some(cr) = ec
+                        .get("attacker_vs_defender_cost_ratio")
+                        .and_then(|v| v.as_f64())
+                    {
                         explicit_cost_ratio = Some(cr);
                     }
                 }
@@ -2829,7 +2866,9 @@ async fn get_tarpit_stats(
     }
 
     if explicit_economic_analysis.is_none() {
-        let active_traps_len = osoosi_runtime::tarpit::ActiveProcessTarpit::new().active_traps.len();
+        let active_traps_len = osoosi_runtime::tarpit::ActiveProcessTarpit::new()
+            .active_traps
+            .len();
         trapped_callers = trapped_callers.max(active_traps_len as i64).max(14);
         tokens_burned = tokens_burned.max(total_tests * 850 + trapped_callers * 4096);
     }
@@ -2932,7 +2971,10 @@ async fn get_tarpit_stats(
             rl_advantage_score
         );
         return (
-            [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+            [(
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; version=0.0.4; charset=utf-8",
+            )],
             prom_content,
         )
             .into_response();
@@ -3011,15 +3053,37 @@ async fn get_tarpit_stats(
         + bp_report.six_breakout_scenario_proofs.len()
         + bp_report.residual_risk_verification_suite.len()
         + bp_report.benign_usability_controls.len();
-    let failed_checks = bp_report.six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
-        + bp_report.six_breakout_scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
-        + bp_report.residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
-        + bp_report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let failed_checks = bp_report
+        .six_fault_injection_verifications
+        .iter()
+        .filter(|v| !v.passed)
+        .count()
+        + bp_report
+            .six_breakout_scenario_proofs
+            .iter()
+            .filter(|p| !p.pre_execution_prevented)
+            .count()
+        + bp_report
+            .residual_risk_verification_suite
+            .iter()
+            .filter(|r| !r.passed)
+            .count()
+        + bp_report
+            .benign_usability_controls
+            .iter()
+            .filter(|b| !b.allowed)
+            .count();
     let passed_checks = total_checks.saturating_sub(failed_checks);
-    let all_invariants_verified = failed_checks == 0 && bp_report.total_prohibited_side_effects_executed == 0;
-    let false_positives_on_benign_dev_workflows = bp_report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let all_invariants_verified =
+        failed_checks == 0 && bp_report.total_prohibited_side_effects_executed == 0;
+    let false_positives_on_benign_dev_workflows = bp_report
+        .benign_usability_controls
+        .iter()
+        .filter(|b| !b.allowed)
+        .count();
 
-    resp_json["central_measurements"] = serde_json::to_value(&bp_report.central_measurements).unwrap_or_else(|_| json!({}));
+    resp_json["central_measurements"] =
+        serde_json::to_value(&bp_report.central_measurements).unwrap_or_else(|_| json!({}));
     resp_json["breakout_prevention_summary"] = json!({
         "suite_version": bp_report.policy_version,
         "policy_version": bp_report.policy_version,
@@ -3038,14 +3102,18 @@ async fn get_tarpit_stats(
 async fn get_download_run_log() -> impl IntoResponse {
     let log_path = resolve_adversarial_log_path();
     let content = if log_path.exists() {
-        std::fs::read_to_string(&log_path).unwrap_or_else(|_| "[INFO] No execution log available yet.\n".to_string())
+        std::fs::read_to_string(&log_path)
+            .unwrap_or_else(|_| "[INFO] No execution log available yet.\n".to_string())
     } else {
         "[INFO] Agent Octopus & OshoosiClaw Adversarial Defense Suite Log\n[INFO] Suite ready for test execution.\n".to_string()
     };
 
     (
         [
-            (axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/plain; charset=utf-8",
+            ),
             (
                 axum::http::header::CONTENT_DISPOSITION,
                 "attachment; filename=\"adversarial_execution.log\"",
@@ -3064,7 +3132,8 @@ async fn get_download_test_json() -> impl IntoResponse {
                 "total_tests": 168,
                 "passed_tests": 168,
                 "failed_tests": 0
-            })).unwrap_or_default()
+            }))
+            .unwrap_or_default()
         })
     } else {
         serde_json::to_string_pretty(&json!({
@@ -3072,12 +3141,16 @@ async fn get_download_test_json() -> impl IntoResponse {
             "total_tests": 168,
             "passed_tests": 168,
             "failed_tests": 0
-        })).unwrap_or_default()
+        }))
+        .unwrap_or_default()
     };
 
     (
         [
-            (axum::http::header::CONTENT_TYPE, "application/json; charset=utf-8"),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            ),
             (
                 axum::http::header::CONTENT_DISPOSITION,
                 "attachment; filename=\"adversarial_audit.json\"",
@@ -3100,7 +3173,10 @@ async fn get_adversarial_test_stream(
     if suite == "owasp_hunting" {
         tokio::spawn(async move {
             let send_sse = |val: Value| -> axum::body::Bytes {
-                let s = format!("data: {}\n\n", serde_json::to_string(&val).unwrap_or_default());
+                let s = format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&val).unwrap_or_default()
+                );
                 axum::body::Bytes::from(s)
             };
 
@@ -3122,7 +3198,8 @@ async fn get_adversarial_test_stream(
             let mut failed_count = 0usize;
 
             for ev in &result.evidence {
-                let is_pass = (!ev.attack_objective_succeeded && ev.edr_enforcement_activated) || ev.legitimate_control_passed;
+                let is_pass = (!ev.attack_objective_succeeded && ev.edr_enforcement_activated)
+                    || ev.legitimate_control_passed;
                 if is_pass {
                     passed_count += 1;
                 } else {
@@ -3164,13 +3241,15 @@ async fn get_adversarial_test_stream(
                     result.skyrl_evaluation.wilson_95_ci_lower_pct, result.skyrl_evaluation.wilson_95_ci_upper_pct)
             })))).await;
 
-            let _ = tx.send(Ok(send_sse(json!({
-                "type": "complete",
-                "passed": passed_count,
-                "failed": failed_count,
-                "total": result.total_tests_executed,
-                "skyrl_evaluation": result.skyrl_evaluation
-            })))).await;
+            let _ = tx
+                .send(Ok(send_sse(json!({
+                    "type": "complete",
+                    "passed": passed_count,
+                    "failed": failed_count,
+                    "total": result.total_tests_executed,
+                    "skyrl_evaluation": result.skyrl_evaluation
+                }))))
+                .await;
         });
 
         let body = axum::body::Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
@@ -3181,13 +3260,17 @@ async fn get_adversarial_test_stream(
                 (axum::http::header::CONNECTION, "keep-alive"),
             ],
             body,
-        ).into_response();
+        )
+            .into_response();
     }
 
     if suite == "vcdb" || suite == "veris" {
         tokio::spawn(async move {
             let send_sse = |val: Value| -> axum::body::Bytes {
-                let s = format!("data: {}\n\n", serde_json::to_string(&val).unwrap_or_default());
+                let s = format!(
+                    "data: {}\n\n",
+                    serde_json::to_string(&val).unwrap_or_default()
+                );
                 axum::body::Bytes::from(s)
             };
 
@@ -3198,11 +3281,13 @@ async fn get_adversarial_test_stream(
 
             let engine = osoosi_vcdb::global_vcdb_engine();
             let catalog = engine.get_catalog();
-            let _ = tx.send(Ok(send_sse(json!({
-                "type": "output",
-                "line": format!("[VCDB] Catalog revision: {} | 9 DBIR Patterns | {} Incidents",
-                    catalog.upstream_commit, catalog.total_incidents)
-            })))).await;
+            let _ = tx
+                .send(Ok(send_sse(json!({
+                    "type": "output",
+                    "line": format!("[VCDB] Catalog revision: {} | 9 DBIR Patterns | {} Incidents",
+                        catalog.upstream_commit, catalog.total_incidents)
+                }))))
+                .await;
 
             let report = engine.execute_vcdb_replay_suite();
             let mut passed_count = 0usize;
@@ -3240,13 +3325,15 @@ async fn get_adversarial_test_stream(
                     report.wilson_ci_95.0, report.wilson_ci_95.1, report.timeline_benchmark.containment_acceleration_ratio)
             })))).await;
 
-            let _ = tx.send(Ok(send_sse(json!({
-                "type": "complete",
-                "passed": passed_count,
-                "failed": failed_count,
-                "total": report.total_incidents_replayed,
-                "report": report
-            })))).await;
+            let _ = tx
+                .send(Ok(send_sse(json!({
+                    "type": "complete",
+                    "passed": passed_count,
+                    "failed": failed_count,
+                    "total": report.total_incidents_replayed,
+                    "report": report
+                }))))
+                .await;
         });
 
         let body = axum::body::Body::from_stream(tokio_stream::wrappers::ReceiverStream::new(rx));
@@ -3257,13 +3344,16 @@ async fn get_adversarial_test_stream(
                 (axum::http::header::CONNECTION, "keep-alive"),
             ],
             body,
-        ).into_response();
+        )
+            .into_response();
     }
-
 
     tokio::spawn(async move {
         let send_sse = |val: Value| -> axum::body::Bytes {
-            let s = format!("data: {}\n\n", serde_json::to_string(&val).unwrap_or_default());
+            let s = format!(
+                "data: {}\n\n",
+                serde_json::to_string(&val).unwrap_or_default()
+            );
             axum::body::Bytes::from(s)
         };
 
@@ -3272,10 +3362,12 @@ async fn get_adversarial_test_stream(
             "line": format!("[SUITE-SYNC] Initializing test stream runner for suite: '{}'...", suite)
         })))).await;
 
-        let _ = tx.send(Ok(send_sse(json!({
-            "type": "output",
-            "line": format!("[SPAWN] Spawning adversarial tester process (suite: {})...", suite)
-        })))).await;
+        let _ = tx
+            .send(Ok(send_sse(json!({
+                "type": "output",
+                "line": format!("[SPAWN] Spawning adversarial tester process (suite: {})...", suite)
+            }))))
+            .await;
 
         let script_path = [
             "tests/strix_llm_adversarial_tester.py",
@@ -3289,11 +3381,14 @@ async fn get_adversarial_test_stream(
 
         let mut cmd = tokio::process::Command::new("python");
         cmd.env("PYTHONIOENCODING", "utf-8")
-           .env("PYTHONUTF8", "1")
-           .arg("-u")
-           .arg(script_path)
-           .arg("--skip-strix");
-        if let Some(parent) = std::path::Path::new(script_path).parent().and_then(|p| p.parent()) {
+            .env("PYTHONUTF8", "1")
+            .arg("-u")
+            .arg(script_path)
+            .arg("--skip-strix");
+        if let Some(parent) = std::path::Path::new(script_path)
+            .parent()
+            .and_then(|p| p.parent())
+        {
             if parent.exists() && !parent.as_os_str().is_empty() {
                 cmd.current_dir(parent);
             }
@@ -3348,7 +3443,7 @@ async fn get_adversarial_test_stream(
         }
 
         cmd.stdout(std::process::Stdio::piped())
-           .stderr(std::process::Stdio::piped());
+            .stderr(std::process::Stdio::piped());
 
         let expected_suite_total: usize = if suite == "all" || suite == "strix_llm_adversarial" {
             2414
@@ -3375,30 +3470,44 @@ async fn get_adversarial_test_stream(
                     let clean_trimmed = clean_line.trim();
                     if clean_trimmed.starts_with("[PASS]") {
                         passed_count += 1;
-                        let test_name = clean_trimmed.strip_prefix("[PASS]").unwrap_or(clean_trimmed).trim();
-                        let _ = tx.send(Ok(send_sse(json!({
-                            "type": "test_result",
-                            "name": test_name,
-                            "status": "ok",
-                            "suite": suite,
-                            "suite_total": expected_suite_total.max(passed_count + failed_count)
-                        })))).await;
+                        let test_name = clean_trimmed
+                            .strip_prefix("[PASS]")
+                            .unwrap_or(clean_trimmed)
+                            .trim();
+                        let _ = tx
+                            .send(Ok(send_sse(json!({
+                                "type": "test_result",
+                                "name": test_name,
+                                "status": "ok",
+                                "suite": suite,
+                                "suite_total": expected_suite_total.max(passed_count + failed_count)
+                            }))))
+                            .await;
                     } else if clean_trimmed.starts_with("[FAIL]") {
                         failed_count += 1;
-                        let test_name = clean_trimmed.strip_prefix("[FAIL]").unwrap_or(clean_trimmed).trim();
-                        let _ = tx.send(Ok(send_sse(json!({
-                            "type": "test_result",
-                            "name": test_name,
-                            "status": "failed",
-                            "suite": suite,
-                            "suite_total": expected_suite_total.max(passed_count + failed_count)
-                        })))).await;
+                        let test_name = clean_trimmed
+                            .strip_prefix("[FAIL]")
+                            .unwrap_or(clean_trimmed)
+                            .trim();
+                        let _ = tx
+                            .send(Ok(send_sse(json!({
+                                "type": "test_result",
+                                "name": test_name,
+                                "status": "failed",
+                                "suite": suite,
+                                "suite_total": expected_suite_total.max(passed_count + failed_count)
+                            }))))
+                            .await;
                     }
 
-                    if tx.send(Ok(send_sse(json!({
-                        "type": "output",
-                        "line": clean_line
-                    })))).await.is_err() {
+                    if tx
+                        .send(Ok(send_sse(json!({
+                            "type": "output",
+                            "line": clean_line
+                        }))))
+                        .await
+                        .is_err()
+                    {
                         let _ = child.kill().await;
                         return;
                     }
@@ -3412,10 +3521,12 @@ async fn get_adversarial_test_stream(
                     let clean_line = ansi_re.replace_all(&raw_line, "").to_string();
                     if !clean_line.trim().is_empty() {
                         collected_lines.push(format!("[STDERR] {}", clean_line));
-                        let _ = tx.send(Ok(send_sse(json!({
-                            "type": "output",
-                            "line": format!("[STDERR] {}", clean_line)
-                        })))).await;
+                        let _ = tx
+                            .send(Ok(send_sse(json!({
+                                "type": "output",
+                                "line": format!("[STDERR] {}", clean_line)
+                            }))))
+                            .await;
                     }
                 }
             }
@@ -3431,21 +3542,30 @@ async fn get_adversarial_test_stream(
                     if let Some(records) = audit_val.get("records").and_then(|r| r.as_array()) {
                         let rec_total = records.len();
                         for rec in records {
-                            let is_pass = rec.get("passed").and_then(|b| b.as_bool()).unwrap_or(true);
+                            let is_pass =
+                                rec.get("passed").and_then(|b| b.as_bool()).unwrap_or(true);
                             if is_pass {
                                 passed_count += 1;
                             } else {
                                 failed_count += 1;
                             }
-                            let name = rec.get("name").and_then(|s| s.as_str()).unwrap_or("Security Assertion");
-                            let perim = rec.get("perimeter").and_then(|s| s.as_str()).unwrap_or(&suite);
-                            let _ = tx.send(Ok(send_sse(json!({
-                                "type": "test_result",
-                                "name": format!("[{}] {}", perim, name),
-                                "status": if is_pass { "ok" } else { "failed" },
-                                "suite": perim,
-                                "suite_total": rec_total
-                            })))).await;
+                            let name = rec
+                                .get("name")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("Security Assertion");
+                            let perim = rec
+                                .get("perimeter")
+                                .and_then(|s| s.as_str())
+                                .unwrap_or(&suite);
+                            let _ = tx
+                                .send(Ok(send_sse(json!({
+                                    "type": "test_result",
+                                    "name": format!("[{}] {}", perim, name),
+                                    "status": if is_pass { "ok" } else { "failed" },
+                                    "suite": perim,
+                                    "suite_total": rec_total
+                                }))))
+                                .await;
                         }
                     }
                 }
@@ -3462,7 +3582,11 @@ async fn get_adversarial_test_stream(
         let audit_file = resolve_adversarial_audit_path();
         let has_detailed_report = audit_file.exists()
             && std::fs::read_to_string(&audit_file)
-                .map(|c| c.contains("skyrl_prompt_evolution") || c.contains("accounting_reconciliation") || c.contains("total_evaluations"))
+                .map(|c| {
+                    c.contains("skyrl_prompt_evolution")
+                        || c.contains("accounting_reconciliation")
+                        || c.contains("total_evaluations")
+                })
                 .unwrap_or(false);
         if !has_detailed_report {
             let total = passed_count + failed_count;
@@ -3475,15 +3599,20 @@ async fn get_adversarial_test_stream(
                 "failed_tests": failed_count,
                 "success_rate_percent": if total > 0 { (passed_count as f64 / total as f64) * 100.0 } else { 100.0 }
             });
-            let _ = std::fs::write(&audit_file, serde_json::to_string_pretty(&audit_data).unwrap_or_default());
+            let _ = std::fs::write(
+                &audit_file,
+                serde_json::to_string_pretty(&audit_data).unwrap_or_default(),
+            );
         }
 
-        let _ = tx.send(Ok(send_sse(json!({
-            "type": "complete",
-            "passed": passed_count,
-            "failed": failed_count,
-            "total": passed_count + failed_count
-        })))).await;
+        let _ = tx
+            .send(Ok(send_sse(json!({
+                "type": "complete",
+                "passed": passed_count,
+                "failed": failed_count,
+                "total": passed_count + failed_count
+            }))))
+            .await;
     });
 
     let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -3495,8 +3624,6 @@ async fn get_adversarial_test_stream(
         .body(Body::from_stream(stream))
         .unwrap()
 }
-
-
 
 // ============================================================================
 // Autonomous AI Threat Compiler & 3-Tier Blockchain of Ledgers Handlers
@@ -3529,13 +3656,11 @@ async fn post_ai_feeds_sync() -> Json<Value> {
                 "stix_bundle": stix_bundle,
             }))
         }
-        Err(e) => {
-            Json(json!({
-                "status": "error",
-                "error": e.to_string(),
-                "feed_status": collector.get_feed_status(),
-            }))
-        }
+        Err(e) => Json(json!({
+            "status": "error",
+            "error": e.to_string(),
+            "feed_status": collector.get_feed_status(),
+        })),
     }
 }
 
@@ -3783,11 +3908,10 @@ async fn post_disk_cleanup_run(
     let mode = body
         .and_then(|Json(b)| b.mode)
         .unwrap_or_else(|| "standard".to_string());
-    let report = tokio::task::spawn_blocking(move || {
-        osoosi_core::run_autonomous_disk_cleanup_sweep(&mode)
-    })
-    .await
-    .unwrap_or_else(|_| osoosi_core::run_autonomous_disk_cleanup_sweep("standard"));
+    let report =
+        tokio::task::spawn_blocking(move || osoosi_core::run_autonomous_disk_cleanup_sweep(&mode))
+            .await
+            .unwrap_or_else(|_| osoosi_core::run_autonomous_disk_cleanup_sweep("standard"));
     Json(report)
 }
 
@@ -3912,19 +4036,21 @@ struct DeceptionEntangleRequest {
     pub peer_id: Option<String>,
 }
 
-pub static CANARY_CAGE_ACTIVE_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static CANARY_CAGE_TRIGGERED_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-pub static CANARY_CAGE_TOTAL_EXECUTIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+pub static CANARY_CAGE_ACTIVE_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static CANARY_CAGE_TRIGGERED_COUNT: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+pub static CANARY_CAGE_TOTAL_EXECUTIONS: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 static GLOBAL_FILE_LINEAGE_TRACKER: std::sync::OnceLock<
     Arc<osoosi_agent_anomaly::file_lineage::FileLineageTracker>,
 > = std::sync::OnceLock::new();
 
-pub fn get_global_file_lineage_tracker() -> Arc<osoosi_agent_anomaly::file_lineage::FileLineageTracker> {
+pub fn get_global_file_lineage_tracker(
+) -> Arc<osoosi_agent_anomaly::file_lineage::FileLineageTracker> {
     GLOBAL_FILE_LINEAGE_TRACKER
-        .get_or_init(|| {
-            Arc::new(osoosi_agent_anomaly::file_lineage::FileLineageTracker::new())
-        })
+        .get_or_init(|| Arc::new(osoosi_agent_anomaly::file_lineage::FileLineageTracker::new()))
         .clone()
 }
 
@@ -3971,7 +4097,10 @@ pub async fn enrich_deception_telemetry(state: &DashboardState, val: &mut Value)
             lineage_map.insert(s.session_id, json!(digests));
         }
 
-        obj.insert("session_file_lineage".to_string(), Value::Object(lineage_map.clone()));
+        obj.insert(
+            "session_file_lineage".to_string(),
+            Value::Object(lineage_map.clone()),
+        );
         obj.insert("file_lineage_graph".to_string(), Value::Object(lineage_map));
 
         let poisoned_meta = tracker.get_all_poisoned_digests();
@@ -4001,8 +4130,14 @@ pub async fn enrich_deception_telemetry(state: &DashboardState, val: &mut Value)
             }
         }
 
-        obj.insert("swarm_immunized_hashes".to_string(), json!(immunized_hashes));
-        obj.insert("poisoned_document_hashes".to_string(), json!(immunized_hashes));
+        obj.insert(
+            "swarm_immunized_hashes".to_string(),
+            json!(immunized_hashes),
+        );
+        obj.insert(
+            "poisoned_document_hashes".to_string(),
+            json!(immunized_hashes),
+        );
     }
 }
 
@@ -4295,8 +4430,10 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
                         let hash = t.get("hash_blake3").and_then(|v| v.as_str());
                         let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
                         let target = fp.or(proc).unwrap_or("unknown");
-                        if osoosi_core::rea::is_rea_benign_system_or_dev_process(target, Some(reason))
-                            || osoosi_model::malware::is_informational_or_crt_yara_rule(reason)
+                        if osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                            target,
+                            Some(reason),
+                        ) || osoosi_model::malware::is_informational_or_crt_yara_rule(reason)
                         {
                             return false;
                         }
@@ -4312,8 +4449,13 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
                     .iter()
                     .filter(|d| {
                         d.is_malware
-                            && !osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type)
-                            && !osoosi_core::rea::is_rea_benign_system_or_dev_process(&d.file_path, Some(&d.malware_type))
+                            && !osoosi_model::malware::is_informational_or_crt_yara_rule(
+                                &d.malware_type,
+                            )
+                            && !osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                                &d.file_path,
+                                Some(&d.malware_type),
+                            )
                             && !orch
                                 .memory()
                                 .is_false_positive_pattern(
@@ -4441,8 +4583,13 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
                     .iter()
                     .filter(|d| {
                         d.is_malware
-                            && !osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type)
-                            && !osoosi_core::rea::is_rea_benign_system_or_dev_process(&d.file_path, Some(&d.malware_type))
+                            && !osoosi_model::malware::is_informational_or_crt_yara_rule(
+                                &d.malware_type,
+                            )
+                            && !osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                                &d.file_path,
+                                Some(&d.malware_type),
+                            )
                             && !orch
                                 .memory()
                                 .is_false_positive_pattern(
@@ -5491,7 +5638,8 @@ async fn post_auth_login_endpoint(
             }))
             .into_response();
             if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
-                resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+                resp.headers_mut()
+                    .insert(axum::http::header::SET_COOKIE, hv);
             }
             Ok(resp)
         }
@@ -5575,7 +5723,8 @@ async fn get_auth_status_endpoint(headers: HeaderMap) -> Response {
     let mut resp = Json(body).into_response();
     if !has_valid_cookie {
         if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
-            resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+            resp.headers_mut()
+                .insert(axum::http::header::SET_COOKIE, hv);
         }
     }
     resp
@@ -6073,11 +6222,17 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                             .and_then(|v| v.as_str());
 
                         if let Some(p) = proc {
-                            if osoosi_core::rea::is_rea_benign_system_or_dev_process(p, summary_or_reason) {
+                            if osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                                p,
+                                summary_or_reason,
+                            ) {
                                 return None;
                             }
                         } else if let Some(sr) = summary_or_reason {
-                            if osoosi_core::rea::is_rea_benign_system_or_dev_process("<unknown process>", Some(sr)) {
+                            if osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                                "<unknown process>",
+                                Some(sr),
+                            ) {
                                 return None;
                             }
                         }
@@ -8624,11 +8779,28 @@ async fn get_agent_anomalies_breakout_prevention_report(
         + report.six_breakout_scenario_proofs.len()
         + report.residual_risk_verification_suite.len()
         + report.benign_usability_controls.len();
-    let failed_checks = report.six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
-        + report.six_breakout_scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
-        + report.residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
-        + report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
-    let all_invariants_verified = failed_checks == 0 && report.total_prohibited_side_effects_executed == 0;
+    let failed_checks = report
+        .six_fault_injection_verifications
+        .iter()
+        .filter(|v| !v.passed)
+        .count()
+        + report
+            .six_breakout_scenario_proofs
+            .iter()
+            .filter(|p| !p.pre_execution_prevented)
+            .count()
+        + report
+            .residual_risk_verification_suite
+            .iter()
+            .filter(|r| !r.passed)
+            .count()
+        + report
+            .benign_usability_controls
+            .iter()
+            .filter(|b| !b.allowed)
+            .count();
+    let all_invariants_verified =
+        failed_checks == 0 && report.total_prohibited_side_effects_executed == 0;
     let passed_checks = total_checks.saturating_sub(failed_checks);
     (
         StatusCode::OK,
@@ -8652,13 +8824,34 @@ async fn post_agent_anomalies_simulate_breakout_gauntlet(
         + report.six_breakout_scenario_proofs.len()
         + report.residual_risk_verification_suite.len()
         + report.benign_usability_controls.len();
-    let failed_checks = report.six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
-        + report.six_breakout_scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
-        + report.residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
-        + report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let failed_checks = report
+        .six_fault_injection_verifications
+        .iter()
+        .filter(|v| !v.passed)
+        .count()
+        + report
+            .six_breakout_scenario_proofs
+            .iter()
+            .filter(|p| !p.pre_execution_prevented)
+            .count()
+        + report
+            .residual_risk_verification_suite
+            .iter()
+            .filter(|r| !r.passed)
+            .count()
+        + report
+            .benign_usability_controls
+            .iter()
+            .filter(|b| !b.allowed)
+            .count();
     let passed_checks = total_checks.saturating_sub(failed_checks);
-    let all_invariants_verified = failed_checks == 0 && report.total_prohibited_side_effects_executed == 0;
-    let false_positives_on_benign_dev_workflows = report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let all_invariants_verified =
+        failed_checks == 0 && report.total_prohibited_side_effects_executed == 0;
+    let false_positives_on_benign_dev_workflows = report
+        .benign_usability_controls
+        .iter()
+        .filter(|b| !b.allowed)
+        .count();
     (
         StatusCode::OK,
         Json(json!({
@@ -11989,8 +12182,16 @@ mod tests {
         }
 
         for view_name in ["dlp.js", "mesh.js", "har.js", "adversarial.js"] {
-            let src_path = repo_root.join("dashboard").join("src").join("views").join(view_name);
-            let dist_path = repo_root.join("dashboard").join("dist").join("views").join(view_name);
+            let src_path = repo_root
+                .join("dashboard")
+                .join("src")
+                .join("views")
+                .join(view_name);
+            let dist_path = repo_root
+                .join("dashboard")
+                .join("dist")
+                .join("views")
+                .join(view_name);
             let src_content = std::fs::read_to_string(&src_path)
                 .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", src_path, e));
             let dist_content = std::fs::read_to_string(&dist_path)
@@ -12011,7 +12212,8 @@ mod tests {
         assert!(index_html.contains("href=\"#mesh\" class=\"nav-item\" data-view=\"mesh\""));
 
         let app_js = std::fs::read_to_string(repo_root.join("dashboard/src/app.js")).unwrap();
-        let mesh_js = std::fs::read_to_string(repo_root.join("dashboard/src/views/mesh.js")).unwrap_or_default();
+        let mesh_js = std::fs::read_to_string(repo_root.join("dashboard/src/views/mesh.js"))
+            .unwrap_or_default();
         let combined_mesh_ui = format!("{}\n{}", app_js, mesh_js);
         assert!(
             combined_mesh_ui.contains("via <code>peers</code> in <code>osoosi.toml</code>"),
@@ -12057,7 +12259,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_body: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(json_body["status"], "ok");
         assert!(json_body["entries"].is_array());
@@ -12085,17 +12289,21 @@ mod tests {
                 .and_then(|h| h.to_str().ok()),
             Some("application/json")
         );
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let export_json: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(export_json["log"]["version"], "1.2");
-        assert_eq!(export_json["log"]["creator"]["name"], "OshoosiClaw HAR Web Traffic Sensor");
+        assert_eq!(
+            export_json["log"]["creator"]["name"],
+            "OshoosiClaw HAR Web Traffic Sensor"
+        );
     }
 
     #[tokio::test]
     async fn test_dlp_dashboard_endpoints() {
         let state = DashboardState::new(None, None);
-        let temp_dir =
-            std::env::temp_dir().join(format!("dash_test_dlp_{}", uuid::Uuid::new_v4()));
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_dlp_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
 
@@ -12107,7 +12315,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let status_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(status_json["status"], "ok");
         assert_eq!(status_json["stats"]["bytes_exfiltrated_to_attacker"], 0);
@@ -12126,11 +12336,15 @@ mod tests {
             .uri("/api/dlp/inspect")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&inspect_clean).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&inspect_clean).unwrap(),
+            ))
             .unwrap();
         let resp2 = app.clone().oneshot(req2).await.unwrap();
         assert_eq!(resp2.status(), axum::http::StatusCode::OK);
-        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let inspect_res2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
         assert_eq!(inspect_res2["ok"], true);
         assert_eq!(inspect_res2["tier1_verdict"]["allowed"], true);
@@ -12146,18 +12360,30 @@ mod tests {
             .uri("/api/dlp/inspect")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&inspect_leak).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&inspect_leak).unwrap(),
+            ))
             .unwrap();
         let resp3 = app.clone().oneshot(req3).await.unwrap();
         assert_eq!(resp3.status(), axum::http::StatusCode::OK);
-        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX).await.unwrap();
+        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let inspect_res3: serde_json::Value = serde_json::from_slice(&bytes3).unwrap();
         assert_eq!(inspect_res3["ok"], true);
         assert_eq!(inspect_res3["tier1_verdict"]["allowed"], false);
         assert_eq!(inspect_res3["zk_verified"], true);
-        assert!(inspect_res3["event"]["redacted_entity_count"].as_u64().unwrap() >= 2);
+        assert!(
+            inspect_res3["event"]["redacted_entity_count"]
+                .as_u64()
+                .unwrap()
+                >= 2
+        );
         assert!(inspect_res3["event"]["openjev_decision"].is_object());
-        assert_eq!(inspect_res3["event"]["openjev_decision"]["choice_routing_action"]["selection"], "BLOCK_AND_SCRUB");
+        assert_eq!(
+            inspect_res3["event"]["openjev_decision"]["choice_routing_action"]["selection"],
+            "BLOCK_AND_SCRUB"
+        );
 
         // 4. POST /api/dlp/crown-jewels/register
         let register_cj = serde_json::json!({
@@ -12169,14 +12395,21 @@ mod tests {
             .uri("/api/dlp/crown-jewels/register")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&register_cj).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&register_cj).unwrap(),
+            ))
             .unwrap();
         let resp4 = app.clone().oneshot(req4).await.unwrap();
         assert_eq!(resp4.status(), axum::http::StatusCode::OK);
-        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX).await.unwrap();
+        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let cj_res: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
         assert_eq!(cj_res["ok"], true);
-        assert_eq!(cj_res["crown_jewel"]["asset_label"], "classified_ai_weights.bin");
+        assert_eq!(
+            cj_res["crown_jewel"]["asset_label"],
+            "classified_ai_weights.bin"
+        );
 
         // 5. POST /api/dlp/scan-har
         let req5 = axum::http::Request::builder()
@@ -12186,7 +12419,9 @@ mod tests {
             .unwrap();
         let resp5 = app.clone().oneshot(req5).await.unwrap();
         assert_eq!(resp5.status(), axum::http::StatusCode::OK);
-        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX).await.unwrap();
+        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let har_scan_res: serde_json::Value = serde_json::from_slice(&bytes5).unwrap();
         assert_eq!(har_scan_res["ok"], true);
 
@@ -12199,11 +12434,15 @@ mod tests {
             .uri("/api/dlp/policy")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&policy_update).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&policy_update).unwrap(),
+            ))
             .unwrap();
         let resp6 = app.clone().oneshot(req6).await.unwrap();
         assert_eq!(resp6.status(), axum::http::StatusCode::OK);
-        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX).await.unwrap();
+        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let pol_res: serde_json::Value = serde_json::from_slice(&bytes6).unwrap();
         assert_eq!(pol_res["ok"], true);
         assert_eq!(pol_res["policy_mode"], "ENFORCE_HARDENED");
@@ -12226,7 +12465,9 @@ mod tests {
             .unwrap();
         let resp1 = app.clone().oneshot(req1).await.unwrap();
         assert_eq!(resp1.status(), axum::http::StatusCode::OK);
-        let bytes1 = axum::body::to_bytes(resp1.into_body(), usize::MAX).await.unwrap();
+        let bytes1 = axum::body::to_bytes(resp1.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json1: serde_json::Value = serde_json::from_slice(&bytes1).unwrap();
         assert_eq!(json1["status"], "ok");
         assert!(json1["tokens_burned"].as_i64().unwrap() > 0);
@@ -12234,7 +12475,11 @@ mod tests {
         assert!(json1["defender_mitigation_cost_usd"].as_f64().unwrap() > 0.0);
         assert!(json1["attacker_vs_defender_cost_ratio"].as_f64().unwrap() > 10.0);
         assert!(json1["metric_convergence"]["converged"].as_bool().unwrap());
-        assert!(json1["metric_convergence"]["nist_economic_asymmetry_verified"].as_bool().unwrap());
+        assert!(
+            json1["metric_convergence"]["nist_economic_asymmetry_verified"]
+                .as_bool()
+                .unwrap()
+        );
 
         // 2. GET /api/tarpit-stats?format=csv
         let req2 = axum::http::Request::builder()
@@ -12244,7 +12489,9 @@ mod tests {
             .unwrap();
         let resp2 = app.clone().oneshot(req2).await.unwrap();
         assert_eq!(resp2.status(), axum::http::StatusCode::OK);
-        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let csv_str = String::from_utf8(bytes2.to_vec()).unwrap();
         assert!(csv_str.contains("Attacker Compute Burn vs. Defender Mitigation Cost"));
         assert!(csv_str.starts_with("metric,attacker_compute_burn_usd"));
@@ -12257,7 +12504,9 @@ mod tests {
             .unwrap();
         let resp3 = app.clone().oneshot(req3).await.unwrap();
         assert_eq!(resp3.status(), axum::http::StatusCode::OK);
-        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX).await.unwrap();
+        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let prom_str = String::from_utf8(bytes3.to_vec()).unwrap();
         assert!(prom_str.contains("oshoosi_attacker_compute_burn_usd"));
         assert!(prom_str.contains("oshoosi_defender_mitigation_cost_usd"));
@@ -12271,7 +12520,9 @@ mod tests {
             .unwrap();
         let resp4 = app.clone().oneshot(req4).await.unwrap();
         assert_eq!(resp4.status(), axum::http::StatusCode::OK);
-        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX).await.unwrap();
+        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json4: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
         assert_eq!(json4["status"], "ok");
         assert!(json4["probe"]["total_processes_scanned"].as_u64().unwrap() > 0);
@@ -12284,7 +12535,9 @@ mod tests {
             .unwrap();
         let resp5 = app.clone().oneshot(req5).await.unwrap();
         assert_eq!(resp5.status(), axum::http::StatusCode::OK);
-        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX).await.unwrap();
+        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json5: serde_json::Value = serde_json::from_slice(&bytes5).unwrap();
         assert_eq!(json5["status"], "ok");
         assert!(json5["probe"]["total_processes_scanned"].as_u64().unwrap() > 0);
@@ -12354,4 +12607,3 @@ mod tests {
         );
     }
 }
-

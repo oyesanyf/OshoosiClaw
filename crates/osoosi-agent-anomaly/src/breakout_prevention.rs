@@ -7,11 +7,11 @@
 
 use chrono::{DateTime, Utc};
 use osoosi_policy::breakout_gate::{
-    global_ring7_authorizer, AdvisoryModelJudgmentGuard, AuthorityLevel, CedarAction,
-    CedarContext, CedarPrincipal, CedarResource, ComposedWorkflowStepKind, DataClassification,
-    EnforcementStage, GuardedEffectOutcome, LoopbackIpcAuthorizer, PlatformAttestationGate,
+    global_ring7_authorizer, AdvisoryModelJudgmentGuard, AuthorityLevel, CedarAction, CedarContext,
+    CedarPrincipal, CedarResource, ComposedWorkflowStepKind, DataClassification, EnforcementStage,
+    GuardedEffectOutcome, LoopbackIpcAuthorizer, PlatformAttestationGate,
     PlatformAttestationPosture, ProcessInstanceIdentity, Ring7CapabilityEffectAuthorizer,
-     TrustedTransformationKind, WorkloadDegradationMode,
+    TrustedTransformationKind, WorkloadDegradationMode,
 };
 use osoosi_policy::engine::{PolicyEngine, ThreatVoter, VoteResult};
 use osoosi_types::HostSecurityEvent;
@@ -167,7 +167,10 @@ impl OsConfinementVerifier {
         let ns_ok = std::path::Path::new("/proc/self/ns").exists();
         (
             true,
-            format!("Linux_eBPF_LSM_hooks={}_ns={}", status.hooks_attached, ns_ok),
+            format!(
+                "Linux_eBPF_LSM_hooks={}_ns={}",
+                status.hooks_attached, ns_ok
+            ),
             0,
             true,
         )
@@ -181,13 +184,18 @@ impl OsConfinementVerifier {
 
         #[cfg(target_os = "windows")]
         {
-            let comspec =
-                std::env::var("ComSpec").unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".to_string());
+            let comspec = std::env::var("ComSpec")
+                .unwrap_or_else(|_| r"C:\Windows\System32\cmd.exe".to_string());
             let args = vec![
                 "/c".to_string(),
                 "echo probe > %OSOOSI_CANARY_PIPE%".to_string(),
             ];
-            match CanaryCage::spawn_caged(&comspec, &args, "breakout-kernel-proof", Duration::from_secs(5)) {
+            match CanaryCage::spawn_caged(
+                &comspec,
+                &args,
+                "breakout-kernel-proof",
+                Duration::from_secs(5),
+            ) {
                 Ok(outcome) => {
                     if !outcome.canary_triggered {
                         side_effect_counter.fetch_add(1, Ordering::SeqCst);
@@ -457,7 +465,7 @@ pub fn run_concurrent_crown_jewel_read_write_race_proof(
             approved_capabilities: vec!["ExternalWrite".to_string()],
         });
 
-        let crown_jewel_read_started = Arc::new( std::sync::atomic::AtomicBool::new(false) );
+        let crown_jewel_read_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let write_committed_after_read = Arc::new(AtomicUsize::new(0));
         let barrier = Arc::new(std::sync::Barrier::new(2));
 
@@ -585,8 +593,10 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         Some("job-agent-build".to_string()),
         "sess-scenario-2",
     );
-    auth.causal_graph
-        .register_process_instance(cargo_parent.clone(), AuthorityLevel::L2AuthorizedUserObjective);
+    auth.causal_graph.register_process_instance(
+        cargo_parent.clone(),
+        AuthorityLevel::L2AuthorizedUserObjective,
+    );
 
     // Downstream OS effect 2A: `cargo test` spawns `build_script_build.exe` attempting outbound curl
     let build_rs_event = HostSecurityEvent {
@@ -777,7 +787,10 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         true,
         || "crown-jewel-secret-content",
     );
-    assert!(read_res.is_ok(), "Scoped Crown-Jewel read must succeed and taint lineage");
+    assert!(
+        read_res.is_ok(),
+        "Scoped Crown-Jewel read must succeed and taint lineage"
+    );
 
     // Step 2: Agent attempts to post a GitHub issue comment containing a completely abstract,
     // zero-token-overlap summary ("The module uses a mathematical ring structure for fast consensus.")
@@ -801,7 +814,12 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         } => (true, policy_decision_id, causal_event_id, reason),
         _ => {
             s4_side_effects.fetch_add(1, Ordering::SeqCst);
-            (false, "none".to_string(), "none".to_string(), "failed".to_string())
+            (
+                false,
+                "none".to_string(),
+                "none".to_string(),
+                "failed".to_string(),
+            )
         }
     };
     total_prohibited_effects.fetch_add(s4_side_effects.load(Ordering::SeqCst), Ordering::SeqCst);
@@ -908,7 +926,12 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         } => (true, policy_decision_id, causal_event_id, reason),
         _ => {
             s5_side_effects.fetch_add(1, Ordering::SeqCst);
-            (false, "none".to_string(), "none".to_string(), "failed".to_string())
+            (
+                false,
+                "none".to_string(),
+                "none".to_string(),
+                "failed".to_string(),
+            )
         }
     };
     total_prohibited_effects.fetch_add(s5_side_effects.load(Ordering::SeqCst), Ordering::SeqCst);
@@ -1087,10 +1110,8 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
     // Multi-Threaded Concurrency Stress Proof
     // ========================================================================
     let race_proof = run_concurrent_crown_jewel_read_write_race_proof(24);
-    total_prohibited_effects.fetch_add(
-        race_proof.unauthorized_writes_after_taint,
-        Ordering::SeqCst,
-    );
+    total_prohibited_effects
+        .fetch_add(race_proof.unauthorized_writes_after_taint, Ordering::SeqCst);
 
     // ========================================================================
     // 7-Row Enforcement Coverage Matrix
@@ -1269,8 +1290,9 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
             "DEPLOYED"
         },
     );
-    let wf_composition_blocked =
-        !wf_attack_verdict.allowed && wf_attack_out.is_none() && wf_side_effects.load(Ordering::SeqCst) == 0;
+    let wf_composition_blocked = !wf_attack_verdict.allowed
+        && wf_attack_out.is_none()
+        && wf_side_effects.load(Ordering::SeqCst) == 0;
     if !wf_composition_blocked {
         total_prohibited_effects.fetch_add(1, Ordering::SeqCst);
     }
@@ -1318,8 +1340,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
     let model_manip_res = AdvisoryModelJudgmentGuard::enforce_advisory_only_invariant(
         false, // deterministic Cedar said DENY
         true,  // adversarial prompt tricked LLM judge into saying 0.99 benign!
-        0.99,
-        true, // LLM tried to grant capability
+        0.99, true, // LLM tried to grant capability
         true, // LLM tried to declassify taint
     );
     let model_manip_passed =
@@ -1337,8 +1358,9 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         &degraded_posture,
         "ReleaseCrownJewelDecryptionKey",
     );
-    let plat_attestation_passed =
-        !plat_dec.operation_allowed && plat_dec.sensitive_keys_withheld && plat_dec.degraded_layers.len() == 2;
+    let plat_attestation_passed = !plat_dec.operation_allowed
+        && plat_dec.sensitive_keys_withheld
+        && plat_dec.degraded_layers.len() == 2;
 
     // P1.3 & Family 7: Safe Telemetry Overload (EventsLost > 0 quarantines ONLY affected workload, never host)
     let overload_eval = auth.overload_controller.evaluate_telemetry_backpressure(
@@ -1684,7 +1706,8 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
     };
     let ollama_dec = auth.evaluate_os_event(&ollama_event);
     benign_controls.push(BenignUsabilityProofRecord {
-        workflow_name: "3. Local Ollama inference (POST http://127.0.0.1:11434/api/generate)".to_string(),
+        workflow_name: "3. Local Ollama inference (POST http://127.0.0.1:11434/api/generate)"
+            .to_string(),
         allowed: !ollama_cls.requires_privileged_capability && ollama_dec.allowed,
         executed_side_effects: 1,
         policy_decision_id: ollama_dec.policy_decision_id,
@@ -1753,8 +1776,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
     // Measure authorization & blocking enforcement latency in ms across a guarded evaluation
     let lat_start = std::time::Instant::now();
     let _ = auth.evaluate_os_event(&broker_event);
-    let enforcement_latency_ms =
-        (lat_start.elapsed().as_secs_f64() * 1000.0).max(0.05);
+    let enforcement_latency_ms = (lat_start.elapsed().as_secs_f64() * 1000.0).max(0.05);
 
     // ========================================================================
     // Refinement 4: 6-Scenario Fault Injection Verification
@@ -1905,12 +1927,22 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         + scenario_proofs.len()
         + residual_risk_verification_suite.len()
         + benign_controls.len();
-    let failed_checks = six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
-        + scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
-        + residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
+    let failed_checks = six_fault_injection_verifications
+        .iter()
+        .filter(|v| !v.passed)
+        .count()
+        + scenario_proofs
+            .iter()
+            .filter(|p| !p.pre_execution_prevented)
+            .count()
+        + residual_risk_verification_suite
+            .iter()
+            .filter(|r| !r.passed)
+            .count()
         + benign_controls.iter().filter(|b| !b.allowed).count();
     let passed_checks = total_checks.saturating_sub(failed_checks);
-    let false_positives_on_benign_dev_workflows = benign_controls.iter().filter(|b| !b.allowed).count();
+    let false_positives_on_benign_dev_workflows =
+        benign_controls.iter().filter(|b| !b.allowed).count();
     let total_prohibited = total_prohibited_effects.load(Ordering::SeqCst);
     let all_invariants_verified = failed_checks == 0 && total_prohibited == 0;
 
@@ -2003,8 +2035,16 @@ mod tests {
         }
         assert_eq!(report.enforcement_coverage_matrix.len(), 7);
         for row in &report.enforcement_coverage_matrix {
-            assert!(row.interception_confirmed, "Row {} interception failed", row.row_number);
-            assert!(row.authorization_evaluated, "Row {} auth eval failed", row.row_number);
+            assert!(
+                row.interception_confirmed,
+                "Row {} interception failed",
+                row.row_number
+            );
+            assert!(
+                row.authorization_evaluated,
+                "Row {} auth eval failed",
+                row.row_number
+            );
             assert!(
                 row.unauthorized_effect_prevented,
                 "Row {} prevention failed",
@@ -2021,19 +2061,30 @@ mod tests {
         assert!(report.post_launch_capability_revocation_passed);
         assert!(report.zero_token_paraphrase_exfil_blocked);
         assert!(report.cross_process_session_broker_correlation_passed);
-        assert!(report.os_confinement_verification.kernel_confinement_active_when_userspace_disabled);
-        assert!(!report.os_confinement_verification.undocumented_kernel_table_walk_used);
+        assert!(
+            report
+                .os_confinement_verification
+                .kernel_confinement_active_when_userspace_disabled
+        );
+        assert!(
+            !report
+                .os_confinement_verification
+                .undocumented_kernel_table_walk_used
+        );
         assert_eq!(report.staged_priority_verifications.len(), 9);
         for item in &report.staged_priority_verifications {
-            assert!(item.passed, "Priority {} failed: {}", item.priority_id, item.evidence);
+            assert!(
+                item.passed,
+                "Priority {} failed: {}",
+                item.priority_id, item.evidence
+            );
         }
         assert_eq!(report.residual_risk_verification_suite.len(), 9);
         for fam in &report.residual_risk_verification_suite {
             assert!(
                 fam.passed,
                 "Residual risk family {} failed: {}",
-                fam.family_name,
-                fam.verification_summary
+                fam.family_name, fam.verification_summary
             );
         }
     }
@@ -2107,8 +2158,10 @@ mod tests {
             Some("job-5100".to_string()),
             "sess-broker-test",
         );
-        auth.causal_graph
-            .register_process_instance(agent_proc.clone(), AuthorityLevel::L2AuthorizedUserObjective);
+        auth.causal_graph.register_process_instance(
+            agent_proc.clone(),
+            AuthorityLevel::L2AuthorizedUserObjective,
+        );
         auth.causal_graph.record_causal_step(
             &agent_proc.instance_key(),
             "sess-broker-test",
@@ -2208,11 +2261,7 @@ mod tests {
     #[test]
     fn test_adversarial_model_manipulation_cannot_grant_capability() {
         let res = AdvisoryModelJudgmentGuard::enforce_advisory_only_invariant(
-            false,
-            true,
-            0.999,
-            true,
-            true,
+            false, true, 0.999, true, true,
         );
         assert!(!res.final_allowed);
         assert!(res.model_override_rejected);

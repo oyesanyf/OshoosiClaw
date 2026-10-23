@@ -24,7 +24,7 @@ pub struct CanaryAlert {
     pub pid: u32,
     pub trap_kind: String, // "NamedPipe" on Windows, "Memfd" on Linux
     pub trap_path: String,
-    pub confidence: f64,   // 1.00
+    pub confidence: f64, // 1.00
     pub timestamp: DateTime<Utc>,
     pub attributed_file_digest: Option<String>,
     pub details: String,
@@ -191,13 +191,19 @@ impl CagedChild {
             let elapsed_ms = self.start_time.elapsed().as_millis() as u64;
 
             if triggered {
-                let alert = self.alert_received.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                let alert = self
+                    .alert_received
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
                 return Ok(CanaryCageResult {
                     exit_code: Some(137),
                     success: false,
                     canary_triggered: true,
                     stdout: String::new(),
-                    stderr: "Execution aborted: Ephemeral canary honey-pipe touched by caged process".into(),
+                    stderr:
+                        "Execution aborted: Ephemeral canary honey-pipe touched by caged process"
+                            .into(),
                     alert,
                     duration_ms: elapsed_ms,
                 });
@@ -242,13 +248,19 @@ impl CagedChild {
                     }
                     let _ = self.child.kill();
                     let _ = self.child.wait();
-                    let alert = self.alert_received.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    let alert = self
+                        .alert_received
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .clone();
                     return Ok(CanaryCageResult {
                         exit_code: Some(137),
                         success: false,
                         canary_triggered: true,
                         stdout: String::new(),
-                        stderr: "Execution aborted: Ephemeral canary memfd touched by caged process".into(),
+                        stderr:
+                            "Execution aborted: Ephemeral canary memfd touched by caged process"
+                                .into(),
                         alert,
                         duration_ms: start.elapsed().as_millis() as u64,
                     });
@@ -262,7 +274,11 @@ impl CagedChild {
                         }
                         let triggered = self.canary_triggered.load(Ordering::SeqCst);
                         if triggered {
-                            let alert = self.alert_received.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                            let alert = self
+                                .alert_received
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .clone();
                             return Ok(CanaryCageResult {
                                 exit_code: Some(137),
                                 success: false,
@@ -415,10 +431,10 @@ impl CanaryCage {
             use windows::Win32::Storage::FileSystem::{
                 FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX,
             };
-            use windows::Win32::System::IO::{CancelIo, OVERLAPPED};
             use windows::Win32::System::JobObjects::*;
             use windows::Win32::System::Pipes::*;
             use windows::Win32::System::Threading::*;
+            use windows::Win32::System::IO::{CancelIo, OVERLAPPED};
 
             let rand_hex = format!("{:016x}", rand::random::<u128>());
             let pipe_name = format!(r"\\.\pipe\osoosi_canary_{}_{}", session_id, rand_hex);
@@ -447,11 +463,14 @@ impl CanaryCage {
 
             // 2. Create and configure Win32 Job Object
             let job = unsafe { CreateJobObjectW(None, None) }.map_err(|e| {
-                unsafe { let _ = CloseHandle(h_pipe); }
+                unsafe {
+                    let _ = CloseHandle(h_pipe);
+                }
                 CanaryCageError::ConfinementFailed(format!("CreateJobObjectW failed: {:?}", e))
             })?;
 
-            let mut limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            let mut limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                unsafe { std::mem::zeroed() };
             limit_info.BasicLimitInformation.LimitFlags =
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
 
@@ -556,7 +575,8 @@ impl CanaryCage {
                 full_cmd.push(' ');
                 full_cmd.push_str(&quote_win32_arg(a.as_ref()));
             }
-            let mut wide_cmd: Vec<u16> = full_cmd.encode_utf16().chain(std::iter::once(0)).collect();
+            let mut wide_cmd: Vec<u16> =
+                full_cmd.encode_utf16().chain(std::iter::once(0)).collect();
 
             // 7. Spawn Suspended Child
             let mut si: STARTUPINFOW = unsafe { std::mem::zeroed() };
@@ -597,7 +617,10 @@ impl CanaryCage {
             // 8. Fail-Closed Pre-Execution Confinement
             let assign_res = unsafe { AssignProcessToJobObject(job, pi.hProcess) };
             if let Err(e) = assign_res {
-                error!("CONFINEMENT FAILURE: AssignProcessToJobObject failed: {:?}", e);
+                error!(
+                    "CONFINEMENT FAILURE: AssignProcessToJobObject failed: {:?}",
+                    e
+                );
                 unsafe {
                     let _ = TerminateProcess(pi.hProcess, 137);
                     let _ = CloseHandle(pi.hThread);
@@ -654,7 +677,8 @@ impl CanaryCage {
                     let job_handle = HANDLE(job_raw as *mut _);
                     let shutdown = HANDLE(shutdown_raw as *mut _);
 
-                    let h_event = unsafe { CreateEventW(None, true, false, None) }.unwrap_or_default();
+                    let h_event =
+                        unsafe { CreateEventW(None, true, false, None) }.unwrap_or_default();
                     let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
                     overlapped.hEvent = h_event;
 
@@ -665,9 +689,8 @@ impl CanaryCage {
                         let err = unsafe { GetLastError() };
                         if err == ERROR_IO_PENDING {
                             let wait_handles = [shutdown, h_event];
-                            let wait_res = unsafe {
-                                WaitForMultipleObjects(&wait_handles, false, INFINITE)
-                            };
+                            let wait_res =
+                                unsafe { WaitForMultipleObjects(&wait_handles, false, INFINITE) };
                             if wait_res.0 == 0 {
                                 // Shutdown event signaled: clean up immediately in < 1ms
                                 unsafe {
@@ -770,8 +793,13 @@ impl CanaryCage {
             }
 
             // 1. Determine high FD below RLIMIT_NOFILE
-            let mut rlim = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
-            let high_fd: i32 = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) } == 0 && rlim.rlim_cur > 10 {
+            let mut rlim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            let high_fd: i32 = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut rlim) } == 0
+                && rlim.rlim_cur > 10
+            {
                 ((rlim.rlim_cur - 1) as i32).min(1020)
             } else {
                 512
@@ -802,7 +830,11 @@ impl CanaryCage {
             let canary_payload = b"{\"vault\":\"osoosi_edr_vault\",\"key\":\"cage_honeytoken_secret_canary\",\"credential\":\"edr_vault_token_trap\"}\n";
             let initial_size = canary_payload.len() as libc::off_t;
             unsafe {
-                libc::write(memfd, canary_payload.as_ptr() as *const libc::c_void, canary_payload.len());
+                libc::write(
+                    memfd,
+                    canary_payload.as_ptr() as *const libc::c_void,
+                    canary_payload.len(),
+                );
                 libc::lseek(memfd, 0, libc::SEEK_SET);
             }
 
@@ -839,7 +871,9 @@ impl CanaryCage {
             let child = match cmd.spawn() {
                 Ok(c) => c,
                 Err(e) => {
-                    unsafe { libc::close(memfd); }
+                    unsafe {
+                        libc::close(memfd);
+                    }
                     return Err(CanaryCageError::Io(e));
                 }
             };
@@ -1003,10 +1037,7 @@ mod tests {
         // Command touches the honeypipe via cmd.exe output redirection
         let mut child = CanaryCage::spawn_child(
             "cmd.exe",
-            &[
-                "/c",
-                "echo TRAP_TRIGGER > %CANARY_HONEY_PIPE%",
-            ],
+            &["/c", "echo TRAP_TRIGGER > %CANARY_HONEY_PIPE%"],
             "test_trap_session",
             None,
             Some(Arc::new(move |_alert| {

@@ -415,7 +415,12 @@ impl ConfusedDeputyBrokerRouter {
 
     pub fn is_broker_image(&self, image: &str) -> bool {
         let norm = image.replace('/', "\\");
-        let base = norm.rsplit('\\').next().unwrap_or(image).trim().to_ascii_lowercase();
+        let base = norm
+            .rsplit('\\')
+            .next()
+            .unwrap_or(image)
+            .trim()
+            .to_ascii_lowercase();
         self.known_brokers.contains(&base)
     }
 
@@ -439,7 +444,9 @@ impl ConfusedDeputyBrokerRouter {
     }
 
     pub fn resolve_delegation(&self, broker_pid: u32) -> Option<BrokerDelegation> {
-        self.active_delegations.get(&broker_pid).map(|entry| entry.clone())
+        self.active_delegations
+            .get(&broker_pid)
+            .map(|entry| entry.clone())
     }
 
     pub fn remove_delegation(&self, broker_pid: u32) {
@@ -465,8 +472,9 @@ impl CausalSecurityGraph {
     pub fn open(db_path: &str) -> Result<Self> {
         if let Some(parent) = Path::new(db_path).parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create database directory: {:?}", parent))?;
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create database directory: {:?}", parent)
+                })?;
             }
         }
 
@@ -664,16 +672,17 @@ impl CausalSecurityGraph {
         new_taint_level: u32,
         has_crown_jewel: bool,
     ) -> (u64, u64) {
-        let mut entry = self.sessions.entry(session_id.to_string()).or_insert_with(|| {
-            SessionCausalState {
+        let mut entry = self
+            .sessions
+            .entry(session_id.to_string())
+            .or_insert_with(|| SessionCausalState {
                 session_id: session_id.to_string(),
                 taint_epoch: 1,
                 revocation_seq: 1,
                 taint_level: 0,
                 has_crown_jewel_taint: false,
                 event_counter: 0,
-            }
-        });
+            });
 
         entry.taint_epoch += 1;
         entry.revocation_seq += 1;
@@ -683,16 +692,17 @@ impl CausalSecurityGraph {
     }
 
     pub fn bump_revocation_seq(&self, session_id: &str) -> u64 {
-        let mut entry = self.sessions.entry(session_id.to_string()).or_insert_with(|| {
-            SessionCausalState {
+        let mut entry = self
+            .sessions
+            .entry(session_id.to_string())
+            .or_insert_with(|| SessionCausalState {
                 session_id: session_id.to_string(),
                 taint_epoch: 1,
                 revocation_seq: 1,
                 taint_level: 0,
                 has_crown_jewel_taint: false,
                 event_counter: 0,
-            }
-        });
+            });
         entry.revocation_seq += 1;
         entry.revocation_seq
     }
@@ -750,7 +760,10 @@ impl CausalSecurityGraph {
         Ok(())
     }
 
-    pub fn get_process_instance(&self, instance_id: &str) -> Result<Option<ProcessInstanceIdentity>> {
+    pub fn get_process_instance(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<ProcessInstanceIdentity>> {
         let lock = self.conn.lock();
         let mut stmt = lock.prepare(
             "SELECT instance_id, pid, start_time_100ns, image_digest_blake3, parent_instance_id, job_object_id, origin_session_id
@@ -850,16 +863,17 @@ impl CausalSecurityGraph {
         )?;
 
         // Update local session state
-        let mut session = self.sessions.entry(event.session_id.clone()).or_insert_with(|| {
-            SessionCausalState {
+        let mut session = self
+            .sessions
+            .entry(event.session_id.clone())
+            .or_insert_with(|| SessionCausalState {
                 session_id: event.session_id.clone(),
                 taint_epoch: event.taint_epoch,
                 revocation_seq: 1,
                 taint_level: event.post_event_taint,
                 has_crown_jewel_taint: false,
                 event_counter: event.event_seq,
-            }
-        });
+            });
         session.event_counter = std::cmp::max(session.event_counter, event.event_seq);
         session.taint_level = std::cmp::max(session.taint_level, event.post_event_taint);
 
@@ -924,7 +938,9 @@ impl CausalSecurityGraph {
         proc_instance_id: &str,
         file_canonical_path: &str,
     ) -> Result<(u32, bool)> {
-        let file_id = blake3::hash(file_canonical_path.as_bytes()).to_hex().to_string();
+        let file_id = blake3::hash(file_canonical_path.as_bytes())
+            .to_hex()
+            .to_string();
         let lock = self.conn.lock();
 
         let file_info: Option<(u32, bool)> = lock
@@ -1137,7 +1153,11 @@ impl CausalSecurityGraph {
                 "SELECT source_id, taint_propagated, has_crown_jewel_taint FROM causal_edges WHERE target_id = ?1",
             )?;
             let rows = stmt.query_map(params![current], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?, r.get::<_, i64>(2)? != 0))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, u32>(1)?,
+                    r.get::<_, i64>(2)? != 0,
+                ))
             })?;
 
             for r in rows {
@@ -1188,7 +1208,8 @@ impl CausalSecurityGraph {
                 declassified_node_id: declassified_node_id.to_string(),
                 pii_leakage_bits: proof.pii_leakage_bits,
                 pqc_signature_verified: false,
-                reason: "Scrubbed payload is missing mandatory <ZK_PII:...> commitments".to_string(),
+                reason: "Scrubbed payload is missing mandatory <ZK_PII:...> commitments"
+                    .to_string(),
             });
         }
 
@@ -1216,7 +1237,8 @@ impl CausalSecurityGraph {
                 declassified_node_id: declassified_node_id.to_string(),
                 pii_leakage_bits: proof.pii_leakage_bits,
                 pqc_signature_verified: false,
-                reason: "Cryptographic ML-DSA-65 / Schnorr ZK proof verification failed".to_string(),
+                reason: "Cryptographic ML-DSA-65 / Schnorr ZK proof verification failed"
+                    .to_string(),
             });
         }
 
@@ -1238,7 +1260,10 @@ impl CausalSecurityGraph {
         )?;
 
         // 3. Record event in causal_events
-        let event_id = format!("declass-{}", blake3::hash(now.as_bytes()).to_hex()[..16].to_string());
+        let event_id = format!(
+            "declass-{}",
+            blake3::hash(now.as_bytes()).to_hex()[..16].to_string()
+        );
         lock.execute(
             "INSERT INTO causal_events (
                 event_id, event_seq, decision_id, session_id, process_instance_id,
@@ -1584,7 +1609,10 @@ mod tests {
             Some("job_1".to_string()),
             "session_alpha",
         );
-        assert_eq!(p1.instance_id, p2.instance_id, "Identical parameters must generate identical UUID");
+        assert_eq!(
+            p1.instance_id, p2.instance_id,
+            "Identical parameters must generate identical UUID"
+        );
 
         // Distinct PID -> distinct instance_id
         let p3 = ProcessInstanceIdentity::new(
@@ -1614,11 +1642,19 @@ mod tests {
         let graph = CausalSecurityGraph::in_memory()?;
 
         // 1. Register clean root process
-        let root = ProcessInstanceIdentity::new(1000, 10, "digest_root", None, None, "session_test");
+        let root =
+            ProcessInstanceIdentity::new(1000, 10, "digest_root", None, None, "session_test");
         graph.register_process_instance(&root, "C:\\agent\\root.exe", 0, false)?;
 
         // 2. Register child worker process
-        let worker = ProcessInstanceIdentity::new(1001, 20, "digest_worker", Some(root.instance_id.clone()), None, "session_test");
+        let worker = ProcessInstanceIdentity::new(
+            1001,
+            20,
+            "digest_worker",
+            Some(root.instance_id.clone()),
+            None,
+            "session_test",
+        );
         graph.record_process_spawn(&root, &worker, "C:\\agent\\worker.exe")?;
 
         // 3. Register a Crown-Jewel file
@@ -1633,16 +1669,29 @@ mod tests {
         )?;
 
         // Worker reads Crown-Jewel file -> worker taint elevated
-        let (new_taint, is_cj) = graph.record_file_read(&worker.instance_id, "C:\\vault\\credentials.json")?;
+        let (new_taint, is_cj) =
+            graph.record_file_read(&worker.instance_id, "C:\\vault\\credentials.json")?;
         assert_eq!(new_taint, 3);
         assert!(is_cj);
 
         // 4. Worker spawns a sub-worker
-        let sub_worker = ProcessInstanceIdentity::new(1002, 30, "digest_sub", Some(worker.instance_id.clone()), None, "session_test");
+        let sub_worker = ProcessInstanceIdentity::new(
+            1002,
+            30,
+            "digest_sub",
+            Some(worker.instance_id.clone()),
+            None,
+            "session_test",
+        );
         graph.record_process_spawn(&worker, &sub_worker, "C:\\agent\\sub_worker.exe")?;
 
         // 5. Sub-worker writes a scratchpad file
-        graph.record_file_write(&sub_worker.instance_id, "C:\\temp\\output.txt", "C:\\temp\\output.txt", "hash_output")?;
+        graph.record_file_write(
+            &sub_worker.instance_id,
+            "C:\\temp\\output.txt",
+            "C:\\temp\\output.txt",
+            "hash_output",
+        )?;
         let output_file_id = blake3::hash(b"C:\\temp\\output.txt").to_hex().to_string();
 
         // 6. Transitive taint query on output file
@@ -1650,7 +1699,10 @@ mod tests {
         assert!(report.is_tainted);
         assert_eq!(report.max_taint_level, 3);
         assert!(report.has_crown_jewel_taint);
-        assert!(report.taint_origins.iter().any(|o| o.contains(&cj_id) || o.contains(&worker.instance_id)));
+        assert!(report
+            .taint_origins
+            .iter()
+            .any(|o| o.contains(&cj_id) || o.contains(&worker.instance_id)));
 
         Ok(())
     }
@@ -1782,14 +1834,8 @@ mod tests {
     #[test]
     fn test_confused_deputy_broker_attribution() -> Result<()> {
         let graph = CausalSecurityGraph::in_memory()?;
-        let agent_identity = ProcessInstanceIdentity::new(
-            2000,
-            100,
-            "agent_hash",
-            None,
-            None,
-            "session_agent_99",
-        );
+        let agent_identity =
+            ProcessInstanceIdentity::new(2000, 100, "agent_hash", None, None, "session_agent_99");
 
         // Register broker delegation: agent calls WmiPrvSE.exe (PID 4444)
         graph.broker_router.register_delegation(
@@ -1888,10 +1934,8 @@ mod tests {
         assert_eq!(matches[0].event_ids, vec!["evt_1", "evt_2", "evt_3"]);
 
         // Query non-matching sequence
-        let no_matches = graph.query_workflow_sequence(
-            session,
-            &["ChildProcessExec", "SensitiveFileAccess"],
-        )?;
+        let no_matches =
+            graph.query_workflow_sequence(session, &["ChildProcessExec", "SensitiveFileAccess"])?;
         assert_eq!(no_matches.len(), 0);
 
         Ok(())
@@ -1906,7 +1950,8 @@ mod tests {
             test_version: "1.2.0".to_string(),
             framework_version: "seven-ring-v1".to_string(),
             random_seed: 42,
-            environment_config: "{\"mode\": \"enforce\", \"sandbox\": \"appcontainer\"}".to_string(),
+            environment_config: "{\"mode\": \"enforce\", \"sandbox\": \"appcontainer\"}"
+                .to_string(),
             policy_version: 1,
             attack_objective: "Direct external exfiltration of crown jewel credentials".to_string(),
             expected_effect: "PreExecutionPrevented".to_string(),

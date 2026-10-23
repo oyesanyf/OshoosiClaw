@@ -9,11 +9,9 @@
 //!    exceeding bounds, or leaking memory.
 //! 4. Attributed Canary Alert Immunity: Sessions with only immune files reject attribution.
 
-use std::path::PathBuf;
-use osoosi_agent_anomaly::file_lineage::{
-    FileLineageTracker, LineageError, DEFAULT_MAX_CAPACITY,
-};
+use osoosi_agent_anomaly::file_lineage::{FileLineageTracker, LineageError, DEFAULT_MAX_CAPACITY};
 use osoosi_types::resolve_project_root;
+use std::path::PathBuf;
 
 /// Challenge 1: Lineage Hashing against authoritative BLAKE3 reference test vectors.
 #[test]
@@ -23,8 +21,7 @@ fn challenge_lineage_blake3_reference_vectors() {
     // af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262
     let empty_hash = FileLineageTracker::compute_blake3(b"");
     assert_eq!(
-        empty_hash,
-        "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+        empty_hash, "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
         "Empty byte slice BLAKE3 hash mismatch"
     );
 
@@ -32,8 +29,7 @@ fn challenge_lineage_blake3_reference_vectors() {
     // BLAKE3: d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24
     let hello_hash = FileLineageTracker::compute_blake3(b"hello world");
     assert_eq!(
-        hello_hash,
-        "d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24",
+        hello_hash, "d74981efa70a0c880b8d8c1985d075dbcbf679b99a5f9914e5aaf96b831a9e24",
         "Reference 'hello world' BLAKE3 hash mismatch"
     );
 
@@ -52,11 +48,14 @@ fn challenge_lineage_blake3_reference_vectors() {
     let temp_file = temp_dir.join(format!("test_lineage_blake3_{}.tmp", now));
     std::fs::write(&temp_file, sample_data).expect("Write temp file");
 
-    let file_hash = FileLineageTracker::compute_file_blake3(&temp_file)
-        .expect("Compute file BLAKE3");
+    let file_hash =
+        FileLineageTracker::compute_file_blake3(&temp_file).expect("Compute file BLAKE3");
     let _ = std::fs::remove_file(&temp_file);
 
-    assert_eq!(file_hash, reference_hash, "File BLAKE3 hash must match slice hash");
+    assert_eq!(
+        file_hash, reference_hash,
+        "File BLAKE3 hash must match slice hash"
+    );
 }
 
 /// Challenge 2: Repository and System Immunity
@@ -68,10 +67,20 @@ fn challenge_repository_and_system_immunity() {
     // 1. Project Root Immunity
     let root = resolve_project_root().expect("Must resolve project root in workspace");
     let cargo_toml = root.join("Cargo.toml");
-    let lib_rs = root.join("crates").join("osoosi-agent-anomaly").join("src").join("lib.rs");
+    let lib_rs = root
+        .join("crates")
+        .join("osoosi-agent-anomaly")
+        .join("src")
+        .join("lib.rs");
 
-    assert!(tracker.is_path_immune(&cargo_toml), "Cargo.toml in root must be immune");
-    assert!(tracker.is_path_immune(&lib_rs), "crates/.../lib.rs must be immune");
+    assert!(
+        tracker.is_path_immune(&cargo_toml),
+        "Cargo.toml in root must be immune"
+    );
+    assert!(
+        tracker.is_path_immune(&lib_rs),
+        "crates/.../lib.rs must be immune"
+    );
 
     // Ingest Cargo.toml into tracker
     let cargo_digest = tracker
@@ -87,7 +96,11 @@ fn challenge_repository_and_system_immunity() {
     );
     match poison_res {
         Err(LineageError::ImmuneTarget(msg)) => {
-            assert!(msg.contains("immune"), "Error must mention immunity: {}", msg);
+            assert!(
+                msg.contains("immune"),
+                "Error must mention immunity: {}",
+                msg
+            );
         }
         other => panic!("Expected Err(LineageError::ImmuneTarget), got {:?}", other),
     }
@@ -127,11 +140,7 @@ fn challenge_repository_and_system_immunity() {
             p
         );
 
-        let ingest_res = tracker.record_ingested_file(
-            "dev_session",
-            &p,
-            tool.as_bytes(),
-        );
+        let ingest_res = tracker.record_ingested_file("dev_session", &p, tool.as_bytes());
         let digest = ingest_res.expect("Recording developer binary should succeed");
 
         // Attempt to poison toolchain digest
@@ -143,7 +152,10 @@ fn challenge_repository_and_system_immunity() {
         );
         match poison_tool {
             Err(LineageError::ImmuneTarget(_)) => {}
-            other => panic!("Toolchain {:?} poisoning was not blocked! Got {:?}", tool, other),
+            other => panic!(
+                "Toolchain {:?} poisoning was not blocked! Got {:?}",
+                tool, other
+            ),
         }
         assert!(
             !tracker.is_poisoned_digest(&digest),
@@ -187,17 +199,16 @@ fn challenge_bounded_capacity_stress_exceeding_16384() {
     assert_eq!(tracker.max_capacity, 16_384);
 
     let test_count = 20_000usize;
-    println!("Beginning stress harness: inserting {} entries into bounded map...", test_count);
+    println!(
+        "Beginning stress harness: inserting {} entries into bounded map...",
+        test_count
+    );
 
     // 1. Stress poisoned_digests map
     for i in 0..test_count {
         let digest = format!("{:064x}", i);
-        let res = tracker.mark_digest_poisoned(
-            &digest,
-            "stress_session",
-            "bounded_stress_test",
-            1.0,
-        );
+        let res =
+            tracker.mark_digest_poisoned(&digest, "stress_session", "bounded_stress_test", 1.0);
         assert!(res.is_ok(), "Insertion {} should succeed without panic", i);
     }
 

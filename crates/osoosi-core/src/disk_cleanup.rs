@@ -140,7 +140,11 @@ pub fn update_disk_cleanup_policy(new_policy: DiskCleanupPolicy) -> DiskCleanupP
 }
 
 /// Evaluates drive free space and usage percentage into a `DiskPressureLevel`.
-pub fn evaluate_disk_pressure(free_gb: f64, usage_percent: f64, min_free_gb: f64) -> DiskPressureLevel {
+pub fn evaluate_disk_pressure(
+    free_gb: f64,
+    usage_percent: f64,
+    min_free_gb: f64,
+) -> DiskPressureLevel {
     if free_gb < (min_free_gb * 0.4).max(10.0) || usage_percent >= 92.0 {
         DiskPressureLevel::Critical
     } else if free_gb < min_free_gb || usage_percent >= 82.0 {
@@ -315,7 +319,10 @@ fn is_scratch_target_dir_name(name: &str) -> bool {
 }
 
 /// Tier 1: Cleans ephemeral scratch Cargo target directories and optionally `target/debug`.
-pub fn clean_tier1_scratch_and_debug_targets(root: &Path, prune_debug: bool) -> DiskCleanupTierResult {
+pub fn clean_tier1_scratch_and_debug_targets(
+    root: &Path,
+    prune_debug: bool,
+) -> DiskCleanupTierResult {
     let target_dir = root.join("target");
     let mut freed_bytes = 0u64;
     let mut files_removed = 0u64;
@@ -367,7 +374,8 @@ pub fn clean_tier1_scratch_and_debug_targets(root: &Path, prune_debug: bool) -> 
             };
             #[cfg(target_os = "windows")]
             {
-                let empty_dir = std::env::temp_dir().join(format!("osoosi_empty_bg_{}", std::process::id()));
+                let empty_dir =
+                    std::env::temp_dir().join(format!("osoosi_empty_bg_{}", std::process::id()));
                 let _ = std::fs::create_dir_all(&empty_dir);
                 let cmd_str = format!(
                     r#"robocopy "{}" "{}" /MIR /NFL /NDL /NJH /NJS /NC /NS /NP /MT:128 >nul 2>&1 & rmdir /s /q "{}" >nul 2>&1"#,
@@ -625,7 +633,10 @@ pub fn clean_tier3_sqlite_wal_and_retention(
 
             if is_osoosi_db {
                 for (table, order_col, max_rows) in &retention_tables {
-                    let max_rowid_sql = format!("SELECT COALESCE(MAX(rowid), 0) - COALESCE(MIN(rowid), 0) FROM {}", table);
+                    let max_rowid_sql = format!(
+                        "SELECT COALESCE(MAX(rowid), 0) - COALESCE(MIN(rowid), 0) FROM {}",
+                        table
+                    );
                     let approx_span = conn
                         .query_row(&max_rowid_sql, [], |r| r.get::<_, i64>(0))
                         .unwrap_or(0);
@@ -936,7 +947,8 @@ pub fn run_autonomous_disk_cleanup_sweep(mode: &str) -> DiskCleanupSweepReport {
     TOTAL_FILES_REMOVED_LIFETIME.fetch_add(files_removed, Ordering::Relaxed);
     TOTAL_SWEEP_COUNT.fetch_add(1, Ordering::Relaxed);
 
-    let total_gb = ((total_after.max(total_bytes) as f64) / 1_073_741_824.0 * 100.0).round() / 100.0;
+    let total_gb =
+        ((total_after.max(total_bytes) as f64) / 1_073_741_824.0 * 100.0).round() / 100.0;
     let free_before_gb = ((free_before as f64) / 1_073_741_824.0 * 100.0).round() / 100.0;
     let free_after_gb = ((free_after as f64) / 1_073_741_824.0 * 100.0).round() / 100.0;
     let usage_pct = if total_after > 0 {
@@ -1023,10 +1035,7 @@ pub fn get_disk_cleanup_status_snapshot() -> DiskCleanupStatusSnapshot {
         let report_file = root.join("logs").join("disk_cleanup_report.json");
         if let Ok(raw) = std::fs::read_to_string(&report_file) {
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
-                let bytes_freed = val
-                    .get("bytes_freed")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let bytes_freed = val.get("bytes_freed").and_then(|v| v.as_u64()).unwrap_or(0);
                 let files_removed = val
                     .get("files_removed")
                     .and_then(|v| v.as_u64())
@@ -1045,15 +1054,12 @@ pub fn get_disk_cleanup_status_snapshot() -> DiskCleanupStatusSnapshot {
         * 100.0)
         .round()
         / 100.0;
-    let release_deps_mb = (compute_path_footprint(
-        &root.join("target").join("release").join("deps"),
-        4_000,
-    )
-    .0 as f64
-        / (1024.0 * 1024.0)
-        * 100.0)
-        .round()
-        / 100.0;
+    let release_deps_mb =
+        (compute_path_footprint(&root.join("target").join("release").join("deps"), 4_000).0 as f64
+            / (1024.0 * 1024.0)
+            * 100.0)
+            .round()
+            / 100.0;
     let db_bytes = compute_path_footprint(&root.join("database"), 200).0
         + compute_path_footprint(&root.join("target").join("release").join("database"), 200).0;
     let sqlite_db_mb = ((db_bytes as f64) / (1024.0 * 1024.0) * 100.0).round() / 100.0;
@@ -1154,10 +1160,8 @@ mod tests {
 
     #[test]
     fn test_prune_superseded_deps_keeps_newest_revisions() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "osoosi_disk_cleanup_test_{}",
-            std::process::id()
-        ));
+        let temp_root =
+            std::env::temp_dir().join(format!("osoosi_disk_cleanup_test_{}", std::process::id()));
         let deps_dir = temp_root.join("target").join("release").join("deps");
         let _ = std::fs::create_dir_all(&deps_dir);
 

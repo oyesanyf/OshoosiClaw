@@ -9,9 +9,9 @@
 //!    database query, calls to `is_false_positive_pattern` for slow-path queries time out after ~5ms
 //!    and return Ok(false) rather than blocking HTTP endpoints or deadlocking.
 
+use osoosi_memory::MemoryStore;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use osoosi_memory::MemoryStore;
 
 /// Challenge 4A: Fast-path return for empty / None inputs without database queries.
 #[test]
@@ -22,7 +22,9 @@ fn challenge_memory_store_empty_inputs_fast_path() {
     for _ in 0..1000 {
         assert!(!mem.is_false_positive_pattern(None, None).unwrap());
         assert!(!mem.is_false_positive_pattern(Some(""), Some("")).unwrap());
-        assert!(!mem.is_false_positive_pattern(Some("   "), Some("   ")).unwrap());
+        assert!(!mem
+            .is_false_positive_pattern(Some("   "), Some("   "))
+            .unwrap());
     }
     let elapsed = t0.elapsed();
     let per_call_micros = elapsed.as_micros() / 3000;
@@ -50,7 +52,11 @@ fn challenge_memory_store_ide_allowlist_fast_path() {
     let t0 = Instant::now();
     for path in &ide_cases {
         let is_fp = mem.is_false_positive_pattern(Some(path), None).unwrap();
-        assert!(is_fp, "IDE path {:?} must match false positive pattern", path);
+        assert!(
+            is_fp,
+            "IDE path {:?} must match false positive pattern",
+            path
+        );
     }
     let elapsed = t0.elapsed();
     let avg_micros = elapsed.as_micros() / (ide_cases.len() as u128);
@@ -95,7 +101,9 @@ fn challenge_memory_store_lock_non_blocking_under_contention() {
 
     // 1. Empty strings: must return Ok(false) immediately (< 1ms) because it checks BEFORE acquiring lock
     let t_empty = Instant::now();
-    let res_empty = mem.is_false_positive_pattern(None, None).expect("Empty fast-path");
+    let res_empty = mem
+        .is_false_positive_pattern(None, None)
+        .expect("Empty fast-path");
     let dur_empty = t_empty.elapsed();
     assert!(!res_empty);
     assert!(
@@ -125,7 +133,10 @@ fn challenge_memory_store_lock_non_blocking_under_contention() {
     // without blocking for the full duration of the background query.
     let t_slow = Instant::now();
     let res_slow = mem
-        .is_false_positive_pattern(Some(r"C:\untrusted\suspicious_app.exe"), Some("fedcba0987654321"))
+        .is_false_positive_pattern(
+            Some(r"C:\untrusted\suspicious_app.exe"),
+            Some("fedcba0987654321"),
+        )
         .expect("Lock timeout fallback must return Ok(false)");
     let dur_slow = t_slow.elapsed();
 

@@ -66,7 +66,9 @@ pub fn verify_windows_confinement_invariants(
         return Err("Missing mandatory CREATE_SUSPENDED (0x00000004) flag".to_string());
     }
     if (policy.job_limit_flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE) == 0 {
-        return Err("Missing mandatory JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x00002000)".to_string());
+        return Err(
+            "Missing mandatory JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE (0x00002000)".to_string(),
+        );
     }
     if (policy.job_limit_flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS) == 0
         || policy.active_process_limit == 0
@@ -77,7 +79,9 @@ pub fn verify_windows_confinement_invariants(
         return Err("AppContainer capability SID isolation must be required".to_string());
     }
     if !policy.require_is_process_in_job_before_resume {
-        return Err("IsProcessInJob == TRUE verification before ResumeThread is mandatory".to_string());
+        return Err(
+            "IsProcessInJob == TRUE verification before ResumeThread is mandatory".to_string(),
+        );
     }
     if policy.allow_uncontained_fallback {
         return Err("Uncontained child process fallback is strictly prohibited".to_string());

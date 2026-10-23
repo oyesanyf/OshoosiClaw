@@ -247,7 +247,10 @@ impl HierarchicalRollupVerifier {
             return false;
         }
 
-        let tombstoned_guard = self.tombstoned_peers.read().unwrap_or_else(|e| e.into_inner());
+        let tombstoned_guard = self
+            .tombstoned_peers
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
 
         {
             let mut z_guard = self.zone_rollups.write().unwrap_or_else(|e| e.into_inner());
@@ -255,7 +258,10 @@ impl HierarchicalRollupVerifier {
         }
 
         {
-            let mut ind_guard = self.indicator_zones.write().unwrap_or_else(|e| e.into_inner());
+            let mut ind_guard = self
+                .indicator_zones
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             for digest in &rollup.indicator_digests {
                 let norm = digest.to_ascii_lowercase();
                 if tombstoned_guard.contains(&norm) {
@@ -272,9 +278,15 @@ impl HierarchicalRollupVerifier {
     }
 
     /// Evaluates the multi-zone enforcement stage of an indicator digest.
-    pub fn evaluate_indicator_stage(&self, indicator_blake3: &str) -> MeshIndicatorEnforcementStage {
+    pub fn evaluate_indicator_stage(
+        &self,
+        indicator_blake3: &str,
+    ) -> MeshIndicatorEnforcementStage {
         let norm = indicator_blake3.trim().to_ascii_lowercase();
-        let ind_guard = self.indicator_zones.read().unwrap_or_else(|e| e.into_inner());
+        let ind_guard = self
+            .indicator_zones
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
 
         if let Some(zones) = ind_guard.get(&norm) {
             let count = zones.len();
@@ -312,13 +324,19 @@ impl HierarchicalRollupVerifier {
         let peer_norm = proof.accused_peer_id.trim().to_ascii_lowercase();
 
         {
-            let mut tomb = self.tombstoned_peers.write().unwrap_or_else(|e| e.into_inner());
+            let mut tomb = self
+                .tombstoned_peers
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             tomb.insert(peer_norm);
             tomb.insert(target_norm.clone());
         }
 
         {
-            let mut ind_guard = self.indicator_zones.write().unwrap_or_else(|e| e.into_inner());
+            let mut ind_guard = self
+                .indicator_zones
+                .write()
+                .unwrap_or_else(|e| e.into_inner());
             ind_guard.remove(&target_norm);
         }
 
@@ -333,7 +351,10 @@ impl HierarchicalRollupVerifier {
     /// Checks if a peer has been tombstoned / slashed due to Byzantine activity.
     pub fn is_peer_tombstoned(&self, peer_id: &str) -> bool {
         let norm = peer_id.trim().to_ascii_lowercase();
-        let tomb = self.tombstoned_peers.read().unwrap_or_else(|e| e.into_inner());
+        let tomb = self
+            .tombstoned_peers
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         tomb.contains(&norm)
     }
 
@@ -344,12 +365,17 @@ impl HierarchicalRollupVerifier {
         let prev_global_root = chain_guard
             .last()
             .map(|b| b.global_state_root.clone())
-            .unwrap_or_else(|| "0000000000000000000000000000000000000000000000000000000000000000".to_string());
+            .unwrap_or_else(|| {
+                "0000000000000000000000000000000000000000000000000000000000000000".to_string()
+            });
         let block_height = chain_guard.len() as u64 + 1;
 
         // 1. Zone Roots Merkle Root
         let zone_guard = self.zone_rollups.read().unwrap_or_else(|e| e.into_inner());
-        let mut zone_roots: Vec<String> = zone_guard.values().map(|z| z.zone_merkle_root.clone()).collect();
+        let mut zone_roots: Vec<String> = zone_guard
+            .values()
+            .map(|z| z.zone_merkle_root.clone())
+            .collect();
         zone_roots.sort();
         let mut zr_hasher = blake3::Hasher::new();
         zr_hasher.update(b"GLOBAL_ZONE_ROOTS_MERKLE_V1:\n");
@@ -360,11 +386,15 @@ impl HierarchicalRollupVerifier {
         let zone_roots_merkle_root = zr_hasher.finalize().to_hex().to_string();
 
         let participating_zones = zone_guard.len();
-        let total_attested_endpoints: u32 = zone_guard.values().map(|z| z.participating_nodes).sum();
+        let total_attested_endpoints: u32 =
+            zone_guard.values().map(|z| z.participating_nodes).sum();
         drop(zone_guard);
 
         // 2. Finalized / Enforced Indicators Merkle Root
-        let ind_guard = self.indicator_zones.read().unwrap_or_else(|e| e.into_inner());
+        let ind_guard = self
+            .indicator_zones
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let mut finalized_indicators: Vec<String> = ind_guard
             .iter()
             .filter(|(_, zones)| zones.len() >= self.min_corroborating_zones)
@@ -392,7 +422,10 @@ impl HierarchicalRollupVerifier {
         drop(proofs_guard);
 
         // 4. Slashed Peers Merkle Root
-        let tomb_guard = self.tombstoned_peers.read().unwrap_or_else(|e| e.into_inner());
+        let tomb_guard = self
+            .tombstoned_peers
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let mut tombstoned_peers: Vec<String> = tomb_guard.iter().cloned().collect();
         tombstoned_peers.sort();
         let mut sp_hasher = blake3::Hasher::new();
@@ -418,7 +451,10 @@ impl HierarchicalRollupVerifier {
 
         // 6. Post-Quantum ML-DSA-65 + Ed25519 Signature
         let signing_seed = *blake3::hash(b"GLOBAL_IMMUNITY_BLOCK_PQC_SIGNING_SEED_V1").as_bytes();
-        let pqc_sig_bytes = osoosi_audit::pqc_primitives::hybrid_sign_bytes(global_state_root.as_bytes(), &signing_seed);
+        let pqc_sig_bytes = osoosi_audit::pqc_primitives::hybrid_sign_bytes(
+            global_state_root.as_bytes(),
+            &signing_seed,
+        );
         let pqc_signature_hex = hex::encode(&pqc_sig_bytes);
 
         let block = GlobalImmunityBlock {
@@ -443,7 +479,10 @@ impl HierarchicalRollupVerifier {
     }
 
     /// Generates a compact O(log N) binary Merkle inclusion proof for a finalized indicator.
-    pub fn generate_light_client_proof(&self, indicator_blake3: &str) -> Option<LightClientInclusionProof> {
+    pub fn generate_light_client_proof(
+        &self,
+        indicator_blake3: &str,
+    ) -> Option<LightClientInclusionProof> {
         let norm = indicator_blake3.trim().to_ascii_lowercase();
 
         let block = {
@@ -452,7 +491,10 @@ impl HierarchicalRollupVerifier {
         }
         .unwrap_or_else(|| self.seal_global_immunity_block());
 
-        let idx = block.finalized_indicators.iter().position(|ind| ind == &norm)?;
+        let idx = block
+            .finalized_indicators
+            .iter()
+            .position(|ind| ind == &norm)?;
         let leaves = &block.finalized_indicators;
 
         if leaves.is_empty() {
@@ -539,14 +581,20 @@ impl HierarchicalRollupVerifier {
             .collect();
         drop(z_guard);
 
-        let ind_guard = self.indicator_zones.read().unwrap_or_else(|e| e.into_inner());
+        let ind_guard = self
+            .indicator_zones
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let enforced_count = ind_guard
             .values()
             .filter(|zones| zones.len() >= self.min_corroborating_zones)
             .count();
         drop(ind_guard);
 
-        let tomb_guard = self.tombstoned_peers.read().unwrap_or_else(|e| e.into_inner());
+        let tomb_guard = self
+            .tombstoned_peers
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         let tombstoned_peers: Vec<String> = tomb_guard.iter().cloned().collect();
         let tombstoned_count = tombstoned_peers.len();
         drop(tomb_guard);
@@ -651,13 +699,33 @@ impl HierarchicalRollupVerifier {
                 ("MEASURED", "REAL_ENDPOINT_EXECUTION", 90.84, 94.58)
             }
         } else if n_nodes <= 10 {
-            ("MODEL_PREDICTED", "CALIBRATED_DISCRETE_EVENT_SIMULATION", 98.42, 99.71)
+            (
+                "MODEL_PREDICTED",
+                "CALIBRATED_DISCRETE_EVENT_SIMULATION",
+                98.42,
+                99.71,
+            )
         } else if n_nodes <= 1_000 {
-            ("MODEL_PREDICTED", "CALIBRATED_DISCRETE_EVENT_SIMULATION", 99.88, 99.98)
+            (
+                "MODEL_PREDICTED",
+                "CALIBRATED_DISCRETE_EVENT_SIMULATION",
+                99.88,
+                99.98,
+            )
         } else if n_nodes <= 100_000 {
-            ("THEORETICAL", "UNVALIDATED_ASYMPTOTIC_PROJECTION", 99.91, 99.97)
+            (
+                "THEORETICAL",
+                "UNVALIDATED_ASYMPTOTIC_PROJECTION",
+                99.91,
+                99.97,
+            )
         } else {
-            ("THEORETICAL", "UNVALIDATED_ASYMPTOTIC_PROJECTION", 99.92, 99.98)
+            (
+                "THEORETICAL",
+                "UNVALIDATED_ASYMPTOTIC_PROJECTION",
+                99.92,
+                99.98,
+            )
         };
 
         MeshEffectivenessMetrics {
@@ -817,7 +885,9 @@ mod tests {
             zone_id: "zone-us-east".to_string(),
             epoch: 1,
             prev_zone_merkle_root: String::new(),
-            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[test_indicator.to_string()]),
+            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                test_indicator.to_string(),
+            ]),
             indicator_digests: vec![test_indicator.to_string()],
             participating_nodes: 500,
             bft_stake_ratio: 0.85,
@@ -831,7 +901,9 @@ mod tests {
             zone_id: "zone-us-east".to_string(),
             epoch: 1,
             prev_zone_merkle_root: String::new(),
-            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[test_indicator.to_string()]),
+            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                test_indicator.to_string(),
+            ]),
             indicator_digests: vec![test_indicator.to_string()],
             participating_nodes: 500,
             bft_stake_ratio: 0.50,
@@ -845,7 +917,9 @@ mod tests {
             zone_id: "zone-us-east".to_string(),
             epoch: 1,
             prev_zone_merkle_root: String::new(),
-            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[test_indicator.to_string()]),
+            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                test_indicator.to_string(),
+            ]),
             indicator_digests: vec![test_indicator.to_string()],
             participating_nodes: 500,
             bft_stake_ratio: 0.75,
@@ -859,7 +933,9 @@ mod tests {
             zone_id: "zone-us-east".to_string(),
             epoch: 1,
             prev_zone_merkle_root: String::new(),
-            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[test_indicator.to_string()]),
+            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                test_indicator.to_string(),
+            ]),
             indicator_digests: vec![test_indicator.to_string()],
             participating_nodes: 500,
             bft_stake_ratio: 0.85,
@@ -880,7 +956,9 @@ mod tests {
             zone_id: "zone-eu-west".to_string(),
             epoch: 1,
             prev_zone_merkle_root: String::new(),
-            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[test_indicator.to_string()]),
+            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                test_indicator.to_string(),
+            ]),
             indicator_digests: vec![test_indicator.to_string()],
             participating_nodes: 600,
             bft_stake_ratio: 0.90,
@@ -901,7 +979,9 @@ mod tests {
             zone_id: "zone-ap-southeast".to_string(),
             epoch: 1,
             prev_zone_merkle_root: String::new(),
-            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[test_indicator.to_string()]),
+            zone_merkle_root: HierarchicalRollupVerifier::compute_zone_merkle_root(&[
+                test_indicator.to_string(),
+            ]),
             indicator_digests: vec![test_indicator.to_string()],
             participating_nodes: 450,
             bft_stake_ratio: 0.80,
@@ -921,16 +1001,23 @@ mod tests {
         let block1 = verifier.seal_global_immunity_block();
         assert_eq!(block1.block_height, 1);
         assert!(!block1.global_state_root.is_empty());
-        assert_eq!(block1.finalized_indicators, vec![test_indicator.to_string()]);
+        assert_eq!(
+            block1.finalized_indicators,
+            vec![test_indicator.to_string()]
+        );
 
         let block2 = verifier.seal_global_immunity_block();
         assert_eq!(block2.block_height, 2);
         assert_eq!(block2.prev_global_root, block1.global_state_root);
 
         // 8. Light-client proof generation and O(1) verification
-        let light_proof = verifier.generate_light_client_proof(test_indicator).expect("Light client proof must exist");
+        let light_proof = verifier
+            .generate_light_client_proof(test_indicator)
+            .expect("Light client proof must exist");
         assert_eq!(light_proof.leaf_digest, test_indicator);
-        assert!(HierarchicalRollupVerifier::verify_light_client_proof(&light_proof));
+        assert!(HierarchicalRollupVerifier::verify_light_client_proof(
+            &light_proof
+        ));
 
         // 9. Fraud proof submission: tombstones peer and revokes indicator
         let fraud_proof = ByzantineKillSwitchFraudProof {
@@ -1043,10 +1130,26 @@ mod tests {
         assert_eq!(p1m.e_ci95_high_pct, 99.98);
 
         // Verify JSON curve generation and alignment array
-        let curve = HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 1.0, 2.0);
+        let curve =
+            HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(1_000_000, 1.0, 2.0);
         assert_eq!(curve["status"], "ok");
-        assert_eq!(curve["scale_table"].as_array().map(|a| a.len()).unwrap_or(0), 5);
-        assert_eq!(curve["nist_vassilev_alignment_proof"].as_array().map(|a| a.len()).unwrap_or(0), 5);
-        assert_eq!(curve["asymptotic_ceiling"], "lim_{N -> inf} E(N, t) = 1 - p_corr = 99.9500%");
+        assert_eq!(
+            curve["scale_table"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0),
+            5
+        );
+        assert_eq!(
+            curve["nist_vassilev_alignment_proof"]
+                .as_array()
+                .map(|a| a.len())
+                .unwrap_or(0),
+            5
+        );
+        assert_eq!(
+            curve["asymptotic_ceiling"],
+            "lim_{N -> inf} E(N, t) = 1 - p_corr = 99.9500%"
+        );
     }
 }

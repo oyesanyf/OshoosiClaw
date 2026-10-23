@@ -343,10 +343,8 @@ impl SiqueryEngine {
             !is_pragma && (is_metadata || lower.contains("hierarchical_merkle_anchors"));
         let need_kernel_conservation =
             !is_pragma && (is_metadata || lower.contains("kernel_object_conservation"));
-        let need_vcdb_incidents =
-            !is_pragma && (is_metadata || lower.contains("vcdb_incidents"));
-        let need_drift_traces =
-            !is_pragma && (is_metadata || lower.contains("agent_drift_traces"));
+        let need_vcdb_incidents = !is_pragma && (is_metadata || lower.contains("vcdb_incidents"));
+        let need_drift_traces = !is_pragma && (is_metadata || lower.contains("agent_drift_traces"));
 
         let any_table_needed = need_processes
             || need_sockets
@@ -1026,7 +1024,6 @@ impl SiqueryEngine {
 
         deduped
     }
-
 
     /// Displays the schema of a specific table using PRAGMA table_info formatted as an ASCII box table.
     pub fn get_table_schema(&self, table: &str) -> Result<String, String> {
@@ -4567,7 +4564,11 @@ impl SiqueryEngine {
             if user_data_dir.join("History").exists() {
                 let key = user_data_dir.to_string_lossy().to_ascii_lowercase();
                 if seen_dirs.insert(key) {
-                    profiles.push((browser.to_string(), "Default".to_string(), user_data_dir.to_path_buf()));
+                    profiles.push((
+                        browser.to_string(),
+                        "Default".to_string(),
+                        user_data_dir.to_path_buf(),
+                    ));
                 }
             }
 
@@ -4706,38 +4707,43 @@ impl SiqueryEngine {
         let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
         let user_dirs = Self::get_user_local_appdata_dirs();
 
-        let mut register_gecko_profiles_dir = |browser: &str, profiles_container: &std::path::Path| {
-            if !profiles_container.exists() || !profiles_container.is_dir() {
-                return;
-            }
-
-            // Check if profiles_container itself contains places.sqlite
-            if profiles_container.join("places.sqlite").exists() {
-                let key = profiles_container.to_string_lossy().to_ascii_lowercase();
-                if seen_dirs.insert(key) {
-                    let pname = profiles_container
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("Default")
-                        .to_string();
-                    profiles.push((browser.to_string(), pname, profiles_container.to_path_buf()));
+        let mut register_gecko_profiles_dir =
+            |browser: &str, profiles_container: &std::path::Path| {
+                if !profiles_container.exists() || !profiles_container.is_dir() {
+                    return;
                 }
-            }
 
-            // Check subdirectories for places.sqlite
-            if let Ok(entries) = std::fs::read_dir(profiles_container) {
-                for entry in entries.filter_map(|e| e.ok()) {
-                    let p = entry.path();
-                    if p.is_dir() && p.join("places.sqlite").exists() {
-                        let key = p.to_string_lossy().to_ascii_lowercase();
-                        if seen_dirs.insert(key) {
-                            let pname = entry.file_name().to_string_lossy().to_string();
-                            profiles.push((browser.to_string(), pname, p));
+                // Check if profiles_container itself contains places.sqlite
+                if profiles_container.join("places.sqlite").exists() {
+                    let key = profiles_container.to_string_lossy().to_ascii_lowercase();
+                    if seen_dirs.insert(key) {
+                        let pname = profiles_container
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("Default")
+                            .to_string();
+                        profiles.push((
+                            browser.to_string(),
+                            pname,
+                            profiles_container.to_path_buf(),
+                        ));
+                    }
+                }
+
+                // Check subdirectories for places.sqlite
+                if let Ok(entries) = std::fs::read_dir(profiles_container) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let p = entry.path();
+                        if p.is_dir() && p.join("places.sqlite").exists() {
+                            let key = p.to_string_lossy().to_ascii_lowercase();
+                            if seen_dirs.insert(key) {
+                                let pname = entry.file_name().to_string_lossy().to_string();
+                                profiles.push((browser.to_string(), pname, p));
+                            }
                         }
                     }
                 }
-            }
-        };
+            };
 
         for (_user, base_dir) in &user_dirs {
             let roaming_dir = base_dir.parent().map(|p| p.join("Roaming"));
@@ -4799,7 +4805,8 @@ impl SiqueryEngine {
                                 }
 
                                 // Portable / Tor Browser layout: <dir>/Browser/TorBrowser/Data/Browser
-                                let portable_data = path2.join("TorBrowser").join("Data").join("Browser");
+                                let portable_data =
+                                    path2.join("TorBrowser").join("Data").join("Browser");
                                 if portable_data.is_dir() {
                                     register_gecko_profiles_dir(&clean_name1, &portable_data);
                                 }
@@ -4816,7 +4823,10 @@ impl SiqueryEngine {
     /// Classifies whether an endpoint belongs to local loopback / RFC 1918 private space
     /// or a verified BGP Autonomous System Number (ASN) CIDR range using IP address math
     /// and dynamic socket address resolution.
-    pub fn classify_trusted_asn_or_local_endpoint(host: &str, server_ip: &str) -> Option<&'static str> {
+    pub fn classify_trusted_asn_or_local_endpoint(
+        host: &str,
+        server_ip: &str,
+    ) -> Option<&'static str> {
         let h_low = host
             .trim()
             .trim_start_matches('[')
@@ -4882,12 +4892,7 @@ impl SiqueryEngine {
                 return Some("ASN8075:Microsoft-Azure");
             }
             // AS14618 / AS54113 (151.101.0.0/16, 18.0.0.0/8, 54.0.0.0/8, 3.0.0.0/8, 52.0.0.0/10)
-            if (a == 151 && b == 101)
-                || a == 18
-                || a == 54
-                || a == 3
-                || (a == 52 && b < 96)
-            {
+            if (a == 151 && b == 101) || a == 18 || a == 54 || a == 3 || (a == 52 && b < 96) {
                 return Some("ASN14618:AWS-Fastly-Infra");
             }
             None
@@ -5558,7 +5563,11 @@ impl SiqueryEngine {
             if !history_file.exists() {
                 continue;
             }
-            let temp_name = format!("osoosi_har_hist_{}_{}.db", browser.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_name = format!(
+                "osoosi_har_hist_{}_{}.db",
+                browser.replace(' ', "_"),
+                uuid::Uuid::new_v4()
+            );
             let temp_path = std::env::temp_dir().join(temp_name);
             if Self::copy_sqlite_with_wal(&history_file, &temp_path) {
                 if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
@@ -5681,7 +5690,11 @@ impl SiqueryEngine {
             if !places_file.exists() {
                 continue;
             }
-            let temp_name = format!("osoosi_har_gecko_{}_{}.db", browser.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_name = format!(
+                "osoosi_har_gecko_{}_{}.db",
+                browser.replace(' ', "_"),
+                uuid::Uuid::new_v4()
+            );
             let temp_path = std::env::temp_dir().join(temp_name);
             if Self::copy_sqlite_with_wal(&places_file, &temp_path) {
                 if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
@@ -5793,12 +5806,43 @@ impl SiqueryEngine {
             fn is_browser_process_name(pname: &str) -> bool {
                 let lower = pname.to_ascii_lowercase();
                 let browser_keywords = [
-                    "chrome", "msedge", "brave", "firefox", "opera", "vivaldi", "arc", "comet",
-                    "zen", "waterfox", "librewolf", "floorp", "palemoon", "basilisk", "seamonkey",
-                    "tor", "mullvad", "duckduckgo", "yandex", "whale", "thorium", "chromium",
-                    "maxthon", "centbrowser", "epic", "avastbrowser", "avgbrowser", "ccleanerbrowser",
-                    "sidekick", "wavebox", "island", "slimjet", "iron", "falkon", "safari",
-                    "msedgewebview2", "webview2",
+                    "chrome",
+                    "msedge",
+                    "brave",
+                    "firefox",
+                    "opera",
+                    "vivaldi",
+                    "arc",
+                    "comet",
+                    "zen",
+                    "waterfox",
+                    "librewolf",
+                    "floorp",
+                    "palemoon",
+                    "basilisk",
+                    "seamonkey",
+                    "tor",
+                    "mullvad",
+                    "duckduckgo",
+                    "yandex",
+                    "whale",
+                    "thorium",
+                    "chromium",
+                    "maxthon",
+                    "centbrowser",
+                    "epic",
+                    "avastbrowser",
+                    "avgbrowser",
+                    "ccleanerbrowser",
+                    "sidekick",
+                    "wavebox",
+                    "island",
+                    "slimjet",
+                    "iron",
+                    "falkon",
+                    "safari",
+                    "msedgewebview2",
+                    "webview2",
                 ];
                 browser_keywords.iter().any(|k| lower.contains(k))
             }
@@ -5823,7 +5867,10 @@ impl SiqueryEngine {
                             if let Some(n) = tr.split(':').nth(1) {
                                 cur_name = n.trim().to_string();
                             }
-                        } else if (tr.starts_with("A (Host) Record") || tr.starts_with("AAAA Record")) && !cur_name.is_empty() {
+                        } else if (tr.starts_with("A (Host) Record")
+                            || tr.starts_with("AAAA Record"))
+                            && !cur_name.is_empty()
+                        {
                             if let Some(d) = tr.split(':').nth(1) {
                                 let ip = d.trim().to_string();
                                 if !ip.is_empty() {
@@ -5844,7 +5891,9 @@ impl SiqueryEngine {
                 proc_map.insert(pid.as_u32(), format!("{}", process.name()));
             }
 
-            let candidate_ports = [80, 443, 8000, 8080, 8443, 8888, 3000, 3030, 5000, 5173, 9000, 11434];
+            let candidate_ports = [
+                80, 443, 8000, 8080, 8443, 8888, 3000, 3030, 5000, 5173, 9000, 11434,
+            ];
 
             // Ingest IPv4 TCP sockets (mapped with distinct TCP/TLS transport metadata rather than synthetic HTTP CONNECT + octet-stream)
             let tcp4 = get_tcp_ipv4_table();
@@ -5852,7 +5901,9 @@ impl SiqueryEngine {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
                 let local_port = u16::from_be(row.dwLocalPort as u16);
                 let proc_name = proc_map.get(&(row.dwOwningPid as u32));
-                let is_browser = proc_name.map(|pn| is_browser_process_name(pn)).unwrap_or(false);
+                let is_browser = proc_name
+                    .map(|pn| is_browser_process_name(pn))
+                    .unwrap_or(false);
 
                 let web_port = if candidate_ports.contains(&remote_port) {
                     remote_port
@@ -5868,7 +5919,10 @@ impl SiqueryEngine {
                 if remote_ip == "0.0.0.0" {
                     continue;
                 }
-                let host = dns_map.get(&remote_ip).cloned().unwrap_or_else(|| remote_ip.clone());
+                let host = dns_map
+                    .get(&remote_ip)
+                    .cloned()
+                    .unwrap_or_else(|| remote_ip.clone());
                 let source_file = match proc_name {
                     Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
                     _ => "active_socket:tcp".to_string(),
@@ -5932,7 +5986,9 @@ impl SiqueryEngine {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
                 let local_port = u16::from_be(row.dwLocalPort as u16);
                 let proc_name = proc_map.get(&(row.dwOwningPid as u32));
-                let is_browser = proc_name.map(|pn| is_browser_process_name(pn)).unwrap_or(false);
+                let is_browser = proc_name
+                    .map(|pn| is_browser_process_name(pn))
+                    .unwrap_or(false);
 
                 let web_port = if candidate_ports.contains(&remote_port) {
                     remote_port
@@ -5948,7 +6004,10 @@ impl SiqueryEngine {
                 if remote_ip == "::" || remote_ip == "0000:0000:0000:0000:0000:0000:0000:0000" {
                     continue;
                 }
-                let host = dns_map.get(&remote_ip).cloned().unwrap_or_else(|| remote_ip.clone());
+                let host = dns_map
+                    .get(&remote_ip)
+                    .cloned()
+                    .unwrap_or_else(|| remote_ip.clone());
                 let source_file = match proc_name {
                     Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
                     _ => "active_socket:tcp6".to_string(),
@@ -7782,7 +7841,8 @@ impl SiqueryEngine {
                 }
                 if let Ok(fw) = hklm.get_value::<String, _>("TaskFirmwareVersion") {
                     manufacturer_version = fw;
-                } else if let Ok(fw) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision") {
+                } else if let Ok(fw) = hklm.get_value::<String, _>("FirmwareVersionAtLastProvision")
+                {
                     manufacturer_version = fw;
                 }
                 if let Ok(att) = hklm.get_value::<u32, _>("TaskReadyForAttestation") {
@@ -7812,7 +7872,9 @@ impl SiqueryEngine {
 
         #[cfg(target_os = "linux")]
         {
-            if std::path::Path::new("/dev/tpmrm0").exists() || std::path::Path::new("/dev/tpm0").exists() {
+            if std::path::Path::new("/dev/tpmrm0").exists()
+                || std::path::Path::new("/dev/tpm0").exists()
+            {
                 tpm_present = 1;
                 tpm_ready = 1;
                 spec_version = "2.0".to_string();
@@ -7820,7 +7882,8 @@ impl SiqueryEngine {
                 activated = "1".to_string();
                 owned = "1".to_string();
                 device_id = "/dev/tpm0".to_string();
-                if let Ok(desc) = std::fs::read_to_string("/sys/class/tpm/tpm0/device/description") {
+                if let Ok(desc) = std::fs::read_to_string("/sys/class/tpm/tpm0/device/description")
+                {
                     let d = desc.trim();
                     if !d.is_empty() {
                         manufacturer_name = d.to_string();
@@ -8374,7 +8437,10 @@ impl SiqueryEngine {
         for inc in &catalog.incidents {
             let data_variety = &inc.attribute.confidentiality.data_variety;
             let (breach_prob, prior_score) = if let Some(prior) = priors.get(data_variety) {
-                (prior.conditional_breach_probability, prior.redactx_openjev_prior_score)
+                (
+                    prior.conditional_breach_probability,
+                    prior.redactx_openjev_prior_score,
+                )
             } else {
                 (0.50, 3.0)
             };
@@ -8393,15 +8459,23 @@ impl SiqueryEngine {
                     &inc.action.variety,
                     &inc.asset.variety,
                     data_variety,
-                    &format!("{} {}", inc.timeline.discovery_value, inc.timeline.discovery_unit),
-                    &format!("{} {}", inc.timeline.containment_value, inc.timeline.containment_unit),
+                    &format!(
+                        "{} {}",
+                        inc.timeline.discovery_value, inc.timeline.discovery_unit
+                    ),
+                    &format!(
+                        "{} {}",
+                        inc.timeline.containment_value, inc.timeline.containment_unit
+                    ),
                     &mitre_json,
                     &owasp_json,
                     &inc.oshoosi_enforcement_plane,
                     breach_prob,
                     prior_score,
                 ])
-                .map_err(|e| format!("Failed to insert vcdb incident {}: {}", inc.incident_id, e))?;
+                .map_err(|e| {
+                    format!("Failed to insert vcdb incident {}: {}", inc.incident_id, e)
+                })?;
         }
 
         Ok(())
@@ -9537,12 +9611,18 @@ mod tests {
     fn test_collect_live_har_entries_fast() {
         let engine = SiqueryEngine::new();
         let entries = engine.collect_live_har_entries_fast(25);
-        assert!(!entries.is_empty(), "collect_live_har_entries_fast must return entries");
+        assert!(
+            !entries.is_empty(),
+            "collect_live_har_entries_fast must return entries"
+        );
         for entry in &entries {
             assert!(entry.get("method").is_some(), "Entry must contain method");
             assert!(entry.get("url").is_some(), "Entry must contain url");
             assert!(entry.get("verdict").is_some(), "Entry must contain verdict");
-            assert!(entry.get("risk_score").is_some(), "Entry must contain risk_score");
+            assert!(
+                entry.get("risk_score").is_some(),
+                "Entry must contain risk_score"
+            );
         }
     }
 

@@ -691,7 +691,8 @@ mod tests {
             "tool_call: execute_command (cmd: whoami /priv, elevate: true)".to_string(),
             "SELECT * FROM users WHERE admin = 1; -- drop table sensitive_info".to_string(),
             "Unicode test: Ọ̀ṣọ́ọ̀sì 狩人の神 🛡️ 🚀 12345 !@#$%^&*()".to_string(),
-            "Very long text repeating words to test token count scaling and saturation. ".repeat(20),
+            "Very long text repeating words to test token count scaling and saturation. "
+                .repeat(20),
         ];
 
         for text in &test_cases {
@@ -785,7 +786,8 @@ mod tests {
                     let clusters = engine_clone.get_threat_clusters();
                     assert!(!clusters.is_empty(), "Threat clusters must not be empty");
 
-                    let similarities = engine_clone.evaluate_similarity_against_centroids(&query_vec);
+                    let similarities =
+                        engine_clone.evaluate_similarity_against_centroids(&query_vec);
                     assert!(!similarities.is_empty());
 
                     // Verify results are sorted descending
@@ -811,6 +813,8 @@ mod tests {
         let final_clusters = engine.get_threat_clusters();
         assert!(final_clusters.len() >= 5);
         let cluster_names: Vec<String> = final_clusters.into_iter().map(|(k, _)| k).collect();
-        assert!(cluster_names.iter().any(|n| n.starts_with("Adversarial-Cluster-")));
+        assert!(cluster_names
+            .iter()
+            .any(|n| n.starts_with("Adversarial-Cluster-")));
     }
 }

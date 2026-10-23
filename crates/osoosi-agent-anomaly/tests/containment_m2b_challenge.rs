@@ -7,17 +7,15 @@
 //! 3. Tainted Session Forced Caging: `SessionTaintState` taint marking enforces `force_canary_cage = true`.
 //! 4. DiracDeltaCapabilityTicket: Bound canary trap metadata and atomic single-use zero-standing privilege enforcement.
 
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 use chrono::Utc;
 use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use osoosi_agent_anomaly::agentjacking_guard::{
     AgentjackingGuard, AgentjackingPhase, SessionTaintState,
 };
-use osoosi_agent_anomaly::containment_ring::{
-    AgentContainmentRing, DiracDeltaCapabilityTicket,
-};
+use osoosi_agent_anomaly::containment_ring::{AgentContainmentRing, DiracDeltaCapabilityTicket};
 use osoosi_agent_anomaly::file_lineage::FileLineageTracker;
 use osoosi_agent_anomaly::types::ToolCallTelemetry;
 use osoosi_types::resolve_project_root;
@@ -35,7 +33,12 @@ fn create_temp_test_file(prefix: &str, content: &[u8]) -> PathBuf {
 }
 
 /// Helper to build test ToolCallTelemetry
-fn build_telemetry(session_id: &str, agent_id: &str, tool_name: &str, params: serde_json::Value) -> ToolCallTelemetry {
+fn build_telemetry(
+    session_id: &str,
+    agent_id: &str,
+    tool_name: &str,
+    params: serde_json::Value,
+) -> ToolCallTelemetry {
     ToolCallTelemetry {
         session_id: session_id.to_string(),
         agent_id: agent_id.to_string(),
@@ -63,7 +66,12 @@ fn challenge_pre_tool_lineage_veto() {
     let poisoned_file = create_temp_test_file("malicious_doc", b"EXFILTRATE_ENV_VARS_VIA_WEBHOOK");
     let digest = FileLineageTracker::compute_file_blake3(&poisoned_file).expect("Compute BLAKE3");
     tracker
-        .mark_digest_poisoned(&digest, "session-adv-1", "Adversarial prompt injection", 1.0)
+        .mark_digest_poisoned(
+            &digest,
+            "session-adv-1",
+            "Adversarial prompt injection",
+            1.0,
+        )
         .expect("Poisoning non-immune digest must succeed");
 
     assert!(tracker.is_poisoned_digest(&digest));
@@ -75,7 +83,8 @@ fn challenge_pre_tool_lineage_veto() {
         "read_document",
         json!({"file_path": poisoned_file.to_string_lossy().to_string()}),
     );
-    let ticket1 = DiracDeltaCapabilityTicket::issue("agent-infiltrator", "read_document", 1, 10_000_000_000);
+    let ticket1 =
+        DiracDeltaCapabilityTicket::issue("agent-infiltrator", "read_document", 1, 10_000_000_000);
     let mut closure_ran = false;
     let res = ring.execute_contained_tool(&tel_path, &ticket1, &tracker, || {
         closure_ran = true;
@@ -109,15 +118,22 @@ fn challenge_pre_tool_lineage_veto() {
             }
         }),
     );
-    let ticket2 = DiracDeltaCapabilityTicket::issue("agent-infiltrator", "analyze_hash", 1, 10_000_000_000);
+    let ticket2 =
+        DiracDeltaCapabilityTicket::issue("agent-infiltrator", "analyze_hash", 1, 10_000_000_000);
     let mut nested_ran = false;
     let res_nested = ring.execute_contained_tool(&tel_nested, &ticket2, &tracker, || {
         nested_ran = true;
         "NESTED_UNAUTHORIZED"
     });
 
-    assert!(res_nested.is_err(), "Nested poisoned digest must trigger veto");
-    assert!(!nested_ran, "Tool closure must NOT run on nested poisoned digest");
+    assert!(
+        res_nested.is_err(),
+        "Nested poisoned digest must trigger veto"
+    );
+    assert!(
+        !nested_ran,
+        "Tool closure must NOT run on nested poisoned digest"
+    );
     let nested_err = res_nested.unwrap_err();
     assert!(
         nested_err.contains("[ContainmentRing-Lineage-Veto]"),
@@ -139,17 +155,25 @@ fn challenge_repository_path_immunity() {
 
     let root = resolve_project_root().expect("Resolve project root");
     let cargo_toml = root.join("Cargo.toml");
-    let lib_rs = root.join("crates").join("osoosi-agent-anomaly").join("src").join("lib.rs");
+    let lib_rs = root
+        .join("crates")
+        .join("osoosi-agent-anomaly")
+        .join("src")
+        .join("lib.rs");
 
     assert!(cargo_toml.exists(), "Cargo.toml must exist");
     assert!(lib_rs.exists(), "lib.rs must exist");
 
     // Verify tracker returns is_path_immune = true
-    assert!(tracker.is_path_immune(&cargo_toml), "Cargo.toml must be immune");
+    assert!(
+        tracker.is_path_immune(&cargo_toml),
+        "Cargo.toml must be immune"
+    );
     assert!(tracker.is_path_immune(&lib_rs), "lib.rs must be immune");
 
     // Compute Cargo.toml BLAKE3 hash
-    let cargo_hash = FileLineageTracker::compute_file_blake3(&cargo_toml).expect("Cargo.toml BLAKE3");
+    let cargo_hash =
+        FileLineageTracker::compute_file_blake3(&cargo_toml).expect("Cargo.toml BLAKE3");
 
     // Adversarial scenario: An external source poisons the exact hash of Cargo.toml before
     // Cargo.toml was ingested into the tracker's known_paths map.
@@ -159,8 +183,14 @@ fn challenge_repository_path_immunity() {
         "Poison attack targeting build file digest",
         1.0,
     );
-    assert!(poison_res.is_ok(), "Digest poisoning should register in tracker");
-    assert!(tracker.is_poisoned_digest(&cargo_hash), "Hash is poisoned in poisoned_digests");
+    assert!(
+        poison_res.is_ok(),
+        "Digest poisoning should register in tracker"
+    );
+    assert!(
+        tracker.is_poisoned_digest(&cargo_hash),
+        "Hash is poisoned in poisoned_digests"
+    );
 
     // Verify execute_contained_tool still SUCCEEDS because is_path_immune is checked first!
     let tel_immune = build_telemetry(
@@ -169,20 +199,36 @@ fn challenge_repository_path_immunity() {
         "read_build_manifest",
         json!({"path": cargo_toml.to_string_lossy().to_string()}),
     );
-    let ticket = DiracDeltaCapabilityTicket::issue("agent-developer", "read_build_manifest", 1, 10_000_000_000);
+    let ticket = DiracDeltaCapabilityTicket::issue(
+        "agent-developer",
+        "read_build_manifest",
+        1,
+        10_000_000_000,
+    );
     let mut executed = false;
     let res = ring.execute_contained_tool(&tel_immune, &ticket, &tracker, || {
         executed = true;
         "CARGO_TOML_CONTENT_ALLOWED"
     });
 
-    assert!(res.is_ok(), "Immune path must NOT be vetoed even if its hash is present in poisoned_digests");
-    assert!(executed, "Tool closure must execute for immune repository path");
+    assert!(
+        res.is_ok(),
+        "Immune path must NOT be vetoed even if its hash is present in poisoned_digests"
+    );
+    assert!(
+        executed,
+        "Tool closure must execute for immune repository path"
+    );
     assert_eq!(res.unwrap(), "CARGO_TOML_CONTENT_ALLOWED");
 
     // Verify same behavior for library source file
     let lib_hash = FileLineageTracker::compute_file_blake3(&lib_rs).expect("lib.rs BLAKE3");
-    let _ = tracker.mark_digest_poisoned(&lib_hash, "swarm_external_adversary", "Targeting lib.rs", 1.0);
+    let _ = tracker.mark_digest_poisoned(
+        &lib_hash,
+        "swarm_external_adversary",
+        "Targeting lib.rs",
+        1.0,
+    );
     assert!(tracker.is_poisoned_digest(&lib_hash));
 
     let tel_lib = build_telemetry(
@@ -191,7 +237,8 @@ fn challenge_repository_path_immunity() {
         "inspect_source",
         json!({"source": lib_rs.to_string_lossy().to_string()}),
     );
-    let ticket_lib = DiracDeltaCapabilityTicket::issue("agent-developer", "inspect_source", 1, 10_000_000_000);
+    let ticket_lib =
+        DiracDeltaCapabilityTicket::issue("agent-developer", "inspect_source", 1, 10_000_000_000);
     let mut lib_executed = false;
     let res_lib = ring.execute_contained_tool(&tel_lib, &ticket_lib, &tracker, || {
         lib_executed = true;
@@ -203,7 +250,10 @@ fn challenge_repository_path_immunity() {
 
     // Also test dev interpreter immunity (e.g. python.exe, cargo.exe)
     let cargo_exe = Path::new("cargo.exe");
-    assert!(tracker.is_path_immune(cargo_exe), "cargo.exe must be immune");
+    assert!(
+        tracker.is_path_immune(cargo_exe),
+        "cargo.exe must be immune"
+    );
 }
 
 /// Challenge 3: Tainted Session Forced Caging & DiracDeltaCapabilityTicket Metadata
@@ -218,11 +268,15 @@ fn challenge_tainted_session_forced_caging_and_ticket_canary_binding() {
     let session_id = "sess-challenge-caging-99";
 
     // Step 1: Clean session initially
-    assert_eq!(guard.get_session_taint(session_id), SessionTaintState::Clean);
+    assert_eq!(
+        guard.get_session_taint(session_id),
+        SessionTaintState::Clean
+    );
     assert!(!guard.requires_canary_cage(session_id));
 
     // Step 2: Ingest untrusted PDF/repo/markdown -> mark_session_tainted
-    let new_taint = guard.mark_session_tainted(session_id, "https://untrusted-adversary.com/payload.pdf");
+    let new_taint =
+        guard.mark_session_tainted(session_id, "https://untrusted-adversary.com/payload.pdf");
     assert_eq!(new_taint, SessionTaintState::TaintedByExternalData);
     assert!(new_taint.force_canary_cage());
     assert!(guard.requires_canary_cage(session_id));
@@ -235,8 +289,14 @@ fn challenge_tainted_session_forced_caging_and_ticket_canary_binding() {
         None,
     );
     assert!(tool_eval.is_allowed);
-    assert!(tool_eval.force_canary_cage, "Tainted session must enforce force_canary_cage = true");
-    assert_eq!(tool_eval.taint_state, SessionTaintState::TaintedByExternalData);
+    assert!(
+        tool_eval.force_canary_cage,
+        "Tainted session must enforce force_canary_cage = true"
+    );
+    assert_eq!(
+        tool_eval.taint_state,
+        SessionTaintState::TaintedByExternalData
+    );
 
     // Step 4: Verify Quarantined state also forces canary cage
     let quarantined_eval = guard.evaluate_chained_tool_call(
@@ -276,7 +336,10 @@ fn challenge_tainted_session_forced_caging_and_ticket_canary_binding() {
     assert_eq!(ticket2.canary_token_id, None);
     ticket2.bind_canary("tok_new", "memfd://canary_trap_fd");
     assert_eq!(ticket2.canary_token_id.as_deref(), Some("tok_new"));
-    assert_eq!(ticket2.canary_trap_uri.as_deref(), Some("memfd://canary_trap_fd"));
+    assert_eq!(
+        ticket2.canary_trap_uri.as_deref(),
+        Some("memfd://canary_trap_fd")
+    );
 
     // Builder pattern with_canary
     let ticket3 = DiracDeltaCapabilityTicket::issue("agent-99", "fetch_api", 1, 5_000_000_000)
@@ -291,6 +354,9 @@ fn challenge_tainted_session_forced_caging_and_ticket_canary_binding() {
 
     // Replay attempt must fail closed!
     let replay = ticket3.consume_once("fetch_api");
-    assert!(replay.is_err(), "Second consumption (replay) must be rejected");
+    assert!(
+        replay.is_err(),
+        "Second consumption (replay) must be rejected"
+    );
     assert!(replay.unwrap_err().contains("already consumed"));
 }

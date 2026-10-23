@@ -245,22 +245,20 @@ impl OwaspHuntingEngine {
 
         let sync_result = match client {
             Ok(cli) => match cli.get(target_url).send() {
-                Ok(resp) if resp.status().is_success() => {
-                    match resp.json::<serde_json::Value>() {
-                        Ok(json) => {
-                            if let Some(sha) = json.get("sha").and_then(|v| v.as_str()) {
-                                info!("OWASP Hunting upstream feed synced: commit {}", sha);
-                                Some(sha.to_string())
-                            } else {
-                                None
-                            }
-                        }
-                        Err(e) => {
-                            warn!("Failed to parse OWASP Hunting response JSON: {}", e);
+                Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                    Ok(json) => {
+                        if let Some(sha) = json.get("sha").and_then(|v| v.as_str()) {
+                            info!("OWASP Hunting upstream feed synced: commit {}", sha);
+                            Some(sha.to_string())
+                        } else {
                             None
                         }
                     }
-                }
+                    Err(e) => {
+                        warn!("Failed to parse OWASP Hunting response JSON: {}", e);
+                        None
+                    }
+                },
                 Ok(resp) => {
                     warn!(
                         "OWASP Hunting upstream responded with status: {}",
@@ -346,8 +344,7 @@ impl OwaspHuntingEngine {
 
             // 2. Unseen Held-Out Evaluation Execution
             let t1 = std::time::Instant::now();
-            let held_out_ev =
-                self.run_category_trial(cat, OwaspDatasetSplit::HeldOut_Eval, true);
+            let held_out_ev = self.run_category_trial(cat, OwaspDatasetSplit::HeldOut_Eval, true);
             let held_out_ms = t1.elapsed().as_secs_f64() * 1000.0;
             total_latency += held_out_ms;
             held_out_total += 1;
@@ -368,8 +365,7 @@ impl OwaspHuntingEngine {
 
             // 3. Paired Benign Legitimate Control Execution
             let t2 = std::time::Instant::now();
-            let control_ev =
-                self.run_category_trial(cat, OwaspDatasetSplit::Benign_Control, false);
+            let control_ev = self.run_category_trial(cat, OwaspDatasetSplit::Benign_Control, false);
             let control_ms = t2.elapsed().as_secs_f64() * 1000.0;
             total_latency += control_ms;
 
@@ -483,7 +479,8 @@ impl OwaspHuntingEngine {
                         observed_behavior =
                             "CanaryCage trapped canary mutation; tool closure aborted".to_string();
                         resulting_system_state =
-                            "Agent confined to Ring-2; zero unauthorized tool execution".to_string();
+                            "Agent confined to Ring-2; zero unauthorized tool execution"
+                                .to_string();
                     } else {
                         attack_objective_succeeded = true;
                         observed_behavior = "Uncaught prompt override".to_string();
@@ -491,8 +488,7 @@ impl OwaspHuntingEngine {
                     }
                 }
                 "ssrf" => {
-                    enforcement_component =
-                        "Mathematical IPv4/IPv6 CIDR Egress Gate".to_string();
+                    enforcement_component = "Mathematical IPv4/IPv6 CIDR Egress Gate".to_string();
                     let blocked = Self::is_disallowed_ip_or_url(&input);
                     if blocked {
                         edr_enforcement_activated = true;
@@ -549,8 +545,7 @@ impl OwaspHuntingEngine {
                     }
                 }
                 "http_request_smuggling" => {
-                    enforcement_component =
-                        "4-Parser Differential HTTP Framing Matrix".to_string();
+                    enforcement_component = "4-Parser Differential HTTP Framing Matrix".to_string();
                     let has_smuggling = input.contains("Content-Length:")
                         && (input.contains("Transfer-Encoding: chunked")
                             || input.contains("Transfer-Encoding:"));
@@ -591,9 +586,8 @@ impl OwaspHuntingEngine {
                 "log_injection" => {
                     enforcement_component =
                         "Forensic ANSI & CRLF Log Sanitizer (BLAKE3 Audit Chain)".to_string();
-                    let has_log_tamper = input.contains('\r')
-                        || input.contains('\n')
-                        || input.contains("\x1b[");
+                    let has_log_tamper =
+                        input.contains('\r') || input.contains('\n') || input.contains("\x1b[");
                     if has_log_tamper {
                         edr_enforcement_activated = true;
                         attack_objective_succeeded = false;
@@ -662,7 +656,9 @@ impl OwaspHuntingEngine {
             legitimate_control_passed,
             independent_oracle_verified
         );
-        let evidence_blake3 = blake3::hash(evidence_payload.as_bytes()).to_hex().to_string();
+        let evidence_blake3 = blake3::hash(evidence_payload.as_bytes())
+            .to_hex()
+            .to_string();
 
         OwaspExecutionEvidence {
             test_id,
@@ -670,17 +666,18 @@ impl OwaspHuntingEngine {
             category_name: cat.name.clone(),
             testing_level: cat.testing_level,
             dataset_split: split,
-            attack_input: if is_attack { input.clone() } else { String::new() },
+            attack_input: if is_attack {
+                input.clone()
+            } else {
+                String::new()
+            },
             legitimate_control_input: if !is_attack {
                 input.clone()
             } else {
                 cat.legitimate_control_input.clone()
             },
             exact_target: cat.exact_target.clone(),
-            execution_mechanism: format!(
-                "{:?} via {}",
-                cat.testing_level, enforcement_component
-            ),
+            execution_mechanism: format!("{:?} via {}", cat.testing_level, enforcement_component),
             expected_security_property: cat.expected_security_property.clone(),
             observed_behavior,
             enforcement_component,
@@ -1604,8 +1601,14 @@ mod tests {
             .filter(|c| c.priority_tier == OwaspPriorityTier::Extended_AppSec_Correlation)
             .count();
 
-        assert_eq!(priority_count, 12, "Must classify 12 Priority EDR Core categories");
-        assert_eq!(extended_count, 29, "Must classify 29 Extended AppSec categories");
+        assert_eq!(
+            priority_count, 12,
+            "Must classify 12 Priority EDR Core categories"
+        );
+        assert_eq!(
+            extended_count, 29,
+            "Must classify 29 Extended AppSec categories"
+        );
 
         // Verify auto_signature_blocking is FALSE across all 41 categories
         for cat in &categories {
@@ -1644,13 +1647,27 @@ mod tests {
 
     #[test]
     fn test_ssrf_mathematical_ip_guard() {
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://127.0.0.1/admin"));
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://169.254.169.254/latest"));
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://10.0.0.1:8080/secret"));
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://172.16.5.2/metrics"));
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://192.168.1.1/router"));
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://[::1]/debug"));
-        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url("http://[::ffff:a00:1]/metadata"));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://127.0.0.1/admin"
+        ));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://169.254.169.254/latest"
+        ));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://10.0.0.1:8080/secret"
+        ));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://172.16.5.2/metrics"
+        ));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://192.168.1.1/router"
+        ));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://[::1]/debug"
+        ));
+        assert!(OwaspHuntingEngine::is_disallowed_ip_or_url(
+            "http://[::ffff:a00:1]/metadata"
+        ));
 
         // Benign public destinations must pass
         assert!(!OwaspHuntingEngine::is_disallowed_ip_or_url(
@@ -1666,7 +1683,9 @@ mod tests {
         assert!(!OwaspHuntingEngine::is_safe_path("../etc/passwd"));
         assert!(!OwaspHuntingEngine::is_safe_path("C:\\Windows\\System32"));
         assert!(!OwaspHuntingEngine::is_safe_path("\\\\evil-server\\share"));
-        assert!(!OwaspHuntingEngine::is_safe_path("uploads/avatar.png:stream"));
+        assert!(!OwaspHuntingEngine::is_safe_path(
+            "uploads/avatar.png:stream"
+        ));
         assert!(!OwaspHuntingEngine::is_safe_path("%2e%2e%2fconfig.json"));
 
         // Safe relative paths

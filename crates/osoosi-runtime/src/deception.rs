@@ -173,14 +173,19 @@ impl DeceptionManager {
         &self,
         session_id: &str,
     ) -> anyhow::Result<(String, windows::Win32::Foundation::HANDLE)> {
-        crate::honeytokens::HoneytokenManager::new(std::path::PathBuf::from("."), "deception_engine".to_string())
-            .deploy_diskless_canary_pipe(session_id)
+        crate::honeytokens::HoneytokenManager::new(
+            std::path::PathBuf::from("."),
+            "deception_engine".to_string(),
+        )
+        .deploy_diskless_canary_pipe(session_id)
     }
 
     /// Fallback for diskless ephemeral pipe on non-Windows platforms.
     #[cfg(not(windows))]
     pub fn deploy_diskless_canary_pipe(&self, _session_id: &str) -> anyhow::Result<String> {
-        Err(anyhow::anyhow!("Named pipe canary is only supported on Windows"))
+        Err(anyhow::anyhow!(
+            "Named pipe canary is only supported on Windows"
+        ))
     }
 
     /// Deploy a diskless ephemeral in-memory canary file descriptor (memfd) on Linux.
@@ -190,14 +195,23 @@ impl DeceptionManager {
         name: &str,
         payload: &[u8],
     ) -> anyhow::Result<std::os::fd::RawFd> {
-        crate::honeytokens::HoneytokenManager::new(std::path::PathBuf::from("."), "deception_engine".to_string())
-            .deploy_diskless_canary_memfd(name, payload)
+        crate::honeytokens::HoneytokenManager::new(
+            std::path::PathBuf::from("."),
+            "deception_engine".to_string(),
+        )
+        .deploy_diskless_canary_memfd(name, payload)
     }
 
     /// Fallback for memfd canary on non-Linux platforms.
     #[cfg(not(target_os = "linux"))]
-    pub fn deploy_diskless_canary_memfd(&self, _name: &str, _payload: &[u8]) -> anyhow::Result<i32> {
-        Err(anyhow::anyhow!("memfd_create canary is only supported on Linux"))
+    pub fn deploy_diskless_canary_memfd(
+        &self,
+        _name: &str,
+        _payload: &[u8],
+    ) -> anyhow::Result<i32> {
+        Err(anyhow::anyhow!(
+            "memfd_create canary is only supported on Linux"
+        ))
     }
 }
 

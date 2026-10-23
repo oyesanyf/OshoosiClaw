@@ -97,7 +97,9 @@ fn test_deep_process_ancestry_tree_stress_and_stack_safety() -> Result<()> {
         "hash_leaf_output",
     )?;
 
-    let leaf_file_id = blake3::hash(leaf_output_path.as_bytes()).to_hex().to_string();
+    let leaf_file_id = blake3::hash(leaf_output_path.as_bytes())
+        .to_hex()
+        .to_string();
 
     // Query transitive taint on leaf artifact
     let query_start = Instant::now();
@@ -110,9 +112,18 @@ fn test_deep_process_ancestry_tree_stress_and_stack_safety() -> Result<()> {
     );
 
     // Invariant Assertions:
-    assert!(report.is_tainted, "Leaf artifact MUST inherit transitive taint from 64 generations above");
-    assert_eq!(report.max_taint_level, 3, "Taint level MUST be 3 (CrownJewel)");
-    assert!(report.has_crown_jewel_taint, "Crown-Jewel taint flag MUST survive 64 process generations");
+    assert!(
+        report.is_tainted,
+        "Leaf artifact MUST inherit transitive taint from 64 generations above"
+    );
+    assert_eq!(
+        report.max_taint_level, 3,
+        "Taint level MUST be 3 (CrownJewel)"
+    );
+    assert!(
+        report.has_crown_jewel_taint,
+        "Crown-Jewel taint flag MUST survive 64 process generations"
+    );
     assert!(
         report.causal_chain.len() >= depth + 1,
         "Causal chain must contain at least {} nodes, actual: {}",
@@ -156,7 +167,10 @@ fn test_causal_graph_directed_cycle_resilience() -> Result<()> {
 
     assert!(report.is_tainted);
     assert_eq!(report.max_taint_level, 2);
-    assert!(elapsed < Duration::from_millis(100), "Cycle traversal must terminate in < 100ms");
+    assert!(
+        elapsed < Duration::from_millis(100),
+        "Cycle traversal must terminate in < 100ms"
+    );
     assert!(report.causal_chain.contains(&node_a.to_string()));
     assert!(report.causal_chain.contains(&node_b.to_string()));
     assert!(report.causal_chain.contains(&node_c.to_string()));
@@ -209,7 +223,12 @@ fn test_pid_reuse_attack_resistance_via_composite_identity() -> Result<()> {
         Some("job_dev".to_string()),
         "session_clean_developer",
     );
-    graph.register_process_instance(&identity_benign_dev, "C:\\Rust\\.cargo\\bin\\cargo.exe", 0, false)?;
+    graph.register_process_instance(
+        &identity_benign_dev,
+        "C:\\Rust\\.cargo\\bin\\cargo.exe",
+        0,
+        false,
+    )?;
 
     // Attack Verification: Assert instance IDs are distinct
     assert_ne!(
@@ -221,7 +240,8 @@ fn test_pid_reuse_attack_resistance_via_composite_identity() -> Result<()> {
     let benign_lookup = graph.get_process_instance(&identity_benign_dev.instance_id)?;
     assert!(benign_lookup.is_some());
 
-    let benign_taint_report = graph.get_transitive_taint_report(&identity_benign_dev.instance_id)?;
+    let benign_taint_report =
+        graph.get_transitive_taint_report(&identity_benign_dev.instance_id)?;
     assert!(
         !benign_taint_report.is_tainted,
         "Benign process assigned recycled PID MUST NOT inherit malware's taint!"
@@ -407,7 +427,8 @@ fn test_high_concurrency_readers_and_writers_stress() -> Result<()> {
     }
 
     for h in handles {
-        h.join().expect("Worker thread panicked under concurrency contention!");
+        h.join()
+            .expect("Worker thread panicked under concurrency contention!");
     }
 
     let total_ops = successful_ops.load(Ordering::SeqCst);
@@ -465,7 +486,8 @@ fn test_concurrency_capability_invalidation_barrier() -> Result<()> {
     );
 
     // Lookup with new epoch (2, 2) also misses (requires fresh Cedar evaluation)
-    let fresh_lookup = graph.check_capability(principal, action, destination, 1, new_epoch, new_rev_seq)?;
+    let fresh_lookup =
+        graph.check_capability(principal, action, destination, 1, new_epoch, new_rev_seq)?;
     assert_eq!(
         fresh_lookup, None,
         "Fresh evaluation is mandatory once taint epoch has bumped"
@@ -512,34 +534,73 @@ fn test_zk_pii_declassification_adversarial_oracle() -> Result<()> {
     // Probe A: Tamper proof by introducing non-zero leakage bits
     let mut leak_proof = valid_proof.clone();
     leak_proof.pii_leakage_bits = 4;
-    let res_leak = graph.declassify_node(&secret_id, &clean_id, &leak_proof, "session_test", None)?;
-    assert!(!res_leak.success, "Declassification with non-zero leakage bits MUST fail closed");
+    let res_leak =
+        graph.declassify_node(&secret_id, &clean_id, &leak_proof, "session_test", None)?;
+    assert!(
+        !res_leak.success,
+        "Declassification with non-zero leakage bits MUST fail closed"
+    );
     assert!(res_leak.reason.contains("non-zero leakage bits"));
 
     // Probe B: Invalidate ZK proof flag
     let mut invalid_zk_proof = valid_proof.clone();
     invalid_zk_proof.is_valid_zero_knowledge_proof = false;
-    let res_zk = graph.declassify_node(&secret_id, &clean_id, &invalid_zk_proof, "session_test", None)?;
+    let res_zk = graph.declassify_node(
+        &secret_id,
+        &clean_id,
+        &invalid_zk_proof,
+        "session_test",
+        None,
+    )?;
     assert!(!res_zk.success, "Invalid ZK proof flag MUST fail closed");
 
     // Probe C: Corrupt ML-DSA-65 post-quantum signature bytes
     let mut tampered_sig_proof = valid_proof.clone();
-    if !tampered_sig_proof.pqc_signature_hex.is_empty() {
-        tampered_sig_proof.pqc_signature_hex = "deadbeefcafebabe00112233".to_string();
-    }
-    let res_sig = graph.declassify_node(&secret_id, &clean_id, &tampered_sig_proof, "session_test", None)?;
-    assert!(!res_sig.success, "Forged ML-DSA-65 signature MUST fail verification");
+    assert!(
+        !tampered_sig_proof.pqc_mldsa65_signature_hex.is_empty(),
+        "Valid ZK-PII proof must carry an ML-DSA-65 + Ed25519 hybrid signature"
+    );
+    tampered_sig_proof.pqc_mldsa65_signature_hex = "deadbeefcafebabe00112233".to_string();
+    let res_sig = graph.declassify_node(
+        &secret_id,
+        &clean_id,
+        &tampered_sig_proof,
+        "session_test",
+        None,
+    )?;
+    assert!(
+        !res_sig.success,
+        "Forged ML-DSA-65 signature MUST fail verification"
+    );
 
     // Probe D: Missing mandatory <ZK_PII:...> commitments
     let mut missing_commitments_proof = valid_proof.clone();
     missing_commitments_proof.scrubbed_payload = "Plain payload with no commitments".to_string();
     missing_commitments_proof.redacted_entity_count = 2;
-    let res_commit = graph.declassify_node(&secret_id, &clean_id, &missing_commitments_proof, "session_test", None)?;
-    assert!(!res_commit.success, "Missing <ZK_PII:...> commitments MUST fail closed");
+    let res_commit = graph.declassify_node(
+        &secret_id,
+        &clean_id,
+        &missing_commitments_proof,
+        "session_test",
+        None,
+    )?;
+    assert!(
+        !res_commit.success,
+        "Missing <ZK_PII:...> commitments MUST fail closed"
+    );
 
     // Probe E: Valid proof succeeds and clears taint
-    let res_valid = graph.declassify_node(&secret_id, &clean_id, &valid_proof, "session_test", Some("dec_approved"))?;
-    assert!(res_valid.success, "Legitimate ZK-PII declassification MUST succeed");
+    let res_valid = graph.declassify_node(
+        &secret_id,
+        &clean_id,
+        &valid_proof,
+        "session_test",
+        Some("dec_approved"),
+    )?;
+    assert!(
+        res_valid.success,
+        "Legitimate ZK-PII declassification MUST succeed"
+    );
     assert_eq!(res_valid.pii_leakage_bits, 0);
     assert!(res_valid.pqc_signature_verified);
 
@@ -590,17 +651,23 @@ fn test_confused_deputy_broker_attribution_and_tamper_defense() -> Result<()> {
 
     // 2. Non-broker process (e.g. rogue explorer.exe or cmd_fake.exe) attempts attribution
     let non_broker_image = "C:\\malware\\explorer.exe";
-    let fake_attributed = graph.attribute_broker_action(broker_pid, non_broker_image, "inst_fake")?;
-    assert_eq!(fake_attributed, None, "Non-broker binary MUST NOT be attributed as a broker");
+    let fake_attributed =
+        graph.attribute_broker_action(broker_pid, non_broker_image, "inst_fake")?;
+    assert_eq!(
+        fake_attributed, None,
+        "Non-broker binary MUST NOT be attributed as a broker"
+    );
 
     // 3. Unregistered broker PID returns None
     let unregistered_pid = 9001;
-    let unreg_attributed = graph.attribute_broker_action(unregistered_pid, broker_image, "inst_unreg")?;
+    let unreg_attributed =
+        graph.attribute_broker_action(unregistered_pid, broker_image, "inst_unreg")?;
     assert_eq!(unreg_attributed, None);
 
     // 4. Removing delegation clears active broker mapping
     graph.broker_router.remove_delegation(broker_pid);
-    let after_remove = graph.attribute_broker_action(broker_pid, broker_image, "inst_broker_9000")?;
+    let after_remove =
+        graph.attribute_broker_action(broker_pid, broker_image, "inst_broker_9000")?;
     assert_eq!(after_remove, None, "Removed delegation MUST return None");
 
     Ok(())
