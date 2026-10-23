@@ -171,6 +171,59 @@ fn event_image_path(event: &HostSecurityEvent) -> Option<&str> {
     None
 }
 
+/// Normalizes Windows NT device paths (`\Device\HarddiskVolume3\Windows\System32\conhost.exe`)
+/// to standard Win32 paths (`C:\Windows\System32\conhost.exe` or `D:\...`) so disk reads,
+/// Authenticode checks, and BLAKE3 hashing succeed.
+pub fn normalize_nt_device_path(raw: &str) -> String {
+    let trimmed = raw.trim().trim_matches('"');
+    let lower = trimmed.to_ascii_lowercase();
+    for prefix in ["\\device\\harddiskvolume", "/device/harddiskvolume"] {
+        if lower.starts_with(prefix) {
+            let after = &trimmed[prefix.len()..];
+            let digits_len = after.chars().take_while(|c| c.is_ascii_digit()).count();
+            let vol_num = &after[..digits_len];
+            let rest = after[digits_len..].trim_start_matches(['\\', '/']);
+            if !rest.is_empty() {
+                let win_rest = rest.replace('/', "\\");
+                for drive in ["C", "D", "E", "F"] {
+                    let candidate = format!("{}:\\{}", drive, win_rest);
+                    if std::path::Path::new(&candidate).exists() {
+                        return candidate;
+                    }
+                }
+                let fallback_drive =
+                    if vol_num == "4" || win_rest.to_ascii_lowercase().starts_with("harfile") {
+                        "D"
+                    } else {
+                        "C"
+                    };
+                return format!("{}:\\{}", fallback_drive, win_rest);
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+fn resolve_or_compute_event_hash(
+    event: &HostSecurityEvent,
+    normalized_image_path: &str,
+) -> Option<String> {
+    if let Some(h) = preferred_hash_from_event(event) {
+        if h != "no-hash" && !h.trim().is_empty() {
+            return Some(h);
+        }
+    }
+    if !normalized_image_path.is_empty() && normalized_image_path != "unknown" {
+        let p = std::path::Path::new(normalized_image_path);
+        if p.is_file() {
+            if let Ok(bytes) = std::fs::read(p) {
+                return Some(blake3::hash(&bytes).to_hex().to_string());
+            }
+        }
+    }
+    None
+}
+
 fn event_stem(event: &HostSecurityEvent) -> String {
     event_image_path(event)
         .and_then(|p| std::path::Path::new(p).file_stem())
@@ -813,8 +866,11 @@ impl PolicyEngine {
     pub async fn scan_event(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
-        let image_path = event_image_path(event).unwrap_or("unknown");
-        let hash = preferred_hash_from_event(event).unwrap_or_else(|| "no-hash".to_string());
+        let raw_image_path = event_image_path(event).unwrap_or("unknown");
+        let normalized_image_owned = normalize_nt_device_path(raw_image_path);
+        let image_path = normalized_image_owned.as_str();
+        let hash = resolve_or_compute_event_hash(event, image_path)
+            .unwrap_or_else(|| "no-hash".to_string());
         let cmdline = event
             .data
             .get("CommandLine")
@@ -1077,16 +1133,59 @@ impl PolicyEngine {
             }
         }
 
-        // Active behavioral threats (Sigma, memory, live network, Cedar forbid) override NSRL/Trusted-Vendor static known-good
-        let has_behavioral_or_active_threat = evidence_votes.iter().any(|v| {
-            matches!(
-                v.class,
-                EvidenceClass::Behavior | EvidenceClass::Memory | EvidenceClass::LiveNetwork
-            )
-        });
+        // Deterministic active behavioral/exploit threats (Sigma, CredentialGuard, ProcessInjection, live C2 network, Cedar forbid)
+        // override NSRL/Trusted-Vendor/Merkle static known-good, whereas statistical heuristics alone do not.
+        let has_deterministic_active_attack = matches!(event.event_id, 8 | 10 | 25)
+            || evidence_votes.iter().any(|v| {
+                let r = &v.result.reason;
+                matches!(v.class, EvidenceClass::LiveNetwork)
+                    || r.contains("Cedar-Ring7-Forbid")
+                    || r.contains("CredentialGuard")
+                    || r.contains("Remote thread injection")
+                    || r.contains("Process image tampering")
+                    || r.contains("Process Injection")
+                    || r.contains("Module Overloading")
+                    || r.contains("Reverse Shell")
+                    || r.contains("Encoded Execution")
+                    || r.contains("Self-Protection Violation")
+                    || r.contains("Sigma Match:")
+                    || r.contains("Canary")
+                    || r.contains("SpiderWeb")
+                    || r.contains("Mercury-Fluid")
+                    || r.contains("DualChannel-S1S2-Discriminator")
+                    || r.contains("Adaptive-Merkle-Tamper-Alert")
+                    || r.contains("Detected malicious pattern in process memory")
+                    || r.contains("masquerade")
+                    || r.contains("prompt_injection")
+            });
 
-        if (vetoed || nsrl_vetoed) && !has_behavioral_or_active_threat {
+        if (vetoed || nsrl_vetoed) && !has_deterministic_active_attack {
             debug!(target: CONSENSUS_LOG_TARGET, "[CONSENSUS] round aborted (veto)");
+            if hash != "no-hash" && !hash.trim().is_empty() {
+                let proc_name = process_name_from_event(event);
+                let _ = self.memory.mark_hash_clean_ignored(
+                    &hash,
+                    proc_name.as_deref(),
+                    Some(image_path),
+                    "consensus_veto_clean",
+                );
+                let finding = osoosi_types::ConsensusFinding {
+                    id: format!("CONS-VETO-{}", &hash[..hash.len().min(12)]),
+                    hash_blake3: hash.clone(),
+                    process_name: proc_name,
+                    file_path: Some(image_path.to_string()),
+                    verdict: "benign".to_string(),
+                    confidence: 0.99,
+                    detector_count: vote_count,
+                    voters_summary: signature.reason.clone().unwrap_or_else(|| {
+                        "Veto [Trusted-Vendor / NSRL / Merkle Allowlist]: Verified clean binary"
+                            .to_string()
+                    }),
+                    action_taken: "ignored_and_allowed".to_string(),
+                    evaluated_at: chrono::Utc::now(),
+                };
+                let _ = self.memory.record_consensus_finding(&finding);
+            }
             return None;
         }
 
@@ -1129,7 +1228,7 @@ impl PolicyEngine {
                 path = %image_path,
                 "[CONSENSUS] clean (all voters abstained)"
             );
-            if let Some(hash) = preferred_hash_from_event(event) {
+            if hash != "no-hash" && !hash.trim().is_empty() {
                 let proc_name = process_name_from_event(event);
                 let _ = self.memory.mark_hash_clean_ignored(
                     &hash,
@@ -1143,7 +1242,7 @@ impl PolicyEngine {
                     process_name: proc_name,
                     file_path: Some(image_path.to_string()),
                     verdict: "benign".to_string(),
-                    confidence: 0.0,
+                    confidence: 0.98,
                     detector_count: 0,
                     voters_summary: "All voters abstained / nominal behavior".to_string(),
                     action_taken: "ignored_and_allowed".to_string(),
@@ -1156,7 +1255,11 @@ impl PolicyEngine {
 
         signature.detector_count = vote_count;
         signature.process_name = process_name_from_event(event);
-        signature.hash_blake3 = preferred_hash_from_event(event);
+        signature.hash_blake3 = if hash != "no-hash" {
+            Some(hash.clone())
+        } else {
+            preferred_hash_from_event(event)
+        };
         signature.parent_process = event
             .data
             .get("ParentImage")

@@ -6280,6 +6280,7 @@ impl EdrOrchestrator {
                                                 "File Monitor: verified Authenticode digital signature for trusted vendor '{}' on {}. Disregarding ML flag as false positive (SUPPRESSED_FP).",
                                                 subject, result.file_path
                                             );
+                                            orchestrator.malware_scanner.purge_detection_by_path_or_hash(Some(&result.file_path), Some(&result.file_hash));
                                             return;
                                         }
                                     }
@@ -6288,6 +6289,7 @@ impl EdrOrchestrator {
                                             "File Monitor: verified Authenticode digital signature on {}. Disregarding ML flag as false positive (SUPPRESSED_FP).",
                                             result.file_path
                                         );
+                                        orchestrator.malware_scanner.purge_detection_by_path_or_hash(Some(&result.file_path), Some(&result.file_hash));
                                         return;
                                     }
                                 }
@@ -6302,6 +6304,7 @@ impl EdrOrchestrator {
                                         "File Monitor: suppressed false-positive detection on trusted component: {}",
                                         result.file_path
                                     );
+                                    orchestrator.malware_scanner.purge_detection_by_path_or_hash(Some(&result.file_path), Some(&result.file_hash));
                                     return;
                                 }
 
@@ -6331,6 +6334,7 @@ impl EdrOrchestrator {
                                                     "File Monitor: Decision model evaluated {} as benign (prob={:.2}, action='{}'). Alert suppressed.",
                                                     result.file_path, decision.verdict_probability, decision.containment_action
                                                 );
+                                                orchestrator.malware_scanner.purge_detection_by_path_or_hash(Some(&result.file_path), Some(&result.file_hash));
                                                 let _ = orchestrator.memory.mark_hash_clean_ignored(
                                                     &event.hash,
                                                     file_stem,
@@ -9260,14 +9264,14 @@ impl EdrOrchestrator {
             })
             .unwrap_or_else(|| "unknown".to_string());
 
-        let f_path = event
+        let raw_f_path = event
             .data
             .get("Image")
             .or_else(|| event.data.get("NewProcessName"))
             .or_else(|| event.data.get("ImagePath"))
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+            .unwrap_or("");
+        let f_path = osoosi_policy::engine::normalize_nt_device_path(raw_f_path);
 
         let cmd_line = event
             .data
@@ -9305,6 +9309,33 @@ impl EdrOrchestrator {
             signature.action_state = osoosi_types::ActionState::Executed;
         } else {
             signature.action_state = osoosi_types::ActionState::Pending;
+        }
+
+        if osoosi_memory::is_consensus_finding_vetoed_or_benign(
+            Some(&p_name),
+            Some(&f_path),
+            signature.reason.as_deref().unwrap_or(""),
+        ) {
+            let benign_finding = osoosi_types::ConsensusFinding {
+                id: signature.id.clone(),
+                hash_blake3: hash_val.clone(),
+                process_name: Some(p_name.clone()),
+                file_path: Some(f_path.clone()),
+                verdict: "benign".to_string(),
+                confidence: 0.99,
+                detector_count: signature.detector_count,
+                voters_summary: signature.reason.clone().unwrap_or_default(),
+                action_taken: "ignored_and_allowed".to_string(),
+                evaluated_at: chrono::Utc::now(),
+            };
+            let _ = self.memory.record_consensus_finding(&benign_finding);
+            let _ = self.memory.mark_hash_clean_ignored(
+                &hash_val,
+                Some(&p_name),
+                Some(&f_path),
+                "rea_consensus_veto",
+            );
+            return Ok(());
         }
 
         let _ = self.memory.log_threat(&signature);
@@ -10588,6 +10619,26 @@ impl EdrOrchestrator {
             return 0;
         }
         let mut dropped = self.memory.purge_vetoed_and_false_positive_threats().unwrap_or(0);
+        let rea_for_scanner = crate::rea::global_rea_engine();
+        let scanner_purged = self.malware_scanner.purge_false_positive_or_benign_detections(|d| {
+            if osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type) {
+                return true;
+            }
+            if crate::rea::is_rea_benign_system_or_dev_process(&d.file_path, Some(&d.malware_type)) {
+                return true;
+            }
+            let p = std::path::Path::new(&d.file_path);
+            if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
+                return true;
+            }
+            let (should_drop, _, _) = rea_for_scanner.adjudicate_process_or_binary_alert(
+                None,
+                Some(&d.file_path),
+                Some(&d.malware_type),
+            );
+            should_drop
+        });
+        dropped += scanner_purged;
         let mut candidates = Vec::new();
         if let Ok(feed) = self.mesh_gossip_feed.read() {
             for item in feed.iter() {

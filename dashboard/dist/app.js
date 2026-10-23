@@ -3157,7 +3157,7 @@ function renderConsensusFindings(findings) {
 
         const safeFindings = Array.isArray(findings) ? findings : [];
         if (statTotal) statTotal.textContent = safeFindings.length.toString();
-        const malCount = safeFindings.filter(f => f && f.is_malicious).length;
+        const malCount = safeFindings.filter(f => f && (typeof f.is_malicious === 'boolean' ? f.is_malicious : String(f.verdict || '').toLowerCase() === 'malicious')).length;
         if (statMalicious) statMalicious.textContent = malCount.toString();
 
         if (!list) return;
@@ -3175,22 +3175,26 @@ function renderConsensusFindings(findings) {
 
         list.innerHTML = safeFindings.map(f => {
             if (!f) return '';
-            const dateStr = f.timestamp ? (new Date(f.timestamp).toLocaleTimeString() || f.timestamp) : '—';
-            const rawPath = f.file_path || 'Direct Telemetry Event';
+            const rawTs = f.timestamp || f.evaluated_at;
+            const dateStr = rawTs ? (new Date(rawTs).toLocaleTimeString() || rawTs) : '—';
+            const rawPath = f.file_path || f.process_name || 'Direct Telemetry Event';
             const displayPath = escapeHtml(rawPath);
-            const shortHash = f.sha256 ? `${escapeHtml(f.sha256.substring(0, 14))}...` : '—';
-            const fullHash = escapeHtml(f.sha256 || '');
-            const verdictBadge = f.is_malicious 
+            const rawHash = f.sha256 || f.hash_blake3 || '';
+            const shortHash = rawHash ? `${escapeHtml(rawHash.substring(0, 14))}...` : '—';
+            const fullHash = escapeHtml(rawHash);
+            const isMalicious = typeof f.is_malicious === 'boolean' ? f.is_malicious : String(f.verdict || '').toLowerCase() === 'malicious';
+            const verdictBadge = isMalicious 
                 ? `<span class="badge red" style="font-weight:600;"><i data-lucide="shield-alert" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> MALICIOUS</span>`
                 : `<span class="badge green" style="font-weight:600;"><i data-lucide="shield-check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> BENIGN / CLEAN</span>`;
             
-            const scorePercent = typeof f.consensus_score === 'number' ? (f.consensus_score * 100).toFixed(0) + '%' : '—';
+            const scoreVal = typeof f.consensus_score === 'number' ? f.consensus_score : (typeof f.confidence === 'number' ? (f.confidence > 0 ? f.confidence : 0.98) : null);
+            const scorePercent = typeof scoreVal === 'number' ? (scoreVal * 100).toFixed(0) + '%' : '—';
             
-            const actionBadge = f.is_malicious
+            const actionBadge = isMalicious
                 ? `<span class="badge orange" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="box" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Contained / Sandboxed</span>`
                 : `<span class="badge blue" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Clean (Ignored)</span>`;
 
-            const breakdown = escapeHtml(f.detector_breakdown || f.rationale || 'Consensus Multi-Model');
+            const breakdown = escapeHtml(f.detector_breakdown || f.voters_summary || f.rationale || 'Consensus Multi-Model');
 
             return `
                 <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
@@ -3252,9 +3256,11 @@ function renderCleanHashes(cleanHashes) {
 
         list.innerHTML = safeHashes.map(h => {
             if (!h) return '';
-            const dateStr = h.created_at ? (new Date(h.created_at).toLocaleString() || h.created_at) : '—';
-            const hash = escapeHtml(h.hash || '');
-            const source = escapeHtml(h.source || 'Consensus Quorum');
+            const rawTs = h.created_at || h.marked_at;
+            const dateStr = rawTs ? (new Date(rawTs).toLocaleString() || rawTs) : '—';
+            const hash = escapeHtml(h.hash || h.hash_blake3 || '');
+            const procInfo = h.process_name || h.file_path ? ` (${escapeHtml(h.process_name || h.file_path)})` : '';
+            const source = `${escapeHtml(h.source || 'Consensus Quorum')}${procInfo}`;
 
             return `
                 <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">

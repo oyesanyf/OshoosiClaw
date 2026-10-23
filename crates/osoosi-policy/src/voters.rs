@@ -244,6 +244,7 @@ impl GemmaVoter {
 
         const TRUSTED_STEMS: &[&str] = &[
             "osoosi",
+            "osoosi-cli",
             "sysmon",
             "sysmon64",
             "csrss",
@@ -255,10 +256,29 @@ impl GemmaVoter {
             "taskmgr",
             "runtimebroker",
             "searchindexer",
+            "conhost",
+            "openconsole",
+            "windowsterminal",
+            "wsl",
+            "wslhost",
+            "wslservice",
+            "sc",
+            "ipconfig",
+            "velociraptor",
+            "velociraptor.e",
+            "clibrowser",
+            "wix",
+            "wixnative",
+            "llvm-rc",
+            "lld-link",
+            "rust-lld",
+            "signtool",
             "rustc",
             "cargo",
             "python",
             "git",
+            "chrome",
+            "msedge",
             "cursor",
             "antigravity",
             "code",
@@ -286,6 +306,25 @@ impl ThreatVoter for BehavioralThreatVoter {
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event.data.get("Image").and_then(|v| v.as_str());
+        if let Some(img) = image {
+            let cmd = event
+                .data
+                .get("CommandLine")
+                .or_else(|| event.data.get("command_line"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let has_suspicious_cmd = cmd.contains("-enc")
+                || cmd.contains("frombase64string")
+                || cmd.contains("mimikatz")
+                || cmd.contains("sekurlsa")
+                || cmd.contains("comsvcs")
+                || cmd.contains("lsass")
+                || cmd.contains("keymgr");
+            if GemmaVoter::is_known_safe(img) && !has_suspicious_cmd && !matches!(event.event_id, 8 | 10 | 25) {
+                return None;
+            }
+        }
         let process_name = image
             .and_then(|p| std::path::Path::new(p).file_name())
             .and_then(|n| n.to_str());
@@ -968,7 +1007,10 @@ impl ThreatVoter for YaraXMemoryVoter {
                             buffer.truncate(bytes_read);
                             let mut scanner = yara_x::Scanner::new(&rules);
                             let results = scanner.scan(&buffer).ok()?;
-                            if results.matching_rules().count() > 0 {
+                            if results
+                                .matching_rules()
+                                .any(|r| !osoosi_model::malware::is_informational_or_crt_yara_rule(r.identifier()))
+                            {
                                 return Some(VoteResult {
                                     confidence: 0.98,
                                     reason: "Yara-X: Detected malicious pattern in process memory"
@@ -3032,6 +3074,12 @@ impl ThreatVoter for PhaseLockAttractorVoter {
 
         if pid <= 4 {
             return None;
+        }
+
+        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if GemmaVoter::is_known_safe(img) && !matches!(event.event_id, 8 | 10 | 25) {
+                return None;
+            }
         }
 
         let cmdline = event

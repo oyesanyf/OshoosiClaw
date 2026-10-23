@@ -484,6 +484,7 @@ impl YaraManager {
     }
 
     /// Scan byte buffer with the active YARA engine and return matching rule identifiers.
+    /// Filters out generic PE structural and compiler CRT/debugger helper rules (`IsPE64`, `anti_dbg`, `DebuggerCheck__*`, etc.).
     pub fn scan_bytes(&self, bytes: &[u8]) -> Vec<String> {
         let rules = self.active_rules();
         let mut scanner = yara_x::Scanner::new(&rules);
@@ -491,6 +492,7 @@ impl YaraManager {
             Ok(results) => results
                 .matching_rules()
                 .map(|r| r.identifier().to_string())
+                .filter(|id| !osoosi_model::malware::is_informational_or_crt_yara_rule(id))
                 .collect(),
             Err(e) => {
                 warn!("YARA scan_bytes error: {}", e);
