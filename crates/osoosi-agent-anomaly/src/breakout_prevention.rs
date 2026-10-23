@@ -2019,7 +2019,25 @@ mod tests {
             report.architectural_statement,
             DEFENSIBLE_ARCHITECTURE_STATEMENT
         );
-        assert_eq!(report.breakout_prevention_rate, 1.0);
+        let unprevented: Vec<String> = report
+            .six_breakout_scenario_proofs
+            .iter()
+            .filter(|s| !(s.pre_execution_prevented && s.prohibited_side_effects_executed == 0))
+            .map(|s| {
+                format!(
+                    "#{} effects={} pdec={} forbid={:?}",
+                    s.scenario_number,
+                    s.prohibited_side_effects_executed,
+                    s.policy_decision_id,
+                    s.matched_forbid_policies
+                )
+            })
+            .collect();
+        assert_eq!(
+            report.breakout_prevention_rate, 1.0,
+            "Unprevented breakout scenarios: {:?}",
+            unprevented
+        );
         assert_eq!(report.legitimate_usability_pass_rate, 1.0);
         assert_eq!(
             report.total_prohibited_side_effects_executed, 0,

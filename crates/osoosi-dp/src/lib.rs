@@ -544,7 +544,7 @@ impl CrownJewelMerkleFingerprinter {
             || actor_lower.contains("beacon")
             || actor_lower.contains("stealer");
 
-        for (label_lower, _root_hex) in &self.registered_assets {
+        for label_lower in self.registered_assets.keys() {
             if !label_lower.is_empty() && lower.contains(label_lower.as_str()) {
                 if has_export_marker || is_untrusted_or_exfil_sink {
                     // Canonicalize label casing from registered_roots if available
@@ -2350,7 +2350,7 @@ impl RedactXStructuredValidator {
                 sum += d;
             }
         }
-        sum % 10 == 0
+        sum.is_multiple_of(10)
     }
 
     /// ISO 7064 MOD 11-2 weighted checksum validation for Medical Record Numbers (MRN).
