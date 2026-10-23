@@ -863,8 +863,42 @@ impl PolicyEngine {
         }
     }
 
-    pub async fn scan_event(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
+    pub async fn scan_event(&self, raw_event: &HostSecurityEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
+
+        let mut normalized_event_storage: Option<HostSecurityEvent> = None;
+        if let serde_json::Value::Object(ref map) = raw_event.data {
+            let path_keys = [
+                "Image",
+                "NewProcessName",
+                "ImagePath",
+                "SourceImage",
+                "TargetImage",
+                "ParentImage",
+                "ImageLoaded",
+            ];
+            let needs_norm = path_keys.iter().any(|k| {
+                map.get(*k)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_ascii_lowercase().starts_with("\\device\\harddiskvolume"))
+                    .unwrap_or(false)
+            });
+            if needs_norm {
+                let mut cloned = raw_event.clone();
+                if let serde_json::Value::Object(ref mut cmap) = cloned.data {
+                    for k in &path_keys {
+                        if let Some(val) = cmap.get(*k).and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                            let norm = normalize_nt_device_path(&val);
+                            if norm != val {
+                                cmap.insert((*k).to_string(), serde_json::Value::String(norm));
+                            }
+                        }
+                    }
+                }
+                normalized_event_storage = Some(cloned);
+            }
+        }
+        let event: &HostSecurityEvent = normalized_event_storage.as_ref().unwrap_or(raw_event);
 
         let raw_image_path = event_image_path(event).unwrap_or("unknown");
         let normalized_image_owned = normalize_nt_device_path(raw_image_path);

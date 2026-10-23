@@ -2646,6 +2646,10 @@ pub fn normalize_truncated_process_name(proc_name: &str, file_path: Option<&str>
         "llama-server.e" => "llama-server.exe".to_string(),
         "microsoftstart" => "MicrosoftStartFeedProvider.exe".to_string(),
         "m2d_verificati" => "m2d_verification.exe".to_string(),
+        "trustedinstall" => "TrustedInstaller.exe".to_string(),
+        "chrome_proxy.e" => "chrome_proxy.exe".to_string(),
+        "remoting_nativ" => "remoting_native_messaging_host.exe".to_string(),
+        "git-credential" => "git-credential-manager.exe".to_string(),
         _ => trimmed.to_string(),
     }
 }
@@ -2658,11 +2662,16 @@ pub fn resolve_bare_process_to_full_path(proc_name: &str) -> String {
     }
     let candidates = [
         format!(r"C:\Windows\System32\{}", norm),
+        format!(r"C:\Windows\servicing\{}", norm),
+        format!(r"C:\Windows\System32\WindowsPowerShell\v1.0\{}", norm),
         format!(r"C:\Program Files\Velociraptor\{}", norm),
         format!(r"D:\harfile\OshoosiClaw\target\release\{}", norm),
         format!(r"C:\Program Files\Git\cmd\{}", norm),
+        format!(r"C:\Program Files\Git\usr\bin\{}", norm),
+        format!(r"C:\Program Files\Git\usr\lib\gnupg\{}", norm),
         format!(r"C:\Program Files\Git\mingw64\bin\{}", norm),
         format!(r"C:\Program Files\Google\Chrome\Application\{}", norm),
+        format!(r"C:\Program Files (x86)\Google\Chrome Remote Desktop\154.0.8037.40\{}", norm),
     ];
     for c in &candidates {
         if std::path::Path::new(c).is_file() {
@@ -2719,6 +2728,15 @@ pub fn is_consensus_finding_vetoed_or_benign(
     voters_summary: &str,
 ) -> bool {
     let summary_lower = voters_summary.to_ascii_lowercase();
+    let norm_path_lower = file_path
+        .map(normalize_nt_device_path_in_memory)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let is_in_trusted_system_or_app_dir = norm_path_lower.starts_with(r"c:\windows\")
+        || norm_path_lower.starts_with(r"c:\program files\")
+        || norm_path_lower.starts_with(r"c:\program files (x86)\")
+        || norm_path_lower.starts_with(r"d:\harfile\oshoosiclaw\");
+
     let active_attack_markers = [
         "mimikatz",
         "cobalt",
@@ -2732,9 +2750,11 @@ pub fn is_consensus_finding_vetoed_or_benign(
         "eicar",
         "reflective_loader",
         "shellcode",
-        "masquerade",
     ];
     if active_attack_markers.iter().any(|m| summary_lower.contains(m)) {
+        return false;
+    }
+    if summary_lower.contains("masquerade") && !is_in_trusted_system_or_app_dir {
         return false;
     }
 
@@ -2750,6 +2770,9 @@ pub fn is_consensus_finding_vetoed_or_benign(
         || summary_lower.contains("anti_dbg")
         || summary_lower.contains("ispe64")
         || summary_lower.contains("ispe32")
+        || summary_lower.contains("unknown v0.0.0 has known cves")
+        || summary_lower.contains("cve-2009-2940")
+        || summary_lower.contains("behavioral baseline: first outbound connection")
     {
         return true;
     }
@@ -2777,6 +2800,8 @@ pub fn is_consensus_finding_vetoed_or_benign(
             | "wslhost.exe"
             | "wslservice.exe"
             | "chrome.exe"
+            | "chrome_proxy.exe"
+            | "chrome_proxy.e"
             | "msedge.exe"
             | "msedgewebview2.exe"
             | "osoosi.exe"
@@ -2785,6 +2810,13 @@ pub fn is_consensus_finding_vetoed_or_benign(
             | "git.exe"
             | "git-remote-https.exe"
             | "git-credential-manager.exe"
+            | "git-credential-helper.exe"
+            | "git-credential"
+            | "gpg.exe"
+            | "gpg-agent.exe"
+            | "scdaemon.exe"
+            | "gpgsm.exe"
+            | "dirmngr.exe"
             | "sh.exe"
             | "bash.exe"
             | "ssh.exe"
@@ -2792,6 +2824,8 @@ pub fn is_consensus_finding_vetoed_or_benign(
             | "python3.exe"
             | "pythonw.exe"
             | "node.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
             | "sc.exe"
             | "ipconfig.exe"
             | "arp.exe"
@@ -2844,9 +2878,23 @@ pub fn is_consensus_finding_vetoed_or_benign(
             | "ctfmon.exe"
             | "runtimebroker.exe"
             | "smartscreen.exe"
+            | "trustedinstaller.exe"
+            | "trustedinstall"
+            | "tiworker.exe"
+            | "wmiprvse.exe"
+            | "msiexec.exe"
+            | "spoolsv.exe"
+            | "audiodg.exe"
+            | "fontdrvhost.exe"
             | "securityhealthservice.exe"
             | "mpdefendercoreservice.exe"
             | "msmpeng.exe"
+            | "slack.exe"
+            | "remoting_host.exe"
+            | "remoting_native_messaging_host.exe"
+            | "remoting_nativ"
+            | "googledrivefs.exe"
+            | "googleupdate.exe"
             | "docker.exe"
             | "com.docker.backend.exe"
             | "ollama.exe"
