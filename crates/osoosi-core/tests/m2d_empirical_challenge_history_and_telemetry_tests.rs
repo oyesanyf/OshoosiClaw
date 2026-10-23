@@ -109,7 +109,9 @@ fn challenge_1_sub5ms_history_caching_and_concurrency_stress() {
     // 4. Test boundary limits on cache (1, 200, 500, 1000)
     for &test_limit in &[1, 10, 50, 200, 500, 1000] {
         let t0 = Instant::now();
-        let res = mem.get_recent_threats(test_limit).expect("limit query succeeds");
+        let res = mem
+            .get_recent_threats(test_limit)
+            .expect("limit query succeeds");
         let elapsed = t0.elapsed();
         assert!(
             elapsed.as_millis() < 5,
@@ -145,14 +147,18 @@ fn challenge_1_sub5ms_history_caching_and_concurrency_stress() {
 
     // Next query refreshes cache
     let reprime_start = Instant::now();
-    let reloaded = mem.get_recent_threats(500).expect("reload after invalidation");
+    let reloaded = mem
+        .get_recent_threats(500)
+        .expect("reload after invalidation");
     let reprime_elapsed = reprime_start.elapsed();
     println!("Reload after invalidation took: {:?}", reprime_elapsed);
     assert_eq!(reloaded.len(), 51);
 
     // Sub-5ms verified on newly primed cache
     let t_post = Instant::now();
-    let cached_new = mem.get_recent_threats(500).expect("cached get after re-prime");
+    let cached_new = mem
+        .get_recent_threats(500)
+        .expect("cached get after re-prime");
     let post_elapsed = t_post.elapsed();
     assert_eq!(cached_new.len(), 51);
     assert!(
@@ -172,7 +178,9 @@ fn challenge_1_sub5ms_history_caching_and_concurrency_stress() {
             let mut thread_latencies = Vec::with_capacity(requests_per_thread);
             for _ in 0..requests_per_thread {
                 let t_start = Instant::now();
-                let res = mem_clone.get_recent_threats(500).expect("concurrent get succeeds");
+                let res = mem_clone
+                    .get_recent_threats(500)
+                    .expect("concurrent get succeeds");
                 let dur = t_start.elapsed();
                 assert_eq!(res.len(), 51);
                 thread_latencies.push(dur.as_micros());
@@ -272,7 +280,10 @@ fn challenge_2_bounded_audit_retrieval_and_merkle_integrity() {
     // Limit = 1 -> exactly 1 newest entry (sequence 2999)
     let one_lim = audit.get_recent_entries(1);
     assert_eq!(one_lim.len(), 1);
-    assert_eq!(one_lim[0].data["sequence"].as_u64().unwrap(), (TOTAL_ENTRIES - 1) as u64);
+    assert_eq!(
+        one_lim[0].data["sequence"].as_u64().unwrap(),
+        (TOTAL_ENTRIES - 1) as u64
+    );
 
     // Limit = TOTAL_ENTRIES -> all 3,000 entries
     let all_lim = audit.get_recent_entries(TOTAL_ENTRIES);
@@ -370,20 +381,16 @@ fn challenge_3_webui_parity_exhaustive_sha256_and_appjs_invariants() {
         let hash_dist = hex::encode(hasher_dist.finalize());
 
         assert_eq!(
-            hash_src,
-            hash_dist,
+            hash_src, hash_dist,
             "SHA-256 mismatch for file {:?}\nsrc: {}\ndist: {}",
-            file_rel,
-            hash_src,
-            hash_dist
+            file_rel, hash_src, hash_dist
         );
 
         // BLAKE3
         let blake3_src = blake3::hash(&src_bytes);
         let blake3_dist = blake3::hash(&dist_bytes);
         assert_eq!(
-            blake3_src,
-            blake3_dist,
+            blake3_src, blake3_dist,
             "BLAKE3 mismatch for file {:?}",
             file_rel
         );
@@ -417,7 +424,9 @@ fn challenge_3_webui_parity_exhaustive_sha256_and_appjs_invariants() {
         "dashboard/src/app.js must render deception telemetry"
     );
 
-    println!("✔ Challenge 3 Passed: 0-diff byte-for-byte SHA-256 parity and code invariants verified.");
+    println!(
+        "✔ Challenge 3 Passed: 0-diff byte-for-byte SHA-256 parity and code invariants verified."
+    );
 }
 
 // ====================================================================================

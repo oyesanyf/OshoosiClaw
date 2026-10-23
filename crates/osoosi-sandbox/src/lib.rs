@@ -28,7 +28,6 @@ pub mod windows;
 pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url};
 pub use security::SandboxSecurityConfig;
 
-
 /// Configuration for a sandbox execution.
 #[derive(Debug, Clone)]
 pub struct SandboxConfig {
@@ -659,7 +658,10 @@ pub fn validate_sandbox_relative_path(
         }
     }
     if trimmed.starts_with('/') || trimmed.starts_with('\\') {
-        return Err("Leading slash/backslash or UNC path rejected (Path::join replacement defense)".to_string());
+        return Err(
+            "Leading slash/backslash or UNC path rejected (Path::join replacement defense)"
+                .to_string(),
+        );
     }
     if trimmed.contains(':') {
         return Err(
@@ -754,13 +756,8 @@ mod tests {
         assert!(windows::verify_windows_confinement_invariants(&default_policy).is_ok());
 
         // 1. All confinement checks pass -> ResumeThread allowed
-        let ok_outcome = windows::evaluate_pre_resume_confinement_gate(
-            &default_policy,
-            true,
-            true,
-            true,
-            true,
-        );
+        let ok_outcome =
+            windows::evaluate_pre_resume_confinement_gate(&default_policy, true, true, true, true);
         assert!(ok_outcome.resume_thread_allowed);
         assert!(!ok_outcome.terminated_suspended_process);
         assert!(ok_outcome.sid_freed_via_free_sid);
@@ -786,4 +783,3 @@ mod tests {
         assert!(windows::verify_windows_confinement_invariants(&bad_policy).is_err());
     }
 }
-

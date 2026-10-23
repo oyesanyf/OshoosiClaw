@@ -60,7 +60,9 @@ fn extend_simulated_pcr_16(hash_bytes: &[u8]) {
 #[cfg(target_os = "windows")]
 fn is_hardware_tpm_present() -> bool {
     use windows::core::w;
-    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY_LOCAL_MACHINE, KEY_READ};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, HKEY_LOCAL_MACHINE, KEY_READ,
+    };
     unsafe {
         let mut key = windows::Win32::System::Registry::HKEY::default();
         let status = RegOpenKeyExW(
@@ -197,7 +199,10 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
                 );
                 let fw_str = if res.is_ok() && fw_len > 2 {
                     let u16_slice = &fw_buf[..(fw_len as usize / 2).saturating_sub(1)];
-                    String::from_utf16_lossy(u16_slice).trim_matches('\0').trim().to_string()
+                    String::from_utf16_lossy(u16_slice)
+                        .trim_matches('\0')
+                        .trim()
+                        .to_string()
                 } else {
                     let mut fw_len2 = (fw_buf.len() * 2) as u32;
                     let mut fw_type2 = REG_SZ;
@@ -211,7 +216,10 @@ pub fn read_pcr(pcr_index: u32) -> Option<String> {
                     );
                     if res2.is_ok() && fw_len2 > 2 {
                         let u16_slice = &fw_buf[..(fw_len2 as usize / 2).saturating_sub(1)];
-                        String::from_utf16_lossy(u16_slice).trim_matches('\0').trim().to_string()
+                        String::from_utf16_lossy(u16_slice)
+                            .trim_matches('\0')
+                            .trim()
+                            .to_string()
                     } else {
                         "2.0".to_string()
                     }

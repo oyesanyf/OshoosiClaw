@@ -45,9 +45,7 @@ pub struct OwaspExecuteRequest {
     pub priority_only: bool,
 }
 
-pub async fn post_owasp_hunting_execute(
-    payload: Option<Json<OwaspExecuteRequest>>,
-) -> Json<Value> {
+pub async fn post_owasp_hunting_execute(payload: Option<Json<OwaspExecuteRequest>>) -> Json<Value> {
     let priority_only = payload.map(|p| p.priority_only).unwrap_or(false);
     let result = tokio::task::spawn_blocking(move || {
         let engine = global_owasp_hunting_engine();

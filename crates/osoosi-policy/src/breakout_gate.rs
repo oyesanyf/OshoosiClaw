@@ -171,7 +171,9 @@ impl SignedWorkspaceInstructionAllowlist {
         let caller_lower = caller_principal.trim().to_ascii_lowercase();
         let flags_lower = storage_flags_or_provider.trim().to_ascii_lowercase();
 
-        if flags_lower.contains("cryptprotect_local_machine") || flags_lower.contains("dpapi_local_machine") {
+        if flags_lower.contains("cryptprotect_local_machine")
+            || flags_lower.contains("dpapi_local_machine")
+        {
             return KeyProtectionAuditResult {
                 allowed: false,
                 cryptprotect_local_machine_rejected: true,
@@ -250,8 +252,12 @@ impl SignedWorkspaceInstructionAllowlist {
         let norm_path = Self::normalize_path(relative_path);
         let content_blake3 = blake3::hash(content).to_hex().to_string();
         let assigned_authority = AuthorityLevel::L4WorkspaceConfiguration;
-        let payload =
-            Self::canonical_payload(&norm_path, &content_blake3, signer_key_id, assigned_authority);
+        let payload = Self::canonical_payload(
+            &norm_path,
+            &content_blake3,
+            signer_key_id,
+            assigned_authority,
+        );
         let hmac_blake3_tag = hex::encode(self.compute_keyed_blake3(&payload));
         let hmac_sha256_tag = hex::encode(self.compute_hmac_sha256(&payload));
         let ed_att = blake3::keyed_hash(
@@ -298,26 +304,76 @@ impl SignedWorkspaceInstructionAllowlist {
         (root_hex, root_hmac)
     }
 
-    pub fn contains_authority_usurpation_or_unsafe_directive(content: &str) -> Option<&'static str> {
+    pub fn contains_authority_usurpation_or_unsafe_directive(
+        content: &str,
+    ) -> Option<&'static str> {
         let lower = content.to_ascii_lowercase();
         const FORBIDDEN_DIRECTIVES: &[(&str, &str)] = &[
-            ("ignore previous instructions", "Attempts to override L2AuthorizedUserObjective"),
-            ("disregard user objective", "Attempts to override L2AuthorizedUserObjective"),
-            ("override system policy", "Attempts to override L1SystemSecurityPolicy"),
-            ("disable_security_policy", "Attempts to disable L1SystemSecurityPolicy"),
+            (
+                "ignore previous instructions",
+                "Attempts to override L2AuthorizedUserObjective",
+            ),
+            (
+                "disregard user objective",
+                "Attempts to override L2AuthorizedUserObjective",
+            ),
+            (
+                "override system policy",
+                "Attempts to override L1SystemSecurityPolicy",
+            ),
+            (
+                "disable_security_policy",
+                "Attempts to disable L1SystemSecurityPolicy",
+            ),
             ("bypass_cedar", "Attempts to bypass Cedar reference monitor"),
-            ("authority_level: l1", "Attempts upward authority promotion to L1SystemSecurityPolicy"),
-            ("authority_level: l2", "Attempts upward authority promotion to L2AuthorizedUserObjective"),
-            ("promote_to_system_policy", "Attempts upward authority promotion to L1"),
-            ("curl ", "Contains unauthorized shell network fetch directive in workspace config"),
-            ("wget ", "Contains unauthorized shell network fetch directive in workspace config"),
-            ("invoke-webrequest", "Contains unauthorized PowerShell web fetch directive in workspace config"),
-            ("webhook.site", "References external exfiltration sink in workspace config"),
-            ("requestbin", "References external exfiltration sink in workspace config"),
-            ("/dev/tcp/", "Contains reverse-shell socket directive in workspace config"),
-            ("nc -e", "Contains netcat reverse-shell directive in workspace config"),
-            ("exfiltrate", "Contains explicit exfiltration directive in workspace config"),
-            ("--no-verify", "Attempts to bypass git cryptographic hook verification"),
+            (
+                "authority_level: l1",
+                "Attempts upward authority promotion to L1SystemSecurityPolicy",
+            ),
+            (
+                "authority_level: l2",
+                "Attempts upward authority promotion to L2AuthorizedUserObjective",
+            ),
+            (
+                "promote_to_system_policy",
+                "Attempts upward authority promotion to L1",
+            ),
+            (
+                "curl ",
+                "Contains unauthorized shell network fetch directive in workspace config",
+            ),
+            (
+                "wget ",
+                "Contains unauthorized shell network fetch directive in workspace config",
+            ),
+            (
+                "invoke-webrequest",
+                "Contains unauthorized PowerShell web fetch directive in workspace config",
+            ),
+            (
+                "webhook.site",
+                "References external exfiltration sink in workspace config",
+            ),
+            (
+                "requestbin",
+                "References external exfiltration sink in workspace config",
+            ),
+            (
+                "/dev/tcp/",
+                "Contains reverse-shell socket directive in workspace config",
+            ),
+            (
+                "nc -e",
+                "Contains netcat reverse-shell directive in workspace config",
+            ),
+            (
+                "exfiltrate",
+                "Contains explicit exfiltration directive in workspace config",
+            ),
+            (
+                "--no-verify",
+                "Attempts to bypass git cryptographic hook verification",
+            ),
         ];
         for (pattern, reason) in FORBIDDEN_DIRECTIVES {
             if lower.contains(pattern) {
@@ -337,8 +393,7 @@ impl SignedWorkspaceInstructionAllowlist {
         let actual_blake3 = blake3::hash(content).to_hex().to_string();
         let (merkle_root, merkle_hmac) = self.compute_merkle_root();
         let expected_merkle_hmac = self.compute_hmac_sha256(merkle_root.as_bytes());
-        let merkle_root_hmac_verified =
-            bool::from(merkle_hmac.ct_eq(&expected_merkle_hmac));
+        let merkle_root_hmac_verified = bool::from(merkle_hmac.ct_eq(&expected_merkle_hmac));
 
         let decision_seed = format!(
             "ws-auth:{}:{}:{}:{}",
@@ -371,8 +426,12 @@ impl SignedWorkspaceInstructionAllowlist {
         let entry = entry_ref.value().clone();
         drop(entry_ref);
 
-        let hash_matches =
-            bool::from(entry.content_blake3.as_bytes().ct_eq(actual_blake3.as_bytes()));
+        let hash_matches = bool::from(
+            entry
+                .content_blake3
+                .as_bytes()
+                .ct_eq(actual_blake3.as_bytes()),
+        );
         let payload = Self::canonical_payload(
             &norm_path,
             &actual_blake3,
@@ -716,7 +775,9 @@ impl CausalSecurityGraph {
             "dllhost.exe",
             "backgroundtaskhost.exe",
         ];
-        BROKERS.iter().any(|b| lower.ends_with(b) || lower.contains(b))
+        BROKERS
+            .iter()
+            .any(|b| lower.ends_with(b) || lower.contains(b))
     }
 
     /// Attributes a broker process (`WmiPrvSE.exe`, `svchost.exe`, `conhost.exe`, `git-remote-https.exe`, `ssh.exe`)
@@ -832,10 +893,7 @@ impl CausalSecurityGraph {
 
     fn sync_session_state(&self, node: &CausalNodeState) {
         let sess_id = node.origin_session_id.clone();
-        let existing = self
-            .session_taint
-            .get(&sess_id)
-            .map(|r| r.value().clone());
+        let existing = self.session_taint.get(&sess_id).map(|r| r.value().clone());
         let updated = match existing {
             Some(mut cur) => {
                 cur.taint_level = cur.taint_level.max(node.taint_level);
@@ -864,7 +922,10 @@ impl CausalSecurityGraph {
         salami_increment: f64,
     ) -> CausalNodeState {
         let existing_node = self.nodes.get(node_key).map(|r| r.value().clone());
-        let existing_sess = self.session_taint.get(session_id).map(|r| r.value().clone());
+        let existing_sess = self
+            .session_taint
+            .get(session_id)
+            .map(|r| r.value().clone());
 
         let base = existing_node.or(existing_sess).unwrap_or(CausalNodeState {
             node_key: node_key.to_string(),
@@ -919,7 +980,11 @@ impl CausalSecurityGraph {
             .nodes
             .get(source_key)
             .map(|r| r.value().clone())
-            .or_else(|| self.session_taint.get(source_key).map(|r| r.value().clone()));
+            .or_else(|| {
+                self.session_taint
+                    .get(source_key)
+                    .map(|r| r.value().clone())
+            });
 
         let dst = self
             .nodes
@@ -941,35 +1006,43 @@ impl CausalSecurityGraph {
                 session_terminated: false,
             });
 
-        let (taint_level, has_crown_jewel_taint, highest_classification, mut ancestors, turns, revoked) =
-            if let Some(s) = src {
-                let mut anc = dst.ancestor_keys.clone();
-                for k in &s.ancestor_keys {
-                    if !anc.contains(k) {
-                        anc.push(k.clone());
-                    }
+        let (
+            taint_level,
+            has_crown_jewel_taint,
+            highest_classification,
+            mut ancestors,
+            turns,
+            revoked,
+        ) = if let Some(s) = src {
+            let mut anc = dst.ancestor_keys.clone();
+            for k in &s.ancestor_keys {
+                if !anc.contains(k) {
+                    anc.push(k.clone());
                 }
-                if !anc.contains(&s.node_key) {
-                    anc.push(s.node_key.clone());
-                }
-                (
-                    dst.taint_level.max(s.taint_level),
-                    dst.has_crown_jewel_taint || s.has_crown_jewel_taint,
-                    dst.highest_classification.max(s.highest_classification),
-                    anc,
-                    dst.cumulative_turns.max(s.cumulative_turns).saturating_add(1),
-                    dst.capabilities_revoked || s.capabilities_revoked,
-                )
-            } else {
-                (
-                    dst.taint_level,
-                    dst.has_crown_jewel_taint,
-                    dst.highest_classification,
-                    dst.ancestor_keys,
-                    dst.cumulative_turns.saturating_add(1),
-                    dst.capabilities_revoked,
-                )
-            };
+            }
+            if !anc.contains(&s.node_key) {
+                anc.push(s.node_key.clone());
+            }
+            (
+                dst.taint_level.max(s.taint_level),
+                dst.has_crown_jewel_taint || s.has_crown_jewel_taint,
+                dst.highest_classification.max(s.highest_classification),
+                anc,
+                dst.cumulative_turns
+                    .max(s.cumulative_turns)
+                    .saturating_add(1),
+                dst.capabilities_revoked || s.capabilities_revoked,
+            )
+        } else {
+            (
+                dst.taint_level,
+                dst.has_crown_jewel_taint,
+                dst.highest_classification,
+                dst.ancestor_keys,
+                dst.cumulative_turns.saturating_add(1),
+                dst.capabilities_revoked,
+            )
+        };
 
         let causal_event_id = self.next_causal_event_id("edge", target_key);
         let updated = CausalNodeState {
@@ -1020,7 +1093,9 @@ impl CausalSecurityGraph {
             );
         }
 
-        let payload_blake3 = blake3::hash(redacted_payload.as_bytes()).to_hex().to_string();
+        let payload_blake3 = blake3::hash(redacted_payload.as_bytes())
+            .to_hex()
+            .to_string();
         let msg = format!(
             "zk-declassify-v1|sess={}|node={}|hash={}",
             session_id, source_node_key, payload_blake3
@@ -1066,7 +1141,9 @@ impl CausalSecurityGraph {
         if rec.session_id != session_id {
             return false;
         }
-        let actual_hash = blake3::hash(redacted_payload.as_bytes()).to_hex().to_string();
+        let actual_hash = blake3::hash(redacted_payload.as_bytes())
+            .to_hex()
+            .to_string();
         if !bool::from(
             rec.sanitized_payload_blake3
                 .as_bytes()
@@ -1132,7 +1209,8 @@ impl CausalSecurityGraph {
             declassified_receipts: Vec::new(),
             session_terminated: false,
         };
-        self.nodes.insert(derived_node_key.to_string(), derived.clone());
+        self.nodes
+            .insert(derived_node_key.to_string(), derived.clone());
         Ok(derived)
     }
 
@@ -1636,7 +1714,11 @@ impl ProtectedPolicyStore {
     ) -> SignedPolicyUpdateBundle {
         let canonical = format!(
             "cedar-policy-update-v1|v={}|label={}|author={}|approver={}|body={}",
-            version_num, policy_version_label, author_principal, approver_principal, cedar_policy_text
+            version_num,
+            policy_version_label,
+            author_principal,
+            approver_principal,
+            cedar_policy_text
         );
         let ed_sig = blake3::keyed_hash(&self.control_plane_key, canonical.as_bytes())
             .to_hex()
@@ -1740,7 +1822,9 @@ impl ProtectedPolicyStore {
         }
 
         // 4. Verify core `forbid` invariants are preserved
-        if !bundle.cedar_policy_text.contains("Action::\"ExternalWrite\"")
+        if !bundle
+            .cedar_policy_text
+            .contains("Action::\"ExternalWrite\"")
             || !bundle.cedar_policy_text.contains("hasCrownJewelTaint")
             || !bundle
                 .cedar_policy_text
@@ -1791,7 +1875,8 @@ impl ProtectedPolicyStore {
         let clause_trimmed = proposal.proposed_forbid_clause.trim();
         let clause_lower = clause_trimmed.to_ascii_lowercase();
 
-        if proposal.attempts_taint_declassification || proposal.attempts_causal_provenance_mutation {
+        if proposal.attempts_taint_declassification || proposal.attempts_causal_provenance_mutation
+        {
             return CandidatePolicyProposalEvaluation {
                 proposal_valid_for_dual_approval: false,
                 active_policy_unchanged_until_signed: self.active_version_num.load(Ordering::SeqCst) == ver_before,
@@ -1924,7 +2009,10 @@ impl SafeTelemetryOverloadController {
         let util_pct =
             ((queue_depth as f64) / (self.max_queue_capacity.max(1) as f64) * 100.0).min(100.0);
 
-        let (mode, reason) = if !synchronous_enforcement_intact || events_lost >= 100 || util_pct >= 95.0 {
+        let (mode, reason) = if !synchronous_enforcement_intact
+            || events_lost >= 100
+            || util_pct >= 95.0
+        {
             // Quarantine ONLY the affected agent session/workload, NEVER the whole host!
             causal_graph.revoke_node_capabilities(session_id, session_id);
             capability_cache.advance_taint_and_revocation();
@@ -2034,7 +2122,10 @@ impl ExternalIntegrityVerifierAndRecovery {
             .last()
             .map(|e| e.envelope_blake3.clone())
             .unwrap_or_else(|| "0".repeat(64));
-        let body = format!("audit-env-v1|seq={}|prev={}|msg={}", seq_num, prev_hash, event_summary);
+        let body = format!(
+            "audit-env-v1|seq={}|prev={}|msg={}",
+            seq_num, prev_hash, event_summary
+        );
         let env_blake3 = blake3::hash(body.as_bytes()).to_hex().to_string();
         let hmac_tag = self.compute_hmac(body.as_bytes());
         let env = AppendOnlyAuditEnvelope {
@@ -2120,8 +2211,11 @@ impl ExternalIntegrityVerifierAndRecovery {
             serialized_sessions
         );
         let expected_hmac = self.compute_hmac(canonical.as_bytes());
-        let snap_hmac_ok =
-            bool::from(snap.hmac_sha256_tag.as_bytes().ct_eq(expected_hmac.as_bytes()));
+        let snap_hmac_ok = bool::from(
+            snap.hmac_sha256_tag
+                .as_bytes()
+                .ct_eq(expected_hmac.as_bytes()),
+        );
 
         let version_tampered = policy_store.active_version_num() < snap.policy_version_num;
         if tampered || version_tampered {
@@ -2163,7 +2257,8 @@ impl ExternalIntegrityVerifierAndRecovery {
             restored_policy_version_num: policy_store.active_version_num(),
             audit_chain_intact: snap_hmac_ok,
             revocation_seq_after_recovery: capability_cache.current_revocation_seq(),
-            reason: "INTEGRITY_INTACT: External attestation and append-only audit chain verified".to_string(),
+            reason: "INTEGRITY_INTACT: External attestation and append-only audit chain verified"
+                .to_string(),
         }
     }
 }
@@ -2314,12 +2409,7 @@ impl Ring7CapabilityEffectAuthorizer {
         max_score
     }
 
-    pub fn set_session_egress_budget(
-        &self,
-        session_id: &str,
-        max_requests: u32,
-        max_bytes: usize,
-    ) {
+    pub fn set_session_egress_budget(&self, session_id: &str, max_requests: u32, max_bytes: usize) {
         self.egress_budgets.insert(
             session_id.to_string(),
             SessionEgressBudgetState {
@@ -2404,12 +2494,14 @@ impl Ring7CapabilityEffectAuthorizer {
             matched_forbid.push("CEDAR-FORBID-CAPABILITIES-REVOKED".to_string());
         }
 
-        if let Some(w_mode) = self.overload_controller.workload_modes.get(&principal.session_id) {
+        if let Some(w_mode) = self
+            .overload_controller
+            .workload_modes
+            .get(&principal.session_id)
+        {
             match *w_mode.value() {
                 WorkloadDegradationMode::QuarantineAffectedWorkloadOnly => {
-                    matched_forbid.push(
-                        "CEDAR-FORBID-WORKLOAD-OVERLOAD-QUARANTINED".to_string(),
-                    );
+                    matched_forbid.push("CEDAR-FORBID-WORKLOAD-OVERLOAD-QUARANTINED".to_string());
                 }
                 WorkloadDegradationMode::StrictReadOnlyContainment
                     if matches!(
@@ -2419,9 +2511,7 @@ impl Ring7CapabilityEffectAuthorizer {
                             | CedarAction::PrivilegedLocalControl
                     ) =>
                 {
-                    matched_forbid.push(
-                        "CEDAR-FORBID-WORKLOAD-READONLY-DEGRADATION".to_string(),
-                    );
+                    matched_forbid.push("CEDAR-FORBID-WORKLOAD-READONLY-DEGRADATION".to_string());
                 }
                 _ => {}
             }
@@ -2487,7 +2577,8 @@ impl Ring7CapabilityEffectAuthorizer {
         if action == CedarAction::ChildProcessExec {
             if context.upward_authority_promotion_attempted {
                 matched_forbid.push(
-                    "CEDAR-FORBID-004A: Upward authority promotion from L4/L5 forbidden".to_string(),
+                    "CEDAR-FORBID-004A: Upward authority promotion from L4/L5 forbidden"
+                        .to_string(),
                 );
             }
             if !resource.is_approved_child_binary || !resource.is_signed_and_allowlisted {
@@ -2505,10 +2596,12 @@ impl Ring7CapabilityEffectAuthorizer {
 
         if action == CedarAction::DynamicCodeExec
             && (!resource.is_signed_and_allowlisted
-                || principal.authority_level.rank() > AuthorityLevel::L3TrustedApplicationInstruction.rank())
+                || principal.authority_level.rank()
+                    > AuthorityLevel::L3TrustedApplicationInstruction.rank())
         {
             matched_forbid.push(
-                "CEDAR-FORBID-005: Unsigned or untrusted dynamic code/module load forbidden".to_string(),
+                "CEDAR-FORBID-005: Unsigned or untrusted dynamic code/module load forbidden"
+                    .to_string(),
             );
         }
 
@@ -2522,7 +2615,8 @@ impl Ring7CapabilityEffectAuthorizer {
             }
             if !resource.is_task_scoped_destination {
                 matched_forbid.push(
-                    "CEDAR-FORBID-006B: Sensitive credential/system file outside task scope".to_string(),
+                    "CEDAR-FORBID-006B: Sensitive credential/system file outside task scope"
+                        .to_string(),
                 );
             }
         }
@@ -2728,8 +2822,11 @@ impl Ring7CapabilityEffectAuthorizer {
         );
         let has_valid_declassification = declassification_receipt_id
             .map(|rid| {
-                self.causal_graph
-                    .verify_declassification_receipt(rid, &principal.session_id, payload)
+                self.causal_graph.verify_declassification_receipt(
+                    rid,
+                    &principal.session_id,
+                    payload,
+                )
             })
             .unwrap_or(false);
 
@@ -2884,11 +2981,7 @@ impl Ring7CapabilityEffectAuthorizer {
             }
         };
 
-        let requested_authority = match event
-            .data
-            .get("AuthorityLevel")
-            .and_then(|v| v.as_u64())
-        {
+        let requested_authority = match event.data.get("AuthorityLevel").and_then(|v| v.as_u64()) {
             Some(1) => AuthorityLevel::L1SystemSecurityPolicy,
             Some(2) => AuthorityLevel::L2AuthorizedUserObjective,
             Some(3) => AuthorityLevel::L3TrustedApplicationInstruction,
@@ -3358,9 +3451,8 @@ impl WorkflowCompositionEvaluator {
             })
             .collect();
 
-        let decision_hash = blake3::hash(
-            format!("wf-comp:{}:{}", session_id, chain_summary.join("->")).as_bytes(),
-        );
+        let decision_hash =
+            blake3::hash(format!("wf-comp:{}:{}", session_id, chain_summary.join("->")).as_bytes());
         let policy_decision_id = format!("pdec-wf-{}", &decision_hash.to_hex()[..16]);
 
         if let ComposedWorkflowStepKind::ExecuteApprovedDeployment {
@@ -3368,9 +3460,9 @@ impl WorkflowCompositionEvaluator {
             ref dual_authorization_cosigners,
         } = step
         {
-            let has_prior_read = steps_snapshot.iter().any(|s| {
-                matches!(s, ComposedWorkflowStepKind::ReadPermittedProjectFile { .. })
-            });
+            let has_prior_read = steps_snapshot
+                .iter()
+                .any(|s| matches!(s, ComposedWorkflowStepKind::ReadPermittedProjectFile { .. }));
             let has_unverified_config_mod = steps_snapshot.iter().any(|s| {
                 matches!(
                     s,
@@ -3573,12 +3665,15 @@ mod tests {
 
     #[test]
     fn test_authority_hierarchy_and_signed_workspace_allowlist() {
-        assert!(AuthorityLevel::L1SystemSecurityPolicy.outranks(&AuthorityLevel::L2AuthorizedUserObjective));
-        assert!(AuthorityLevel::L2AuthorizedUserObjective.outranks(&AuthorityLevel::L4WorkspaceConfiguration));
+        assert!(AuthorityLevel::L1SystemSecurityPolicy
+            .outranks(&AuthorityLevel::L2AuthorizedUserObjective));
+        assert!(AuthorityLevel::L2AuthorizedUserObjective
+            .outranks(&AuthorityLevel::L4WorkspaceConfiguration));
         assert!(!AuthorityLevel::L4WorkspaceConfiguration.can_override_higher_policy());
         assert!(!AuthorityLevel::L5UntrustedRetrievedContent.can_authorize_privileged_action());
 
-        let allowlist = SignedWorkspaceInstructionAllowlist::new(*b"test-control-plane-key-32-bytes!");
+        let allowlist =
+            SignedWorkspaceInstructionAllowlist::new(*b"test-control-plane-key-32-bytes!");
         let content = b"# AGENTS.md\nAlways run cargo test before shipping.";
         let sig = allowlist.sign_and_register_workspace_file(
             ".agents/AGENTS.md",
@@ -3592,8 +3687,14 @@ mod tests {
         );
         assert!(verified.allowed);
         assert!(verified.cryptographic_signature_valid);
-        assert_eq!(sig.assigned_authority, AuthorityLevel::L4WorkspaceConfiguration);
-        assert_eq!(verified.effective_authority, AuthorityLevel::L4WorkspaceConfiguration);
+        assert_eq!(
+            sig.assigned_authority,
+            AuthorityLevel::L4WorkspaceConfiguration
+        );
+        assert_eq!(
+            verified.effective_authority,
+            AuthorityLevel::L4WorkspaceConfiguration
+        );
 
         // Attempting upward promotion from L4 to L2 must be blocked
         let promoted = allowlist.verify_workspace_instruction(
@@ -3605,10 +3706,8 @@ mod tests {
         assert!(promoted.upward_promotion_blocked);
 
         // Machine-wide CRYPTPROTECT_LOCAL_MACHINE key storage must be rejected
-        let machine_wide = allowlist.verify_key_isolation_policy(
-            "OsoosiEDRService",
-            "DPAPI:CRYPTPROTECT_LOCAL_MACHINE",
-        );
+        let machine_wide = allowlist
+            .verify_key_isolation_policy("OsoosiEDRService", "DPAPI:CRYPTPROTECT_LOCAL_MACHINE");
         assert!(!machine_wide.allowed);
         assert!(machine_wide.cryptprotect_local_machine_rejected);
     }
@@ -3622,7 +3721,8 @@ mod tests {
         let permit_prop = CandidateCedarPolicyProposal {
             proposal_id: "prop-permit-1".to_string(),
             proposer_model_id: "skyrl-ppo-v2".to_string(),
-            proposed_forbid_clause: "permit (principal, action == Action::\"ExternalWrite\", resource);".to_string(),
+            proposed_forbid_clause:
+                "permit (principal, action == Action::\"ExternalWrite\", resource);".to_string(),
             attempts_taint_declassification: false,
             attempts_causal_provenance_mutation: false,
             benign_workflow_regression_passed: true,
@@ -3638,7 +3738,8 @@ mod tests {
         let taint_prop = CandidateCedarPolicyProposal {
             proposal_id: "prop-taint-2".to_string(),
             proposer_model_id: "skyrl-ppo-v2".to_string(),
-            proposed_forbid_clause: "forbid (principal, action == Action::\"ExternalWrite\", resource);".to_string(),
+            proposed_forbid_clause:
+                "forbid (principal, action == Action::\"ExternalWrite\", resource);".to_string(),
             attempts_taint_declassification: true,
             attempts_causal_provenance_mutation: false,
             benign_workflow_regression_passed: true,
@@ -3665,5 +3766,3 @@ mod tests {
         assert_eq!(store.active_version_num(), initial_ver);
     }
 }
-
-

@@ -152,7 +152,10 @@ mod tests {
         let ts = 1776543210i64;
         for _ in 0..100 {
             let p = perturb_timestamp_csprng(ts, 1e-9);
-            assert!((p - ts).abs() < 3600, "Perturbation must be clamped strictly < 3600s");
+            assert!(
+                (p - ts).abs() < 3600,
+                "Perturbation must be clamped strictly < 3600s"
+            );
         }
     }
 
@@ -433,8 +436,10 @@ impl CrownJewelMerkleFingerprinter {
             self.chunk_hashes.insert(digest, asset_label.to_string());
             let chunk_hex = hex::encode(digest);
             if chunk_hex.len() >= 16 {
-                self.chunk_hex_prefixes
-                    .insert(chunk_hex[..16].to_ascii_lowercase(), asset_label.to_string());
+                self.chunk_hex_prefixes.insert(
+                    chunk_hex[..16].to_ascii_lowercase(),
+                    asset_label.to_string(),
+                );
             }
             root_hasher.update(&digest);
         }
@@ -908,7 +913,9 @@ impl OsoosiTwoTierDlpEngine {
         }
 
         // 3. Delimiter-separated tokens (e.g. '-', '.', '_')
-        for raw_tok in input.split(|c: char| c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';')) {
+        for raw_tok in input.split(|c: char| {
+            c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';')
+        }) {
             let tok = raw_tok.trim();
             for &delim in &['-', '.', '_'] {
                 if tok.contains(delim) {
@@ -968,7 +975,9 @@ impl OsoosiTwoTierDlpEngine {
         let mut current_seq = String::new();
         let mut longest_seq = String::new();
 
-        for raw_tok in input.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '"' | '\'')) {
+        for raw_tok in
+            input.split(|c: char| c.is_whitespace() || matches!(c, ',' | ';' | ':' | '"' | '\''))
+        {
             let lower = raw_tok.trim().to_ascii_lowercase();
             let clean = lower.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
             let mapped_char = match clean {
@@ -1040,24 +1049,13 @@ impl OsoosiTwoTierDlpEngine {
             return None;
         }
         const TARGET_MARKERS: [&[u8; 4]; 7] = [
-            b"AKIA",
-            b"ASIA",
-            b"ghp_",
-            b"sk-p",
-            b"sk-l",
-            b"xoxb",
-            b"----",
+            b"AKIA", b"ASIA", b"ghp_", b"sk-p", b"sk-l", b"xoxb", b"----",
         ];
 
         for key in 1u8..=255u8 {
             let mut found_marker = false;
             for win in raw_bytes.windows(4) {
-                let xored = [
-                    win[0] ^ key,
-                    win[1] ^ key,
-                    win[2] ^ key,
-                    win[3] ^ key,
-                ];
+                let xored = [win[0] ^ key, win[1] ^ key, win[2] ^ key, win[3] ^ key];
                 if TARGET_MARKERS.contains(&&xored) {
                     found_marker = true;
                     break;
@@ -1065,7 +1063,10 @@ impl OsoosiTwoTierDlpEngine {
             }
             if found_marker {
                 let decrypted: Vec<u8> = raw_bytes.iter().map(|&b| b ^ key).collect();
-                if decrypted.iter().all(|&c| (0x20..=0x7E).contains(&c) || c == b'\n' || c == b'\r' || c == b'\t') {
+                if decrypted
+                    .iter()
+                    .all(|&c| (0x20..=0x7E).contains(&c) || c == b'\n' || c == b'\r' || c == b'\t')
+                {
                     if let Ok(s) = String::from_utf8(decrypted) {
                         return Some(s);
                     }
@@ -1144,7 +1145,9 @@ impl OsoosiTwoTierDlpEngine {
             return false;
         }
 
-        for raw_tok in text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';')) {
+        for raw_tok in
+            text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';'))
+        {
             let tok = raw_tok.trim();
             if tok.len() < 64 {
                 continue;
@@ -1247,7 +1250,8 @@ impl OsoosiTwoTierDlpEngine {
                 }) {
                     let tok = raw_tok.trim();
                     if tok.len() >= 16 && tok.len() <= 4096 {
-                        if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
+                        if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit())
+                        {
                             if let Ok(bytes) = hex::decode(tok) {
                                 if bytes.iter().all(|&c| (0x20..=0x7E).contains(&c)) {
                                     if let Ok(s) = String::from_utf8(bytes.clone()) {
@@ -1256,7 +1260,9 @@ impl OsoosiTwoTierDlpEngine {
                                             next_frontier.push(s);
                                         }
                                     }
-                                } else if let Some(xor_s) = Self::decode_single_byte_xor_candidates(&bytes) {
+                                } else if let Some(xor_s) =
+                                    Self::decode_single_byte_xor_candidates(&bytes)
+                                {
                                     if seen.insert(xor_s.clone()) {
                                         layers.push(xor_s.clone());
                                         next_frontier.push(xor_s);
@@ -1271,7 +1277,9 @@ impl OsoosiTwoTierDlpEngine {
                                 }
                             }
                             if let Some(raw_b64) = Self::decode_raw_base64_bytes(tok) {
-                                if let Some(xor_s) = Self::decode_single_byte_xor_candidates(&raw_b64) {
+                                if let Some(xor_s) =
+                                    Self::decode_single_byte_xor_candidates(&raw_b64)
+                                {
                                     if seen.insert(xor_s.clone()) {
                                         layers.push(xor_s.clone());
                                         next_frontier.push(xor_s);
@@ -1347,27 +1355,29 @@ impl OsoosiTwoTierDlpEngine {
             || sink_lower.contains("api.github.com/repos/oyesanyf/oshoosiclaw");
 
         // High-entropy / custom multi-round cipher exfil detection (exempt clean git source commits on canonical github)
-        let is_cipher_exfil = Self::detect_custom_multi_round_cipher_exfil(&text, is_external_sink && !(is_dev_tool && is_canonical_github))
-            || (is_external_sink
-                && !(is_dev_tool && is_canonical_github)
-                && text
-                    .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';'))
-                    .any(|tok| {
-                        let trimmed = tok.trim();
-                        if trimmed.len() >= 32 {
-                            if let Ok(b) = hex::decode(trimmed) {
-                                if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
-                                    return true;
-                                }
-                            }
-                            if let Some(b) = Self::decode_raw_base64_bytes(trimmed) {
-                                if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
-                                    return true;
-                                }
+        let is_cipher_exfil = Self::detect_custom_multi_round_cipher_exfil(
+            &text,
+            is_external_sink && !(is_dev_tool && is_canonical_github),
+        ) || (is_external_sink
+            && !(is_dev_tool && is_canonical_github)
+            && text
+                .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';'))
+                .any(|tok| {
+                    let trimmed = tok.trim();
+                    if trimmed.len() >= 32 {
+                        if let Ok(b) = hex::decode(trimmed) {
+                            if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
+                                return true;
                             }
                         }
-                        false
-                    }));
+                        if let Some(b) = Self::decode_raw_base64_bytes(trimmed) {
+                            if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                }));
 
         if is_cipher_exfil
             && !detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string())
@@ -1384,9 +1394,11 @@ impl OsoosiTwoTierDlpEngine {
                     detected_categories.push(cj);
                 }
             }
-            let (layer_cj_meta, _) = self
-                .crown_jewels
-                .evaluate_crown_jewel_export_attempt(layer, actor_process, destination_sink);
+            let (layer_cj_meta, _) = self.crown_jewels.evaluate_crown_jewel_export_attempt(
+                layer,
+                actor_process,
+                destination_sink,
+            );
             for cj in layer_cj_meta {
                 if !detected_categories.contains(&cj) {
                     detected_categories.push(cj);
@@ -1563,10 +1575,11 @@ impl OsoosiTwoTierDlpEngine {
         };
 
         let allowed = (detected_categories.is_empty())
-            || (is_dev_tool && is_canonical_github && !has_crown_jewel && detected_categories.is_empty())
-            || (!is_external_sink
+            || (is_dev_tool
+                && is_canonical_github
                 && !has_crown_jewel
-                && is_dev_tool);
+                && detected_categories.is_empty())
+            || (!is_external_sink && !has_crown_jewel && is_dev_tool);
 
         let escalate_to_tier2 = !allowed;
         let rationale = if allowed {
@@ -1705,7 +1718,13 @@ impl OsoosiTwoTierDlpEngine {
             }
         }
 
-        for tok in text.split(|c: char| c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':' | '(' | ')')) {
+        for tok in text.split(|c: char| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':' | '(' | ')'
+                )
+        }) {
             let clean = tok.trim();
             if clean.len() == 10 && RedactXStructuredValidator::npi_valid(clean) {
                 let tag = format!("NPI:{}", clean);
@@ -1715,9 +1734,14 @@ impl OsoosiTwoTierDlpEngine {
                 if !validator_cats.contains(&"HIPAA_NPI".to_string()) {
                     validator_cats.push("HIPAA_NPI".to_string());
                 }
-            } else if clean.len() == 11 && clean.as_bytes()[3] == b'-' && clean.as_bytes()[6] == b'-' {
+            } else if clean.len() == 11
+                && clean.as_bytes()[3] == b'-'
+                && clean.as_bytes()[6] == b'-'
+            {
                 let parts: Vec<&str> = clean.split('-').collect();
-                if parts.len() == 3 && RedactXStructuredValidator::ssn_valid(parts[0], parts[1], parts[2]) {
+                if parts.len() == 3
+                    && RedactXStructuredValidator::ssn_valid(parts[0], parts[1], parts[2])
+                {
                     if !validator_cats.contains(&"US_SSN".to_string()) {
                         validator_cats.push("US_SSN".to_string());
                     }
@@ -1746,8 +1770,15 @@ impl OsoosiTwoTierDlpEngine {
             || proc_lower == "cargo.exe";
         let sink_lower = destination_sink.to_ascii_lowercase();
         let is_canonical_github = sink_lower.contains("github.com/oyesanyf/oshoosiclaw");
-        let has_crown_jewel = tier1.detected_categories.iter().any(|c| c.starts_with("CROWN_JEWEL"));
-        let canonical_git_push_allowed = is_dev_tool && is_canonical_github && !has_crown_jewel && tier1.detected_categories.is_empty() && validator_cats.is_empty();
+        let has_crown_jewel = tier1
+            .detected_categories
+            .iter()
+            .any(|c| c.starts_with("CROWN_JEWEL"));
+        let canonical_git_push_allowed = is_dev_tool
+            && is_canonical_github
+            && !has_crown_jewel
+            && tier1.detected_categories.is_empty()
+            && validator_cats.is_empty();
 
         let total_detected = tier1.detected_categories.len() + validator_cats.len();
 
@@ -1763,10 +1794,12 @@ impl OsoosiTwoTierDlpEngine {
             -6.5
         };
 
-        let p_true_phi_pii = (1.0 / (1.0 + (-raw_logit / platt_temperature).exp())).clamp(0.0001, 0.9999);
+        let p_true_phi_pii =
+            (1.0 / (1.0 + (-raw_logit / platt_temperature).exp())).clamp(0.0001, 0.9999);
         let p_false_clean = (1.0 - p_true_phi_pii).clamp(0.0001, 0.9999);
 
-        let h_shannon = -(p_true_phi_pii * p_true_phi_pii.log2() + p_false_clean * p_false_clean.log2());
+        let h_shannon =
+            -(p_true_phi_pii * p_true_phi_pii.log2() + p_false_clean * p_false_clean.log2());
         let shannon_entropy_norm = (h_shannon / 1.0).clamp(0.0, 1.0);
         let evidential_confidence = (1.0 - shannon_entropy_norm).clamp(0.0, 1.0);
 
@@ -2053,16 +2086,55 @@ impl PresidioGlinerPiiZeroGuard {
                         let clean = lower.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
                         let is_nato_word = matches!(
                             clean,
-                            "alpha" | "alfa" | "bravo" | "charlie" | "delta" | "echo" | "foxtrot"
-                                | "golf" | "hotel" | "india" | "juliet" | "juliett" | "kilo"
-                                | "lima" | "mike" | "november" | "oscar" | "papa" | "quebec"
-                                | "romeo" | "sierra" | "tango" | "uniform" | "victor" | "whiskey"
-                                | "xray" | "x-ray" | "yankee" | "zulu" | "zero" | "one" | "two"
-                                | "three" | "four" | "five" | "six" | "seven" | "eight" | "nine"
-                                | "dash" | "hyphen" | "underscore"
+                            "alpha"
+                                | "alfa"
+                                | "bravo"
+                                | "charlie"
+                                | "delta"
+                                | "echo"
+                                | "foxtrot"
+                                | "golf"
+                                | "hotel"
+                                | "india"
+                                | "juliet"
+                                | "juliett"
+                                | "kilo"
+                                | "lima"
+                                | "mike"
+                                | "november"
+                                | "oscar"
+                                | "papa"
+                                | "quebec"
+                                | "romeo"
+                                | "sierra"
+                                | "tango"
+                                | "uniform"
+                                | "victor"
+                                | "whiskey"
+                                | "xray"
+                                | "x-ray"
+                                | "yankee"
+                                | "zulu"
+                                | "zero"
+                                | "one"
+                                | "two"
+                                | "three"
+                                | "four"
+                                | "five"
+                                | "six"
+                                | "seven"
+                                | "eight"
+                                | "nine"
+                                | "dash"
+                                | "hyphen"
+                                | "underscore"
                         );
-                        let is_ascii_int = tok.parse::<u8>().map(|v| (32..=126).contains(&v)).unwrap_or(false);
-                        let is_delim_token = tok.len() >= 4 && (tok.contains('-') || tok.contains('.') || tok.contains('_'));
+                        let is_ascii_int = tok
+                            .parse::<u8>()
+                            .map(|v| (32..=126).contains(&v))
+                            .unwrap_or(false);
+                        let is_delim_token = tok.len() >= 4
+                            && (tok.contains('-') || tok.contains('.') || tok.contains('_'));
 
                         if is_nato_word || is_ascii_int || is_delim_token {
                             detected_type = Some("OBFUSCATED_SECRET");
@@ -2263,10 +2335,7 @@ impl RedactXStructuredValidator {
 
         // CMS NPI algorithm: prefix with 80840 to form 15 digits
         let prefixed = format!("80840{}", clean);
-        let digits: Vec<u32> = prefixed
-            .chars()
-            .filter_map(|c| c.to_digit(10))
-            .collect();
+        let digits: Vec<u32> = prefixed.chars().filter_map(|c| c.to_digit(10)).collect();
         if digits.len() != 15 {
             return false;
         }
@@ -2291,10 +2360,7 @@ impl RedactXStructuredValidator {
         if clean.contains('.') || clean.contains('/') || clean.contains(':') {
             return false;
         }
-        let digits: Vec<u32> = clean
-            .chars()
-            .filter_map(|c| c.to_digit(10))
-            .collect();
+        let digits: Vec<u32> = clean.chars().filter_map(|c| c.to_digit(10)).collect();
         if digits.len() < 6 {
             return false;
         }
@@ -2322,8 +2388,22 @@ impl RedactXStructuredValidator {
     pub fn mrn_scan(text: &str) -> Vec<String> {
         let lower = text.to_ascii_lowercase();
         let prefixes = [
-            "mrn:", "mrn#", "mrn-", "mrn ", "mr#:", "mr#", "medical record:", "medical record #",
-            "chart #:", "chart #", "chart#", "patient id:", "patient id", "unit #:", "unit #", "unit#"
+            "mrn:",
+            "mrn#",
+            "mrn-",
+            "mrn ",
+            "mr#:",
+            "mr#",
+            "medical record:",
+            "medical record #",
+            "chart #:",
+            "chart #",
+            "chart#",
+            "patient id:",
+            "patient id",
+            "unit #:",
+            "unit #",
+            "unit#",
         ];
         let mut results = Vec::new();
 
@@ -2540,7 +2620,6 @@ pub struct OpenJevDecisionVerdict {
     pub canonical_git_push_allowed: bool,
 }
 
-
 #[cfg(test)]
 mod tests_dlp_evasion {
     use super::*;
@@ -2556,13 +2635,26 @@ mod tests_dlp_evasion {
             let b = raw_secret.as_bytes();
             for chunk in b.chunks(3) {
                 let mut n = (chunk[0] as u32) << 16;
-                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
-                if chunk.len() > 2 { n |= chunk[2] as u32; }
-                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                if chunk.len() > 1 {
+                    n |= (chunk[1] as u32) << 8;
+                }
+                if chunk.len() > 2 {
+                    n |= chunk[2] as u32;
+                }
+                const B64: &[u8] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                 out.push(B64[((n >> 18) & 63) as usize] as char);
                 out.push(B64[((n >> 12) & 63) as usize] as char);
-                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
-                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 1 {
+                    out.push(B64[((n >> 6) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                if chunk.len() > 2 {
+                    out.push(B64[(n & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
             }
             out
         };
@@ -2573,13 +2665,26 @@ mod tests_dlp_evasion {
             let b = d1.as_bytes();
             for chunk in b.chunks(3) {
                 let mut n = (chunk[0] as u32) << 16;
-                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
-                if chunk.len() > 2 { n |= chunk[2] as u32; }
-                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                if chunk.len() > 1 {
+                    n |= (chunk[1] as u32) << 8;
+                }
+                if chunk.len() > 2 {
+                    n |= chunk[2] as u32;
+                }
+                const B64: &[u8] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                 out.push(B64[((n >> 18) & 63) as usize] as char);
                 out.push(B64[((n >> 12) & 63) as usize] as char);
-                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
-                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 1 {
+                    out.push(B64[((n >> 6) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                if chunk.len() > 2 {
+                    out.push(B64[(n & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
             }
             out
         };
@@ -2596,21 +2701,42 @@ mod tests_dlp_evasion {
             let b = d4.as_bytes();
             for chunk in b.chunks(3) {
                 let mut n = (chunk[0] as u32) << 16;
-                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
-                if chunk.len() > 2 { n |= chunk[2] as u32; }
-                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                if chunk.len() > 1 {
+                    n |= (chunk[1] as u32) << 8;
+                }
+                if chunk.len() > 2 {
+                    n |= chunk[2] as u32;
+                }
+                const B64: &[u8] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                 out.push(B64[((n >> 18) & 63) as usize] as char);
                 out.push(B64[((n >> 12) & 63) as usize] as char);
-                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
-                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 1 {
+                    out.push(B64[((n >> 6) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                if chunk.len() > 2 {
+                    out.push(B64[(n & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
             }
             out
         };
 
-        let verdict = engine.inspect_hot_tier1("evil_agent.exe", "https://api.external.com/leak", d5.as_bytes());
+        let verdict = engine.inspect_hot_tier1(
+            "evil_agent.exe",
+            "https://api.external.com/leak",
+            d5.as_bytes(),
+        );
         assert!(!verdict.allowed, "Depth-5 encoded payload must be blocked!");
-        assert!(verdict.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
-        assert!(verdict.detected_categories.contains(&"DEEP_NESTED_ENCODING_EVASION".to_string()));
+        assert!(verdict
+            .detected_categories
+            .contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict
+            .detected_categories
+            .contains(&"DEEP_NESTED_ENCODING_EVASION".to_string()));
     }
 
     #[test]
@@ -2619,37 +2745,79 @@ mod tests_dlp_evasion {
 
         // 1. NATO phonetic spelled out AWS Key
         let nato_payload = "alpha kilo india alpha india oscar sierra foxtrot oscar delta november november seven echo x-ray alpha mike papa lima echo";
-        let verdict_nato = engine.inspect_hot_tier1("agent", "https://api.external.com", nato_payload.as_bytes());
-        assert!(!verdict_nato.allowed, "NATO phonetic secret must be blocked!");
-        assert!(verdict_nato.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
-        assert!(verdict_nato.detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
+        let verdict_nato =
+            engine.inspect_hot_tier1("agent", "https://api.external.com", nato_payload.as_bytes());
+        assert!(
+            !verdict_nato.allowed,
+            "NATO phonetic secret must be blocked!"
+        );
+        assert!(verdict_nato
+            .detected_categories
+            .contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict_nato
+            .detected_categories
+            .contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
 
         // 2. Delimiter interleaved
         let delim_payload = "A-K-I-A-I-O-S-F-O-D-N-N-7-E-X-A-M-P-L-E";
-        let verdict_delim = engine.inspect_hot_tier1("agent", "https://api.external.com", delim_payload.as_bytes());
-        assert!(!verdict_delim.allowed, "Delimiter-interleaved secret must be blocked!");
-        assert!(verdict_delim.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
-        assert!(verdict_delim.detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
+        let verdict_delim = engine.inspect_hot_tier1(
+            "agent",
+            "https://api.external.com",
+            delim_payload.as_bytes(),
+        );
+        assert!(
+            !verdict_delim.allowed,
+            "Delimiter-interleaved secret must be blocked!"
+        );
+        assert!(verdict_delim
+            .detected_categories
+            .contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict_delim
+            .detected_categories
+            .contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
 
         // 3. ASCII decimal array
-        let ascii_payload = "[65, 75, 73, 65, 73, 79, 83, 70, 79, 68, 78, 78, 55, 69, 88, 65, 77, 80, 76, 69]";
-        let verdict_ascii = engine.inspect_hot_tier1("agent", "https://api.external.com", ascii_payload.as_bytes());
-        assert!(!verdict_ascii.allowed, "ASCII code array secret must be blocked!");
-        assert!(verdict_ascii.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
-        assert!(verdict_ascii.detected_categories.contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
+        let ascii_payload =
+            "[65, 75, 73, 65, 73, 79, 83, 70, 79, 68, 78, 78, 55, 69, 88, 65, 77, 80, 76, 69]";
+        let verdict_ascii = engine.inspect_hot_tier1(
+            "agent",
+            "https://api.external.com",
+            ascii_payload.as_bytes(),
+        );
+        assert!(
+            !verdict_ascii.allowed,
+            "ASCII code array secret must be blocked!"
+        );
+        assert!(verdict_ascii
+            .detected_categories
+            .contains(&"AWS_ACCESS_KEY".to_string()));
+        assert!(verdict_ascii
+            .detected_categories
+            .contains(&"SEMANTIC_PARAPHRASE_EVASION".to_string()));
     }
 
     #[test]
     fn test_crown_jewel_semantic_shingle_fingerprinting() {
         let mut engine = OsoosiTwoTierDlpEngine::new();
-        let original_crown_jewel = b"SECRET_PROPRIETARY_TRADING_ALGORITHM_SIGNATURE_MATRIX_CONFIDENTIAL_ALPHA_BETA";
-        engine.crown_jewels.register_crown_jewel_bytes("PROPRIETARY_MODEL", original_crown_jewel);
+        let original_crown_jewel =
+            b"SECRET_PROPRIETARY_TRADING_ALGORITHM_SIGNATURE_MATRIX_CONFIDENTIAL_ALPHA_BETA";
+        engine
+            .crown_jewels
+            .register_crown_jewel_bytes("PROPRIETARY_MODEL", original_crown_jewel);
 
         // Paraphrased excerpt: reformatted with whitespace, commas, mixed casing, extra symbols
-        let reformatted_excerpt = b"Secret Proprietary Trading Algorithm, Signature Matrix: Confidential Alpha Beta!";
-        let verdict = engine.inspect_hot_tier1("agent", "https://api.external.com", reformatted_excerpt);
-        assert!(!verdict.allowed, "Reformatted semantic crown jewel excerpt must be blocked!");
-        assert!(verdict.detected_categories.iter().any(|c| c.contains("CROWN_JEWEL(PROPRIETARY_MODEL)")));
+        let reformatted_excerpt =
+            b"Secret Proprietary Trading Algorithm, Signature Matrix: Confidential Alpha Beta!";
+        let verdict =
+            engine.inspect_hot_tier1("agent", "https://api.external.com", reformatted_excerpt);
+        assert!(
+            !verdict.allowed,
+            "Reformatted semantic crown jewel excerpt must be blocked!"
+        );
+        assert!(verdict
+            .detected_categories
+            .iter()
+            .any(|c| c.contains("CROWN_JEWEL(PROPRIETARY_MODEL)")));
     }
 
     #[test]
@@ -2661,9 +2829,18 @@ mod tests_dlp_evasion {
         let xor_key = 0x5a_u8;
         let xor_bytes: Vec<u8> = secret.iter().map(|&b| b ^ xor_key).collect();
         let hex_payload = hex::encode(&xor_bytes);
-        let verdict_xor = engine.inspect_hot_tier1("agent", "https://paste.external.org/upload", hex_payload.as_bytes());
-        assert!(!verdict_xor.allowed, "Single-byte XOR secret exfiltration must be blocked!");
-        assert!(verdict_xor.detected_categories.contains(&"AWS_ACCESS_KEY".to_string()));
+        let verdict_xor = engine.inspect_hot_tier1(
+            "agent",
+            "https://paste.external.org/upload",
+            hex_payload.as_bytes(),
+        );
+        assert!(
+            !verdict_xor.allowed,
+            "Single-byte XOR secret exfiltration must be blocked!"
+        );
+        assert!(verdict_xor
+            .detected_categories
+            .contains(&"AWS_ACCESS_KEY".to_string()));
 
         // 2. High-entropy unstructured custom cipher sent to external sink
         let mut rng_bytes = [0u8; 96];
@@ -2671,9 +2848,18 @@ mod tests_dlp_evasion {
             *b = ((i * 137 + 43) % 256) as u8;
         }
         let high_entropy_hex = hex::encode(rng_bytes);
-        let verdict_cipher = engine.inspect_hot_tier1("agent", "https://paste.external.org/upload", high_entropy_hex.as_bytes());
-        assert!(!verdict_cipher.allowed, "High-entropy cipher exfiltration to external sink must be blocked!");
-        assert!(verdict_cipher.detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string()));
+        let verdict_cipher = engine.inspect_hot_tier1(
+            "agent",
+            "https://paste.external.org/upload",
+            high_entropy_hex.as_bytes(),
+        );
+        assert!(
+            !verdict_cipher.allowed,
+            "High-entropy cipher exfiltration to external sink must be blocked!"
+        );
+        assert!(verdict_cipher
+            .detected_categories
+            .contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string()));
     }
 
     #[test]
@@ -2684,18 +2870,37 @@ mod tests_dlp_evasion {
         assert!(RedactXStructuredValidator::npi_valid("1234567893"));
         assert!(!RedactXStructuredValidator::npi_valid("1234567890"));
 
-        let clinical_text = "Patient John Doe, MRN: MRN# 4810294-8, NPI: 1234567893, Phone: (555) 234-5678";
-        let verdict = engine.evaluate_openjev_hybrid("ehr_sync.exe", "https://untrusted-health-api.org/exfil", clinical_text, Some("zero_leakage"));
-        assert!(verdict.noul_contains_phi_pii.value, "Clinical note must be flagged as containing PHI/PII");
+        let clinical_text =
+            "Patient John Doe, MRN: MRN# 4810294-8, NPI: 1234567893, Phone: (555) 234-5678";
+        let verdict = engine.evaluate_openjev_hybrid(
+            "ehr_sync.exe",
+            "https://untrusted-health-api.org/exfil",
+            clinical_text,
+            Some("zero_leakage"),
+        );
+        assert!(
+            verdict.noul_contains_phi_pii.value,
+            "Clinical note must be flagged as containing PHI/PII"
+        );
         assert_eq!(verdict.choice_routing_action.selection, "BLOCK_AND_SCRUB");
         assert!(verdict.score_privacy_risk.expected_value >= 3.0);
-        assert!(verdict.validator_confirmed_categories.contains(&"HIPAA_MRN".to_string()));
+        assert!(verdict
+            .validator_confirmed_categories
+            .contains(&"HIPAA_MRN".to_string()));
         assert!(!verdict.canonical_git_push_allowed);
 
         // 2. Canonical GitHub Push with 0 secrets
         let git_clean_payload = "commit 4a3f12b... refs/heads/main src/lib.rs clean code change";
-        let verdict_git = engine.evaluate_openjev_hybrid("git-remote-https.exe", "https://github.com/oyesanyf/OshoosiClaw.git/info/refs", git_clean_payload, None);
-        assert!(!verdict_git.noul_contains_phi_pii.value, "Canonical GitHub push with 0 secrets must be clean");
+        let verdict_git = engine.evaluate_openjev_hybrid(
+            "git-remote-https.exe",
+            "https://github.com/oyesanyf/OshoosiClaw.git/info/refs",
+            git_clean_payload,
+            None,
+        );
+        assert!(
+            !verdict_git.noul_contains_phi_pii.value,
+            "Canonical GitHub push with 0 secrets must be clean"
+        );
         assert_eq!(verdict_git.choice_routing_action.selection, "PASS_CLEAN");
         assert!(verdict_git.canonical_git_push_allowed);
         assert_eq!(verdict_git.score_privacy_risk.scale_min, 1);
@@ -2729,7 +2934,10 @@ mod tests_dlp_evasion {
 
         // 2. Tier-1 hot scan must detect the Crown-Jewel export and deny it
         let tier1 = engine.inspect_hot_tier1(actor, destination, payload.as_bytes());
-        assert!(!tier1.allowed, "Tier-1 hot scan must block Crown-Jewel export!");
+        assert!(
+            !tier1.allowed,
+            "Tier-1 hot scan must block Crown-Jewel export!"
+        );
         assert!(tier1.sensitivity_potential_phi >= 0.95);
         assert!(tier1
             .detected_categories
@@ -2739,15 +2947,22 @@ mod tests_dlp_evasion {
         // 3. Destination & operation authorization check
         let (cedar_forbid, forbid_reason) =
             engine.evaluate_egress_destination_policy(actor, destination, operation);
-        assert!(cedar_forbid, "C2 destination & untrusted exfil actor must be forbidden by Cedar policy!");
+        assert!(
+            cedar_forbid,
+            "C2 destination & untrusted exfil actor must be forbidden by Cedar policy!"
+        );
         assert!(forbid_reason.is_some());
 
         // 4. OpenJEV hybrid voter evaluation
-        let openjev = engine.evaluate_openjev_hybrid(actor, destination, payload, Some("zero_leakage"));
+        let openjev =
+            engine.evaluate_openjev_hybrid(actor, destination, payload, Some("zero_leakage"));
         let voter_quarantine = openjev.choice_routing_action.selection == "QUARANTINE_ENFORCE"
             || openjev.choice_routing_action.selection == "BLOCK_AND_SCRUB"
             || openjev.noul_contains_phi_pii.value;
-        assert!(voter_quarantine, "OpenJEV voter must vote to quarantine/block!");
+        assert!(
+            voter_quarantine,
+            "OpenJEV voter must vote to quarantine/block!"
+        );
 
         // 5. Decision precedence aggregation
         let final_verdict = aggregate_dlp_decision(
@@ -2759,7 +2974,8 @@ mod tests_dlp_evasion {
         assert_eq!(final_verdict, DlpVerdict::Deny);
         assert_eq!(final_verdict.as_authorization_str(), "DENY");
         assert_eq!(
-            final_verdict.as_dlp_response_str(voter_quarantine || !tier1.detected_categories.is_empty()),
+            final_verdict
+                .as_dlp_response_str(voter_quarantine || !tier1.detected_categories.is_empty()),
             "QUARANTINE"
         );
     }
@@ -2773,19 +2989,28 @@ mod tests_dlp_evasion {
             .register_asset_metadata("certs/OshoosiClaw_Signing.pfx", pfx_merkle_root);
 
         // Harmless reference to the asset name without exporting chunks, Merkle roots, or key material
-        let harmless_text = "Inventory check: certs/OshoosiClaw_Signing.pfx is stored in hardware vault.";
-        let (cj_cats, protected_export_denied) = engine.crown_jewels.evaluate_crown_jewel_export_attempt(
-            harmless_text,
-            "osoosi-cli.exe",
-            "local_audit_log",
-        );
+        let harmless_text =
+            "Inventory check: certs/OshoosiClaw_Signing.pfx is stored in hardware vault.";
+        let (cj_cats, protected_export_denied) =
+            engine.crown_jewels.evaluate_crown_jewel_export_attempt(
+                harmless_text,
+                "osoosi-cli.exe",
+                "local_audit_log",
+            );
         assert!(
             !protected_export_denied && cj_cats.is_empty(),
             "Harmless reference to an asset name over an allowed channel must not be flagged as a prohibited export!"
         );
 
-        let tier1 = engine.inspect_hot_tier1("osoosi-cli.exe", "local_audit_log", harmless_text.as_bytes());
-        assert!(tier1.allowed, "Harmless filename reference must be allowed by Tier-1!");
+        let tier1 = engine.inspect_hot_tier1(
+            "osoosi-cli.exe",
+            "local_audit_log",
+            harmless_text.as_bytes(),
+        );
+        assert!(
+            tier1.allowed,
+            "Harmless filename reference must be allowed by Tier-1!"
+        );
 
         let openjev = engine.evaluate_openjev_hybrid(
             "osoosi-cli.exe",
@@ -2812,16 +3037,25 @@ mod tests_dlp_evasion {
     fn test_ipv4_host_headers_never_false_positive_as_hipaa_phone_or_mrn() {
         let engine = OsoosiTwoTierDlpEngine::new();
         let har_payload = "CONNECT https://172.64.155.209:443/ Host: 172.64.155.209\nCONNECT https://104.18.39.21:443/ Host: 104.18.39.21\nCONNECT https://140.82.112.26:443/ Host: 140.82.112.26";
-        let tier1 = engine.inspect_hot_tier1("har_sensor", "https://172.64.155.209:443/", har_payload.as_bytes());
+        let tier1 = engine.inspect_hot_tier1(
+            "har_sensor",
+            "https://172.64.155.209:443/",
+            har_payload.as_bytes(),
+        );
         assert!(
-            !tier1.detected_categories.contains(&"HIPAA_PHONE".to_string()),
+            !tier1
+                .detected_categories
+                .contains(&"HIPAA_PHONE".to_string()),
             "IPv4 address + port must never false-positive as HIPAA_PHONE!"
         );
         assert!(
             !tier1.detected_categories.contains(&"HIPAA_MRN".to_string()),
             "IPv4 address must never false-positive as HIPAA_MRN!"
         );
-        assert!(tier1.allowed, "Clean HAR IPv4 CONNECT header must be allowed!");
+        assert!(
+            tier1.allowed,
+            "Clean HAR IPv4 CONNECT header must be allowed!"
+        );
     }
 
     #[test]
@@ -2832,10 +3066,15 @@ mod tests_dlp_evasion {
         assert_eq!(mrns, vec!["84729104".to_string()]);
         let phones = RedactXStructuredValidator::nanp_phone_fax_scan(multibyte_payload);
         assert_eq!(phones.len(), 2);
-        let tier1 = engine.inspect_hot_tier1("dlp_sensor", "https://example.org", multibyte_payload.as_bytes());
+        let tier1 = engine.inspect_hot_tier1(
+            "dlp_sensor",
+            "https://example.org",
+            multibyte_payload.as_bytes(),
+        );
         assert!(tier1.detected_categories.contains(&"HIPAA_MRN".to_string()));
-        assert!(tier1.detected_categories.contains(&"HIPAA_PHONE".to_string()));
+        assert!(tier1
+            .detected_categories
+            .contains(&"HIPAA_PHONE".to_string()));
         assert!(tier1.detected_categories.contains(&"HIPAA_FAX".to_string()));
     }
 }
-

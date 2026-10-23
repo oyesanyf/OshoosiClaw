@@ -239,7 +239,9 @@ pub fn sync_ebpf_unregister_canary_fd(tgid: u32, fd: u32) {
         .write()
         .unwrap_or_else(|e| e.into_inner());
     let initial_len = guard.canary_trap_fds.len();
-    guard.canary_trap_fds.retain(|e| !(e.tgid == tgid && e.fd == fd));
+    guard
+        .canary_trap_fds
+        .retain(|e| !(e.tgid == tgid && e.fd == fd));
     if guard.canary_trap_fds.len() != initial_len {
         guard.dirty = true;
     }

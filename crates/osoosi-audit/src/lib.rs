@@ -370,7 +370,7 @@ impl MerkleAuditTree {
         let mut retained_entries = Vec::with_capacity(initial_len);
         let mut retained_leaves = Vec::with_capacity(initial_len);
 
-        for (entry, leaf) in entries.into_iter().zip(leaves.into_iter()) {
+        for (entry, leaf) in entries.into_iter().zip(leaves) {
             if keep(&entry) {
                 retained_entries.push(entry);
                 retained_leaves.push(leaf);

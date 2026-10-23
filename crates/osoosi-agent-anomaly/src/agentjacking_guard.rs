@@ -350,7 +350,11 @@ impl AgentjackingGuard {
 
     /// Marks an agent session as tainted by untrusted external content (PDFs, Markdown, web pages, repo clones),
     /// setting `force_canary_cage: true` to automatically route subsequent subprocess/tool executions through `CanaryCage::spawn_caged`.
-    pub fn mark_session_tainted(&self, session_id: &str, content_source: &str) -> SessionTaintState {
+    pub fn mark_session_tainted(
+        &self,
+        session_id: &str,
+        content_source: &str,
+    ) -> SessionTaintState {
         let now_secs = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -367,7 +371,9 @@ impl AgentjackingGuard {
             });
 
         track.taint_state = SessionTaintState::TaintedByExternalData;
-        track.unverified_data_sources.push(content_source.to_string());
+        track
+            .unverified_data_sources
+            .push(content_source.to_string());
         track.last_action_secs = now_secs;
         track.taint_state
     }
@@ -527,7 +533,10 @@ mod tests {
             None,
         );
         assert!(tool_verdict.is_allowed);
-        assert!(tool_verdict.force_canary_cage, "Tainted session must enforce force_canary_cage = true");
+        assert!(
+            tool_verdict.force_canary_cage,
+            "Tainted session must enforce force_canary_cage = true"
+        );
 
         // Quarantined session also enforces force_canary_cage = true
         let blocked = guard.evaluate_chained_tool_call(

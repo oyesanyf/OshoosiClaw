@@ -932,7 +932,9 @@ impl ZeroMutualInformationProjector {
         let mut result = text.to_string();
 
         // 1. Check NATO phonetic sequences
-        if let Some(decoded_nato) = osoosi_dp::OsoosiTwoTierDlpEngine::decode_nato_phonetic_and_spelled(&result) {
+        if let Some(decoded_nato) =
+            osoosi_dp::OsoosiTwoTierDlpEngine::decode_nato_phonetic_and_spelled(&result)
+        {
             if secret_markers.iter().any(|m| decoded_nato.contains(m)) || decoded_nato.len() >= 16 {
                 let words: Vec<&str> = result.split_whitespace().collect();
                 let mut start_idx = None;
@@ -945,13 +947,48 @@ impl ZeroMutualInformationProjector {
                     let clean = lower.trim_matches(|c: char| !c.is_alphanumeric() && c != '-');
                     let is_nato = matches!(
                         clean,
-                        "alpha" | "alfa" | "bravo" | "charlie" | "delta" | "echo" | "foxtrot"
-                            | "golf" | "hotel" | "india" | "juliet" | "juliett" | "kilo"
-                            | "lima" | "mike" | "november" | "oscar" | "papa" | "quebec"
-                            | "romeo" | "sierra" | "tango" | "uniform" | "victor" | "whiskey"
-                            | "xray" | "x-ray" | "yankee" | "zulu" | "zero" | "one" | "two"
-                            | "three" | "four" | "five" | "six" | "seven" | "eight" | "nine"
-                            | "dash" | "hyphen" | "underscore"
+                        "alpha"
+                            | "alfa"
+                            | "bravo"
+                            | "charlie"
+                            | "delta"
+                            | "echo"
+                            | "foxtrot"
+                            | "golf"
+                            | "hotel"
+                            | "india"
+                            | "juliet"
+                            | "juliett"
+                            | "kilo"
+                            | "lima"
+                            | "mike"
+                            | "november"
+                            | "oscar"
+                            | "papa"
+                            | "quebec"
+                            | "romeo"
+                            | "sierra"
+                            | "tango"
+                            | "uniform"
+                            | "victor"
+                            | "whiskey"
+                            | "xray"
+                            | "x-ray"
+                            | "yankee"
+                            | "zulu"
+                            | "zero"
+                            | "one"
+                            | "two"
+                            | "three"
+                            | "four"
+                            | "five"
+                            | "six"
+                            | "seven"
+                            | "eight"
+                            | "nine"
+                            | "dash"
+                            | "hyphen"
+                            | "underscore"
                     );
                     if is_nato {
                         if start_idx.is_none() {
@@ -1000,7 +1037,9 @@ impl ZeroMutualInformationProjector {
 
             // Delimiter interleaved token match (e.g. A-K-I-A-..., s-k---p-r-o-j-..., etc.)
             if !is_secret_bearing {
-                if let Some(delim_dec) = osoosi_dp::OsoosiTwoTierDlpEngine::decode_delimiter_interleaved(&tok) {
+                if let Some(delim_dec) =
+                    osoosi_dp::OsoosiTwoTierDlpEngine::decode_delimiter_interleaved(&tok)
+                {
                     if secret_markers.iter().any(|m| delim_dec.contains(m)) {
                         is_secret_bearing = true;
                     }
@@ -1010,7 +1049,10 @@ impl ZeroMutualInformationProjector {
             // Deep nested encoding layers match (up to depth 8)
             if !is_secret_bearing && tok.len() >= 16 {
                 let layers = osoosi_dp::OsoosiTwoTierDlpEngine::unwrap_encoded_layers(&tok);
-                if layers.iter().any(|l| secret_markers.iter().any(|m| l.contains(m))) {
+                if layers
+                    .iter()
+                    .any(|l| secret_markers.iter().any(|m| l.contains(m)))
+                {
                     is_secret_bearing = true;
                 }
             }
@@ -1069,8 +1111,10 @@ impl ZeroMutualInformationProjector {
         let (final_output, secret_redacted) = Self::redact_covert_secrets(&canonical_output);
 
         let quantized_release_ms = self.quantize_release_time_ms(now_ms);
-        let covert_channel_neutralized =
-            stripped_zero_width_chars > 0 || had_whitespace_modulation || json_reordered || secret_redacted;
+        let covert_channel_neutralized = stripped_zero_width_chars > 0
+            || had_whitespace_modulation
+            || json_reordered
+            || secret_redacted;
 
         ZeroMiProjectionResult {
             canonical_output: final_output,
@@ -1202,13 +1246,26 @@ mod tests {
             let b = hex_s.as_bytes();
             for chunk in b.chunks(3) {
                 let mut n = (chunk[0] as u32) << 16;
-                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
-                if chunk.len() > 2 { n |= chunk[2] as u32; }
-                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                if chunk.len() > 1 {
+                    n |= (chunk[1] as u32) << 8;
+                }
+                if chunk.len() > 2 {
+                    n |= chunk[2] as u32;
+                }
+                const B64: &[u8] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                 out.push(B64[((n >> 18) & 63) as usize] as char);
                 out.push(B64[((n >> 12) & 63) as usize] as char);
-                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
-                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 1 {
+                    out.push(B64[((n >> 6) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                if chunk.len() > 2 {
+                    out.push(B64[(n & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
             }
             out
         };
@@ -1217,13 +1274,26 @@ mod tests {
             let b = b64_1.as_bytes();
             for chunk in b.chunks(3) {
                 let mut n = (chunk[0] as u32) << 16;
-                if chunk.len() > 1 { n |= (chunk[1] as u32) << 8; }
-                if chunk.len() > 2 { n |= chunk[2] as u32; }
-                const B64: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                if chunk.len() > 1 {
+                    n |= (chunk[1] as u32) << 8;
+                }
+                if chunk.len() > 2 {
+                    n |= chunk[2] as u32;
+                }
+                const B64: &[u8] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                 out.push(B64[((n >> 18) & 63) as usize] as char);
                 out.push(B64[((n >> 12) & 63) as usize] as char);
-                if chunk.len() > 1 { out.push(B64[((n >> 6) & 63) as usize] as char); } else { out.push('='); }
-                if chunk.len() > 2 { out.push(B64[(n & 63) as usize] as char); } else { out.push('='); }
+                if chunk.len() > 1 {
+                    out.push(B64[((n >> 6) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                if chunk.len() > 2 {
+                    out.push(B64[(n & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
             }
             out
         };

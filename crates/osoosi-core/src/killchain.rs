@@ -382,9 +382,13 @@ pub async fn engage_killchain_isolation(
     // Regularly probes process tree telemetry every 60s. If 3 consecutive healthy probes pass,
     // automatically restores host early. Otherwise, hard failsafe triggers at 30 minutes.
     tokio::spawn(async move {
-        let max_probes = (ROLLBACK_WATCHDOG_MAX_SECS / INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS).max(1);
+        let max_probes =
+            (ROLLBACK_WATCHDOG_MAX_SECS / INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS).max(1);
         for _ in 0..max_probes {
-            tokio::time::sleep(std::time::Duration::from_secs(INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(
+                INTERMEDIATE_HEALTH_PROBE_INTERVAL_SECS,
+            ))
+            .await;
             let current = get_killchain_status();
             if !current.isolated {
                 return;
@@ -2393,15 +2397,10 @@ mod tests {
         record_successful_auth();
         reset_killchain_state_for_testing();
 
-        let engaged = engage_killchain_isolation(
-            "test_op",
-            "Verify Early Rollback",
-            false,
-            false,
-            false,
-        )
-        .await
-        .unwrap();
+        let engaged =
+            engage_killchain_isolation("test_op", "Verify Early Rollback", false, false, false)
+                .await
+                .unwrap();
         assert!(engaged.isolated);
         assert_eq!(engaged.consecutive_healthy_probes, 0);
 
@@ -2423,10 +2422,19 @@ mod tests {
         let (rep3, st3) = evaluate_and_execute_intermediate_rollback().await.unwrap();
         assert!(rep3.process_tree_integrity_ok, "Probe 3 should be healthy");
         assert_eq!(rep3.consecutive_healthy_probes, 3);
-        assert!(rep3.eligible_for_early_rollback, "Must be eligible for early rollback on 3rd probe");
-        assert!(!st3.isolated, "Host must be automatically rolled back before 30-minute timer!");
+        assert!(
+            rep3.eligible_for_early_rollback,
+            "Must be eligible for early rollback on 3rd probe"
+        );
+        assert!(
+            !st3.isolated,
+            "Host must be automatically rolled back before 30-minute timer!"
+        );
 
         let final_status = get_killchain_status();
-        assert!(!final_status.isolated, "Final status must confirm host is disarmed");
+        assert!(
+            !final_status.isolated,
+            "Final status must confirm host is disarmed"
+        );
     }
 }

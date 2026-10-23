@@ -120,7 +120,10 @@ impl CanaryManager {
                 }
             }
         }
-        let paths: Vec<String> = deployed.iter().map(|c| c.path.to_string_lossy().to_string()).collect();
+        let paths: Vec<String> = deployed
+            .iter()
+            .map(|c| c.path.to_string_lossy().to_string())
+            .collect();
         if let Ok(mut lock) = self.deployed_cache.write() {
             *lock = paths;
         }

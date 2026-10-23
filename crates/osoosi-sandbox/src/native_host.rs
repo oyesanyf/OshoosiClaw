@@ -387,7 +387,10 @@ pub fn is_ssrf_url(url: &str) -> Result<(), String> {
         "instance-data",
     ];
     if blocked_hostnames.contains(&host.as_str()) || host.ends_with(".localhost") {
-        return Err(format!("SSRF Violation: access to host '{}' is blocked", host));
+        return Err(format!(
+            "SSRF Violation: access to host '{}' is blocked",
+            host
+        ));
     }
     if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_ssrf_ip(ip) {
@@ -469,4 +472,3 @@ pub fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
     }
     false
 }
-

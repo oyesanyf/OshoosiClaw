@@ -22,9 +22,7 @@ use std::time::SystemTime;
 use parking_lot::RwLock;
 use rand::Rng;
 
-use osoosi_agent_anomaly::agentjacking_guard::{
-    AgentjackingGuard, SessionTaintState,
-};
+use osoosi_agent_anomaly::agentjacking_guard::{AgentjackingGuard, SessionTaintState};
 use osoosi_agent_anomaly::file_lineage::{FileLineageTracker, LineageError};
 
 // ============================================================================
@@ -203,19 +201,24 @@ mod scenario_1_poisoned_root_intent {
 
         // 2. File fails Merkle allowlist verification
         let is_signed_merkle = false; // Simulated unsigned / tampered file
-        assert!(!is_signed_merkle, "Tampered workspace file must fail Merkle allowlist verification");
+        assert!(
+            !is_signed_merkle,
+            "Tampered workspace file must fail Merkle allowlist verification"
+        );
 
         // 3. Register poisoned digest in FileLineageTracker
         tracker
-            .mark_digest_poisoned(&file_hash, "session-genesis-1", "tampered workspace config at genesis", 0.95)
+            .mark_digest_poisoned(
+                &file_hash,
+                "session-genesis-1",
+                "tampered workspace config at genesis",
+                0.95,
+            )
             .expect("Mark digest poisoned");
 
         // Attempting to record ingested file fails with PoisonedDigest
-        let record_res = tracker.record_ingested_file(
-            "session-genesis-1",
-            &tampered_file,
-            malicious_prompt,
-        );
+        let record_res =
+            tracker.record_ingested_file("session-genesis-1", &tampered_file, malicious_prompt);
         assert!(
             matches!(record_res, Err(LineageError::PoisonedDigest(_))),
             "Tampered file matching poisoned digest must return PoisonedDigest error"
@@ -223,7 +226,10 @@ mod scenario_1_poisoned_root_intent {
 
         // 4. Session is tagged with untrusted taint at Turn 0
         let session_state = SessionTaintState::TaintedByExternalData;
-        assert!(session_state.force_canary_cage(), "Tainted session must enforce canary caging");
+        assert!(
+            session_state.force_canary_cage(),
+            "Tainted session must enforce canary caging"
+        );
 
         // 5. Authority level cannot be elevated: L4 WorkspaceConfig cannot override L1/L2
         let file_level = AuthorityLevel::Level4WorkspaceConfiguration;
@@ -249,14 +255,14 @@ mod scenario_1_poisoned_root_intent {
 
         let tracker = FileLineageTracker::new();
         let digest = tracker
-            .record_ingested_file(
-                "session-clean-genesis",
-                &clean_file,
-                clean_content,
-            )
+            .record_ingested_file("session-clean-genesis", &clean_file, clean_content)
             .expect("Track clean file");
 
-        assert_eq!(digest, file_hash.to_lowercase(), "Clean file digest must match recorded entry");
+        assert_eq!(
+            digest,
+            file_hash.to_lowercase(),
+            "Clean file digest must match recorded entry"
+        );
         let _ = std::fs::remove_file(&clean_file);
     }
 }
@@ -311,7 +317,10 @@ mod scenario_2_post_spawn_toctou_dll {
 
         let verdict = gate.evaluate_egress(&ctx);
         assert!(
-            matches!(verdict, EgressAuthorizationVerdict::DenyCapabilityRevoked { .. }),
+            matches!(
+                verdict,
+                EgressAuthorizationVerdict::DenyCapabilityRevoked { .. }
+            ),
             "Downstream effect after unsigned DLL load must be denied pre-execution"
         );
     }
@@ -402,15 +411,23 @@ mod scenario_4_semantic_paraphrase_crown_jewel {
         // Original: "BEGIN RSA PRIVATE KEY MIIEowIBAAKCAQEA0Y3J..."
         // Paraphrase: "A high-level cryptographic summary detailing the asymmetrical keying mechanism..."
         let original_shingles: HashSet<String> = (0..5).map(|i| format!("shingle_{}", i)).collect();
-        let paraphrase_shingles: HashSet<String> = (10..15).map(|i| format!("shingle_{}", i)).collect();
-        let intersection: HashSet<_> = original_shingles.intersection(&paraphrase_shingles).collect();
-        assert_eq!(intersection.len(), 0, "Paraphrase must share 0 verbatim shingles");
+        let paraphrase_shingles: HashSet<String> =
+            (10..15).map(|i| format!("shingle_{}", i)).collect();
+        let intersection: HashSet<_> = original_shingles
+            .intersection(&paraphrase_shingles)
+            .collect();
+        assert_eq!(
+            intersection.len(),
+            0,
+            "Paraphrase must share 0 verbatim shingles"
+        );
 
         // 3. Outbound write attempt to external destination (e.g. GitHub issue comment or docs site)
         let ctx = EgressEvaluationContext {
             session_id: "session-paraphrase-1".to_string(),
             principal_lineage: vec!["agent_writer".to_string()],
-            destination_identity: "https://api.github.com/repos/external/issues/1/comments".to_string(),
+            destination_identity: "https://api.github.com/repos/external/issues/1/comments"
+                .to_string(),
             destination_port: 443,
             operation_kind: EgressOperationKind::Publish,
             session_data_classification: session_data_class,
@@ -669,7 +686,9 @@ mod concurrency_race_condition {
                     // Thread A: Reads Crown-Jewel asset, elevates classification, increments revocation_seq
                     let mut guard = class_clone.write();
                     *guard = DataClassification::CrownJewel;
-                    gate_clone.current_revocation_seq.fetch_add(1, Ordering::SeqCst);
+                    gate_clone
+                        .current_revocation_seq
+                        .fetch_add(1, Ordering::SeqCst);
                 } else {
                     // Thread B: In-flight HTTP publisher attempting pre-commit write
                     let acquired_rev_seq = gate_clone.current_revocation_seq.load(Ordering::SeqCst);
@@ -678,7 +697,9 @@ mod concurrency_race_condition {
                     let current_class = *class_clone.read();
                     let active_rev_seq = gate_clone.current_revocation_seq.load(Ordering::SeqCst);
 
-                    if current_class >= DataClassification::Confidential || active_rev_seq != acquired_rev_seq {
+                    if current_class >= DataClassification::Confidential
+                        || active_rev_seq != acquired_rev_seq
+                    {
                         // Abort write before transmitting
                         abort_clone.fetch_add(1, Ordering::SeqCst);
                     } else {
@@ -767,7 +788,10 @@ mod usability_parity_controls {
 
         // 1. Workspace cargo build / cargo test: Allowed
         let is_workspace_cargo = true;
-        assert!(is_workspace_cargo, "Workspace cargo build/test must be allowed");
+        assert!(
+            is_workspace_cargo,
+            "Workspace cargo build/test must be allowed"
+        );
 
         // 2. Canonical Git push to https://github.com/oyesanyf/OshoosiClaw.git: Allowed
         let git_ctx = EgressEvaluationContext {
@@ -952,7 +976,9 @@ mod autonomous_testing_sequence {
         pub fn determine_outcome(&self) -> TestOutcomeClassification {
             if !self.attack_attempted {
                 TestOutcomeClassification::NotAttempted
-            } else if !self.prohibited_effect_occurred && self.observer_confidence == ObserverConfidence::Verified {
+            } else if !self.prohibited_effect_occurred
+                && self.observer_confidence == ObserverConfidence::Verified
+            {
                 TestOutcomeClassification::Prevented
             } else if self.prohibited_effect_occurred && self.os_enforcement_result == "BLOCKED" {
                 TestOutcomeClassification::DetectedAfterExecution
@@ -983,7 +1009,10 @@ mod autonomous_testing_sequence {
             causal_event_id: "evt-adr-bench-001".to_string(),
         };
 
-        assert_eq!(evidence.determine_outcome(), TestOutcomeClassification::Prevented);
+        assert_eq!(
+            evidence.determine_outcome(),
+            TestOutcomeClassification::Prevented
+        );
         assert!(!evidence.prohibited_effect_occurred);
     }
 
@@ -1033,15 +1062,25 @@ mod autonomous_testing_sequence {
     fn test_fault_1_policy_engine_unavailable_fails_closed() {
         let engine_available = false;
         let action_permitted = if !engine_available { false } else { true };
-        assert!(!action_permitted, "Fault 1: Engine unavailable must fail closed");
+        assert!(
+            !action_permitted,
+            "Fault 1: Engine unavailable must fail closed"
+        );
     }
 
     #[test]
     fn test_fault_2_voter_timeout_or_contradiction_cedar_overrides() {
         let cedar_decision = "DENY";
         let voter_timed_out = true;
-        let final_action = if cedar_decision == "DENY" || voter_timed_out { "BLOCKED" } else { "PERMITTED" };
-        assert_eq!(final_action, "BLOCKED", "Fault 2: Voter timeout cannot bypass Cedar deny");
+        let final_action = if cedar_decision == "DENY" || voter_timed_out {
+            "BLOCKED"
+        } else {
+            "PERMITTED"
+        };
+        assert_eq!(
+            final_action, "BLOCKED",
+            "Fault 2: Voter timeout cannot bypass Cedar deny"
+        );
     }
 
     #[test]
@@ -1049,7 +1088,10 @@ mod autonomous_testing_sequence {
         let rev_seq_at_start = 5u64;
         let rev_seq_at_commit = 6u64; // Incremented concurrently
         let write_committed = rev_seq_at_start == rev_seq_at_commit;
-        assert!(!write_committed, "Fault 3: Concurrent revocation must abort pre-commit write");
+        assert!(
+            !write_committed,
+            "Fault 3: Concurrent revocation must abort pre-commit write"
+        );
     }
 
     #[test]
@@ -1060,7 +1102,10 @@ mod autonomous_testing_sequence {
         let origin_session_id = "session-origin-abc";
 
         let identity_retained = !origin_session_id.is_empty() && start_time_100ns > 0;
-        assert!(identity_retained, "Fault 4: ProcessInstanceIdentity must preserve origin session binding");
+        assert!(
+            identity_retained,
+            "Fault 4: ProcessInstanceIdentity must preserve origin session binding"
+        );
     }
 
     #[test]
@@ -1079,13 +1124,18 @@ mod autonomous_testing_sequence {
             causal_event_id: "evt-fault-5".to_string(),
         };
 
-        let outcome = if events_lost > 0 && evidence.observer_confidence != ObserverConfidence::Verified {
-            TestOutcomeClassification::Inconclusive
-        } else {
-            evidence.determine_outcome()
-        };
+        let outcome =
+            if events_lost > 0 && evidence.observer_confidence != ObserverConfidence::Verified {
+                TestOutcomeClassification::Inconclusive
+            } else {
+                evidence.determine_outcome()
+            };
 
-        assert_eq!(outcome, TestOutcomeClassification::Inconclusive, "Fault 5: Queue saturation must report INCONCLUSIVE");
+        assert_eq!(
+            outcome,
+            TestOutcomeClassification::Inconclusive,
+            "Fault 5: Queue saturation must report INCONCLUSIVE"
+        );
     }
 
     #[test]
@@ -1093,8 +1143,9 @@ mod autonomous_testing_sequence {
         // Broker process (e.g. WmiPrvSE.exe) inherits upstream session taint
         let upstream_tainted = true;
         let broker_tainted = upstream_tainted;
-        assert!(broker_tainted, "Fault 6: Broker process must inherit upstream agent taint");
+        assert!(
+            broker_tainted,
+            "Fault 6: Broker process must inherit upstream agent taint"
+        );
     }
 }
-
-

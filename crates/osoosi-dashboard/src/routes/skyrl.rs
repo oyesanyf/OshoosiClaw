@@ -599,12 +599,8 @@ pub async fn post_skyrl_train(
     }
 
     // Persist & co-evolve synthetic adversarial prompt mutations in logs/adversarial_regression_corpus.json
-    let corpus_meta = evolve_and_persist_skyrl_regression_corpus(
-        total_episodes,
-        loss,
-        mean_reward,
-        &active_lora,
-    );
+    let corpus_meta =
+        evolve_and_persist_skyrl_regression_corpus(total_episodes, loss, mean_reward, &active_lora);
 
     let checkpoint = json!({
         "timestamp": chrono::Utc::now().to_rfc3339(),
@@ -643,7 +639,8 @@ pub fn resolve_regression_corpus_path() -> std::path::PathBuf {
             return p.to_path_buf();
         }
     }
-    let resolved_log = osoosi_types::resolve_log_directory().join("adversarial_regression_corpus.json");
+    let resolved_log =
+        osoosi_types::resolve_log_directory().join("adversarial_regression_corpus.json");
     if resolved_log.exists() {
         return resolved_log;
     }
@@ -696,7 +693,11 @@ pub fn evolve_and_persist_skyrl_regression_corpus(
 
     let mut existing_digests: std::collections::HashSet<String> = mutations
         .iter()
-        .filter_map(|m| m.get("digest_sha256").and_then(|d| d.as_str()).map(|s| s.to_string()))
+        .filter_map(|m| {
+            m.get("digest_sha256")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string())
+        })
         .collect();
 
     let synthetic_templates = [
@@ -749,7 +750,9 @@ pub fn evolve_and_persist_skyrl_regression_corpus(
 
     let mut sorted_digests: Vec<String> = existing_digests.into_iter().collect();
     sorted_digests.sort();
-    let merkle_root = blake3::hash(sorted_digests.join(":").as_bytes()).to_hex().to_string();
+    let merkle_root = blake3::hash(sorted_digests.join(":").as_bytes())
+        .to_hex()
+        .to_string();
 
     let updated_doc = json!({
         "schema_version": "1.2.0",
@@ -875,4 +878,3 @@ mod tests {
         );
     }
 }
-

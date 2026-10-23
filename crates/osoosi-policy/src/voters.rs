@@ -321,7 +321,10 @@ impl ThreatVoter for BehavioralThreatVoter {
                 || cmd.contains("comsvcs")
                 || cmd.contains("lsass")
                 || cmd.contains("keymgr");
-            if GemmaVoter::is_known_safe(img) && !has_suspicious_cmd && !matches!(event.event_id, 8 | 10 | 25) {
+            if GemmaVoter::is_known_safe(img)
+                && !has_suspicious_cmd
+                && !matches!(event.event_id, 8 | 10 | 25)
+            {
                 return None;
             }
         }
@@ -1007,10 +1010,11 @@ impl ThreatVoter for YaraXMemoryVoter {
                             buffer.truncate(bytes_read);
                             let mut scanner = yara_x::Scanner::new(&rules);
                             let results = scanner.scan(&buffer).ok()?;
-                            if results
-                                .matching_rules()
-                                .any(|r| !osoosi_model::malware::is_informational_or_crt_yara_rule(r.identifier()))
-                            {
+                            if results.matching_rules().any(|r| {
+                                !osoosi_model::malware::is_informational_or_crt_yara_rule(
+                                    r.identifier(),
+                                )
+                            }) {
                                 return Some(VoteResult {
                                     confidence: 0.98,
                                     reason: "Yara-X: Detected malicious pattern in process memory"
@@ -1042,9 +1046,32 @@ fn kev_product_matches_stem(stem: &str, product: &str) -> bool {
         return true;
     }
     const GENERIC_AMBIGUOUS_STEMS: &[&str] = &[
-        "setup", "file", "server", "client", "update", "updater", "install", "installer",
-        "service", "agent", "browser", "manager", "system", "windows", "linux", "action",
-        "http", "app", "host", "tool", "cli", "env", "expand", "unzip", "perl", "sed",
+        "setup",
+        "file",
+        "server",
+        "client",
+        "update",
+        "updater",
+        "install",
+        "installer",
+        "service",
+        "agent",
+        "browser",
+        "manager",
+        "system",
+        "windows",
+        "linux",
+        "action",
+        "http",
+        "app",
+        "host",
+        "tool",
+        "cli",
+        "env",
+        "expand",
+        "unzip",
+        "perl",
+        "sed",
     ];
     if GENERIC_AMBIGUOUS_STEMS.contains(&stem.as_str()) {
         return false;
@@ -4212,8 +4239,14 @@ mod hybrid_cve_and_kev_tests {
         assert!(!kev_product_matches_stem("setup", "action-setup"));
         assert!(!kev_product_matches_stem("file", "HTTP File Server"));
         assert!(!kev_product_matches_stem("server", "HTTP File Server"));
-        assert!(!kev_product_matches_stem("update", "Windows Update Service"));
-        assert!(!kev_product_matches_stem("client", "Enterprise Client Agent"));
+        assert!(!kev_product_matches_stem(
+            "update",
+            "Windows Update Service"
+        ));
+        assert!(!kev_product_matches_stem(
+            "client",
+            "Enterprise Client Agent"
+        ));
     }
 
     #[test]
@@ -4224,4 +4257,3 @@ mod hybrid_cve_and_kev_tests {
         assert!(kev_product_matches_stem("winrar", "WinRAR"));
     }
 }
-

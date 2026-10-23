@@ -780,7 +780,12 @@ pub fn parse_and_inspect_har_json_with_session(
         let body_blake3 = if let Some(content_val) = resp_content {
             if let Some(text_val) = content_val.get("text").and_then(|v| v.as_str()) {
                 if !text_val.is_empty() {
-                    Some(blake3::hash(text_val.as_bytes()).to_hex().to_string().to_lowercase())
+                    Some(
+                        blake3::hash(text_val.as_bytes())
+                            .to_hex()
+                            .to_string()
+                            .to_lowercase(),
+                    )
                 } else {
                     None
                 }
@@ -1195,7 +1200,10 @@ mod tests {
     #[test]
     fn test_har_blake3_lineage_and_swarm_poisoned_payload() {
         let payload_text = "<html><body>har_response_payload_test_content</body></html>";
-        let expected_blake3 = blake3::hash(payload_text.as_bytes()).to_hex().to_string().to_lowercase();
+        let expected_blake3 = blake3::hash(payload_text.as_bytes())
+            .to_hex()
+            .to_string()
+            .to_lowercase();
 
         let raw = serde_json::json!({
             "log": {
@@ -1237,7 +1245,9 @@ mod tests {
         assert_eq!(poisoned_report.primary_verdict, "MALICIOUS");
         let p_entry = &poisoned_report.entries[0];
         assert_eq!(p_entry.threat_score, 1.00);
-        assert!(p_entry.threat_tags.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+        assert!(p_entry
+            .threat_tags
+            .contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
 
         // Cleanup
         clear_swarm_poisoned_har_digests();
@@ -1259,11 +1269,18 @@ mod tests {
             true
         });
 
-        let hook_report = parse_and_inspect_har_json_with_session(&raw.to_string(), "label", Some("sess-hook-99")).unwrap();
+        let hook_report = parse_and_inspect_har_json_with_session(
+            &raw.to_string(),
+            "label",
+            Some("sess-hook-99"),
+        )
+        .unwrap();
         assert!(hook_invoked.load(Ordering::SeqCst));
         assert_eq!(hook_report.malicious_entries, 1);
         assert_eq!(hook_report.entries[0].threat_score, 1.00);
-        assert!(hook_report.entries[0].threat_tags.contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
+        assert!(hook_report.entries[0]
+            .threat_tags
+            .contains(&"HAR:SWARM_POISONED_PAYLOAD".to_string()));
 
         clear_har_lineage_hook();
     }

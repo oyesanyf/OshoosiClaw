@@ -539,8 +539,7 @@ fn orchestrate_evidence(
         confidence = confidence.min(0.35);
     }
 
-    let require_approval =
-        confidence >= 0.70 && independent < 2 && !has_deterministic_guard;
+    let require_approval = confidence >= 0.70 && independent < 2 && !has_deterministic_guard;
     let action = if (confidence >= 0.94 && independent >= 3 && strong_action)
         || (confidence >= 0.90 && has_deterministic_guard)
     {
@@ -684,7 +683,10 @@ impl PolicyEngine {
     /// Evaluates any downstream operating-system or agent event (`HostSecurityEvent`) against the
     /// 7-Ring Cedar Reference Monitor, `CausalSecurityGraph`, and `RevocationBoundCapabilityCache`.
     /// Emits a deterministic `PolicyDecisionRecord` containing `(policy_decision_id, causal_event_id, policy_version)`.
-    pub fn evaluate(&self, event: &HostSecurityEvent) -> crate::breakout_gate::PolicyDecisionRecord {
+    pub fn evaluate(
+        &self,
+        event: &HostSecurityEvent,
+    ) -> crate::breakout_gate::PolicyDecisionRecord {
         crate::breakout_gate::global_ring7_authorizer().evaluate_os_event(event)
     }
 
@@ -880,14 +882,19 @@ impl PolicyEngine {
             let needs_norm = path_keys.iter().any(|k| {
                 map.get(*k)
                     .and_then(|v| v.as_str())
-                    .map(|s| s.to_ascii_lowercase().starts_with("\\device\\harddiskvolume"))
+                    .map(|s| {
+                        s.to_ascii_lowercase()
+                            .starts_with("\\device\\harddiskvolume")
+                    })
                     .unwrap_or(false)
             });
             if needs_norm {
                 let mut cloned = raw_event.clone();
                 if let serde_json::Value::Object(ref mut cmap) = cloned.data {
                     for k in &path_keys {
-                        if let Some(val) = cmap.get(*k).and_then(|v| v.as_str()).map(|s| s.to_string()) {
+                        if let Some(val) =
+                            cmap.get(*k).and_then(|v| v.as_str()).map(|s| s.to_string())
+                        {
                             let norm = normalize_nt_device_path(&val);
                             if norm != val {
                                 cmap.insert((*k).to_string(), serde_json::Value::String(norm));

@@ -6,8 +6,8 @@ pub mod skyrl;
 pub mod vcdb;
 pub mod workflow_guard;
 
-use axum::Router;
 use crate::DashboardState;
+use axum::Router;
 
 /// Mounts all modular domain sub-routers onto a single Axum Router<DashboardState>.
 /// Guarantees 100% backward compatibility on port 3030 for /api/* and legacy aliases.

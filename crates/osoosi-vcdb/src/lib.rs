@@ -52,7 +52,9 @@ impl DbirPattern {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "system intrusion" => Some(DbirPattern::SystemIntrusion),
-            "basic web application attacks" | "basic web app" => Some(DbirPattern::BasicWebApplicationAttacks),
+            "basic web application attacks" | "basic web app" => {
+                Some(DbirPattern::BasicWebApplicationAttacks)
+            }
             "privilege misuse" => Some(DbirPattern::PrivilegeMisuse),
             "miscellaneous errors" | "misc errors" => Some(DbirPattern::MiscellaneousErrors),
             "social engineering" => Some(DbirPattern::SocialEngineering),
@@ -231,17 +233,31 @@ impl VerisCrosswalkEntry {
             VerisCrosswalkEntry {
                 dbir_pattern: "System Intrusion".to_string(),
                 veris_action_variety: "Ransomware".to_string(),
-                mitre_techniques: vec!["T1486".to_string(), "T1059".to_string(), "T1078".to_string()],
+                mitre_techniques: vec![
+                    "T1486".to_string(),
+                    "T1059".to_string(),
+                    "T1078".to_string(),
+                ],
                 atlas_techniques: vec!["AML.T0043".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-03".to_string(), "OWASP-HUNT-07".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-03".to_string(),
+                    "OWASP-HUNT-07".to_string(),
+                ],
                 primary_enforcement_plane: "CanaryCage".to_string(),
             },
             VerisCrosswalkEntry {
                 dbir_pattern: "Basic Web Application Attacks".to_string(),
                 veris_action_variety: "SQL Injection".to_string(),
-                mitre_techniques: vec!["T1190".to_string(), "T1005".to_string(), "T1041".to_string()],
+                mitre_techniques: vec![
+                    "T1190".to_string(),
+                    "T1005".to_string(),
+                    "T1041".to_string(),
+                ],
                 atlas_techniques: vec!["AML.T0000".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-17".to_string(), "OWASP-HUNT-05".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-17".to_string(),
+                    "OWASP-HUNT-05".to_string(),
+                ],
                 primary_enforcement_plane: "RedactXOpenJevDlpEngine".to_string(),
             },
             VerisCrosswalkEntry {
@@ -249,7 +265,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "Phishing".to_string(),
                 mitre_techniques: vec!["T1566.002".to_string(), "T1078.004".to_string()],
                 atlas_techniques: vec!["AML.T0051".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-01".to_string(), "OWASP-HUNT-14".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-01".to_string(),
+                    "OWASP-HUNT-14".to_string(),
+                ],
                 primary_enforcement_plane: "ProcessCommandLineGate".to_string(),
             },
             VerisCrosswalkEntry {
@@ -257,7 +276,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "Privilege Abuse".to_string(),
                 mitre_techniques: vec!["T1078.003".to_string(), "T1567.002".to_string()],
                 atlas_techniques: vec!["AML.T0040".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-13".to_string(), "OWASP-HUNT-05".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-13".to_string(),
+                    "OWASP-HUNT-05".to_string(),
+                ],
                 primary_enforcement_plane: "CedarAuthorizer".to_string(),
             },
             VerisCrosswalkEntry {
@@ -265,7 +287,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "Misconfiguration".to_string(),
                 mitre_techniques: vec!["T1530".to_string(), "T1613".to_string()],
                 atlas_techniques: vec!["AML.T0012".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-37".to_string(), "OWASP-HUNT-26".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-37".to_string(),
+                    "OWASP-HUNT-26".to_string(),
+                ],
                 primary_enforcement_plane: "RedactXOpenJevDlpEngine".to_string(),
             },
             VerisCrosswalkEntry {
@@ -273,7 +298,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "RAM Scraper / Skimmer".to_string(),
                 mitre_techniques: vec!["T1055.001".to_string(), "T1005".to_string()],
                 atlas_techniques: vec!["AML.T0038".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-07".to_string(), "OWASP-HUNT-36".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-07".to_string(),
+                    "OWASP-HUNT-36".to_string(),
+                ],
                 primary_enforcement_plane: "CanaryCage".to_string(),
             },
             VerisCrosswalkEntry {
@@ -281,7 +309,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "DoS / Volumetric Amplification".to_string(),
                 mitre_techniques: vec!["T1498.001".to_string(), "T1499.004".to_string()],
                 atlas_techniques: vec!["AML.T0029".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-29".to_string(), "OWASP-HUNT-31".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-29".to_string(),
+                    "OWASP-HUNT-31".to_string(),
+                ],
                 primary_enforcement_plane: "ProcessCommandLineGate".to_string(),
             },
             VerisCrosswalkEntry {
@@ -289,7 +320,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "Theft".to_string(),
                 mitre_techniques: vec!["T1078.001".to_string(), "T1552".to_string()],
                 atlas_techniques: vec!["AML.T0045".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-36".to_string(), "OWASP-HUNT-14".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-36".to_string(),
+                    "OWASP-HUNT-14".to_string(),
+                ],
                 primary_enforcement_plane: "CedarAuthorizer".to_string(),
             },
             VerisCrosswalkEntry {
@@ -297,7 +331,10 @@ impl VerisCrosswalkEntry {
                 veris_action_variety: "Public Code Repository Leak".to_string(),
                 mitre_techniques: vec!["T1552.001".to_string(), "T1567.001".to_string()],
                 atlas_techniques: vec!["AML.T0048".to_string()],
-                owasp_hunting_categories: vec!["OWASP-HUNT-35".to_string(), "OWASP-HUNT-41".to_string()],
+                owasp_hunting_categories: vec![
+                    "OWASP-HUNT-35".to_string(),
+                    "OWASP-HUNT-41".to_string(),
+                ],
                 primary_enforcement_plane: "RedactXOpenJevDlpEngine".to_string(),
             },
         ]
@@ -405,7 +442,10 @@ impl VcdbEngine {
         if path.exists() {
             if let Ok(content) = std::fs::read_to_string(path) {
                 if let Ok(catalog) = serde_json::from_str::<VerisCatalog>(&content) {
-                    info!("Loaded VCDB catalog from disk with {} incidents", catalog.incidents.len());
+                    info!(
+                        "Loaded VCDB catalog from disk with {} incidents",
+                        catalog.incidents.len()
+                    );
                     return catalog;
                 }
             }
@@ -426,7 +466,8 @@ impl VcdbEngine {
 
     /// Sync upstream VCDB commit hash with 2.5s network timeout and offline fallback.
     pub fn sync_upstream_feed(&self, upstream_url: Option<&str>) -> Result<String, String> {
-        let url = upstream_url.unwrap_or("https://api.github.com/repos/vz-risk/VCDB/commits/master");
+        let url =
+            upstream_url.unwrap_or("https://api.github.com/repos/vz-risk/VCDB/commits/master");
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_millis(2500))
             .user_agent("OsoosiEDR-VCDB-Sync/1.2.0")
@@ -436,21 +477,39 @@ impl VcdbEngine {
         match client.get(url).send() {
             Ok(resp) if resp.status().is_success() => {
                 if let Ok(json) = resp.json::<serde_json::Value>() {
-                    let sha = json.get("sha").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let sha = json
+                        .get("sha")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
                     let mut catalog = self.catalog.write();
                     catalog.upstream_commit = sha.chars().take(12).collect();
-                    info!("Successfully synced VCDB upstream commit: {}", catalog.upstream_commit);
-                    Ok(format!("Synced upstream commit: {}", catalog.upstream_commit))
+                    info!(
+                        "Successfully synced VCDB upstream commit: {}",
+                        catalog.upstream_commit
+                    );
+                    Ok(format!(
+                        "Synced upstream commit: {}",
+                        catalog.upstream_commit
+                    ))
                 } else {
                     Ok("Synced upstream metadata (offline catalog verified)".to_string())
                 }
             }
             Ok(resp) => {
-                warn!("VCDB upstream returned status {}, falling back to cached catalog", resp.status());
-                Ok(format!("Offline cached catalog active (HTTP {})", resp.status()))
+                warn!(
+                    "VCDB upstream returned status {}, falling back to cached catalog",
+                    resp.status()
+                );
+                Ok(format!(
+                    "Offline cached catalog active (HTTP {})",
+                    resp.status()
+                ))
             }
             Err(e) => {
-                warn!("VCDB upstream sync unreachable ({}), using verified offline catalog", e);
+                warn!(
+                    "VCDB upstream sync unreachable ({}), using verified offline catalog",
+                    e
+                );
                 Ok("Offline cached catalog active (network timeout fallback)".to_string())
             }
         }
@@ -464,7 +523,11 @@ impl VcdbEngine {
         for inc in &catalog.incidents {
             let variety = inc.attribute.confidentiality.data_variety.clone();
             let records = inc.attribute.confidentiality.records_estimated;
-            let disclosed = if inc.attribute.confidentiality.state == "Confirmed" { 1 } else { 0 };
+            let disclosed = if inc.attribute.confidentiality.state == "Confirmed" {
+                1
+            } else {
+                0
+            };
 
             let entry = variety_stats.entry(variety).or_insert((0, 0, 0));
             entry.0 += 1;
@@ -524,7 +587,10 @@ impl VcdbEngine {
             return (
                 true,
                 latency_ms.max(0.012),
-                format!("Benign control [{}] passed functional evaluation with zero false alerts", incident.paired_benign_control.operation_name),
+                format!(
+                    "Benign control [{}] passed functional evaluation with zero false alerts",
+                    incident.paired_benign_control.operation_name
+                ),
             );
         }
 
@@ -534,13 +600,21 @@ impl VcdbEngine {
                 // Assert sandbox containment boundary + memory scraping isolation
                 let isolated = true;
                 let boundary_proven = true;
-                (isolated && boundary_proven, "CanaryCage AppContainer sandbox prevented memory scraper and host kill-chain".to_string())
+                (
+                    isolated && boundary_proven,
+                    "CanaryCage AppContainer sandbox prevented memory scraper and host kill-chain"
+                        .to_string(),
+                )
             }
             "RedactXOpenJevDlpEngine" => {
                 // Assert PHI/PII/Secret detected and quarantined with zero bytes leaked
                 let zero_bytes_leaked = true;
                 let scrub_tagged = true;
-                (zero_bytes_leaked && scrub_tagged, "RedactX OpenJEV scrubbed sensitive tokens (<ZK_PHI>/<ZK_PII>) with 0B exfil".to_string())
+                (
+                    zero_bytes_leaked && scrub_tagged,
+                    "RedactX OpenJEV scrubbed sensitive tokens (<ZK_PHI>/<ZK_PII>) with 0B exfil"
+                        .to_string(),
+                )
             }
             "SsrfMathematicalIpGuard" => {
                 // Assert cloud metadata and link-local CIDR blocked mathematically
@@ -550,12 +624,20 @@ impl VcdbEngine {
             "SafePathJoinMinifilter" => {
                 // Assert path normalization blocked Zip Slip / traversal breakout
                 let canonical_jail_intact = true;
-                (canonical_jail_intact, "SafePathJoinMinifilter thwarted Zip Slip relative directory breakout".to_string())
+                (
+                    canonical_jail_intact,
+                    "SafePathJoinMinifilter thwarted Zip Slip relative directory breakout"
+                        .to_string(),
+                )
             }
             "CedarAuthorizer" => {
                 // Assert least-privilege temporal authorization denied unauthorized access
                 let ticket_denied = true;
-                (ticket_denied, "CedarAuthorizer denied unauthorized token and revoked ephemeral capability".to_string())
+                (
+                    ticket_denied,
+                    "CedarAuthorizer denied unauthorized token and revoked ephemeral capability"
+                        .to_string(),
+                )
             }
             "ProcessCommandLineGate" | _ => {
                 // Assert command injection / shell metacharacters intercepted
@@ -602,7 +684,8 @@ impl VcdbEngine {
             }
 
             // 1. Run Adversarial Breach Replay
-            let (attack_verified, attack_lat, attack_details) = Self::verify_incident_postcondition(inc, false);
+            let (attack_verified, attack_lat, attack_details) =
+                Self::verify_incident_postcondition(inc, false);
             if attack_verified {
                 breaches_prevented += 1;
                 if is_held_out {
@@ -655,7 +738,10 @@ impl VcdbEngine {
             total_incidents_replayed: total,
             breaches_prevented,
             prevention_rate_pct: (prevention_rate * 10.0).round() / 10.0,
-            wilson_ci_95: ((wilson_ci.0 * 10.0).round() / 10.0, (wilson_ci.1 * 10.0).round() / 10.0),
+            wilson_ci_95: (
+                (wilson_ci.0 * 10.0).round() / 10.0,
+                (wilson_ci.1 * 10.0).round() / 10.0,
+            ),
             held_out_incidents_count: held_out_count,
             held_out_prevention_rate_pct: (held_out_rate * 10.0).round() / 10.0,
             benign_controls_tested: total,
@@ -688,7 +774,10 @@ mod tests {
         let engine = global_vcdb_engine();
         let catalog = engine.get_catalog();
 
-        assert!(catalog.incidents.len() >= 18, "Catalog must contain at least 18 incidents");
+        assert!(
+            catalog.incidents.len() >= 18,
+            "Catalog must contain at least 18 incidents"
+        );
 
         let mut patterns_found = std::collections::HashSet::new();
         for inc in &catalog.incidents {
@@ -718,12 +807,25 @@ mod tests {
     #[test]
     fn test_veris_crosswalk_matrix() {
         let crosswalk = VerisCrosswalkEntry::build_matrix();
-        assert_eq!(crosswalk.len(), 9, "Crosswalk must cover all 9 DBIR patterns");
+        assert_eq!(
+            crosswalk.len(),
+            9,
+            "Crosswalk must cover all 9 DBIR patterns"
+        );
 
         for entry in crosswalk {
-            assert!(!entry.mitre_techniques.is_empty(), "Must map to MITRE ATT&CK");
-            assert!(!entry.owasp_hunting_categories.is_empty(), "Must map to OWASP Hunting");
-            assert!(!entry.primary_enforcement_plane.is_empty(), "Must specify enforcement plane");
+            assert!(
+                !entry.mitre_techniques.is_empty(),
+                "Must map to MITRE ATT&CK"
+            );
+            assert!(
+                !entry.owasp_hunting_categories.is_empty(),
+                "Must map to OWASP Hunting"
+            );
+            assert!(
+                !entry.primary_enforcement_plane.is_empty(),
+                "Must specify enforcement plane"
+            );
         }
     }
 
@@ -737,14 +839,20 @@ mod tests {
         // Verify Medical PHI prior
         if let Some(med) = priors.get("Medical") {
             assert!(med.conditional_breach_probability > 0.0);
-            assert!(med.redactx_openjev_prior_score >= 4.0, "Medical score should be high priority");
+            assert!(
+                med.redactx_openjev_prior_score >= 4.0,
+                "Medical score should be high priority"
+            );
             assert!(med.redactx_openjev_prior_score <= 5.0);
         }
 
         // Verify Secrets prior
         if let Some(sec) = priors.get("Secrets") {
             assert!(sec.conditional_breach_probability > 0.0);
-            assert!(sec.redactx_openjev_prior_score >= 4.0, "Secrets score should be high priority");
+            assert!(
+                sec.redactx_openjev_prior_score >= 4.0,
+                "Secrets score should be high priority"
+            );
             assert!(sec.redactx_openjev_prior_score <= 5.0);
         }
     }
@@ -769,10 +877,25 @@ mod tests {
         let report = engine.execute_vcdb_replay_suite();
 
         assert!(report.total_incidents_replayed >= 18);
-        assert_eq!(report.prevention_rate_pct, 100.0, "All breach chains must be prevented");
-        assert_eq!(report.held_out_prevention_rate_pct, 100.0, "Held-out evaluation must be 100%");
-        assert_eq!(report.benign_control_violations, 0, "Benign control violations must be 0");
-        assert_eq!(report.benign_pass_rate_pct, 100.0, "Benign pass rate must be 100.0%");
-        assert!(report.wilson_ci_95.0 > 80.0, "Wilson 95% lower bound must be >80%");
+        assert_eq!(
+            report.prevention_rate_pct, 100.0,
+            "All breach chains must be prevented"
+        );
+        assert_eq!(
+            report.held_out_prevention_rate_pct, 100.0,
+            "Held-out evaluation must be 100%"
+        );
+        assert_eq!(
+            report.benign_control_violations, 0,
+            "Benign control violations must be 0"
+        );
+        assert_eq!(
+            report.benign_pass_rate_pct, 100.0,
+            "Benign pass rate must be 100.0%"
+        );
+        assert!(
+            report.wilson_ci_95.0 > 80.0,
+            "Wilson 95% lower bound must be >80%"
+        );
     }
 }

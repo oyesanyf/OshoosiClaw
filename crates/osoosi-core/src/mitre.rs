@@ -37,7 +37,9 @@ pub struct AutonomousMitreSynchronizer {
 
 impl AutonomousMitreSynchronizer {
     pub fn new(
-        mesh_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<osoosi_wire::MeshCommand>>>>,
+        mesh_tx: Arc<
+            tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<osoosi_wire::MeshCommand>>>,
+        >,
     ) -> Self {
         let interval = std::env::var("OSOOSI_STIX_REFRESH_SECS")
             .ok()
@@ -100,9 +102,11 @@ impl AutonomousMitreSynchronizer {
         let atlas_count = all_techs.iter().filter(|t| t.is_atlas).count();
         let ent_count = all_techs.len().saturating_sub(atlas_count);
 
-        self.enterprise_attack_count.store(ent_count, Ordering::Relaxed);
+        self.enterprise_attack_count
+            .store(ent_count, Ordering::Relaxed);
         self.atlas_ai_count.store(atlas_count, Ordering::Relaxed);
-        self.total_techniques.store(all_techs.len(), Ordering::Relaxed);
+        self.total_techniques
+            .store(all_techs.len(), Ordering::Relaxed);
         *self.last_refreshed_at.write() = chrono::Utc::now().to_rfc3339();
 
         // Broadcast updated manifest over wire mesh

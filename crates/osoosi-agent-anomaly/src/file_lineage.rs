@@ -140,7 +140,11 @@ impl FileLineageTracker {
 
     /// Create a new `FileLineageTracker` with custom bounded capacity.
     pub fn with_capacity(max_capacity: usize) -> Self {
-        let cap = if max_capacity == 0 { DEFAULT_MAX_CAPACITY } else { max_capacity };
+        let cap = if max_capacity == 0 {
+            DEFAULT_MAX_CAPACITY
+        } else {
+            max_capacity
+        };
         Self {
             max_capacity: cap,
             session_files: DashMap::new(),
@@ -193,7 +197,9 @@ impl FileLineageTracker {
 
         // Check filename component directly
         if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-            if is_developer_interpreter(file_name) || is_protected_os_shell_or_desktop_binary(file_name) {
+            if is_developer_interpreter(file_name)
+                || is_protected_os_shell_or_desktop_binary(file_name)
+            {
                 return true;
             }
         }
@@ -326,10 +332,14 @@ impl FileLineageTracker {
         drop(session_entries);
 
         // Record into global path-by-digest mapping
-        self.known_paths_by_digest.insert(digest.clone(), path.to_path_buf());
+        self.known_paths_by_digest
+            .insert(digest.clone(), path.to_path_buf());
 
         // Increment global counter
-        let mut total = self.total_ingested_count.lock().unwrap_or_else(|e| e.into_inner());
+        let mut total = self
+            .total_ingested_count
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *total = total.saturating_add(1);
 
         Ok(digest)
@@ -363,7 +373,10 @@ impl FileLineageTracker {
     }
 
     /// Inspect tool call parameters (JSON) for references to poisoned file paths or hashes.
-    pub fn inspect_tool_call_parameters(&self, params: &serde_json::Value) -> Result<(), LineageError> {
+    pub fn inspect_tool_call_parameters(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<(), LineageError> {
         match params {
             serde_json::Value::String(s) => {
                 let trimmed = s.trim().to_lowercase();
@@ -440,19 +453,34 @@ impl FileLineageTracker {
         let mut order = self.session_order.lock().unwrap_or_else(|e| e.into_inner());
         order.clear();
 
-        let mut q_paths = self.known_paths_by_digest.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut q_paths = self
+            .known_paths_by_digest
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         q_paths.clear();
         self.known_paths_by_digest.map.clear();
 
-        let mut q_poison = self.poisoned_digests.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut q_poison = self
+            .poisoned_digests
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         q_poison.clear();
         self.poisoned_digests.map.clear();
 
-        let mut q_alerts = self.seen_alerts.queue.lock().unwrap_or_else(|e| e.into_inner());
+        let mut q_alerts = self
+            .seen_alerts
+            .queue
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         q_alerts.clear();
         self.seen_alerts.map.clear();
 
-        let mut total = self.total_ingested_count.lock().unwrap_or_else(|e| e.into_inner());
+        let mut total = self
+            .total_ingested_count
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         *total = 0;
     }
 }
@@ -501,7 +529,9 @@ mod tests {
             assert!(tracker.is_path_immune(&repo_file));
 
             let digest = "1111111111111111111111111111111111111111111111111111111111111111";
-            tracker.known_paths_by_digest.insert(digest.to_string(), repo_file);
+            tracker
+                .known_paths_by_digest
+                .insert(digest.to_string(), repo_file);
 
             // Poisoning attempt on immune repo path MUST fail
             let poison_res = tracker.mark_digest_poisoned(digest, "session_test", "attack", 1.0);
@@ -617,7 +647,11 @@ mod tests {
 
             // Ingesting the immune repo file MUST succeed despite hash being in poisoned_digests
             let res = tracker.record_ingested_file("test_session", &repo_file, b"");
-            assert!(res.is_ok(), "Immune repository file must not be blocked: {:?}", res);
+            assert!(
+                res.is_ok(),
+                "Immune repository file must not be blocked: {:?}",
+                res
+            );
             assert_eq!(res.unwrap(), digest);
 
             // Verify entry was recorded with is_immune = true

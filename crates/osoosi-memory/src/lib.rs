@@ -256,7 +256,10 @@ impl MemoryStore {
         // Schema Migrations (Dynamic)
         let _ = conn.execute("ALTER TABLE threats ADD COLUMN parent_process TEXT", []);
         let _ = conn.execute("ALTER TABLE threats ADD COLUMN version TEXT", []);
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_threats_detected_at ON threats (detected_at DESC)", []);
+        let _ = conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_threats_detected_at ON threats (detected_at DESC)",
+            [],
+        );
         let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_threats_proc_hash ON threats (process_name, hash_blake3)", []);
 
         // Reputation scores for mesh peers (EigenTrust-lite)
@@ -1074,7 +1077,11 @@ impl MemoryStore {
         {
             let cache = self.status_cache.read();
             if let Some(val) = cache.get(&cache_key) {
-                return Ok(if val.is_empty() { None } else { Some(val.clone()) });
+                return Ok(if val.is_empty() {
+                    None
+                } else {
+                    Some(val.clone())
+                });
             }
         }
         let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(15)) else {
@@ -1599,7 +1606,9 @@ impl MemoryStore {
     /// Get recent threats for dashboard (from memory + audit THREAT_DETECTED events).
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
         if let Some((ts, ref cached)) = *self.recent_threats_cache.read() {
-            if ts.elapsed() < std::time::Duration::from_millis(2000) && (limit <= 1000 || cached.len() >= limit) {
+            if ts.elapsed() < std::time::Duration::from_millis(2000)
+                && (limit <= 1000 || cached.len() >= limit)
+            {
                 return Ok(cached.iter().take(limit).cloned().collect());
             }
         }
@@ -1705,8 +1714,9 @@ impl MemoryStore {
     ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
         let (process_name, hash_blake3, file_path) = {
             let conn = self.conn.lock();
-            let mut stmt =
-                conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
+            let mut stmt = conn.prepare(
+                "SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1",
+            )?;
             let mut rows = stmt.query(params![threat_id])?;
             let Some(row) = rows.next()? else {
                 return Ok(None);
@@ -1722,7 +1732,13 @@ impl MemoryStore {
                 params![proc, hash, source_node, Utc::now().to_rfc3339()],
             )?;
             if !hash.is_empty() {
-                self.record_ai_override_locked(&conn, hash, 0, "analyst false positive", source_node)?;
+                self.record_ai_override_locked(
+                    &conn,
+                    hash,
+                    0,
+                    "analyst false positive",
+                    source_node,
+                )?;
             }
             (process_name, hash_blake3, file_path)
         };
@@ -1780,8 +1796,9 @@ impl MemoryStore {
     ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
         let (process_name, hash_blake3, file_path) = {
             let conn = self.conn.lock();
-            let mut stmt =
-                conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
+            let mut stmt = conn.prepare(
+                "SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1",
+            )?;
             let mut rows = stmt.query(params![threat_id])?;
             let Some(row) = rows.next()? else {
                 return Ok(None);
@@ -1798,7 +1815,13 @@ impl MemoryStore {
                 params![proc, hash, source_node, Utc::now().to_rfc3339()],
             )?;
             if !hash.is_empty() {
-                self.record_ai_override_locked(&conn, hash, 1, "analyst true positive", source_node)?;
+                self.record_ai_override_locked(
+                    &conn,
+                    hash,
+                    1,
+                    "analyst true positive",
+                    source_node,
+                )?;
             }
             (process_name, hash_blake3, file_path)
         };
@@ -2194,7 +2217,8 @@ impl MemoryStore {
                 {
                     if finding.voters_summary.trim().is_empty() {
                         finding.voters_summary =
-                            "[Autonomous-REA-Veto: Verified Clean Binary (Score: 0.00)]".to_string();
+                            "[Autonomous-REA-Veto: Verified Clean Binary (Score: 0.00)]"
+                                .to_string();
                     } else {
                         finding.voters_summary = format!(
                             "{} | [Autonomous-REA-Veto: Verified Clean Binary (Score: 0.00)]",
@@ -2254,7 +2278,12 @@ impl MemoryStore {
                         | "cscript.exe"
                         | "wscript.exe"
                 );
-                if !is_lolbin && !self.clean_hashes_cache.read().contains(&finding.hash_blake3) {
+                if !is_lolbin
+                    && !self
+                        .clean_hashes_cache
+                        .read()
+                        .contains(&finding.hash_blake3)
+                {
                     pending_clean.push((
                         finding.hash_blake3.clone(),
                         finding.process_name.clone(),
@@ -2333,7 +2362,8 @@ impl MemoryStore {
         source: &str,
     ) -> anyhow::Result<()> {
         let norm_path = file_path.map(normalize_nt_device_path_in_memory);
-        let norm_proc = process_name.map(|p| normalize_truncated_process_name(p, norm_path.as_deref()));
+        let norm_proc =
+            process_name.map(|p| normalize_truncated_process_name(p, norm_path.as_deref()));
         let clean_hash = compute_real_or_deterministic_hash(
             hash,
             norm_path.as_deref(),
@@ -2430,7 +2460,6 @@ impl MemoryStore {
 
     /// Retrieve list of clean ignored hashes up to `limit`.
     pub fn get_clean_ignored_hashes(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
-
         let conn = self.conn.lock();
         let _ = conn.execute(
             "DELETE FROM known_clean_hashes WHERE hash_blake3 = 'no-hash' OR TRIM(hash_blake3) = ''",
@@ -2448,19 +2477,15 @@ impl MemoryStore {
                  LIMIT 50",
             )?;
             let benign_rows: Vec<(String, Option<String>, Option<String>, String)> = benign_stmt
-                .query_map([], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
-                })?
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
                 .filter_map(|res| res.ok())
                 .collect();
 
             for (hash, proc_opt, path_opt, eval_at) in benign_rows {
                 let norm_path = path_opt.map(|p| normalize_nt_device_path_in_memory(&p));
-                let norm_proc = proc_opt.map(|p| normalize_truncated_process_name(&p, norm_path.as_deref()));
-                let target = norm_path
-                    .as_deref()
-                    .or(norm_proc.as_deref())
-                    .unwrap_or("");
+                let norm_proc =
+                    proc_opt.map(|p| normalize_truncated_process_name(&p, norm_path.as_deref()));
+                let target = norm_path.as_deref().or(norm_proc.as_deref()).unwrap_or("");
                 let lower_target = target.to_ascii_lowercase();
                 let base = lower_target
                     .rsplit('\\')
@@ -2517,7 +2542,8 @@ impl MemoryStore {
             let marked_at: String = row.get(3)?;
             let source_val: String = row.get(4)?;
             let norm_path = path_val.map(|p| normalize_nt_device_path_in_memory(&p));
-            let norm_proc = proc_val.map(|p| normalize_truncated_process_name(&p, norm_path.as_deref()));
+            let norm_proc =
+                proc_val.map(|p| normalize_truncated_process_name(&p, norm_path.as_deref()));
             let real_hash = compute_real_or_deterministic_hash(
                 &hash_val,
                 norm_path.as_deref(),
@@ -2575,7 +2601,6 @@ impl MemoryStore {
     }
 }
 
-
 /// Normalizes Windows NT device paths (`\Device\HarddiskVolume3\...`) into Win32 drive paths (`C:\...` / `D:\...`).
 pub fn normalize_nt_device_path_in_memory(raw: &str) -> String {
     let trimmed = raw.trim();
@@ -2584,7 +2609,10 @@ pub fn normalize_nt_device_path_in_memory(raw: &str) -> String {
     }
     let lower = trimmed.to_ascii_lowercase();
     if let Some(after_prefix) = lower.strip_prefix("\\device\\harddiskvolume") {
-        let digits_len = after_prefix.chars().take_while(|c| c.is_ascii_digit()).count();
+        let digits_len = after_prefix
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
         if digits_len > 0 {
             let total_prefix_len = "\\device\\harddiskvolume".len() + digits_len;
             let rest = &trimmed[total_prefix_len..];
@@ -2611,7 +2639,10 @@ pub fn normalize_truncated_process_name(proc_name: &str, file_path: Option<&str>
     let trimmed = proc_name.trim();
     if let Some(fp) = file_path {
         if fp.contains('\\') || fp.contains('/') {
-            if let Some(fname) = std::path::Path::new(fp).file_name().and_then(|n| n.to_str()) {
+            if let Some(fname) = std::path::Path::new(fp)
+                .file_name()
+                .and_then(|n| n.to_str())
+            {
                 if !fname.is_empty() && fname.len() > trimmed.len() {
                     return fname.to_string();
                 }
@@ -2657,7 +2688,10 @@ pub fn resolve_bare_process_to_full_path(proc_name: &str) -> String {
         format!(r"C:\Program Files\Git\usr\lib\gnupg\{}", norm),
         format!(r"C:\Program Files\Git\mingw64\bin\{}", norm),
         format!(r"C:\Program Files\Google\Chrome\Application\{}", norm),
-        format!(r"C:\Program Files (x86)\Google\Chrome Remote Desktop\154.0.8037.40\{}", norm),
+        format!(
+            r"C:\Program Files (x86)\Google\Chrome Remote Desktop\154.0.8037.40\{}",
+            norm
+        ),
     ];
     for c in &candidates {
         if std::path::Path::new(c).is_file() {
@@ -2682,7 +2716,8 @@ pub fn compute_real_or_deterministic_hash(
     if !h.is_empty() && h != "no-hash" && h != "unknown" && h.len() >= 32 {
         return h.to_ascii_lowercase();
     }
-    let cache = FILE_BLAKE3_MEM_CACHE.get_or_init(|| parking_lot::RwLock::new(std::collections::HashMap::new()));
+    let cache = FILE_BLAKE3_MEM_CACHE
+        .get_or_init(|| parking_lot::RwLock::new(std::collections::HashMap::new()));
     let cache_key = format!(
         "{}:{}:{}",
         file_path.unwrap_or(""),
@@ -2754,7 +2789,10 @@ pub fn is_consensus_finding_vetoed_or_benign(
         "reflective_loader",
         "shellcode",
     ];
-    if active_attack_markers.iter().any(|m| summary_lower.contains(m)) {
+    if active_attack_markers
+        .iter()
+        .any(|m| summary_lower.contains(m))
+    {
         return false;
     }
     if summary_lower.contains("masquerade") && !is_in_trusted_system_or_app_dir {
@@ -3001,7 +3039,11 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(!result.unwrap());
-        assert!(elapsed < std::time::Duration::from_millis(60), "Elapsed was {:?}, expected ~5ms", elapsed);
+        assert!(
+            elapsed < std::time::Duration::from_millis(60),
+            "Elapsed was {:?}, expected ~5ms",
+            elapsed
+        );
 
         background_thread.join().unwrap();
     }

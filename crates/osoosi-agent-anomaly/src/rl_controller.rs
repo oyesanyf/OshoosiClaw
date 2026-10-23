@@ -249,17 +249,33 @@ impl RLAdaptiveController {
     pub fn nudge_voter_weights(&self) -> std::collections::HashMap<String, f64> {
         let mut weights = std::collections::HashMap::new();
         // Base scaling factor derived from learned Q-value across containment actions
-        let mean_containment_q = (self.q_table[5][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize]
+        let mean_containment_q = (self.q_table[5]
+            [DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize]
             + self.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize])
             / 2.0;
         let scale = (1.02 + (mean_containment_q.max(0.0) / 100.0) * 1.48).clamp(1.02, 2.50);
 
-        weights.insert("Agentic-Escape-Detector".to_string(), (1.10 * scale).clamp(1.02, 2.50));
-        weights.insert("SpiderWeb-Containment".to_string(), (1.12 * scale).clamp(1.02, 2.50));
+        weights.insert(
+            "Agentic-Escape-Detector".to_string(),
+            (1.10 * scale).clamp(1.02, 2.50),
+        );
+        weights.insert(
+            "SpiderWeb-Containment".to_string(),
+            (1.12 * scale).clamp(1.02, 2.50),
+        );
         weights.insert("Sigma-Engine".to_string(), (1.05 * scale).clamp(1.02, 2.50));
-        weights.insert("BehavioralAI-Cortex".to_string(), (1.08 * scale).clamp(1.02, 2.50));
-        weights.insert("Ai-Security-Audit-Voter".to_string(), (1.06 * scale).clamp(1.02, 2.50));
-        weights.insert("Mercury-Fluid-Dynamics".to_string(), (1.04 * scale).clamp(1.02, 2.50));
+        weights.insert(
+            "BehavioralAI-Cortex".to_string(),
+            (1.08 * scale).clamp(1.02, 2.50),
+        );
+        weights.insert(
+            "Ai-Security-Audit-Voter".to_string(),
+            (1.06 * scale).clamp(1.02, 2.50),
+        );
+        weights.insert(
+            "Mercury-Fluid-Dynamics".to_string(),
+            (1.04 * scale).clamp(1.02, 2.50),
+        );
 
         weights
     }
@@ -547,7 +563,13 @@ impl StixMdpStateVector {
             }
         };
 
-        Self::new(phase, severity, lineage_depth, canary_triggered, signature_trust)
+        Self::new(
+            phase,
+            severity,
+            lineage_depth,
+            canary_triggered,
+            signature_trust,
+        )
     }
 
     /// Map continuous/structured state into tabular MDP state (0..=7):
@@ -575,9 +597,9 @@ impl StixMdpStateVector {
                     2 // Execution
                 }
             }
-            3 | 6 => 3, // Credential Access / Persistence
-            4 | 8 => 4, // Lateral Movement
-            5 => 5,     // Defense Evasion / Context Hijacking
+            3 | 6 => 3,   // Credential Access / Persistence
+            4 | 8 => 4,   // Lateral Movement
+            5 => 5,       // Defense Evasion / Context Hijacking
             11 | 12 => 6, // Exfiltration / Impact / AML.T0054
             _ => 3,
         }
@@ -602,10 +624,18 @@ impl StixMdpStateVector {
         }
         // Interaction terms:
         feats[11] = feats[1] * (1.0 - feats[4]); // severity * unverified signature
-        feats[12] = feats[3] * feats[1];         // canary * severity
+        feats[12] = feats[3] * feats[1]; // canary * severity
         feats[13] = (self.lineage_depth as f32 / 16.0) * feats[1]; // lineage * severity
-        feats[14] = if self.signature_trust >= 1.0 { 1.0 } else { 0.0 };
-        feats[15] = if self.canary_triggered && self.signature_trust < 1.0 { 1.0 } else { 0.0 };
+        feats[14] = if self.signature_trust >= 1.0 {
+            1.0
+        } else {
+            0.0
+        };
+        feats[15] = if self.canary_triggered && self.signature_trust < 1.0 {
+            1.0
+        } else {
+            0.0
+        };
         feats
     }
 }
@@ -640,19 +670,28 @@ impl StixCurriculumGenerator {
                         technique_id: "T1189".to_string(),
                         tactic: "initial-access".to_string(),
                         severity: 0.70,
-                        mitigations: vec![DefenseAction::ObserveOnly, DefenseAction::RotateCredentialAndRevokeTicket],
+                        mitigations: vec![
+                            DefenseAction::ObserveOnly,
+                            DefenseAction::RotateCredentialAndRevokeTicket,
+                        ],
                     },
                     StixAttackStep {
                         technique_id: "AML.T0043".to_string(),
                         tactic: "execution".to_string(),
                         severity: 0.95,
-                        mitigations: vec![DefenseAction::IsolateLateralEdgeAndHoneypot, DefenseAction::SurgicalAutotomyAndCgroupFreeze],
+                        mitigations: vec![
+                            DefenseAction::IsolateLateralEdgeAndHoneypot,
+                            DefenseAction::SurgicalAutotomyAndCgroupFreeze,
+                        ],
                     },
                     StixAttackStep {
                         technique_id: "T1059".to_string(),
                         tactic: "execution".to_string(),
                         severity: 0.80,
-                        mitigations: vec![DefenseAction::RotateCredentialAndRevokeTicket, DefenseAction::SurgicalAutotomyAndCgroupFreeze],
+                        mitigations: vec![
+                            DefenseAction::RotateCredentialAndRevokeTicket,
+                            DefenseAction::SurgicalAutotomyAndCgroupFreeze,
+                        ],
                     },
                     StixAttackStep {
                         technique_id: "T1552.001".to_string(),
@@ -726,7 +765,10 @@ impl StixCurriculumGenerator {
     }
 
     /// Train `RLAdaptiveController` on STIX curriculum episodes.
-    pub fn train_controller_on_curriculum(controller: &mut RLAdaptiveController, episodes: &[StixCurriculumEpisode]) {
+    pub fn train_controller_on_curriculum(
+        controller: &mut RLAdaptiveController,
+        episodes: &[StixCurriculumEpisode],
+    ) {
         for episode in episodes {
             for (step_idx, step) in episode.trajectory.iter().enumerate() {
                 let state_vec = StixMdpStateVector::from_stix_technique(
@@ -778,7 +820,11 @@ pub fn mask_defensive_actions(state: &StixMdpStateVector) -> [bool; DefenseActio
 
 /// Reward shaping ($R(s, a, s')$): provides exact ground-truth reward `+1.0` (or `+100.0`) when a deterministic trap
 /// contains a verified breakout; `-1.0` (or `-100.0`) penalty if isolating benign signed OS or developer binary (`signature_trust == 1.0`).
-pub fn compute_shaped_reward(state: &StixMdpStateVector, action: DefenseAction, contained: bool) -> f64 {
+pub fn compute_shaped_reward(
+    state: &StixMdpStateVector,
+    action: DefenseAction,
+    contained: bool,
+) -> f64 {
     // 1. Strict penalty for false-positive isolation on benign OS/dev binary
     if state.signature_trust >= 1.0 {
         match action {
@@ -804,8 +850,14 @@ pub fn compute_shaped_reward(state: &StixMdpStateVector, action: DefenseAction, 
         match action {
             DefenseAction::ObserveOnly if state.technique_severity < 0.40 => 1.0,
             DefenseAction::RotateCredentialAndRevokeTicket if state.tactic_phase == 6 => 1.0,
-            DefenseAction::IsolateLateralEdgeAndHoneypot if state.tactic_phase == 8 || state.tactic_phase == 5 => 1.0,
-            DefenseAction::SurgicalAutotomyAndCgroupFreeze if state.technique_severity >= 0.85 => 1.0,
+            DefenseAction::IsolateLateralEdgeAndHoneypot
+                if state.tactic_phase == 8 || state.tactic_phase == 5 =>
+            {
+                1.0
+            }
+            DefenseAction::SurgicalAutotomyAndCgroupFreeze if state.technique_severity >= 0.85 => {
+                1.0
+            }
             _ => 0.5,
         }
     } else {
@@ -844,16 +896,24 @@ mod tests {
 
     #[test]
     fn test_stix_mdp_state_vector_mapping() {
-        let state_prompt_inj = StixMdpStateVector::from_stix_technique("AML.T0043", Some("execution"), 2, false, 0.0);
+        let state_prompt_inj =
+            StixMdpStateVector::from_stix_technique("AML.T0043", Some("execution"), 2, false, 0.0);
         assert_eq!(state_prompt_inj.tactic_phase, 2);
         assert!(state_prompt_inj.technique_severity >= 0.90);
         assert_eq!(state_prompt_inj.to_discrete_state_index(), 5);
 
-        let state_canary = StixMdpStateVector::from_stix_technique("T1552.001", Some("credential-access"), 3, true, 0.0);
+        let state_canary = StixMdpStateVector::from_stix_technique(
+            "T1552.001",
+            Some("credential-access"),
+            3,
+            true,
+            0.0,
+        );
         assert!(state_canary.canary_triggered);
         assert_eq!(state_canary.to_discrete_state_index(), 7);
 
-        let state_benign = StixMdpStateVector::from_stix_technique("T1082", Some("discovery"), 1, false, 1.0);
+        let state_benign =
+            StixMdpStateVector::from_stix_technique("T1082", Some("discovery"), 1, false, 1.0);
         assert_eq!(state_benign.signature_trust, 1.0);
         assert_eq!(state_benign.to_discrete_state_index(), 0);
 
@@ -871,7 +931,11 @@ mod tests {
         assert!(!masks[DefenseAction::ObserveOnly as usize]);
         assert!(masks[DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize]);
 
-        let reward_canary = compute_shaped_reward(&canary_state, DefenseAction::SurgicalAutotomyAndCgroupFreeze, true);
+        let reward_canary = compute_shaped_reward(
+            &canary_state,
+            DefenseAction::SurgicalAutotomyAndCgroupFreeze,
+            true,
+        );
         assert_eq!(reward_canary, 1.0);
 
         // Benign signed binary: destructive action is masked out and penalized
@@ -880,7 +944,11 @@ mod tests {
         assert!(benign_masks[DefenseAction::ObserveOnly as usize]);
         assert!(!benign_masks[DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize]);
 
-        let penalty = compute_shaped_reward(&benign_state, DefenseAction::SurgicalAutotomyAndCgroupFreeze, false);
+        let penalty = compute_shaped_reward(
+            &benign_state,
+            DefenseAction::SurgicalAutotomyAndCgroupFreeze,
+            false,
+        );
         assert_eq!(penalty, -1.0);
     }
 
@@ -889,7 +957,9 @@ mod tests {
         let mut controller = RLAdaptiveController::new();
         let reward = controller.record_canary_containment_reward();
         assert_eq!(reward, 100.0);
-        assert!(controller.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize] > 0.0);
+        assert!(
+            controller.q_table[7][DefenseAction::SurgicalAutotomyAndCgroupFreeze as usize] > 0.0
+        );
 
         let nudges = controller.nudge_voter_weights();
         assert!(nudges.contains_key("Agentic-Escape-Detector"));

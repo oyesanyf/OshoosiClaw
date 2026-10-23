@@ -726,8 +726,7 @@ pub fn validate_rea_target_path(raw_path: &str) -> Result<PathBuf> {
     // Reject NTFS Alternate Data Streams (any ':' not at index 1 after an ASCII drive letter)
     for (idx, ch) in trimmed.char_indices() {
         if ch == ':' {
-            let valid_drive_colon =
-                idx == 1 && trimmed.as_bytes()[0].is_ascii_alphabetic();
+            let valid_drive_colon = idx == 1 && trimmed.as_bytes()[0].is_ascii_alphabetic();
             if !valid_drive_colon {
                 return Err(anyhow!(
                     "REA_SANDBOX_PATH_VIOLATION: NTFS Alternate Data Stream (ADS) or illegal colon blocked ('{}')",
@@ -850,7 +849,13 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
         }
     }
 
-    let unix_markers = ["/tmp/", "/var/tmp/", "/dev/shm/", "/downloads/", "/users/public/"];
+    let unix_markers = [
+        "/tmp/",
+        "/var/tmp/",
+        "/dev/shm/",
+        "/downloads/",
+        "/users/public/",
+    ];
     for marker in &unix_markers {
         if unix_norm.contains(marker) || unix_norm.starts_with(marker) {
             return true;
@@ -1039,7 +1044,15 @@ fn get_dynamic_masquerade_protected_names() -> &'static dashmap::DashSet<String>
                                 .strip_suffix(".exe")
                                 .or_else(|| lower.strip_suffix(".dll"))
                                 .unwrap_or(&lower);
-                            if !matches!(stem, "setup" | "install" | "installer" | "update" | "updater" | "uninstall") {
+                            if !matches!(
+                                stem,
+                                "setup"
+                                    | "install"
+                                    | "installer"
+                                    | "update"
+                                    | "updater"
+                                    | "uninstall"
+                            ) {
                                 set.insert(lower.clone());
                                 if lower.len() > 14 {
                                     set.insert(lower[..14].to_string());
@@ -1174,10 +1187,8 @@ pub fn scan_and_sanitize_counter_ai_strings(
 
             if has_ignore_prev || has_disregard || has_benign_override || has_role_hijack {
                 let snippet: String = s.chars().take(120).collect();
-                detected_injections.push(format!(
-                    "REA_ANTI_ANALYSIS_PROMPT_INJECTION: {}",
-                    snippet
-                ));
+                detected_injections
+                    .push(format!("REA_ANTI_ANALYSIS_PROMPT_INJECTION: {}", snippet));
                 if detected_injections.len() >= 16 {
                     break;
                 }
@@ -1854,11 +1865,9 @@ pub fn inspect_rust_binary(
     }
 
     for (offset, slice) in dep_v0_slices {
-        let max_decompressed = (slice
-            .len()
-            .saturating_mul(MAX_ARCHIVE_DECOMPRESSION_RATIO))
-        .max(65_536)
-        .min(MAX_DECOMPRESSED_BYTES);
+        let max_decompressed = (slice.len().saturating_mul(MAX_ARCHIVE_DECOMPRESSION_RATIO))
+            .max(65_536)
+            .min(MAX_DECOMPRESSED_BYTES);
         let decoder = ZlibDecoder::new(slice);
         let mut json_str = String::new();
         if decoder
@@ -3894,11 +3903,12 @@ pub fn inspect_network_capture(
 
     // Check HAR JSON first (full W3C `.har` archive or single HAR entry JSON)
     if let Ok(har_val) = serde_json::from_slice::<Value>(bytes) {
-        let single_entry_vec = if har_val.get("request").is_some() && har_val.get("response").is_some() {
-            Some(vec![har_val.clone()])
-        } else {
-            None
-        };
+        let single_entry_vec =
+            if har_val.get("request").is_some() && har_val.get("response").is_some() {
+                Some(vec![har_val.clone()])
+            } else {
+                None
+            };
         let entries_opt = har_val
             .get("log")
             .and_then(|l| l.get("entries"))
@@ -4008,7 +4018,9 @@ pub fn inspect_network_capture(
                 } else if req_body.starts_with("\0asm")
                     || resp_body.starts_with("\0asm")
                     || combined_body.contains("AGFzbQE")
-                    || combined_body.to_ascii_lowercase().contains("0061736d01000000")
+                    || combined_body
+                        .to_ascii_lowercase()
+                        .contains("0061736d01000000")
                 {
                     embedded_artifacts.push(json!({
                         "entry_index": idx,
@@ -4038,16 +4050,16 @@ pub fn inspect_network_capture(
 
                 // OpenJEV-Voter DLP & credential exfiltration inspection
                 let ojev_vote = evaluate_openjev_consensus_vote(url, "HAR/Network", &combined_body);
-                let entry_verdict = if !prompt_injection_hits.is_empty()
-                    || !smuggling_or_ssrf_hits.is_empty()
-                {
-                    "ESCALATE_MALICIOUS"
-                } else if ojev_vote.decision == "ESCALATE_MALICIOUS" {
-                    openjev_dlp_hits.push(format!("Entry #{} ({}): {}", idx, url, ojev_vote.reason));
-                    "ESCALATE_DLP_EXFIL"
-                } else {
-                    "VERIFIED_CLEAN"
-                };
+                let entry_verdict =
+                    if !prompt_injection_hits.is_empty() || !smuggling_or_ssrf_hits.is_empty() {
+                        "ESCALATE_MALICIOUS"
+                    } else if ojev_vote.decision == "ESCALATE_MALICIOUS" {
+                        openjev_dlp_hits
+                            .push(format!("Entry #{} ({}): {}", idx, url, ojev_vote.reason));
+                        "ESCALATE_DLP_EXFIL"
+                    } else {
+                        "VERIFIED_CLEAN"
+                    };
 
                 endpoints.push(json!({
                     "method": method,
@@ -4073,15 +4085,16 @@ pub fn inspect_network_capture(
                 digest_sha256: None,
             });
 
-            let base_sev = if !smuggling_or_ssrf_hits.is_empty() || !prompt_injection_hits.is_empty() {
-                "critical"
-            } else if !embedded_artifacts.is_empty() || !openjev_dlp_hits.is_empty() {
-                "high"
-            } else if !sensitive_headers.is_empty() {
-                "medium"
-            } else {
-                "info"
-            };
+            let base_sev =
+                if !smuggling_or_ssrf_hits.is_empty() || !prompt_injection_hits.is_empty() {
+                    "critical"
+                } else if !embedded_artifacts.is_empty() || !openjev_dlp_hits.is_empty() {
+                    "high"
+                } else if !sensitive_headers.is_empty() {
+                    "medium"
+                } else {
+                    "info"
+                };
 
             findings.push(json!({
                 "category": "har_network_capture",
@@ -4122,8 +4135,12 @@ pub fn inspect_network_capture(
                     ep.get("method").and_then(|v| v.as_str()).unwrap_or("GET"),
                     ep.get("url").and_then(|v| v.as_str()).unwrap_or("/"),
                     ep.get("status").and_then(|v| v.as_u64()).unwrap_or(200),
-                    ep.get("rea_verdict").and_then(|v| v.as_str()).unwrap_or("VERIFIED_CLEAN"),
-                    ep.get("openjev_decision").and_then(|v| v.as_str()).unwrap_or("VETO_BENIGN"),
+                    ep.get("rea_verdict")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("VERIFIED_CLEAN"),
+                    ep.get("openjev_decision")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("VETO_BENIGN"),
                 ));
             }
 
@@ -4806,11 +4823,7 @@ pub fn analyze_target_bytes(
         .map(|t| t.contains("self_binary") || t.contains("companion_binary"))
         .unwrap_or(false)
         || path
-            .and_then(|p| {
-                std::env::current_exe()
-                    .ok()
-                    .map(|exe| p == exe.as_path())
-            })
+            .and_then(|p| std::env::current_exe().ok().map(|exe| p == exe.as_path()))
             .unwrap_or(false)
         || (find_subslice(bytes, b"OpenOshoosi::REA::ReportIntegritySeal").is_some()
             && find_subslice(bytes, b"rustc 1.").is_some());
@@ -5160,8 +5173,7 @@ fn index_binary_file_into_map(map: &dashmap::DashMap<String, PathBuf>, path: Pat
             .or_insert_with(|| path.clone());
     }
     if stem.len() > 14 && stem.is_char_boundary(14) {
-        map.entry(stem[..14].to_string())
-            .or_insert_with(|| path);
+        map.entry(stem[..14].to_string()).or_insert_with(|| path);
     }
 }
 
@@ -5214,9 +5226,8 @@ fn get_dynamic_host_binary_index() -> &'static dashmap::DashMap<String, PathBuf>
         {
             use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
             let sys = System::new_with_specifics(
-                RefreshKind::new().with_processes(
-                    ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
-                ),
+                RefreshKind::new()
+                    .with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
             );
             for proc in sys.processes().values() {
                 if let Some(exe) = proc.exe() {
@@ -5318,7 +5329,10 @@ pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
             // Read up to 64 KiB header or full file if <= 16 MiB for BLAKE3 / .dep-v0 check
             if meta.len() <= 16 * 1024 * 1024 {
                 if let Ok(bytes) = std::fs::read(path) {
-                    let b3 = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                    let b3 = blake3::hash(&bytes)
+                        .to_hex()
+                        .to_string()
+                        .to_ascii_lowercase();
                     if is_protected_local_binary_hash(&b3) {
                         cache.insert(path.to_path_buf(), true);
                         return true;
@@ -5448,9 +5462,8 @@ pub fn resolve_candidate_binary_path(
     {
         use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
         let sys = System::new_with_specifics(
-            RefreshKind::new().with_processes(
-                ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
-            ),
+            RefreshKind::new()
+                .with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
         );
         for proc in sys.processes().values() {
             let p_name = proc.name().to_ascii_lowercase();
@@ -5700,7 +5713,9 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
     };
     if is_cargo_hashed_artifact {
         let ws_target = osoosi_types::resolve_base_dir().join("target");
-        if ws_target.is_dir() && (! (raw.contains('\\') || raw.contains('/')) || is_canonical_trusted_binary_dir(raw)) {
+        if ws_target.is_dir()
+            && (!(raw.contains('\\') || raw.contains('/')) || is_canonical_trusted_binary_dir(raw))
+        {
             return true;
         }
     }
@@ -5754,7 +5769,10 @@ fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
             if let Ok(metadata) = exe_path.metadata() {
                 if metadata.len() <= MAX_REA_FILE_BYTES as u64 {
                     if let Ok(bytes) = std::fs::read(&exe_path) {
-                        let hash = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                        let hash = blake3::hash(&bytes)
+                            .to_hex()
+                            .to_string()
+                            .to_ascii_lowercase();
                         set.insert(hash);
                     }
                 }
@@ -5790,9 +5808,8 @@ fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
     {
         use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
         let sys = System::new_with_specifics(
-            RefreshKind::new().with_processes(
-                ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet),
-            ),
+            RefreshKind::new()
+                .with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
         );
         for proc in sys.processes().values().take(64) {
             if let Some(exe) = proc.exe() {
@@ -5883,7 +5900,9 @@ pub fn veto_peer_kill_switch_candidate(
     // 3. Poisoned YARA Rule Veto (dynamically checked against protected binary names discovered on host):
     if let Some(yara_src) = candidate_yara {
         let yara_lower = yara_src.to_ascii_lowercase();
-        for token in yara_lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_') {
+        for token in yara_lower
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_')
+        {
             if token.ends_with(".exe") && get_dynamic_masquerade_protected_names().contains(token) {
                 return Some(format!(
                     "POISONED_YARA_PROTECTED_BINARY_VETO: YARA rule targets protected OS/developer binary {}",
@@ -5919,9 +5938,15 @@ pub fn build_kill_switch_fraud_proof(
     h.update(veto_reason.as_bytes());
     let fraud_proof_hash = h.finalize().to_hex().to_string();
 
-    let detector_id = format!("osoosi-sentinel-{}", &blake3::hash(accused_peer_id.as_bytes()).to_hex()[..8]);
+    let detector_id = format!(
+        "osoosi-sentinel-{}",
+        &blake3::hash(accused_peer_id.as_bytes()).to_hex()[..8]
+    );
     let signing_seed = *blake3::hash(b"DETECTOR_FRAUD_COUNTER_SIGNATURE_SEED_V1").as_bytes();
-    let counter_sig = hex::encode(osoosi_audit::pqc_primitives::hybrid_sign_bytes(fraud_proof_hash.as_bytes(), &signing_seed));
+    let counter_sig = hex::encode(osoosi_audit::pqc_primitives::hybrid_sign_bytes(
+        fraud_proof_hash.as_bytes(),
+        &signing_seed,
+    ));
 
     osoosi_wire::ByzantineKillSwitchFraudProof {
         proof_id,
@@ -5961,7 +5986,6 @@ pub fn inspect_mesh_threat_frame(
     )
 }
 
-
 /// Runs a dynamic sandboxed detonation probe on an unknown or suspicious binary or script.
 pub fn run_caged_rea_detonation_probe(
     binary_path: &Path,
@@ -5969,7 +5993,9 @@ pub fn run_caged_rea_detonation_probe(
     timeout_ms: u64,
 ) -> Result<ReaDetonationReport, ReaError> {
     if !binary_path.exists() {
-        return Err(ReaError::NotFound(binary_path.to_string_lossy().to_string()));
+        return Err(ReaError::NotFound(
+            binary_path.to_string_lossy().to_string(),
+        ));
     }
 
     let path_str = binary_path.to_string_lossy().to_string();
@@ -6030,7 +6056,8 @@ pub fn run_caged_rea_detonation_probe(
         session_id,
         Some(&custom_env),
         None,
-    ).map_err(|e| ReaError::CageError(format!("Failed to spawn caged detonation probe: {}", e)))?;
+    )
+    .map_err(|e| ReaError::CageError(format!("Failed to spawn caged detonation probe: {}", e)))?;
 
     let effective_timeout = Duration::from_millis(timeout_ms.max(500));
     let cage_res = child
@@ -6046,7 +6073,10 @@ pub fn run_caged_rea_detonation_probe(
             path_str, session_id
         );
         let alert = cage_res.alert.clone();
-        let trap_path = alert.as_ref().map(|a| a.trap_path.clone()).unwrap_or_default();
+        let trap_path = alert
+            .as_ref()
+            .map(|a| a.trap_path.clone())
+            .unwrap_or_default();
 
         let findings = vec![
             json!({
@@ -6131,7 +6161,10 @@ pub fn run_caged_rea_detonation_probe(
             evidence: vec![ReaEvidence {
                 source: "osoosi_runtime::CanaryCage".to_string(),
                 location: path_str,
-                observation: format!("Child completed: exit_code={:?}, duration_ms={}", cage_res.exit_code, cage_res.duration_ms),
+                observation: format!(
+                    "Child completed: exit_code={:?}, duration_ms={}",
+                    cage_res.exit_code, cage_res.duration_ms
+                ),
                 confidence: 0.8,
                 digest_sha256: None,
             }],
@@ -6185,12 +6218,36 @@ impl AutonomousReaEngine {
             None,
         );
         for (det, target, reason) in [
-            ("Process/ETW/CLI", "svchost.exe", "ETW process baseline verification"),
-            ("Malware/YARA", "osoosi.exe", "Self-binary Authenticode & BLAKE3 verification"),
-            ("HAR/Network", "chrome.exe", "HAR L7 outbound TLS session inspection"),
-            ("DLP", "git.exe", "Canonical repository push https://github.com/oyesanyf/OshoosiClaw.git"),
-            ("Agent/Alignment", "cargo.exe", "Subagent workspace build tool verification"),
-            ("CVE/SCA", "rustc.exe", "Cargo-auditable SBOM & CVE range verification"),
+            (
+                "Process/ETW/CLI",
+                "svchost.exe",
+                "ETW process baseline verification",
+            ),
+            (
+                "Malware/YARA",
+                "osoosi.exe",
+                "Self-binary Authenticode & BLAKE3 verification",
+            ),
+            (
+                "HAR/Network",
+                "chrome.exe",
+                "HAR L7 outbound TLS session inspection",
+            ),
+            (
+                "DLP",
+                "git.exe",
+                "Canonical repository push https://github.com/oyesanyf/OshoosiClaw.git",
+            ),
+            (
+                "Agent/Alignment",
+                "cargo.exe",
+                "Subagent workspace build tool verification",
+            ),
+            (
+                "CVE/SCA",
+                "rustc.exe",
+                "Cargo-auditable SBOM & CVE range verification",
+            ),
         ] {
             let _ = engine.cast_consensus_vote(target, det, reason, 0.20);
             let ojev_vote = evaluate_openjev_consensus_vote(target, det, reason);
@@ -6224,13 +6281,10 @@ impl AutonomousReaEngine {
         if let Some(spoof_reason) =
             detect_binary_masquerade_spoof(target, file_path.map(Path::new), None)
         {
-            self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
+            self.masquerade_attempts_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
-            return (
-                false,
-                spoof_reason,
-                None,
-            );
+            return (false, spoof_reason, None);
         }
 
         // 1. Fast autonomous adjudication check for benign system/dev process or veto reason
@@ -6244,12 +6298,7 @@ impl AutonomousReaEngine {
                     let sz = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                     if sz > 0 && sz <= MAX_REA_FILE_BYTES as u64 {
                         if let Ok(bytes) = std::fs::read(p) {
-                            (
-                                p_str,
-                                sz,
-                                sha256_hex(&bytes),
-                                blake3_hex(&bytes),
-                            )
+                            (p_str, sz, sha256_hex(&bytes), blake3_hex(&bytes))
                         } else {
                             (
                                 p_str,
@@ -6276,14 +6325,10 @@ impl AutonomousReaEngine {
                 };
 
             // Record lightweight ReaInvestigationReport if not already recorded
-            let already_recorded = self
-                .investigations
-                .read()
-                .iter()
-                .any(|r| {
-                    r.target_path.eq_ignore_ascii_case(target)
-                        || r.target_path.eq_ignore_ascii_case(&resolved_label)
-                });
+            let already_recorded = self.investigations.read().iter().any(|r| {
+                r.target_path.eq_ignore_ascii_case(target)
+                    || r.target_path.eq_ignore_ascii_case(&resolved_label)
+            });
 
             if !already_recorded {
                 let auto_yara = synthesize_rea_yara_rule(
@@ -6346,7 +6391,10 @@ impl AutonomousReaEngine {
 
             return (
                 true,
-                format!("Autonomous REA verified benign system/dev process '{}'", target),
+                format!(
+                    "Autonomous REA verified benign system/dev process '{}'",
+                    target
+                ),
                 Some(real_blake3),
             );
         }
@@ -6357,13 +6405,10 @@ impl AutonomousReaEngine {
             if let Some(spoof_reason) =
                 detect_binary_masquerade_spoof(&resolved_str, Some(&resolved_path), None)
             {
-                self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
+                self.masquerade_attempts_blocked
+                    .fetch_add(1, Ordering::Relaxed);
                 self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
-                return (
-                    false,
-                    spoof_reason,
-                    None,
-                );
+                return (false, spoof_reason, None);
             }
 
             let is_dynamically_verified = verify_dynamic_binary_trust(&resolved_path);
@@ -6450,7 +6495,8 @@ impl AutonomousReaEngine {
         raw_payload: Option<&str>,
     ) -> ReaMeshInspectionVerdict {
         self.mesh_frames_inspected.fetch_add(1, Ordering::Relaxed);
-        let candidate_proc = extract_process_from_summary(proc_or_summary).unwrap_or(proc_or_summary);
+        let candidate_proc =
+            extract_process_from_summary(proc_or_summary).unwrap_or(proc_or_summary);
 
         // 1. Layer 4: Scan mesh summary, YARA rule, and raw payload for embedded prompt-injection
         let mut combined_mesh_str = proc_or_summary.to_string();
@@ -6469,9 +6515,11 @@ impl AutonomousReaEngine {
             false,
         );
         if !pi_findings.is_empty() {
-            self.prompt_injections_blocked.fetch_add(1, Ordering::Relaxed);
+            self.prompt_injections_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.mesh_threats_vetoed.fetch_add(1, Ordering::Relaxed);
-            let seal = blake3_hex(format!("rea:mesh:pi:{}:{}", direction, proc_or_summary).as_bytes());
+            let seal =
+                blake3_hex(format!("rea:mesh:pi:{}:{}", direction, proc_or_summary).as_bytes());
             return ReaMeshInspectionVerdict {
                 allowed: false,
                 vetoed: true,
@@ -6500,9 +6548,13 @@ impl AutonomousReaEngine {
         if let Some(payload) = raw_payload {
             let ojev_vote = evaluate_openjev_consensus_vote(candidate_proc, "mesh_gossip", payload);
             self.record_consensus_vote(ojev_vote.clone());
-            if direction.eq_ignore_ascii_case("outbound") && ojev_vote.decision == "ESCALATE_MALICIOUS" {
+            if direction.eq_ignore_ascii_case("outbound")
+                && ojev_vote.decision == "ESCALATE_MALICIOUS"
+            {
                 self.mesh_threats_vetoed.fetch_add(1, Ordering::Relaxed);
-                let seal = blake3_hex(format!("rea:mesh:openjev:{}:{}", direction, proc_or_summary).as_bytes());
+                let seal = blake3_hex(
+                    format!("rea:mesh:openjev:{}:{}", direction, proc_or_summary).as_bytes(),
+                );
                 return ReaMeshInspectionVerdict {
                     allowed: false,
                     vetoed: true,
@@ -6524,9 +6576,12 @@ impl AutonomousReaEngine {
         if let Some(spoof_reason) =
             detect_binary_masquerade_spoof(candidate_proc, Some(Path::new(candidate_proc)), None)
         {
-            self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
+            self.masquerade_attempts_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
-            let seal = blake3_hex(format!("rea:mesh:masquerade:{}:{}", direction, candidate_proc).as_bytes());
+            let seal = blake3_hex(
+                format!("rea:mesh:masquerade:{}:{}", direction, candidate_proc).as_bytes(),
+            );
             return ReaMeshInspectionVerdict {
                 allowed: true,
                 vetoed: false,
@@ -6556,9 +6611,15 @@ impl AutonomousReaEngine {
         ) {
             self.mesh_threats_vetoed.fetch_add(1, Ordering::Relaxed);
             self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
-            let seal = blake3_hex(format!("rea:mesh:veto:{}:{}", direction, veto_reason).as_bytes());
+            let seal =
+                blake3_hex(format!("rea:mesh:veto:{}:{}", direction, veto_reason).as_bytes());
             let fraud_proof = peer_id.map(|pid| {
-                build_kill_switch_fraud_proof(pid, Some(candidate_proc), candidate_blake3, &veto_reason)
+                build_kill_switch_fraud_proof(
+                    pid,
+                    Some(candidate_proc),
+                    candidate_blake3,
+                    &veto_reason,
+                )
             });
             return ReaMeshInspectionVerdict {
                 allowed: false,
@@ -6576,7 +6637,8 @@ impl AutonomousReaEngine {
             };
         }
 
-        let seal = blake3_hex(format!("rea:mesh:verified:{}:{}", direction, proc_or_summary).as_bytes());
+        let seal =
+            blake3_hex(format!("rea:mesh:verified:{}:{}", direction, proc_or_summary).as_bytes());
         ReaMeshInspectionVerdict {
             allowed: true,
             vetoed: false,
@@ -6586,7 +6648,10 @@ impl AutonomousReaEngine {
             masquerade_detected: false,
             rea_seal_blake3: seal,
             threat_score_adjustment: 0.0,
-            summary: format!("[REA-Voter] Verified legitimate {} mesh threat intelligence frame", direction),
+            summary: format!(
+                "[REA-Voter] Verified legitimate {} mesh threat intelligence frame",
+                direction
+            ),
         }
     }
 
@@ -6599,7 +6664,8 @@ impl AutonomousReaEngine {
         candidate_reason: &str,
         raw_score: f64,
     ) -> ReaDetectorEvaluation {
-        self.detector_alerts_evaluated.fetch_add(1, Ordering::Relaxed);
+        self.detector_alerts_evaluated
+            .fetch_add(1, Ordering::Relaxed);
         {
             let mut map = self.per_detector_counts.write();
             *map.entry(detector_name.to_string()).or_insert(0) += 1;
@@ -6622,7 +6688,8 @@ impl AutonomousReaEngine {
             false,
         );
         if !pi_findings.is_empty() {
-            self.prompt_injections_blocked.fetch_add(1, Ordering::Relaxed);
+            self.prompt_injections_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
             let adj = (raw_score + 0.45).clamp(0.95, 1.0);
             return ReaDetectorEvaluation {
@@ -6649,7 +6716,8 @@ impl AutonomousReaEngine {
             Some(Path::new(target_proc_or_path)),
             None,
         ) {
-            self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
+            self.masquerade_attempts_blocked
+                .fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
             let adj = (raw_score + 0.40).clamp(0.92, 1.0);
             return ReaDetectorEvaluation {
@@ -6672,11 +6740,8 @@ impl AutonomousReaEngine {
 
         // 3. Check if active behavioral/LOTL attack or OpenJEV credential/PII leak is present
         let has_lotl = has_active_lotl_or_exploit_indicators(candidate_reason);
-        let ojev_vote = evaluate_openjev_consensus_vote(
-            target_proc_or_path,
-            detector_name,
-            candidate_reason,
-        );
+        let ojev_vote =
+            evaluate_openjev_consensus_vote(target_proc_or_path, detector_name, candidate_reason);
         if ojev_vote.decision == "ESCALATE_MALICIOUS" || has_lotl {
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
             let adj = (raw_score + 0.25).clamp(0.88, 1.0);
@@ -6714,7 +6779,10 @@ impl AutonomousReaEngine {
                 adjusted_score: 0.0,
                 rea_threat_score: 0.02,
                 verdict: "BENIGN_VETOED".to_string(),
-                explanation: format!("[REA-Voter] Vetoed false positive in '{}': {}", detector_name, adj_reason),
+                explanation: format!(
+                    "[REA-Voter] Vetoed false positive in '{}': {}",
+                    detector_name, adj_reason
+                ),
                 rea_seal_blake3: seal,
                 auto_yara_synthesized: false,
             };
@@ -6751,7 +6819,8 @@ impl AutonomousReaEngine {
         server_ip: &str,
         payload_or_har_json: &str,
     ) -> ReaHarAnalysisResult {
-        let mut res = self.analyze_har_entry_or_archive(url, method, status, mime_type, payload_or_har_json);
+        let mut res =
+            self.analyze_har_entry_or_archive(url, method, status, mime_type, payload_or_har_json);
         let src_low = source_file.to_ascii_lowercase();
         let is_live_socket = src_low.starts_with("active_socket:")
             || mime_type.starts_with("transport/")
@@ -6783,9 +6852,14 @@ impl AutonomousReaEngine {
                 method,
                 owner_proc,
                 url,
-                if server_ip.is_empty() { "local" } else { server_ip }
+                if server_ip.is_empty() {
+                    "local"
+                } else {
+                    server_ip
+                }
             );
-        } else if (src_low.starts_with("browser_download:") || src_low.starts_with("browser_history:"))
+        } else if (src_low.starts_with("browser_download:")
+            || src_low.starts_with("browser_history:"))
             && !res.prompt_injection_detected
             && !res.smuggling_or_ssrf_detected
             && !payload_or_har_json.contains("SWARM_POISONED_LINEAGE")
@@ -6820,7 +6894,8 @@ impl AutonomousReaEngine {
         mime_type: &str,
         payload_or_har_json: &str,
     ) -> ReaHarAnalysisResult {
-        self.detector_alerts_evaluated.fetch_add(1, Ordering::Relaxed);
+        self.detector_alerts_evaluated
+            .fetch_add(1, Ordering::Relaxed);
         {
             let mut map = self.per_detector_counts.write();
             *map.entry("HAR/Network".to_string()).or_insert(0) += 1;
@@ -6831,7 +6906,8 @@ impl AutonomousReaEngine {
         let url_low = url.to_ascii_lowercase();
 
         let mut findings = Vec::new();
-        let mut artifact_class = if mime_type.starts_with("transport/") || method.starts_with("TCP") {
+        let mut artifact_class = if mime_type.starts_with("transport/") || method.starts_with("TCP")
+        {
             "os_transport_socket".to_string()
         } else if mime_type.contains("wasm")
             || payload_or_har_json.starts_with("\0asm")
@@ -6848,7 +6924,9 @@ impl AutonomousReaEngine {
             "pe_native_binary".to_string()
         } else if lower.contains("6080604052") {
             "evm_bytecode".to_string()
-        } else if payload_or_har_json.contains("\"log\"") && payload_or_har_json.contains("\"entries\"") {
+        } else if payload_or_har_json.contains("\"log\"")
+            && payload_or_har_json.contains("\"entries\"")
+        {
             "har_archive".to_string()
         } else if mime_type.contains("json") {
             "http_json_api".to_string()
@@ -6888,14 +6966,12 @@ impl AutonomousReaEngine {
         }
 
         let mut dummy_recon = String::new();
-        let (pi_findings, _) = scan_and_sanitize_counter_ai_strings(
-            combined.as_bytes(),
-            &mut dummy_recon,
-            false,
-        );
+        let (pi_findings, _) =
+            scan_and_sanitize_counter_ai_strings(combined.as_bytes(), &mut dummy_recon, false);
         let prompt_injection_detected = !pi_findings.is_empty();
         if prompt_injection_detected {
-            self.prompt_injections_blocked.fetch_add(1, Ordering::Relaxed);
+            self.prompt_injections_blocked
+                .fetch_add(1, Ordering::Relaxed);
             for pi in &pi_findings {
                 findings.push(json!({
                     "category": "REA_ANTI_ANALYSIS_PROMPT_INJECTION",
@@ -6941,19 +7017,28 @@ impl AutonomousReaEngine {
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
             (
                 "ESCALATE_MALICIOUS".to_string(),
-                format!("Escalate [REA-Voter]: Embedded {} payload reconstructed from HAR stream {}", artifact_class, url),
+                format!(
+                    "Escalate [REA-Voter]: Embedded {} payload reconstructed from HAR stream {}",
+                    artifact_class, url
+                ),
             )
         } else if ojev_vote.decision == "ESCALATE_MALICIOUS" {
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
             (
                 "ESCALATE_MALICIOUS".to_string(),
-                format!("Escalate [REA-Voter]: Corroborated OpenJEV DLP exfiltration on {}", url),
+                format!(
+                    "Escalate [REA-Voter]: Corroborated OpenJEV DLP exfiltration on {}",
+                    url
+                ),
             )
         } else {
             self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
             (
                 "VETO_BENIGN".to_string(),
-                format!("Veto [REA-Voter]: Verified clean HAR L7 HTTP {} transaction ({})", method, artifact_class),
+                format!(
+                    "Veto [REA-Voter]: Verified clean HAR L7 HTTP {} transaction ({})",
+                    method, artifact_class
+                ),
             )
         };
 
@@ -6997,15 +7082,20 @@ impl AutonomousReaEngine {
             candidate_reason,
             current_confidence,
         );
-        let (decision, weight, confidence) = if eval.masquerade_escalated || eval.prompt_injection_escalated {
-            ("ESCALATE_MALICIOUS".to_string(), 1.85, 0.98)
-        } else if eval.verdict == "CONFIRMED_ACTIVE_THREAT" {
-            ("ESCALATE_MALICIOUS".to_string(), 1.65, 0.95)
-        } else if eval.benign_veto {
-            ("VETO_BENIGN".to_string(), -1.50, 0.96)
-        } else {
-            ("ATTEST_NEUTRAL".to_string(), 0.25, eval.adjusted_score.clamp(0.10, 0.95))
-        };
+        let (decision, weight, confidence) =
+            if eval.masquerade_escalated || eval.prompt_injection_escalated {
+                ("ESCALATE_MALICIOUS".to_string(), 1.85, 0.98)
+            } else if eval.verdict == "CONFIRMED_ACTIVE_THREAT" {
+                ("ESCALATE_MALICIOUS".to_string(), 1.65, 0.95)
+            } else if eval.benign_veto {
+                ("VETO_BENIGN".to_string(), -1.50, 0.96)
+            } else {
+                (
+                    "ATTEST_NEUTRAL".to_string(),
+                    0.25,
+                    eval.adjusted_score.clamp(0.10, 0.95),
+                )
+            };
 
         let vote = ReaConsensusVote {
             voter_name: "REA-Voter".to_string(),
@@ -7648,32 +7738,38 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
                 .unwrap_or(false);
 
         // Check if dynamic load is unsigned, untrusted path, or non-allowlisted
-        let is_unsigned_or_untrusted_dynamic_load = if is_image_load_event && !image_loaded.is_empty() {
-            let signed_field = event.data.get("Signed").or_else(|| event.data.get("is_signed"));
-            let is_signed_false = signed_field.map(|v| {
-                if let Some(b) = v.as_bool() {
-                    !b
-                } else if let Some(s) = v.as_str() {
-                    s.eq_ignore_ascii_case("false") || s == "0"
-                } else {
-                    false
-                }
-            }).unwrap_or(false);
+        let is_unsigned_or_untrusted_dynamic_load =
+            if is_image_load_event && !image_loaded.is_empty() {
+                let signed_field = event
+                    .data
+                    .get("Signed")
+                    .or_else(|| event.data.get("is_signed"));
+                let is_signed_false = signed_field
+                    .map(|v| {
+                        if let Some(b) = v.as_bool() {
+                            !b
+                        } else if let Some(s) = v.as_str() {
+                            s.eq_ignore_ascii_case("false") || s == "0"
+                        } else {
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
 
-            let sig_status = event
-                .data
-                .get("SignatureStatus")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let sig_invalid = !sig_status.is_empty()
-                && !sig_status.eq_ignore_ascii_case("Valid")
-                && !sig_status.eq_ignore_ascii_case("ValidSignature");
+                let sig_status = event
+                    .data
+                    .get("SignatureStatus")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let sig_invalid = !sig_status.is_empty()
+                    && !sig_status.eq_ignore_ascii_case("Valid")
+                    && !sig_status.eq_ignore_ascii_case("ValidSignature");
 
-            let is_untrusted_path = is_untrusted_writable_or_temp_path(image_loaded);
-            is_signed_false || sig_invalid || is_untrusted_path
-        } else {
-            false
-        };
+                let is_untrusted_path = is_untrusted_writable_or_temp_path(image_loaded);
+                is_signed_false || sig_invalid || is_untrusted_path
+            } else {
+                false
+            };
 
         // 1. Check Layer 4 counter-AI prompt injection in event image or command line
         let mut dummy_recon = String::new();
@@ -7714,10 +7810,7 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
                 engine
                     .malicious_confirmations
                     .fetch_add(1, Ordering::Relaxed);
-                let reason = format!(
-                    "Escalate [REA-Voter]: {}",
-                    spoof_reason
-                );
+                let reason = format!("Escalate [REA-Voter]: {}", spoof_reason);
                 engine.record_consensus_vote(ReaConsensusVote {
                     voter_name: "REA-Voter".to_string(),
                     target: eval_binary.to_string(),
@@ -7747,7 +7840,9 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
                 image_loaded, image
             );
             let engine = global_rea_engine();
-            engine.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
+            engine
+                .malicious_confirmations
+                .fetch_add(1, Ordering::Relaxed);
             engine.record_consensus_vote(ReaConsensusVote {
                 voter_name: "REA-Voter".to_string(),
                 target: image_loaded.to_string(),
@@ -7793,12 +7888,8 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             };
             if is_rea_benign_system_or_dev_process(image, Some(reason_context)) {
                 let engine = global_rea_engine();
-                let vote = engine.cast_consensus_vote(
-                    image,
-                    "Consensus/HostSecurityEvent",
-                    cmdline,
-                    0.05,
-                );
+                let vote =
+                    engine.cast_consensus_vote(image, "Consensus/HostSecurityEvent", cmdline, 0.05);
                 if vote.benign_veto {
                     return Some(osoosi_policy::engine::VoteResult {
                         confidence: vote.confidence as f32,
@@ -7922,7 +8013,6 @@ impl osoosi_policy::engine::ThreatVoter for OpenJevVoter {
         openjev_voter_stats_snapshot()
     }
 }
-
 
 // ============================================================================
 // Unit Tests
@@ -8382,7 +8472,10 @@ mod tests {
             assert_eq!(res.verdict, "BENIGN_VERIFIED");
             assert_eq!(res.threat_score, 0.0);
             assert!(!res.canary_triggered);
-            assert!(res.findings[0]["title"].as_str().unwrap().contains("Benign System or Developer Process"));
+            assert!(res.findings[0]["title"]
+                .as_str()
+                .unwrap()
+                .contains("Benign System or Developer Process"));
         }
     }
 
@@ -8392,16 +8485,31 @@ mod tests {
         // Write a test batch file that probes the CANARY_HONEY_PIPE decoy
         let temp_dir = std::env::temp_dir();
         let rand_hex = format!("{:016x}", rand::random::<u128>());
-        let trap_bat = temp_dir.join(format!("malicious_probe_test_{}_{}.bat", std::process::id(), rand_hex));
-        std::fs::write(&trap_bat, b"@echo off\r\necho PROBE > %CANARY_HONEY_PIPE%\r\n").expect("write trap bat");
+        let trap_bat = temp_dir.join(format!(
+            "malicious_probe_test_{}_{}.bat",
+            std::process::id(),
+            rand_hex
+        ));
+        std::fs::write(
+            &trap_bat,
+            b"@echo off\r\necho PROBE > %CANARY_HONEY_PIPE%\r\n",
+        )
+        .expect("write trap bat");
 
         let res = run_caged_rea_detonation_probe(&trap_bat, "session_detonation_trap", 6000)
             .expect("Detonation probe should execute and catch trap");
 
         let _ = std::fs::remove_file(&trap_bat);
 
-        assert!(res.canary_triggered, "Touching honey-pipe must trigger canary");
-        assert_eq!(res.exit_code, Some(137), "Child must be terminated with exit code 137");
+        assert!(
+            res.canary_triggered,
+            "Touching honey-pipe must trigger canary"
+        );
+        assert_eq!(
+            res.exit_code,
+            Some(137),
+            "Child must be terminated with exit code 137"
+        );
         assert_eq!(res.threat_score, 1.00);
         assert_eq!(res.verdict, "MALICIOUS");
         assert!(res.mitre_attack_ids.contains(&"AML.T0043".to_string()));
@@ -8411,8 +8519,15 @@ mod tests {
 
     #[test]
     fn test_rea_analyze_target_bytes_developer_immunity() {
-        let dummy_bytes = b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00\xb8\x00\x00\x00";
-        for dev_tool in &["python.exe", "cargo.exe", "node.exe", "git.exe", "osoosi.exe"] {
+        let dummy_bytes =
+            b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00\xb8\x00\x00\x00";
+        for dev_tool in &[
+            "python.exe",
+            "cargo.exe",
+            "node.exe",
+            "git.exe",
+            "osoosi.exe",
+        ] {
             let report = analyze_target_bytes(
                 dev_tool,
                 None,
@@ -8449,7 +8564,10 @@ mod tests {
             None,
             Some("Malicious C2"),
         );
-        assert!(res.is_some(), "Must veto candidate matching protected binary hash");
+        assert!(
+            res.is_some(),
+            "Must veto candidate matching protected binary hash"
+        );
         let veto_str = res.unwrap();
         assert!(
             veto_str.contains("PROTECTED_LOCAL_BINARY_HASH_VETO"),
@@ -8487,7 +8605,10 @@ mod tests {
             Some(r#"rule CleanRule { strings: $a = "badc2url.com" condition: $a }"#),
             Some("MITRE T1071 C2 Communication"),
         );
-        assert!(clean_threat.is_none(), "Legitimate threat candidate must not be vetoed");
+        assert!(
+            clean_threat.is_none(),
+            "Legitimate threat candidate must not be vetoed"
+        );
     }
 
     #[test]
@@ -8507,7 +8628,12 @@ mod tests {
                 spoof_path
             );
             assert!(
-                detect_binary_masquerade_spoof(spoof_path, Some(Path::new(spoof_path)), Some(fake_pe)).is_some(),
+                detect_binary_masquerade_spoof(
+                    spoof_path,
+                    Some(Path::new(spoof_path)),
+                    Some(fake_pe)
+                )
+                .is_some(),
                 "Masquerading binary '{}' must be detected by detect_binary_masquerade_spoof",
                 spoof_path
             );
@@ -8521,7 +8647,11 @@ mod tests {
                 Some(spoof_path),
                 Some("suspicious compiler execution"),
             );
-            assert!(!is_benign, "Masquerading '{}' must not be adjudicated benign", spoof_path);
+            assert!(
+                !is_benign,
+                "Masquerading '{}' must not be adjudicated benign",
+                spoof_path
+            );
             assert!(adj_msg.contains("REA_MASQUERADE_SPOOF_DETECTED"));
 
             let report = analyze_target_bytes(
@@ -8544,11 +8674,16 @@ mod tests {
         }
 
         // Canonical trusted paths must pass
-        assert!(is_canonical_trusted_binary_dir(r"C:\Windows\System32\svchost.exe"));
+        assert!(is_canonical_trusted_binary_dir(
+            r"C:\Windows\System32\svchost.exe"
+        ));
         assert!(is_canonical_trusted_binary_dir(
             r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.42.34433\bin\Hostx64\x64\cl.exe"
         ));
-        assert!(is_rea_benign_system_or_dev_process(r"C:\Windows\System32\svchost.exe", None));
+        assert!(is_rea_benign_system_or_dev_process(
+            r"C:\Windows\System32\svchost.exe",
+            None
+        ));
     }
 
     #[test]
@@ -8636,18 +8771,25 @@ mod tests {
             report.rea_security_posture["counter_ai_prompt_injection_detected"].as_bool(),
             Some(true)
         );
-        assert!(report.findings.iter().any(|f| {
-            f["category"].as_str() == Some("REA_ANTI_ANALYSIS_PROMPT_INJECTION")
-        }));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| { f["category"].as_str() == Some("REA_ANTI_ANALYSIS_PROMPT_INJECTION") }));
         let recon = report.reconstructed_code.clone().unwrap_or_default();
         assert!(
             recon.contains("[REDACTED_COUNTER_AI_PROMPT_INJECTION]"),
             "Reconstructed code must redact prompt injection strings"
         );
-        assert!(!recon.contains("\x1b[31m"), "ANSI escape sequences must be stripped");
+        assert!(
+            !recon.contains("\x1b[31m"),
+            "ANSI escape sequences must be stripped"
+        );
 
         // Verify tamper-evident BLAKE3 HMAC seal
-        assert!(verify_rea_report_seal(&report), "Authentic REA report seal must verify");
+        assert!(
+            verify_rea_report_seal(&report),
+            "Authentic REA report seal must verify"
+        );
         report.threat_score = 0.01;
         assert!(
             !verify_rea_report_seal(&report),
@@ -8675,8 +8817,14 @@ mod tests {
             "Image": r"C:\Users\Public\Temp\cl.exe",
             "CommandLine": r"C:\Users\Public\Temp\cl.exe /c payload.c"
         }));
-        let rea_vote = rea_voter.vote(&masq_event).await.expect("ReaVoter must vote on masquerade");
-        assert!(rea_vote.weight > 1.0, "Masquerade must receive positive escalation weight");
+        let rea_vote = rea_voter
+            .vote(&masq_event)
+            .await
+            .expect("ReaVoter must vote on masquerade");
+        assert!(
+            rea_vote.weight > 1.0,
+            "Masquerade must receive positive escalation weight"
+        );
         assert!(rea_vote.reason.contains("REA_MASQUERADE_SPOOF_DETECTED"));
 
         // 2. Credential / API key exfiltration in command line must be escalated by OpenJevVoter
@@ -8688,7 +8836,10 @@ mod tests {
             .vote(&exfil_event)
             .await
             .expect("OpenJevVoter must vote on AWS key exfil");
-        assert!(ojev_vote.weight > 1.0, "Credential leak must receive positive escalation weight");
+        assert!(
+            ojev_vote.weight > 1.0,
+            "Credential leak must receive positive escalation weight"
+        );
         assert!(ojev_vote.reason.contains("Escalate [OpenJEV-Voter]"));
 
         // 3. Canonical git push to OshoosiClaw must be vetoed/attested benign by both voters
@@ -8697,13 +8848,22 @@ mod tests {
             "DestinationHostname": "github.com/oyesanyf/OshoosiClaw.git",
             "CommandLine": "git push https://github.com/oyesanyf/OshoosiClaw.git main"
         }));
-        let rea_clean = rea_voter.vote(&git_event).await.expect("ReaVoter must veto benign git");
-        assert!(rea_clean.weight < 0.0, "Canonical git.exe must receive negative veto weight");
+        let rea_clean = rea_voter
+            .vote(&git_event)
+            .await
+            .expect("ReaVoter must veto benign git");
+        assert!(
+            rea_clean.weight < 0.0,
+            "Canonical git.exe must receive negative veto weight"
+        );
         let ojev_clean = openjev_voter
             .vote(&git_event)
             .await
             .expect("OpenJevVoter must veto benign canonical git push");
-        assert!(ojev_clean.weight < 0.0, "Clean canonical git push must receive negative veto weight");
+        assert!(
+            ojev_clean.weight < 0.0,
+            "Clean canonical git push must receive negative veto weight"
+        );
 
         // 4. Active LOTL attack (rundll32 keymgr.dll,KRShowKeyMgr) must NOT be vetoed by either voter
         let lotl_event = make_event(serde_json::json!({
@@ -8807,18 +8967,14 @@ mod tests {
         assert_eq!(report.detected_kind, "network_capture");
         assert!(verify_rea_report_seal(&report));
         assert!(report.threat_score >= 0.75);
-        assert!(
-            !report.metadata["embedded_artifacts"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            !report.metadata["smuggling_or_ssrf_hits"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
+        assert!(!report.metadata["embedded_artifacts"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(!report.metadata["smuggling_or_ssrf_hits"]
+            .as_array()
+            .unwrap()
+            .is_empty());
     }
 
     #[tokio::test]
@@ -8851,7 +9007,9 @@ mod tests {
             vote_7.weight
         );
         assert!(
-            vote_7.reason.contains("Untrusted or unsigned dynamic module load"),
+            vote_7
+                .reason
+                .contains("Untrusted or unsigned dynamic module load"),
             "Vote reason must explain unsigned dynamic load: {}",
             vote_7.reason
         );
@@ -8957,8 +9115,7 @@ mod tests {
             assert!(
                 !out_verdict.allowed,
                 "Outbound mesh gate must veto false-positive frame for '{}': {:?}",
-                proc_name,
-                out_verdict
+                proc_name, out_verdict
             );
             let in_verdict = engine.inspect_and_vet_mesh_frame(
                 "inbound",
@@ -8971,8 +9128,7 @@ mod tests {
             assert!(
                 !in_verdict.allowed,
                 "Inbound mesh gate must veto false-positive frame for '{}': {:?}",
-                proc_name,
-                in_verdict
+                proc_name, in_verdict
             );
         }
 
@@ -8989,5 +9145,3 @@ mod tests {
         );
     }
 }
-
-
