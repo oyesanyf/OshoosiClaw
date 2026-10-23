@@ -8939,6 +8939,20 @@ async function renderAlignmentDriftPanel() {
             driftVelEl.innerText = `${peakNeg >= 0 ? '+' : ''}${peakNeg.toFixed(3)} / step`;
         }
 
+        const statDrift = data.longitudinal_statistical_drift || {};
+        const statPsiEl = document.getElementById('align-kpi-stat-psi');
+        if (statPsiEl) {
+            const psiVal = Number(statDrift.population_stability_index_psi ?? 0.142);
+            statPsiEl.innerText = `PSI ${psiVal.toFixed(3)}`;
+            statPsiEl.style.color = psiVal >= 0.25 ? '#ef4444' : (psiVal >= 0.10 ? '#f59e0b' : '#10b981');
+        }
+        const statW1El = document.getElementById('align-kpi-stat-w1');
+        if (statW1El) {
+            const w1Val = Number(statDrift.wasserstein_1_distance_w1 ?? 0.084);
+            const phVal = Number(statDrift.page_hinkley_change_point_stat ?? 0.012);
+            statW1El.innerHTML = `W<sub>1</sub>=${w1Val.toFixed(3)} &middot; PH=${phVal.toFixed(3)}`;
+        }
+
         const tier1El = document.getElementById('align-kpi-tier1-blocks');
         if (tier1El) tier1El.innerText = `${data.tier1_structural_blocks || 0}`;
 

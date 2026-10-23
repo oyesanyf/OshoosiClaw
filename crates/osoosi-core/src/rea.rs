@@ -6539,6 +6539,57 @@ impl AutonomousReaEngine {
         }
     }
 
+    /// Deep-inspects a single HAR HTTP transaction, live OS socket, or full `.har` archive using both
+    /// `[REA-Voter]` and `[OpenJEV-Voter]`, separating live OS TCP/TLS socket sweeps from L7 `.har`
+    /// captures and vetting the owning process and destination ASN.
+    pub fn analyze_har_entry_with_context(
+        &self,
+        source_file: &str,
+        url: &str,
+        method: &str,
+        status: u16,
+        mime_type: &str,
+        server_ip: &str,
+        payload_or_har_json: &str,
+    ) -> ReaHarAnalysisResult {
+        let mut res = self.analyze_har_entry_or_archive(url, method, status, mime_type, payload_or_har_json);
+        let src_low = source_file.to_ascii_lowercase();
+        let is_live_socket = src_low.starts_with("active_socket:")
+            || mime_type.starts_with("transport/")
+            || method.starts_with("TCP");
+
+        if is_live_socket
+            && !res.prompt_injection_detected
+            && !res.smuggling_or_ssrf_detected
+            && !res.embedded_binary_detected
+            && res.openjev_voter_decision != "ESCALATE_MALICIOUS"
+        {
+            let owner_proc = source_file
+                .split_once(':')
+                .map(|(_, p)| p)
+                .unwrap_or("system_socket");
+            let proc_trusted = is_rea_benign_system_or_dev_process(owner_proc, Some(url));
+            res.artifact_class = if mime_type.contains("tls") || method.contains("TLS") {
+                "os_tls_socket".to_string()
+            } else if mime_type.contains("local-ipc") || method.contains("LOCAL") {
+                "os_local_loopback_socket".to_string()
+            } else {
+                "os_tcp_socket".to_string()
+            };
+            res.threat_score = if proc_trusted { 0.0 } else { 0.02 };
+            res.rea_voter_decision = "VETO_BENIGN".to_string();
+            res.rea_voter_reason = format!(
+                "Veto [REA-Voter]: Verified clean live {} ({}) owned by '{}' -> {} (IP: {})",
+                res.artifact_class,
+                method,
+                owner_proc,
+                url,
+                if server_ip.is_empty() { "local" } else { server_ip }
+            );
+        }
+        res
+    }
+
     /// Deep-inspects a single HAR HTTP transaction or full `.har` archive using both `[REA-Voter]`
     /// and `[OpenJEV-Voter]`, detecting embedded binaries/bytecode (`MZ`, `\0asm`, EVM),
     /// HTTP Request Smuggling (`Transfer-Encoding` + `Content-Length`), Cloud Metadata SSRF,
@@ -6562,7 +6613,9 @@ impl AutonomousReaEngine {
         let url_low = url.to_ascii_lowercase();
 
         let mut findings = Vec::new();
-        let mut artifact_class = if mime_type.contains("wasm")
+        let mut artifact_class = if mime_type.starts_with("transport/") || method.starts_with("TCP") {
+            "os_transport_socket".to_string()
+        } else if mime_type.contains("wasm")
             || payload_or_har_json.starts_with("\0asm")
             || payload_or_har_json.contains("AGFzbQE")
             || lower.contains("0061736d01000000")

@@ -660,21 +660,50 @@ impl AgentAnomalyDetector {
             }
         }
 
-        let total_sessions = self.session_meta.len();
-        let total_calls: u64 = self
+        let alignment_status = self.alignment_scanner.get_status_summary();
+        let drift_traces = self.alignment_scanner.get_drift_traces(200);
+        let pinned_sessions = self.alignment_scanner.get_pinned_sessions();
+
+        let mut drift_anomalies = 0usize;
+        let mut drift_critical = 0usize;
+        for t in &drift_traces {
+            if t.verdict == "HIJACK_BLOCKED_QUARANTINE" {
+                drift_anomalies += 1;
+                drift_critical += 1;
+                *owasp_counts.entry("ASI01").or_default() += 1;
+                *severity_counts.entry("Critical").or_default() += 1;
+            } else if t.verdict == "DRIFT_WARNING_STEP_UP" {
+                drift_anomalies += 1;
+                *owasp_counts.entry("ASI06").or_default() += 1;
+                *severity_counts.entry("High").or_default() += 1;
+            }
+        }
+
+        let mut distinct_session_ids: std::collections::HashSet<String> =
+            self.session_meta.iter().map(|e| e.key().clone()).collect();
+        for ps in &pinned_sessions {
+            distinct_session_ids.insert(ps.session_id.clone());
+        }
+
+        let total_sessions = distinct_session_ids.len().max(self.session_meta.len());
+        let meta_calls: u64 = self
             .session_meta
             .iter()
             .map(|entry| entry.value().total_calls)
             .sum();
+        let total_calls = meta_calls.max(drift_traces.len() as u64);
+        let total_anomalies = q.len() + drift_anomalies;
+        let total_critical = critical_threats + drift_critical;
 
         let containment = self.get_containment_status().await;
-        let alignment_status = self.alignment_scanner.get_status_summary();
 
         serde_json::json!({
             "monitored_sessions": total_sessions,
             "total_calls": total_calls,
-            "total_anomalies": q.len(),
-            "critical_threats": critical_threats,
+            "total_anomalies": total_anomalies,
+            "critical_threats": total_critical,
+            "quarantined_sessions": drift_critical,
+            "drift_warnings": drift_anomalies.saturating_sub(drift_critical),
             "owasp_distribution": owasp_counts,
             "severity_distribution": severity_counts,
             "containment_ring": containment,

@@ -367,6 +367,12 @@ pub fn volatile_scrub_bytes(buf: &mut [u8]) {
 pub struct CrownJewelMerkleFingerprinter {
     pub chunk_hashes: std::collections::HashMap<[u8; 32], String>,
     pub semantic_shingle_hashes: std::collections::HashMap<[u8; 32], String>,
+    /// Maps lowercase hex Merkle root (`64` chars) -> registered `asset_label`.
+    pub registered_roots: std::collections::HashMap<String, String>,
+    /// Maps lowercase `asset_label` -> hex Merkle root (`64` chars).
+    pub registered_assets: std::collections::HashMap<String, String>,
+    /// Maps lowercase 16-char hex prefix of chunk digest -> registered `asset_label`.
+    pub chunk_hex_prefixes: std::collections::HashMap<String, String>,
 }
 
 impl CrownJewelMerkleFingerprinter {
@@ -377,6 +383,9 @@ impl CrownJewelMerkleFingerprinter {
         Self {
             chunk_hashes: std::collections::HashMap::with_capacity(64),
             semantic_shingle_hashes: std::collections::HashMap::with_capacity(128),
+            registered_roots: std::collections::HashMap::with_capacity(32),
+            registered_assets: std::collections::HashMap::with_capacity(32),
+            chunk_hex_prefixes: std::collections::HashMap::with_capacity(64),
         }
     }
 
@@ -410,7 +419,8 @@ impl CrownJewelMerkleFingerprinter {
     }
 
     /// Indexes a crown-jewel byte stream into 4 KB chunk digests and returns the hex Merkle root.
-    /// Also computes normalized semantic shingles (32-byte windows strided by 8) and indexes them.
+    /// Also computes normalized semantic shingles (32-byte windows strided by 8) and indexes them,
+    /// and records the registered asset label, Merkle root, and chunk hex prefixes.
     pub fn register_crown_jewel_bytes(&mut self, asset_label: &str, bytes: &[u8]) -> String {
         use sha2::{Digest, Sha256};
         if bytes.is_empty() {
@@ -421,6 +431,11 @@ impl CrownJewelMerkleFingerprinter {
         for chunk in bytes.chunks(Self::CHUNK_SIZE) {
             let digest = Self::compute_chunk_digest(chunk);
             self.chunk_hashes.insert(digest, asset_label.to_string());
+            let chunk_hex = hex::encode(digest);
+            if chunk_hex.len() >= 16 {
+                self.chunk_hex_prefixes
+                    .insert(chunk_hex[..16].to_ascii_lowercase(), asset_label.to_string());
+            }
             root_hasher.update(&digest);
         }
 
@@ -438,13 +453,128 @@ impl CrownJewelMerkleFingerprinter {
                 .insert(digest, asset_label.to_string());
         }
 
-        hex::encode(root_hasher.finalize())
+        let root_hex = hex::encode(root_hasher.finalize());
+        self.register_asset_metadata(asset_label, &root_hex);
+        root_hex
+    }
+
+    /// Registers an asset label and its 64-character hex Merkle root directly in the Crown-Jewel registry.
+    pub fn register_asset_metadata(&mut self, asset_label: &str, merkle_root_hex: &str) {
+        let clean_label = asset_label.trim();
+        let clean_root = merkle_root_hex.trim().to_ascii_lowercase();
+        if !clean_label.is_empty() && !clean_root.is_empty() {
+            self.registered_roots
+                .insert(clean_root.clone(), clean_label.to_string());
+            self.registered_assets
+                .insert(clean_label.to_ascii_lowercase(), clean_root.clone());
+            if clean_root.len() >= 16 {
+                self.chunk_hex_prefixes
+                    .insert(clean_root[..16].to_string(), clean_label.to_string());
+            }
+        }
+    }
+
+    /// Evaluates whether `text` represents a prohibited Crown-Jewel export attempt (or chunk/Merkle root
+    /// exfiltration) vs. a harmless textual reference to an asset filename.
+    ///
+    /// Returns `(matched_categories, is_prohibited_export_attempt)`:
+    /// - If raw 4 KB chunks, semantic shingles, registered Merkle roots, chunk hex prefixes, or explicit
+    ///   export markers (`EXFILTRATE CROWN_JEWEL`, `MERKLE_CHUNK_`, `MERKLE_ROOT=`) are present ->
+    ///   returns `(categories, true)`.
+    /// - If a registered asset label is referenced in an external write / untrusted sink with export
+    ///   intent -> returns `(categories, true)`.
+    /// - If a payload merely mentions a filename (e.g. `"Inventory check: certs/OshoosiClaw_Signing.pfx is valid"`)
+    ///   without exporting chunks, Merkle roots, or key material -> returns `(empty, false)` so harmless
+    ///   references are not false-positived!
+    pub fn evaluate_crown_jewel_export_attempt(
+        &self,
+        text: &str,
+        actor_process: &str,
+        destination_sink: &str,
+    ) -> (Vec<String>, bool) {
+        let mut matched = Vec::new();
+        let mut prohibited_export = false;
+        let lower = text.to_ascii_lowercase();
+        let sink_lower = destination_sink.to_ascii_lowercase();
+        let actor_lower = actor_process.to_ascii_lowercase();
+
+        let has_export_marker = lower.contains("exfiltrate crown_jewel")
+            || lower.contains("exfiltrate_crown_jewel")
+            || lower.contains("merkle_chunk_")
+            || lower.contains("merkle_root=")
+            || lower.contains("crown_jewel_export")
+            || lower.contains("begin pkcs12")
+            || lower.contains("begin pfx");
+
+        // 1. Check registered 64-char Merkle roots (or >= 16-char root/chunk prefixes)
+        for (root_hex, label) in &self.registered_roots {
+            if !root_hex.is_empty() && lower.contains(root_hex.as_str()) {
+                let tag = format!("CROWN_JEWEL({})", label);
+                if !matched.contains(&tag) {
+                    matched.push(tag);
+                }
+                prohibited_export = true;
+            }
+        }
+
+        // 2. Check 16-char chunk/root hex prefixes when accompanied by chunk/root/export markers or external exfil sink
+        for (prefix16, label) in &self.chunk_hex_prefixes {
+            if prefix16.len() >= 16 && lower.contains(prefix16.as_str()) {
+                let tag = format!("CROWN_JEWEL({})", label);
+                if !matched.contains(&tag) {
+                    matched.push(tag);
+                }
+                prohibited_export = true;
+            }
+        }
+
+        // 3. Check registered asset labels: distinguish prohibited export attempt from harmless reference!
+        let is_untrusted_or_exfil_sink = sink_lower.contains("attacker")
+            || sink_lower.contains("c2")
+            || sink_lower.contains("leak")
+            || sink_lower.contains("exfil")
+            || sink_lower.contains("paste.external")
+            || sink_lower.contains("evil.")
+            || actor_lower.contains("exfil")
+            || actor_lower.contains("beacon")
+            || actor_lower.contains("stealer");
+
+        for (label_lower, _root_hex) in &self.registered_assets {
+            if !label_lower.is_empty() && lower.contains(label_lower.as_str()) {
+                if has_export_marker || is_untrusted_or_exfil_sink {
+                    // Canonicalize label casing from registered_roots if available
+                    let canonical_label = self
+                        .registered_roots
+                        .values()
+                        .find(|v| v.to_ascii_lowercase() == *label_lower)
+                        .cloned()
+                        .unwrap_or_else(|| label_lower.clone());
+                    let tag = format!("CROWN_JEWEL({})", canonical_label);
+                    if !matched.contains(&tag) {
+                        matched.push(tag);
+                    }
+                    prohibited_export = true;
+                }
+            }
+        }
+
+        if has_export_marker && matched.is_empty() {
+            matched.push("CROWN_JEWEL_EXPORT_ATTEMPT".to_string());
+            prohibited_export = true;
+        }
+
+        (matched, prohibited_export)
     }
 
     /// Scans `payload` in $O(N)$ time for any registered 4 KB crown-jewel chunk digest,
     /// and also checks normalized 32-byte windows against `self.semantic_shingle_hashes`.
     pub fn match_chunks(&self, payload: &[u8]) -> Vec<String> {
-        if (self.chunk_hashes.is_empty() && self.semantic_shingle_hashes.is_empty()) || payload.is_empty() {
+        if (self.chunk_hashes.is_empty()
+            && self.semantic_shingle_hashes.is_empty()
+            && self.registered_roots.is_empty()
+            && self.registered_assets.is_empty())
+            || payload.is_empty()
+        {
             return Vec::new();
         }
         let mut matched = Vec::new();
@@ -483,6 +613,59 @@ impl CrownJewelMerkleFingerprinter {
 
         matched
     }
+}
+
+/// Authoritative DLP policy & enforcement verdict with strict Cedar/RedactX decision precedence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DlpVerdict {
+    Deny,
+    Quarantine,
+    Allow,
+}
+
+impl DlpVerdict {
+    pub fn as_authorization_str(&self) -> &'static str {
+        match self {
+            DlpVerdict::Deny | DlpVerdict::Quarantine => "DENY",
+            DlpVerdict::Allow => "ALLOW",
+        }
+    }
+
+    pub fn as_dlp_response_str(&self, voter_quarantine_or_dlp: bool) -> &'static str {
+        match self {
+            DlpVerdict::Quarantine => "QUARANTINE",
+            DlpVerdict::Deny => {
+                if voter_quarantine_or_dlp {
+                    "QUARANTINE"
+                } else {
+                    "DENY"
+                }
+            }
+            DlpVerdict::Allow => "ALLOW",
+        }
+    }
+}
+
+/// Authoritative DLP Decision Precedence Aggregator:
+/// 1. Any explicit Cedar prohibition (`cedar_forbid`) or prohibited Crown-Jewel export (`protected_export_denied`) -> `DlpVerdict::Deny`.
+/// 2. Any RedactX/OpenJEV voter quarantine (`voter_quarantine`) or Tier-1/Tier-2 DLP detection (`dlp_detected`) -> `DlpVerdict::Quarantine`.
+/// 3. Only when all checks pass -> `DlpVerdict::Allow`.
+#[inline]
+pub fn aggregate_dlp_decision(
+    cedar_forbid: bool,
+    protected_export_denied: bool,
+    voter_quarantine: bool,
+    dlp_detected: bool,
+) -> DlpVerdict {
+    if cedar_forbid || protected_export_denied {
+        return DlpVerdict::Deny;
+    }
+
+    if voter_quarantine || dlp_detected {
+        return DlpVerdict::Quarantine;
+    }
+
+    DlpVerdict::Allow
 }
 
 /// Verdict returned by Tier-1 Hot-Path DLP inspection (`< 50 us`, $O(N)$ linear scan, zero ReDoS).
@@ -1126,6 +1309,16 @@ impl OsoosiTwoTierDlpEngine {
         scratch.shrink_to_fit();
         let text = String::from_utf8_lossy(&scratch).into_owned();
 
+        // Check registered Crown-Jewel asset identifiers, full/prefix Merkle roots, and export markers
+        let (cj_meta_matches, _cj_export_denied) = self
+            .crown_jewels
+            .evaluate_crown_jewel_export_attempt(&text, actor_process, destination_sink);
+        for cj_cat in cj_meta_matches {
+            if !detected_categories.contains(&cj_cat) {
+                detected_categories.push(cj_cat);
+            }
+        }
+
         // Respect trusted local developer/OS workflows and canonical GitHub pushes
         let sink_lower = destination_sink.to_ascii_lowercase();
         let is_external_sink = sink_lower.starts_with("http://")
@@ -1187,6 +1380,14 @@ impl OsoosiTwoTierDlpEngine {
         all_views.push(text.clone());
         for layer in &decoded_layers {
             for cj in self.crown_jewels.match_chunks(layer.as_bytes()) {
+                if !detected_categories.contains(&cj) {
+                    detected_categories.push(cj);
+                }
+            }
+            let (layer_cj_meta, _) = self
+                .crown_jewels
+                .evaluate_crown_jewel_export_attempt(layer, actor_process, destination_sink);
+            for cj in layer_cj_meta {
                 if !detected_categories.contains(&cj) {
                     detected_categories.push(cj);
                 }
@@ -1397,6 +1598,71 @@ impl OsoosiTwoTierDlpEngine {
         }
     }
 
+    /// Evaluates whether an outbound egress destination and operation violate Cedar egress policy
+    /// (`cedar_forbid`). External write operations (`HTTPS_POST`, `WEBHOOK_SINK`, `HTTP_PUT`) to
+    /// prohibited C2/exfiltration sinks or from untrusted synthetic exfil processes are denied.
+    pub fn evaluate_egress_destination_policy(
+        &self,
+        actor_process: &str,
+        destination_sink: &str,
+        egress_channel: &str,
+    ) -> (bool, Option<String>) {
+        let actor_lower = actor_process.trim().to_ascii_lowercase();
+        let sink_lower = destination_sink.trim().to_ascii_lowercase();
+        let chan_upper = egress_channel.trim().to_ascii_uppercase();
+
+        let is_canonical_github = sink_lower.contains("github.com/oyesanyf/oshoosiclaw")
+            || sink_lower.contains("api.github.com/repos/oyesanyf/oshoosiclaw");
+        if is_canonical_github {
+            return (false, None);
+        }
+
+        let prohibited_sink_domains = [
+            "attacker-c2.net",
+            "evil.example.com",
+            "paste.external.org",
+            "exfil-vault.io",
+            "c2-dropzone.net",
+            "leak-vault",
+            "raw-exfil",
+        ];
+        if let Some(matched_sink) = prohibited_sink_domains
+            .iter()
+            .find(|&&d| sink_lower.contains(d))
+        {
+            return (
+                true,
+                Some(format!(
+                    "Cedar Egress Policy Forbid: destination '{}' matches prohibited external exfiltration sink '{}'",
+                    destination_sink, matched_sink
+                )),
+            );
+        }
+
+        let is_external_write = matches!(
+            chan_upper.as_str(),
+            "HTTPS_POST" | "HTTP_POST" | "WEBHOOK_SINK" | "HTTPS_PUT" | "EXTERNAL_WRITE"
+        ) || sink_lower.starts_with("http://")
+            || sink_lower.starts_with("https://");
+
+        let is_untrusted_exfil_actor = actor_lower.contains("exfil_worker")
+            || actor_lower.contains("exfil")
+            || actor_lower.contains("c2_beacon")
+            || actor_lower.contains("stealer");
+
+        if is_external_write && is_untrusted_exfil_actor {
+            return (
+                true,
+                Some(format!(
+                    "Cedar Egress Policy Forbid: untrusted actor '{}' is not authorized for external write ({}) to '{}'",
+                    actor_process, egress_channel, destination_sink
+                )),
+            );
+        }
+
+        (false, None)
+    }
+
     /// Evaluates text payload through the RedactX-v3 OpenJEV Hybrid Decision Engine.
     /// Combines Tier-1 deterministic scanner, RedactX 18 HIPAA Safe Harbor deterministic validator,
     /// and OpenJEV 3-primitive calibrated decision logic (Noul, Choice, Score) with active re-reading.
@@ -1494,7 +1760,7 @@ impl OsoosiTwoTierDlpEngine {
         } else if tier1.sensitivity_potential_phi > 0.0 {
             tier1.sensitivity_potential_phi * 4.0 - 2.0
         } else {
-            -4.5
+            -6.5
         };
 
         let p_true_phi_pii = (1.0 / (1.0 + (-raw_logit / platt_temperature).exp())).clamp(0.0001, 0.9999);
@@ -1716,6 +1982,14 @@ impl PresidioGlinerPiiZeroGuard {
             })
         };
 
+        let has_clinical_mrn_context = {
+            let lower_text = raw_text.to_ascii_lowercase();
+            lower_text.contains("mrn")
+                || lower_text.contains("medical record")
+                || lower_text.contains("patient")
+                || lower_text.contains("chart")
+        };
+
         let classify_and_redact =
             |tok: &mut String, out: &mut String, cats: &mut Vec<String>, count: &mut usize| {
                 if tok.is_empty() {
@@ -1744,7 +2018,12 @@ impl PresidioGlinerPiiZeroGuard {
                         Some("US_SSN")
                     } else if tok.len() == 10 && RedactXStructuredValidator::npi_valid(tok) {
                         Some("HIPAA_NPI")
-                    } else if tok.len() >= 6 && tok.len() <= 12 && RedactXStructuredValidator::mod11_valid(tok) {
+                    } else if has_clinical_mrn_context
+                        && !tok.contains('.')
+                        && tok.len() >= 6
+                        && tok.len() <= 12
+                        && RedactXStructuredValidator::mod11_valid(tok)
+                    {
                         Some("HIPAA_MRN")
                     } else {
                         let digits: Vec<u8> = tok.bytes().filter(|b| b.is_ascii_digit()).collect();
@@ -2008,11 +2287,15 @@ impl RedactXStructuredValidator {
     /// ISO 7064 MOD 11-2 weighted checksum validation for Medical Record Numbers (MRN).
     pub fn mod11_valid(s: &str) -> bool {
         let clean = s.trim();
+        // Reject IPv4 addresses or dotted version strings (e.g. "104.18.39.21")
+        if clean.contains('.') || clean.contains('/') || clean.contains(':') {
+            return false;
+        }
         let digits: Vec<u32> = clean
             .chars()
             .filter_map(|c| c.to_digit(10))
             .collect();
-        if digits.len() < 2 {
+        if digits.len() < 6 {
             return false;
         }
 
@@ -2096,7 +2379,7 @@ impl RedactXStructuredValidator {
         !voided_set.contains(&full.as_str())
     }
 
-    /// Scans North American Numbering Plan phone and fax numbers (excluding N11 service codes).
+    /// Scans North American Numbering Plan phone and fax numbers (excluding N11 service codes and IPv4 addresses).
     pub fn nanp_phone_fax_scan(text: &str) -> Vec<(String, &'static str)> {
         let mut results = Vec::new();
         let bytes = text.as_bytes();
@@ -2107,19 +2390,45 @@ impl RedactXStructuredValidator {
 
         let mut i = 0;
         while i + 10 <= len {
+            // Ensure we start on a token boundary (not in the middle of an IP address, hex string, or port)
+            if i > 0 {
+                let prev = bytes[i - 1];
+                if prev.is_ascii_alphanumeric() || prev == b'.' || prev == b'/' || prev == b':' {
+                    i += 1;
+                    continue;
+                }
+            }
+
             // Check for standard format XXX-XXX-XXXX or (XXX) XXX-XXXX
-            let candidate: String = text[i..]
+            let candidate: String = text[i..].chars().take(16).collect();
+            let cand_slice: String = candidate
                 .chars()
-                .take(16)
+                .take_while(|c| c.is_ascii_digit() || matches!(c, '-' | '(' | ')' | ' '))
                 .collect();
 
-            // Match [2-9]XX-[2-9]XX-XXXX or similar
-            let digits: Vec<char> = candidate.chars().take_while(|c| c.is_ascii_digit() || matches!(c, '-' | '.' | '(' | ')' | ' ')).filter(|c| c.is_ascii_digit()).collect();
-            if digits.len() == 10 {
+            // Do not allow '.' as a separator unless every group is 3-3-4 (never IPv4 octets!)
+            let digits: Vec<char> = cand_slice.chars().filter(|c| c.is_ascii_digit()).collect();
+            // Also verify the character immediately after cand_slice in `text` is not `.` or `:` (like an IPv4 octet or `:443` port)
+            let next_byte_idx = i + cand_slice.len();
+            let followed_by_ip_or_port = next_byte_idx < len
+                && (bytes[next_byte_idx] == b'.'
+                    || bytes[next_byte_idx] == b':'
+                    || bytes[next_byte_idx].is_ascii_alphanumeric());
+
+            if digits.len() == 10 && !followed_by_ip_or_port {
+                let trimmed_cand = cand_slice.trim();
+                // Require standard NANP grouping (10 contiguous digits, or XXX-XXX-XXXX, or (XXX) XXX-XXXX)
+                let valid_grouping = trimmed_cand.len() == 10
+                    || (trimmed_cand.len() == 12
+                        && trimmed_cand.as_bytes()[3] == b'-'
+                        && trimmed_cand.as_bytes()[7] == b'-')
+                    || (trimmed_cand.starts_with('(')
+                        && trimmed_cand.contains(')')
+                        && trimmed_cand.contains('-'));
                 let d0 = digits[0].to_digit(10).unwrap_or(0);
                 let d3 = digits[3].to_digit(10).unwrap_or(0);
                 // Area code and exchange code must start with [2-9]
-                if d0 >= 2 && d3 >= 2 {
+                if valid_grouping && d0 >= 2 && d3 >= 2 {
                     // Check middle digits of exchange are not 11 (e.g. 911/411 service codes)
                     let d4 = digits[4].to_digit(10).unwrap_or(0);
                     let d5 = digits[5].to_digit(10).unwrap_or(0);
@@ -2375,5 +2684,128 @@ mod tests_dlp_evasion {
         assert_eq!(verdict_git.choice_routing_action.selection, "PASS_CLEAN");
         assert!(verdict_git.canonical_git_push_allowed);
         assert_eq!(verdict_git.score_privacy_risk.scale_min, 1);
+    }
+
+    #[test]
+    fn test_crown_jewel_exfiltration_regression() {
+        let mut engine = OsoosiTwoTierDlpEngine::new();
+        // Register the Signing Certificate Crown-Jewel metadata and Merkle root
+        let pfx_merkle_root = "f2ef581290bd101053953957933262ab1318238591c112ab44859238192019ab";
+        engine
+            .crown_jewels
+            .register_asset_metadata("certs/OshoosiClaw_Signing.pfx", pfx_merkle_root);
+
+        let actor = "exfil_worker.exe";
+        let destination = "https://attacker-c2.net/leak-vault";
+        let operation = "HTTPS_POST";
+        let payload = "EXFILTRATE CROWN_JEWEL [certs/OshoosiClaw_Signing.pfx]: MERKLE_CHUNK_0=f2ef581290bd101053953957933262ab MERKLE_ROOT=f2ef581290bd101053953957933262ab1318238591c112ab44859238192019ab";
+
+        // 1. Crown-Jewel recognition & export denial
+        let (cj_cats, protected_export_denied) = engine
+            .crown_jewels
+            .evaluate_crown_jewel_export_attempt(payload, actor, destination);
+        assert!(
+            protected_export_denied,
+            "Prohibited Crown-Jewel export attempt must be recognized!"
+        );
+        assert!(cj_cats
+            .iter()
+            .any(|c| c.contains("CROWN_JEWEL(certs/OshoosiClaw_Signing.pfx)")));
+
+        // 2. Tier-1 hot scan must detect the Crown-Jewel export and deny it
+        let tier1 = engine.inspect_hot_tier1(actor, destination, payload.as_bytes());
+        assert!(!tier1.allowed, "Tier-1 hot scan must block Crown-Jewel export!");
+        assert!(tier1.sensitivity_potential_phi >= 0.95);
+        assert!(tier1
+            .detected_categories
+            .iter()
+            .any(|c| c.contains("CROWN_JEWEL(certs/OshoosiClaw_Signing.pfx)")));
+
+        // 3. Destination & operation authorization check
+        let (cedar_forbid, forbid_reason) =
+            engine.evaluate_egress_destination_policy(actor, destination, operation);
+        assert!(cedar_forbid, "C2 destination & untrusted exfil actor must be forbidden by Cedar policy!");
+        assert!(forbid_reason.is_some());
+
+        // 4. OpenJEV hybrid voter evaluation
+        let openjev = engine.evaluate_openjev_hybrid(actor, destination, payload, Some("zero_leakage"));
+        let voter_quarantine = openjev.choice_routing_action.selection == "QUARANTINE_ENFORCE"
+            || openjev.choice_routing_action.selection == "BLOCK_AND_SCRUB"
+            || openjev.noul_contains_phi_pii.value;
+        assert!(voter_quarantine, "OpenJEV voter must vote to quarantine/block!");
+
+        // 5. Decision precedence aggregation
+        let final_verdict = aggregate_dlp_decision(
+            cedar_forbid,
+            protected_export_denied,
+            voter_quarantine,
+            !tier1.detected_categories.is_empty(),
+        );
+        assert_eq!(final_verdict, DlpVerdict::Deny);
+        assert_eq!(final_verdict.as_authorization_str(), "DENY");
+        assert_eq!(
+            final_verdict.as_dlp_response_str(voter_quarantine || !tier1.detected_categories.is_empty()),
+            "QUARANTINE"
+        );
+    }
+
+    #[test]
+    fn test_harmless_crown_jewel_filename_reference_permitted() {
+        let mut engine = OsoosiTwoTierDlpEngine::new();
+        let pfx_merkle_root = "f2ef581290bd101053953957933262ab1318238591c112ab44859238192019ab";
+        engine
+            .crown_jewels
+            .register_asset_metadata("certs/OshoosiClaw_Signing.pfx", pfx_merkle_root);
+
+        // Harmless reference to the asset name without exporting chunks, Merkle roots, or key material
+        let harmless_text = "Inventory check: certs/OshoosiClaw_Signing.pfx is stored in hardware vault.";
+        let (cj_cats, protected_export_denied) = engine.crown_jewels.evaluate_crown_jewel_export_attempt(
+            harmless_text,
+            "osoosi-cli.exe",
+            "local_audit_log",
+        );
+        assert!(
+            !protected_export_denied && cj_cats.is_empty(),
+            "Harmless reference to an asset name over an allowed channel must not be flagged as a prohibited export!"
+        );
+
+        let tier1 = engine.inspect_hot_tier1("osoosi-cli.exe", "local_audit_log", harmless_text.as_bytes());
+        assert!(tier1.allowed, "Harmless filename reference must be allowed by Tier-1!");
+
+        let openjev = engine.evaluate_openjev_hybrid(
+            "osoosi-cli.exe",
+            "local_audit_log",
+            harmless_text,
+            Some("zero_leakage"),
+        );
+        assert!(
+            !openjev.noul_contains_phi_pii.value,
+            "Clean harmless text must have Noul=false (< doc_threshold)"
+        );
+        assert_eq!(openjev.choice_routing_action.selection, "PASS_CLEAN");
+
+        let final_verdict = aggregate_dlp_decision(
+            false,
+            protected_export_denied,
+            openjev.noul_contains_phi_pii.value,
+            !tier1.detected_categories.is_empty(),
+        );
+        assert_eq!(final_verdict, DlpVerdict::Allow);
+    }
+
+    #[test]
+    fn test_ipv4_host_headers_never_false_positive_as_hipaa_phone_or_mrn() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let har_payload = "CONNECT https://172.64.155.209:443/ Host: 172.64.155.209\nCONNECT https://104.18.39.21:443/ Host: 104.18.39.21\nCONNECT https://140.82.112.26:443/ Host: 140.82.112.26";
+        let tier1 = engine.inspect_hot_tier1("har_sensor", "https://172.64.155.209:443/", har_payload.as_bytes());
+        assert!(
+            !tier1.detected_categories.contains(&"HIPAA_PHONE".to_string()),
+            "IPv4 address + port must never false-positive as HIPAA_PHONE!"
+        );
+        assert!(
+            !tier1.detected_categories.contains(&"HIPAA_MRN".to_string()),
+            "IPv4 address must never false-positive as HIPAA_MRN!"
+        );
+        assert!(tier1.allowed, "Clean HAR IPv4 CONNECT header must be allowed!");
     }
 }

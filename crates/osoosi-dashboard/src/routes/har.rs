@@ -5,7 +5,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::{api_error_json, DashboardState};
@@ -134,14 +134,31 @@ pub fn refresh_live_har_cache_now() -> Value {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        let source_file = e
+            .get("source_file")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let server_ip = e
+            .get("server_ip")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
         let tags = e
             .get("threat_tags")
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
 
-        let rea_har =
-            rea_engine.analyze_har_entry_or_archive(&url, &method, status, &mime_type, &tags);
+        let rea_har = rea_engine.analyze_har_entry_with_context(
+            &source_file,
+            &url,
+            &method,
+            status,
+            &mime_type,
+            &server_ip,
+            &tags,
+        );
         if rea_har.rea_voter_decision == "ESCALATE_MALICIOUS" {
             rea_escalated_count += 1;
         } else {
@@ -182,6 +199,12 @@ pub fn refresh_live_har_cache_now() -> Value {
             {
                 obj.insert("threat_score".to_string(), json!(rea_har.threat_score));
                 obj.insert("verdict".to_string(), json!("malicious"));
+            } else if rea_har.rea_voter_decision == "VETO_BENIGN"
+                && !tags.contains("SWARM_POISONED_LINEAGE")
+                && cur_score < 0.40
+            {
+                obj.insert("threat_score".to_string(), json!(cur_score.min(0.02)));
+                obj.insert("verdict".to_string(), json!("benign"));
             }
         }
 

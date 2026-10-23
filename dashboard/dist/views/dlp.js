@@ -336,7 +336,13 @@ async function renderDlpView(forceRefresh = false) {
                             process: ev.actor_process || ev.process,
                             sink: ev.destination_sink || ev.sink,
                             channel: ev.channel,
-                            verdict: ev.verdict || (ev.allowed ? 'ALLOWED' : (ev.escalate_to_tier2 ? 'SCRUBBED' : 'BLOCKED')),
+                            verdict: ev.verdict || (ev.allowed ? 'ALLOWED' : 'BLOCKED'),
+                            authorizationDecision: ev.authorization_decision || (ev.allowed ? 'ALLOW' : 'DENY'),
+                            dlpResponse: ev.dlp_response || (ev.allowed ? 'ALLOW' : 'QUARANTINE'),
+                            executionMode: ev.execution_mode || 'LIVE_ENFORCEMENT',
+                            externalTransmission: ev.external_transmission || (ev.allowed ? 'Permitted' : 'None'),
+                            reaActorVerdict: ev.rea_actor_verdict || 'REA_INSPECTED',
+                            reaAssetKind: ev.rea_asset_kind || 'TEXT_STREAM',
                             sensitivityPhi: ev.sensitivity_potential_phi ?? ev.sensitivityPhi ?? 0.0,
                             categories: ev.detected_categories || ev.categories || [],
                             scrubbed: ev.scrubbed_preview || ev.scrubbed || '',
@@ -469,11 +475,17 @@ function renderDlpEventsTable() {
     }
 
     tbody.innerHTML = filtered.map(ev => {
-        let verdictBadge = '<span class="badge green">ALLOWED</span>';
-        if (ev.verdict === 'BLOCKED') {
-            verdictBadge = '<span class="badge red">🛡️ BLOCKED</span>';
+        const authDec = ev.authorizationDecision || (ev.verdict === 'ALLOWED' ? 'ALLOW' : 'DENY');
+        const dlpResp = ev.dlpResponse || (ev.verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE');
+        const execMode = ev.executionMode || 'LIVE_ENFORCEMENT';
+        let verdictBadge = '<span class="badge green">✅ ALLOW</span>';
+        if (ev.verdict === 'BLOCKED' || authDec === 'DENY') {
+            verdictBadge = `<span class="badge red">🛡️ ${escapeHtml(authDec)} / ${escapeHtml(dlpResp)}</span>`;
         } else if (ev.verdict === 'SCRUBBED') {
             verdictBadge = '<span class="badge yellow">🧼 SCRUBBED</span>';
+        }
+        if (execMode === 'SIMULATED_TEST') {
+            verdictBadge += '<div style="margin-top: 3px;"><span class="badge purple" style="font-size: 9px; padding: 1px 4px;">SIMULATED_TEST</span></div>';
         }
 
         const phiFormatted = (typeof ev.sensitivityPhi === 'number') ? ev.sensitivityPhi.toFixed(2) : '0.00';
@@ -485,6 +497,10 @@ function renderDlpEventsTable() {
             ? ev.categories.map(c => `<span class="badge blue" style="font-size: 9.5px; padding: 1px 4px; margin: 1px;">${escapeHtml(c)}</span>`).join('')
             : '<span style="color: var(--text-muted); font-size: 10px;">NONE (Benign)</span>';
 
+        const reaTag = ev.reaActorVerdict && ev.reaActorVerdict.includes('UNTRUSTED')
+            ? '<span class="badge red" style="font-size: 9px; padding: 1px 4px; margin-left: 4px;">REA:UNTRUSTED</span>'
+            : '<span class="badge green" style="font-size: 9px; padding: 1px 4px; margin-left: 4px;">REA:VERIFIED</span>';
+
         const scrubbedPreview = ev.scrubbed ? escapeHtml(ev.scrubbed.slice(0, 110)) + (ev.scrubbed.length > 110 ? '...' : '') : '<span style="color: var(--text-muted);">Clean</span>';
         const commitPreview = ev.commitment ? `${ev.commitment.slice(0, 12)}...` : 'n/a';
         const sigPreview = ev.pqcSig ? `${ev.pqcSig.slice(0, 14)}` : 'ML-DSA-65';
@@ -492,7 +508,7 @@ function renderDlpEventsTable() {
         return `
             <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <td style="padding: 8px 10px; font-family: monospace; color: var(--text-muted); font-size: 11px;">${ev.timestamp || new Date().toISOString().slice(11, 19)}</td>
-                <td style="padding: 8px 10px; font-weight: 600; color: #f8fafc; font-family: monospace;">${escapeHtml(ev.process || 'agent.exe')}</td>
+                <td style="padding: 8px 10px; font-weight: 600; color: #f8fafc; font-family: monospace;">${escapeHtml(ev.process || 'agent.exe')} ${reaTag}</td>
                 <td style="padding: 8px 10px; font-size: 11px; font-family: monospace;">
                     <div style="color: #38bdf8; word-break: break-all;">${escapeHtml(ev.sink || 'https://...')}</div>
                     <div style="color: #64748b; font-size: 10px;">${escapeHtml(ev.channel || 'HTTPS_POST')}</div>
@@ -554,7 +570,7 @@ async function submitDlpInspection() {
 
         let verdict = 'ALLOWED';
         if (serverResult && serverResult.event) {
-            verdict = serverResult.event.allowed ? 'ALLOWED' : (serverResult.event.escalate_to_tier2 ? 'SCRUBBED' : 'BLOCKED');
+            verdict = serverResult.event.allowed ? 'ALLOWED' : 'BLOCKED';
         } else if (dlpState.policyMode === 'ENFORCE_BLOCK_AND_SCRUB' || dlpState.policyMode === 'ENFORCE_STRICT') {
             verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'BLOCKED' : 'ALLOWED';
         } else if (dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL') {
@@ -576,6 +592,12 @@ async function submitDlpInspection() {
         const pqcSigStr = String(serverResult?.event?.pqc_signature_prefix || analysis.zkProof?.mlDsa65Signature || 'ML-DSA-65');
         const scrubbedStr = String(serverResult?.event?.scrubbed_preview ?? analysis.scrubbed ?? '');
         const sensitivityPhi = Number(serverResult?.event?.sensitivity_potential_phi ?? analysis.sensitivityPhi ?? 0.0);
+        const authorizationDecision = String(serverResult?.event?.authorization_decision || (verdict === 'ALLOWED' ? 'ALLOW' : 'DENY'));
+        const dlpResponse = String(serverResult?.event?.dlp_response || (verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE'));
+        const executionMode = String(serverResult?.event?.execution_mode || (process.toLowerCase().includes('exfil_worker') ? 'SIMULATED_TEST' : 'LIVE_ENFORCEMENT'));
+        const externalTransmission = String(serverResult?.event?.external_transmission || (executionMode === 'SIMULATED_TEST' ? 'None in simulated mode' : (verdict === 'ALLOWED' ? 'Permitted' : 'Blocked (0 bytes)')));
+        const reaActorVerdict = String(serverResult?.event?.rea_actor_verdict || (process.toLowerCase().includes('exfil_worker') ? 'REA_UNTRUSTED_EXFIL_ACTOR' : 'REA_VERIFIED_BENIGN_ACTOR'));
+        const reaAssetKind = String(serverResult?.event?.rea_asset_kind || 'TEXT_STREAM');
 
         const eventRecord = {
             id: 'dlp-ev-' + Date.now(),
@@ -584,6 +606,12 @@ async function submitDlpInspection() {
             sink,
             channel,
             verdict,
+            authorizationDecision,
+            dlpResponse,
+            executionMode,
+            externalTransmission,
+            reaActorVerdict,
+            reaAssetKind,
             sensitivityPhi,
             categories: serverResult?.event?.detected_categories || analysis.categories,
             scrubbed: scrubbedStr,
@@ -602,7 +630,7 @@ async function submitDlpInspection() {
         }
         if (verdict === 'BLOCKED') {
             verdictStyle = 'background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); color: #ef4444;';
-            verdictLabel = '🛡️ EXFILTRATION BLOCKED &amp; QUARANTINED (0 Bits Leaked)';
+            verdictLabel = `🛡️ AUTHORIZATION: ${authorizationDecision} • DLP RESPONSE: ${dlpResponse} (${executionMode})`;
         } else if (verdict === 'SCRUBBED') {
             verdictStyle = 'background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); color: #f59e0b;';
             verdictLabel = '🧼 ZERO-PII SCRUBBED &amp; AUDITED (Sanitized Delivery)';
@@ -616,6 +644,13 @@ async function submitDlpInspection() {
             <div style="padding: 10px 14px; border-radius: 6px; font-weight: 700; font-size: 13px; margin-bottom: 12px; ${verdictStyle} display: flex; justify-content: space-between; align-items: center;">
                 <span>${verdictLabel}</span>
                 <span style="font-size: 11.5px; opacity: 0.9;">φ = ${sensitivityPhi.toFixed(2)} / 1.00</span>
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; padding: 8px 10px; border-radius: 6px; background: rgba(15, 23, 42, 0.65); border: 1px solid var(--glass-border); font-size: 11px; font-family: monospace;">
+                <div><span style="color: var(--text-muted);">Authorization:</span> <strong style="color: ${authorizationDecision === 'DENY' ? '#ef4444' : '#10b981'};">${escapeHtml(authorizationDecision)}</strong></div>
+                <div><span style="color: var(--text-muted);">DLP Response:</span> <strong style="color: ${dlpResponse === 'QUARANTINE' || dlpResponse === 'DENY' ? '#ef4444' : '#10b981'};">${escapeHtml(dlpResponse)}</strong></div>
+                <div><span style="color: var(--text-muted);">REA Provenance:</span> <strong style="color: #38bdf8;">${escapeHtml(reaActorVerdict)} (${escapeHtml(reaAssetKind)})</strong></div>
+                <div><span style="color: var(--text-muted);">External Tx:</span> <strong style="color: #a855f7;">${escapeHtml(externalTransmission)}</strong></div>
             </div>
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">

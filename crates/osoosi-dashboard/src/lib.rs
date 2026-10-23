@@ -8147,10 +8147,59 @@ pub async fn get_agent_anomalies_findings(
     State(state): State<DashboardState>,
     Query(query): Query<AgentFindingsQuery>,
 ) -> impl IntoResponse {
-    let findings = state
+    let mut findings = state
         .agent_anomaly_detector
         .get_recent_findings(query.limit)
         .await;
+    let drift_traces = state
+        .agent_anomaly_detector
+        .alignment_scanner
+        .get_drift_traces(query.limit);
+    for t in drift_traces {
+        if t.verdict == "HIJACK_BLOCKED_QUARANTINE" || t.verdict == "DRIFT_WARNING_STEP_UP" {
+            let already_present = findings
+                .iter()
+                .any(|f| f.session_id == t.session_id && f.rationale.contains(&t.proposed_tool));
+            if !already_present {
+                let is_crit = t.verdict == "HIJACK_BLOCKED_QUARANTINE";
+                findings.push(osoosi_agent_anomaly::AnomalyFinding {
+                    id: t.trace_id.clone(),
+                    session_id: t.session_id.clone(),
+                    agent_id: t.agent_id.clone(),
+                    risk_category: if is_crit {
+                        osoosi_agent_anomaly::OwaspAgenticRisk::PromptInjectionASI01
+                    } else {
+                        osoosi_agent_anomaly::OwaspAgenticRisk::ContextPoisoningASI06
+                    },
+                    severity: if is_crit {
+                        osoosi_agent_anomaly::AlertSeverity::Critical
+                    } else {
+                        osoosi_agent_anomaly::AlertSeverity::High
+                    },
+                    confidence_score: (1.0 - t.intent_alignment_score as f32).clamp(0.65, 0.99),
+                    rationale: format!(
+                        "[{}] Step {} tool `{}` (alignment={:.3}, Δv={:+.3}): {}",
+                        t.verdict,
+                        t.step_index,
+                        t.proposed_tool,
+                        t.intent_alignment_score,
+                        t.drift_velocity,
+                        t.rationale
+                    ),
+                    recommended_mitigation: if is_crit {
+                        "Quarantine tainted agent session, sever capability epoch, and block hijacked tool sink.".to_string()
+                    } else {
+                        "Encapsulate untrusted context inside CanaryCage and enforce strict tool-envelope pinning.".to_string()
+                    },
+                    flagged_at: chrono::DateTime::parse_from_rfc3339(&t.timestamp)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    evidence: serde_json::to_value(&t).unwrap_or_default(),
+                });
+            }
+        }
+    }
+    findings.truncate(query.limit);
     (StatusCode::OK, Json(findings))
 }
 

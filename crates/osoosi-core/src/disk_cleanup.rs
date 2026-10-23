@@ -552,7 +552,7 @@ pub fn clean_tier2_superseded_release_deps(
         ));
     }
 
-    let current_deps_bytes = compute_path_footprint(&deps_dir, 15_000).0;
+    let current_deps_bytes = compute_path_footprint(&deps_dir, 1_500).0;
     DiskCleanupTierResult {
         tier_name: "Tier 2: Superseded Release Crate Revisions".to_string(),
         bytes_freed: freed_bytes,
@@ -599,6 +599,8 @@ pub fn clean_tier3_sqlite_wal_and_retention(
         ),
     ];
 
+    let wal_limit_bytes = policy.max_sqlite_wal_mb.max(8) * 1024 * 1024;
+
     for db_path in &db_candidates {
         if !db_path.exists() {
             continue;
@@ -606,37 +608,54 @@ pub fn clean_tier3_sqlite_wal_and_retention(
         let wal_path = PathBuf::from(format!("{}-wal", db_path.display()));
         let shm_path = PathBuf::from(format!("{}-shm", db_path.display()));
 
-        let size_before = db_path.metadata().map(|m| m.len()).unwrap_or(0)
-            + wal_path.metadata().map(|m| m.len()).unwrap_or(0)
-            + shm_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let db_file_size_before = db_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let wal_size_before = wal_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let shm_size_before = shm_path.metadata().map(|m| m.len()).unwrap_or(0);
+        let size_before = db_file_size_before + wal_size_before + shm_size_before;
+
+        let is_osoosi_db = db_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.eq_ignore_ascii_case("osoosi.db"))
+            .unwrap_or(false);
 
         if let Ok(conn) = rusqlite::Connection::open(db_path) {
-            let _ = conn.busy_timeout(Duration::from_millis(2500));
+            let _ = conn.busy_timeout(Duration::from_millis(120));
+            let mut db_rows_deleted = 0usize;
 
-            for (table, order_col, max_rows) in &retention_tables {
-                let count_sql = format!("SELECT COUNT(*) FROM {}", table);
-                if let Ok(cnt) = conn.query_row(&count_sql, [], |r| r.get::<_, i64>(0)) {
-                    if (cnt as usize) > *max_rows {
-                        let excess = (cnt as usize) - *max_rows;
-                        let del_sql = format!(
-                            "DELETE FROM {} WHERE rowid IN (SELECT rowid FROM {} ORDER BY {} ASC LIMIT ?1)",
-                            table, table, order_col
-                        );
-                        if let Ok(deleted) = conn.execute(&del_sql, rusqlite::params![excess as i64])
-                        {
-                            rows_pruned = rows_pruned.saturating_add(deleted as u64);
+            if is_osoosi_db {
+                for (table, order_col, max_rows) in &retention_tables {
+                    let max_rowid_sql = format!("SELECT COALESCE(MAX(rowid), 0) - COALESCE(MIN(rowid), 0) FROM {}", table);
+                    let approx_span = conn
+                        .query_row(&max_rowid_sql, [], |r| r.get::<_, i64>(0))
+                        .unwrap_or(0);
+                    if (approx_span as usize) <= *max_rows {
+                        continue;
+                    }
+                    let count_sql = format!("SELECT COUNT(*) FROM {}", table);
+                    if let Ok(cnt) = conn.query_row(&count_sql, [], |r| r.get::<_, i64>(0)) {
+                        if (cnt as usize) > *max_rows {
+                            let excess = (cnt as usize) - *max_rows;
+                            let del_sql = format!(
+                                "DELETE FROM {} WHERE rowid IN (SELECT rowid FROM {} ORDER BY {} ASC LIMIT ?1)",
+                                table, table, order_col
+                            );
+                            if let Ok(deleted) =
+                                conn.execute(&del_sql, rusqlite::params![excess as i64])
+                            {
+                                rows_pruned = rows_pruned.saturating_add(deleted as u64);
+                                db_rows_deleted = db_rows_deleted.saturating_add(deleted);
+                            }
                         }
                     }
                 }
             }
 
-            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-
-            let wal_limit_bytes = policy.max_sqlite_wal_mb.max(8) * 1024 * 1024;
-            if size_before > wal_limit_bytes {
-                let _ = conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+            if wal_size_before > wal_limit_bytes || db_rows_deleted > 0 {
+                let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+            } else if wal_size_before > 1024 * 1024 {
+                let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
             }
-            let _ = conn.execute_batch("PRAGMA optimize;");
         }
 
         let size_after = db_path.metadata().map(|m| m.len()).unwrap_or(0)

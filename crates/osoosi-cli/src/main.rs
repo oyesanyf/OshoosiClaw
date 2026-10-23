@@ -5589,7 +5589,6 @@ async fn ensure_ollama_model() {
     list_cmd.arg("list");
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         list_cmd.creation_flags(0x08000000);
     }
     let list_fut = list_cmd.output();
@@ -5622,7 +5621,6 @@ async fn ensure_ollama_model() {
                 pull_cmd.args(["pull", &f_model]);
                 #[cfg(target_os = "windows")]
                 {
-                    use std::os::windows::process::CommandExt;
                     pull_cmd.creation_flags(0x08000000);
                 }
                 let pull_fut = pull_cmd.status();
@@ -5657,7 +5655,6 @@ async fn ensure_ollama_model() {
             pull_cmd.args(["pull", model]);
             #[cfg(target_os = "windows")]
             {
-                use std::os::windows::process::CommandExt;
                 pull_cmd.creation_flags(0x08000000);
             }
             let pull_fut = pull_cmd.status();
@@ -5733,7 +5730,6 @@ async fn ollama_available() -> bool {
         .stderr(std::process::Stdio::null());
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
         check_cmd.creation_flags(0x08000000);
     }
     let check_fut = check_cmd.status();
@@ -5789,7 +5785,6 @@ async fn install_ollama_best_effort() {
         ]);
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
             winget_cmd.creation_flags(0x08000000);
         }
         let winget_fut = winget_cmd.status();
@@ -7496,7 +7491,6 @@ async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> 
         cli_cmd.args(["pull", m]);
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
             cli_cmd.creation_flags(0x08000000);
         }
 

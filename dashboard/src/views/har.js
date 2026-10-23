@@ -233,7 +233,9 @@ function renderHarTrafficTable() {
         const method = (e.method || 'GET').toUpperCase();
         let methodColor = 'var(--accent-blue)';
         if (method === 'POST') methodColor = 'var(--accent-green)';
-        else if (method === 'CONNECT') methodColor = 'var(--accent-purple)';
+        else if (method === 'TCP/TLS') methodColor = '#06b6d4';
+        else if (method === 'TCP/LOCAL') methodColor = '#10b981';
+        else if (method === 'CONNECT' || method === 'TCP') methodColor = 'var(--accent-purple)';
         else if (method === 'DELETE') methodColor = '#ef4444';
 
         const src = e.source_file || 'unknown';
@@ -295,7 +297,10 @@ function renderHarTrafficTable() {
         const respBytes = parseInt(e.response_bytes, 10) || 0;
         const totalVol = reqBytes + respBytes;
         const duration = parseFloat(e.duration_ms) || 0;
-        const volLatencyText = `${formatHarBytes(totalVol)} (${duration.toFixed(1)}ms)`;
+        const isLiveSocket = srcLower.startsWith('active_socket') || (e.mime_type || '').startsWith('transport/');
+        const volLatencyText = (isLiveSocket && totalVol === 0)
+            ? 'Live Socket (No TLS MITM)'
+            : `${formatHarBytes(totalVol)} (${duration.toFixed(1)}ms)`;
 
         const v = (e.verdict || 'benign').toLowerCase();
         const score = parseFloat(e.threat_score) || 0.0;
@@ -304,7 +309,11 @@ function renderHarTrafficTable() {
         const reaPill = reaDec === 'ESCALATE_MALICIOUS'
             ? `<span class="badge red" style="font-size: 9.5px; margin-left: 4px;" title="${escapeHtml(e.rea_voter_reason || 'REA-Voter Escalated')}">REA:ESC</span>`
             : `<span class="badge blue" style="font-size: 9.5px; margin-left: 4px;" title="${escapeHtml(e.rea_voter_reason || 'REA-Voter Vetoed Benign')}">REA:OK</span>`;
-        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (0%)</span>${reaPill}`;
+        const tagsStr = e.threat_tags || '';
+        const asnPill = (tagsStr.startsWith('ASN') || tagsStr.startsWith('LOCAL_LOOPBACK'))
+            ? `<span class="badge green" style="font-size: 9px; margin-left: 4px;" title="Verified ASN / Local Endpoint Trust">${escapeHtml(tagsStr)}</span>`
+            : '';
+        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (${Math.round(score * 100)}%)</span>${reaPill}${asnPill}`;
         if (v === 'malicious' || score >= 0.75) {
             verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>${reaPill}`;
         } else if (v === 'suspicious' || score >= 0.4) {
