@@ -2393,7 +2393,9 @@ impl RedactXStructuredValidator {
             // Ensure we start on a token boundary (not in the middle of an IP address, hex string, or port)
             if i > 0 {
                 let prev = bytes[i - 1];
-                if prev.is_ascii_alphanumeric() || prev == b'.' || prev == b'/' || prev == b':' {
+                if prev.is_ascii_alphanumeric()
+                    || matches!(prev, b'.' | b'/' | b':' | b'=' | b'&' | b'?' | b'_' | b'-')
+                {
                     i += 1;
                     continue;
                 }
@@ -2408,12 +2410,13 @@ impl RedactXStructuredValidator {
 
             // Do not allow '.' as a separator unless every group is 3-3-4 (never IPv4 octets!)
             let digits: Vec<char> = cand_slice.chars().filter(|c| c.is_ascii_digit()).collect();
-            // Also verify the character immediately after cand_slice in `text` is not `.` or `:` (like an IPv4 octet or `:443` port)
+            // Verify the character immediately after cand_slice in `text` is not an IP/URL/hyphen delimiter
             let next_byte_idx = i + cand_slice.len();
             let followed_by_ip_or_port = next_byte_idx < len
-                && (bytes[next_byte_idx] == b'.'
-                    || bytes[next_byte_idx] == b':'
-                    || bytes[next_byte_idx].is_ascii_alphanumeric());
+                && (matches!(
+                    bytes[next_byte_idx],
+                    b'.' | b':' | b'/' | b'&' | b'=' | b'_' | b'-'
+                ) || bytes[next_byte_idx].is_ascii_alphanumeric());
 
             if digits.len() == 10 && !followed_by_ip_or_port {
                 let trimmed_cand = cand_slice.trim();
