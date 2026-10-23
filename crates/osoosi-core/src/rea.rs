@@ -5347,6 +5347,23 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         return false;
     }
 
+    if reason_lower == "ispe64"
+        || reason_lower == "ispe32"
+        || reason_lower == "isdll"
+        || reason_lower == "anti_dbg"
+        || reason_lower.starts_with("debuggercheck__")
+        || reason_lower.starts_with("debuggerexception__")
+        || reason_lower.starts_with("debuggerhiding__")
+        || reason_lower.starts_with("seh__")
+    {
+        let p = Path::new(raw);
+        if !is_untrusted_writable_or_temp_path(raw)
+            && detect_binary_masquerade_spoof(raw, Some(p), None).is_none()
+        {
+            return true;
+        }
+    }
+
     if reason_lower.contains("veto")
         || reason_lower.contains("trusted vendor")
         || reason_lower.contains("trusted-vendor")
@@ -5409,6 +5426,7 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         "com.docker.backend.exe", "docker.exe", "dockerd.exe", "vpnkit.exe",
         "language_server.exe", "language_server_windows_x64.exe", "gemini.exe", "antigravity.exe", "code.exe",
         "velociraptor.exe", "velociraptor.e",
+        "clibrowser.exe", "clibrowser", "wix.exe", "wixnative.exe", "llvm-rc.exe", "lld-link.exe", "rust-lld.exe", "llvm-ar.exe", "llvm-lib.exe", "dumpbin.exe", "editbin.exe", "nmake.exe", "cmake.exe", "ninja.exe",
         "cargo.exe", "rustc.exe", "rustup.exe", "clippy-driver.exe", "cargo-fmt.exe",
         "rustfmt.exe", "rust-analyzer.exe", "build-script-build.exe",
         "link.exe", "cl.exe", "msbuild.exe", "signtool.exe", "candle.exe", "light.exe",

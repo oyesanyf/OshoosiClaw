@@ -5933,6 +5933,7 @@ dependencies = [
  "osoosi-behavioral",
  "osoosi-core",
  "osoosi-dp",
+ "osoosi-model",
  "osoosi-owasp-hunting",
  "osoosi-policy",
  "osoosi-runtime",
@@ -6049,6 +6050,7 @@ name = "osoosi-memory"
 version = "1.2.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "bloomfilter",
  "chrono",
  "dirs",

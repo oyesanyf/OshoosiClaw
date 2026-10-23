@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 osoosi-types = { path = "../osoosi-types" }
+osoosi-model = { path = "../osoosi-model" }
 osoosi-core = { path = "../osoosi-core" }
 osoosi-runtime = { path = "../osoosi-runtime" }
 osoosi-policy = { path = "../osoosi-policy" }

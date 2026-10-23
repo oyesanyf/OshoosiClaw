@@ -2699,15 +2699,27 @@ async fn get_tarpit_stats(
     }
 
     let bp_report = osoosi_agent_anomaly::run_breakout_prevention_proof_suite().await;
+    let total_checks = bp_report.six_fault_injection_verifications.len()
+        + bp_report.six_breakout_scenario_proofs.len()
+        + bp_report.residual_risk_verification_suite.len()
+        + bp_report.benign_usability_controls.len();
+    let failed_checks = bp_report.six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
+        + bp_report.six_breakout_scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
+        + bp_report.residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
+        + bp_report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let passed_checks = total_checks.saturating_sub(failed_checks);
+    let all_invariants_verified = failed_checks == 0 && bp_report.total_prohibited_side_effects_executed == 0;
+    let false_positives_on_benign_dev_workflows = bp_report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+
     resp_json["central_measurements"] = serde_json::to_value(&bp_report.central_measurements).unwrap_or_else(|_| json!({}));
     resp_json["breakout_prevention_summary"] = json!({
-        "suite_version": bp_report.suite_version,
+        "suite_version": bp_report.policy_version,
         "policy_version": bp_report.policy_version,
-        "all_invariants_verified": bp_report.all_invariants_verified,
-        "total_checks": bp_report.total_checks,
-        "passed_checks": bp_report.passed_checks,
-        "failed_checks": bp_report.failed_checks,
-        "false_positives_on_benign_dev_workflows": bp_report.false_positives_on_benign_dev_workflows,
+        "all_invariants_verified": all_invariants_verified,
+        "total_checks": total_checks,
+        "passed_checks": passed_checks,
+        "failed_checks": failed_checks,
+        "false_positives_on_benign_dev_workflows": false_positives_on_benign_dev_workflows,
         "central_measurements": bp_report.central_measurements,
         "report_endpoint": "/api/agent-anomalies/breakout-prevention-report"
     });
@@ -3884,6 +3896,7 @@ async fn get_backup_status(State(state): State<DashboardState>) -> Json<Value> {
 async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            let _ = orch.run_autonomous_rea_threat_adjudication();
             let scanner = orch.malware_scanner();
             let stats = scanner.stats();
             let clamav_clean_count = orch
@@ -3893,9 +3906,9 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
                 .filter(|e| e.event_type == "CLAMAV_CLEAN")
                 .count();
 
-            let (total_scanned, total_malware) = if stats.total_scanned == 0 {
+            let total_malware = if stats.total_scanned == 0 {
                 let threats = orch.memory().get_recent_threats(500).unwrap_or_default();
-                let unsuppressed_count = threats
+                threats
                     .into_iter()
                     .filter(|t| {
                         let fp = t
@@ -3904,36 +3917,46 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
                             .filter(|s| !s.is_empty());
                         let proc = t.get("process_name").and_then(|v| v.as_str());
                         let hash = t.get("hash_blake3").and_then(|v| v.as_str());
-                        let target = fp.or(proc);
+                        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                        let target = fp.or(proc).unwrap_or("unknown");
+                        if osoosi_core::rea::is_rea_benign_system_or_dev_process(target, Some(reason))
+                            || osoosi_model::malware::is_informational_or_crt_yara_rule(reason)
+                        {
+                            return false;
+                        }
                         !orch
                             .memory()
-                            .is_false_positive_pattern(target, hash)
+                            .is_false_positive_pattern(Some(target), hash)
                             .unwrap_or(false)
                     })
-                    .count();
-                (unsuppressed_count, unsuppressed_count)
+                    .count()
             } else {
-                let unsuppressed_count = scanner
+                scanner
                     .recent_detections()
                     .iter()
                     .filter(|d| {
-                        !orch
-                            .memory()
-                            .is_false_positive_pattern(
-                                Some(&d.file_path),
-                                Some(d.file_hash.as_str()),
-                            )
-                            .unwrap_or(false)
+                        d.is_malware
+                            && !osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type)
+                            && !osoosi_core::rea::is_rea_benign_system_or_dev_process(&d.file_path, Some(&d.malware_type))
+                            && !orch
+                                .memory()
+                                .is_false_positive_pattern(
+                                    Some(&d.file_path),
+                                    Some(d.file_hash.as_str()),
+                                )
+                                .unwrap_or(false)
                     })
-                    .count();
-                (stats.total_scanned, unsuppressed_count)
+                    .count()
             };
+
+            let clean_count = stats.clean_scans.max(clamav_clean_count);
+            let total_scanned = stats.total_scanned.max(clean_count + total_malware);
 
             Json(json!({
                 "total_scanned": total_scanned,
                 "total_skipped": stats.total_skipped,
                 "total_malware": total_malware,
-                "clamav_clean_count": clamav_clean_count,
+                "clamav_clean_count": total_scanned.saturating_sub(total_malware).max(clean_count),
                 "model_loaded": stats.model_loaded,
                 "magika_available": stats.magika_available,
                 "live": true
@@ -4033,19 +4056,34 @@ async fn post_yara_update(State(state): State<DashboardState>) -> Json<Value> {
 async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            let _ = orch.run_autonomous_rea_threat_adjudication();
             let scanner = orch.malware_scanner();
             let detections = scanner.recent_detections();
             let items: Vec<Value> = if !detections.is_empty() {
+                let mut seen = std::collections::HashSet::new();
                 detections
                     .iter()
                     .filter(|d| {
-                        !orch
-                            .memory()
-                            .is_false_positive_pattern(
-                                Some(&d.file_path),
-                                Some(d.file_hash.as_str()),
-                            )
-                            .unwrap_or(false)
+                        d.is_malware
+                            && !osoosi_model::malware::is_informational_or_crt_yara_rule(&d.malware_type)
+                            && !osoosi_core::rea::is_rea_benign_system_or_dev_process(&d.file_path, Some(&d.malware_type))
+                            && !orch
+                                .memory()
+                                .is_false_positive_pattern(
+                                    Some(&d.file_path),
+                                    Some(d.file_hash.as_str()),
+                                )
+                                .unwrap_or(false)
+                    })
+                    .filter(|d| {
+                        let hash_lower = d.file_hash.to_ascii_lowercase();
+                        let path_lower = d.file_path.to_ascii_lowercase();
+                        let key = if !hash_lower.is_empty() {
+                            (hash_lower, String::new())
+                        } else {
+                            (String::new(), path_lower)
+                        };
+                        seen.insert(key)
                     })
                     .take(20)
                     .map(|d| {
@@ -4067,6 +4105,7 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
                     .collect()
             } else {
                 let threats = orch.memory().get_recent_threats(30).unwrap_or_default();
+                let mut seen = std::collections::HashSet::new();
                 threats
                     .into_iter()
                     .filter(|t| {
@@ -4076,11 +4115,29 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
                             .filter(|s| !s.is_empty());
                         let proc = t.get("process_name").and_then(|v| v.as_str());
                         let hash = t.get("hash_blake3").and_then(|v| v.as_str());
-                        let target = fp.or(proc);
+                        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                        let target = fp.or(proc).unwrap_or("unknown");
+                        if osoosi_core::rea::is_rea_benign_system_or_dev_process(target, Some(reason))
+                            || osoosi_model::malware::is_informational_or_crt_yara_rule(reason)
+                        {
+                            return false;
+                        }
                         !orch
                             .memory()
-                            .is_false_positive_pattern(target, hash)
+                            .is_false_positive_pattern(Some(target), hash)
                             .unwrap_or(false)
+                    })
+                    .filter(|t| {
+                        let fp = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                        let proc = t.get("process_name").and_then(|v| v.as_str()).unwrap_or("");
+                        let hash = t.get("hash_blake3").and_then(|v| v.as_str()).unwrap_or("");
+                        let target = if !fp.is_empty() { fp } else { proc };
+                        let key = if !hash.is_empty() {
+                            (hash.to_ascii_lowercase(), String::new())
+                        } else {
+                            (String::new(), target.to_ascii_lowercase())
+                        };
+                        seen.insert(key)
                     })
                     .map(|t| {
                         let fp = t
@@ -4190,6 +4247,10 @@ async fn post_manual_false_positive(
 ) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            orch.malware_scanner().purge_detection_by_path_or_hash(
+                req.file_path.as_deref().or(req.process_name.as_deref()),
+                req.hash.as_deref(),
+            );
             if let Some(ref h) = req.hash {
                 orch.mark_gossip_false_positive(h);
             }
@@ -4264,7 +4325,31 @@ pub async fn get_consensus_findings(
     let limit = query.limit.unwrap_or(50);
     match &state.backend {
         Some(orch) => match orch.memory().get_consensus_findings(limit) {
-            Ok(findings) => Json(json!(findings)),
+            Ok(findings) => {
+                let enriched: Vec<Value> = findings
+                    .into_iter()
+                    .map(|f| {
+                        json!({
+                            "id": f.id,
+                            "hash_blake3": f.hash_blake3,
+                            "sha256": f.hash_blake3,
+                            "process_name": f.process_name,
+                            "file_path": f.file_path,
+                            "verdict": f.verdict,
+                            "confidence": f.confidence,
+                            "consensus_score": f.confidence,
+                            "detector_count": f.detector_count,
+                            "voters_summary": f.voters_summary,
+                            "detector_breakdown": f.voters_summary,
+                            "action_taken": f.action_taken,
+                            "evaluated_at": f.evaluated_at,
+                            "timestamp": f.evaluated_at.to_rfc3339(),
+                            "is_malicious": f.verdict.eq_ignore_ascii_case("malicious"),
+                        })
+                    })
+                    .collect();
+                Json(json!(enriched))
+            }
             Err(e) => api_error_json(
                 "CONSENSUS_FINDINGS_FETCH_FAILED",
                 format!("Failed to retrieve consensus findings: {}", e),
@@ -8185,14 +8270,27 @@ pub async fn post_agent_anomalies_simulate_test(
 }
 
 async fn get_agent_anomalies_breakout_prevention_report(
-    State(_state): State<Arc<DashboardState>>,
+    State(_state): State<DashboardState>,
 ) -> impl IntoResponse {
     let report = osoosi_agent_anomaly::run_breakout_prevention_proof_suite().await;
+    let total_checks = report.six_fault_injection_verifications.len()
+        + report.six_breakout_scenario_proofs.len()
+        + report.residual_risk_verification_suite.len()
+        + report.benign_usability_controls.len();
+    let failed_checks = report.six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
+        + report.six_breakout_scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
+        + report.residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
+        + report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let all_invariants_verified = failed_checks == 0 && report.total_prohibited_side_effects_executed == 0;
+    let passed_checks = total_checks.saturating_sub(failed_checks);
     (
         StatusCode::OK,
         Json(json!({
             "status": "success",
-            "all_invariants_verified": report.all_invariants_verified,
+            "all_invariants_verified": all_invariants_verified,
+            "total_checks": total_checks,
+            "passed_checks": passed_checks,
+            "failed_checks": failed_checks,
             "central_measurements": report.central_measurements,
             "report": report,
         })),
@@ -8200,19 +8298,30 @@ async fn get_agent_anomalies_breakout_prevention_report(
 }
 
 async fn post_agent_anomalies_simulate_breakout_gauntlet(
-    State(_state): State<Arc<DashboardState>>,
+    State(_state): State<DashboardState>,
 ) -> impl IntoResponse {
     let report = osoosi_agent_anomaly::run_breakout_prevention_proof_suite().await;
+    let total_checks = report.six_fault_injection_verifications.len()
+        + report.six_breakout_scenario_proofs.len()
+        + report.residual_risk_verification_suite.len()
+        + report.benign_usability_controls.len();
+    let failed_checks = report.six_fault_injection_verifications.iter().filter(|v| !v.passed).count()
+        + report.six_breakout_scenario_proofs.iter().filter(|p| !p.pre_execution_prevented).count()
+        + report.residual_risk_verification_suite.iter().filter(|r| !r.passed).count()
+        + report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
+    let passed_checks = total_checks.saturating_sub(failed_checks);
+    let all_invariants_verified = failed_checks == 0 && report.total_prohibited_side_effects_executed == 0;
+    let false_positives_on_benign_dev_workflows = report.benign_usability_controls.iter().filter(|b| !b.allowed).count();
     (
         StatusCode::OK,
         Json(json!({
             "status": "success",
             "message": "Executed 6-Part Adversarial Breakout Prevention Proof Suite, 9-Family Residual-Risk Verification Suite, 6-Scenario Fault Injection, and Benign Developer Usability Control Suite.",
-            "all_invariants_verified": report.all_invariants_verified,
-            "total_checks": report.total_checks,
-            "passed_checks": report.passed_checks,
-            "failed_checks": report.failed_checks,
-            "false_positives_on_benign_dev_workflows": report.false_positives_on_benign_dev_workflows,
+            "all_invariants_verified": all_invariants_verified,
+            "total_checks": total_checks,
+            "passed_checks": passed_checks,
+            "failed_checks": failed_checks,
+            "false_positives_on_benign_dev_workflows": false_positives_on_benign_dev_workflows,
             "central_measurements": report.central_measurements,
             "report": report,
         })),
@@ -8678,6 +8787,11 @@ pub async fn get_audit_nsrl_aslr_merkle() -> impl IntoResponse {
 pub async fn get_rea_status() -> impl IntoResponse {
     let engine = osoosi_core::rea::global_rea_engine();
     (StatusCode::OK, Json(engine.status_snapshot()))
+}
+
+pub async fn get_rea_universal_coverage() -> impl IntoResponse {
+    let engine = osoosi_core::rea::global_rea_engine();
+    (StatusCode::OK, Json(engine.universal_coverage_snapshot()))
 }
 
 pub async fn get_rea_providers() -> impl IntoResponse {

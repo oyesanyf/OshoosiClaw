@@ -6,6 +6,7 @@ license.workspace = true
 description = "Local persistence and threat intelligence memory for OpenỌ̀ṣọ́ọ̀sì"
 
 [dependencies]
+blake3 = { workspace = true }
 osoosi-types = { path = "../osoosi-types" }
 serde = { workspace = true }
 serde_json = { workspace = true }
