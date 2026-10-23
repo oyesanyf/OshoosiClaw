@@ -1118,9 +1118,9 @@ pub fn scan_and_sanitize_counter_ai_strings(
         }
     }
 
-    // Sanitize reconstructed_code: strip ANSI escapes, raw control chars, and script tags
-    if !reconstructed_code.is_empty() {
-        let mut clean = String::with_capacity(reconstructed_code.len());
+    // Sanitize reconstructed_code: strip ANSI escapes, raw control chars, script tags, and redact prompt injections
+    if !reconstructed_code.is_empty() || !detected_injections.is_empty() {
+        let mut clean = String::with_capacity(reconstructed_code.len() + 64);
         let mut chars = reconstructed_code.chars().peekable();
         while let Some(ch) = chars.next() {
             if ch == '\x1b' {
@@ -1147,6 +1147,26 @@ pub fn scan_and_sanitize_counter_ai_strings(
             clean = clean
                 .replace("<script", "<scr_ipt")
                 .replace("<SCRIPT", "<SCR_IPT");
+        }
+        if !detected_injections.is_empty() {
+            sanitized_count += detected_injections.len();
+            let mut filtered_lines = Vec::new();
+            for line in clean.lines() {
+                let ll = line.to_ascii_lowercase();
+                if (ll.contains("ignore ") && ll.contains("instructions"))
+                    || (ll.contains("disregard ") && ll.contains("instructions"))
+                    || ll.contains("<|im_start|>system")
+                    || ll.contains("<<sys>>")
+                {
+                    filtered_lines.push("// [REDACTED_COUNTER_AI_PROMPT_INJECTION]".to_string());
+                } else {
+                    filtered_lines.push(line.to_string());
+                }
+            }
+            clean = filtered_lines.join("\n");
+            if !clean.contains("[REDACTED_COUNTER_AI_PROMPT_INJECTION]") {
+                clean.push_str("\n// [REDACTED_COUNTER_AI_PROMPT_INJECTION]\n");
+            }
         }
         *reconstructed_code = clean;
     }
@@ -3791,18 +3811,29 @@ pub fn inspect_network_capture(
     let mut evidence = Vec::new();
     let limitations = Vec::new();
 
-    // Check HAR JSON first
+    // Check HAR JSON first (full W3C `.har` archive or single HAR entry JSON)
     if let Ok(har_val) = serde_json::from_slice::<Value>(bytes) {
-        if let Some(entries) = har_val
+        let single_entry_vec = if har_val.get("request").is_some() && har_val.get("response").is_some() {
+            Some(vec![har_val.clone()])
+        } else {
+            None
+        };
+        let entries_opt = har_val
             .get("log")
             .and_then(|l| l.get("entries"))
             .and_then(|e| e.as_array())
-        {
+            .or(single_entry_vec.as_ref());
+
+        if let Some(entries) = entries_opt {
             let mut endpoints = Vec::new();
             let mut sensitive_headers = Vec::new();
             let mut status_distribution: HashMap<u64, usize> = HashMap::new();
+            let mut embedded_artifacts = Vec::new();
+            let mut smuggling_or_ssrf_hits = Vec::new();
+            let mut openjev_dlp_hits = Vec::new();
+            let mut prompt_injection_hits = Vec::new();
 
-            for entry in entries.iter().take(200) {
+            for (idx, entry) in entries.iter().take(200).enumerate() {
                 let req = entry.get("request");
                 let resp = entry.get("response");
                 let method = req
@@ -3819,6 +3850,8 @@ pub fn inspect_network_capture(
                     .unwrap_or(0);
                 *status_distribution.entry(status).or_insert(0) += 1;
 
+                let mut has_te = false;
+                let mut has_cl = false;
                 if let Some(hdrs) = req
                     .and_then(|r| r.get("headers"))
                     .and_then(|h| h.as_array())
@@ -3829,6 +3862,11 @@ pub fn inspect_network_capture(
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_ascii_lowercase();
+                        if hname == "transfer-encoding" {
+                            has_te = true;
+                        } else if hname == "content-length" {
+                            has_cl = true;
+                        }
                         if matches!(
                             hname.as_str(),
                             "authorization" | "cookie" | "x-api-key" | "x-osoosi-token"
@@ -3839,10 +3877,104 @@ pub fn inspect_network_capture(
                     }
                 }
 
+                let req_body = req
+                    .and_then(|r| r.get("postData"))
+                    .and_then(|p| p.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let resp_body = resp
+                    .and_then(|r| r.get("content"))
+                    .and_then(|c| c.get("text"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let resp_mime = resp
+                    .and_then(|r| r.get("content"))
+                    .and_then(|c| c.get("mimeType"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                let combined_body = format!("{} {} {}", url, req_body, resp_body);
+                let url_low = url.to_ascii_lowercase();
+
+                if has_te && has_cl {
+                    smuggling_or_ssrf_hits.push(format!(
+                        "Entry #{} ({} {}): CL.TE / TE.CL HTTP Request Smuggling desync headers present",
+                        idx, method, url
+                    ));
+                }
+                if url_low.contains("169.254.169.254")
+                    || url_low.contains("metadata.google.internal")
+                    || url_low.contains("100.100.100.200")
+                {
+                    smuggling_or_ssrf_hits.push(format!(
+                        "Entry #{} ({} {}): Cloud Metadata SSRF target detected",
+                        idx, method, url
+                    ));
+                }
+
+                // Detect embedded PE / WASM / EVM / ELF artifacts inside HTTP body
+                if req_body.starts_with("MZ")
+                    || resp_body.starts_with("MZ")
+                    || combined_body.contains("TVqQAA")
+                    || combined_body.contains("TVpQAA")
+                {
+                    embedded_artifacts.push(json!({
+                        "entry_index": idx,
+                        "url": url,
+                        "artifact_kind": "pe_native_binary",
+                        "mime_type": resp_mime,
+                    }));
+                } else if req_body.starts_with("\0asm")
+                    || resp_body.starts_with("\0asm")
+                    || combined_body.contains("AGFzbQE")
+                    || combined_body.to_ascii_lowercase().contains("0061736d01000000")
+                {
+                    embedded_artifacts.push(json!({
+                        "entry_index": idx,
+                        "url": url,
+                        "artifact_kind": "wasm_module",
+                        "mime_type": resp_mime,
+                    }));
+                } else if combined_body.to_ascii_lowercase().contains("6080604052") {
+                    embedded_artifacts.push(json!({
+                        "entry_index": idx,
+                        "url": url,
+                        "artifact_kind": "evm_bytecode",
+                        "mime_type": resp_mime,
+                    }));
+                }
+
+                // Counter-AI prompt injection scan on HTTP transaction
+                let mut dummy_recon = String::new();
+                let (pi_list, _) = scan_and_sanitize_counter_ai_strings(
+                    combined_body.as_bytes(),
+                    &mut dummy_recon,
+                    false,
+                );
+                if !pi_list.is_empty() {
+                    prompt_injection_hits.extend(pi_list);
+                }
+
+                // OpenJEV-Voter DLP & credential exfiltration inspection
+                let ojev_vote = evaluate_openjev_consensus_vote(url, "HAR/Network", &combined_body);
+                let entry_verdict = if !prompt_injection_hits.is_empty()
+                    || !smuggling_or_ssrf_hits.is_empty()
+                {
+                    "ESCALATE_MALICIOUS"
+                } else if ojev_vote.decision == "ESCALATE_MALICIOUS" {
+                    openjev_dlp_hits.push(format!("Entry #{} ({}): {}", idx, url, ojev_vote.reason));
+                    "ESCALATE_DLP_EXFIL"
+                } else {
+                    "VERIFIED_CLEAN"
+                };
+
                 endpoints.push(json!({
                     "method": method,
                     "url": url,
                     "status": status,
+                    "mime_type": resp_mime,
+                    "rea_verdict": entry_verdict,
+                    "openjev_decision": ojev_vote.decision,
                 }));
             }
 
@@ -3850,27 +3982,67 @@ pub fn inspect_network_capture(
                 source: "har_archive_parser".to_string(),
                 location: "log.entries".to_string(),
                 observation: format!(
-                    "Parsed {} HTTP Archive (HAR) request/response transactions",
-                    entries.len()
+                    "Parsed {} HTTP Archive (HAR) transactions ({} embedded binary/bytecode artifacts, {} smuggling/SSRF anomalies, {} OpenJEV DLP hits)",
+                    entries.len(),
+                    embedded_artifacts.len(),
+                    smuggling_or_ssrf_hits.len(),
+                    openjev_dlp_hits.len()
                 ),
                 confidence: 1.0,
                 digest_sha256: None,
             });
 
+            let base_sev = if !smuggling_or_ssrf_hits.is_empty() || !prompt_injection_hits.is_empty() {
+                "critical"
+            } else if !embedded_artifacts.is_empty() || !openjev_dlp_hits.is_empty() {
+                "high"
+            } else if !sensitive_headers.is_empty() {
+                "medium"
+            } else {
+                "info"
+            };
+
             findings.push(json!({
                 "category": "har_network_capture",
-                "severity": if sensitive_headers.is_empty() { "info" } else { "medium" },
-                "title": format!("HAR Capture ({} HTTP entries, {} sensitive header types)", entries.len(), sensitive_headers.len()),
-                "detail": format!("Sensitive headers observed: {:?}", sensitive_headers),
+                "severity": base_sev,
+                "title": format!("HAR Capture ({} HTTP entries, {} sensitive header types, {} embedded artifacts)", entries.len(), sensitive_headers.len(), embedded_artifacts.len()),
+                "detail": format!("Sensitive headers: {:?} | Embedded artifacts: {} | Smuggling/SSRF: {} | OpenJEV DLP hits: {}", sensitive_headers, embedded_artifacts.len(), smuggling_or_ssrf_hits.len(), openjev_dlp_hits.len()),
             }));
 
-            let mut spec = String::from("# Reconstructed HTTP API Surface from HAR Capture\n");
-            for ep in endpoints.iter().take(30) {
+            for art in &embedded_artifacts {
+                findings.push(json!({
+                    "category": "har_embedded_executable_payload",
+                    "severity": "high",
+                    "title": format!("Embedded {} Payload in HAR HTTP Stream", art["artifact_kind"].as_str().unwrap_or("binary")),
+                    "detail": format!("URL: {} (entry #{})", art["url"].as_str().unwrap_or(""), art["entry_index"].as_u64().unwrap_or(0)),
+                }));
+            }
+            for sm in &smuggling_or_ssrf_hits {
+                findings.push(json!({
+                    "category": "har_protocol_or_ssrf_attack",
+                    "severity": "critical",
+                    "title": "HAR HTTP Request Smuggling / Cloud Metadata SSRF Detected",
+                    "detail": sm,
+                }));
+            }
+            for dlp_hit in &openjev_dlp_hits {
+                findings.push(json!({
+                    "category": "har_openjev_credential_exfiltration",
+                    "severity": "high",
+                    "title": "OpenJEV-Voter Detected Credential/PII Exfiltration in HAR Traffic",
+                    "detail": dlp_hit,
+                }));
+            }
+
+            let mut spec = String::from("# Reconstructed HTTP API Surface & REA + OpenJEV Forensic Audit from HAR Capture\n");
+            for ep in endpoints.iter().take(40) {
                 spec.push_str(&format!(
-                    "{} {} -> HTTP {}\n",
+                    "{} {} -> HTTP {} [REA: {} | OpenJEV: {}]\n",
                     ep.get("method").and_then(|v| v.as_str()).unwrap_or("GET"),
                     ep.get("url").and_then(|v| v.as_str()).unwrap_or("/"),
-                    ep.get("status").and_then(|v| v.as_u64()).unwrap_or(200)
+                    ep.get("status").and_then(|v| v.as_u64()).unwrap_or(200),
+                    ep.get("rea_verdict").and_then(|v| v.as_str()).unwrap_or("VERIFIED_CLEAN"),
+                    ep.get("openjev_decision").and_then(|v| v.as_str()).unwrap_or("VETO_BENIGN"),
                 ));
             }
 
@@ -3880,6 +4052,11 @@ pub fn inspect_network_capture(
                 "endpoints": endpoints,
                 "sensitive_headers": sensitive_headers,
                 "status_distribution": status_distribution,
+                "embedded_artifacts": embedded_artifacts,
+                "smuggling_or_ssrf_hits": smuggling_or_ssrf_hits,
+                "openjev_dlp_hits": openjev_dlp_hits,
+                "rea_voter_active": true,
+                "openjev_voter_active": true,
             });
             return (metadata, findings, evidence, limitations, spec);
         }
@@ -4747,6 +4924,7 @@ pub fn analyze_target_bytes(
         "max_sqlite_pages": MAX_SQLITE_PAGES,
         "layer4_counter_ai_sanitizer": "enforced",
         "prompt_injection_detected": !prompt_injections.is_empty(),
+        "counter_ai_prompt_injection_detected": !prompt_injections.is_empty(),
         "prompt_injection_findings": prompt_injections,
         "sanitized_strings_count": sanitized_count,
         "report_integrity_hmac_blake3": seal,
@@ -5047,11 +5225,31 @@ pub struct ReaMeshInspectionVerdict {
     pub allowed: bool,
     pub vetoed: bool,
     pub veto_reason: Option<String>,
+    pub fraud_proof: Option<osoosi_wire::ByzantineKillSwitchFraudProof>,
     pub prompt_injection_detected: bool,
     pub masquerade_detected: bool,
     pub rea_seal_blake3: String,
     pub threat_score_adjustment: f64,
     pub summary: String,
+}
+
+/// Result of REA + OpenJEV deep forensic inspection of an HTTP Archive (`.har`) entry or archive.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReaHarAnalysisResult {
+    pub url: String,
+    pub method: String,
+    pub status: u16,
+    pub artifact_class: String,
+    pub rea_voter_decision: String,
+    pub rea_voter_reason: String,
+    pub openjev_voter_decision: String,
+    pub openjev_voter_reason: String,
+    pub prompt_injection_detected: bool,
+    pub embedded_binary_detected: bool,
+    pub smuggling_or_ssrf_detected: bool,
+    pub threat_score: f32,
+    pub findings: Vec<Value>,
+    pub rea_seal_blake3: String,
 }
 
 /// Result of routing a candidate detector alert through `AutonomousReaEngine::evaluate_detector_candidate`.
@@ -5713,18 +5911,14 @@ impl AutonomousReaEngine {
         let target = file_path.or(process_name).unwrap_or("unknown_target");
 
         // Protection Layer 1: Check for binary masquerading or untrusted writable/temp path FIRST!
-        if let Some(spoof_finding) =
+        if let Some(spoof_reason) =
             detect_binary_masquerade_spoof(target, file_path.map(Path::new), None)
         {
             self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
-            let desc = spoof_finding["description"]
-                .as_str()
-                .unwrap_or("Binary masquerade spoof detected in untrusted path")
-                .to_string();
             return (
                 false,
-                format!("REA_MASQUERADE_SPOOF_DETECTED: {}", desc),
+                spoof_reason,
                 None,
             );
         }
@@ -5843,18 +6037,14 @@ impl AutonomousReaEngine {
         let resolved = resolve_candidate_binary_path(process_name, file_path);
         if let Some(resolved_path) = resolved {
             let resolved_str = resolved_path.to_string_lossy().to_string();
-            if let Some(spoof_finding) =
+            if let Some(spoof_reason) =
                 detect_binary_masquerade_spoof(&resolved_str, Some(&resolved_path), None)
             {
                 self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
                 self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
-                let desc = spoof_finding["description"]
-                    .as_str()
-                    .unwrap_or("Binary masquerade spoof detected")
-                    .to_string();
                 return (
                     false,
-                    format!("REA_MASQUERADE_SPOOF_DETECTED: {}", desc),
+                    spoof_reason,
                     None,
                 );
             }
@@ -5974,14 +6164,21 @@ impl AutonomousReaEngine {
         let candidate_proc = extract_process_from_summary(proc_or_summary).unwrap_or(proc_or_summary);
 
         // 1. Layer 4: Scan mesh summary, YARA rule, and raw payload for embedded prompt-injection
-        let mut strings_to_check = vec![proc_or_summary.to_string()];
+        let mut combined_mesh_str = proc_or_summary.to_string();
         if let Some(y) = candidate_yara {
-            strings_to_check.push(y.to_string());
+            combined_mesh_str.push('\n');
+            combined_mesh_str.push_str(y);
         }
         if let Some(p) = raw_payload {
-            strings_to_check.push(p.to_string());
+            combined_mesh_str.push('\n');
+            combined_mesh_str.push_str(p);
         }
-        let (_sanitized, pi_findings) = scan_and_sanitize_counter_ai_strings(&strings_to_check);
+        let mut dummy_recon = String::new();
+        let (pi_findings, _sanitized) = scan_and_sanitize_counter_ai_strings(
+            combined_mesh_str.as_bytes(),
+            &mut dummy_recon,
+            false,
+        );
         if !pi_findings.is_empty() {
             self.prompt_injections_blocked.fetch_add(1, Ordering::Relaxed);
             self.mesh_threats_vetoed.fetch_add(1, Ordering::Relaxed);
@@ -6035,16 +6232,12 @@ impl AutonomousReaEngine {
         }
 
         // 3. Layer 1: Check if the target process is a masquerading binary in %TEMP% / Downloads / Public
-        if let Some(spoof_finding) =
+        if let Some(spoof_reason) =
             detect_binary_masquerade_spoof(candidate_proc, Some(Path::new(candidate_proc)), None)
         {
             self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
             let seal = blake3_hex(format!("rea:mesh:masquerade:{}:{}", direction, candidate_proc).as_bytes());
-            let desc = spoof_finding["description"]
-                .as_str()
-                .unwrap_or("Binary masquerading detected")
-                .to_string();
             return ReaMeshInspectionVerdict {
                 allowed: true,
                 vetoed: false,
@@ -6056,7 +6249,7 @@ impl AutonomousReaEngine {
                 threat_score_adjustment: 0.35,
                 summary: format!(
                     "[REA-Voter] Confirmed masquerading binary in {} mesh frame: {}",
-                    direction, desc
+                    direction, spoof_reason
                 ),
             };
         }
@@ -6128,10 +6321,13 @@ impl AutonomousReaEngine {
         );
 
         // 1. Check Layer 4 prompt injection in candidate reason or command-line
-        let (_san, pi_findings) = scan_and_sanitize_counter_ai_strings(&[
-            target_proc_or_path.to_string(),
-            candidate_reason.to_string(),
-        ]);
+        let combined_det_str = format!("{}\n{}", target_proc_or_path, candidate_reason);
+        let mut dummy_recon = String::new();
+        let (pi_findings, _san) = scan_and_sanitize_counter_ai_strings(
+            combined_det_str.as_bytes(),
+            &mut dummy_recon,
+            false,
+        );
         if !pi_findings.is_empty() {
             self.prompt_injections_blocked.fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
@@ -6155,17 +6351,13 @@ impl AutonomousReaEngine {
         }
 
         // 2. Check Layer 1 binary masquerading
-        if let Some(spoof_finding) = detect_binary_masquerade_spoof(
+        if let Some(spoof_reason) = detect_binary_masquerade_spoof(
             target_proc_or_path,
             Some(Path::new(target_proc_or_path)),
             None,
         ) {
             self.masquerade_attempts_blocked.fetch_add(1, Ordering::Relaxed);
             self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
-            let desc = spoof_finding["description"]
-                .as_str()
-                .unwrap_or("Binary masquerading spoof detected")
-                .to_string();
             let adj = (raw_score + 0.40).clamp(0.92, 1.0);
             return ReaDetectorEvaluation {
                 detector_name: detector_name.to_string(),
@@ -6178,7 +6370,7 @@ impl AutonomousReaEngine {
                 verdict: "MALICIOUS_MASQUERADE_SPOOF".to_string(),
                 explanation: format!(
                     "[REA-Voter] Detector '{}' escalated due to binary masquerade spoof: {}",
-                    detector_name, desc
+                    detector_name, spoof_reason
                 ),
                 rea_seal_blake3: seal,
                 auto_yara_synthesized: false,
@@ -6250,6 +6442,179 @@ impl AutonomousReaEngine {
             ),
             rea_seal_blake3: seal,
             auto_yara_synthesized: false,
+        }
+    }
+
+    /// Deep-inspects a single HAR HTTP transaction or full `.har` archive using both `[REA-Voter]`
+    /// and `[OpenJEV-Voter]`, detecting embedded binaries/bytecode (`MZ`, `\0asm`, EVM),
+    /// HTTP Request Smuggling (`Transfer-Encoding` + `Content-Length`), Cloud Metadata SSRF,
+    /// counter-AI prompt injection, and credential/PII exfiltration.
+    pub fn analyze_har_entry_or_archive(
+        &self,
+        url: &str,
+        method: &str,
+        status: u16,
+        mime_type: &str,
+        payload_or_har_json: &str,
+    ) -> ReaHarAnalysisResult {
+        self.detector_alerts_evaluated.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut map = self.per_detector_counts.write();
+            *map.entry("HAR/Network".to_string()).or_insert(0) += 1;
+        }
+
+        let combined = format!("{} {} {} {}", method, url, mime_type, payload_or_har_json);
+        let lower = combined.to_ascii_lowercase();
+        let url_low = url.to_ascii_lowercase();
+
+        let mut findings = Vec::new();
+        let mut artifact_class = if mime_type.contains("wasm")
+            || payload_or_har_json.starts_with("\0asm")
+            || payload_or_har_json.contains("AGFzbQE")
+            || lower.contains("0061736d01000000")
+        {
+            "wasm_module".to_string()
+        } else if payload_or_har_json.starts_with("MZ")
+            || payload_or_har_json.contains("TVqQAA")
+            || payload_or_har_json.contains("TVpQAA")
+            || mime_type.contains("x-msdownload")
+            || mime_type.contains("x-dosexec")
+        {
+            "pe_native_binary".to_string()
+        } else if lower.contains("6080604052") {
+            "evm_bytecode".to_string()
+        } else if payload_or_har_json.contains("\"log\"") && payload_or_har_json.contains("\"entries\"") {
+            "har_archive".to_string()
+        } else if mime_type.contains("json") {
+            "http_json_api".to_string()
+        } else if mime_type.contains("javascript") {
+            "javascript_bundle".to_string()
+        } else {
+            "http_transaction".to_string()
+        };
+
+        let embedded_binary_detected = matches!(
+            artifact_class.as_str(),
+            "wasm_module" | "pe_native_binary" | "evm_bytecode"
+        );
+        if embedded_binary_detected {
+            findings.push(json!({
+                "category": "har_embedded_executable_payload",
+                "severity": "high",
+                "title": format!("Embedded {} Payload Detected in HAR HTTP Transaction", artifact_class),
+                "detail": format!("{} {} ({})", method, url, mime_type),
+            }));
+        }
+
+        let smuggling_or_ssrf_detected = (lower.contains("transfer-encoding")
+            && lower.contains("content-length")
+            && (lower.contains("chunked") || lower.contains("smuggl")))
+            || url_low.contains("169.254.169.254")
+            || url_low.contains("metadata.google.internal")
+            || url_low.contains("100.100.100.200");
+        if smuggling_or_ssrf_detected {
+            artifact_class = "protocol_smuggling_or_ssrf".to_string();
+            findings.push(json!({
+                "category": "har_protocol_or_ssrf_attack",
+                "severity": "critical",
+                "title": "HTTP Request Smuggling / Cloud Metadata SSRF in HAR Traffic",
+                "detail": format!("{} {} flagged by REA protocol differential guard", method, url),
+            }));
+        }
+
+        let mut dummy_recon = String::new();
+        let (pi_findings, _) = scan_and_sanitize_counter_ai_strings(
+            combined.as_bytes(),
+            &mut dummy_recon,
+            false,
+        );
+        let prompt_injection_detected = !pi_findings.is_empty();
+        if prompt_injection_detected {
+            self.prompt_injections_blocked.fetch_add(1, Ordering::Relaxed);
+            for pi in &pi_findings {
+                findings.push(json!({
+                    "category": "REA_ANTI_ANALYSIS_PROMPT_INJECTION",
+                    "severity": "critical",
+                    "title": "Counter-AI Prompt Injection in HAR Payload",
+                    "detail": pi,
+                }));
+            }
+        }
+
+        let ojev_vote = evaluate_openjev_consensus_vote(url, "HAR/Network", &combined);
+        if ojev_vote.decision == "ESCALATE_MALICIOUS" {
+            findings.push(json!({
+                "category": "har_openjev_credential_exfiltration",
+                "severity": "high",
+                "title": "OpenJEV-Voter Credential / PII Exfiltration in HAR Traffic",
+                "detail": ojev_vote.reason.clone(),
+            }));
+        }
+
+        let mut threat_score: f32 = 0.02;
+        if prompt_injection_detected || smuggling_or_ssrf_detected {
+            threat_score = 0.96;
+        } else if ojev_vote.decision == "ESCALATE_MALICIOUS" {
+            threat_score = 0.91;
+        } else if embedded_binary_detected {
+            threat_score = 0.78;
+        }
+
+        let (rea_voter_decision, rea_voter_reason) = if prompt_injection_detected {
+            self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
+            (
+                "ESCALATE_MALICIOUS".to_string(),
+                format!("Escalate [REA-Voter]: Counter-AI prompt injection detected in HAR traffic to {}", url),
+            )
+        } else if smuggling_or_ssrf_detected {
+            self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
+            (
+                "ESCALATE_MALICIOUS".to_string(),
+                format!("Escalate [REA-Voter]: HTTP Request Smuggling / Cloud Metadata SSRF detected on {}", url),
+            )
+        } else if embedded_binary_detected {
+            self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
+            (
+                "ESCALATE_MALICIOUS".to_string(),
+                format!("Escalate [REA-Voter]: Embedded {} payload reconstructed from HAR stream {}", artifact_class, url),
+            )
+        } else if ojev_vote.decision == "ESCALATE_MALICIOUS" {
+            self.malicious_confirmations.fetch_add(1, Ordering::Relaxed);
+            (
+                "ESCALATE_MALICIOUS".to_string(),
+                format!("Escalate [REA-Voter]: Corroborated OpenJEV DLP exfiltration on {}", url),
+            )
+        } else {
+            self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
+            (
+                "VETO_BENIGN".to_string(),
+                format!("Veto [REA-Voter]: Verified clean HAR L7 HTTP {} transaction ({})", method, artifact_class),
+            )
+        };
+
+        let seal = blake3_hex(
+            format!(
+                "rea:har:{}:{}:{}:{}:{:.3}:{}",
+                method, url, status, artifact_class, threat_score, rea_voter_decision
+            )
+            .as_bytes(),
+        );
+
+        ReaHarAnalysisResult {
+            url: url.to_string(),
+            method: method.to_string(),
+            status,
+            artifact_class,
+            rea_voter_decision,
+            rea_voter_reason,
+            openjev_voter_decision: ojev_vote.decision,
+            openjev_voter_reason: ojev_vote.reason,
+            prompt_injection_detected,
+            embedded_binary_detected,
+            smuggling_or_ssrf_detected,
+            threat_score,
+            findings,
+            rea_seal_blake3: seal,
         }
     }
 
@@ -6858,7 +7223,12 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
         let combined_context = format!("{} {}", image, cmdline);
 
         // 1. Check Layer 4 counter-AI prompt injection in event image or command line
-        let (_san, pi_findings) = scan_and_sanitize_counter_ai_strings(&[combined_context.clone()]);
+        let mut dummy_recon = String::new();
+        let (pi_findings, _san) = scan_and_sanitize_counter_ai_strings(
+            combined_context.as_bytes(),
+            &mut dummy_recon,
+            false,
+        );
         if !pi_findings.is_empty() {
             let engine = global_rea_engine();
             let vote = engine.cast_consensus_vote(
@@ -6876,7 +7246,7 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
 
         // 2. Check Layer 1 binary masquerading (e.g. %TEMP%\cl.exe, \Downloads\svchost.exe)
         if !image.is_empty() {
-            if let Some(spoof_finding) =
+            if let Some(spoof_reason) =
                 detect_binary_masquerade_spoof(image, Some(Path::new(image)), None)
             {
                 let engine = global_rea_engine();
@@ -6886,13 +7256,9 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
                 engine
                     .malicious_confirmations
                     .fetch_add(1, Ordering::Relaxed);
-                let desc = spoof_finding["description"]
-                    .as_str()
-                    .unwrap_or("Binary masquerading spoof detected")
-                    .to_string();
                 let reason = format!(
-                    "Escalate [REA-Voter]: REA_MASQUERADE_SPOOF_DETECTED — {}",
-                    desc
+                    "Escalate [REA-Voter]: {}",
+                    spoof_reason
                 );
                 engine.record_consensus_vote(ReaConsensusVote {
                     voter_name: "REA-Voter".to_string(),
@@ -7710,7 +8076,7 @@ mod tests {
                 "Layer 2 sandbox guard must reject dangerous path '{}'",
                 forbidden
             );
-            let inspect_res = inspect_path(forbidden, Some("auto"));
+            let inspect_res = inspect_path(forbidden);
             assert!(
                 inspect_res.is_err(),
                 "inspect_path must reject dangerous path '{}'",
@@ -7898,6 +8264,81 @@ mod tests {
         assert_eq!(cov["universal_rea_active"].as_bool(), Some(true));
         assert!(cov["mesh_frames_inspected"].as_u64().unwrap_or(0) >= 3);
         assert!(cov["consensus_votes_cast"].as_u64().unwrap_or(0) >= 6);
+    }
+
+    #[test]
+    fn test_rea_har_entry_and_archive_deep_inspection() {
+        let engine = global_rea_engine();
+
+        // 1. Clean HAR entry should be vetoed benign by both REA-Voter and OpenJEV-Voter
+        let clean_har = engine.analyze_har_entry_or_archive(
+            "https://github.com/oyesanyf/OshoosiClaw",
+            "GET",
+            200,
+            "application/json",
+            r#"{"status":"ok"}"#,
+        );
+        assert_eq!(clean_har.rea_voter_decision, "VETO_BENIGN");
+        assert!(!clean_har.rea_seal_blake3.is_empty());
+
+        // 2. HAR entry carrying embedded PE binary or AWS key must be escalated malicious
+        let pe_har = engine.analyze_har_entry_or_archive(
+            "https://cdn-dropper.example/stage2.bin",
+            "GET",
+            200,
+            "application/octet-stream",
+            "TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        );
+        assert_eq!(pe_har.artifact_class, "pe_native_binary");
+        assert!(pe_har.embedded_binary_detected);
+        assert_eq!(pe_har.rea_voter_decision, "ESCALATE_MALICIOUS");
+        assert!(pe_har.threat_score >= 0.75);
+
+        // 3. Full HAR archive with SSRF and OpenJEV credential exfiltration
+        let malicious_har_archive = br#"{
+            "log": {
+                "version": "1.2",
+                "entries": [
+                    {
+                        "request": {
+                            "method": "POST",
+                            "url": "http://169.254.169.254/latest/meta-data/iam/security-credentials/",
+                            "headers": [
+                                {"name": "Transfer-Encoding", "value": "chunked"},
+                                {"name": "Content-Length", "value": "42"}
+                            ],
+                            "postData": {"text": "aws_key=AKIAIOSFODNN7EXAMPLE"}
+                        },
+                        "response": {
+                            "status": 200,
+                            "content": {"mimeType": "application/wasm", "text": "AGFzbQEAAAAB"}
+                        }
+                    }
+                ]
+            }
+        }"#;
+        let report = analyze_target_bytes(
+            "malicious_capture.har",
+            None,
+            malicious_har_archive,
+            ReaTargetKind::NetworkCapture,
+            Some("har_archive_inspect".to_string()),
+        );
+        assert_eq!(report.detected_kind, "network_capture");
+        assert!(verify_rea_report_seal(&report));
+        assert!(report.threat_score >= 0.75);
+        assert!(
+            !report.metadata["embedded_artifacts"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !report.metadata["smuggling_or_ssrf_hits"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 }
 

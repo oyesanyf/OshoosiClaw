@@ -299,11 +299,16 @@ function renderHarTrafficTable() {
 
         const v = (e.verdict || 'benign').toLowerCase();
         const score = parseFloat(e.threat_score) || 0.0;
-        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (0%)</span>`;
+        const reaDec = e.rea_voter_decision || (v === 'malicious' ? 'ESCALATE_MALICIOUS' : 'VETO_BENIGN');
+        const ojevDec = e.openjev_voter_decision || 'VETO_BENIGN';
+        const reaPill = reaDec === 'ESCALATE_MALICIOUS'
+            ? `<span class="badge red" style="font-size: 9.5px; margin-left: 4px;" title="${escapeHtml(e.rea_voter_reason || 'REA-Voter Escalated')}">REA:ESC</span>`
+            : `<span class="badge blue" style="font-size: 9.5px; margin-left: 4px;" title="${escapeHtml(e.rea_voter_reason || 'REA-Voter Vetoed Benign')}">REA:OK</span>`;
+        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (0%)</span>${reaPill}`;
         if (v === 'malicious' || score >= 0.75) {
-            verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>`;
+            verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>${reaPill}`;
         } else if (v === 'suspicious' || score >= 0.4) {
-            verdictBadge = `<span class="badge orange" style="font-size: 10.5px;">SUSPICIOUS (${Math.round(score * 100)}%)</span>`;
+            verdictBadge = `<span class="badge orange" style="font-size: 10.5px;">SUSPICIOUS (${Math.round(score * 100)}%)</span>${reaPill}`;
         }
 
         const originalIndex = entries.indexOf(e);
@@ -341,7 +346,7 @@ function renderHarTrafficTable() {
                     ${escapeHtml(volLatencyText)}
                 </td>
                 <td style="padding: 8px 12px;">
-                    <span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; font-family: monospace; font-size: 10px; cursor: help;" title="BLAKE3 Lineage: ${escapeHtml(hash)}">
+                    <span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; font-family: monospace; font-size: 10px; cursor: help;" title="BLAKE3 Lineage: ${escapeHtml(hash)} | OpenJEV: ${escapeHtml(ojevDec)}">
                         #${escapeHtml(shortHash)}
                     </span>
                 </td>
@@ -349,8 +354,11 @@ function renderHarTrafficTable() {
                     ${verdictBadge}
                 </td>
                 <td style="padding: 8px 12px; text-align: right; white-space: nowrap;">
-                    <button type="button" class="btn-secondary" onclick="event.stopPropagation(); inspectHarEntryRow(${originalIndex});" style="font-size: 10.5px; padding: 3px 8px; border-radius: 4px; cursor: pointer;">
+                    <button type="button" class="btn-secondary" title="Inspect HAR Entry" onclick="event.stopPropagation(); inspectHarEntryRow(${originalIndex});" style="font-size: 10.5px; padding: 3px 7px; border-radius: 4px; cursor: pointer;">
                         🔍
+                    </button>
+                    <button type="button" class="btn-secondary" title="Deep-Inspect in REA Reverse Engineering" onclick="event.stopPropagation(); openHarEntryInRea(${originalIndex});" style="font-size: 10.5px; padding: 3px 7px; border-radius: 4px; cursor: pointer; margin-left: 4px;">
+                        🔬
                     </button>
                 </td>
             </tr>
@@ -395,6 +403,12 @@ function inspectHarEntryRow(idx) {
         const reqBytes = parseInt(entry.request_bytes, 10) || 0;
         const respBytes = parseInt(entry.response_bytes, 10) || 0;
         const duration = parseFloat(entry.duration_ms) || 0.0;
+        const reaDecision = entry.rea_voter_decision || 'VETO_BENIGN';
+        const reaReason = entry.rea_voter_reason || 'Veto [REA-Voter]: Verified clean HAR L7 HTTP transaction';
+        const ojevDecision = entry.openjev_voter_decision || 'VETO_BENIGN';
+        const ojevReason = entry.openjev_voter_reason || 'Veto [OpenJEV-Voter]: Zero credential/PII exfiltration risk';
+        const reaClass = entry.rea_artifact_class || 'http_transaction';
+        const reaSeal = entry.rea_seal_blake3 || hash;
         grid.innerHTML = `
             <div>
                 <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Host / Domain</strong>
@@ -418,12 +432,20 @@ function inspectHarEntryRow(idx) {
             </div>
             <div>
                 <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Threat Tags &amp; Classification</strong>
-                <div>${escapeHtml(entry.threat_tags || 'None / Safe Lineage')}</div>
+                <div>${escapeHtml(entry.threat_tags || 'None / Safe Lineage')} (${escapeHtml(reaClass)})</div>
+            </div>
+            <div>
+                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">[REA-Voter] Verdict</strong>
+                <div title="${escapeHtml(reaReason)}"><span class="badge ${reaDecision === 'ESCALATE_MALICIOUS' ? 'red' : 'green'}">${escapeHtml(reaDecision)}</span></div>
+            </div>
+            <div>
+                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">[OpenJEV-Voter] DLP Verdict</strong>
+                <div title="${escapeHtml(ojevReason)}"><span class="badge ${ojevDecision === 'ESCALATE_MALICIOUS' ? 'red' : 'blue'}">${escapeHtml(ojevDecision)}</span></div>
             </div>
             <div style="grid-column: 1 / -1;">
-                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">BLAKE3 FileLineageTracker Digest</strong>
+                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">BLAKE3 FileLineageTracker &amp; REA Seal Digest</strong>
                 <div style="font-family: monospace; font-size: 11.5px; background: rgba(0,0,0,0.4); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--glass-border); word-break: break-all; color: #38bdf8;">
-                    ${escapeHtml(hash)}
+                    Lineage: ${escapeHtml(hash)} | REA Seal: ${escapeHtml(reaSeal)}
                 </div>
             </div>
         `;
@@ -443,6 +465,25 @@ function openSelectedHarInSiquery() {
     if (state.selectedHarEntry && state.selectedHarEntry.host) {
         openHarHostInSiquery(state.selectedHarEntry.host);
     }
+}
+
+function openHarEntryInRea(idx) {
+    const entry = (typeof idx === 'number' && state.harEntries?.[idx]) ? state.harEntries[idx] : state.selectedHarEntry;
+    const srcFile = entry?.source_file || '';
+    const targetPath = (srcFile.toLowerCase().endsWith('.har') || srcFile.toLowerCase().endsWith('.json'))
+        ? srcFile
+        : 'logs/live_web_traffic.har';
+
+    window.location.hash = '#rea';
+    setTimeout(() => {
+        const inputEl = document.getElementById('rea-target-input');
+        const selectEl = document.getElementById('rea-kind-select');
+        if (inputEl) inputEl.value = targetPath;
+        if (selectEl) selectEl.value = 'network_capture';
+        if (typeof window.runReaAnalysis === 'function') {
+            window.runReaAnalysis();
+        }
+    }, 120);
 }
 
 function toggleHarAutoUpdate() {
@@ -590,7 +631,10 @@ async function exportLiveHarFile() {
                         hash_blake3: computeHarBlake3Fingerprint(entry),
                         threat_score: entry.threat_score || 0.0,
                         threat_tags: entry.threat_tags || '',
-                        verdict: entry.verdict || 'benign'
+                        verdict: entry.verdict || 'benign',
+                        rea_voter_decision: entry.rea_voter_decision || 'VETO_BENIGN',
+                        openjev_voter_decision: entry.openjev_voter_decision || 'VETO_BENIGN',
+                        rea_seal_blake3: entry.rea_seal_blake3 || ''
                     }
                 };
             });
@@ -652,6 +696,7 @@ window.ensureHarContinuousPolling = ensureHarContinuousPolling;
 window.inspectHarEntryRow = inspectHarEntryRow;
 window.closeHarInspector = closeHarInspector;
 window.openSelectedHarInSiquery = openSelectedHarInSiquery;
+window.openHarEntryInRea = openHarEntryInRea;
 window.toggleHarAutoUpdate = toggleHarAutoUpdate;
 window.refreshHarTrafficNow = refreshHarTrafficNow;
 window.handleHarFileUpload = handleHarFileUpload;
