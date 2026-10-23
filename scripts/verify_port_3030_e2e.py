@@ -473,6 +473,22 @@ def test_endpoints():
         assert "osoosi_token=" in set_cookie and "HttpOnly" in set_cookie, f"Missing HttpOnly osoosi_token cookie: {set_cookie}"
         print(f" [PASS] POST /api/auth/login (username='admin') -> HTTP {resp.status} ({elapsed_ms:6.2f} ms), Set-Cookie HttpOnly verified")
 
+    dc_body = json.dumps({"mode": "standard"}).encode("utf-8")
+    dc_req = urllib.request.Request(
+        f"{BASE_URL}/api/disk-cleanup/run",
+        data=dc_body,
+        headers={**headers, "Content-Type": "application/json"},
+        method="POST",
+    )
+    dc_t0 = time.perf_counter()
+    with urllib.request.urlopen(dc_req, timeout=10) as resp:
+        dc_ms = (time.perf_counter() - dc_t0) * 1000.0
+        dc_data = json.loads(resp.read().decode("utf-8"))
+        assert resp.status == 200
+        assert dc_data.get("status") == "ok"
+        assert len(dc_data.get("tiers", [])) == 5
+        print(f" [PASS] POST /api/disk-cleanup/run   -> HTTP {resp.status} ({dc_ms:6.2f} ms, 5 tiers verified, Free={dc_data.get('drive_free_gb_after')} GB)")
+
     print("\n" + "="*70)
     print(" ALL END-TO-END VERIFICATIONS PASSED (100% HEALTH, LATENCY SLA & PARITY)")
     print("="*70 + "\n")

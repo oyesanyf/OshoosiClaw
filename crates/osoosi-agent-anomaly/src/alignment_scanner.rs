@@ -987,8 +987,12 @@ impl RuntimeAlignmentScanner {
                 / 1000.0;
         let intent_alignment_score = combined_score.clamp(0.0, 1.0);
 
-        let prev_score = pinned.last_alignment_score;
         let step_index = pinned.step_count + 1;
+        let prev_score = if step_index == 1 && !pinned.untrusted_taint && tier1.passed && tier2.is_aligned {
+            intent_alignment_score
+        } else {
+            pinned.last_alignment_score
+        };
         let drift_velocity = ((intent_alignment_score - prev_score) * 1000.0).round() / 1000.0;
 
         // Update session state
@@ -1208,8 +1212,12 @@ impl RuntimeAlignmentScanner {
                 .round()
                 / 1000.0;
         let intent_alignment_score = combined_score.clamp(0.0, 1.0);
-        let prev_score = pinned.last_alignment_score;
         let step_index = pinned.step_count + 1;
+        let prev_score = if step_index == 1 && !pinned.untrusted_taint && tier1.passed && tier2.is_aligned {
+            intent_alignment_score
+        } else {
+            pinned.last_alignment_score
+        };
         let drift_velocity = ((intent_alignment_score - prev_score) * 1000.0).round() / 1000.0;
 
         if let Some(mut sess) = self.pinned_sessions.get_mut(&session_id) {
@@ -1768,9 +1776,67 @@ impl RuntimeAlignmentScanner {
             })
             .collect();
 
+        // Compute Longitudinal Statistical Distribution Drift (PSI, Wasserstein-1 W1, Page-Hinkley)
+        // Reference baseline distribution P_ref (5 bins over [0.0, 1.0]: [0..0.2), [0.2..0.4), [0.4..0.6), [0.6..0.8), [0.8..1.0])
+        let p_ref = [0.02_f64, 0.03, 0.05, 0.15, 0.75];
+        let mut q_counts = [0usize; 5];
+        for t in &traces {
+            let s = t.intent_alignment_score.clamp(0.0, 1.0);
+            let idx = if s < 0.2 {
+                0
+            } else if s < 0.4 {
+                1
+            } else if s < 0.6 {
+                2
+            } else if s < 0.8 {
+                3
+            } else {
+                4
+            };
+            q_counts[idx] += 1;
+        }
+        let n_float = (total_traces.max(1)) as f64;
+        let mut psi = 0.0_f64;
+        let mut w1 = 0.0_f64;
+        let mut cdf_p = 0.0_f64;
+        let mut cdf_q = 0.0_f64;
+        for i in 0..5 {
+            let p_i = p_ref[i].max(1e-4);
+            let q_i = ((q_counts[i] as f64) / n_float).max(1e-4);
+            psi += (q_i - p_i) * (q_i / p_i).ln();
+            cdf_p += p_i;
+            cdf_q += q_i;
+            w1 += (cdf_p - cdf_q).abs() * 0.20;
+        }
+        let psi_rounded = (psi * 1000.0).round() / 1000.0;
+        let w1_rounded = (w1 * 1000.0).round() / 1000.0;
+
+        // Page-Hinkley sequential change-point statistic for negative alignment shift
+        let delta_ph = 0.02_f64;
+        let mut cum_mean = 0.0_f64;
+        let mut u_t = 0.0_f64;
+        let mut max_u_t = 0.0_f64;
+        for (idx, t) in traces.iter().rev().enumerate() {
+            let k = (idx + 1) as f64;
+            let x = t.intent_alignment_score;
+            cum_mean = cum_mean + (x - cum_mean) / k;
+            u_t += cum_mean - x - delta_ph;
+            if u_t > max_u_t {
+                max_u_t = u_t;
+            }
+        }
+        let ph_stat = ((max_u_t - u_t).abs() * 1000.0).round() / 1000.0;
+        let statistical_drift_status = if psi_rounded >= 0.25 {
+            "SIGNIFICANT_COVARIATE_SHIFT (PSI >= 0.25)"
+        } else if psi_rounded >= 0.10 {
+            "MODERATE_DISTRIBUTION_DRIFT (0.10 <= PSI < 0.25)"
+        } else {
+            "STATIONARY_DISTRIBUTION (PSI < 0.10)"
+        };
+
         serde_json::json!({
             "status": "active",
-            "pattern": "LlamaFirewall AlignmentCheck + Langfuse/Phoenix Longitudinal Drift",
+            "pattern": "LlamaFirewall AlignmentCheck (Intra-Session Trajectory Drift) + Langfuse/Phoenix Statistical Distribution Drift",
             "tier1_engine": "Sub-ms Rust Structural & EmbeddingGemma-2 128-dim Intent Scanner",
             "tier2_engine": format!("Local Ollama Judge ({}) — Zero Together API Dependency", self.ollama_base_url),
             "external_cloud_dependency": false,
@@ -1784,6 +1850,23 @@ impl RuntimeAlignmentScanner {
             "mean_intent_alignment_score": mean_alignment_score,
             "mean_drift_velocity": mean_drift_velocity,
             "peak_negative_drift_velocity": peak_negative_drift_velocity,
+            "intra_session_trajectory_drift": {
+                "metric_name": "Step-by-Step Semantic Goal Divergence (Δalignment / Δstep)",
+                "formula": "v_t = alignment(step_t) - alignment(step_{t-1}), anchored at Step 1",
+                "mean_step_velocity": mean_drift_velocity,
+                "peak_negative_step_velocity": peak_negative_drift_velocity,
+                "step_up_warnings": drift_warning_count,
+                "quarantine_blocks": hijack_blocked_count
+            },
+            "longitudinal_statistical_drift": {
+                "metric_name": "Cross-Session Population & Covariate Distribution Drift",
+                "population_stability_index_psi": psi_rounded,
+                "wasserstein_1_distance_w1": w1_rounded,
+                "page_hinkley_change_point_stat": ph_stat,
+                "distribution_status": statistical_drift_status,
+                "reference_baseline_mean": 0.895,
+                "current_window_mean": mean_alignment_score
+            },
             "siquery_table": "agent_drift_traces",
             "siquery_sample_sql": "SELECT * FROM agent_drift_traces ORDER BY id DESC LIMIT 100;",
             "drift_by_arm": arm_breakdown,

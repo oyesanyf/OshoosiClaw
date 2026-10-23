@@ -4921,8 +4921,196 @@ impl SiqueryEngine {
         profiles
     }
 
-    /// Evaluates URL risk for browser history scoring.
-    fn score_url_risk(url: &str) -> (f64, &'static str) {
+    /// Classifies whether a hostname or IP belongs to local loopback / RFC 1918 private space
+    /// or a verified cloud/developer Autonomous System Number (ASN) range (GitHub, Cloudflare,
+    /// Google/Antigravity, Microsoft/Azure/Windows Update, AWS/Fastly/Docker/PyPI/NIST/DigiCert).
+    pub fn classify_trusted_asn_or_local_endpoint(host: &str, server_ip: &str) -> Option<&'static str> {
+        let h_low = host
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+        let ip_low = server_ip
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
+
+        // 1. Loopback & RFC 1918 local network
+        if h_low == "localhost"
+            || h_low == "127.0.0.1"
+            || h_low == "::1"
+            || h_low.starts_with("127.")
+            || ip_low == "localhost"
+            || ip_low == "127.0.0.1"
+            || ip_low == "::1"
+            || ip_low.starts_with("127.")
+        {
+            return Some("LOCAL_LOOPBACK_IPC");
+        }
+
+        for cand in [h_low.as_str(), ip_low.as_str()] {
+            if let Ok(ip4) = cand.parse::<Ipv4Addr>() {
+                if ip4.is_loopback() || ip4.is_private() {
+                    return Some("LOCAL_LOOPBACK_OR_RFC1918");
+                }
+            }
+            if let Ok(ip6) = cand.parse::<Ipv6Addr>() {
+                if ip6.is_loopback() || (ip6.segments()[0] & 0xfe00) == 0xfc00 || (ip6.segments()[0] & 0xffc0) == 0xfe80 {
+                    return Some("LOCAL_LOOPBACK_OR_RFC1918");
+                }
+            }
+        }
+
+        // 2. Trusted domain suffixes
+        let github_domains = [
+            "github.com",
+            "githubusercontent.com",
+            "githubassets.com",
+            "ghcr.io",
+            "github.io",
+        ];
+        if github_domains
+            .iter()
+            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
+        {
+            return Some("ASN36459:GitHub");
+        }
+
+        let google_domains = [
+            "google.com",
+            "googleapis.com",
+            "gstatic.com",
+            "googleusercontent.com",
+            "gvt1.com",
+            "gvt2.com",
+            "1e100.net",
+            "antigravity-unleash.goog",
+        ];
+        if google_domains
+            .iter()
+            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
+            || h_low.ends_with(".goog")
+        {
+            return Some("ASN15169:Google-Cloud");
+        }
+
+        let msft_domains = [
+            "microsoft.com",
+            "windowsupdate.com",
+            "azure.com",
+            "windows.net",
+            "office.com",
+            "office365.com",
+            "live.com",
+            "bing.com",
+            "msftconnecttest.com",
+            "msftncsi.com",
+            "msedge.net",
+            "sfx.ms",
+            "trafficmanager.net",
+            "visualstudio.com",
+            "vsassets.io",
+            "aka.ms",
+        ];
+        if msft_domains
+            .iter()
+            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
+        {
+            return Some("ASN8075:Microsoft-Azure");
+        }
+
+        let cf_domains = ["cloudflare.com", "cloudflare-dns.com", "cloudflareclient.com"];
+        if cf_domains
+            .iter()
+            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
+        {
+            return Some("ASN13335:Cloudflare");
+        }
+
+        let infra_domains = [
+            "docker.com",
+            "docker.io",
+            "pypi.org",
+            "pythonhosted.org",
+            "crates.io",
+            "rust-lang.org",
+            "digicert.com",
+            "nist.gov",
+            "npmjs.org",
+            "npmjs.com",
+            "huggingface.co",
+            "ollama.com",
+            "mozilla.org",
+            "firefox.com",
+            "brave.com",
+            "ubuntu.com",
+            "debian.org",
+        ];
+        if infra_domains
+            .iter()
+            .any(|d| h_low == *d || h_low.ends_with(&format!(".{}", d)))
+        {
+            return Some("ASN_TRUSTED_DEV_INFRA");
+        }
+
+        // 3. Trusted ASN IPv4 CIDR prefixes (when reverse DNS / SNI was not cached)
+        for cand in [ip_low.as_str(), h_low.as_str()] {
+            if let Ok(ip4) = cand.parse::<Ipv4Addr>() {
+                let [a, b, c, _d] = ip4.octets();
+                // GitHub AS36459 (140.82.112.0/20, 192.30.252.0/22, 185.199.108.0/22, 20.205.243.0/24)
+                if (a == 140 && b == 82 && (112..=127).contains(&c))
+                    || (a == 192 && b == 30 && (252..=255).contains(&c))
+                    || (a == 185 && b == 199 && (108..=111).contains(&c))
+                    || (a == 20 && b == 205 && c == 243)
+                {
+                    return Some("ASN36459:GitHub");
+                }
+                // Cloudflare AS13335 (104.16.0.0/12, 172.64.0.0/13, 162.158.0.0/15, 108.162.192.0/18, 1.1.1.1, 1.0.0.1)
+                if (a == 104 && (16..=31).contains(&b))
+                    || (a == 172 && (64..=71).contains(&b))
+                    || (a == 162 && (158..=159).contains(&b))
+                    || (a == 108 && b == 162 && c >= 192)
+                    || (a == 1 && (b == 1 || b == 0) && c == 1)
+                {
+                    return Some("ASN13335:Cloudflare");
+                }
+                // Google / GCP AS15169 / AS396982 (142.250.0.0/15, 172.217.0.0/16, 172.253.0.0/16, 74.125.0.0/16, 34.0.0.0/9, 35.184.0.0/13, 8.8.8.8, 8.8.4.4)
+                if (a == 142 && (250..=251).contains(&b))
+                    || (a == 172 && (b == 217 || b == 253))
+                    || (a == 74 && b == 125)
+                    || (a == 34 && b < 128)
+                    || (a == 35 && (184..=247).contains(&b))
+                    || (a == 8 && b == 8 && (c == 8 || c == 4))
+                {
+                    return Some("ASN15169:Google-Cloud");
+                }
+                // Microsoft / Azure AS8075 (13.64.0.0/11, 20.0.0.0/8, 40.64.0.0/10, 52.96.0.0/12, 52.104.0.0/14, 204.79.197.0/24)
+                if (a == 13 && (64..=107).contains(&b))
+                    || a == 20
+                    || (a == 40 && (64..=127).contains(&b))
+                    || (a == 52 && (96..=191).contains(&b))
+                    || (a == 204 && b == 79 && c == 197)
+                {
+                    return Some("ASN8075:Microsoft-Azure");
+                }
+                // Fastly / AWS / Docker Hub / PyPI / NVD (151.101.0.0/16, 18.0.0.0/8, 54.0.0.0/8, 3.0.0.0/8, 52.0.0.0/10)
+                if (a == 151 && b == 101)
+                    || a == 18
+                    || a == 54
+                    || a == 3
+                    || (a == 52 && b < 96)
+                {
+                    return Some("ASN14618:AWS-Fastly-Infra");
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Evaluates URL risk for browser history and HAR scoring.
+    pub fn score_url_risk(url: &str) -> (f64, &'static str) {
         let lower = url.to_ascii_lowercase();
         let host = if let Ok(parsed) = url::Url::parse(url) {
             parsed.host_str().unwrap_or("").to_string()
@@ -4938,23 +5126,41 @@ impl SiqueryEngine {
                 .unwrap_or("")
                 .to_string()
         };
-        let host_lower = host.to_ascii_lowercase();
+        let host_lower = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_ascii_lowercase();
 
-        // 1. SSRF & Cloud Metadata
-        let ssrf_targets = [
+        // 1. Cloud Metadata SSRF (169.254.169.254, metadata.google.internal, 100.100.100.200)
+        // OR external URL with SSRF query redirect parameter targeting loopback/metadata
+        let cloud_metadata_targets = [
             "169.254.169.254",
             "metadata.google.internal",
             "100.100.100.200",
-            "127.0.0.1",
-            "[::1]",
-            "localhost",
         ];
-        if ssrf_targets
+        if cloud_metadata_targets
             .iter()
             .any(|t| host_lower == *t || lower.contains(&format!("://{}", t)))
             || host_lower.starts_with("169.254.")
         {
             return (0.92, "malicious");
+        }
+
+        // Check if an external host has an SSRF redirect/fetch parameter pointing to loopback
+        let is_local_host = matches!(
+            Self::classify_trusted_asn_or_local_endpoint(&host_lower, &host_lower),
+            Some("LOCAL_LOOPBACK_IPC") | Some("LOCAL_LOOPBACK_OR_RFC1918")
+        );
+        if !is_local_host {
+            if let Some(query_part) = lower.split_once('?').map(|(_, q)| q) {
+                if query_part.contains("127.0.0.1")
+                    || query_part.contains("localhost")
+                    || query_part.contains("169.254.169.254")
+                    || query_part.contains("[::1]")
+                {
+                    return (0.92, "malicious");
+                }
+            }
         }
 
         // 2. Exfiltration Sinks
@@ -4966,6 +5172,7 @@ impl SiqueryEngine {
             "ngrok",
             "interactsh",
             "pipedream.net",
+            "attacker-c2.net",
         ];
         if exfil_sinks.iter().any(|sink| host_lower.contains(sink)) {
             return (0.90, "malicious");
@@ -5021,8 +5228,11 @@ impl SiqueryEngine {
             }
         }
 
-        // 6. Cleartext HTTP to Raw Public IP
-        if lower.starts_with("http://") && host.parse::<std::net::IpAddr>().is_ok() {
+        // 6. Cleartext HTTP to Raw Public IP (exempt local loopback, RFC 1918, and trusted ASNs)
+        if lower.starts_with("http://")
+            && host_lower.parse::<std::net::IpAddr>().is_ok()
+            && Self::classify_trusted_asn_or_local_endpoint(&host_lower, &host_lower).is_none()
+        {
             return (0.55, "suspicious");
         }
 
@@ -5363,7 +5573,7 @@ impl SiqueryEngine {
                 path,
                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
             ) {
-                if let Ok(mut src_stmt) = src_conn.prepare("SELECT source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict FROM har_entries ORDER BY id DESC LIMIT 500;") {
+                if let Ok(mut src_stmt) = src_conn.prepare("SELECT source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict FROM har_entries WHERE source_file NOT LIKE 'active_socket:%' ORDER BY id DESC LIMIT 500;") {
                     if let Ok(rows) = src_stmt.query_map([], |row| {
                         Ok((
                             row.get::<_, String>(0).unwrap_or_default(),
@@ -5383,8 +5593,15 @@ impl SiqueryEngine {
                         ))
                     }) {
                         for r in rows.filter_map(|r| r.ok()) {
+                            let (mut score, mut verdict) = (r.11, r.13.clone());
+                            // Re-verify persisted non-poisoned rows against calibrated URL & ASN rules
+                            if !r.12.contains("SWARM_POISONED_LINEAGE") {
+                                let (re_score, re_verdict) = Self::score_url_risk(&r.3);
+                                score = re_score;
+                                verdict = re_verdict.to_string();
+                            }
                             let _ = insert_stmt.execute(rusqlite::params![
-                                r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, r.11, r.12, r.13
+                                r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, score, r.12, verdict
                             ]);
                             count += 1;
                         }
@@ -5778,7 +5995,7 @@ impl SiqueryEngine {
 
             let candidate_ports = [80, 443, 8000, 8080, 8443, 8888, 3000, 3030, 5000, 5173, 9000, 11434];
 
-            // Ingest IPv4 TCP sockets
+            // Ingest IPv4 TCP sockets (mapped with distinct TCP/TLS transport metadata rather than synthetic HTTP CONNECT + octet-stream)
             let tcp4 = get_tcp_ipv4_table();
             for row in tcp4 {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
@@ -5805,28 +6022,52 @@ impl SiqueryEngine {
                     Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
                     _ => "active_socket:tcp".to_string(),
                 };
-                let scheme = if web_port == 443 || web_port == 8443 { "https" } else { "http" };
+                let is_tls_port = web_port == 443 || web_port == 8443;
+                let asn_trust = Self::classify_trusted_asn_or_local_endpoint(&host, &remote_ip);
+                let is_loopback_or_private = matches!(
+                    asn_trust,
+                    Some("LOCAL_LOOPBACK_IPC") | Some("LOCAL_LOOPBACK_OR_RFC1918")
+                );
+                let scheme = if is_tls_port { "https" } else { "http" };
+                let protocol_label = if is_tls_port {
+                    "TCP/TLS"
+                } else if is_loopback_or_private {
+                    "TCP/LOCAL"
+                } else {
+                    "TCP"
+                };
+                let transport_mime = if is_tls_port {
+                    "transport/tls-socket"
+                } else if is_loopback_or_private {
+                    "transport/local-ipc"
+                } else {
+                    "transport/tcp-socket"
+                };
                 let url = format!("{}://{}:{}/", scheme, host, web_port);
                 let (mut score, mut verdict) = Self::score_url_risk(&url);
-                // For local loopback 127.0.0.1:3030 or 127.0.0.1:11434 on active local sockets,
-                // keep score 0.0 / "benign" unless path has suspicious tokens.
-                if (remote_ip == "127.0.0.1" || host == "localhost") && (web_port == 3030 || web_port == 11434 || web_port == 3000 || web_port == 5000) {
+                if asn_trust.is_some() {
                     score = 0.0;
                     verdict = "benign";
                 }
-                let threat_tags = if score > 0.0 { "SUSPICIOUS_SOCKET" } else { "" };
+                let threat_tags = if score > 0.0 {
+                    "SUSPICIOUS_SOCKET"
+                } else if let Some(tag) = asn_trust {
+                    tag
+                } else {
+                    "LIVE_OS_SOCKET"
+                };
                 let _ = insert_stmt.execute(rusqlite::params![
                     source_file,
                     chrono::Utc::now().to_rfc3339(),
-                    "CONNECT",
+                    protocol_label,
                     url,
                     host,
                     200i64,
-                    "application/octet-stream",
+                    transport_mime,
                     remote_ip,
-                    1024i64,
-                    4096i64,
-                    10.0f64,
+                    0i64,
+                    0i64,
+                    0.0f64,
                     score,
                     threat_tags,
                     verdict,
@@ -5834,7 +6075,7 @@ impl SiqueryEngine {
                 count += 1;
             }
 
-            // Ingest IPv6 TCP sockets
+            // Ingest IPv6 TCP sockets (mapped with distinct TCP/TLS transport metadata)
             let tcp6 = get_tcp_ipv6_table();
             for row in tcp6 {
                 let remote_port = u16::from_be(row.dwRemotePort as u16);
@@ -5861,7 +6102,27 @@ impl SiqueryEngine {
                     Some(pname) if !pname.is_empty() => format!("active_socket:{}", pname),
                     _ => "active_socket:tcp6".to_string(),
                 };
-                let scheme = if web_port == 443 || web_port == 8443 { "https" } else { "http" };
+                let is_tls_port = web_port == 443 || web_port == 8443;
+                let asn_trust = Self::classify_trusted_asn_or_local_endpoint(&host, &remote_ip);
+                let is_loopback_or_private = matches!(
+                    asn_trust,
+                    Some("LOCAL_LOOPBACK_IPC") | Some("LOCAL_LOOPBACK_OR_RFC1918")
+                );
+                let scheme = if is_tls_port { "https" } else { "http" };
+                let protocol_label = if is_tls_port {
+                    "TCP/TLS"
+                } else if is_loopback_or_private {
+                    "TCP/LOCAL"
+                } else {
+                    "TCP"
+                };
+                let transport_mime = if is_tls_port {
+                    "transport/tls-socket"
+                } else if is_loopback_or_private {
+                    "transport/local-ipc"
+                } else {
+                    "transport/tcp-socket"
+                };
                 let host_bracketed = if host.contains(':') && !host.starts_with('[') {
                     format!("[{}]", host)
                 } else {
@@ -5869,23 +6130,29 @@ impl SiqueryEngine {
                 };
                 let url = format!("{}://{}:{}/", scheme, host_bracketed, web_port);
                 let (mut score, mut verdict) = Self::score_url_risk(&url);
-                if (remote_ip == "::1" || host == "localhost") && (web_port == 3030 || web_port == 11434 || web_port == 3000 || web_port == 5000) {
+                if asn_trust.is_some() {
                     score = 0.0;
                     verdict = "benign";
                 }
-                let threat_tags = if score > 0.0 { "SUSPICIOUS_SOCKET" } else { "" };
+                let threat_tags = if score > 0.0 {
+                    "SUSPICIOUS_SOCKET"
+                } else if let Some(tag) = asn_trust {
+                    tag
+                } else {
+                    "LIVE_OS_SOCKET"
+                };
                 let _ = insert_stmt.execute(rusqlite::params![
                     source_file,
                     chrono::Utc::now().to_rfc3339(),
-                    "CONNECT",
+                    protocol_label,
                     url,
                     host,
                     200i64,
-                    "application/octet-stream",
+                    transport_mime,
                     remote_ip,
-                    1024i64,
-                    4096i64,
-                    10.0f64,
+                    0i64,
+                    0i64,
+                    0.0f64,
                     score,
                     threat_tags,
                     verdict,

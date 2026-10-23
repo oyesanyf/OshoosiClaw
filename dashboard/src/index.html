@@ -2675,14 +2675,14 @@
                             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                                 <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
                                     <i data-lucide="compass" style="width: 18px; height: 18px; color: #10b981;"></i>
-                                    Runtime Trace-Alignment Scanner &amp; Longitudinal Drift Telemetry
+                                    Runtime Semantic Trajectory Drift &amp; Statistical Distribution Drift Telemetry
                                 </h4>
-                                <span class="badge green" style="font-size: 11px;">LlamaFirewall AlignmentCheck</span>
+                                <span class="badge green" style="font-size: 11px;">Intra-Session Trajectory (&Delta;align/&Delta;step)</span>
                                 <span class="badge blue" style="font-size: 11px;">Tier-1 Rust + Tier-2 Local Ollama (Zero Together API)</span>
-                                <span class="badge purple" style="font-size: 11px;">Langfuse / Phoenix Drift d(align)/dt</span>
+                                <span class="badge purple" style="font-size: 11px;">Longitudinal Distribution Drift (PSI / W<sub>1</sub> / Page-Hinkley)</span>
                             </div>
                             <p style="color: var(--text-secondary); font-size: 12px; margin: 4px 0 0 0;">
-                                Cryptographic BLAKE3 session intent pinning &middot; 128-dim EmbeddingGemma-2 semantic trajectory &middot; Local enclave judge (`127.0.0.1:11434`) &middot; Siquery table: <code>agent_drift_traces</code>
+                                Step-by-step intra-session goal divergence (&Delta;alignment/&Delta;step anchored at Step 1) + cross-session statistical covariate shift (PSI &amp; Wasserstein-1 W<sub>1</sub>) &middot; Siquery table: <code>agent_drift_traces</code>
                             </p>
                         </div>
                         <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
@@ -2720,9 +2720,14 @@
                                 <div style="font-size: 11px; color: var(--text-muted);">Range [0.00, 1.00]</div>
                             </div>
                             <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 14px;">
-                                <div style="font-size: 11px; font-weight: 600; color: #f59e0b; text-transform: uppercase;">Peak Drift Velocity</div>
+                                <div style="font-size: 11px; font-weight: 600; color: #f59e0b; text-transform: uppercase;">Intra-Session Step Velocity</div>
                                 <div id="align-kpi-drift-vel" style="font-size: 18px; font-weight: 700; color: #f59e0b; margin-top: 3px; font-family: monospace;">-0.780 / step</div>
-                                <div style="font-size: 11px; color: var(--text-muted);">d(alignment)/dt</div>
+                                <div style="font-size: 11px; color: var(--text-muted);">&Delta;alignment / &Delta;step</div>
+                            </div>
+                            <div style="background: rgba(14, 165, 233, 0.08); border: 1px solid rgba(14, 165, 233, 0.25); border-radius: 8px; padding: 10px 14px;">
+                                <div style="font-size: 11px; font-weight: 600; color: #38bdf8; text-transform: uppercase;">Longitudinal Stat Drift</div>
+                                <div id="align-kpi-stat-psi" style="font-size: 18px; font-weight: 700; color: #38bdf8; margin-top: 3px; font-family: monospace;">PSI 0.142</div>
+                                <div id="align-kpi-stat-w1" style="font-size: 11px; color: var(--text-muted);">W<sub>1</sub>=0.084 &middot; Page-Hinkley</div>
                             </div>
                             <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 10px 14px;">
                                 <div style="font-size: 11px; font-weight: 600; color: #ef4444; text-transform: uppercase;">Tier-1 Structural Blocks</div>
