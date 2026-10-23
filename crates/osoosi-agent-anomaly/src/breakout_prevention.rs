@@ -204,22 +204,20 @@ impl OsConfinementVerifier {
                         side_effect_counter.fetch_add(1, Ordering::SeqCst);
                     }
                     let code = outcome.exit_code.unwrap_or(0) as u32;
-                    return (
+                    (
                         outcome.canary_triggered,
                         code,
                         format!(
                             "Windows CanaryCage Job Object (CREATE_SUSPENDED -> AssignProcessToJobObject -> IsProcessInJob==TRUE) terminated child PID with exit_code={} on honey-pipe trap",
                             code
                         ),
-                    );
+                    )
                 }
-                Err(e) => {
-                    return (
-                        true,
-                        137,
-                        format!("CanaryCage confinement enforcement: {}", e),
-                    );
-                }
+                Err(e) => (
+                    true,
+                    137,
+                    format!("CanaryCage confinement enforcement: {}", e),
+                ),
             }
         }
 
