@@ -23,8 +23,11 @@ pub mod kill_switch;
 pub mod memory_limiter;
 pub mod native_host;
 pub mod security;
+pub mod windows;
 
+pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url};
 pub use security::SandboxSecurityConfig;
+
 
 /// Configuration for a sandbox execution.
 #[derive(Debug, Clone)]
@@ -628,3 +631,159 @@ fn analyze_syscall_sequence(sequence: &[String]) -> bool {
     }
     false
 }
+
+/// Validates and joins a candidate relative path inside a sandbox root, defending against:
+/// 1. `Path::join` replacement via absolute paths, drive letters (`C:\`), or leading slashes/backslashes.
+/// 2. UNC network paths (`\\server\share`).
+/// 3. Percent-encoded traversal (`%2e`, `%2f`, `%5c`, `%00`) or null bytes.
+/// 4. NTFS Alternate Data Streams (`report.txt:hidden_stream`).
+/// 5. Parent directory traversal (`..` / `Component::ParentDir`).
+pub fn validate_sandbox_relative_path(
+    sandbox_root: &std::path::Path,
+    candidate_rel: &str,
+) -> Result<PathBuf, String> {
+    let trimmed = candidate_rel.trim();
+    if trimmed.is_empty() {
+        return Err("Empty sandbox path rejected".to_string());
+    }
+    if trimmed.contains('\0') {
+        return Err("Null byte in path rejected".to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    for encoded in ["%2e", "%2f", "%5c", "%00"] {
+        if lower.contains(encoded) {
+            return Err(format!(
+                "Percent-encoded traversal sequence '{}' rejected",
+                encoded
+            ));
+        }
+    }
+    if trimmed.starts_with('/') || trimmed.starts_with('\\') {
+        return Err("Leading slash/backslash or UNC path rejected (Path::join replacement defense)".to_string());
+    }
+    if trimmed.contains(':') {
+        return Err(
+            "Drive letter or NTFS Alternate Data Stream (':') rejected (Path::join replacement defense)"
+                .to_string(),
+        );
+    }
+
+    let rel_path = std::path::Path::new(trimmed);
+    if rel_path.is_absolute() {
+        return Err("Absolute path rejected (Path::join replacement defense)".to_string());
+    }
+    for comp in rel_path.components() {
+        match comp {
+            std::path::Component::Normal(seg) => {
+                let s = seg.to_string_lossy();
+                if s.contains("..") || s.contains(':') {
+                    return Err(format!("Disallowed path segment '{}' rejected", s));
+                }
+            }
+            std::path::Component::CurDir => {}
+            _ => {
+                return Err(format!(
+                    "Disallowed non-normal path component '{:?}' rejected",
+                    comp
+                ));
+            }
+        }
+    }
+    Ok(sandbox_root.join(rel_path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+    use std::path::Path;
+
+    #[test]
+    fn test_vector3_sandbox_path_join_replacement_and_traversal_blocked() {
+        let root = Path::new("/tmp/sandbox_workspace");
+        // Absolute path / drive letter (Path::join replacement attack)
+        assert!(validate_sandbox_relative_path(root, r"C:\Windows\System32\config\SAM").is_err());
+        assert!(validate_sandbox_relative_path(root, "/etc/shadow").is_err());
+        // UNC path
+        assert!(validate_sandbox_relative_path(root, r"\\10.0.0.5\c$\secrets.txt").is_err());
+        // Percent-encoded traversal & null byte
+        assert!(validate_sandbox_relative_path(root, "..%2f..%2fetc/passwd").is_err());
+        assert!(validate_sandbox_relative_path(root, "%2e%2e%5cWindows%5cwin.ini").is_err());
+        assert!(validate_sandbox_relative_path(root, "report.txt%00.png").is_err());
+        // NTFS Alternate Data Stream
+        assert!(validate_sandbox_relative_path(root, "report.txt:hidden_ads").is_err());
+        // ParentDir traversal
+        assert!(validate_sandbox_relative_path(root, "../../etc/passwd").is_err());
+        // Valid relative path allowed
+        let ok_path = validate_sandbox_relative_path(root, "reports/summary.json")
+            .expect("normal relative path must succeed");
+        assert!(ok_path.ends_with("summary.json"));
+    }
+
+    #[test]
+    fn test_vector4_mathematical_ipv4_ipv6_ssrf_blocked() {
+        // Cloud metadata IMDSv1/v2
+        assert!(is_ssrf_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(is_ssrf_url("http://[::ffff:169.254.169.254]/latest/meta-data/").is_err());
+        assert!(is_ssrf_url("http://metadata.google.internal/computeMetadata/v1/").is_err());
+        // Loopback & Ollama/Dashboard local ports
+        assert!(is_ssrf_url("http://127.0.0.1:11434/api/tags").is_err());
+        assert!(is_ssrf_url("http://localhost:3030/api/status").is_err());
+        assert!(is_ssrf_url("http://[::1]:3030/api/status").is_err());
+        // RFC1918 private networks
+        assert!(is_ssrf_url("http://10.0.0.1/admin").is_err());
+        assert!(is_ssrf_url("http://172.16.5.4/internal").is_err());
+        assert!(is_ssrf_url("http://192.168.1.1/router").is_err());
+        // Carrier-Grade NAT (CGNAT 100.64.0.0/10)
+        assert!(is_ssrf_url("http://100.64.0.1/mesh").is_err());
+        assert!(is_ssrf_url("http://100.127.255.254/mesh").is_err());
+        // IPv6 Unique Local (fc00::/7) and Link-Local (fe80::/10)
+        assert!(is_ssrf_ip("fc00::1".parse::<IpAddr>().unwrap()));
+        assert!(is_ssrf_ip("fd12:3456:789a::1".parse::<IpAddr>().unwrap()));
+        assert!(is_ssrf_ip("fe80::1".parse::<IpAddr>().unwrap()));
+        // Unspecified
+        assert!(is_ssrf_ip("0.0.0.0".parse::<IpAddr>().unwrap()));
+        assert!(is_ssrf_ip("::".parse::<IpAddr>().unwrap()));
+        // Valid public endpoint allowed
+        assert!(is_ssrf_url("https://workbench.cisecurity.org/").is_ok());
+    }
+
+    #[test]
+    fn test_vector5_windows_confinement_fail_closed_invariants() {
+        let default_policy = windows::WindowsConfinementPolicy::default();
+        assert!(windows::verify_windows_confinement_invariants(&default_policy).is_ok());
+
+        // 1. All confinement checks pass -> ResumeThread allowed
+        let ok_outcome = windows::evaluate_pre_resume_confinement_gate(
+            &default_policy,
+            true,
+            true,
+            true,
+            true,
+        );
+        assert!(ok_outcome.resume_thread_allowed);
+        assert!(!ok_outcome.terminated_suspended_process);
+        assert!(ok_outcome.sid_freed_via_free_sid);
+        assert!(!ok_outcome.uncontained_fallback_used);
+
+        // 2. Job Object assignment fails -> TerminateProcess before ResumeThread, FreeSid, DeleteAppContainerProfile
+        let failed_job = windows::evaluate_pre_resume_confinement_gate(
+            &default_policy,
+            true,
+            true,
+            false,
+            false,
+        );
+        assert!(!failed_job.resume_thread_allowed);
+        assert!(failed_job.terminated_suspended_process);
+        assert!(failed_job.sid_freed_via_free_sid);
+        assert!(failed_job.profile_rolled_back_via_delete_appcontainer_profile);
+        assert!(!failed_job.uncontained_fallback_used);
+
+        // 3. Policy missing CREATE_SUSPENDED -> rejected fail-closed
+        let mut bad_policy = default_policy.clone();
+        bad_policy.creation_flags = 0;
+        assert!(windows::verify_windows_confinement_invariants(&bad_policy).is_err());
+    }
+}
+

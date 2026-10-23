@@ -4000,6 +4000,59 @@ OshoosiClaw maintains an exhaustive documentation library spanning high-level ar
 
 ---
 
+<a id="-15-vector-agent-breakout--edr-compromise-verification-matrix"></a>
+<a id="15-vector-agent-breakout--edr-compromise-verification-matrix"></a>
+## 🛡️ 15-Vector Autonomous AI Agent Breakout (7) & EDR Compromise/Evasion (8) Verification Matrix
+
+OshoosiClaw continuously verifies **15 canonical security vectors** spanning **7 Autonomous AI Agent Breakout Vectors (`AB-VEC-01`..`AB-VEC-07`)** and **8 EDR Compromise & Evasion Vectors (`EDR-VEC-01`..`EDR-VEC-08`)** across live Rust unit tests, HTTP verification endpoints (`GET/POST /api/cicd-protection/verify-15-vectors` and `/api/workflow-guard/verify-15-vectors`), and the standalone E2E harness (`tests/verify_15_breakout_and_edr_compromise_vectors.py` & `Perimeter 20` in `tests/strix_llm_adversarial_tester.py`).
+
+```mermaid
+flowchart LR
+    subgraph AGENT_BREAKOUT["Part 1: 7 Autonomous AI Agent Breakout Defenses"]
+        AB1["AB-VEC-01: Multi-Turn Goal Hijacking<br/>(RuntimeAlignmentScanner + Dogwood MFOTL)"]
+        AB2["AB-VEC-02: Inter-Agent Lateral Movement<br/>(HMAC-SHA256 Epoch N→N+1 + Case-Insensitive Guard)"]
+        AB3["AB-VEC-03: Path::join & ADS Traversal<br/>(validate_sandbox_relative_path + Cedar Gate)"]
+        AB4["AB-VEC-04: SSRF to Loopback/Metadata/IPv6<br/>(is_ssrf_ip Mathematical IPv4/IPv6 Gate)"]
+        AB5["AB-VEC-05: OS Sandbox Child Escape<br/>(CREATE_SUSPENDED + Job Object + FreeSid/Rollback)"]
+        AB6["AB-VEC-06: Steganographic / Depth-8 Exfil<br/>(OsoosiTwoTierDlpEngine + RedactX-v3 + ZK-BFT)"]
+        AB7["AB-VEC-07: Self-Approval & Workflow Tampering<br/>(WorkflowGuardState + Ed25519 Signed Config)"]
+    end
+
+    subgraph EDR_COMPROMISE["Part 2: 8 EDR Compromise & Evasion Defenses"]
+        EDR1["EDR-VEC-01: Binary Masquerading<br/>(Authenticode + WinVerifyTrust + NSRL Merkle)"]
+        EDR2["EDR-VEC-02: Counter-AI Disassembler Poisoning<br/>(REA Deterministic Sanitizer + Structured Schema)"]
+        EDR3["EDR-VEC-03: P2P Mesh Kill-Switch Poisoning<br/>(inspect_mesh_threat_frame + 5-Anchor Floor)"]
+        EDR4["EDR-VEC-04: Sensor Blinding & Chaff Flood<br/>(ETW Canaries + 3-Clean-Probe Auto-Rollback)"]
+        EDR5["EDR-VEC-05: BYOVD & Kernel DKOM<br/>(Ring-0 ObRegisterCallbacks + PsLoadedModuleList vs Pool)"]
+        EDR6["EDR-VEC-06: Direct/Indirect Syscall Unhooking<br/>(Clean NTDLL .text Diff + RIP/RSP Call-Stack Walk)"]
+        EDR7["EDR-VEC-07: Malformed PE/ELF/WASM/HAR Parser<br/>(Memory-Safe Goblin/wasmparser + Wasmtime Fuel)"]
+        EDR8["EDR-VEC-08: Audit Log & Config Downgrade<br/>(BLAKE3 Merkle + TPM 2.0 0x01800001 + ML-DSA-65)"]
+    end
+
+    AGENT_BREAKOUT --> VERIFIER["Unified 15-Vector Live Verification Gate<br/>/api/cicd-protection/verify-15-vectors<br/>tests/verify_15_breakout_and_edr_compromise_vectors.py"]
+    EDR_COMPROMISE --> VERIFIER
+```
+
+| Vector ID | Category | Attack Vector & Standard | Primary Rust / C Defense Implementation | Live Verification Check |
+| :--- | :--- | :--- | :--- | :--- |
+| **`AB-VEC-01`** | Agent Breakout | **Multi-Turn Goal Hijacking & Indirect Prompt Injection** (`OWASP ASI01` / `ASI06`) | `RuntimeAlignmentScanner::evaluate_tier1_structural` (`crates/osoosi-agent-anomaly/src/alignment_scanner.rs`) + `EmbeddingGemma 2` MRL trajectory drift | Blocks `[SYSTEM OVERRIDE]` untrusted input escalating `Summarize README.md` into `shell_exec` |
+| **`AB-VEC-02`** | Agent Breakout | **Inter-Agent Lateral Movement & Capability Epoch Forgery** (`OWASP ASI03` / `ASI08`) | `ArmContainmentRing` & `MeshGuard` (`crates/osoosi-agent-anomaly/src/containment_ring.rs`) | Constant-time `HMAC-SHA256(arm_id, epoch, role)` verification, monotonic `N -> N+1` epoch rotation, case-insensitive sink isolation (`AccountingLedgerWrite`) |
+| **`AB-VEC-03`** | Agent Breakout | **Tool-Argument Path Traversal & `Path::join` Replacement** (`OWASP ASI02`) | `validate_sandbox_relative_path` (`crates/osoosi-sandbox/src/lib.rs`) + `BreakoutDefenseCoordinator` | Rejects `C:\`, `/etc/shadow`, `\\?\`, `%2e%2e%2f`, and NTFS ADS (`file.txt:zone.identifier`) before `Path::join` |
+| **`AB-VEC-04`** | Agent Breakout | **SSRF Pivot to Localhost Daemons or Cloud Metadata** (`OWASP ASI05`) | `is_ssrf_ip`, `is_ssrf_ipv4`, `is_ssrf_url` (`crates/osoosi-sandbox/src/native_host.rs`) | Mathematical `Ipv4Addr`/`Ipv6Addr` blocking of `127.0.0.0/8` (`:3030`, `:11434`, `:9222`), `169.254.169.254`, RFC1918, CGNAT, and `::ffff:127.0.0.1` |
+| **`AB-VEC-05`** | Agent Breakout | **OS Sandbox Escape via Unconfined Child Processes** (`MITRE T1611`) | `evaluate_pre_resume_confinement_gate` (`crates/osoosi-sandbox/src/windows.rs`) + `CanaryCage` (`crates/osoosi-runtime/src/canary_cage.rs`) | Enforces `CREATE_SUSPENDED (0x00000004)` + `AssignProcessToJobObject` + `IsProcessInJob == TRUE` before `ResumeThread`, with `FreeSid` & `DeleteAppContainerProfile` rollback on failure |
+| **`AB-VEC-06`** | Agent Breakout | **Steganographic, Multi-Layer Encoded, or Side-Channel Exfiltration** (`OWASP ASI07`) | `OsoosiTwoTierDlpEngine` (`crates/osoosi-dp/src/lib.rs`) | Recursive depth-8 multi-layer unwrapping (`Base64`/`Hex`/`URL`), NATO phonetic assembly, Shannon entropy bound ($H(X) \ge 5.65$), 4 KB Crown-Jewel Merkle chunks, and `<ZK_PII>` scrubbing |
+| **`AB-VEC-07`** | Agent Breakout | **Self-Approval & Policy/Workflow Tampering** (`OWASP ASI10`) | `WorkflowGuardState` (`crates/osoosi-dashboard/src/routes/workflow_guard.rs`) | Blocks self-modification of `.github/workflows/auto-review-bot.yml`, `.githooks/post-commit`, `scripts/solo_pr_ship.ps1`, and `config/osoosi.toml.sig` |
+| **`EDR-VEC-01`** | EDR Compromise | **Binary Masquerading & Static Allowlist Abuse** (`MITRE T1036.005`) | `ReaEngine` (`crates/osoosi-core/src/rea.rs`) | Zero path-string exemptions; requires cryptographic Authenticode / Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`) or NIST NSRL BLAKE3 Merkle verification |
+| **`EDR-VEC-02`** | EDR Compromise | **Counter-AI Disassembler & Telemetry Poisoning** (`OWASP LLM01` / `MITRE T1027`) | `ReaEngine::sanitize_binary_strings_Against_prompt_injection` (`crates/osoosi-core/src/rea.rs`) | Neutralizes embedded prompt-injection strings inside PE/ELF section names, PDB paths, and binary strings before cognitive triage |
+| **`EDR-VEC-03`** | EDR Compromise | **P2P Mesh Poisoning & False-Positive Kill-Switch Attacks** (`MITRE T1562.001`) | `inspect_mesh_threat_frame` (`crates/osoosi-core/src/rea.rs`) | Vetoes mesh frames targeting critical OS binaries (`svchost.exe`, `ntoskrnl.exe`, `osoosi.exe`) and enforces 5-anchor minimum YARA specificity |
+| **`EDR-VEC-04`** | EDR Compromise | **Sensor Blinding, Chaff Flooding & Alert Fatigue** (`MITRE T1562.006` / `T1499`) | `SiqueryEngine` (`etw_sessions`) + `KillChainEngine` (`crates/osoosi-core/src/killchain.rs`) | Synthetic ETW/eBPF heartbeats detect `EtwEventWrite` patching; containment auto-rolls back after 3 consecutive clean 60s health probes (30-min hard ceiling) |
+| **`EDR-VEC-05`** | EDR Compromise | **Bring Your Own Vulnerable Driver (BYOVD) & Kernel DKOM** (`MITRE T1068` / `T1014`) | `driver/windows/osoosi_driver.c`, `driver/windows/osoosi_elam.c` & `SiqueryEngine` (`drivers`) | Ring-0 `ObRegisterCallbacks` strips `PROCESS_TERMINATE`/`PROCESS_VM_WRITE` handles; cross-view `PsLoadedModuleList` vs. kernel pool tags detects DKOM-unlinked drivers |
+| **`EDR-VEC-06`** | EDR Compromise | **User-Mode Hook Evasion (Direct/Indirect Syscalls & Unhooking)** (`MITRE T1562.001` / `T1106`) | `HollowingEngine` (`crates/osoosi-telemetry/src/hollowing.rs`) & `ReaEngine` | Compares in-memory `.text` sections against clean on-disk `ntdll.dll` and inspects kernel ETW call-stack `RIP`/`RSP` for unbacked `RWX` frames |
+| **`EDR-VEC-07`** | EDR Compromise | **Parser Exploitation inside the EDR (Malformed PE/ELF/WASM/HAR)** (`CWE-125` / `CWE-787`) | `ReaEngine::analyze_bytes` (`crates/osoosi-core/src/rea.rs`) | Memory-safe bounds-checked Rust parsers (`goblin`, `wasmparser`, `pelite`, `x509-parser`) + Wasmtime fuel/epoch limits safely handle truncated/corrupt headers without panic |
+| **`EDR-VEC-08`** | EDR Compromise | **Audit Log Tampering & Configuration Downgrade** (`MITRE T1070` / `T1562`) | `MerkleLogChain` (`crates/osoosi-audit/src/lib.rs`) & `PqcHybridSigner` (`crates/osoosi-audit/src/pqc_primitives.rs`) | Tamper-evident BLAKE3 Merkle logchain, TPM 2.0 monotonic anti-rollback counter (`0x01800001`), and `Ed25519 + ML-DSA-65` hybrid PQC signatures |
+
+---
+
 <a id="contributing"></a>
 <a id="approvals"></a>
 ## 🤝 Contributing

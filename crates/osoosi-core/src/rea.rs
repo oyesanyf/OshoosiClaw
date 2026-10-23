@@ -5940,6 +5940,28 @@ pub fn build_kill_switch_fraud_proof(
     }
 }
 
+/// Top-level convenience entry point for inspecting outbound or inbound P2P / GossipSub / Nostr
+/// mesh threat intelligence frames against prompt injection, OpenJEV secret exfiltration,
+/// binary masquerading, and Byzantine false-positive kill-switch attacks.
+pub fn inspect_mesh_threat_frame(
+    direction: &str,
+    peer_id: Option<&str>,
+    proc_or_summary: &str,
+    candidate_blake3: Option<&str>,
+    candidate_yara: Option<&str>,
+    raw_payload: Option<&str>,
+) -> ReaMeshInspectionVerdict {
+    global_rea_engine().inspect_and_vet_mesh_frame(
+        direction,
+        peer_id,
+        proc_or_summary,
+        candidate_blake3,
+        candidate_yara,
+        raw_payload,
+    )
+}
+
+
 /// Runs a dynamic sandboxed detonation probe on an unknown or suspicious binary or script.
 pub fn run_caged_rea_detonation_probe(
     binary_path: &Path,
@@ -7019,6 +7041,16 @@ impl AutonomousReaEngine {
         json!({
             "universal_rea_active": true,
             "paired_voters": ["REA-Voter", "OpenJEV-Voter"],
+            "pipelines_covered": [
+                "yara",
+                "entropy",
+                "behavioral",
+                "memory",
+                "hollowing",
+                "dll_hijack",
+                "p2p_mesh",
+                "har_network"
+            ],
             "mesh_frames_inspected": self.mesh_frames_inspected.load(Ordering::Relaxed),
             "mesh_threats_vetoed": self.mesh_threats_vetoed.load(Ordering::Relaxed),
             "detector_alerts_evaluated": self.detector_alerts_evaluated.load(Ordering::Relaxed),

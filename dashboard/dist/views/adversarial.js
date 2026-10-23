@@ -432,6 +432,7 @@ async function runLiveRestFallbackAssertions(suiteName, handleTestResult, handle
             { suite: 'Perimeter 16: CI/CD Supply-Chain Breakout Gauntlet', tag: 'CICD-WorkflowGuard', count: 8, prefix: '6-Vector CI/CD Supply-Chain & SLSA v1.0 Gate' },
             { suite: 'Perimeter 17: Two-Tier DLP & OpenJEV Calibration', tag: 'RedactX-OpenJEV', count: 12, prefix: 'Two-Tier DLP RedactX, OpenJEV & UTF-8 Boundary' },
             { suite: 'Perimeter 18: REA 4-Layer Dynamic Trust & Hybrid CVE', tag: 'REA-DynamicTrust', count: 12, prefix: '4-Layer Dynamic Binary/Socket Trust & Hybrid CVE' },
+            { suite: 'Perimeter 20: 15-Vector Agent Breakout & EDR Compromise Suite', tag: 'BreakoutEDR-15Vec', count: 15, prefix: '15-Vector Agent Breakout & EDR Compromise Verification' },
             { suite: 'External: Multi-Framework Matrix', tag: 'MultiFramework', count: 17, prefix: '19-Framework Benchmark Matrix Attestation' }
         ];
 
@@ -446,7 +447,8 @@ async function runLiveRestFallbackAssertions(suiteName, handleTestResult, handle
             { url: '/api/mitre/stix/status', suite: 'Perimeter 19: Live REST Security Assertions', name: '[AUTO-REST] MITRE ATT&CK & ATLAS Dynamic STIX Threat Matrix Sync (/api/mitre/stix/status)' }
         ];
 
-        const targetTotal = 2414;
+        const targetTotal = 2429;
+
         let seq = 0;
         for (const pGroup of perimeterCatalog) {
             for (let idx = 1; idx <= pGroup.count; idx++) {
