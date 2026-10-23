@@ -15,6 +15,7 @@ pub mod agentjacking_guard;
 pub mod alignment_scanner;
 pub mod atlas_arm;
 pub mod breakout_defense;
+pub mod breakout_prevention;
 pub mod cedar_engine;
 pub mod classifier;
 pub mod containment_ring;
@@ -36,7 +37,7 @@ pub use agentjacking_guard::{
 pub use alignment_scanner::{
     global_alignment_scanner, AlignmentCheckRequest, AlignmentCheckVerdict, DriftTraceRecord,
     MultiTurnAlignmentSimulationResult, PinnedTaskIntent, RuntimeAlignmentScanner,
-    Tier1StructuralResult, Tier2OllamaJudgeResult,
+    RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
 pub use file_lineage::{
     FileLineageTracker, IngestedFileEntry, LineageEntry, LineageError, PoisonMetadata,
@@ -46,6 +47,7 @@ pub use breakout_defense::{
     validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,
     UnifiedBreakoutEvaluation, ZeroMiProjectionResult, ZeroMutualInformationProjector,
 };
+pub use breakout_prevention::*;
 pub use cedar_engine::{
     PolicyExecutionStep, VanishingPolynomialProof, VanishingPolynomialTraceVerifier,
     MERSENNE_127_PRIME,

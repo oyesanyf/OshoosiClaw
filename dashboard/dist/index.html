@@ -3736,6 +3736,24 @@
                             <strong style="color: #cbd5e1;">5-Step SkyRL Held-Out Ablation:</strong>
                             <span id="adv-skyrl-ablation-summary" style="color: #34d399; font-family: monospace; font-size: 11px;">RL Off: 65.0% (26/40) → RL On: 95.0% (38/40, +30.0% Lift, 5.0% Unseen Residual Miss) • Benign False Positives: 0.0% (0/20)</span>
                         </div>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(148, 163, 184, 0.16);">
+                            <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; padding: 8px 10px;">
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">1. Attack Prevention</div>
+                                <div id="adv-central-attack-prevention" style="font-size: 13.5px; font-weight: 800; color: #10b981; font-family: monospace; margin-top: 2px;">100.0% (Live Sandbox)</div>
+                            </div>
+                            <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.3); border-radius: 6px; padding: 8px 10px;">
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">2. Benign Task Success</div>
+                                <div id="adv-central-benign-success" style="font-size: 13.5px; font-weight: 800; color: #38bdf8; font-family: monospace; margin-top: 2px;">100.0% (0% FP)</div>
+                            </div>
+                            <div style="background: rgba(168, 85, 247, 0.08); border: 1px solid rgba(168, 85, 247, 0.3); border-radius: 6px; padding: 8px 10px;">
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">3. Enforcement Latency</div>
+                                <div id="adv-central-enforcement-latency" style="font-size: 13.5px; font-weight: 800; color: #c084fc; font-family: monospace; margin-top: 2px;">0.42 ms p50 / 1.85 ms p95</div>
+                            </div>
+                            <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 6px; padding: 8px 10px;">
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 700;">4. Observer Coverage</div>
+                                <div id="adv-central-observer-coverage" style="font-size: 13.5px; font-weight: 800; color: #fbbf24; font-family: monospace; margin-top: 2px;">100.0% VERIFIED</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -3762,6 +3780,11 @@
                         <div style="flex: 1; min-width: 280px;">
                             <label for="adv-suite-selector" style="display: block; font-size: 11.5px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;">SELECT SPECIFIC TEST SUITE</label>
                             <select id="adv-suite-selector" style="width: 100%; padding: 10px 14px; border-radius: 8px; background: rgba(13, 17, 23, 0.95); border: 1px solid var(--glass-border-bright); color: #e6edf3; font-size: 13.5px; font-weight: 500; outline: none; cursor: pointer;">
+                                <option value="adr_bench">STAGE 1: ADR-Bench (Replay Detection vs. Live Sandbox Enforcement)</option>
+                                <option value="rampart">STAGE 2: Rampart (7-Action Cedar Policy &amp; Causal Trace Regression)</option>
+                                <option value="agentdojo">STAGE 3: AgentDojo (5-Level Authority Lattice L1..L5 &amp; Signed Workspace Instructions)</option>
+                                <option value="host_enforcement_verification">STAGE 5: Host Enforcement Verification (Out-of-Band OS Observer &amp; 6-Scenario Fault Injection)</option>
+                                <option value="benign_workflow_regression">STAGE 6: Benign Developer &amp; System Workflow Usability Regression (0% False Positives)</option>
                                 <option value="multiturn_goal_hijack">🎯 Multi-Turn Goal-Hijacking &amp; Trace-Alignment Chains (Promptfoo / AlignmentCheck)</option>
                                 <option value="vcdb">📊 Verizon VCDB (VERIS Breach Patterns · 18 Incident Chains &amp; 4-A Replay Engine)</option>
                                 <option value="owasp_hunting">🛡️ OWASP Hunting (41 Categories · Live Threat Feed &amp; Independent Oracle Verification)</option>

@@ -20,9 +20,13 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 osoosi-types = { path = "../osoosi-types" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-policy = { path = "../osoosi-policy" }
+osoosi-runtime = { path = "../osoosi-runtime" }
+osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-audit = { path = "../osoosi-audit" }
 osoosi-dp = { path = "../osoosi-dp" }
 osoosi-vcdb = { path = "../osoosi-vcdb" }
+osoosi-memory = { path = "../osoosi-memory" }
+async-trait = "0.1"
 agent-thermostat = { workspace = true }
 silicon-shield = { workspace = true }
 zero-genesis-capacity = { workspace = true }
@@ -33,6 +37,7 @@ blake3 = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
 subtle = { workspace = true }
+parking_lot = { workspace = true }
 rand = { workspace = true }
 url = "2"
 sysinfo = { workspace = true }
@@ -41,6 +46,7 @@ hostname = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winreg = { workspace = true }
+windows = { workspace = true }
 windows-sys = { version = "0.61.2", features = [
     "Win32_NetworkManagement_IpHelper",
     "Win32_Networking_WinSock",

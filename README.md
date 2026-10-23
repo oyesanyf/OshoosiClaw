@@ -1908,6 +1908,77 @@ Built within `crates/osoosi-agent-anomaly`, the **AgentOctopus** containment arc
 
 ---
 
+<a id="-7-ring-continuous-cedar-reference-monitor--causal-security-graph"></a>
+<a id="7-ring-continuous-cedar-reference-monitor--causal-security-graph"></a>
+
+</details>
+
+<details>
+<summary><b>🛡️ 7-Ring Continuous Cedar Reference Monitor, Causal Provenance Graph & 6-Capability Adversarial Verification Harness</b> (Click to expand)</summary>
+
+<a id="-7-ring-continuous-cedar-reference-monitor--causal-security-graph"></a>
+## 🛡️ 7-Ring Continuous Cedar Reference Monitor, Causal Provenance Graph & 6-Capability Adversarial Verification Harness
+
+OshoosiClaw (`OpenỌ̀ṣọ́ọ̀sì`) enforces a **Separate-Reasoning-from-Authority** architecture (`crates/osoosi-policy/src/breakout_gate.rs`, `crates/osoosi-agent-anomaly/src/breakout_prevention.rs`) where models may propose actions, summarize untrusted content, and emit advisory risk scores, but **never hold ambient authority**. Every tool invocation and downstream OS effect (`HostSecurityEvent` EventIDs `1/4688`, `3/5156`, `7`, `8/10`, `11/4663`, `17/18`) is mediated by a 7-Ring Continuous Cedar Reference Monitor:
+
+```mermaid
+flowchart TD
+    subgraph Ring1["Ring 1: 5-Level Immutable Authority Lattice (P0.2)"]
+        L1["L1: System Security Policy"] --> L2["L2: Authorized User Objective"]
+        L2 --> L3["L3: Trusted App Instruction"]
+        L3 --> L4["L4: Signed Workspace Config<br/>(CLAUDE.md, .cursorrules, AGENTS.md, .githooks)<br/>HMAC-BLAKE3 + Ed25519/ML-DSA-65<br/>Zero Upward Promotion · Per-User/TPM Key Scope"]
+        L4 --> L5["L5: Untrusted Retrieved Content<br/>(Web, Issues, PDFs, Logs, Peer Outputs)"]
+    end
+
+    subgraph Ring2["Ring 2: Continuous Lifecycle Cedar Reference Monitor"]
+        CEDAR["PolicyEngine::evaluate & scan_event<br/>7 Actions: ChildProcessExec, SensitiveFileAccess,<br/>ExternalNetworkConnect, ExternalWrite,<br/>PrivilegedLocalControl, DynamicCodeExec, CrossSessionTransfer<br/>Emits (policy_decision_id, causal_event_id, policy_version)<br/>Fail-Closed Voter Floor [0.50, 2.50]"]
+    end
+
+    subgraph Ring3["Ring 3: Persistent Causal Security Graph & Workflow Composition"]
+        GRAPH["CausalSecurityGraph & WorkflowCompositionEvaluator<br/>• Composite ProcessInstanceIdentity (BootGUID + PID + StartKey + SHA256)<br/>• Monotonic Taint across Processes, Temp Files, Brokers & Sessions<br/>• Blocks SensitiveFileAccess → Transform → ExternalWrite<br/>  unless verified <ZK_PII:...> / <ZK_CROWN_JEWEL_REDACTED:...> HMAC Receipt"]
+    end
+
+    subgraph Ring4_5["Ring 4 & Ring 5: Loopback Service Identity & Concurrency Seqlock"]
+        LOOP["LoopbackIpcAuthorizer<br/>• Permits Read-Only Ollama (:11434 /api/generate, /api/embeddings)<br/>• Blocks Unapproved Chrome DevTools (:9222) & Docker Socket"]
+        CACHE["RevocationBoundCapabilityCache<br/>• Keyed by (principal, action, resource, policy_ver, taint_epoch, rev_seq)<br/>• RwLock Seqlock Barrier: 0 In-Flight Writes Commit on Taint/Revocation"]
+    end
+
+    subgraph Ring6_7["Ring 6 & Ring 7: 3-Boundary Self-Protection & OS Confinement"]
+        SELF["ProtectedPolicyStore (P0.4) · SafeTelemetryOverloadController (P1.3)<br/>ExternalIntegrityVerifierAndRecovery (P2.2)<br/>Separate Learning from Authority (CandidateCedarPolicyProposal)"]
+        OS["OS-Enforced Confinement (OsConfinementVerifier)<br/>• Windows: AppContainer + Job Object (KILL_ON_JOB_CLOSE) + WFP<br/>• Linux: Non-Root 65532:65532 + seccomp-oshoosi.json + Landlock V3 + cgroups v2"]
+    end
+
+    Ring1 --> Ring2
+    Ring2 --> Ring3
+    Ring3 --> Ring4_5
+    Ring4_5 --> Ring6_7
+```
+
+### 1. The 7 Defense Rings & 9 Residual-Risk Families
+
+| Ring / Boundary | Core Implementation | Enforced Security Invariant |
+|:---|:---|:---|
+| **Ring 1: 5-Level Immutable Authority Hierarchy (`P0.2`)** | `AuthorityLevel`, `SignedWorkspaceInstructionAllowlist` | Enforces `L1 > L2 > L3 > L4 > L5`; verifies keyed `HMAC-BLAKE3` + `Ed25519/ML-DSA-65` signatures in constant time (`subtle::ConstantTimeEq`); rejects machine-wide `CRYPTPROTECT_LOCAL_MACHINE` key scope; prevents `L4` from ever overriding `L1`/`L2`. |
+| **Ring 2: Continuous Cedar Reference Monitor** | `PolicyEngine::evaluate`, `PolicyEngine::scan_event` | Evaluates all 7 `CedarAction` variants on both tool calls and downstream OS telemetry; classifies `PreExecutionPrevented`, `PostNotificationContained`, and `PostExecutionDetected`; prevents negative/timed-out voters from overriding a Cedar `forbid`. |
+| **Ring 3: Causal Security Graph & Workflow Composition** | `CausalSecurityGraph`, `WorkflowCompositionEvaluator` | Propagates taint across child/grandchild processes, intermediate temp files, system brokers (`WmiPrvSE.exe`, `svchost.exe`, `git-remote-https.exe`, `ssh.exe`), and cross-session relays; requires supervisor HMAC `<ZK_CROWN_JEWEL_REDACTED:...>` receipts for declassification. |
+| **Ring 4: Loopback & IPC Service-Identity Gate** | `LoopbackIpcAuthorizer` | Distinguishes benign local Ollama inference (`127.0.0.1:11434/api/generate`) from privileged local control (`127.0.0.1:9222` Chrome DevTools, `//./pipe/docker_engine`, `/var/run/docker.sock`, Ollama model deletion). |
+| **Ring 5: Revocation-Bound Capability Cache** | `RevocationBoundCapabilityCache` | Synchronizes `execute_guarded_sensitive_read` and `execute_guarded_external_write` via an atomic `(taint_epoch, revocation_seq)` seqlock and `parking_lot::RwLock` barrier (`0` stale writes committed under concurrency). |
+| **Ring 6: 3-Boundary Control-Plane Self-Protection (`P0.4`, `P1.3`, `P2.2`)** | `ProtectedPolicyStore`, `SafeTelemetryOverloadController`, `ExternalIntegrityVerifierAndRecovery` | Enforces dual `Ed25519 + ML-DSA-65` policy signatures, monotonic versions, and two-party non-agent approval; freezes high-risk actions on telemetry `EventsLost > 0`; enforces **Separate Learning from Authority** (`CandidateCedarPolicyProposal`). |
+| **Ring 7: OS-Enforced Capability Isolation** | `Ring7CapabilityEffectAuthorizer`, `OsConfinementVerifier` | Enforces Windows AppContainer + Job Object (`CREATE_SUSPENDED` pre-resume check) + WFP/NDF and Linux non-root `65532:65532` + `--cap-drop=ALL` + `seccomp-oshoosi.json` + Landlock V3 + cgroups v2, plus `PlatformAttestationGate` for hardware/firmware trust layers. |
+
+### 2. Six-Capability Autonomous Adversarial & Usability Regression Harness (`tests/strix_llm_adversarial_tester.py`)
+
+| Stage / `--suite` Flag | Capability Focus | Key Verification & Anti-Reward-Hacking Guardrails |
+|:---|:---|:---|
+| **`adr_bench`** | Historical Tool-Trace Replay vs. Live Sandbox Enforcement | Explicitly separates `REPLAY_DETECTION_ONLY` (`DETECTION_ONLY`) from `LIVE_SANDBOX_ENFORCEMENT` (`PREVENTED`) and deduplicates shared prompt fixtures with `agentdojo` via canonical SHA-256 digests. |
+| **`rampart`** | Single-Runtime Cedar Action-Level Regression Validator | Calls OshoosiClaw's authorization interface across all 7 `CedarAction` variants and asserts deterministic `(policy_decision_id, causal_event_id, policy_version)` trace correlation. |
+| **`agentdojo`** | Indirect Prompt Injection & 5-Level Authority Lattice (`L1`–`L5`) | Verifies workspace instruction signing (`CLAUDE.md`, `.cursorrules`, `.agents/AGENTS.md`, `.githooks`, `build.rs`), zero upward authority promotion, and rejection of `CRYPTPROTECT_LOCAL_MACHINE`. |
+| **`pyrit`** | Multi-Turn Adversarial Drift & Composed Workflow Chains | Exercises multi-turn `T1 -> T2 -> T3` goal-hijack chains, `WorkflowCompositionEvaluator`, and `AdvisoryModelJudgmentGuard` (model judgments are strictly advisory). |
+| **`host_enforcement_verification`** | Out-of-Band OS Observer & 6-Scenario Fault Injection (`FI-01`..`FI-06`) | Evaluates the 6-field evidence schema (`attack_attempted`, `cedar_decision`, `os_enforcement_result`, `prohibited_effect_occurred`, `observer_confidence`, `final_outcome`) and proves that `PARTIAL` observer confidence (`FI-05`) yields `INCONCLUSIVE` (never `PREVENTED`). |
+| **`benign_workflow_regression`** | Benign Developer & System Workflow Usability Regression | Verifies **100% Benign Task Success (0% False Positives)** across `cargo test`, `git status`, workspace source reads, local Ollama `/api/generate` & `/api/embeddings`, and ZK-redacted summaries, surfacing the 4 Central Measurements (`Attack Prevention`, `Benign Task Success`, `Enforcement Latency`, `Observer Coverage`) in `/api/tarpit-stats`, `/api/agent-anomalies/breakout-prevention-report`, and `#adversarial-tests-view`. |
+
+---
+
 <a id="-hardened-canarycage-filelineage-and-swarm-pre-immunization"></a>
 <a id="hardened-canarycage-filelineage-and-swarm-pre-immunization"></a>
 

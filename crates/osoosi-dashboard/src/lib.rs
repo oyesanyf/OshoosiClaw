@@ -803,6 +803,15 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/agent-anomalies/simulate-test",
             post(post_agent_anomalies_simulate_test),
         )
+        .route(
+            "/api/agent-anomalies/breakout-prevention-report",
+            get(get_agent_anomalies_breakout_prevention_report)
+                .post(get_agent_anomalies_breakout_prevention_report),
+        )
+        .route(
+            "/api/agent-anomalies/simulate-breakout-gauntlet",
+            post(post_agent_anomalies_simulate_breakout_gauntlet),
+        )
         .route("/api/consensus/findings", get(get_consensus_findings))
         .route("/api/consensus/clean-hashes", get(get_clean_ignored_hashes))
         .route("/api/consensus/evaluate", post(post_consensus_evaluate))
@@ -2689,6 +2698,20 @@ async fn get_tarpit_stats(
         resp_json["economic_cost_analysis"] = ec;
     }
 
+    let bp_report = osoosi_agent_anomaly::run_breakout_prevention_proof_suite().await;
+    resp_json["central_measurements"] = serde_json::to_value(&bp_report.central_measurements).unwrap_or_else(|_| json!({}));
+    resp_json["breakout_prevention_summary"] = json!({
+        "suite_version": bp_report.suite_version,
+        "policy_version": bp_report.policy_version,
+        "all_invariants_verified": bp_report.all_invariants_verified,
+        "total_checks": bp_report.total_checks,
+        "passed_checks": bp_report.passed_checks,
+        "failed_checks": bp_report.failed_checks,
+        "false_positives_on_benign_dev_workflows": bp_report.false_positives_on_benign_dev_workflows,
+        "central_measurements": bp_report.central_measurements,
+        "report_endpoint": "/api/agent-anomalies/breakout-prevention-report"
+    });
+
     Json(resp_json).into_response()
 }
 
@@ -2947,7 +2970,12 @@ async fn get_adversarial_test_stream(
             let mapped_suite = match suite.as_str() {
                 "all" => "all",
                 "strix_llm_adversarial" => "all",
+                "adr_bench" => "adr_bench",
+                "rampart" => "rampart",
+                "agentdojo" => "agentdojo",
                 "pyrit" => "pyrit",
+                "host_enforcement_verification" => "host_enforcement_verification",
+                "benign_workflow_regression" => "benign_workflow_regression",
                 "garak" => "garak",
                 "deepeval" => "deepeval",
                 "inspect_ai" => "inspect_ai",
@@ -8152,6 +8180,41 @@ pub async fn post_agent_anomalies_simulate_test(
             "message": "Simulation executed: 1 benign turn, 1 inventory scraping attack turn, 1 SAM credential / SSRF breakout turn.",
             "simulated_calls": 3,
             "detected_finding": breakout_finding.or(finding),
+        })),
+    )
+}
+
+async fn get_agent_anomalies_breakout_prevention_report(
+    State(_state): State<Arc<DashboardState>>,
+) -> impl IntoResponse {
+    let report = osoosi_agent_anomaly::run_breakout_prevention_proof_suite().await;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "all_invariants_verified": report.all_invariants_verified,
+            "central_measurements": report.central_measurements,
+            "report": report,
+        })),
+    )
+}
+
+async fn post_agent_anomalies_simulate_breakout_gauntlet(
+    State(_state): State<Arc<DashboardState>>,
+) -> impl IntoResponse {
+    let report = osoosi_agent_anomaly::run_breakout_prevention_proof_suite().await;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "message": "Executed 6-Part Adversarial Breakout Prevention Proof Suite, 9-Family Residual-Risk Verification Suite, 6-Scenario Fault Injection, and Benign Developer Usability Control Suite.",
+            "all_invariants_verified": report.all_invariants_verified,
+            "total_checks": report.total_checks,
+            "passed_checks": report.passed_checks,
+            "failed_checks": report.failed_checks,
+            "false_positives_on_benign_dev_workflows": report.false_positives_on_benign_dev_workflows,
+            "central_measurements": report.central_measurements,
+            "report": report,
         })),
     )
 }
