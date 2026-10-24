@@ -282,7 +282,7 @@ impl SafetyFilter {
         let name_lower = target_name.to_lowercase();
         let trimmed = name_lower.trim();
         let s = trimmed.strip_prefix(r"\\?\").unwrap_or(trimmed);
-        let filename = s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s);
+        let filename = s.rsplit(['/', '\\']).next().unwrap_or(s);
 
         self.protected_binaries.contains(filename) || self.protected_binaries.contains(&name_lower)
     }

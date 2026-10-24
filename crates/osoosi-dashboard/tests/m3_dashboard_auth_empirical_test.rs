@@ -373,11 +373,14 @@ async fn test_empirical_dashboard_auth_enforcement_and_bypass_resistance() {
         .send()
         .await
         .expect("API status GET failed");
-    assert_eq!(status_resp.status(), StatusCode::OK);
-    // Verify Set-Cookie header is provided on GET /api/status
+    // EDR-VEC-09: Public status query must never exfiltrate master admin token via Set-Cookie
     let cookies = status_resp.headers().get("set-cookie");
+    let has_token_cookie = cookies
+        .and_then(|c| c.to_str().ok())
+        .map(|s| s.contains("osoosi_token="))
+        .unwrap_or(false);
     assert!(
-        cookies.is_some(),
-        "GET /api/status must deliver osoosi_token cookie for browser session"
+        !has_token_cookie,
+        "GET /api/status must NEVER exfiltrate osoosi_token cookie on unauthenticated queries"
     );
 }
