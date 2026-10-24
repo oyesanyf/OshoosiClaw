@@ -2,8 +2,10 @@
 
 ## Git Push Guardrails
 - **Restricted Remotes:** NEVER run `git push` inside `IDE/vscode` or target any Microsoft/upstream third-party remote.
-- **Canonical Repository:** ALL code pushes must strictly target `https://github.com/oyesanyf/OshoosiClaw.git`.
-- **Zero-Wait Incremental Commits ("NO COMMIT SHOULD WAIT, WE MAY LOSE CODE CHANGE"):** Never leave verified code waiting uncommitted in the working tree across subtasks. Both lead agents and subagents must commit and ship incremental checkpoints immediately via `powershell -ExecutionPolicy Bypass -File scripts/solo_pr_ship.ps1 -Title "..."` and verify `git status -s` is clean before ending any turn.
+- **Canonical Repository:** ALL code pushes must strictly target `https://github.com/oyesanyf/OshoosiClaw.git`.
+
+- **Zero-Wait Incremental Commits ("NO COMMIT SHOULD WAIT, WE MAY LOSE CODE CHANGE"):** Never leave verified code waiting uncommitted in the working tree across subtasks. Both lead agents and subagents must commit and ship incremental checkpoints immediately via `powershell -ExecutionPolicy Bypass -File scripts/solo_pr_ship.ps1 -Title "..."` and verify `git status -s` is clean before ending any turn.
+
 - **Mandatory PR & GitHub Actions Workflow Remediation ("ALWAY FIX PR AND WORKFLOW ISSUES"):** Always check open Pull Requests and GitHub Actions workflow runs when shipping code. If any Pull Request is stuck or any GitHub Actions workflow (`.github/workflows/*.yml`) fails, immediately inspect the failed job logs, fix the broken workflow or check, and ensure the PR merges cleanly into `main`.
 - **Multi-Developer Code Review & Branch Protection Policy:** GitHub Branch Protection enforces at least one approval (`required_approving_review_count = 1`) on `main`. As more developers join, any repository collaborator or peer developer can review and approve pull requests—`oyesanyf` does not personally have to approve every PR (`require at least one approve, it does not have to be me always, it can be another developer`). For automated release builds and maintainer PRs, `.githooks/post-commit` (`core.hooksPath = .githooks`) and `scripts/solo_pr_ship.ps1` ship commits via a temporary `pr/solo-<timestamp>` branch, verified by `.github/workflows/auto-review-bot.yml`, where approval from any peer developer or the bot satisfies Branch Protection and OpenSSF Scorecard `Code-Review` / `CI-Tests` checks. Step 8 of `scripts/build_and_submit.ps1` also invokes `scripts/solo_pr_ship.ps1`.
 
@@ -72,3 +74,6 @@
 1. **RETRIEVE:** Cite specific context sources, files, logs, or external docs referenced.
 2. **CONTEXT:** Summarize key verified facts and remaining open variables.
 3. **ANSWER:** Present a concise, scannable response using bullet points or tables.
+## Mandatory Cross-Repository Synchronization (`D:\harfile\AgentOctopus`)
+- **User Preference:** "alway update agentoctopus when you update here"
+- **Rule:** Whenever security controls, containment rings, breakout defenses, CIS Benchmark rules, DLP logic, console suppression, or documentation are updated in `D:\harfile\OshoosiClaw`, always synchronize the corresponding changes to `D:\harfile\AgentOctopus` (`https://github.com/oyesanyf/AgentOctopus.git`), verify zero compiler warnings, commit, and push so both repositories remain in lockstep.
