@@ -244,6 +244,16 @@ if (-not (Test-Path $DeployDir)) {
     New-Item -ItemType Directory -Path $DeployDir -Force | Out-Null
 }
 
+# Sync WebUI static assets to target\release and deploy so live server always serves matching assets
+if (Test-Path (Join-Path $ProjectRoot "dashboard\dist")) {
+    $trDash = Join-Path $ProjectRoot "target\release\dashboard\dist"
+    if (-not (Test-Path $trDash)) { New-Item -ItemType Directory -Path $trDash -Force | Out-Null }
+    Copy-Item -Path (Join-Path $ProjectRoot "dashboard\dist\*") -Destination $trDash -Recurse -Force
+    $dpDash = Join-Path $DeployDir "dashboard\dist"
+    if (-not (Test-Path $dpDash)) { New-Item -ItemType Directory -Path $dpDash -Force | Out-Null }
+    Copy-Item -Path (Join-Path $ProjectRoot "dashboard\dist\*") -Destination $dpDash -Recurse -Force
+}
+
 # =============================================================================
 # Step 1: Build Release Binary (cargo build --release -p osoosi-cli)
 # =============================================================================
