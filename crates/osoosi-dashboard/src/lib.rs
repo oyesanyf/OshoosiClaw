@@ -3851,7 +3851,15 @@ async fn post_system_disk_cleanup(
     };
 
     match &state.backend {
-        Some(orch) => Json(orch.cleanup_memory_and_disk(days)),
+        Some(orch) => {
+            let orch_clone = orch.clone();
+            let res = tokio::task::spawn_blocking(move || orch_clone.cleanup_memory_and_disk(days))
+                .await
+                .unwrap_or_else(
+                    |_| json!({ "status": "error", "message": "Cleanup worker task failed" }),
+                );
+            Json(res)
+        }
         None => {
             let working_set_trimmed = osoosi_core::memory_watchdog::trim_process_working_set();
             Json(json!({
