@@ -166,11 +166,12 @@ pub fn host_of(url: &str) -> String {
         .unwrap_or_default()
 }
 
-/// Represents a local staged/uploaded file resolved from disk.
+/// Represents a local staged/uploaded file resolved from disk and classified by Google Magika.
 #[derive(Debug, Clone)]
 pub struct ResolvedUploadedFile {
     pub resolved_path: PathBuf,
     pub filename: String,
+    pub magika_label: String,
     pub content: String,
     pub byte_size: usize,
 }
@@ -184,7 +185,35 @@ pub struct ResolvedUploadedFile {
 /// 6. Workspace root and test directories: ., tests, tests/corpus
 pub fn get_candidate_staging_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    for exfil_root in [r"C:\exfil", r"D:\exfil", "/tmp/exfil"] {
+        let p = PathBuf::from(exfil_root);
+        if p.is_dir() {
+            dirs.push(p);
+        }
+    }
+    if cfg!(windows) {
+        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let users_root = PathBuf::from(format!("{}\\Users", drive));
+        if let Ok(rd) = std::fs::read_dir(&users_root) {
+            for e in rd.flatten() {
+                let u_path = e.path();
+                if !u_path.is_dir() {
+                    continue;
+                }
+                for sub in ["exfil", "Downloads", "Desktop", "Documents"] {
+                    let sub_dir = u_path.join(sub);
+                    if sub_dir.is_dir() && !dirs.contains(&sub_dir) {
+                        dirs.push(sub_dir);
+                    }
+                }
+            }
+        }
+    }
     if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let home_exfil = PathBuf::from(&home).join("exfil");
+        if home_exfil.is_dir() {
+            dirs.push(home_exfil);
+        }
         let home_path = PathBuf::from(home);
         let dl = home_path.join("Downloads");
         if dl.is_dir() { dirs.push(dl); }
@@ -218,21 +247,84 @@ pub fn get_candidate_staging_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Given a candidate filename or path, and a destination URL, resolves the uploaded or staged file.
-/// Capped at max 32 entries per directory to guarantee latency < 15ms.
+/// Reads up to `max_stream_bytes` from `path`, identifies its true content type via Google Magika
+/// (`osoosi_core::rea::identify_and_extract_document_text`), and extracts inspectable plaintext from
+/// PDF, Word (`.docx`/`.doc`), Excel (`.xlsx`/`.xls`), PowerPoint (`.pptx`), XML, CSV, JSON, Markdown, or text.
+pub fn read_and_classify_uploaded_file(
+    path: &Path,
+    max_stream_bytes: usize,
+    max_text_bytes: usize,
+) -> Option<ResolvedUploadedFile> {
+    use std::io::Read;
+    static UPLOADED_FILE_CACHE: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<(PathBuf, u64), ResolvedUploadedFile>>,
+    > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+    let md = std::fs::metadata(path).ok()?;
+    if !md.is_file() || md.len() == 0 {
+        return None;
+    }
+    let total_size = md.len() as usize;
+    let mtime_secs = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let cache_key = (path.to_path_buf(), mtime_secs ^ (total_size as u64));
+    if let Ok(guard) = UPLOADED_FILE_CACHE.lock() {
+        if let Some(cached) = guard.get(&cache_key) {
+            return Some(cached.clone());
+        }
+    }
+
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("uploaded_file")
+        .to_string();
+
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::with_capacity(total_size.min(max_stream_bytes));
+    file.take(max_stream_bytes as u64)
+        .read_to_end(&mut buf)
+        .ok()?;
+
+    let (magika_label, content) =
+        osoosi_core::rea::identify_and_extract_document_text(&buf, Some(&filename), max_text_bytes)?;
+
+    let resolved = ResolvedUploadedFile {
+        resolved_path: path.to_path_buf(),
+        filename,
+        magika_label,
+        content,
+        byte_size: total_size,
+    };
+    if let Ok(mut guard) = UPLOADED_FILE_CACHE.lock() {
+        if guard.len() > 64 {
+            guard.clear();
+        }
+        guard.insert(cache_key, resolved.clone());
+    }
+    Some(resolved)
+}
+
+/// Given a candidate filename or path, and a destination URL, resolves the uploaded or staged file
+/// using Google Magika content identification across PDF, Word, Excel, XML, CSV, and text files.
 pub fn resolve_local_uploaded_file(
     candidate_path_or_name: Option<&str>,
     destination_url: &str,
 ) -> Option<ResolvedUploadedFile> {
-    const MAX_READ_BYTES: usize = 1024 * 1024; // 1 MB
-    const DATA_EXTENSIONS: &[&str] = &[
-        "txt", "csv", "json", "pdf", "xml", "docx", "tsv", "log", "dat", "hl7",
-    ];
+    const MAX_STREAM_BYTES: usize = 2 * 1024 * 1024; // Stream first 2 MB (covers xl/sharedStrings.xml in 10MB+ .xlsx)
+    const MAX_TEXT_BYTES: usize = 64 * 1024; // 64 KB extracted plaintext per file
 
     // Case 1: Candidate path or filename provided
     if let Some(cand) = candidate_path_or_name {
         let trimmed = cand.trim();
-        let cleaned = if let Some(inner) = trimmed.strip_prefix("[file upload:").and_then(|s| s.strip_suffix(']')) {
+        let cleaned = if let Some(inner) = trimmed
+            .strip_prefix("[file upload:")
+            .and_then(|s| s.strip_suffix(']'))
+        {
             inner.trim()
         } else {
             trimmed
@@ -240,37 +332,43 @@ pub fn resolve_local_uploaded_file(
         if !cleaned.is_empty() {
             let direct_path = PathBuf::from(cleaned);
             if direct_path.is_file() {
-                if let Ok(bytes) = std::fs::read(&direct_path) {
-                    let len = bytes.len().min(MAX_READ_BYTES);
-                    let content = String::from_utf8_lossy(&bytes[..len]).to_string();
-                    let filename = direct_path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
-                    return Some(ResolvedUploadedFile {
-                        resolved_path: direct_path,
-                        filename,
-                        content,
-                        byte_size: bytes.len(),
-                    });
+                if let Some(res) =
+                    read_and_classify_uploaded_file(&direct_path, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+                {
+                    return Some(res);
                 }
             }
 
-            // Search by filename in candidate staging dirs
-            let target_filename = direct_path.file_name().and_then(|n| n.to_str()).unwrap_or(cleaned);
+            // Search by filename or stem in candidate staging dirs
+            let target_filename = direct_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(cleaned);
             for dir in get_candidate_staging_dirs() {
-                let Ok(rd) = std::fs::read_dir(&dir) else { continue; };
-                for entry in rd.flatten().take(32) {
+                let Ok(rd) = std::fs::read_dir(&dir) else {
+                    continue;
+                };
+                for entry in rd.flatten().take(48) {
                     let p = entry.path();
-                    if !p.is_file() { continue; }
-                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
-                    if name.eq_ignore_ascii_case(target_filename) {
-                        if let Ok(bytes) = std::fs::read(&p) {
-                            let len = bytes.len().min(MAX_READ_BYTES);
-                            let content = String::from_utf8_lossy(&bytes[..len]).to_string();
-                            return Some(ResolvedUploadedFile {
-                                resolved_path: p,
-                                filename: name,
-                                content,
-                                byte_size: bytes.len(),
-                            });
+                    if !p.is_file() {
+                        continue;
+                    }
+                    let name = p
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let stem = p
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or_default();
+                    if name.eq_ignore_ascii_case(target_filename)
+                        || stem.eq_ignore_ascii_case(target_filename)
+                    {
+                        if let Some(res) =
+                            read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+                        {
+                            return Some(res);
                         }
                     }
                 }
@@ -279,47 +377,82 @@ pub fn resolve_local_uploaded_file(
     }
 
     // Case 2: No filename provided, but destination URL targets dlptest.com or an upload sink.
-    // Inspect the newest modified files (last 120s) matching data extensions.
+    // Use Google Magika to classify candidate files in C:\exfil, Downloads, Desktop, Documents, Temp.
     let is_upload_sink = destination_url.contains("dlptest.com")
         || destination_url.contains("/upload")
-        || destination_url.contains("/post");
+        || destination_url.contains("/https-post")
+        || destination_url.contains("/http-post");
 
     if is_upload_sink {
-        let now = SystemTime::now();
-        let mut candidates: Vec<(PathBuf, SystemTime, u64)> = Vec::new();
+        let mut candidates: Vec<(PathBuf, bool, SystemTime, u64)> = Vec::new();
 
         for dir in get_candidate_staging_dirs() {
-            let Ok(rd) = std::fs::read_dir(&dir) else { continue; };
-            for entry in rd.flatten().take(32) {
+            let is_exfil_dir = dir
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .contains("exfil");
+            let Ok(rd) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in rd.flatten().take(48) {
                 let p = entry.path();
-                if !p.is_file() { continue; }
-                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
-                if !DATA_EXTENSIONS.contains(&ext.as_str()) {
+                if !p.is_file() {
+                    continue;
+                }
+                let ext = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                if matches!(
+                    ext.as_str(),
+                    "exe" | "dll" | "sys" | "msi" | "msixbundle" | "pdb" | "obj" | "lib" | "rlib" | "db" | "db-wal" | "db-shm" | "lnk" | "har" | "zip"
+                ) {
                     continue;
                 }
                 if let Ok(md) = entry.metadata() {
+                    if md.len() == 0 || md.len() > 500 * 1024 * 1024 {
+                        continue;
+                    }
                     let mtime = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                    if let Ok(dur) = now.duration_since(mtime) {
-                        if dur.as_secs() <= 120 && md.len() > 0 && md.len() <= (MAX_READ_BYTES as u64 * 4) {
-                            candidates.push((p, mtime, md.len()));
-                        }
+                    let atime = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
+                    let recent_touch = mtime.max(atime);
+                    let now = SystemTime::now();
+                    let age_secs = now
+                        .duration_since(recent_touch)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(u64::MAX);
+                    if is_exfil_dir || age_secs <= 600 {
+                        candidates.push((p, is_exfil_dir, recent_touch, md.len()));
                     }
                 }
             }
         }
 
-        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
-        if let Some((best_path, _, _)) = candidates.into_iter().next() {
-            if let Ok(bytes) = std::fs::read(&best_path) {
-                let len = bytes.len().min(MAX_READ_BYTES);
-                let content = String::from_utf8_lossy(&bytes[..len]).to_string();
-                let filename = best_path.file_name().and_then(|n| n.to_str()).unwrap_or("staged_upload").to_string();
-                return Some(ResolvedUploadedFile {
-                    resolved_path: best_path,
-                    filename,
-                    content,
-                    byte_size: bytes.len(),
-                });
+        // Prioritize files in C:\exfil (preferring .xlsx/.docx/.pdf/.csv) and most recently accessed/modified files
+        candidates.sort_by(|a, b| {
+            let a_office = a
+                .0
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc"))
+                .unwrap_or(false);
+            let b_office = b
+                .0
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc"))
+                .unwrap_or(false);
+            b.1.cmp(&a.1)
+                .then_with(|| b_office.cmp(&a_office))
+                .then_with(|| b.2.cmp(&a.2))
+        });
+
+        if let Some((best_path, _, _, _)) = candidates.into_iter().next() {
+            if let Some(resolved) =
+                read_and_classify_uploaded_file(&best_path, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+            {
+                return Some(resolved);
             }
         }
     }
@@ -429,6 +562,72 @@ pub fn get_browser_profiles() -> Vec<(String, String, PathBuf)> {
 
 /// Checks whether a DLP event signature (destination, scrubbed preview, or zk commitment)
 /// was previously marked as a released false positive by the user in `database/dlp_released_allowlist.json`.
+/// Checks whether a HAR request (URL, host, or BLAKE3 hash) was excluded/released by the user
+/// in `database/dlp_released_allowlist.json`.
+pub fn is_har_entry_allowlisted(url: &str, host: &str, hash_blake3: &str) -> bool {
+    let path = PathBuf::from("database").join("dlp_released_allowlist.json");
+    if !path.is_file() {
+        return false;
+    }
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(val) = serde_json::from_str::<Value>(&data) else {
+        return false;
+    };
+    let Some(arr) = val.as_array() else {
+        return false;
+    };
+    let url_low = url.trim().to_ascii_lowercase();
+    let host_low = host.trim().to_ascii_lowercase();
+    let hash_low = hash_blake3.trim().trim_start_matches('#').to_ascii_lowercase();
+
+    for item in arr {
+        if let Some(s) = item.as_str() {
+            let pat = s.trim().trim_start_matches('#').to_ascii_lowercase();
+            if !pat.is_empty()
+                && (pat == url_low
+                    || pat == host_low
+                    || (!hash_low.is_empty() && hash_low.starts_with(&pat))
+                    || (pat.len() >= 4 && url_low.contains(&pat)))
+            {
+                return true;
+            }
+        } else if let Some(obj) = item.as_object() {
+            if let Some(sink) = obj.get("destination_sink").or_else(|| obj.get("url")).and_then(|v| v.as_str()) {
+                let s_low = sink.trim().to_ascii_lowercase();
+                if !s_low.is_empty() && (s_low == url_low || s_low == host_low || (s_low.len() >= 4 && url_low.contains(&s_low))) {
+                    return true;
+                }
+            }
+            if let Some(h) = obj.get("host").and_then(|v| v.as_str()) {
+                let h_low = h.trim().to_ascii_lowercase();
+                if !h_low.is_empty() && h_low == host_low {
+                    return true;
+                }
+            }
+            if let Some(bh) = obj.get("hash_blake3").or_else(|| obj.get("zk_commitment_hex")).and_then(|v| v.as_str()) {
+                let bh_low = bh.trim().trim_start_matches('#').to_ascii_lowercase();
+                if !bh_low.is_empty() && !hash_low.is_empty() && (hash_low == bh_low || hash_low.starts_with(&bh_low)) {
+                    return true;
+                }
+            }
+            if let Some(pat) = obj.get("pattern").and_then(|v| v.as_str()) {
+                let p_low = pat.trim().trim_start_matches('#').to_ascii_lowercase();
+                if !p_low.is_empty()
+                    && (p_low == host_low
+                        || p_low == url_low
+                        || (!hash_low.is_empty() && hash_low.starts_with(&p_low))
+                        || url_low.contains(&p_low))
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub fn is_dlp_event_allowlisted(
     destination_sink: &str,
     scrubbed_preview: &str,
@@ -641,12 +840,21 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
     // 3. Check Windows DNS cache for dlptest.com visits
     #[cfg(windows)]
     {
-        if let Ok(output) = std::process::Command::new("ipconfig").arg("/displaydns").output() {
+        use std::os::windows::process::CommandExt;
+        if let Ok(output) = std::process::Command::new("ipconfig")
+            .arg("/displaydns")
+            .creation_flags(0x08000000)
+            .output()
+        {
             let stdout = String::from_utf8_lossy(&output.stdout);
             if stdout.contains("dlptest.com") {
                 let test_url = "https://dlptest.com/https-post/";
                 if let Some(resolved) = resolve_local_uploaded_file(None, test_url) {
-                    let key = format!("dns_dlptest_{}", resolved.resolved_path.display());
+                    let key = format!(
+                        "dns_dlptest_magika_{}_{}",
+                        resolved.magika_label,
+                        resolved.resolved_path.display()
+                    );
                     let started_at = chrono::Utc::now().to_rfc3339();
                     out.push(HarDlpRequest {
                         key,
@@ -662,12 +870,16 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                         started_at,
                         mime_type: "multipart/form-data".to_string(),
                         body_text: format!(
-                            "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                            "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n{}",
                             resolved.resolved_path.display(),
+                            resolved.magika_label,
                             resolved.byte_size,
                             resolved.content
                         ),
-                        params: vec![("uploaded_file".to_string(), resolved.resolved_path.display().to_string())],
+                        params: vec![(
+                            "uploaded_file".to_string(),
+                            resolved.resolved_path.display().to_string(),
+                        )],
                         body_truncated: false,
                     });
                 }

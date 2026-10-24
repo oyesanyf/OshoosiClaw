@@ -5869,7 +5869,10 @@ const PANEL_BUTTON_MAP = {
     'malware-panel-body': 'toggle-malware-panel-btn',
     'consensus-panel-body': 'toggle-consensus-panel-btn',
     'repair-panel-body': 'toggle-repair-panel-btn',
-    'story-panel-body': 'toggle-story-panel-btn'
+    'story-panel-body': 'toggle-story-panel-btn',
+    'mitre-overview-body': 'toggle-mitre-overview-btn',
+    'mitre-filters-body': 'toggle-mitre-filters-btn',
+    'mitre-techniques-matrix-body': 'toggle-mitre-techniques-matrix-btn'
 };
 
 function persistCollapsedPanelsState() {
@@ -5910,8 +5913,21 @@ function syncCollapsedPanelsDOM() {
             }
         }
         if (btn) {
-            const closedLabel = panelId === 'detection-engines-body' ? 'Expand (39 Engines)' : 'Expand';
-            const targetText = isCollapsed ? closedLabel : 'Collapse';
+            let closedLabel = 'Expand';
+            let openLabel = 'Collapse';
+            if (panelId === 'detection-engines-body') {
+                closedLabel = 'Expand (39 Engines)';
+            } else if (panelId === 'mitre-overview-body') {
+                closedLabel = 'Expand Overview';
+                openLabel = 'Collapse Overview';
+            } else if (panelId === 'mitre-filters-body') {
+                closedLabel = 'Expand Filters';
+                openLabel = 'Collapse Filters';
+            } else if (panelId === 'mitre-techniques-matrix-body') {
+                closedLabel = 'Expand Techniques Page';
+                openLabel = 'Collapse Techniques Page';
+            }
+            const targetText = isCollapsed ? closedLabel : openLabel;
             if (btn.innerText !== targetText || btn.textContent !== targetText) {
                 btn.innerText = targetText;
                 btn.textContent = targetText;
@@ -5945,15 +5961,28 @@ function togglePanel(panelId, btnId, defaultOpenText = 'Collapse', defaultClosed
 
     const isCollapsed = state.collapsedPanels.has(panelId);
     const openDisplay = panelId === 'nist-checklist-grid-main' ? 'grid' : 'block';
+    const resolvedOpenText = (panelId === 'mitre-overview-body' && defaultOpenText === 'Collapse')
+        ? 'Collapse Overview'
+        : (panelId === 'mitre-filters-body' && defaultOpenText === 'Collapse')
+        ? 'Collapse Filters'
+        : (panelId === 'mitre-techniques-matrix-body' && defaultOpenText === 'Collapse')
+        ? 'Collapse Techniques Page'
+        : defaultOpenText;
     const closedLabel = (panelId === 'detection-engines-body' && defaultClosedText === 'Expand')
         ? 'Expand (39 Engines)'
+        : (panelId === 'mitre-overview-body' && defaultClosedText === 'Expand')
+        ? 'Expand Overview'
+        : (panelId === 'mitre-filters-body' && defaultClosedText === 'Expand')
+        ? 'Expand Filters'
+        : (panelId === 'mitre-techniques-matrix-body' && defaultClosedText === 'Expand')
+        ? 'Expand Techniques Page'
         : defaultClosedText;
     if (isCollapsed) {
         state.collapsedPanels.delete(panelId);
         el.style.display = openDisplay;
         if (btn) {
-            btn.innerText = defaultOpenText;
-            btn.textContent = defaultOpenText;
+            btn.innerText = resolvedOpenText;
+            btn.textContent = resolvedOpenText;
         }
     } else {
         state.collapsedPanels.add(panelId);
@@ -5997,6 +6026,51 @@ function toggleGossipPanel() { togglePanel('gossip-panel-body', 'toggle-gossip-p
 function toggleMalwarePanel() { togglePanel('malware-panel-body', 'toggle-malware-panel-btn'); }
 function toggleRepairPanel() { togglePanel('repair-panel-body', 'toggle-repair-panel-btn'); }
 function toggleStoryPanel() { togglePanel('story-panel-body', 'toggle-story-panel-btn'); }
+
+const COLLAPSIBLE_PANELS = {
+    'mitre-overview': {
+        bodyId: 'mitre-overview-body',
+        btnId: 'toggle-mitre-overview-btn',
+        expandLabel: 'Expand Overview',
+        collapseLabel: 'Collapse Overview',
+        defaultCollapsed: false
+    },
+    'mitre-filters': {
+        bodyId: 'mitre-filters-body',
+        btnId: 'toggle-mitre-filters-btn',
+        expandLabel: 'Expand Filters',
+        collapseLabel: 'Collapse Filters',
+        defaultCollapsed: false
+    },
+    'mitre-techniques-matrix': {
+        bodyId: 'mitre-techniques-matrix-body',
+        btnId: 'toggle-mitre-techniques-matrix-btn',
+        expandLabel: 'Expand Techniques Page',
+        collapseLabel: 'Collapse Techniques Page',
+        defaultCollapsed: false
+    }
+};
+window.COLLAPSIBLE_PANELS = COLLAPSIBLE_PANELS;
+
+function toggleCollapsiblePanel(panelKey) {
+    const config = COLLAPSIBLE_PANELS[panelKey];
+    if (!config) return;
+    togglePanel(config.bodyId, config.btnId, config.collapseLabel, config.expandLabel);
+}
+window.toggleCollapsiblePanel = toggleCollapsiblePanel;
+
+function toggleMitreOverviewPanel() {
+    toggleCollapsiblePanel('mitre-overview');
+}
+function toggleMitreFiltersPanel() {
+    toggleCollapsiblePanel('mitre-filters');
+}
+function toggleMitreTechniquesMatrixPanel() {
+    toggleCollapsiblePanel('mitre-techniques-matrix');
+}
+window.toggleMitreOverviewPanel = toggleMitreOverviewPanel;
+window.toggleMitreFiltersPanel = toggleMitreFiltersPanel;
+window.toggleMitreTechniquesMatrixPanel = toggleMitreTechniquesMatrixPanel;
 
 function toggleAllDashboardPanels(collapseAll) {
     if (!state.collapsedPanels) state.collapsedPanels = new Set();
@@ -7576,6 +7650,203 @@ function setupMitreFilters() {
     }
 }
 
+const MITRE_COLLAPSED_TACTICS_KEY = 'osoosi_mitre_collapsed_tactics';
+const MITRE_COLLAPSED_CARDS_KEY = 'osoosi_mitre_collapsed_cards';
+
+function loadMitreCollapsedTactics() {
+    try {
+        const stored = localStorage.getItem(MITRE_COLLAPSED_TACTICS_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_) {}
+    return {};
+}
+
+function saveMitreCollapsedTactics(map) {
+    try {
+        localStorage.setItem(MITRE_COLLAPSED_TACTICS_KEY, JSON.stringify(map || {}));
+    } catch (_) {}
+}
+
+function loadMitreCollapsedCards() {
+    try {
+        const stored = localStorage.getItem(MITRE_COLLAPSED_CARDS_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed;
+            }
+        }
+    } catch (_) {}
+    return {};
+}
+
+function saveMitreCollapsedCards(map) {
+    try {
+        localStorage.setItem(MITRE_COLLAPSED_CARDS_KEY, JSON.stringify(map || {}));
+    } catch (_) {}
+}
+
+window.mitreCollapsedTactics = loadMitreCollapsedTactics();
+window.mitreCollapsedCards = loadMitreCollapsedCards();
+
+function isTacticCollapsed(tacticId, hasActiveFilter = false) {
+    if (hasActiveFilter) {
+        return false;
+    }
+    if (window.mitreCollapsedTactics && typeof window.mitreCollapsedTactics[tacticId] === 'boolean') {
+        return window.mitreCollapsedTactics[tacticId];
+    }
+    return false;
+}
+window.isTacticCollapsed = isTacticCollapsed;
+
+function isTechCardCollapsed(techId) {
+    if (window.mitreCollapsedCards && typeof window.mitreCollapsedCards[techId] === 'boolean') {
+        return window.mitreCollapsedCards[techId];
+    }
+    return false;
+}
+window.isTechCardCollapsed = isTechCardCollapsed;
+
+window.toggleMitreTacticCol = function(tacticId) {
+    if (!window.mitreCollapsedTactics) window.mitreCollapsedTactics = {};
+    const col = document.querySelector(`.mitre-tactic-col[data-tactic-id="${tacticId}"]`);
+    const currentlyCollapsed = col ? col.classList.contains('collapsed') : isTacticCollapsed(tacticId, false);
+    const nextState = !currentlyCollapsed;
+
+    window.mitreCollapsedTactics[tacticId] = nextState;
+    saveMitreCollapsedTactics(window.mitreCollapsedTactics);
+
+    if (col) {
+        col.classList.toggle('collapsed', nextState);
+        const header = col.querySelector('.mitre-tactic-header');
+        if (header) {
+            header.setAttribute('aria-expanded', nextState ? 'false' : 'true');
+        }
+    }
+    updateMitreCollapseControlsUI();
+};
+
+window.toggleAllMitreTactics = function() {
+    if (!window.mitreCollapsedTactics) window.mitreCollapsedTactics = {};
+    const cols = Array.from(document.querySelectorAll('.mitre-tactic-col'));
+    if (cols.length === 0) return;
+
+    const anyCollapsed = cols.some(col => col.classList.contains('collapsed'));
+    const targetCollapsed = !anyCollapsed;
+
+    cols.forEach(col => {
+        const id = col.dataset.tacticId;
+        col.classList.toggle('collapsed', targetCollapsed);
+        const header = col.querySelector('.mitre-tactic-header');
+        if (header) {
+            header.setAttribute('aria-expanded', targetCollapsed ? 'false' : 'true');
+        }
+        if (id) {
+            window.mitreCollapsedTactics[id] = targetCollapsed;
+        }
+    });
+    saveMitreCollapsedTactics(window.mitreCollapsedTactics);
+    updateMitreCollapseControlsUI();
+};
+
+window.toggleMitreTechCard = function(techId, ev) {
+    if (ev && typeof ev.stopPropagation === 'function') {
+        ev.stopPropagation();
+    }
+    if (!window.mitreCollapsedCards) window.mitreCollapsedCards = {};
+    const cards = Array.from(document.querySelectorAll(`.mitre-technique-card[data-tech-id="${techId}"]`));
+    const currentlyCollapsed = cards.length > 0 ? cards[0].classList.contains('collapsed') : isTechCardCollapsed(techId);
+    const nextState = !currentlyCollapsed;
+
+    window.mitreCollapsedCards[techId] = nextState;
+    saveMitreCollapsedCards(window.mitreCollapsedCards);
+
+    cards.forEach(card => {
+        card.classList.toggle('collapsed', nextState);
+        const btn = card.querySelector('.mitre-tech-collapse-btn');
+        if (btn) {
+            btn.setAttribute('aria-expanded', nextState ? 'false' : 'true');
+            btn.textContent = nextState ? '▸' : '▾';
+        }
+    });
+    updateMitreCollapseControlsUI();
+};
+
+window.toggleAllMitreTechCards = function() {
+    if (!window.mitreCollapsedCards) window.mitreCollapsedCards = {};
+    const cards = Array.from(document.querySelectorAll('.mitre-technique-card'));
+    if (cards.length === 0) return;
+
+    const anyCollapsed = cards.some(card => card.classList.contains('collapsed'));
+    const targetCollapsed = !anyCollapsed;
+
+    cards.forEach(card => {
+        const id = card.dataset.techId;
+        card.classList.toggle('collapsed', targetCollapsed);
+        const btn = card.querySelector('.mitre-tech-collapse-btn');
+        if (btn) {
+            btn.setAttribute('aria-expanded', targetCollapsed ? 'false' : 'true');
+            btn.textContent = targetCollapsed ? '▸' : '▾';
+        }
+        if (id) {
+            window.mitreCollapsedCards[id] = targetCollapsed;
+        }
+    });
+    saveMitreCollapsedCards(window.mitreCollapsedCards);
+    updateMitreCollapseControlsUI();
+};
+
+function updateMitreCollapseControlsUI() {
+    const cols = Array.from(document.querySelectorAll('.mitre-tactic-col'));
+    const totalCols = cols.length;
+    const collapsedCols = cols.filter(col => col.classList.contains('collapsed')).length;
+    const expandedCols = totalCols - collapsedCols;
+
+    const btn = document.getElementById('toggle-all-mitre-tactics-btn');
+    if (btn) {
+        if (collapsedCols > 0) {
+            btn.innerText = '⊞ Expand All Tactics';
+            btn.textContent = '⊞ Expand All Tactics';
+        } else {
+            btn.innerText = '⊟ Collapse All Tactics';
+            btn.textContent = '⊟ Collapse All Tactics';
+        }
+    }
+
+    const cards = Array.from(document.querySelectorAll('.mitre-technique-card'));
+    const collapsedCards = cards.filter(c => c.classList.contains('collapsed')).length;
+    const cardsBtn = document.getElementById('toggle-all-mitre-cards-btn');
+    if (cardsBtn) {
+        if (collapsedCards > 0) {
+            cardsBtn.innerText = '⊞ Expand All Cards';
+            cardsBtn.textContent = '⊞ Expand All Cards';
+        } else {
+            cardsBtn.innerText = '⊟ Collapse All Cards';
+            cardsBtn.textContent = '⊟ Collapse All Cards';
+        }
+    }
+
+    const summaryEl = document.getElementById('mitre-tactics-collapse-summary');
+    if (summaryEl) {
+        if (totalCols === 0) {
+            summaryEl.innerText = '0 Tactics';
+        } else if (collapsedCols === totalCols) {
+            summaryEl.innerText = `${totalCols} Tactics • All Collapsed (Click any tactic header to expand)`;
+        } else if (expandedCols === totalCols) {
+            summaryEl.innerText = `${totalCols} Tactics • All Expanded • ${cards.length - collapsedCards}/${cards.length} Cards Expanded`;
+        } else {
+            summaryEl.innerText = `${totalCols} Tactics • ${expandedCols} Expanded / ${collapsedCols} Collapsed`;
+        }
+    }
+}
+window.updateMitreCollapseControlsUI = updateMitreCollapseControlsUI;
+
 function applyMitreFiltersAndRender() {
     try {
         if (!mitreDataCache) return;
@@ -7592,6 +7863,7 @@ function applyMitreFiltersAndRender() {
         const frameworkVal = frameworkFilter?.value || 'all';
         const tacticVal = tacticFilter?.value || 'all';
         const statusVal = statusFilter?.value || 'all';
+        const hasActiveFilter = (searchVal.length > 0) || (frameworkVal !== 'all') || (tacticVal !== 'all') || (statusVal !== 'all');
 
         let totalVisible = 0;
         const activeDetections = mitreDataCache.active_detections_by_tactic || {};
@@ -7642,13 +7914,17 @@ function applyMitreFiltersAndRender() {
 
             totalVisible += techniquesForTactic.length;
 
+            const isCollapsed = isTacticCollapsed(tactic.id, hasActiveFilter);
             const tacticAlertCount = activeDetections[tactic.id] || 0;
 
             html += `
-                <div class="mitre-tactic-col" data-tactic-id="${tactic.id}">
-                    <div class="mitre-tactic-header">
+                <div class="mitre-tactic-col ${isCollapsed ? 'collapsed' : ''}" data-tactic-id="${tactic.id}">
+                    <div class="mitre-tactic-header" role="button" tabindex="0" aria-expanded="${isCollapsed ? 'false' : 'true'}" onclick="toggleMitreTacticCol('${tactic.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleMitreTacticCol('${tactic.id}');}">
                         <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span class="mitre-tactic-id">${tactic.id}</span>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <span class="mitre-tactic-id">${tactic.id}</span>
+                                <span class="mitre-tactic-chevron">▾</span>
+                            </div>
                             ${tacticAlertCount > 0 ? `<span class="badge red" style="font-size: 10px;">${tacticAlertCount} alert${tacticAlertCount > 1 ? 's' : ''}</span>` : ''}
                         </div>
                         <div class="mitre-tactic-name">${tactic.name}</div>
@@ -7667,21 +7943,27 @@ function applyMitreFiltersAndRender() {
                             const voter = tech.voter;
                             const action = tech.consensus_action;
                             const sigmaCount = tech.sigma_rules?.length || 0;
+                            const cardCollapsed = isTechCardCollapsed(tech.id);
 
                             return `
-                                <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
+                                <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''} ${cardCollapsed ? 'collapsed' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
                                     <div class="mitre-tech-header">
                                         <span class="mitre-tech-id">${tech.id}</span>
-                                        ${isAtlas ? '<span class="badge magenta" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 0, 128, 0.15); color: #ff3399; border: 1px solid rgba(255, 0, 128, 0.3);">ATLAS</span>' : ''}
-                                        ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
+                                        <div style="display: inline-flex; align-items: center; gap: 4px;">
+                                            ${isAtlas ? '<span class="badge magenta" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 0, 128, 0.15); color: #ff3399; border: 1px solid rgba(255, 0, 128, 0.3);">ATLAS</span>' : ''}
+                                            ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
+                                            <button type="button" class="mitre-tech-collapse-btn" aria-expanded="${cardCollapsed ? 'false' : 'true'}" title="Collapse/Expand Technique Card" onclick="toggleMitreTechCard('${tech.id}', event)">${cardCollapsed ? '▸' : '▾'}</button>
+                                        </div>
                                     </div>
-                                    <div class="mitre-tech-title">${tech.name}</div>
-                                    <div class="mitre-tech-badges">
-                                        ${voter ? `<span class="badge cyan" style="font-size: 9px; padding: 1px 4px; background: rgba(0, 210, 255, 0.12); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">${voter}</span>` : ''}
-                                        ${action ? `<span class="badge yellow" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 170, 0, 0.12); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.25);">${action}</span>` : ''}
-                                        ${sigmaCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;" title="${sigmaCount} Sigma rules">${sigmaCount}σ</span>` : ''}
-                                        ${subCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;">.${subCount} sub</span>` : ''}
-                                        ${tech.groups && tech.groups.length > 0 ? `<span class="badge purple" style="font-size: 9px; padding: 1px 4px;">${tech.groups[0]}</span>` : ''}
+                                    <div class="mitre-tech-body">
+                                        <div class="mitre-tech-title">${tech.name}</div>
+                                        <div class="mitre-tech-badges">
+                                            ${voter ? `<span class="badge cyan" style="font-size: 9px; padding: 1px 4px; background: rgba(0, 210, 255, 0.12); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">${voter}</span>` : ''}
+                                            ${action ? `<span class="badge yellow" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 170, 0, 0.12); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.25);">${action}</span>` : ''}
+                                            ${sigmaCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;" title="${sigmaCount} Sigma rules">${sigmaCount}σ</span>` : ''}
+                                            ${subCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;">.${subCount} sub</span>` : ''}
+                                            ${tech.groups && tech.groups.length > 0 ? `<span class="badge purple" style="font-size: 9px; padding: 1px 4px;">${tech.groups[0]}</span>` : ''}
+                                        </div>
                                     </div>
                                 </div>
                             `;
@@ -7692,6 +7974,7 @@ function applyMitreFiltersAndRender() {
         });
 
         container.innerHTML = html;
+        updateMitreCollapseControlsUI();
 
         if (countEl) {
             countEl.innerText = `Showing ${totalVisible} technique${totalVisible !== 1 ? 's' : ''}`;
@@ -7705,6 +7988,8 @@ function applyMitreFiltersAndRender() {
         renderViewFallbackCard('mitre-matrix-container', 'MITRE ATT&CK Matrix', err);
     }
 }
+window.renderMitreAttackMatrix = renderMitreView;
+window.renderMitreView = renderMitreView;
 
 async function openMitreTechniqueModalById(techId) {
     try {

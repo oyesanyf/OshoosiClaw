@@ -363,7 +363,9 @@ impl DlpContainmentEngine {
         let monitor_only = backend
             .as_ref()
             .map(|b| b.is_monitor_only())
-            .unwrap_or(false);
+            .unwrap_or(false)
+            && event.execution_mode != "LIVE_ENFORCEMENT"
+            && event.dlp_response != "QUARANTINE";
         let dry_run = std::env::var("OSOOSI_DRY_RUN")
             .map(|v| v == "1")
             .unwrap_or(false);
@@ -948,10 +950,12 @@ const BROWSER_IMAGES: &[&str] = &[
 ];
 
 /// Real OS integration: sysinfo process resolution, Authenticode/catalog trust, REA
-/// adjudication, netsh (Windows, hidden window) / iptables (Linux) per-program destination
-/// rules, NtSuspendProcess / SIGSTOP suspension.
+/// adjudication, native Rust WFP / BFE / socket isolation (`osoosi_core::wfp` on Windows,
+/// zero `netsh` subprocesses) / iptables (Linux) per-program destination rules,
+/// NtSuspendProcess / SIGSTOP suspension.
 pub struct SystemContainmentPlatform;
 
+#[allow(dead_code)]
 fn run_hidden(program: &str, args: &[String]) -> anyhow::Result<()> {
     let mut cmd = std::process::Command::new(program);
     cmd.args(args);
@@ -1120,27 +1124,8 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         pid: Option<u32>,
         ips: &[IpAddr],
     ) -> anyhow::Result<()> {
-        let ip_list = ips
-            .iter()
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
         if cfg!(windows) {
-            let mut args = vec![
-                "advfirewall".to_string(),
-                "firewall".to_string(),
-                "add".to_string(),
-                "rule".to_string(),
-                format!("name={}", rule),
-                "dir=out".to_string(),
-                "action=block".to_string(),
-                format!("remoteip={}", ip_list),
-                "enable=yes".to_string(),
-            ];
-            if let Some(p) = program {
-                args.push(format!("program={}", p));
-            }
-            run_hidden("netsh", &args)
+            osoosi_core::wfp::block_destination_native(rule, program, pid, ips).map(|_| ())
         } else {
             let uid = pid.and_then(linux_uid_of);
             for ip in ips {
@@ -1154,21 +1139,12 @@ impl ContainmentPlatform for SystemContainmentPlatform {
     fn unblock_destination(
         &self,
         rule: &str,
-        _program: Option<&str>,
+        program: Option<&str>,
         pid: Option<u32>,
         ips: &[IpAddr],
     ) -> anyhow::Result<()> {
         if cfg!(windows) {
-            run_hidden(
-                "netsh",
-                &[
-                    "advfirewall".to_string(),
-                    "firewall".to_string(),
-                    "delete".to_string(),
-                    "rule".to_string(),
-                    format!("name={}", rule),
-                ],
-            )
+            osoosi_core::wfp::unblock_destination_native(rule, program, pid, ips)
         } else {
             let uid = pid.and_then(linux_uid_of);
             for ip in ips {
@@ -1286,12 +1262,28 @@ pub fn production_voter_ballots(
         ),
         event.sensitivity_potential_phi,
     );
-    ballots.push(VoterBallot {
-        voter: "REA-Voter".to_string(),
-        escalate: rea_vote.decision == "ESCALATE_MALICIOUS",
-        confidence: rea_vote.confidence,
-        weight: rea_vote.weight,
-        reason: rea_vote.reason,
+    let confirmed_dlp_exfil = event.redactx_confirmed_containment
+        && event.openjev_enforcement_agreed
+        && (!event.redactx_validated_categories.is_empty() || !event.detected_categories.is_empty());
+    ballots.push(if confirmed_dlp_exfil {
+        VoterBallot {
+            voter: "REA-Voter".to_string(),
+            escalate: true,
+            confidence: event.sensitivity_potential_phi.max(0.95),
+            weight: 1.5,
+            reason: format!(
+                "Escalate [REA-Voter]: Corroborated confirmed RedactX + OpenJEV DLP exfiltration by '{}' -> '{}' ({:?})",
+                ctx.actor, ctx.destination_host, event.redactx_validated_categories
+            ),
+        }
+    } else {
+        VoterBallot {
+            voter: "REA-Voter".to_string(),
+            escalate: rea_vote.decision == "ESCALATE_MALICIOUS",
+            confidence: rea_vote.confidence,
+            weight: rea_vote.weight,
+            reason: rea_vote.reason,
+        }
     });
     ballots.push(VoterBallot {
         voter: "RedactX-Deterministic-Validators".to_string(),

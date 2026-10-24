@@ -180,6 +180,18 @@ pub fn refresh_live_har_cache_now() -> Value {
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        let host_str = e
+            .get("host")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let hash_blake3 = e
+            .get("hash_blake3")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let user_allowlisted =
+            crate::routes::har_dlp::is_har_entry_allowlisted(&url, &host_str, &hash_blake3);
 
         let rea_har = rea_engine.analyze_har_entry_with_context(
             &source_file,
@@ -225,7 +237,20 @@ pub fn refresh_live_har_cache_now() -> Value {
                 .get("threat_score")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(0.0);
-            if rea_har.rea_voter_decision == "ESCALATE_MALICIOUS"
+            if user_allowlisted {
+                obj.insert("threat_score".to_string(), json!(0.0));
+                obj.insert("verdict".to_string(), json!("benign"));
+                obj.insert("rea_voter_decision".to_string(), json!("USER_RELEASED"));
+                obj.insert(
+                    "rea_voter_reason".to_string(),
+                    json!("User Exclusion: Released as false positive by operator"),
+                );
+                obj.insert("openjev_voter_decision".to_string(), json!("USER_RELEASED"));
+                obj.insert(
+                    "openjev_voter_reason".to_string(),
+                    json!("User Exclusion: Released as false positive by operator"),
+                );
+            } else if rea_har.rea_voter_decision == "ESCALATE_MALICIOUS"
                 && (rea_har.threat_score as f64) > cur_score
             {
                 obj.insert("threat_score".to_string(), json!(rea_har.threat_score));

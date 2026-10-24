@@ -684,24 +684,10 @@ pub struct DlpTier1FastScanVerdict {
     pub rationale: String,
 }
 
-pub const STANDARD_EXEMPT_WEB_PARAMS: &[&str] = &[
-    "state",
-    "code",
-    "code_challenge",
-    "nonce",
-    "sig",
-    "signature",
-    "guce_referrer_sig",
-    "session_id",
-    "cs_live_",
-    "client_id",
-    "redirect_uri",
-];
-
-/// Checks if a query parameter key is a standard web token/signature parameter exempt from cipher exfiltration.
-pub fn is_exempt_query_param_key(key: &str) -> bool {
-    let lower = key.trim().to_ascii_lowercase();
-    STANDARD_EXEMPT_WEB_PARAMS.iter().any(|&p| lower == p || lower.ends_with(p))
+/// Checks if a query parameter key is user-exempted (no hardcoded parameter exclusions;
+/// exclusions are managed by the user via the DLP / HAR allowlist).
+pub fn is_exempt_query_param_key(_key: &str) -> bool {
+    false
 }
 
 /// Mathematical Luhn mod-10 AND ISO/IEC 7812 network length & prefix verifier for PANs.

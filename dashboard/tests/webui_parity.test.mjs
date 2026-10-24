@@ -419,7 +419,15 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                     'toggleAllEngineCategories',
                     'toggleSingleVoterCard',
                     'toggleAllVoterCardsCompact',
-                    'renderEngines'
+                    'renderEngines',
+                    'toggleMitreOverviewPanel',
+                    'toggleMitreFiltersPanel',
+                    'toggleMitreTechniquesMatrixPanel',
+                    'toggleMitreTacticCol',
+                    'toggleAllMitreTactics',
+                    'toggleMitreTechCard',
+                    'toggleAllMitreTechCards',
+                    'toggleCollapsiblePanel'
                 ];
                 for (const method of expectedSidebarAndCicdMethods) {
                     assert.strictEqual(
@@ -464,4 +472,63 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
     });
 });
 
+// ============================================================================
+// Suite 3: MITRE ATT&CK Matrix Layout Containment & Collapsible UI Verification
+// ============================================================================
+describe('MITRE ATT&CK Matrix Layout Containment & Collapsible UI Verification', () => {
+    for (const targetDirName of ['src', 'dist']) {
+        describe(`Target: dashboard/${targetDirName}`, () => {
+            const targetDir = path.resolve(`dashboard/${targetDirName}`);
 
+            it('should verify index.html MITRE container lacks width: max-content and includes collapse controls for every item', () => {
+                const htmlContent = fs.readFileSync(path.join(targetDir, 'index.html'), 'utf8');
+
+                assert.ok(!htmlContent.includes('width: max-content'),
+                    'index.html must not contain width: max-content in MITRE matrix');
+
+                assert.ok(htmlContent.includes('id="toggle-mitre-overview-btn"'), 'Must contain #toggle-mitre-overview-btn');
+                assert.ok(htmlContent.includes('id="toggle-mitre-filters-btn"'), 'Must contain #toggle-mitre-filters-btn');
+                assert.ok(htmlContent.includes('id="toggle-all-mitre-tactics-btn"'), 'Must contain #toggle-all-mitre-tactics-btn');
+                assert.ok(htmlContent.includes('id="toggle-all-mitre-cards-btn"'), 'Must contain #toggle-all-mitre-cards-btn');
+                assert.ok(htmlContent.includes('id="toggle-mitre-techniques-matrix-btn"'), 'Must contain #toggle-mitre-techniques-matrix-btn');
+                assert.ok(htmlContent.includes('id="mitre-overview-body"'), 'Must contain #mitre-overview-body');
+                assert.ok(htmlContent.includes('id="mitre-filters-body"'), 'Must contain #mitre-filters-body');
+                assert.ok(htmlContent.includes('id="mitre-techniques-matrix-card"'), 'Must contain #mitre-techniques-matrix-card');
+                assert.ok(htmlContent.includes('id="mitre-techniques-matrix-body"'), 'Must contain #mitre-techniques-matrix-body');
+                assert.ok(htmlContent.includes('id="mitre-tactics-collapse-summary"'), 'Must contain #mitre-tactics-collapse-summary');
+            });
+
+            it('should verify style.css responsive multi-column grid and collapsible tactic/card styles', () => {
+                const cssContent = fs.readFileSync(path.join(targetDir, 'style.css'), 'utf8');
+
+                assert.ok(cssContent.includes('grid-template-columns: repeat(auto-fill, minmax(240px, 1fr))'),
+                    '.mitre-matrix-container must use repeat(auto-fill, minmax(240px, 1fr))');
+                assert.ok(cssContent.includes('.mitre-tactic-col.collapsed .mitre-techniques-list'),
+                    'Must define .mitre-tactic-col.collapsed .mitre-techniques-list rule');
+                assert.ok(cssContent.includes('.mitre-technique-card.collapsed .mitre-tech-body'),
+                    'Must define .mitre-technique-card.collapsed .mitre-tech-body rule');
+                assert.ok(cssContent.includes('display: none !important'),
+                    'Collapsed MITRE rules must have display: none !important');
+                assert.ok(cssContent.includes('.sidebar {') && cssContent.includes('flex-shrink: 0;'),
+                    '.sidebar must have flex-shrink: 0');
+                assert.ok(cssContent.includes('.content {') && cssContent.includes('min-width: 0;') && cssContent.includes('min-inline-size: 0;'),
+                    '.content must enforce min-width: 0 and min-inline-size: 0');
+            });
+
+            it('should verify app.js exports MITRE collapse functions for Overview, Filters, Tactics, and Individual Technique Cards', () => {
+                const appContent = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+
+                assert.ok(appContent.includes('toggleMitreOverviewPanel'), 'Must include toggleMitreOverviewPanel');
+                assert.ok(appContent.includes('toggleMitreFiltersPanel'), 'Must include toggleMitreFiltersPanel');
+                assert.ok(appContent.includes('toggleMitreTechniquesMatrixPanel'), 'Must include toggleMitreTechniquesMatrixPanel');
+                assert.ok(appContent.includes('toggleMitreTacticCol'), 'Must include toggleMitreTacticCol');
+                assert.ok(appContent.includes('toggleAllMitreTactics'), 'Must include toggleAllMitreTactics');
+                assert.ok(appContent.includes('toggleMitreTechCard'), 'Must include toggleMitreTechCard');
+                assert.ok(appContent.includes('toggleAllMitreTechCards'), 'Must include toggleAllMitreTechCards');
+                assert.ok(appContent.includes('updateMitreCollapseControlsUI'), 'Must include updateMitreCollapseControlsUI');
+                assert.ok(appContent.includes('COLLAPSIBLE_PANELS'), 'Must include COLLAPSIBLE_PANELS');
+                assert.ok(appContent.includes('toggleCollapsiblePanel'), 'Must include toggleCollapsiblePanel');
+            });
+        });
+    }
+});
