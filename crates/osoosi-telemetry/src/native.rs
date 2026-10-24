@@ -885,7 +885,9 @@ async fn run_hook_telemetry_listener(
                     SDDL_REVISION_1,
                     &mut sd_ptr,
                     std::ptr::null_mut(),
-                ) != 0 && !sd_ptr.is_null() {
+                ) != 0
+                    && !sd_ptr.is_null()
+                {
                     sa.lp_security_descriptor = sd_ptr;
                     &mut sa as *mut SecurityAttributes as *mut _
                 } else {

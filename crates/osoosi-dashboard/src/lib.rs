@@ -905,7 +905,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .fallback_service(safe_serve)
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
-            .layer(axum::middleware::from_fn(rate_limiter::rate_limit_middleware))
+            .layer(axum::middleware::from_fn(
+                rate_limiter::rate_limit_middleware,
+            ))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
             .layer(axum::middleware::from_fn(no_cache_header_middleware))
     } else {
@@ -914,7 +916,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .fallback_service(safe_serve)
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
-            .layer(axum::middleware::from_fn(rate_limiter::rate_limit_middleware))
+            .layer(axum::middleware::from_fn(
+                rate_limiter::rate_limit_middleware,
+            ))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
             .layer(axum::middleware::from_fn(no_cache_header_middleware))
     }
@@ -12865,7 +12869,9 @@ mod tests {
         let hash_path = root.join("config").join("admin_password.hash");
         if hash_path.is_file() {
             let hash_content = std::fs::read_to_string(&hash_path).unwrap_or_default();
-            let attacker_hash = blake3::hash(b"attacker_bogus_password_attempt").to_hex().to_string();
+            let attacker_hash = blake3::hash(b"attacker_bogus_password_attempt")
+                .to_hex()
+                .to_string();
             assert!(
                 !hash_content.trim().contains(&attacker_hash),
                 "admin_password.hash MUST NEVER be overwritten by candidate secret on failed login"
@@ -12947,7 +12953,9 @@ mod tests {
             .method(axum::http::Method::POST)
             .header("x-test-require-auth", "1")
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(r#"{"query":"SELECT * FROM processes"}"#))
+            .body(axum::body::Body::from(
+                r#"{"query":"SELECT * FROM processes"}"#,
+            ))
             .unwrap();
         let resp_siquery = app.clone().oneshot(req_siquery).await.unwrap();
         assert_eq!(
@@ -12962,7 +12970,9 @@ mod tests {
             .method(axum::http::Method::POST)
             .header("x-test-require-auth", "1")
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(r#"{"target_path":"C:\\Windows\\System32\\cmd.exe"}"#))
+            .body(axum::body::Body::from(
+                r#"{"target_path":"C:\\Windows\\System32\\cmd.exe"}"#,
+            ))
             .unwrap();
         let resp_rea = app.clone().oneshot(req_rea).await.unwrap();
         assert_eq!(
@@ -12990,7 +13000,10 @@ mod tests {
         let req_auth = axum::http::Request::builder()
             .uri("/api/siquery/query")
             .method(axum::http::Method::POST)
-            .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", expected_token))
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {}", expected_token),
+            )
             .header(axum::http::header::CONTENT_TYPE, "application/json")
             .body(axum::body::Body::from(r#"{"query":"SELECT 1 as test"}"#))
             .unwrap();
@@ -13045,7 +13058,9 @@ mod tests {
             axum::http::StatusCode::TOO_MANY_REQUESTS,
             "11th rapid request from same IP must be throttled with 429"
         );
-        let bytes = axum::body::to_bytes(resp_burst.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp_burst.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json_err["error"], "TOO_MANY_REQUESTS");
     }

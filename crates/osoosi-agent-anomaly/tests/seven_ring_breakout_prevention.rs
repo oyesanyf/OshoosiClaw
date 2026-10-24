@@ -851,58 +851,133 @@ mod usability_parity_controls {
 // ============================================================================
 mod residual_risk_gauntlet {
     use super::*;
+    use osoosi_policy::*;
 
-    #[test]
-    fn test_family_1_workflow_composition_outcome_invariant() {
+    #[tokio::test]
+    async fn test_family_1_workflow_composition_outcome_invariant() {
+        let wf_eval = WorkflowCompositionEvaluator::new();
+        let executed_side_effects = AtomicUsize::new(0);
+
         // Step 1: Read permitted configuration file
-        let read_allowed = true;
-        // Step 2: Modify permitted config
-        let modify_allowed = true;
-        // Step 3: Execute deployment based on modified config
-        // Composite outcome: deployment targets unverified remote
-        let composite_outcome_safe = false;
+        let (step1_verdict, step1_out) = wf_eval.evaluate_and_execute_step(
+            "sess-test-wf-comp",
+            ComposedWorkflowStepKind::ReadPermittedProjectFile {
+                path: "config/app.toml".to_string(),
+            },
+            || "app_version = 1.0\n",
+        );
+        assert!(step1_verdict.allowed, "Permitted Step 1 read must succeed");
+        assert!(step1_out.is_some());
 
-        let execution_permitted = read_allowed && modify_allowed && composite_outcome_safe;
+        // Step 2: Modify permitted config
+        let (step2_verdict, step2_out) = wf_eval.evaluate_and_execute_step(
+            "sess-test-wf-comp",
+            ComposedWorkflowStepKind::ModifyPermittedConfiguration {
+                path: "config/app.toml".to_string(),
+                weakens_security_or_unverified: true,
+            },
+            || (),
+        );
         assert!(
-            !execution_permitted,
-            "Workflow composition: sequence of permitted steps leading to unsafe outcome must be blocked"
+            step2_verdict.allowed,
+            "Permitted Step 2 modify must succeed"
+        );
+        assert!(step2_out.is_some());
+
+        // Step 3: Attempt execution/deployment based on modified config without required dual authorization
+        let (step3_verdict, step3_out) = wf_eval.evaluate_and_execute_step(
+            "sess-test-wf-comp",
+            ComposedWorkflowStepKind::ExecuteApprovedDeployment {
+                target_environment: "production-cluster".to_string(),
+                dual_authorization_cosigners: vec!["unauthorized-single-actor".to_string()],
+            },
+            || {
+                executed_side_effects.fetch_add(1, Ordering::SeqCst);
+                "DEPLOYED"
+            },
+        );
+
+        assert!(
+            !step3_verdict.allowed,
+            "Workflow composition: sequence of individually permitted steps composing into unsafe outcome must be blocked"
+        );
+        assert!(step3_out.is_none(), "Blocked step must yield no output");
+        assert_eq!(
+            executed_side_effects.load(Ordering::SeqCst),
+            0,
+            "Zero prohibited side-effects must execute on composed attack"
         );
     }
 
     #[test]
     fn test_family_2_model_manipulation_advisory_only_invariant() {
-        // Attacker fools LLM judge with jailbreak prompt
-        let llm_judge_verdict_permissive = true; // Adversarially tricked model
-        let cedar_effect_authorized = false; // Hard policy invariant
+        // Attacker fools LLM judge with jailbreak prompt (LLM outputs 0.99 confidence benign)
+        // Hard policy invariant (Cedar) says DENY (false)
+        let model_manip_res = AdvisoryModelJudgmentGuard::enforce_advisory_only_invariant(
+            false, // deterministic Cedar authorizer said DENY
+            true,  // adversarially tricked LLM judge returned permissive
+            0.99,  // LLM confidence
+            true,  // LLM attempted to grant capability
+            true,  // LLM attempted to declassify taint
+        );
 
-        // Invariant: Model evaluation is strictly advisory/veto-only; cannot grant capabilities
-        let final_authorization = cedar_effect_authorized && llm_judge_verdict_permissive;
         assert!(
-            !final_authorization,
+            !model_manip_res.final_allowed,
             "Tricking an LLM judge or embedding can never grant capabilities or declassify taint"
+        );
+        assert!(
+            model_manip_res.model_override_rejected,
+            "Model advisory override of deterministic policy must be rejected"
         );
     }
 
     #[test]
     fn test_family_3_dual_authorization_administrator_abuse_defense() {
-        let principal_1_approved = true;
-        let principal_2_approved = false; // Missing second independent approval
+        let auth = Ring7CapabilityEffectAuthorizer::new();
 
-        let sensitive_policy_update_allowed = principal_1_approved && principal_2_approved;
+        // Attempt single-administrator insider abuse: same admin signs twice
+        let single_admin_bundle = auth.policy_store.sign_policy_bundle(
+            245,
+            "cedar-7ring-v2.4.5-tamper",
+            "permit (principal, action, resource);",
+            "sec-admin-alice",
+            "sec-admin-alice", // self-cosigned single admin!
+        );
+        let single_admin_res = auth
+            .policy_store
+            .apply_policy_update(&single_admin_bundle, &auth.capability_cache);
+
         assert!(
-            !sensitive_policy_update_allowed,
+            !single_admin_res.accepted,
             "Sensitive policy changes strictly require two independent authenticated principals"
+        );
+        assert!(
+            single_admin_res.unauthorized_principal_rejected,
+            "Single-admin self-cosigned update must be rejected by dual authorization gate"
         );
     }
 
     #[test]
     fn test_family_4_platform_attestation_measured_boot() {
-        let uefi_measured_boot_valid = false; // Degraded platform attestation
-        let release_signing_keys = uefi_measured_boot_valid;
+        let degraded_posture = PlatformAttestationPosture {
+            uefi_secure_boot_and_tpm_pcr0_7_valid: false, // Degraded platform attestation
+            hvci_vbs_and_hypervisor_enforced: true,
+            microcode_spectre_mds_l1tf_mitigated: true,
+            iommu_vt_d_kernel_dma_protection_active: false,
+            undocumented_kernel_table_walk_used: false,
+        };
 
+        let plat_dec = PlatformAttestationGate::evaluate_high_impact_operation(
+            &degraded_posture,
+            "release-agent-master-keys",
+        );
         assert!(
-            !release_signing_keys,
-            "Degraded platform attestation must withhold sensitive cryptographic keys"
+            !plat_dec.operation_allowed,
+            "Degraded platform attestation must withhold sensitive cryptographic keys and execution"
+        );
+        assert!(
+            plat_dec.sensitive_keys_withheld,
+            "Keys must be withheld under untrusted platform posture"
         );
     }
 

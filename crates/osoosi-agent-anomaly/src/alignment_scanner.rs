@@ -301,6 +301,19 @@ impl RuntimeAlignmentScanner {
         }
     }
 
+    /// Evaluates whether a proposed tool action targets a high-privilege sink.
+    pub fn is_high_privilege_sink(&self, tool: &str) -> bool {
+        let tool_norm = tool.trim().to_ascii_lowercase();
+        self.high_privilege_sinks.contains(&tool_norm)
+            || tool_norm.contains("shell")
+            || tool_norm.contains("powershell")
+            || tool_norm.contains("ledger")
+            || tool_norm.contains("credential")
+            || tool_norm.contains("delete")
+            || tool_norm.contains("egress")
+            || tool_norm.contains("registry")
+    }
+
     /// Pins the user's initial task intent hash + 128-dim semantic vector + allowed tool envelope
     /// at the start of an agent session.
     pub fn pin_session_intent(

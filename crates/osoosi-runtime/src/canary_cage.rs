@@ -541,10 +541,34 @@ impl CanaryCage {
                 );
             }
 
-            // 5. Build Child-Only Isolated UTF-16 Environment Block (Zero Parent Mutation)
+            // 5. Build Child-Only Isolated UTF-16 Environment Block (Zero Parent Mutation & Strict Secret Sanitization)
             let mut env_map: BTreeMap<String, String> = BTreeMap::new();
+            let allowed_vars = [
+                "systemroot",
+                "path",
+                "temp",
+                "tmp",
+                "user",
+                "username",
+                "home",
+                "userprofile",
+                "comspec",
+                "pathext",
+                "windir",
+            ];
             for (k, v) in std::env::vars() {
-                env_map.insert(k, v);
+                let k_lower = k.to_ascii_lowercase();
+                let is_whitelisted = allowed_vars.iter().any(|&a| k_lower == a);
+                let is_secret = k_lower.contains("secret")
+                    || k_lower.contains("token")
+                    || k_lower.contains("key")
+                    || k_lower.contains("password")
+                    || k_lower.starts_with("osoosi_")
+                    || k_lower.starts_with("aws_")
+                    || k_lower.starts_with("github_");
+                if is_whitelisted && !is_secret {
+                    env_map.insert(k, v);
+                }
             }
             env_map.insert("CANARY_HONEY_PIPE".to_string(), pipe_name.clone());
             env_map.insert("CANARY_SESSION_ID".to_string(), session_id.to_string());
@@ -853,11 +877,36 @@ impl CanaryCage {
                     if flags >= 0 {
                         libc::fcntl(target_high_fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC);
                     }
+                    // Prevent child processes from acquiring new privileges (Ring 7 OS isolation)
+                    #[cfg(target_os = "linux")]
+                    {
+                        let ret = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+                        if ret != 0 {
+                            return Err(std::io::Error::last_os_error());
+                        }
+                    }
                     Ok(())
                 });
             }
 
-            // 4. Pass environment variables strictly via Command::env (zero parent environment mutation)
+            // 4. Pass sanitized environment variables strictly via Command::env (zero parent environment mutation & secret stripping)
+            cmd.env_clear();
+            let allowed_vars = ["path", "temp", "tmp", "user", "home", "term", "lang"];
+            for (k, v) in std::env::vars() {
+                let k_lower = k.to_ascii_lowercase();
+                let is_whitelisted = allowed_vars.iter().any(|&a| k_lower == a);
+                let is_secret = k_lower.contains("secret")
+                    || k_lower.contains("token")
+                    || k_lower.contains("key")
+                    || k_lower.contains("password")
+                    || k_lower.starts_with("osoosi_")
+                    || k_lower.starts_with("aws_")
+                    || k_lower.starts_with("github_");
+                if is_whitelisted && !is_secret {
+                    cmd.env(&k, &v);
+                }
+            }
+
             let trap_path = format!("/proc/self/fd/{}", high_fd);
             cmd.env("CANARY_HONEY_FD", high_fd.to_string());
             cmd.env("CANARY_TRAP_PATH", &trap_path);

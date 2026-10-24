@@ -36,13 +36,9 @@ pub enum BinaryTrustVerdict {
         thumbprint: Option<String>,
     },
     /// Cryptographically verified via Windows Security Catalog (CatRoot hash lookup).
-    TrustedCatalog {
-        catalog_name: Option<String>,
-    },
+    TrustedCatalog { catalog_name: Option<String> },
     /// Cryptographically verified via matching a known BLAKE3 digest in the protected local inventory.
-    TrustedProtectedHash {
-        blake3_hash: String,
-    },
+    TrustedProtectedHash { blake3_hash: String },
     /// Cryptographically verified via Linux/Unix package manager or system integrity manifest.
     TrustedSystemPackage {
         package_name: Option<String>,
@@ -54,18 +50,11 @@ pub enum BinaryTrustVerdict {
         reason: String,
     },
     /// Untrusted: binary in user-writable/temp directory without valid signature or inventory match.
-    UntrustedWritableLocation {
-        path: String,
-        reason: String,
-    },
+    UntrustedWritableLocation { path: String, reason: String },
     /// Untrusted: binary has no digital signature, catalog registration, or inventory digest.
-    UntrustedUnsigned {
-        blake3_hash: String,
-    },
+    UntrustedUnsigned { blake3_hash: String },
     /// Untrusted: binary path does not exist, cannot be read, or is not a regular file.
-    UntrustedIoError {
-        error: String,
-    },
+    UntrustedIoError { error: String },
 }
 
 impl BinaryTrustVerdict {
@@ -113,7 +102,12 @@ fn init_protected_local_binary_hashes() -> DashSet<String> {
     if let Ok(exe_path) = std::env::current_exe() {
         if exe_path.is_file() {
             if let Ok(bytes) = std::fs::read(&exe_path) {
-                set.insert(blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase());
+                set.insert(
+                    blake3::hash(&bytes)
+                        .to_hex()
+                        .to_string()
+                        .to_ascii_lowercase(),
+                );
             }
         }
         if let Some(parent) = exe_path.parent() {
@@ -548,7 +542,10 @@ pub(crate) mod tests {
             "Unsigned system binary in temp directory must NEVER be trusted"
         );
         assert!(
-            matches!(verdict, BinaryTrustVerdict::UntrustedWritableLocation { .. }),
+            matches!(
+                verdict,
+                BinaryTrustVerdict::UntrustedWritableLocation { .. }
+            ),
             "Expected UntrustedWritableLocation verdict, got {:?}",
             verdict
         );
@@ -573,7 +570,10 @@ pub(crate) mod tests {
             "Unsigned binary in target/release must NOT be trusted"
         );
         assert!(
-            matches!(verdict, BinaryTrustVerdict::UntrustedWritableLocation { .. }),
+            matches!(
+                verdict,
+                BinaryTrustVerdict::UntrustedWritableLocation { .. }
+            ),
             "Expected UntrustedWritableLocation, got {:?}",
             verdict
         );
@@ -590,7 +590,10 @@ pub(crate) mod tests {
         let payload = b"MZ\x90\x00\x03\x00\x00\x00DeterministicInventoryTrustPayloadBytes_2026";
         std::fs::write(&custom_bin, payload).expect("Failed to write fixture");
 
-        let hash = blake3::hash(payload).to_hex().to_string().to_ascii_lowercase();
+        let hash = blake3::hash(payload)
+            .to_hex()
+            .to_string()
+            .to_ascii_lowercase();
         invalidate_cache_entry(&custom_bin.to_string_lossy());
 
         register_protected_binary_hash(&hash);

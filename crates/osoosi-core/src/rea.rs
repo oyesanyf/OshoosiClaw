@@ -876,7 +876,9 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
 
     if let Ok(sys_temp) = std::env::var("TEMP").or_else(|_| std::env::var("TMP")) {
         let st = sys_temp.replace('/', "\\").to_ascii_lowercase();
-        if !st.is_empty() && (norm.starts_with(&st) || norm.contains(&format!("\\{}\\", st.trim_matches('\\')))) {
+        if !st.is_empty()
+            && (norm.starts_with(&st) || norm.contains(&format!("\\{}\\", st.trim_matches('\\'))))
+        {
             return true;
         }
     }
@@ -936,7 +938,6 @@ pub static CANONICAL_PROTECTED_BINARY_NAMES: &[&str] = &[
     "searchindexer.exe",
     "audiodg.exe",
     "fontdrvhost.exe",
-
     // Windows Administrative & Diagnostic Executables (frequently abused LOTL)
     "rundll32.exe",
     "regsvr32.exe",
@@ -968,7 +969,6 @@ pub static CANONICAL_PROTECTED_BINARY_NAMES: &[&str] = &[
     "tar.exe",
     "wsl.exe",
     "wslhost.exe",
-
     // Core Windows Dynamic Link Libraries
     "ntdll.dll",
     "kernel32.dll",
@@ -990,7 +990,6 @@ pub static CANONICAL_PROTECTED_BINARY_NAMES: &[&str] = &[
     "amsi.dll",
     "clbcatq.dll",
     "version.dll",
-
     // Developer Toolchains, Compilers & Linkers
     "cl.exe",
     "link.exe",
@@ -1035,7 +1034,6 @@ pub static CANONICAL_PROTECTED_BINARY_NAMES: &[&str] = &[
     "javac.exe",
     "java.exe",
     "dotnet.exe",
-
     // OshoosiClaw Production & Security Binaries
     "osoosi.exe",
     "osoosi-cli.exe",
@@ -1045,7 +1043,6 @@ pub static CANONICAL_PROTECTED_BINARY_NAMES: &[&str] = &[
     "otx-taxii-rs.exe",
     "bulk_trainer.exe",
     "test-peer.exe",
-
     // Unix / Linux Core Binaries & Daemons
     "systemd",
     "init",
@@ -5337,10 +5334,7 @@ pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
     }
 
     let path_str = path.to_string_lossy();
-    if path_str.is_empty()
-        || is_untrusted_writable_or_temp_path(&path_str)
-        || !path.is_file()
-    {
+    if path_str.is_empty() || is_untrusted_writable_or_temp_path(&path_str) || !path.is_file() {
         cache.insert(path.to_path_buf(), false);
         return false;
     }
@@ -8657,12 +8651,8 @@ mod tests {
                 spoof
             );
             assert!(
-                detect_binary_masquerade_spoof(
-                    spoof,
-                    Some(Path::new(spoof)),
-                    Some(fake_pe)
-                )
-                .is_some(),
+                detect_binary_masquerade_spoof(spoof, Some(Path::new(spoof)), Some(fake_pe))
+                    .is_some(),
                 "Spoofed binary '{}' must be flagged by detect_binary_masquerade_spoof",
                 spoof
             );
@@ -8676,7 +8666,11 @@ mod tests {
                 Some(spoof),
                 Some("suspicious toolchain process"),
             );
-            assert!(!is_benign, "Spoofed binary '{}' must not be adjudicated benign", spoof);
+            assert!(
+                !is_benign,
+                "Spoofed binary '{}' must not be adjudicated benign",
+                spoof
+            );
             assert!(adj_msg.contains("REA_MASQUERADE_SPOOF_DETECTED"));
         }
     }
