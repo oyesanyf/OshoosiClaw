@@ -59,6 +59,8 @@ Thumbs.db
 odidere.db*
 osoosi.db*
 killchain_state.json
+workflow_guard_state.json
+**/workflow_guard_state.json
 /backups/
 backups/
 
