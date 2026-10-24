@@ -2,3 +2,8 @@
 f28aefb2682a1db86f2165b4cb0c45fec9db6386:crates/osoosi-agent-anomaly/src/breakout_defense.rs:generic-api-key:782
 crates/osoosi-agent-anomaly/src/breakout_defense.rs:generic-api-key:782
 crates/osoosi-agent-anomaly/src/agentjacking_guard.rs:generic-api-key:581
+
+# Browser DLP Sensor manifest "key" is the extension's PUBLIC key (SubjectPublicKeyInfo) that pins the
+# Chromium extension ID; it is not a secret (no private key is committed).
+2782b824add69ecf5217a98831f6580e8c87cac2:browser-extension/manifest.json:generic-api-key:7
+browser-extension/manifest.json:generic-api-key:7
