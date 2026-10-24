@@ -61,6 +61,10 @@ pub struct AgentContainmentRing {
     pub mesh_watchout_broadcasts: AtomicU64,
     /// Ring buffer for recent P2P mesh peer watch-out alerts
     pub recent_mesh_watchouts: Arc<RwLock<VecDeque<serde_json::Value>>>,
+    /// Unified Breakout Defense Coordinator
+    pub breakout_coordinator: Arc<crate::breakout_defense::BreakoutDefenseCoordinator>,
+    /// Runtime Alignment & Drift Scanner
+    pub alignment_scanner: Arc<crate::alignment_scanner::RuntimeAlignmentScanner>,
 }
 
 impl Default for AgentContainmentRing {
@@ -82,6 +86,30 @@ impl AgentContainmentRing {
             autotomy_severances: AtomicU64::new(0),
             mesh_watchout_broadcasts: AtomicU64::new(0),
             recent_mesh_watchouts: Arc::new(RwLock::new(VecDeque::with_capacity(200))),
+            breakout_coordinator: Arc::new(
+                crate::breakout_defense::BreakoutDefenseCoordinator::new(),
+            ),
+            alignment_scanner: crate::alignment_scanner::global_alignment_scanner(),
+        }
+    }
+
+    pub fn with_components(
+        breakout_coordinator: Arc<crate::breakout_defense::BreakoutDefenseCoordinator>,
+        alignment_scanner: Arc<crate::alignment_scanner::RuntimeAlignmentScanner>,
+    ) -> Self {
+        Self {
+            agent_epochs: DashMap::new(),
+            agent_keys: DashMap::new(),
+            audit_log: Arc::new(RwLock::new(VecDeque::with_capacity(1_000))),
+            total_evaluations: AtomicU64::new(0),
+            ghostjacking_defanged: AtomicU64::new(0),
+            ssrf_blocked: AtomicU64::new(0),
+            path_traversal_blocked: AtomicU64::new(0),
+            autotomy_severances: AtomicU64::new(0),
+            mesh_watchout_broadcasts: AtomicU64::new(0),
+            recent_mesh_watchouts: Arc::new(RwLock::new(VecDeque::with_capacity(200))),
+            breakout_coordinator,
+            alignment_scanner,
         }
     }
 
@@ -92,29 +120,29 @@ impl AgentContainmentRing {
 
     /// Gets or initializes an agent's generation epoch and signing key.
     pub fn get_or_create_epoch(&self, agent_id: &str) -> (u64, [u8; 32]) {
-        let epoch = *self.agent_epochs.entry(agent_id.to_string()).or_insert(1);
-        let key = *self
-            .agent_keys
-            .entry(agent_id.to_string())
-            .or_insert_with(|| {
-                let mut k = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut k);
-                k
-            });
+        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let epoch = *self.agent_epochs.entry(norm_id.clone()).or_insert(1);
+        let key = *self.agent_keys.entry(norm_id).or_insert_with(|| {
+            let mut k = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut k);
+            k
+        });
         (epoch, key)
     }
 
     /// Returns the current active generation epoch for an agent.
     pub fn get_current_epoch(&self, agent_id: &str) -> u64 {
-        self.agent_epochs.get(agent_id).map(|e| *e).unwrap_or(1)
+        let norm_id = agent_id.trim().to_ascii_lowercase();
+        self.agent_epochs.get(&norm_id).map(|e| *e).unwrap_or(1)
     }
 
     /// Signs an inter-agent message payload bound to the agent's current generation epoch.
     pub fn sign_message(&self, agent_id: &str, role: &str, payload: &str) -> (u64, String) {
-        let (epoch, key) = self.get_or_create_epoch(agent_id);
+        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let (epoch, key) = self.get_or_create_epoch(&norm_id);
         let sign_data = format!(
             "{}:{}:{}:{}",
-            agent_id,
+            norm_id,
             epoch,
             role.to_ascii_lowercase(),
             payload
@@ -124,10 +152,10 @@ impl AgentContainmentRing {
 
         // Record arm Merkle chain event and Ring 2 transition
         let ring_merkle = osoosi_audit::global_hierarchical_merkle();
-        let arm_rec = ring_merkle.record_arm_event(agent_id, epoch, role, "sign_message", &sig_hex);
+        let arm_rec = ring_merkle.record_arm_event(&norm_id, epoch, role, "sign_message", &sig_hex);
         ring_merkle.record_ring_transition(
             osoosi_audit::ContainmentRingId::Ring2PolicyMesh,
-            agent_id,
+            &norm_id,
             "sign_message",
             &arm_rec.hash,
             false,
@@ -147,7 +175,8 @@ impl AgentContainmentRing {
         payload: &str,
         signature_hex: &str,
     ) -> Result<(), String> {
-        let current_epoch = self.get_current_epoch(sender_id);
+        let norm_sender_id = sender_id.trim().to_ascii_lowercase();
+        let current_epoch = self.get_current_epoch(&norm_sender_id);
         if epoch != current_epoch {
             return Err(format!(
                 "Stale generation epoch rejected: message epoch {} != active epoch {} (likely severed)",
@@ -174,13 +203,13 @@ impl AgentContainmentRing {
             ));
         }
 
-        let key = match self.agent_keys.get(sender_id) {
+        let key = match self.agent_keys.get(&norm_sender_id) {
             Some(k) => *k,
-            None => return Err(format!("Unknown agent sender ID '{}'", sender_id)),
+            None => return Err(format!("Unknown agent sender ID '{}'", norm_sender_id)),
         };
 
         let expected_bytes = {
-            let sign_data = format!("{}:{}:{}:{}", sender_id, epoch, lower_role, payload);
+            let sign_data = format!("{}:{}:{}:{}", norm_sender_id, epoch, lower_role, payload);
             compute_ring_hmac(&key, sign_data.as_bytes())
         };
 
@@ -200,7 +229,7 @@ impl AgentContainmentRing {
         // Record arm Merkle chain event and Ring 2 transition
         let ring_merkle = osoosi_audit::global_hierarchical_merkle();
         let arm_rec = ring_merkle.record_arm_event(
-            sender_id,
+            &norm_sender_id,
             epoch,
             role,
             "verify_inter_agent_message",
@@ -208,7 +237,7 @@ impl AgentContainmentRing {
         );
         ring_merkle.record_ring_transition(
             osoosi_audit::ContainmentRingId::Ring2PolicyMesh,
-            sender_id,
+            &norm_sender_id,
             "verify_inter_agent_message",
             &arm_rec.hash,
             false,
@@ -220,12 +249,13 @@ impl AgentContainmentRing {
     /// Synchronously advances an agent's generation epoch (Gen N -> Gen N+1) and rotates
     /// its HMAC-SHA256 signing key, invalidating any messages signed under stale epochs.
     pub fn advance_epoch_sync(&self, agent_id: &str) -> u64 {
-        let old_epoch = self.get_current_epoch(agent_id);
+        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let old_epoch = self.get_current_epoch(&norm_id);
         let new_epoch = old_epoch + 1;
-        self.agent_epochs.insert(agent_id.to_string(), new_epoch);
+        self.agent_epochs.insert(norm_id.clone(), new_epoch);
         let mut new_key = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut new_key);
-        self.agent_keys.insert(agent_id.to_string(), new_key);
+        self.agent_keys.insert(norm_id, new_key);
         self.autotomy_severances.fetch_add(1, Ordering::Relaxed);
         new_epoch
     }
@@ -239,36 +269,37 @@ impl AgentContainmentRing {
         reason: &str,
         target_child_pid: Option<u32>,
     ) -> u64 {
-        let old_epoch = self.get_current_epoch(agent_id);
+        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let old_epoch = self.get_current_epoch(&norm_id);
         let new_epoch = old_epoch + 1;
 
         // Monotonic epoch advancement
-        self.agent_epochs.insert(agent_id.to_string(), new_epoch);
+        self.agent_epochs.insert(norm_id.clone(), new_epoch);
 
         // Constant-time volatile scrub of compromised signing key via silicon-shield before rotation
-        if let Some(mut old_key_entry) = self.agent_keys.get_mut(agent_id) {
+        if let Some(mut old_key_entry) = self.agent_keys.get_mut(&norm_id) {
             silicon_shield::SiliconIntegrityGuard::constant_time_scrub(&mut *old_key_entry);
         }
 
         // Rotate signing key so compromised handles can no longer sign
         let mut new_key = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut new_key);
-        self.agent_keys.insert(agent_id.to_string(), new_key);
+        self.agent_keys.insert(norm_id.clone(), new_key);
 
         self.autotomy_severances.fetch_add(1, Ordering::Relaxed);
 
         // Record arm fracture proof and Ring 0 transition
         let ring_merkle = osoosi_audit::global_hierarchical_merkle();
         let fracture_proof =
-            ring_merkle.record_arm_fracture(agent_id, old_epoch, new_epoch, reason, None);
+            ring_merkle.record_arm_fracture(&norm_id, old_epoch, new_epoch, reason, None);
         ring_merkle.record_ring_transition(
             osoosi_audit::ContainmentRingId::Ring0Kernel,
-            agent_id,
+            &norm_id,
             "sever_rogue_agent_branch",
             &fracture_proof.fracture_hash,
             true,
         );
-        ring_merkle.anchor_to_global_tree(None, &format!("autotomy_sever:{}", agent_id));
+        ring_merkle.anchor_to_global_tree(None, &format!("autotomy_sever:{}", norm_id));
 
         // Optionally terminate confirmed rogue child process handle (never touch PID <= 4, system, or self [SEC-RING-01])
         let my_pid = std::process::id();
@@ -432,7 +463,11 @@ impl AgentContainmentRing {
     /// 1. Pre-execution file lineage parameter inspection against `poisoned_digests`
     ///    (ensuring `is_path_immune` is checked first so repository files are never blocked).
     /// 2. Dirac-delta single-use capability impulse ticket consumption.
-    /// 3. Executes the tool closure only if all containment invariants pass.
+    /// 3. Pre-execution Filesystem Access Validation (`validate_agent_filesystem_access`).
+    /// 4. Pre-execution Egress URL Validation (`validate_agent_egress_url`).
+    /// 5. Pre-execution Unified Breakout Defense (`BreakoutDefenseCoordinator::evaluate_action`).
+    /// 6. Pre-execution Runtime Alignment Scanner (`RuntimeAlignmentScanner::evaluate_tier1_structural`).
+    /// 7. Executes the tool closure only if all containment invariants pass.
     pub fn execute_contained_tool<F, R>(
         &self,
         telemetry: &crate::types::ToolCallTelemetry,
@@ -445,7 +480,7 @@ impl AgentContainmentRing {
     {
         self.total_evaluations.fetch_add(1, Ordering::Relaxed);
 
-        // Pre-tool lineage inspection (checks immune paths before poisoned digests)
+        // 1. Pre-tool lineage inspection (checks immune paths before poisoned digests)
         if let Err(err) = self.inspect_pre_tool_execution(telemetry, tracker) {
             return Err(format!(
                 "[ContainmentRing-Lineage-Veto]: Blocked tool execution for action '{}' due to poisoned lineage: {}",
@@ -453,7 +488,7 @@ impl AgentContainmentRing {
             ));
         }
 
-        // Dirac-delta single-use capability impulse check & consumption
+        // 2. Dirac-delta single-use capability impulse check & consumption
         if let Err(err) = ticket.consume_once(&telemetry.tool_name) {
             return Err(format!(
                 "[ContainmentRing-Capability-Veto]: Capability ticket rejected for action '{}': {}",
@@ -461,7 +496,145 @@ impl AgentContainmentRing {
             ));
         }
 
+        // Extract resource and payload from telemetry parameters
+        let mut resource = String::new();
+        if let Some(s) = telemetry.call_parameters.as_str() {
+            resource = s.to_string();
+        } else if let Some(obj) = telemetry.call_parameters.as_object() {
+            for key in &[
+                "path",
+                "file",
+                "filepath",
+                "file_path",
+                "target",
+                "url",
+                "uri",
+                "command",
+                "query",
+            ] {
+                if let Some(val) = obj.get(*key).and_then(|v| v.as_str()) {
+                    resource = val.to_string();
+                    break;
+                }
+            }
+        }
+        let payload = telemetry.call_parameters.to_string();
+
+        // 3. Pre-execution Filesystem Access Validation
+        if !resource.is_empty() {
+            let tool_lower = telemetry.tool_name.to_ascii_lowercase();
+            if tool_lower.contains("file")
+                || tool_lower.contains("read")
+                || tool_lower.contains("write")
+            {
+                if let Err(err) =
+                    crate::breakout_defense::validate_agent_filesystem_access(&resource, None)
+                {
+                    self.path_traversal_blocked.fetch_add(1, Ordering::Relaxed);
+                    return Err(format!(
+                        "[ContainmentRing-Filesystem-Veto]: Blocked file access '{}': {}",
+                        resource, err
+                    ));
+                }
+            }
+        }
+
+        // 4. Pre-execution Egress URL Validation
+        if resource.starts_with("http://") || resource.starts_with("https://") {
+            if let Err(err) = crate::breakout_defense::validate_agent_egress_url(&resource, true) {
+                self.ssrf_blocked.fetch_add(1, Ordering::Relaxed);
+                return Err(format!(
+                    "[ContainmentRing-Egress-Veto]: Blocked network egress to '{}': {}",
+                    resource, err
+                ));
+            }
+        }
+
+        // 5. Pre-execution BreakoutDefenseCoordinator Evaluation
+        let breakout_eval = self.breakout_coordinator.evaluate_action(
+            &telemetry.agent_id,
+            &telemetry.tool_name,
+            &resource,
+            &payload,
+            None,
+        );
+        if !breakout_eval.is_clean {
+            if breakout_eval.ssrf_violation.is_some() {
+                self.ssrf_blocked.fetch_add(1, Ordering::Relaxed);
+            }
+            if breakout_eval.path_violation.is_some() {
+                self.path_traversal_blocked.fetch_add(1, Ordering::Relaxed);
+            }
+            return Err(format!(
+                "[ContainmentRing-Breakout-Veto]: Blocked tool execution for action '{}' due to breakout detection: verdict='{}', tier='{}'",
+                telemetry.tool_name,
+                breakout_eval.composite_verdict,
+                breakout_eval.recommended_action_tier
+            ));
+        }
+
+        // 6. Pre-execution Runtime Alignment Scanner Evaluation
+        let is_high_priv = self
+            .alignment_scanner
+            .is_high_privilege_sink(&telemetry.tool_name);
+
+        let pinned = if let Some(mut p) = self
+            .alignment_scanner
+            .pinned_sessions
+            .get_mut(&telemetry.session_id)
+        {
+            if p.initial_privilege_tier == "auto_pinned_default"
+                && !is_high_priv
+                && !p.allowed_tool_envelope.contains(&telemetry.tool_name)
+            {
+                p.allowed_tool_envelope.push(telemetry.tool_name.clone());
+            }
+            p.clone()
+        } else {
+            let mut pin = self.alignment_scanner.pin_session_intent(
+                &telemetry.session_id,
+                &telemetry.agent_id,
+                "arm-0",
+                "default-model",
+                &format!("Authorized execution of tool {}", telemetry.tool_name),
+                Some(vec![telemetry.tool_name.clone()]),
+            );
+            pin.initial_privilege_tier = "auto_pinned_default".to_string();
+            self.alignment_scanner
+                .pinned_sessions
+                .insert(telemetry.session_id.clone(), pin.clone());
+            pin
+        };
+        let tier1 = self.alignment_scanner.evaluate_tier1_structural(
+            &pinned,
+            "",
+            &telemetry.tool_name,
+            &telemetry.call_parameters,
+        );
+        if !tier1.passed {
+            return Err(format!(
+                "[ContainmentRing-Alignment-Veto]: Blocked tool execution for action '{}' due to alignment violation: score={:.2}, markers={:?}",
+                telemetry.tool_name,
+                tier1.structural_alignment_score,
+                tier1.detected_markers
+            ));
+        }
+
         Ok(tool_closure())
+    }
+
+    /// Backwards-compatible alias for `execute_contained_tool`.
+    pub fn execute_tool_with_containment<F, R>(
+        &self,
+        telemetry: &crate::types::ToolCallTelemetry,
+        ticket: &DiracDeltaCapabilityTicket,
+        tracker: &crate::file_lineage::FileLineageTracker,
+        tool_closure: F,
+    ) -> Result<R, String>
+    where
+        F: FnOnce() -> R,
+    {
+        self.execute_contained_tool(telemetry, ticket, tracker, tool_closure)
     }
 }
 
@@ -493,6 +666,7 @@ pub struct DiracDeltaCapabilityTicket {
 impl DiracDeltaCapabilityTicket {
     /// Issues a Dirac-delta capability impulse valid only for `window_ns` nanoseconds and 1 atomic consumption.
     pub fn issue(agent_id: &str, tool_action: &str, epoch: u64, window_ns: u64) -> Self {
+        let norm_id = agent_id.trim().to_ascii_lowercase();
         let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -501,11 +675,11 @@ impl DiracDeltaCapabilityTicket {
         rand::thread_rng().fill_bytes(&mut ephemeral_secret);
         let sign_payload = format!(
             "LAW3_DIRAC_CAP:{}:{}:{}:{}",
-            agent_id, tool_action, epoch, now_ns
+            norm_id, tool_action, epoch, now_ns
         );
         let derived = compute_ring_hmac(&ephemeral_secret, sign_payload.as_bytes());
         Self {
-            agent_id: agent_id.to_string(),
+            agent_id: norm_id,
             tool_action: tool_action.to_string(),
             epoch,
             issued_at_ns: now_ns,

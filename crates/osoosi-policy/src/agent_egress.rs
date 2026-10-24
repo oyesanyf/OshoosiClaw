@@ -48,12 +48,82 @@ pub enum ProcessThreatLevel {
 pub struct AgentEgressPolicy {
     allowed_domains: HashSet<String>,
     allowed_ips: HashSet<IpAddr>,
+    pub authorized_ipc_ports: HashSet<u16>,
     allow_loopback: bool,
     ai_runtime_regex: Regex,
     tracked_sessions: Arc<DashMap<u32, AgentSessionContext>>,
     process_threat_levels: Arc<DashMap<u32, ProcessThreatLevel>>,
     session_threat_levels: Arc<DashMap<String, ProcessThreatLevel>>,
     default_deny: bool,
+}
+
+/// Mathematically checks whether an IP address belongs to a restricted SSRF / internal range:
+/// - Loopback (127.0.0.0/8, ::1)
+/// - RFC 1918 private IPv4 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+/// - Link-local / Cloud Metadata (169.254.0.0/16, fe80::/10)
+/// - CGNAT (100.64.0.0/10)
+/// - Unique Local IPv6 (fc00::/7)
+/// - Unspecified (0.0.0.0, ::)
+/// - IPv4-mapped IPv6 (::ffff:0:0/96)
+pub fn is_restricted_rebinding_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ipv4) => {
+            let oct = ipv4.octets();
+            // Loopback (127.0.0.0/8)
+            if ipv4.is_loopback() {
+                return true;
+            }
+            // Unspecified (0.0.0.0)
+            if ipv4.is_unspecified() {
+                return true;
+            }
+            // Link-local / Cloud Metadata (169.254.0.0/16)
+            if ipv4.is_link_local() {
+                return true;
+            }
+            // RFC1918: 10.0.0.0/8
+            if oct[0] == 10 {
+                return true;
+            }
+            // RFC1918: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+            if oct[0] == 172 && (16..=31).contains(&oct[1]) {
+                return true;
+            }
+            // RFC1918: 192.168.0.0/16
+            if oct[0] == 192 && oct[1] == 168 {
+                return true;
+            }
+            // CGNAT: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
+            if oct[0] == 100 && (64..=127).contains(&oct[1]) {
+                return true;
+            }
+            false
+        }
+        IpAddr::V6(ipv6) => {
+            let oct = ipv6.octets();
+            // Loopback (::1)
+            if ipv6.is_loopback() {
+                return true;
+            }
+            // Unspecified (::)
+            if ipv6.is_unspecified() {
+                return true;
+            }
+            // IPv4-mapped IPv6 (::ffff:x.x.x.x)
+            if let Some(v4) = ipv6.to_ipv4_mapped() {
+                return is_restricted_rebinding_ip(IpAddr::V4(v4));
+            }
+            // Unique local (fc00::/7) -> first byte is 0xfc or 0xfd
+            if (oct[0] & 0xfe) == 0xfc {
+                return true;
+            }
+            // Link-local (fe80::/10) -> oct[0] == 0xfe && (oct[1] & 0xc0) == 0x80
+            if oct[0] == 0xfe && (oct[1] & 0xc0) == 0x80 {
+                return true;
+            }
+            false
+        }
+    }
 }
 
 impl Default for AgentEgressPolicy {
@@ -110,6 +180,23 @@ impl AgentEgressPolicy {
             }
         }
 
+        let mut authorized_ipc_ports = HashSet::new();
+        // Authorized local IPC / model runtime ports: 11434 (Ollama), 3030 (Agent IPC), 5000 (Daemon/WebUI), 8000 (Local App), 8080 (Local Proxy)
+        authorized_ipc_ports.insert(11434);
+        authorized_ipc_ports.insert(3030);
+        authorized_ipc_ports.insert(5000);
+        authorized_ipc_ports.insert(8000);
+        authorized_ipc_ports.insert(8080);
+
+        if let Ok(env_ports) = std::env::var("OSOOSI_AUTHORIZED_IPC_PORTS") {
+            for entry in env_ports.split([',', ';', ' ']) {
+                let trimmed = entry.trim();
+                if let Ok(p) = trimmed.parse::<u16>() {
+                    authorized_ipc_ports.insert(p);
+                }
+            }
+        }
+
         let default_deny = std::env::var("OSOOSI_AGENT_EGRESS_PERMISSIVE")
             .map(|v| v != "1" && !v.eq_ignore_ascii_case("true"))
             .unwrap_or(true);
@@ -122,6 +209,7 @@ impl AgentEgressPolicy {
         Self {
             allowed_domains,
             allowed_ips,
+            authorized_ipc_ports,
             allow_loopback: true,
             ai_runtime_regex,
             tracked_sessions: Arc::new(DashMap::new()),
@@ -203,6 +291,16 @@ impl AgentEgressPolicy {
     /// Add an explicitly approved IP address.
     pub fn add_allowed_ip(&mut self, ip: IpAddr) {
         self.allowed_ips.insert(ip);
+    }
+
+    /// Add an explicitly authorized local IPC port.
+    pub fn add_authorized_ipc_port(&mut self, port: u16) {
+        self.authorized_ipc_ports.insert(port);
+    }
+
+    /// Check if a local port is authorized for inter-process communication.
+    pub fn is_authorized_ipc_port(&self, port: u16) -> bool {
+        self.authorized_ipc_ports.contains(&port)
     }
 
     /// Register an active AI agent session context by root PID.
@@ -310,11 +408,61 @@ impl AgentEgressPolicy {
     }
 
     /// Check whether a destination IP address is explicitly allowlisted.
+    /// Note: Blanket `ip.is_loopback()` allowance is removed to prevent port scanning;
+    /// loopback connections must be verified with port via `is_ip_and_port_allowed`.
     pub fn is_ip_allowed(&self, ip: IpAddr) -> bool {
-        if self.allow_loopback && ip.is_loopback() {
-            return true;
+        self.allowed_ips.contains(&ip)
+    }
+
+    /// Check whether a destination IP address and port are authorized.
+    /// Loopback addresses strictly require port matching against `authorized_ipc_ports`.
+    pub fn is_ip_and_port_allowed(&self, ip: IpAddr, port: u16) -> bool {
+        if ip.is_loopback() {
+            return self.allow_loopback && self.authorized_ipc_ports.contains(&port);
         }
         self.allowed_ips.contains(&ip)
+    }
+
+    /// Checks whether a domain or host name resolves to any restricted internal IP address,
+    /// defending against DNS rebinding attacks where an external domain dynamically
+    /// resolves to loopback, cloud metadata (169.254.169.254), or internal RFC 1918 subnets.
+    pub fn check_dns_rebinding(&self, domain: &str) -> Result<(), String> {
+        let domain_norm = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+        if domain_norm.is_empty() {
+            return Err("Empty domain name rejected".to_string());
+        }
+
+        // Explicitly allowlisted "localhost" is permitted
+        if domain_norm == "localhost" {
+            return Ok(());
+        }
+
+        // If domain is directly an IP address literal, evaluate via is_restricted_rebinding_ip
+        if let Ok(ip) = domain_norm.parse::<IpAddr>() {
+            if is_restricted_rebinding_ip(ip) && !self.allowed_ips.contains(&ip) {
+                return Err(format!(
+                    "Direct IP literal '{}' targets restricted internal subnet",
+                    ip
+                ));
+            }
+            return Ok(());
+        }
+
+        // Resolve host to socket addresses using std::net::ToSocketAddrs
+        use std::net::ToSocketAddrs;
+        let addr_spec = format!("{}:80", domain_norm);
+        if let Ok(iter) = addr_spec.to_socket_addrs() {
+            for socket_addr in iter {
+                let ip = socket_addr.ip();
+                if is_restricted_rebinding_ip(ip) && !self.allowed_ips.contains(&ip) {
+                    return Err(format!(
+                        "DNS rebinding attack detected: domain '{}' resolves to restricted IP '{}'",
+                        domain_norm, ip
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Check whether a destination string (domain or IP) is allowed.
@@ -323,6 +471,9 @@ impl AgentEgressPolicy {
         if let Ok(ip) = trimmed.parse::<IpAddr>() {
             self.is_ip_allowed(ip)
         } else {
+            if self.check_dns_rebinding(trimmed).is_err() {
+                return false;
+            }
             self.is_domain_allowed(trimmed)
         }
     }
@@ -335,6 +486,25 @@ impl AgentEgressPolicy {
             // Sysmon Event 22: DNS Query
             22 => {
                 let query_name = event.data.get("QueryName").and_then(|v| v.as_str())?;
+
+                // DNS Rebinding validation: verify query does not resolve to restricted internal IP
+                if let Err(rebinding_err) = self.check_dns_rebinding(query_name) {
+                    warn!(
+                        agent_pid = attribution.pid,
+                        domain = %query_name,
+                        runtime = %attribution.image,
+                        error = %rebinding_err,
+                        "Agent network egress blocked: DNS rebinding attack detected"
+                    );
+                    return Some(VoteResult {
+                        confidence: 0.99,
+                        reason: format!(
+                            "Agent Egress Policy Violation [DNS Rebinding Defense]: Agent runtime '{}' (PID {}) issued query '{}' which targets restricted internal infrastructure: {}",
+                            attribution.image, attribution.pid, query_name, rebinding_err
+                        ),
+                        weight: 1.0,
+                    });
+                }
 
                 // 1. Allowlist survivability: Crucial model endpoints and localhost always pass
                 if self.is_domain_allowed(query_name) {
@@ -412,16 +582,42 @@ impl AgentEgressPolicy {
                     })
                     .unwrap_or(0);
 
+                let port_u16 = dest_port as u16;
+
+                // DNS Rebinding check on destination hostname
+                if let Some(host) = dest_host {
+                    if !host.is_empty() {
+                        if let Err(rebinding_err) = self.check_dns_rebinding(host) {
+                            return Some(VoteResult {
+                                confidence: 0.99,
+                                reason: format!(
+                                    "Agent Egress Policy Violation [DNS Rebinding Defense]: Outbound connection to '{}' aborted: {}",
+                                    host, rebinding_err
+                                ),
+                                weight: 1.0,
+                            });
+                        }
+                    }
+                }
+
                 let is_allowed = if let Some(host) = dest_host {
                     if !host.is_empty() && self.is_domain_allowed(host) {
                         true
                     } else if !dest_ip.is_empty() {
-                        self.is_destination_allowed(dest_ip)
+                        if let Ok(ip) = dest_ip.parse::<IpAddr>() {
+                            self.is_ip_and_port_allowed(ip, port_u16)
+                        } else {
+                            self.is_destination_allowed(dest_ip)
+                        }
                     } else {
                         false
                     }
                 } else if !dest_ip.is_empty() {
-                    self.is_destination_allowed(dest_ip)
+                    if let Ok(ip) = dest_ip.parse::<IpAddr>() {
+                        self.is_ip_and_port_allowed(ip, port_u16)
+                    } else {
+                        self.is_destination_allowed(dest_ip)
+                    }
                 } else {
                     false
                 };
@@ -1453,5 +1649,46 @@ mod tests {
             }
             _ => panic!("Expected TranscriptTampering verdict"),
         }
+    }
+
+    #[test]
+    fn test_strict_loopback_port_isolation_and_dns_rebinding_defense() {
+        let policy = AgentEgressPolicy::new();
+
+        // 1. Authorized ports (e.g. 11434, 3030, 5000, 8000) allowed on loopback
+        let loopback_v4: IpAddr = "127.0.0.1".parse().unwrap();
+        let loopback_v6: IpAddr = "::1".parse().unwrap();
+        assert!(policy.is_ip_and_port_allowed(loopback_v4, 11434));
+        assert!(policy.is_ip_and_port_allowed(loopback_v4, 3030));
+        assert!(policy.is_ip_and_port_allowed(loopback_v4, 5000));
+        assert!(policy.is_ip_and_port_allowed(loopback_v6, 11434));
+
+        // 2. Unauthorized sensitive ports (SSH 22, SMB 445, Redis 6379) BLOCKED on loopback
+        assert!(!policy.is_ip_and_port_allowed(loopback_v4, 22));
+        assert!(!policy.is_ip_and_port_allowed(loopback_v4, 445));
+        assert!(!policy.is_ip_and_port_allowed(loopback_v4, 6379));
+        assert!(!policy.is_ip_and_port_allowed(loopback_v6, 6379));
+
+        // 3. DNS rebinding detection: restricted IP ranges detected
+        assert!(is_restricted_rebinding_ip("127.0.0.1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip(
+            "169.254.169.254".parse().unwrap()
+        ));
+        assert!(is_restricted_rebinding_ip("10.0.0.1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip("172.16.1.1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip("192.168.1.1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip("100.64.0.1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip("::1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip("0.0.0.0".parse().unwrap()));
+
+        // Public IPs not classified as restricted rebinding
+        assert!(!is_restricted_rebinding_ip("8.8.8.8".parse().unwrap()));
+        assert!(!is_restricted_rebinding_ip("1.1.1.1".parse().unwrap()));
+
+        // check_dns_rebinding detects direct literal attempts to reach restricted subnets
+        assert!(policy.check_dns_rebinding("169.254.169.254").is_err());
+        assert!(policy.check_dns_rebinding("10.0.0.1").is_err());
+        assert!(policy.check_dns_rebinding("192.168.1.1").is_err());
+        assert!(policy.check_dns_rebinding("localhost").is_ok());
     }
 }

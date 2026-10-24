@@ -275,11 +275,29 @@ impl NativeHost {
             };
         }
 
-        // Real implementation would use reqwest here
+        // Real implementation using reqwest with strict timeout and error handling
         info!("Host: fetching URL '{}'", url);
-        HostResponse::HttpResponse {
-            status: 200,
-            body: "{}".to_string(),
+        let client = match reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                return HostResponse::Error {
+                    message: format!("Failed to initialize HTTP client: {}", e),
+                };
+            }
+        };
+
+        match client.get(url).send().await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let body = resp.text().await.unwrap_or_default();
+                HostResponse::HttpResponse { status, body }
+            }
+            Err(e) => HostResponse::Error {
+                message: format!("HTTP fetch failed for '{}': {}", url, e),
+            },
         }
     }
 
@@ -321,11 +339,58 @@ impl NativeHost {
         }
 
         info!("Host: executing command '{}' with args {:?}", program, args);
-        // Real implementation would call Command::new() here
-        HostResponse::CommandOutput {
-            exit_code: 0,
-            stdout: String::new(),
-            stderr: String::new(),
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(args);
+        cmd.env_clear();
+
+        // Pass sanitized environment block: whitelist benign system variables & strip secrets
+        let allowed_vars = [
+            "path",
+            "systemroot",
+            "temp",
+            "tmp",
+            "user",
+            "username",
+            "home",
+            "lang",
+            "term",
+            "comspec",
+            "pathext",
+            "windir",
+        ];
+        for (k, v) in std::env::vars() {
+            let k_lower = k.to_ascii_lowercase();
+            let is_whitelisted = allowed_vars.iter().any(|&a| k_lower == a);
+            let is_secret = k_lower.contains("secret")
+                || k_lower.contains("token")
+                || k_lower.contains("key")
+                || k_lower.contains("password")
+                || k_lower.starts_with("osoosi_")
+                || k_lower.starts_with("aws_")
+                || k_lower.starts_with("github_");
+            if is_whitelisted && !is_secret {
+                cmd.env(&k, &v);
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            // CREATE_NO_WINDOW (0x08000000)
+            cmd.creation_flags(0x0800_0000);
+        }
+
+        match tokio::time::timeout(std::time::Duration::from_secs(10), cmd.output()).await {
+            Ok(Ok(output)) => HostResponse::CommandOutput {
+                exit_code: output.status.code().unwrap_or(-1),
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            },
+            Ok(Err(e)) => HostResponse::Error {
+                message: format!("Failed to execute command '{}': {}", program, e),
+            },
+            Err(_) => HostResponse::Error {
+                message: format!("Command '{}' timed out after 10 seconds", program),
+            },
         }
     }
 
@@ -346,9 +411,18 @@ impl NativeHost {
         }
     }
 
-    async fn handle_send_mesh(&self, topic: &str, _data: &[u8]) -> HostResponse {
-        info!("Host: sending mesh message to topic '{}'", topic);
-        HostResponse::Hash(uuid::Uuid::new_v4().to_string())
+    async fn handle_send_mesh(&self, topic: &str, data: &[u8]) -> HostResponse {
+        info!(
+            "Host: sending mesh message to topic '{}' ({} bytes)",
+            topic,
+            data.len()
+        );
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(topic.as_bytes());
+        hasher.update(b":");
+        hasher.update(data);
+        let hash_hex = hasher.finalize().to_hex().to_string();
+        HostResponse::Hash(hash_hex)
     }
 
     async fn handle_query_threat_intel(

@@ -160,7 +160,10 @@ fn is_trusted_operational_image(
     if let Ok(meta) = path.metadata() {
         if meta.len() > 0 && meta.len() <= 16 * 1024 * 1024 {
             if let Ok(bytes) = std::fs::read(path) {
-                let b3 = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                let b3 = blake3::hash(&bytes)
+                    .to_hex()
+                    .to_string()
+                    .to_ascii_lowercase();
                 if crate::rea::is_protected_local_binary_hash(&b3) {
                     return true;
                 }
@@ -7918,7 +7921,8 @@ impl EdrOrchestrator {
                         sig.process_name = Some(format!("hollowed_pid_{}", t_pid));
                         sig.mitre_technique = Some("T1055.012".to_string());
                         sig.mitre_technique_name = Some("Process Hollowing".to_string());
-                        sig.mitre_tactic = Some("Defense Evasion / Privilege Escalation".to_string());
+                        sig.mitre_tactic =
+                            Some("Defense Evasion / Privilege Escalation".to_string());
                         sig.reason = Some(format!(
                             "HOLLOWING INTERCEPTION: Confirmed process hollowing! Suspended PID {} received remote memory writes from PID {}",
                             t_pid, source_pid
@@ -7929,7 +7933,10 @@ impl EdrOrchestrator {
                         // Apply Differential Privacy / Merkle protection and record in DB + audit log
                         self.privacy.protect_signature(&mut sig);
                         if let Err(e) = self.memory.log_threat(&sig) {
-                            error!("Failed to persist process hollowing threat signature: {}", e);
+                            error!(
+                                "Failed to persist process hollowing threat signature: {}",
+                                e
+                            );
                         }
                         self.audit.log(
                             "PROCESS_HOLLOWING_TERMINATED",
@@ -14166,7 +14173,10 @@ impl EdrOrchestrator {
                         v,
                         conf,
                         act,
-                        format!("Heuristic scan (ML: {:.2}, YARA: {}, signed: {})", ml_score, yara_str, is_signed),
+                        format!(
+                            "Heuristic scan (ML: {:.2}, YARA: {}, signed: {})",
+                            ml_score, yara_str, is_signed
+                        ),
                     )
                 }
             }
@@ -14189,7 +14199,10 @@ impl EdrOrchestrator {
                 v,
                 conf,
                 act,
-                format!("Malware scanner (ML: {:.2}, YARA: {}, signed: {})", ml_score, yara_str, is_signed),
+                format!(
+                    "Malware scanner (ML: {:.2}, YARA: {}, signed: {})",
+                    ml_score, yara_str, is_signed
+                ),
             )
         };
 

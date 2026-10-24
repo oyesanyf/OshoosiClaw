@@ -45,7 +45,11 @@ impl ClientBucket {
 
     /// Attempt to consume `tokens_to_consume` tokens under `policy`.
     /// Returns `Ok(())` if allowed, or `Err(wait_secs)` if throttled.
-    pub fn try_consume(&mut self, policy: &BucketPolicy, tokens_to_consume: f64) -> Result<(), f64> {
+    pub fn try_consume(
+        &mut self,
+        policy: &BucketPolicy,
+        tokens_to_consume: f64,
+    ) -> Result<(), f64> {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_update).as_secs_f64();
         self.last_update = now;
@@ -128,7 +132,8 @@ impl Port3030RateLimiter {
         match res {
             Ok(()) => Ok(()),
             Err(wait_secs) => {
-                self.total_throttled_requests.fetch_add(1, Ordering::Relaxed);
+                self.total_throttled_requests
+                    .fetch_add(1, Ordering::Relaxed);
                 Err(wait_secs as u64)
             }
         }
@@ -158,7 +163,11 @@ pub static GLOBAL_RATE_LIMITER: Lazy<Port3030RateLimiter> = Lazy::new(Port3030Ra
 /// Extract a normalized client identifier from request headers (IP or token)
 pub fn extract_client_key(req: &Request<Body>) -> String {
     // 1. Allow explicit test client IP override for deterministic unit & integration tests
-    if let Some(test_ip) = req.headers().get("x-test-client-ip").and_then(|v| v.to_str().ok()) {
+    if let Some(test_ip) = req
+        .headers()
+        .get("x-test-client-ip")
+        .and_then(|v| v.to_str().ok())
+    {
         let trimmed = test_ip.trim();
         if !trimmed.is_empty() {
             return trimmed.to_string();
@@ -166,7 +175,11 @@ pub fn extract_client_key(req: &Request<Body>) -> String {
     }
 
     // 2. Client IP from Forwarded / X-Forwarded-For (take the first hop)
-    if let Some(forwarded) = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+    if let Some(forwarded) = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+    {
         if let Some(first_ip) = forwarded.split(',').next() {
             let trimmed = first_ip.trim();
             if !trimmed.is_empty() {
@@ -271,12 +284,18 @@ mod tests {
 
         // Consume all auth tokens for client A (burst 10)
         for _ in 0..10 {
-            assert!(limiter.check_rate_limit(client_a, "/api/auth/login").is_ok());
+            assert!(limiter
+                .check_rate_limit(client_a, "/api/auth/login")
+                .is_ok());
         }
         // Client A 11th request throttled
-        assert!(limiter.check_rate_limit(client_a, "/api/auth/login").is_err());
+        assert!(limiter
+            .check_rate_limit(client_a, "/api/auth/login")
+            .is_err());
 
         // Client B is unaffected
-        assert!(limiter.check_rate_limit(client_b, "/api/auth/login").is_ok());
+        assert!(limiter
+            .check_rate_limit(client_b, "/api/auth/login")
+            .is_ok());
     }
 }

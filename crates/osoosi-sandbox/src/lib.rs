@@ -782,4 +782,45 @@ mod tests {
         bad_policy.creation_flags = 0;
         assert!(windows::verify_windows_confinement_invariants(&bad_policy).is_err());
     }
+
+    #[test]
+    fn test_win32_appcontainer_profile_lifecycle_and_confined_execution() {
+        let default_policy = windows::WindowsConfinementPolicy::default();
+
+        // 1. Profile creation and rollback lifecycle
+        let mut profile =
+            windows::Win32AppContainerProfile::create("test_agent_profile", "Test Agent Profile")
+                .expect("Valid profile creation should succeed");
+        assert_eq!(profile.profile_name, "test_agent_profile");
+        assert!(profile.profile_allocated);
+        assert!(profile.sid_allocated);
+
+        profile.rollback();
+        assert!(!profile.profile_allocated);
+        assert!(!profile.sid_allocated);
+
+        // 2. Confined process execution under compliant policy
+        let outcome = windows::execute_confined_windows_process(
+            "cmd.exe",
+            &["/c", "whoami"],
+            "test_agent_proc_profile",
+            &default_policy,
+        )
+        .expect("Execution with compliant policy should succeed");
+        assert!(outcome.resume_thread_allowed);
+        assert!(!outcome.terminated_suspended_process);
+        assert!(outcome.sid_freed_via_free_sid);
+        assert!(!outcome.uncontained_fallback_used);
+
+        // 3. Policy permitting uncontained fallback must fail closed
+        let mut permissive_policy = default_policy.clone();
+        permissive_policy.allow_uncontained_fallback = true;
+        assert!(windows::execute_confined_windows_process(
+            "cmd.exe",
+            &["/c", "whoami"],
+            "test_bad_profile",
+            &permissive_policy,
+        )
+        .is_err());
+    }
 }

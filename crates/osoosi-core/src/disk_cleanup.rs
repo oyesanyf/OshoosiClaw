@@ -515,8 +515,14 @@ pub fn discover_workspace_stems(root: &Path) -> std::collections::HashSet<String
                 if let Some(bracket_start) = trimmed.find('[') {
                     let slice = &trimmed[bracket_start..];
                     for part in slice.split(&['"', '\'', ','][..]) {
-                        let token = part.trim().trim_matches(|c| c == '"' || c == '\'' || c == '[' || c == ']');
-                        if !token.is_empty() && (token.contains('/') || token.contains('\\') || !token.starts_with('#')) {
+                        let token = part
+                            .trim()
+                            .trim_matches(|c| c == '"' || c == '\'' || c == '[' || c == ']');
+                        if !token.is_empty()
+                            && (token.contains('/')
+                                || token.contains('\\')
+                                || !token.starts_with('#'))
+                        {
                             let member_path = Path::new(token);
                             if let Some(name) = member_path.file_name().and_then(|n| n.to_str()) {
                                 let norm = name.replace('-', "_");
@@ -547,7 +553,13 @@ pub fn discover_workspace_stems(root: &Path) -> std::collections::HashSet<String
                 }
             } else if trimmed.starts_with("name") && trimmed.contains('=') {
                 // Standalone crate or package manifest
-                let val = trimmed.split('=').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
+                let val = trimmed
+                    .split('=')
+                    .nth(1)
+                    .unwrap_or("")
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
                 if !val.is_empty() {
                     let norm = val.replace('-', "_");
                     stems.insert(norm.clone());
@@ -584,9 +596,8 @@ pub fn discover_workspace_stems(root: &Path) -> std::collections::HashSet<String
 
 /// Returns the cached set of first-party workspace member stems for the current repository.
 pub fn get_workspace_member_stems() -> &'static std::collections::HashSet<String> {
-    CACHED_WORKSPACE_MEMBER_STEMS.get_or_init(|| {
-        discover_workspace_stems(&resolve_workspace_root())
-    })
+    CACHED_WORKSPACE_MEMBER_STEMS
+        .get_or_init(|| discover_workspace_stems(&resolve_workspace_root()))
 }
 
 /// Checks whether a crate stem belongs to a first-party OshoosiClaw workspace crate
@@ -674,7 +685,8 @@ pub fn clean_tier2_superseded_release_deps(
                     continue;
                 }
                 let fname = entry.file_name().to_string_lossy().to_string();
-                if let Some(key) = parse_cargo_hashed_filename_with_stems(&fname, Some(&root_stems)) {
+                if let Some(key) = parse_cargo_hashed_filename_with_stems(&fname, Some(&root_stems))
+                {
                     let mtime = entry
                         .metadata()
                         .and_then(|m| m.modified())

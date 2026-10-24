@@ -27,11 +27,13 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          echo "Inspecting PR #${PR_NUMBER} by @${PR_AUTHOR} (association: ${PR_ASSOCIATION}, head: ${PR_HEAD_SHA})..."
+          echo "Inspecting PR #${PR_NUMBER} by @${PR_AUTHOR} (association: ${PR_ASSOCIATION}, head: ${PR_HEAD_SHA}, ref: ${PR_HEAD_REF}, repo: ${PR_HEAD_REPO})..."
 
           # Fetch changed files list from GitHub REST API
           FILES_JSON=$(gh api "/repos/${REPO}/pulls/${PR_NUMBER}/files?per_page=100")
@@ -65,7 +67,39 @@ jobs:
             exit 1
           fi
 
+          # Security Invariant 4: Fail closed on workflow tampering patterns regardless of author
+          WORKFLOW_PATCHES=$(echo "${FILES_JSON}" | jq -r '.[] | select(.filename | startswith(".github/workflows/")) | .patch // empty')
+          if echo "${WORKFLOW_PATCHES}" | grep -E '^\+.*(permissions:\s*write-all|persist-credentials:\s*true|curl.*SECRETS|wget.*GITHUB_TOKEN)' >/dev/null 2>&1; then
+            echo "::error::Unauthorized workflow privilege escalation or exfiltration pattern detected."
+            gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+              --body "❌ **Security Invariant Guard Failed**: Unauthorized workflow privilege escalation or exfiltration pattern detected in \`.github/workflows/\`."
+            exit 1
+          fi
+
           echo "✅ Security invariants passed: Zero forbidden keys, PATH immutability preserved, and hermetic build.rs verified."
+
+          # Security Invariant 5: Self-Approval & Workflow Tampering Guard (AB-VEC-07)
+          # Restrict automated bot approval when critical workflow, policy, or security configurations are modified.
+          CRITICAL_MODIFICATIONS=$(echo "${FILES_JSON}" | jq -r '.[].filename' | grep -E '^(\.github/workflows/|crates/osoosi-policy/|config/)' || true)
+          if [ -n "${CRITICAL_MODIFICATIONS}" ]; then
+            IS_OWNER=false
+            if [ "${PR_AUTHOR}" = "oyesanyf" ] && [ "${PR_ASSOCIATION}" = "OWNER" ] && [ "${PR_HEAD_REPO}" = "${REPO}" ]; then
+              IS_OWNER=true
+            fi
+
+            IS_SOLO_BRANCH=false
+            if [[ "${PR_HEAD_REF}" == pr/solo-* ]]; then
+              IS_SOLO_BRANCH=true
+            fi
+
+            if [ "${IS_OWNER}" != "true" ] || [ "${IS_SOLO_BRANCH}" != "true" ]; then
+              echo "::notice::Automated approval disabled: PR modifies critical workflow, policy, or security configurations (${CRITICAL_MODIFICATIONS}) from non-owner or non-solo branch. Manual human peer review required."
+              gh pr comment "${PR_NUMBER}" --repo "${REPO}" \
+                --body "🛡️ **Security Invariant Guard**: Automated bot approval is disabled because this PR modifies security-critical paths: \`${CRITICAL_MODIFICATIONS}\` and was submitted from outside authorized solo-maintainer pipeline. Independent manual human peer review is required." || true
+              exit 0
+            fi
+            echo "Verified authorized solo maintainer PR on ${PR_HEAD_REF} with critical path modifications. Invariant checks passed."
+          fi
 
           # Peer Developer Review & Approval:
           # Repository branch protection enforces required_approving_review_count = 1 from any authorized developer.

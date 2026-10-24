@@ -1181,7 +1181,9 @@ impl PolicyEngine {
                 v.strong_action
                     && (matches!(
                         v.class,
-                        EvidenceClass::Memory | EvidenceClass::LiveNetwork | EvidenceClass::Behavior
+                        EvidenceClass::Memory
+                            | EvidenceClass::LiveNetwork
+                            | EvidenceClass::Behavior
                     ) || v.result.confidence >= 0.85
                         || v.reliability >= 0.90)
             })
