@@ -1257,4 +1257,3 @@ pub(crate) fn try_build_behavioral_yara_voter(
         }
     }
 }
-

@@ -126,7 +126,8 @@ pub struct EdrOrchestrator {
     /// Wire: P2P Gossip intelligence sharing (used for broadcast when mesh is running)
     pub(crate) mesh: Arc<tokio::sync::Mutex<Option<MeshNode>>>,
     /// Channel to send commands to the mesh task (broadcast, approve peer)
-    pub(crate) mesh_command_tx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<MeshCommand>>>>,
+    pub(crate) mesh_command_tx:
+        Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<MeshCommand>>>>,
     /// Runtime: Active Response (Ghost/Tarpit)
     pub(crate) response: Arc<DeceptionManager>,
     /// Audit: Tamper-evident Merkle Logchain
@@ -155,7 +156,8 @@ pub struct EdrOrchestrator {
     /// Behavioral baseline for anomaly detection
     pub(crate) baseline: Arc<crate::baseline::BehavioralBaseline>,
     /// Policy Consensus tracking (Mesh-validated patches) — DashMap: lock-free concurrent access
-    pub(crate) policy_consensus: Arc<dashmap::DashMap<String, Vec<osoosi_types::PolicyConsensusMessage>>>,
+    pub(crate) policy_consensus:
+        Arc<dashmap::DashMap<String, Vec<osoosi_types::PolicyConsensusMessage>>>,
     /// Approval Queue for high-stakes autonomous actions
     pub(crate) approval_queue: Arc<tokio::sync::Mutex<Vec<osoosi_sandbox::ApprovalRequest>>>,
     /// Sandbox Executor for isolated tool execution
@@ -216,7 +218,8 @@ pub struct EdrOrchestrator {
     /// Static Analyzer: CAPA + FLOSS + LLM reasoning
     pub(crate) static_analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
     /// Morphic Hyper-Web: Entanglement and Probabilistic Deception
-    pub(crate) deception_engine: Arc<tokio::sync::RwLock<osoosi_behavioral::deception::EntanglementEngine>>,
+    pub(crate) deception_engine:
+        Arc<tokio::sync::RwLock<osoosi_behavioral::deception::EntanglementEngine>>,
     /// Spider Eyes: Binary Analyzer (LLM Cortex + Capstone)
     pub(crate) spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
@@ -272,4 +275,3 @@ pub struct EdrOrchestrator {
     /// RL Adaptive Controller (SkyRL-aligned multi-technique containment & voter weight optimization)
     pub rl_controller: Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>>,
 }
-

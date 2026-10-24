@@ -539,4 +539,3 @@ pub fn detect_binary_masquerade_spoof(
 
     None
 }
-

@@ -291,7 +291,6 @@ pub fn inspect_rust_binary(
     (metadata, findings, evidence, limitations, cargo_toml)
 }
 
-
 // ============================================================================
 // 2. Go Binary Inspector (`\xff Go buildinf:` + module/dep/build lines)
 // ============================================================================
@@ -481,7 +480,6 @@ pub fn inspect_go_binary(
 
     (metadata, findings, evidence, limitations, go_mod)
 }
-
 
 // ============================================================================
 // 3. Native Binary Inspector (PE / ELF / Mach-O + Mitigations + Pseudocode)
@@ -882,7 +880,6 @@ pub fn inspect_native_binary(
     (metadata, findings, evidence, limitations, pseudocode)
 }
 
-
 // ============================================================================
 // 6. .NET Assembly Inspector (`BSJB` CLR Metadata Root + Streams + P/Invoke)
 // ============================================================================
@@ -990,4 +987,3 @@ pub fn inspect_dotnet_assembly(
 
     (metadata, findings, evidence, limitations, csharp)
 }
-

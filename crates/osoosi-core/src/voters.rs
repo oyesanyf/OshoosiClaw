@@ -1226,8 +1226,14 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
         let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
-        let _ = std::fs::remove_file(format!("crates/osoosi-core/rules/osoosi_generated/{}.yar", rule_name));
-        let _ = std::fs::remove_file(format!("crates/osoosi-core/yara/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_file(format!(
+            "crates/osoosi-core/rules/osoosi_generated/{}.yar",
+            rule_name
+        ));
+        let _ = std::fs::remove_file(format!(
+            "crates/osoosi-core/yara/osoosi_generated/{}.yar",
+            rule_name
+        ));
         let _ = std::fs::remove_dir_all("crates/osoosi-core/rules");
         let _ = std::fs::remove_dir_all("crates/osoosi-core/yara");
     }

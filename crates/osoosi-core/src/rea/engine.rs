@@ -341,7 +341,6 @@ pub fn resolve_candidate_binary_path(
     None
 }
 
-
 pub struct AutonomousReaEngine {
     pub autonomous_enabled: AtomicBool,
     pub total_autonomous_sweeps: AtomicU64,
@@ -2160,4 +2159,3 @@ pub fn synthesize_yara_from_raw_payload(
     engine.record_report(report);
     yara
 }
-

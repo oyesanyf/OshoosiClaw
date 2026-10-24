@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
-use super::*;
 use super::types::*;
+use super::*;
 use crate::causal_graph::*;
 use crate::console_defense::*;
 use crate::disk_cleanup::*;
@@ -1544,5 +1544,4 @@ impl EdrOrchestrator {
         );
         Ok(())
     }
-
 }

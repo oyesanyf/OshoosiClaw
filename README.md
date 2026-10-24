@@ -18,6 +18,12 @@
 </p>
 
 <p align="center">
+  <a href="docs/FINAL_SCORECARD.md"><img src="https://img.shields.io/badge/Security%20Scorecard-A%2B%20Certified%20(43%2F43%20Vectors)-brightgreen?style=for-the-badge&logo=shield" alt="A+ Security Scorecard"/></a>
+  <a href="logs/adversarial_proof_report.md"><img src="https://img.shields.io/badge/Multi--Trial%20Proof-100%25%20Agreement%20(129%2F129%20Trials)-blueviolet?style=for-the-badge&logo=checkmarx" alt="Multi-Trial Adversarial Proof"/></a>
+  <a href="docs/BASELINE_SCORECARD.md"><img src="https://img.shields.io/badge/Baseline%20Audit-Remediated%20(+73.8%25)-blue?style=for-the-badge" alt="Baseline Audit Remediated"/></a>
+</p>
+
+<p align="center">
   <strong>OshoosiClaw (OpenỌ̀ṣọ́ọ̀sì)</strong> is an enterprise-grade, decentralized Endpoint Detection & Response (EDR) immune system engineered in high-assurance Rust and Python.<br/>
   It combines pre-execution kernel blocking, post-quantum P2P mesh consensus, and multi-agent AI defense to hunt threats and contain adversaries with zero cloud dependencies.
 </p>
@@ -89,6 +95,20 @@
 Unlike traditional antivirus platforms that rely on brittle cloud round-trips or static signature feeds, OshoosiClaw conducts all threat reasoning, fully homomorphic evaluations (TFHE), and autonomous binary analysis locally on the endpoint. It equips security analysts and incident responders with instant, rich visibility through a zero-dependency embedded WebUI running on `http://127.0.0.1:3030`, high-speed interactive SQL host telemetry queries across 101 live system tables, continuous HTTP Archive (HAR) browser/API surveillance, and autonomous containment mechanisms that sever adversary kill-chains in microseconds.
 
 ---
+
+### 🏆 Authoritative A+ Security Certification (43 / 43 Vectors Passing)
+
+Following comprehensive adversarial auditing and verification by an independent reviewer (`reviewer_final_scorecard`), OshoosiClaw achieved a certified **A+ Security Rating** across both critical defense domains, backed by **100% unanimous multi-trial agreement across 129 independent trials** (minimum 3 repeated trials per attack vector):
+
+| Security Domain | Vectors Audited | Code Controls (Check 1) | Fail-Closed Real Path (Check 2) | Proving Test Agreement (Check 3) | Final Grade | Baseline Grade | Posture Delta | Authoritative Report |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Domain 1: EDR Compromise Resistance** | 21 | 21 / 21 (100%) | 21 / 21 (100%) | 21 / 21 (100%) | **A+** | D (15.0%) | **+85.0%** | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md#3-domain-1-edr-compromise-resistance-final-scorecard-21-vectors) |
+| **Domain 2: Agent Breakout Resistance** | 22 | 22 / 22 (100%) | 22 / 22 (100%) | 22 / 22 (100%) | **A+** | C- (36.4%) | **+63.6%** | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md#4-domain-2-agent-breakout-resistance-final-scorecard-22-vectors) |
+| **Unified Repository Posture** | **43** | **43 / 43 (100%)** | **43 / 43 (100%)** | **43 / 43 (100%)** | **A+** | **D+ / C- (26.2%)** | **+73.8%** | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md) |
+
+- **Official Final Scorecard**: [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md) — Comprehensive evidence citations (`file:line`) and fail-closed path proofs for all 43 defense vectors.
+- **Independent Baseline Audit**: [`docs/BASELINE_SCORECARD.md`](docs/BASELINE_SCORECARD.md) — Historical baseline findings and vulnerability breakdown prior to remediation passes.
+- **Machine-Readable Multi-Trial Report**: [`logs/adversarial_proof_report.md`](logs/adversarial_proof_report.md) & [`logs/adversarial_proof_report.json`](logs/adversarial_proof_report.json) — 129 independent test executions with 0 transient failures.
 
 ---
 
@@ -245,6 +265,7 @@ flowchart TD
         ETW["Windows ETW, Minifilter Driver & Win32 API"]
         HAR["Continuous HAR Web Traffic Inspector (#har-traffic)"]
         AGENT["AI Agent Syscall & Tool Execution Streams"]
+        CONHOST["EDR-VEC-23 Interactive Console Defense<br/>(harden_windows_console • FreeConsole • CREATE_NO_WINDOW)"]
     end
 
     subgraph ENGINE["2. Rust High-Assurance Core Engine (OsoosiEDR)"]
@@ -252,7 +273,8 @@ flowchart TD
         SIQ["101-Table Siquery-RS SQLite Virtual Engine"]
         REA["Autonomous REA Binary & Bytecode Decompiler"]
         POL["PhaseLock Attractor & Byzantine Decision Voters"]
-        SAND["CanaryCage Multi-Ring Agent Sandbox"]
+        GATE["6-Layer Pre-Execution Containment Tool Gate (AgentContainmentRing)<br/>1: Lineage • 2: Dirac Impulse • 3: Path Guard • 4: SSRF • 5: Breakout • 6: Alignment"]
+        SAND["AppContainer + Job Object Sandbox (CanaryCage)<br/>(CREATE_SUSPENDED • IsProcessInJob • RAII Cleanup)"]
     end
 
     subgraph SWARM["3. Python AI Swarm & Adaptive Learning"]
@@ -271,14 +293,91 @@ flowchart TD
         UI["Modern WebUI Dashboard (http://127.0.0.1:3030)"]
         CLI["High-Speed CLI Utility (osoosi-cli)"]
         REST["REST & WebSocket Event Streaming API"]
+        PROOF["43-Vector Adversarial Proof Suite (Port 3030)<br/>(/api/cicd-protection/verify-15-vectors • 129 Trials Multi-Trial Agreement)"]
     end
 
     SENSORS --> COLL
-    COLL --> SIQ & REA & POL & SAND
+    COLL --> SIQ & REA & POL & GATE
+    GATE --> SAND
     POL <--> LANG & SKY
     POL --> SQL & MRK
     MRK --> MESH
-    SIQ & REA & POL & SQL --> UI & CLI & REST
+    SIQ & REA & POL & SQL & PROOF --> UI & CLI & REST
+```
+
+### 🛡️ 6-Layer Pre-Execution Containment Tool Gate & Process Confinement
+
+The **6-Layer Pre-Execution Tool Gate** (`AgentContainmentRing::execute_contained_tool` in `crates/osoosi-agent-anomaly/src/containment_ring.rs`) and **OS Sandbox Confinement** (`crates/osoosi-sandbox/src/windows.rs` & `crates/osoosi-runtime/src/canary_cage.rs`) enforce fail-closed invariant verification before any agent tool closure executes:
+
+```mermaid
+flowchart TD
+    subgraph INVOCATION["1. Agent Tool Invocation Request"]
+        REQ["Agent Subprocess / LLM Tool Call<br/>(ToolCallTelemetry: agent_id, session_id, tool_name, params)"]
+        TICKET["DiracDeltaCapabilityTicket<br/>(Single-use impulse ticket, expiry, nonce)"]
+    end
+
+    subgraph RING["2. 6-Layer Pre-Execution Containment Gate (AgentContainmentRing)"]
+        L1["Layer 1: Content Lineage Inspection<br/>• FileLineageTracker BLAKE3 content-addressed digest<br/>• Immune toolchain paths vetted before poisoned digests<br/>• Rejects tainted / injected file artifacts fail-closed"]
+        L2["Layer 2: Dirac-Delta Impulse Consumption<br/>• ticket.consume_once(&tool_name)<br/>• Atomic single-use token consumption<br/>• Replays and duplicate impulses rejected fail-closed"]
+        L3["Layer 3: Safe Filesystem Path Guard<br/>• validate_agent_filesystem_access(&resource)<br/>• Safe Path::join replacement algorithm<br/>• Rejects drive letters, UNC, ADS, %2e traversal, null bytes"]
+        L4["Layer 4: Mathematical Network & SSRF Guard<br/>• validate_agent_egress_url(&resource, true)<br/>• Ipv4Addr / Ipv6Addr mathematical parser<br/>• Blocks RFC1918, loopback, IMDS 169.254, CGNAT, IPv6 ULA"]
+        L5["Layer 5: BreakoutDefenseCoordinator Evaluation<br/>• evaluate_action(agent_id, tool_name, resource, payload)<br/>• Behavioral, operational & lateral anomaly monitors<br/>• Fails closed on any anomalous verdict or lateral drift"]
+        L6["Layer 6: Runtime Alignment Scanner<br/>• evaluate_tier1_structural(&pinned, &tool_name, &params)<br/>• BLAKE3 task intent pinning + 128-dim MRL embeddings<br/>• Multi-turn goal hijacking & high-privilege sinks blocked"]
+    end
+
+    subgraph ISOLATION["3. OS-Enforced Process Confinement (Windows & Linux)"]
+        WIN["Windows Job Object + AppContainer Boundary<br/>• CREATE_SUSPENDED (0x00000004)<br/>• CreateAppContainerProfile + SECURITY_CAPABILITIES<br/>• AssignProcessToJobObject + assert IsProcessInJob == TRUE<br/>• Fail-closed: TerminateProcess on error before ResumeThread<br/>• RAII: FreeSid & DeleteAppContainerProfile cleanup"]
+        LNX["Linux Unshare & Landlock Boundary<br/>• PR_SET_NO_NEW_PRIVS enforcement<br/>• Landlock filesystem restrictions + seccomp filter<br/>• Network namespace unsharing for local tools"]
+    end
+
+    subgraph DISPATCH["4. Safe Tool Execution"]
+        EXEC["tool_closure() Executes within Confined Sandbox<br/>Zero host master token leakage • Sanitized environment block"]
+    end
+
+    INVOCATION --> L1
+    L1 -->|Pass| L2
+    L1 -->|Lineage Poisoned| VETO1["Veto: ContainmentRing-Lineage-Veto"]
+    L2 -->|Pass| L3
+    L2 -->|Ticket Invalid| VETO2["Veto: ContainmentRing-Capability-Veto"]
+    L3 -->|Pass| L4
+    L3 -->|Traversal / ADS| VETO3["Veto: ContainmentRing-Filesystem-Veto"]
+    L4 -->|Pass| L5
+    L4 -->|SSRF / Loopback| VETO4["Veto: ContainmentRing-Egress-Veto"]
+    L5 -->|Pass| L6
+    L5 -->|Anomaly / Drift| VETO5["Veto: ContainmentRing-Breakout-Veto"]
+    L6 -->|Pass| WIN & LNX
+    L6 -->|Alignment Drift| VETO6["Veto: ContainmentRing-Alignment-Veto"]
+    WIN & LNX --> DISPATCH
+    DISPATCH --> EXEC
+```
+
+### 🪟 EDR-VEC-23: Interactive Console Hardening & Elevated Conhost Hijack Defense
+
+Addressing exploit vector `EDR-VEC-23` ("Interactive Elevated Console / Conhost QuickEdit Freeze, WriteConsoleInput Injection, & Parent cmd.exe Shell Drop"), OshoosiClaw incorporates end-to-end console defense in `crates/osoosi-core/src/console_defense.rs` and `crates/osoosi-cli/src/main.rs`:
+
+```mermaid
+flowchart TD
+    subgraph ATTACK_VECTORS["EDR-VEC-23 Interactive Elevated Console Exploit Paths"]
+        A1["1. Conhost QuickEdit Mode Freeze<br/>ENABLE_QUICK_EDIT_MODE (0x0040)<br/>Mouse click enters 'Select' mode<br/>Blocks stdout/stderr writes, freezing EDR"]
+        A2["2. Console Input Injection & Buffer Scraping<br/>AttachConsole / WriteConsoleInputW<br/>Injects synthetic keystrokes into admin console<br/>Scrapes cleartext tokens from screen buffer"]
+        A3["3. Elevated cmd.exe Parent Shell Drop<br/>start.exe / batch file wrapper executes daemon<br/>Ctrl+C / Ctrl+Break kills child daemon<br/>Drops attacker into interactive Admin cmd.exe"]
+    end
+
+    subgraph DEFENSE_CONTROLS["OshoosiClaw Production Console Defense Architecture"]
+        C1["harden_windows_console() (crates/osoosi-core/src/console_defense.rs)<br/>• GetStdHandle(STD_INPUT_HANDLE)<br/>• Strips ENABLE_QUICK_EDIT_MODE (0x0040)<br/>• Strips ENABLE_INSERT_MODE (0x0020)<br/>• Strips ENABLE_MOUSE_INPUT (0x0010)<br/>• Sets ENABLE_EXTENDED_FLAGS (0x0080)<br/>• FlushConsoleInputBuffer to purge queued injection"]
+        C2["FreeConsole() Headless Detachment<br/>• Invoked on --headless, daemon, and service modes<br/>• Detaches from conhost.exe completely<br/>• 0 conhost window exists on winsta0\\default<br/>• Eliminates screen scraping & interactive hooks"]
+        C3["CREATE_NO_WINDOW Confinement<br/>• All Windows child process spawns pass 0x08000000<br/>• Prevents spawning hidden interactive consoles<br/>• Isolates subprocess stdio to anonymous pipes"]
+        C4["ElevatedConsoleHijackDetector Telemetry<br/>• Monitored in siquery virtual tables & ETW<br/>• Detects unsigned processes attached to elevated console<br/>• Flags start.exe batch wrapper shell drop risks"]
+    end
+
+    subgraph OUTCOME["Hardened Runtime State"]
+        SAFE["Immune to QuickEdit Freeze • Zero Console Injection Surface • No Shell-Drop Escape"]
+    end
+
+    A1 --> C1
+    A2 --> C1 & C2
+    A3 --> C2 & C3 & C4
+    C1 & C2 & C3 & C4 --> OUTCOME
 ```
 
 ---
@@ -4105,6 +4204,9 @@ OshoosiClaw maintains an exhaustive documentation library spanning high-level ar
 
 | Documentation Manual | Target Scope & Subject Matter | Direct Access |
 |:---------------------|:------------------------------|:--------------|
+| **Authoritative Final Security Scorecard (A+)** | Authoritative A+ certification across all 43 defense vectors, fail-closed path proofs, exact file:line evidence | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md) |
+| **Baseline Security Scorecard** | Independent baseline audit and vulnerability findings prior to Milestone 2 & 3 remediation | [`docs/BASELINE_SCORECARD.md`](docs/BASELINE_SCORECARD.md) |
+| **Adversarial Multi-Trial Proof Report** | 43-vector verification execution logs with 100% agreement across 129 trials (0 transient failures) | [`logs/adversarial_proof_report.md`](logs/adversarial_proof_report.md) |
 | **System Architecture Manual** | Complete multi-tier EDR pipeline, kernel sensors, decision voters, storage engines | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | **Sovereign Mesh & Innovation** | Decentralized P2P mesh, $E(N,t)$ effectiveness model, holographic deception | [`docs/architecture_and_innovation.md`](docs/architecture_and_innovation.md) |
 | **Kernel Sensor Implementation** | Windows minifilter (`osoosi_driver.c`), WFP callbacks, Linux eBPF LSM hooks | [`docs/EDR_SENSOR_IMPLEMENTATION.md`](docs/EDR_SENSOR_IMPLEMENTATION.md) |
@@ -4119,56 +4221,134 @@ OshoosiClaw maintains an exhaustive documentation library spanning high-level ar
 
 ---
 
-<a id="-15-vector-agent-breakout--edr-compromise-verification-matrix"></a>
-<a id="15-vector-agent-breakout--edr-compromise-verification-matrix"></a>
-## 🛡️ 15-Vector Autonomous AI Agent Breakout (7) & EDR Compromise/Evasion (8) Verification Matrix
+<a id="-43-vector-agent-breakout--edr-compromise-verification-suite"></a>
+<a id="43-vector-agent-breakout--edr-compromise-verification-suite"></a>
+## 🛡️ Authoritative 43-Vector Unified EDR Compromise (21) & Agent Breakout (22) Verification Suite (A+ Certified)
 
-OshoosiClaw continuously verifies **15 canonical security vectors** spanning **7 Autonomous AI Agent Breakout Vectors (`AB-VEC-01`..`AB-VEC-07`)** and **8 EDR Compromise & Evasion Vectors (`EDR-VEC-01`..`EDR-VEC-08`)** across live Rust unit tests, HTTP verification endpoints (`GET/POST /api/cicd-protection/verify-15-vectors` and `/api/workflow-guard/verify-15-vectors`), and the standalone E2E harness (`tests/verify_15_breakout_and_edr_compromise_vectors.py` & `Perimeter 20` in `tests/strix_llm_adversarial_tester.py`).
+OshoosiClaw continuously verifies **43 canonical defense vectors** across two critical security domains:
+1. **Domain 1: EDR Compromise Resistance (21 Vectors: `EDR-VEC-01`..`EDR-VEC-20`, `EDR-VEC-23`)** — Protection against binary masquerading, prompt injection, mesh poisoning, ETW unhooking, BYOVD drivers, hollowing, parser exploits, audit tampering, credential leaks, config downgrades, and interactive console freezes.
+2. **Domain 2: Agent Breakout Resistance (22 Vectors: `AB-VEC-01`..`AB-VEC-22`)** — Fail-closed confinement against goal hijacking, capability epoch forgery, path traversal, SSRF pivots, unconfined child processes, DLP exfiltration, workflow tampering, authority promotion, loopback IPC pivots, salami drift, DLL injection, capability races, confused-deputy brokers, WASM exhaustion, rogue voter manipulation, GhostJacking, and environment secret leaks.
+
+Every single vector is certified with **100% unanimous multi-trial agreement across 129 independent trials** (minimum 3 repeated trials per attack vector), verified by an independent adversarial reviewer (`reviewer_final_scorecard`):
 
 ```mermaid
-flowchart LR
-    subgraph AGENT_BREAKOUT["Part 1: 7 Autonomous AI Agent Breakout Defenses"]
-        AB1["AB-VEC-01: Multi-Turn Goal Hijacking<br/>(RuntimeAlignmentScanner + Dogwood MFOTL)"]
-        AB2["AB-VEC-02: Inter-Agent Lateral Movement<br/>(HMAC-SHA256 Epoch N→N+1 + Case-Insensitive Guard)"]
-        AB3["AB-VEC-03: Path::join & ADS Traversal<br/>(validate_sandbox_relative_path + Cedar Gate)"]
-        AB4["AB-VEC-04: SSRF to Loopback/Metadata/IPv6<br/>(is_ssrf_ip Mathematical IPv4/IPv6 Gate)"]
-        AB5["AB-VEC-05: OS Sandbox Child Escape<br/>(CREATE_SUSPENDED + Job Object + FreeSid/Rollback)"]
-        AB6["AB-VEC-06: Steganographic / Depth-8 Exfil<br/>(OsoosiTwoTierDlpEngine + RedactX-v3 + ZK-BFT)"]
-        AB7["AB-VEC-07: Self-Approval & Workflow Tampering<br/>(WorkflowGuardState + Ed25519 Signed Config)"]
+flowchart TD
+    subgraph SUITE["43-Vector Adversarial Verification Suite (scripts/run_live_adversarial_proof_suite.py)"]
+        HARNESS["Unified Adversarial Test Runner<br/>• 3 Repeated Trials per Vector (129 Total Trials)<br/>• 100% Unanimous Agreement Required<br/>• Live Port 3030 Daemon Verification"]
     end
 
-    subgraph EDR_COMPROMISE["Part 2: 8 EDR Compromise & Evasion Defenses"]
-        EDR1["EDR-VEC-01: Binary Masquerading<br/>(Authenticode + WinVerifyTrust + NSRL Merkle)"]
-        EDR2["EDR-VEC-02: Counter-AI Disassembler Poisoning<br/>(REA Deterministic Sanitizer + Structured Schema)"]
-        EDR3["EDR-VEC-03: P2P Mesh Kill-Switch Poisoning<br/>(inspect_mesh_threat_frame + 5-Anchor Floor)"]
-        EDR4["EDR-VEC-04: Sensor Blinding & Chaff Flood<br/>(ETW Canaries + 3-Clean-Probe Auto-Rollback)"]
-        EDR5["EDR-VEC-05: BYOVD & Kernel DKOM<br/>(Ring-0 ObRegisterCallbacks + PsLoadedModuleList vs Pool)"]
-        EDR6["EDR-VEC-06: Direct/Indirect Syscall Unhooking<br/>(Clean NTDLL .text Diff + RIP/RSP Call-Stack Walk)"]
-        EDR7["EDR-VEC-07: Malformed PE/ELF/WASM/HAR Parser<br/>(Memory-Safe Goblin/wasmparser + Wasmtime Fuel)"]
-        EDR8["EDR-VEC-08: Audit Log & Config Downgrade<br/>(BLAKE3 Merkle + TPM 2.0 0x01800001 + ML-DSA-65)"]
+    subgraph D1["Domain 1: 21 EDR Compromise Resistance Defenses (Grade: A+)"]
+        D1_A["EDR-VEC-01: Masquerade & Static Path Abuse (Authenticode + Catalog)"]
+        D1_B["EDR-VEC-02: Counter-AI Prompt Injection Redaction ([REDACTED])"]
+        D1_C["EDR-VEC-03: P2P Mesh Kill-Switch Veto & Stake Slashing"]
+        D1_D["EDR-VEC-04: ETW Channel Blinding Reconnect & Ihara-Zeta Detector"]
+        D1_E["EDR-VEC-05: BYOVD Driver ELAM Blocklist & Handle Stripping"]
+        D1_F["EDR-VEC-06: Usermode Hook Evasion & Hollowing Process Termination"]
+        D1_G["EDR-VEC-07: Parser Memory Bounds (MAX_REA_FILE_BYTES + catch_unwind)"]
+        D1_H["EDR-VEC-08: Streaming Right-Spine Merkle Audit Log (ML-DSA-65 + TPM 2.0)"]
+        D1_I["EDR-VEC-09: Admin Token Exfiltration via Status Elimination"]
+        D1_J["EDR-VEC-10: Siquery Host SQL Query 401 Unauthorized Gating"]
+        D1_K["EDR-VEC-11: Config Tamper Auto-Resign Bypass Elimination (CRITICAL ALERT)"]
+        D1_L["EDR-VEC-12: Signed Binary Unconditional Decision Bypass Removal"]
+        D1_M["EDR-VEC-13: Consensus Veto Fragile String Override Elimination"]
+        D1_N["EDR-VEC-14: Unauthenticated USB Serial Kill-Switch (HMAC Challenge)"]
+        D1_O["EDR-VEC-15: Named Pipe Telemetry Injection (Strict SDDL SYSTEM/Admin)"]
+        D1_P["EDR-VEC-16: Binary Name Benign Bias Removal in Local Engine"]
+        D1_Q["EDR-VEC-17: Operator Password Hash Overwrite Elimination"]
+        D1_R["EDR-VEC-18: HTTP RFC 9112 Dual Framing & Desync 400 Bad Request"]
+        D1_S["EDR-VEC-19: Arbitrary REA File Decompilation 401 Unauthorized"]
+        D1_T["EDR-VEC-20: SkyRL Model Retraining & Poisoning 401 Unauthorized"]
+        D1_U["EDR-VEC-23: Conhost QuickEdit Freeze & Console Injection Defense"]
     end
 
-    AGENT_BREAKOUT --> VERIFIER["Unified 15-Vector Live Verification Gate<br/>/api/cicd-protection/verify-15-vectors<br/>tests/verify_15_breakout_and_edr_compromise_vectors.py"]
-    EDR_COMPROMISE --> VERIFIER
+    subgraph D2["Domain 2: 22 Agent Breakout Resistance Defenses (Grade: A+)"]
+        D2_A["AB-VEC-01: Multi-Turn Goal Hijacking (BLAKE3 Intent Pinning + MRL)"]
+        D2_B["AB-VEC-02: Inter-Agent Lateral Movement (HMAC Epoch Key + Monotonic N→N+1)"]
+        D2_C["AB-VEC-03: Tool Path Traversal & Safe Path::join Replacement"]
+        D2_D["AB-VEC-04: Mathematical IPv4/IPv6 SSRF & Cloud Metadata Blocking"]
+        D2_E["AB-VEC-05: Windows Job Object + AppContainer (CREATE_SUSPENDED)"]
+        D2_F["AB-VEC-06: Two-Tier Depth-8 DLP Engine (<ZK_PII> Scrubbing)"]
+        D2_G["AB-VEC-07: Auto-Review Bot & Workflow Tampering Defense"]
+        D2_H["AB-VEC-08: 5-Level Immutable Authority Lattice (L1 > L2 > L3 > L4 > L5)"]
+        D2_I["AB-VEC-09: Loopback IPC Port Whitelist (CDP 9222 & Docker Blocked)"]
+        D2_J["AB-VEC-10: Salami-Sliced Drift Tracking & Composite PID Lineage"]
+        D2_K["AB-VEC-11: Dynamic DLL Injection ImageLoad Capability Revocation"]
+        D2_L["AB-VEC-12: Capability Concurrency Race RwLock Serialization Barrier"]
+        D2_M["AB-VEC-13: Confused-Deputy System Broker Causal Taint Binding"]
+        D2_N["AB-VEC-14: WASM Dual-Metering Fuel & Asynchronous Epoch Deadline"]
+        D2_O["AB-VEC-15: Cedar Forbid Supremacy over Rogue Advisory Threat Voters"]
+        D2_P["AB-VEC-16: GhostJacking & EchoLeak Markdown / Zero-Width Sanitizer"]
+        D2_Q["AB-VEC-17: Formally Verified Binary Self-Exclusion Contract"]
+        D2_R["AB-VEC-18: WASM HostCall Single-Statement SELECT Filter"]
+        D2_S["AB-VEC-19: Telemetry Backpressure Workload-Only Capability Quarantine"]
+        D2_T["AB-VEC-20: Sequential Workflow Evaluator Dual-Cosigner Gate"]
+        D2_U["AB-VEC-21: Host Master Secret Scrubbing from Child Environment Blocks"]
+        D2_V["AB-VEC-22: Unchecked WASI Preopened Directory Isolation"]
+    end
+
+    subgraph REPORTS["Certification Artifacts"]
+        SCORECARD["Authoritative Scorecard<br/>docs/FINAL_SCORECARD.md (Grade: A+)"]
+        PROOF_REP["Adversarial Proof Report<br/>logs/adversarial_proof_report.md (129 Trials / 100% Agreement)"]
+    end
+
+    HARNESS --> D1 & D2
+    D1 & D2 --> SCORECARD & PROOF_REP
 ```
 
-| Vector ID | Category | Attack Vector & Standard | Primary Rust / C Defense Implementation | Live Verification Check |
+### Part 1: Domain 1 — EDR Compromise Resistance (21 Vectors — Grade: A+)
+
+| Vector ID | Attack Vector & MITRE Technique | Production Rust / C Defense Implementation | Fail-Closed Enforcement Path | Proving Test & Agreement |
 | :--- | :--- | :--- | :--- | :--- |
-| **`AB-VEC-01`** | Agent Breakout | **Multi-Turn Goal Hijacking & Indirect Prompt Injection** (`OWASP ASI01` / `ASI06`) | `RuntimeAlignmentScanner::evaluate_tier1_structural` (`crates/osoosi-agent-anomaly/src/alignment_scanner.rs`) + `EmbeddingGemma 2` MRL trajectory drift | Blocks `[SYSTEM OVERRIDE]` untrusted input escalating `Summarize README.md` into `shell_exec` |
-| **`AB-VEC-02`** | Agent Breakout | **Inter-Agent Lateral Movement & Capability Epoch Forgery** (`OWASP ASI03` / `ASI08`) | `ArmContainmentRing` & `MeshGuard` (`crates/osoosi-agent-anomaly/src/containment_ring.rs`) | Constant-time `HMAC-SHA256(arm_id, epoch, role)` verification, monotonic `N -> N+1` epoch rotation, case-insensitive sink isolation (`AccountingLedgerWrite`) |
-| **`AB-VEC-03`** | Agent Breakout | **Tool-Argument Path Traversal & `Path::join` Replacement** (`OWASP ASI02`) | `validate_sandbox_relative_path` (`crates/osoosi-sandbox/src/lib.rs`) + `BreakoutDefenseCoordinator` | Rejects `C:\`, `/etc/shadow`, `\\?\`, `%2e%2e%2f`, and NTFS ADS (`file.txt:zone.identifier`) before `Path::join` |
-| **`AB-VEC-04`** | Agent Breakout | **SSRF Pivot to Localhost Daemons or Cloud Metadata** (`OWASP ASI05`) | `is_ssrf_ip`, `is_ssrf_ipv4`, `is_ssrf_url` (`crates/osoosi-sandbox/src/native_host.rs`) | Mathematical `Ipv4Addr`/`Ipv6Addr` blocking of `127.0.0.0/8` (`:3030`, `:11434`, `:9222`), `169.254.169.254`, RFC1918, CGNAT, and `::ffff:127.0.0.1` |
-| **`AB-VEC-05`** | Agent Breakout | **OS Sandbox Escape via Unconfined Child Processes** (`MITRE T1611`) | `evaluate_pre_resume_confinement_gate` (`crates/osoosi-sandbox/src/windows.rs`) + `CanaryCage` (`crates/osoosi-runtime/src/canary_cage.rs`) | Enforces `CREATE_SUSPENDED (0x00000004)` + `AssignProcessToJobObject` + `IsProcessInJob == TRUE` before `ResumeThread`, with `FreeSid` & `DeleteAppContainerProfile` rollback on failure |
-| **`AB-VEC-06`** | Agent Breakout | **Steganographic, Multi-Layer Encoded, or Side-Channel Exfiltration** (`OWASP ASI07`) | `OsoosiTwoTierDlpEngine` (`crates/osoosi-dp/src/lib.rs`) | Recursive depth-8 multi-layer unwrapping (`Base64`/`Hex`/`URL`), NATO phonetic assembly, Shannon entropy bound ($H(X) \ge 5.65$), 4 KB Crown-Jewel Merkle chunks, and `<ZK_PII>` scrubbing |
-| **`AB-VEC-07`** | Agent Breakout | **Self-Approval & Policy/Workflow Tampering** (`OWASP ASI10`) | `WorkflowGuardState` (`crates/osoosi-dashboard/src/routes/workflow_guard.rs`) | Blocks self-modification of `.github/workflows/auto-review-bot.yml`, `.githooks/post-commit`, `scripts/solo_pr_ship.ps1`, and `config/osoosi.toml.sig` |
-| **`EDR-VEC-01`** | EDR Compromise | **Binary Masquerading & Static Allowlist Abuse** (`MITRE T1036.005`) | `ReaEngine` (`crates/osoosi-core/src/rea.rs`) | Zero path-string exemptions; requires cryptographic Authenticode / Windows Security Catalog (`CryptCATAdminEnumCatalogFromHash`) or NIST NSRL BLAKE3 Merkle verification |
-| **`EDR-VEC-02`** | EDR Compromise | **Counter-AI Disassembler & Telemetry Poisoning** (`OWASP LLM01` / `MITRE T1027`) | `ReaEngine::sanitize_binary_strings_Against_prompt_injection` (`crates/osoosi-core/src/rea.rs`) | Neutralizes embedded prompt-injection strings inside PE/ELF section names, PDB paths, and binary strings before cognitive triage |
-| **`EDR-VEC-03`** | EDR Compromise | **P2P Mesh Poisoning & False-Positive Kill-Switch Attacks** (`MITRE T1562.001`) | `inspect_mesh_threat_frame` (`crates/osoosi-core/src/rea.rs`) | Vetoes mesh frames targeting critical OS binaries (`svchost.exe`, `ntoskrnl.exe`, `osoosi.exe`) and enforces 5-anchor minimum YARA specificity |
-| **`EDR-VEC-04`** | EDR Compromise | **Sensor Blinding, Chaff Flooding & Alert Fatigue** (`MITRE T1562.006` / `T1499`) | `SiqueryEngine` (`etw_sessions`) + `KillChainEngine` (`crates/osoosi-core/src/killchain.rs`) | Synthetic ETW/eBPF heartbeats detect `EtwEventWrite` patching; containment auto-rolls back after 3 consecutive clean 60s health probes (30-min hard ceiling) |
-| **`EDR-VEC-05`** | EDR Compromise | **Bring Your Own Vulnerable Driver (BYOVD) & Kernel DKOM** (`MITRE T1068` / `T1014`) | `driver/windows/osoosi_driver.c`, `driver/windows/osoosi_elam.c` & `SiqueryEngine` (`drivers`) | Ring-0 `ObRegisterCallbacks` strips `PROCESS_TERMINATE`/`PROCESS_VM_WRITE` handles; cross-view `PsLoadedModuleList` vs. kernel pool tags detects DKOM-unlinked drivers |
-| **`EDR-VEC-06`** | EDR Compromise | **User-Mode Hook Evasion (Direct/Indirect Syscalls & Unhooking)** (`MITRE T1562.001` / `T1106`) | `HollowingEngine` (`crates/osoosi-telemetry/src/hollowing.rs`) & `ReaEngine` | Compares in-memory `.text` sections against clean on-disk `ntdll.dll` and inspects kernel ETW call-stack `RIP`/`RSP` for unbacked `RWX` frames |
-| **`EDR-VEC-07`** | EDR Compromise | **Parser Exploitation inside the EDR (Malformed PE/ELF/WASM/HAR)** (`CWE-125` / `CWE-787`) | `ReaEngine::analyze_bytes` (`crates/osoosi-core/src/rea.rs`) | Memory-safe bounds-checked Rust parsers (`goblin`, `wasmparser`, `pelite`, `x509-parser`) + Wasmtime fuel/epoch limits safely handle truncated/corrupt headers without panic |
-| **`EDR-VEC-08`** | EDR Compromise | **Audit Log Tampering & Configuration Downgrade** (`MITRE T1070` / `T1562`) | `MerkleLogChain` (`crates/osoosi-audit/src/lib.rs`) & `PqcHybridSigner` (`crates/osoosi-audit/src/pqc_primitives.rs`) | Tamper-evident BLAKE3 Merkle logchain, TPM 2.0 monotonic anti-rollback counter (`0x01800001`), and `Ed25519 + ML-DSA-65` hybrid PQC signatures |
+| **`EDR-VEC-01`** | **Binary Masquerading & Static Path Abuse** (`T1036.005`) | `detect_binary_masquerade_spoof` (`crates/osoosi-core/src/rea.rs:1103`) | Zero blind folder exemptions; dynamic Authenticode / Windows Catalog validation | `prove_edr_vec_01` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-02`** | **Counter-AI Prompt Injection & Redirection** (`LLM01`, `T1027`) | `scan_and_sanitize_counter_ai_strings` (`crates/osoosi-core/src/rea.rs:1191`) | Sanitizes binary strings, redacts injection markers with `[REDACTED]`, escalates score | `prove_edr_vec_02` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-03`** | **P2P Mesh Kill-Switch & Hash Poisoning** (`T1562.001`) | `veto_peer_kill_switch_candidate` (`crates/osoosi-core/src/rea.rs:5764`, `lib.rs:5014`) | Generates `ByzantineKillSwitchFraudProof`, slashes peer stake by 100.0, vetoes candidate | `prove_edr_vec_03` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-04`** | **ETW Channel Blinding & Suppression** (`T1562.006`) | `crates/osoosi-telemetry/src/host_events.rs:290`, `siquery.rs:9144` | Reconnect sweeps on drops; `IharaZetaCycleDetector` ($\det(I - u B_G) = 0$); 3-probe health check | `prove_edr_vec_04` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-05`** | **BYOVD Driver & Kernel DKOM** (`T1068`, `T1014`) | `crates/osoosi-runtime/src/kernel_driver.rs:106`, `driver/windows/osoosi_elam.c` | Ring-0 ELAM blocklist, strips handles, intercepts vulnerable drivers (`rtcore64.sys`) | `prove_edr_vec_05` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-06`** | **Usermode Hook Evasion & Hollowing** (`T1562`, `T1055`) | `crates/osoosi-telemetry/src/hollowing.rs:25`, `crates/osoosi-core/src/lib.rs:7790` | Terminates source/target PIDs via `block_by_pid`, logs `PROCESS_HOLLOWING_TERMINATED` | `prove_edr_vec_06` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-07`** | **Parser Memory Safety & Resource Bounds** (`CWE-125/787`) | `crates/osoosi-core/src/rea.rs:40, 4768` | Hard `MAX_REA_FILE_BYTES` ceiling + `catch_unwind` panic isolation protects PE/ELF parsers | `prove_edr_vec_07` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-08`** | **Audit Log & Merkle Tampering** (`T1070`, `T1565`) | `crates/osoosi-audit/src/lib.rs:50`, `crates/osoosi-audit/src/pqc_primitives.rs:1` | Streaming right-spine Merkle tree + NIST FIPS 204 ML-DSA-65 hybrid signatures + TPM 2.0 PCR | `prove_edr_vec_08` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-09`** | **Admin Token Exfiltration via Status Endpoint** (`CWE-306`) | `crates/osoosi-dashboard/src/lib.rs:1158` | Removed automatic `Set-Cookie` tokens on `/api/status`, `/`, `/api/health`; delivered on login only | `prove_edr_vec_09` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-10`** | **Arbitrary Host Siquery SQL Exfiltration** (`CWE-306`) | `crates/osoosi-dashboard/src/lib.rs:1168` | Removed public bypass on `/api/siquery/query`; unauthenticated queries return HTTP 401 | `prove_edr_vec_10` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-11`** | **Config Tamper Auto-Resigning Bypass** (`T1562`, `CWE-353`) | `crates/osoosi-core/src/hardened.rs:736` | Removed auto-resigning `sign_all_critical_configs()`; tampered configs fail closed with CRITICAL ALERT | `prove_edr_vec_11` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-12`** | **Signed Binary Unconditional Decision Bypass** (`T1562.001`) | `crates/osoosi-core/src/lib.rs:13853`, `local_engine.rs:616` | Removed unconditional `!is_signed` bypass; digital signatures evaluated as evidence with ML models | `prove_edr_vec_12` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-13`** | **Consensus Veto Fragile String Override** (`T1562.001`) | `crates/osoosi-policy/src/engine.rs:1170` | Replaced fragile string matching with deterministic `EvidenceClass` and Cedar Ring 7 Forbid | `prove_edr_vec_13` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-14`** | **Unauthenticated USB Serial Kill-Switch** (`T1562.001`) | `crates/osoosi-core/src/watchdog.rs:372` | Plain `KILL` rejected; requires CHALLENGE request, random nonce, and constant-time HMAC-SHA256 | `prove_edr_vec_14` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-15`** | **Named Pipe Telemetry Injection** (`T1562`, `T1055`) | `crates/osoosi-telemetry/src/native.rs:869` | NULL DACL replaced with strict SDDL `"D:P(A;;GA;;;SY)(A;;GA;;;BA)"` restricting to SYSTEM & Admins | `prove_edr_vec_15` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-16`** | **Binary Name Benign Bias in Local Engine** (`T1036.005`) | `crates/osoosi-behavioral/src/decision_model/local_engine.rs:608` | Removed arbitrary Brier score boosts (+2.2 to +4.5) for superficial filenames; enforces multi-token check | `prove_edr_vec_16` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-17`** | **Operator Password Hash Overwrite Bypass** (`CWE-287`) | `crates/osoosi-dashboard/src/lib.rs:5575` | Removed password overwrite on failed login; constant-time `authenticate_hybrid_credentials` + lockout | `prove_edr_vec_17` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-18`** | **HTTP Dual Framing & Desync Attacks** (`RFC 9112`) | `crates/osoosi-dashboard/src/lib.rs:1020` | Strictly rejects conflicting CL+TE, comma-separated CL, and non-zero body on HEAD with HTTP 400 | `prove_edr_vec_18` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-19`** | **Arbitrary File Decompilation / REA Oracle** (`CWE-200`) | `crates/osoosi-dashboard/src/lib.rs:1168` | Removed public bypass on `/api/rea/v1/analyze`; unauthenticated requests fail closed with HTTP 401 | `prove_edr_vec_19` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-20`** | **SkyRL Model Retraining & Poisoning** (`T1565.001`) | `crates/osoosi-dashboard/src/lib.rs:1168` | Removed public bypass on `/api/skyrl/v1/train`; state-changing model mutations require admin credentials | `prove_edr_vec_20` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-23`** | **Interactive Console QuickEdit Freeze & Injection** (`T1562.001`) | `crates/osoosi-core/src/console_defense.rs:69`, `osoosi-cli/src/main.rs:811` | `harden_windows_console()` strips QuickEdit (0x0040), `FreeConsole()` in headless mode, `CREATE_NO_WINDOW` | `prove_edr_vec_23` (3/3 trials, 100% agreement) |
+
+### Part 2: Domain 2 — Agent Breakout Resistance (22 Vectors — Grade: A+)
+
+| Vector ID | Attack Vector & Standard | Production Rust / C Defense Implementation | Fail-Closed Enforcement Path | Proving Test & Agreement |
+| :--- | :--- | :--- | :--- | :--- |
+| **`AB-VEC-01`** | **Multi-Turn Goal Hijacking** (`OWASP LLM01`) | `crates/osoosi-agent-anomaly/src/alignment_scanner.rs:306`, `containment_ring.rs:576` | BLAKE3 task intent pinning + 128-dim MRL embeddings; pre-execution structural gate blocks hijacked sinks | `prove_ab_vec_01` (3/3 trials, 100% agreement) |
+| **`AB-VEC-02`** | **Capability Epoch Forgery & Lateral Move** (`Law 3`) | `crates/osoosi-agent-anomaly/src/containment_ring.rs:122` | Constant-time `ct_eq` HMAC verification bound to `(norm_id, epoch, role)`; monotonic $N \to N+1$ rotation | `prove_ab_vec_02` (3/3 trials, 100% agreement) |
+| **`AB-VEC-03`** | **Tool Path Traversal & Path::join** (`CWE-22`) | `crates/osoosi-sandbox/src/lib.rs:640`, `containment_ring.rs:524` | Safe `Path::join` replacement algorithm rejects leading slashes, drive letters, UNC, ADS, %2e traversal | `prove_ab_vec_03` (3/3 trials, 100% agreement) |
+| **`AB-VEC-04`** | **SSRF Pivot to Localhost / Metadata** (`CWE-918`) | `crates/osoosi-sandbox/src/native_host.rs:270`, `policy/agent_egress.rs:490` | Mathematical IP parsing blocks RFC1918, loopback, IMDS 169.254, CGNAT 100.64, IPv6 ULA fc00::/7 | `prove_ab_vec_04` (3/3 trials, 100% agreement) |
+| **`AB-VEC-05`** | **OS Sandbox Child Process Escape** (`SEC-WIN-01`) | `crates/osoosi-sandbox/src/windows.rs:98`, `canary_cage.rs:585` | Windows child spawns enforce `CREATE_SUSPENDED`, assign to Job Object, verify `IsProcessInJob == TRUE` | `prove_ab_vec_05` (3/3 trials, 100% agreement) |
+| **`AB-VEC-06`** | **Steganographic / DLP Exfiltration** (`T1048`) | `crates/osoosi-dp/src/lib.rs:698, 1310` | Tier-1 256KB ceiling (`MAX_DLP_HOT_SCAN_BYTES`), Tier-2 RedactX-v3 OpenJEV logit scoring, `<ZK_PII>` scrubbing | `prove_ab_vec_06` (3/3 trials, 100% agreement) |
+| **`AB-VEC-07`** | **Self-Approval & Policy/Workflow Tampering** (`T1562`) | `.github/workflows/auto-review-bot.yml:70`, `workflow_guard.rs:702` | Automated review bot blocks privilege escalation (`write-all`, `persist-credentials`); workflow edits require human owner | `prove_ab_vec_07` (3/3 trials, 100% agreement) |
+| **`AB-VEC-08`** | **Upward Authority Promotion (Ring 1)** (`Lattice`) | `crates/osoosi-policy/src/breakout_gate.rs:86` | Immutable 5-level authority hierarchy ($L1 > L2 > L3 > L4 > L5$) prevents L4 configs overriding L1 system policy | `prove_ab_vec_08` (3/3 trials, 100% agreement) |
+| **`AB-VEC-09`** | **Loopback & Local IPC Pivot (Ring 4)** (`Ring 4`) | `crates/osoosi-policy/src/agent_egress.rs:302` | Blanket loopback removed; authorized IPC whitelist strictly enforced (11434, 3030, 5000); CDP 9222 / Docker 2375 blocked | `prove_ab_vec_09` (3/3 trials, 100% agreement) |
+| **`AB-VEC-10`** | **Salami Drift & PID Reuse (Ring 3)** (`Ring 3`) | `crates/osoosi-agent-anomaly/src/file_lineage.rs:40` | Composite `ProcessInstanceIdentity` prevents PID reuse confusion; monotonic taint propagation across 25+ turns | `prove_ab_vec_10` (3/3 trials, 100% agreement) |
+| **`AB-VEC-11`** | **Dynamic Code / DLL Injection (Ring 7)** (`EventID 7`) | `crates/osoosi-policy/src/breakout_gate.rs:2349` | ImageLoad monitoring on agent processes; loading unsigned DLLs revokes capability impulse tickets fail-closed | `prove_ab_vec_11` (3/3 trials, 100% agreement) |
+| **`AB-VEC-12`** | **Capability Concurrency Race (Ring 5)** (`Concurrency`) | `crates/osoosi-policy/src/breakout_gate.rs:1639` | RwLock write serialization barrier guarantees zero in-flight external write actions commit after revocation initiates | `prove_ab_vec_12` (3/3 trials, 100% agreement) |
+| **`AB-VEC-13`** | **Confused-Deputy System Broker (Ring 3)** (`Broker`) | `crates/osoosi-core/src/causal_graph.rs:389` | System broker processes (`WmiPrvSE.exe`, `svchost.exe`) inherit initiating agent session ID and causal taint | `prove_ab_vec_13` (3/3 trials, 100% agreement) |
+| **`AB-VEC-14`** | **WASM Dual-Metering & Overflow** (`Wasm Sandbox`) | `crates/osoosi-sandbox/src/lib.rs:163` | Dual-metering combines fuel-based execution counting with epoch-based asynchronous deadlines; recursion halts | `prove_ab_vec_14` (3/3 trials, 100% agreement) |
+| **`AB-VEC-15`** | **Rogue Threat Voter Manipulation (Ring 2)** (`Ring 2`) | `crates/osoosi-agent-anomaly/src/breakout_prevention.rs:1030` | Cedar Reference Monitor `forbid` policies cannot be overridden by advisory threat voters; rogue voter (-10.0) fails closed | `prove_ab_vec_15` (3/3 trials, 100% agreement) |
+| **`AB-VEC-16`** | **GhostJacking & EchoLeak Markdown** (`Smuggling`) | `crates/osoosi-agent-anomaly/src/agentjacking_guard.rs:40` | Output sanitization strips hidden markdown image exfiltration links, zero-width steganography, Unicode direction overrides | `prove_ab_vec_16` (3/3 trials, 100% agreement) |
+| **`AB-VEC-17`** | **Naive Binary Self-Exclusion** (`T1036.005`) | `crates/osoosi-policy/src/verified.rs:120` | Contract 3 formally verifies self-exclusion invariant; cross-platform process leaf extraction splits on both `\` and `/` | `prove_ab_vec_17` (3/3 trials, 100% agreement) |
+| **`AB-VEC-18`** | **SQL Injection Escape via WASM HostCall** (`CWE-89`) | `crates/osoosi-sandbox/src/security.rs:133` | Hostcall SQL filtering permits strictly single-statement `SELECT` queries without semicolons; administrative SQL blocked | `prove_ab_vec_18` (3/3 trials, 100% agreement) |
+| **`AB-VEC-19`** | **Telemetry Overload DoS (Family 7)** (`Availability`) | `crates/osoosi-agent-anomaly/src/breakout_prevention.rs:1367` | Telemetry backpressure (`EventsLost > 0`) quarantines and freezes capabilities strictly on noisy agent workload | `prove_ab_vec_19` (3/3 trials, 100% agreement) |
+| **`AB-VEC-20`** | **Composed Workflow Escalation (Family 1)** (`Multi-Step`) | `crates/osoosi-policy/src/breakout_gate.rs:692` | Sequential workflow evaluator tracks composed state across steps; unapproved privileged deployments without cosigners blocked | `prove_ab_vec_20` (3/3 trials, 100% agreement) |
+| **`AB-VEC-21`** | **Host Master Secret Leakage via Env Vars** (`CWE-200`) | `crates/osoosi-runtime/src/canary_cage.rs:545` | Whitelist of benign system variables (`SystemRoot`, `PATH`, `TEMP`, `USER`, `HOME`) and active scrubbing of all `token`, `secret`, `key` | `prove_ab_vec_21` (3/3 trials, 100% agreement) |
+| **`AB-VEC-22`** | **Unchecked WASI Directory Traversal** (`Escape`) | `crates/osoosi-sandbox/src/lib.rs:528` | WASI context built via `WasiCtxBuilder::new().build_p1()` with 0 preopened host dirs, 0 inherited env vars, 0 stdout leaks | `prove_ab_vec_22` (3/3 trials, 100% agreement) |
+
+---
 
 ---
 

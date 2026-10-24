@@ -1,7 +1,4 @@
-#![allow(
-    clippy::collapsible_if,
-    clippy::suspicious_open_options
-)]
+#![allow(clippy::collapsible_if, clippy::suspicious_open_options)]
 
 use clap::{Parser, Subcommand};
 use osoosi_core::{secured_executor::DirectExecutor, EdrOrchestrator};
