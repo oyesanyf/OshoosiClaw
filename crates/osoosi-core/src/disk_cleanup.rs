@@ -417,23 +417,125 @@ pub fn clean_tier1_scratch_and_debug_targets(
     }
 }
 
+static CACHED_WORKSPACE_MEMBER_STEMS: std::sync::OnceLock<std::collections::HashSet<String>> =
+    std::sync::OnceLock::new();
+
+/// Dynamically discovers all first-party Cargo workspace crate member stems
+/// from `root/Cargo.toml` and `root/crates/`.
+///
+/// Discovers all 36+ workspace crates automatically and normalizes crate names
+/// (converting `-` to `_`, and registering both bare and `lib`-prefixed stems).
+pub fn discover_workspace_stems(root: &Path) -> std::collections::HashSet<String> {
+    let mut stems = std::collections::HashSet::new();
+
+    // 1. Scan root/Cargo.toml for [workspace] members or [package] name
+    let cargo_toml_path = root.join("Cargo.toml");
+    if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
+        let mut in_workspace_members = false;
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("[workspace]") {
+                in_workspace_members = false;
+            } else if trimmed.starts_with("members") && trimmed.contains('=') {
+                in_workspace_members = true;
+                // Parse inline array: members = ["crates/a", "crates/b"]
+                if let Some(bracket_start) = trimmed.find('[') {
+                    let slice = &trimmed[bracket_start..];
+                    for part in slice.split(&['"', '\'', ','][..]) {
+                        let token = part.trim().trim_matches(|c| c == '"' || c == '\'' || c == '[' || c == ']');
+                        if !token.is_empty() && (token.contains('/') || token.contains('\\') || !token.starts_with('#')) {
+                            let member_path = Path::new(token);
+                            if let Some(name) = member_path.file_name().and_then(|n| n.to_str()) {
+                                let norm = name.replace('-', "_");
+                                stems.insert(norm.clone());
+                                stems.insert(format!("lib{}", norm));
+                            }
+                        }
+                    }
+                    if trimmed.contains(']') {
+                        in_workspace_members = false;
+                    }
+                }
+            } else if in_workspace_members {
+                if trimmed.starts_with(']') {
+                    in_workspace_members = false;
+                } else {
+                    for part in trimmed.split(',') {
+                        let token = part.trim().trim_matches(|c| c == '"' || c == '\'');
+                        if !token.is_empty() && !token.starts_with('#') {
+                            let member_path = Path::new(token);
+                            if let Some(name) = member_path.file_name().and_then(|n| n.to_str()) {
+                                let norm = name.replace('-', "_");
+                                stems.insert(norm.clone());
+                                stems.insert(format!("lib{}", norm));
+                            }
+                        }
+                    }
+                }
+            } else if trimmed.starts_with("name") && trimmed.contains('=') {
+                // Standalone crate or package manifest
+                let val = trimmed.split('=').nth(1).unwrap_or("").trim().trim_matches('"').trim_matches('\'');
+                if !val.is_empty() {
+                    let norm = val.replace('-', "_");
+                    stems.insert(norm.clone());
+                    stems.insert(format!("lib{}", norm));
+                }
+            }
+        }
+    }
+
+    // 2. Scan root/crates directory if it exists
+    let crates_dir = root.join("crates");
+    if let Ok(entries) = std::fs::read_dir(&crates_dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                if let Some(name) = entry.file_name().to_str() {
+                    let norm = name.replace('-', "_");
+                    stems.insert(norm.clone());
+                    stems.insert(format!("lib{}", norm));
+                }
+            }
+        }
+    }
+
+    // 3. Fall back to resolve_workspace_root() if root had neither Cargo.toml nor crates
+    if stems.is_empty() {
+        let ws = resolve_workspace_root();
+        if ws != root && ws.exists() {
+            return discover_workspace_stems(&ws);
+        }
+    }
+
+    stems
+}
+
+/// Returns the cached set of first-party workspace member stems for the current repository.
+pub fn get_workspace_member_stems() -> &'static std::collections::HashSet<String> {
+    CACHED_WORKSPACE_MEMBER_STEMS.get_or_init(|| {
+        discover_workspace_stems(&resolve_workspace_root())
+    })
+}
+
 /// Checks whether a crate stem belongs to a first-party OshoosiClaw workspace crate
 /// (which only ever has a single version in Cargo.lock, unlike multi-version 3rd-party crates).
 fn is_first_party_workspace_stem(stem: &str) -> bool {
-    let s = stem.trim_start_matches("lib");
-    s.starts_with("osoosi")
-        || s.starts_with("edr_")
-        || s.starts_with("zero_")
-        || s.starts_with("otx_taxii")
-        || s.starts_with("compression_prompt")
-        || s.starts_with("agent_thermostat")
-        || s.starts_with("bulk_trainer")
-        || s.starts_with("test_peer")
-        || s == "libfoo" // for unit test
+    let raw = stem.trim();
+    let unlib = raw.strip_prefix("lib").unwrap_or(raw);
+    let stems = get_workspace_member_stems();
+    stems.contains(raw) || stems.contains(unlib)
 }
 
 /// Parses a Cargo hashed filename `<stem>-<16_hex_chars>.<ext>` into `(stem, ext)`.
+#[allow(dead_code)]
 fn parse_cargo_hashed_filename(filename: &str) -> Option<(String, String)> {
+    parse_cargo_hashed_filename_with_stems(filename, None)
+}
+
+/// Parses a Cargo hashed filename using an optional scoped stem set.
+fn parse_cargo_hashed_filename_with_stems(
+    filename: &str,
+    custom_stems: Option<&std::collections::HashSet<String>>,
+) -> Option<(String, String)> {
     let dot_pos = filename.find('.')?;
     let base = &filename[..dot_pos];
     let ext = &filename[dot_pos..];
@@ -445,8 +547,16 @@ fn parse_cargo_hashed_filename(filename: &str) -> Option<(String, String)> {
     let hash_part = &base[dash_pos + 1..];
     if hash_part.len() == 16 && hash_part.chars().all(|c| c.is_ascii_hexdigit()) {
         let stem = &base[..dash_pos];
-        if !stem.is_empty() && is_first_party_workspace_stem(stem) {
-            return Some((stem.to_string(), ext.to_string()));
+        if !stem.is_empty() {
+            let is_first_party = if let Some(stems) = custom_stems {
+                let unlib = stem.strip_prefix("lib").unwrap_or(stem);
+                stems.contains(stem) || stems.contains(unlib)
+            } else {
+                is_first_party_workspace_stem(stem)
+            };
+            if is_first_party {
+                return Some((stem.to_string(), ext.to_string()));
+            }
         }
     }
     None
@@ -480,6 +590,8 @@ pub fn clean_tier2_superseded_release_deps(
     let mut files_removed = 0u64;
     let mut details = Vec::new();
 
+    let root_stems = discover_workspace_stems(root);
+
     if deps_dir.exists() {
         let mut groups: HashMap<(String, String), Vec<(SystemTime, PathBuf)>> = HashMap::new();
         if let Ok(entries) = std::fs::read_dir(&deps_dir) {
@@ -489,7 +601,7 @@ pub fn clean_tier2_superseded_release_deps(
                     continue;
                 }
                 let fname = entry.file_name().to_string_lossy().to_string();
-                if let Some(key) = parse_cargo_hashed_filename(&fname) {
+                if let Some(key) = parse_cargo_hashed_filename_with_stems(&fname, Some(&root_stems)) {
                     let mtime = entry
                         .metadata()
                         .and_then(|m| m.modified())
@@ -1165,6 +1277,13 @@ mod tests {
             std::env::temp_dir().join(format!("osoosi_disk_cleanup_test_{}", std::process::id()));
         let deps_dir = temp_root.join("target").join("release").join("deps");
         let _ = std::fs::create_dir_all(&deps_dir);
+
+        // Configure test workspace fixture containing member "foo"
+        let _ = std::fs::create_dir_all(temp_root.join("crates").join("foo"));
+        let _ = std::fs::write(
+            temp_root.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/foo\"]\n",
+        );
 
         let f1 = deps_dir.join("libfoo-0000000000000001.rlib");
         let f2 = deps_dir.join("libfoo-0000000000000002.rlib");

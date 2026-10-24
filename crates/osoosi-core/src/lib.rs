@@ -154,14 +154,25 @@ fn is_trusted_operational_image(
         return true;
     }
 
+    // Check pre-approved BLAKE3 hash inventory
+    if let Ok(meta) = path.metadata() {
+        if meta.len() > 0 && meta.len() <= 16 * 1024 * 1024 {
+            if let Ok(bytes) = std::fs::read(path) {
+                let b3 = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+                if crate::rea::is_protected_local_binary_hash(&b3) {
+                    return true;
+                }
+            }
+        }
+    }
+
     let path_lc = image_path.to_lowercase();
 
     // 1. Check dynamic whitelists from config
     let is_trusted_path = config
         .trusted_paths
         .iter()
-        .any(|p| path_lc.contains(&p.to_lowercase()))
-        || osoosi_model::malware::is_ide_or_build_path(&path_lc);
+        .any(|p| path_lc.contains(&p.to_lowercase()));
     let is_trusted_stem = config.trusted_stems.iter().any(|s| {
         let s_lc = s.to_lowercase();
         path_lc.ends_with(&s_lc)
@@ -196,16 +207,9 @@ fn is_trusted_operational_image(
         if sig_status == "valid" || sig_status.contains("trusted") {
             return true;
         }
-
-        // 4. Last resort: If it's in a critical System32 path or IDE path, we trust it to avoid OS breakage
-        if path_lc.contains("\\windows\\system32")
-            || path_lc.contains("\\windows\\syswow64")
-            || osoosi_model::malware::is_ide_or_build_path(&path_lc)
-        {
-            return true;
-        }
     }
 
+    // Last resort path-substring fallback DECOMMISSIONED (R1 requirement)
     false
 }
 
@@ -1126,15 +1130,15 @@ pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool
         || base_name.starts_with("cargo-")
         || base_name.starts_with("rust-");
 
-    if is_dev_name {
-        return true;
+    if !is_dev_name {
+        return false;
     }
 
     if let Some(p) = exe_path {
-        let p_str = p.to_string_lossy();
-        if osoosi_model::malware::is_ide_or_build_path(&p_str) {
-            return true;
+        if crate::rea::is_untrusted_writable_or_temp_path(&p.to_string_lossy()) {
+            return false;
         }
+        return crate::rea::verify_dynamic_binary_trust(p);
     }
 
     false
@@ -1223,33 +1227,17 @@ pub fn is_cloud_storage_service(name: &str, exe_path: Option<&std::path::Path>) 
             | "winfsp-x86"
             | "winfsp"
     );
-    if is_name_match {
-        return true;
+    if !is_name_match {
+        return false;
     }
+
     if let Some(p) = exe_path {
-        let p_raw = p.to_string_lossy().to_ascii_lowercase();
-        let p_str = p_raw.replace('/', "\\");
-        if p_str.contains("\\google\\drivefs\\")
-            || p_str.contains("\\google\\drive\\")
-            || p_str.contains("\\microsoft\\onedrive\\")
-            || p_str.contains("\\onedrive\\")
-            || p_str.contains("\\dropbox\\")
-            || p_str.contains("\\nextcloud\\")
-            || p_str.contains("\\owncloud\\")
-            || p_str.contains("\\box\\")
-            || p_str.contains("\\icloud\\")
-            || p_str.contains("\\seafile\\")
-            || p_str.contains("\\insync\\")
-            || p_str.contains("\\megasync\\")
-            || p_str.contains("\\synology\\")
-            || p_str.contains("\\pcloud\\")
-            || p_str.contains("\\tresorit\\")
-            || p_str.contains("\\winfsp\\")
-            || p_str.contains("\\dokan\\")
-        {
-            return true;
+        if crate::rea::is_untrusted_writable_or_temp_path(&p.to_string_lossy()) {
+            return false;
         }
+        return crate::win_trust::is_trusted_signed_binary(p);
     }
+
     false
 }
 
@@ -5848,14 +5836,13 @@ impl EdrOrchestrator {
                             if let Some(path) = exe_path {
                                 let path_str = path.to_string_lossy();
                                 if should_skip_file_malware_scan(&path)
-                                    || is_developer_tool(&process_name_lc, Some(&path))
                                     || orch
                                         .memory
                                         .is_internal_asset_path(&path_str)
                                         .unwrap_or(false)
                                 {
                                     debug!(
-                                        "CyberShield: skipping trusted/internal image {}",
+                                        "CyberShield: skipping internal asset image {}",
                                         path.display()
                                     );
                                     return;

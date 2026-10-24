@@ -50,13 +50,14 @@ OshoosiClaw is upgraded from heuristic, path-based trust to a hardened cryptogra
 | 16 | Multi-Trial Live CI Verification Runner | Implement `scripts/run_live_multi_trial_suite.py` running $T \ge 3$ trials per vector, reporting `NonReproducibleTransient` on inconsistency, and failing closed. | M5 | R5 |
 | 17 | CI Live Verification Workflow on Port 3030 | Add `live-verification` job in `.github/workflows/ci.yml` compiling daemon, starting on port 3030, and running 6-vector breakout suite + 15-vector gauntlet. | M5 | R5 |
 | 18 | Final Verification, Full Packaging & Solo PR | Rebuild Windows MSI, Linux deb/rpm/tar.gz, Docker image; submit to Microsoft WDSI; update README & mermaid diagrams; solo PR ship. | M6 | Governance, R1-R7 |
+| 19 | Interactive Console Window & QuickEdit DoS Immunity | Windows `CREATE_NO_WINDOW (0x08000000)` on all spawned processes; disable QuickEdit (`ENABLE_QUICK_EDIT_MODE`) and Insert mode on Windows startup via `SetConsoleMode` to prevent console freeze DoS; `FreeConsole()` detach support; unit test hardening mask. | M2 | User Directive (2026-10-24) |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M0 | Ship Verified Starting State & PR #1 | Commit 6 verified starting files; ship PR via `scripts/solo_pr_ship.ps1`. | none | IN_PROGRESS |
-| M1 | Cryptographic Binary Trust (R1) & Host-Independent Masquerade & Remove Test Stems (R6) | Eliminate 14 path-based trust sites; implement unified cryptographic trust pipeline; deterministic protected names; dynamic Cargo stem discovery; tests. | M0 | PLANNED |
-| M2 | Argument-Safe Execution (R2) & Async Request Hygiene (R7) | Discrete argv execution (eliminate `cmd /C`, `sh -c`); non-blocking `/api/system/cleanup` (< 500ms); audit Axum handlers; CI shell check. | M1 | PLANNED |
+| M0 | Ship Verified Starting State & PR #1 | Commit 6 verified starting files; ship PR via `scripts/solo_pr_ship.ps1`. | none | DONE (PR #187, commit 46020066) |
+| M1 | Cryptographic Binary Trust (R1) & Host-Independent Masquerade & Remove Test Stems (R6) | Eliminate 14 path-based trust sites; implement unified cryptographic trust pipeline; deterministic protected names; dynamic Cargo stem discovery; tests. | M0 | IN_PROGRESS |
+| M2 | Argument-Safe Execution (R2), Async Hygiene (R7) & Console DoS Immunity | Discrete argv execution (eliminate `cmd /C`, `sh -c`); `CREATE_NO_WINDOW (0x08000000)`; disable QuickEdit mode via `SetConsoleMode` + `FreeConsole`; non-blocking `/api/system/cleanup` (< 500ms); audit Axum handlers; CI shell check. | M1 | PLANNED |
 | M3 | Fast Hermetic Test Suite (R3) & CRT Mixing LNK4098 Fix (R6) | Opt-in `fhe` cargo feature (< 120s suite); patch `esaxx-rs` to remove `.static_crt(true)`; remove `#![allow(linker_messages)]`; hermetic fixtures. | M1 | PLANNED |
 | M4 | Modular Decomposition of rea.rs and lib.rs (R4) | Split `rea.rs` into `rea/` (8 submodules, all <= 1,500 lines); split `lib.rs` into `orchestrator/` (8 submodules, all <= 2,300 lines) + slim `lib.rs`; re-exports. | M1, M2, M3 | PLANNED |
 | M5 | Live Multi-Trial CI Verification on Port 3030 (R5) | Multi-trial test runner ($T \ge 3$ trials, `NonReproducibleTransient` fail-closed); GitHub Actions `live-verification` job. | M2, M3, M4 | PLANNED |

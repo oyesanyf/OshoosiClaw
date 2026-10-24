@@ -279,8 +279,8 @@ fn is_trusted_operational_tool(
             return true;
         }
 
-        // 4. Last resort: If it's in a critical System32 path, we trust it to avoid OS breakage
-        if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") {
+        // 4. Require valid cryptographic signature on disk
+        if osoosi_types::is_trusted_signed_binary(std::path::Path::new(image_path)) {
             return true;
         }
     }
@@ -288,30 +288,11 @@ fn is_trusted_operational_tool(
     false
 }
 
-fn is_ide_or_developer_path(path: &str) -> bool {
-    let p = path.replace('/', "\\").to_ascii_lowercase();
-    p.contains("\\.vscode\\")
-        || p.contains("\\vscode-win32-x64\\")
-        || p.contains("\\modelfusion\\ide\\")
-        || p.contains("\\resources\\app\\")
-        || p.contains("\\extensions\\")
-        || p.contains("\\target\\debug\\")
-        || p.contains("\\target\\release\\")
-        || p.contains("\\node_modules\\")
-        || p.contains("\\.cargo\\")
-        || p.contains("\\.rustup\\")
-        || p.contains("\\.idea\\")
-        || p.contains("\\plugins\\")
-        || p.contains("\\git\\mingw64\\")
-        || p.contains("\\git-core\\")
-}
-
 fn is_event_dev_or_signed(event: &HostSecurityEvent) -> bool {
     for key in ["Image", "TargetImage", "TargetFilename"] {
         if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
-            if is_ide_or_developer_path(p)
-                || osoosi_types::is_trusted_signed_binary(std::path::Path::new(p))
-            {
+            let path = std::path::Path::new(p);
+            if path.is_file() && osoosi_types::is_trusted_signed_binary(path) {
                 return true;
             }
         }
