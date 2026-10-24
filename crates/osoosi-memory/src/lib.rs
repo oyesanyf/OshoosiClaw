@@ -2759,6 +2759,51 @@ pub fn compute_real_or_deterministic_hash(
     fallback
 }
 
+/// Returns true if the path points to an untrusted writable or temporary directory.
+pub fn is_untrusted_writable_path_in_memory(path: &str) -> bool {
+    let lower_win = path.to_ascii_lowercase().replace('/', "\\");
+    let lower_unix = path.to_ascii_lowercase().replace('\\', "/");
+
+    if lower_win.contains("\\temp\\")
+        || lower_win.ends_with("\\temp")
+        || lower_unix.contains("/tmp/")
+        || lower_unix.ends_with("/tmp")
+        || lower_unix.contains("/var/tmp/")
+        || lower_unix.ends_with("/var/tmp")
+        || lower_unix.contains("/dev/shm/")
+        || lower_unix.ends_with("/dev/shm")
+        || lower_win.contains("\\appdata\\local\\temp")
+        || lower_win.contains("\\appdata\\locallow\\")
+        || lower_win.contains("\\users\\public\\")
+        || lower_unix.contains("/users/public/")
+        || lower_win.contains("\\downloads\\")
+        || lower_win.contains("\\desktop\\")
+        || lower_win.contains("\\target\\debug\\")
+        || lower_win.contains("\\target\\release\\")
+        || lower_win.contains("\\target\\")
+        || lower_win.contains("\\node_modules\\")
+        || lower_win.contains("\\.venv\\")
+        || lower_win.contains("\\virtualenvs\\")
+    {
+        return true;
+    }
+
+    if let Ok(temp_env) = std::env::var("TEMP") {
+        let temp_norm = temp_env.to_ascii_lowercase().replace('/', "\\");
+        if !temp_norm.is_empty() && lower_win.starts_with(&temp_norm) {
+            return true;
+        }
+    }
+    if let Ok(tmp_env) = std::env::var("TMP") {
+        let tmp_norm = tmp_env.to_ascii_lowercase().replace('/', "\\");
+        if !tmp_norm.is_empty() && lower_win.starts_with(&tmp_norm) {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// Determines whether a consensus finding was vetoed or belongs to a verified benign system/dev binary without active exploit markers.
 pub fn is_consensus_finding_vetoed_or_benign(
     process_name: Option<&str>,
@@ -2770,6 +2815,21 @@ pub fn is_consensus_finding_vetoed_or_benign(
         .map(normalize_nt_device_path_in_memory)
         .unwrap_or_default()
         .to_ascii_lowercase();
+
+    // 1. Fail-closed on untrusted writable paths
+    if let Some(fp) = file_path {
+        if is_untrusted_writable_path_in_memory(fp)
+            || is_untrusted_writable_path_in_memory(&norm_path_lower)
+        {
+            return false;
+        }
+    }
+    if let Some(pn) = process_name {
+        if is_untrusted_writable_path_in_memory(pn) {
+            return false;
+        }
+    }
+
     let is_in_trusted_system_or_app_dir = norm_path_lower.starts_with(r"c:\windows\")
         || norm_path_lower.starts_with(r"c:\program files\")
         || norm_path_lower.starts_with(r"c:\program files (x86)\")
@@ -2799,6 +2859,7 @@ pub fn is_consensus_finding_vetoed_or_benign(
         return false;
     }
 
+    // 2. Return true ONLY on explicit cryptographic voter vetoes or verified benign analysis verdicts
     if summary_lower.contains("veto [")
         || summary_lower.contains("trusted vendor")
         || summary_lower.contains("trusted-vendor")
@@ -2819,155 +2880,8 @@ pub fn is_consensus_finding_vetoed_or_benign(
         return true;
     }
 
-    let raw_target = process_name
-        .or(file_path)
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    let base = raw_target
-        .rsplit('\\')
-        .next()
-        .unwrap_or(&raw_target)
-        .rsplit('/')
-        .next()
-        .unwrap_or(&raw_target);
-
-    matches!(
-        base,
-        "conhost.exe"
-            | "openconsole.exe"
-            | "windowsterminal.exe"
-            | "wt.exe"
-            | "wsl.exe"
-            | "wslhost.exe"
-            | "wslservice.exe"
-            | "chrome.exe"
-            | "chrome_proxy.exe"
-            | "chrome_proxy.e"
-            | "msedge.exe"
-            | "msedgewebview2.exe"
-            | "osoosi.exe"
-            | "osoosi-cli.exe"
-            | "osoosi-auditor.exe"
-            | "git.exe"
-            | "git-remote-https.exe"
-            | "git-credential-manager.exe"
-            | "git-credential-helper.exe"
-            | "git-credential"
-            | "gpg.exe"
-            | "gpg-agent.exe"
-            | "scdaemon.exe"
-            | "gpgsm.exe"
-            | "dirmngr.exe"
-            | "sh.exe"
-            | "bash.exe"
-            | "ssh.exe"
-            | "python.exe"
-            | "python3.exe"
-            | "pythonw.exe"
-            | "node.exe"
-            | "powershell.exe"
-            | "pwsh.exe"
-            | "sc.exe"
-            | "ipconfig.exe"
-            | "arp.exe"
-            | "netsh.exe"
-            | "route.exe"
-            | "ping.exe"
-            | "whoami.exe"
-            | "hostname.exe"
-            | "systeminfo.exe"
-            | "wevtutil.exe"
-            | "icacls.exe"
-            | "findstr.exe"
-            | "where.exe"
-            | "taskkill.exe"
-            | "tasklist.exe"
-            | "taskmgr.exe"
-            | "velociraptor.exe"
-            | "velociraptor.e"
-            | "clibrowser.exe"
-            | "microsoftstartfeedprovider.exe"
-            | "wix.exe"
-            | "wixnative.exe"
-            | "candle.exe"
-            | "light.exe"
-            | "llvm-rc.exe"
-            | "lld-link.exe"
-            | "rust-lld.exe"
-            | "signtool.exe"
-            | "cargo.exe"
-            | "rustc.exe"
-            | "rustup.exe"
-            | "clippy-driver.exe"
-            | "rustfmt.exe"
-            | "rust-analyzer.exe"
-            | "build-script-build.exe"
-            | "link.exe"
-            | "cl.exe"
-            | "msbuild.exe"
-            | "svchost.exe"
-            | "explorer.exe"
-            | "lsass.exe"
-            | "csrss.exe"
-            | "services.exe"
-            | "wininit.exe"
-            | "winlogon.exe"
-            | "dwm.exe"
-            | "sihost.exe"
-            | "taskhostw.exe"
-            | "dllhost.exe"
-            | "ctfmon.exe"
-            | "runtimebroker.exe"
-            | "smartscreen.exe"
-            | "trustedinstaller.exe"
-            | "trustedinstall"
-            | "tiworker.exe"
-            | "wmiprvse.exe"
-            | "msiexec.exe"
-            | "spoolsv.exe"
-            | "audiodg.exe"
-            | "fontdrvhost.exe"
-            | "securityhealthservice.exe"
-            | "mpdefendercoreservice.exe"
-            | "msmpeng.exe"
-            | "slack.exe"
-            | "remoting_host.exe"
-            | "remoting_native_messaging_host.exe"
-            | "remoting_nativ"
-            | "googledrivefs.exe"
-            | "googleupdate.exe"
-            | "docker.exe"
-            | "com.docker.backend.exe"
-            | "ollama.exe"
-            | "llama-server.exe"
-            | "rg.exe"
-            | "code.exe"
-            | "antigravity.exe"
-            | "gemini.exe"
-            | "language_server_windows_x64.exe"
-            | "onedrive.exe"
-            | "onedrive.sync.service.exe"
-            | "mousocoreworker.exe"
-            | "mousocoreworke"
-            | "wuaucltcore.exe"
-            | "wuaucltcore.ex"
-            | "wuauclt.exe"
-            | "am_delta_patch.exe"
-            | "am_delta_patch"
-            | "cmd.exe"
-            | "updater.exe"
-            | "backgroundtaskhost.exe"
-            | "backgroundtask"
-            | "credentialuibroker.exe"
-            | "credentialuibr"
-            | "tabtip.exe"
-            | "rtkngui64.exe"
-            | "mobsync.exe"
-            | "locationnotificationwindows.exe"
-            | "runonce.exe"
-            | "wmiadap.exe"
-    )
+    // Bare process names are never automatically vetoed; trust must be cryptographically attested.
+    false
 }
 
 #[cfg(test)]
