@@ -4851,6 +4851,60 @@ impl EdrOrchestrator {
                                 "Mesh Intelligence: External threat reported from {}: {:?}",
                                 sig.source_node, sig.reason
                             );
+
+                            // Inspect mesh threat frame and verify peer kill-switch veto before marking hashes or persisting
+                            let inbound_mesh_verdict = crate::rea::inspect_mesh_threat_frame(
+                                "inbound",
+                                Some(&sig.source_node),
+                                sig.process_name.as_deref().unwrap_or(proc_clean),
+                                sig.hash_blake3.as_deref(),
+                                None,
+                                sig.reason.as_deref(),
+                            );
+                            if inbound_mesh_verdict.vetoed || !inbound_mesh_verdict.allowed {
+                                let veto_reason = inbound_mesh_verdict
+                                    .veto_reason
+                                    .unwrap_or_else(|| inbound_mesh_verdict.summary.clone());
+                                warn!(
+                                    "GossipSub [BYZANTINE_KILLSWITCH_VETOED]: Rejected peer threat {} from {}: {}",
+                                    sig.id, sig.source_node, veto_reason
+                                );
+                                orch_sig.audit.log(
+                                    "BYZANTINE_KILLSWITCH_VETOED",
+                                    serde_json::json!({
+                                        "source_node": sig.source_node,
+                                        "threat_id": sig.id,
+                                        "process_name": sig.process_name,
+                                        "hash_blake3": sig.hash_blake3,
+                                        "veto_reason": veto_reason,
+                                        "rea_seal_blake3": inbound_mesh_verdict.rea_seal_blake3,
+                                    }),
+                                );
+                                return;
+                            }
+                            if let Some(veto_reason) = crate::rea::veto_peer_kill_switch_candidate(
+                                sig.process_name.as_deref().or(Some(proc_clean)),
+                                sig.hash_blake3.as_deref(),
+                                None,
+                                sig.reason.as_deref(),
+                            ) {
+                                warn!(
+                                    "GossipSub [BYZANTINE_KILLSWITCH_VETOED]: Rejected peer threat {} from {}: {}",
+                                    sig.id, sig.source_node, veto_reason
+                                );
+                                orch_sig.audit.log(
+                                    "BYZANTINE_KILLSWITCH_VETOED",
+                                    serde_json::json!({
+                                        "source_node": sig.source_node,
+                                        "threat_id": sig.id,
+                                        "process_name": sig.process_name,
+                                        "hash_blake3": sig.hash_blake3,
+                                        "veto_reason": veto_reason,
+                                    }),
+                                );
+                                return;
+                            }
+
                             // Persist mesh threat so it shows in the dashboard
                             if let Err(e) = orch_sig.memory.log_threat(&sig) {
                                 if e.to_string().contains("UNIQUE constraint") {
@@ -5240,6 +5294,60 @@ impl EdrOrchestrator {
                         "BitChat: Decentralized threat received via Nostr relay: {:?} ({})",
                         sig.reason, sig.source_node
                     );
+
+                    // Inspect mesh threat frame and verify peer kill-switch veto before marking hashes or persisting
+                    let inbound_mesh_verdict = crate::rea::inspect_mesh_threat_frame(
+                        "inbound",
+                        Some(&sig.source_node),
+                        sig.process_name.as_deref().unwrap_or(&proc_name_owned),
+                        sig.hash_blake3.as_deref(),
+                        None,
+                        sig.reason.as_deref(),
+                    );
+                    if inbound_mesh_verdict.vetoed || !inbound_mesh_verdict.allowed {
+                        let veto_reason = inbound_mesh_verdict
+                            .veto_reason
+                            .unwrap_or_else(|| inbound_mesh_verdict.summary.clone());
+                        warn!(
+                            "Nostr [BYZANTINE_KILLSWITCH_VETOED]: Rejected peer threat {} from {}: {}",
+                            sig.id, sig.source_node, veto_reason
+                        );
+                        orch.audit.log(
+                            "BYZANTINE_KILLSWITCH_VETOED",
+                            serde_json::json!({
+                                "source_node": sig.source_node,
+                                "threat_id": sig.id,
+                                "process_name": sig.process_name,
+                                "hash_blake3": sig.hash_blake3,
+                                "veto_reason": veto_reason,
+                                "rea_seal_blake3": inbound_mesh_verdict.rea_seal_blake3,
+                            }),
+                        );
+                        return;
+                    }
+                    if let Some(veto_reason) = crate::rea::veto_peer_kill_switch_candidate(
+                        sig.process_name.as_deref().or(Some(&proc_name_owned)),
+                        sig.hash_blake3.as_deref(),
+                        None,
+                        sig.reason.as_deref(),
+                    ) {
+                        warn!(
+                            "Nostr [BYZANTINE_KILLSWITCH_VETOED]: Rejected peer threat {} from {}: {}",
+                            sig.id, sig.source_node, veto_reason
+                        );
+                        orch.audit.log(
+                            "BYZANTINE_KILLSWITCH_VETOED",
+                            serde_json::json!({
+                                "source_node": sig.source_node,
+                                "threat_id": sig.id,
+                                "process_name": sig.process_name,
+                                "hash_blake3": sig.hash_blake3,
+                                "veto_reason": veto_reason,
+                            }),
+                        );
+                        return;
+                    }
+
                     let _ = orch.memory.upsert_peer_status(&osoosi_types::PeerAnnounce {
                         source_node: sig.source_node.clone(),
                         timestamp: chrono::Utc::now(),
@@ -7686,6 +7794,44 @@ impl EdrOrchestrator {
                         .on_remote_memory_write(t_pid, source_pid)
                     {
                         warn!("HOLLOWING INTERCEPTION: Confirmed process hollowing! Suspended PID {} received remote memory writes from PID {}", t_pid, source_pid);
+
+                        // Trigger immediate process termination of the hollowed process (t_pid) and source_pid
+                        let _ = self.blocking_manager.block_by_pid(t_pid).await;
+                        if source_pid > 0 && source_pid != t_pid {
+                            let _ = self.blocking_manager.block_by_pid(source_pid).await;
+                        }
+
+                        // Emit a High/Critical ThreatSignature and record in database
+                        let mut sig = osoosi_types::ThreatSignature::new("local".to_string());
+                        sig.confidence = 1.0;
+                        sig.detector_count = 1;
+                        sig.process_name = Some(format!("hollowed_pid_{}", t_pid));
+                        sig.mitre_technique = Some("T1055.012".to_string());
+                        sig.mitre_technique_name = Some("Process Hollowing".to_string());
+                        sig.mitre_tactic = Some("Defense Evasion / Privilege Escalation".to_string());
+                        sig.reason = Some(format!(
+                            "HOLLOWING INTERCEPTION: Confirmed process hollowing! Suspended PID {} received remote memory writes from PID {}",
+                            t_pid, source_pid
+                        ));
+                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        sig.action_state = osoosi_types::ActionState::Executed;
+
+                        // Apply Differential Privacy / Merkle protection and record in DB + audit log
+                        self.privacy.protect_signature(&mut sig);
+                        if let Err(e) = self.memory.log_threat(&sig) {
+                            error!("Failed to persist process hollowing threat signature: {}", e);
+                        }
+                        self.audit.log(
+                            "PROCESS_HOLLOWING_TERMINATED",
+                            serde_json::json!({
+                                "threat_id": sig.id,
+                                "target_pid": t_pid,
+                                "source_pid": source_pid,
+                                "mitre": "T1055.012",
+                                "action": "Terminated"
+                            }),
+                        );
+                        self.broadcast_threat_to_mesh(sig).await;
                     }
                 }
             } else if event.event_id == 5 {
@@ -13850,11 +13996,14 @@ impl EdrOrchestrator {
                 .await
             {
                 Ok(decision) => {
-                    let is_mal = !is_signed
-                        && (inj_flag
-                            || decision.verdict == "malicious"
-                            || decision.containment_action == "isolate"
-                            || decision.containment_action == "quarantine");
+                    // Digital signature is considered as evidence in state_text and logs, but MUST NOT blindly override
+                    // malicious Clef/ML verdicts, high anomaly scores, or prompt injection flags.
+                    let is_mal = inj_flag
+                        || decision.verdict == "malicious"
+                        || decision.containment_action == "isolate"
+                        || decision.containment_action == "quarantine"
+                        || (ml_score >= 0.85 && yara_str != "none")
+                        || (ml_score >= 0.95);
                     let v = if is_mal {
                         "malicious".to_string()
                     } else {
@@ -13877,18 +14026,21 @@ impl EdrOrchestrator {
                         conf,
                         act,
                         format!(
-                            "Decision Model ({}): verdict={}, action={}, severity={}, human_escalation={}",
+                            "Decision Model ({}): verdict={}, action={}, severity={}, human_escalation={}, signed={}",
                             decision.provider_used,
                             decision.verdict,
                             decision.containment_action,
                             decision.threat_severity,
-                            decision.human_escalation_required
+                            decision.human_escalation_required,
+                            is_signed
                         ),
                     )
                 }
                 Err(e) => {
                     warn!("Decision engine failed for consensus evaluation: {}. Falling back to ML/YARA.", e);
-                    let is_mal = is_malware && (ml_score >= 0.80 || yara_str != "none");
+                    let is_mal = (is_malware && (ml_score >= 0.80 || yara_str != "none"))
+                        || inj_flag
+                        || (ml_score >= 0.95);
                     let v = if is_mal {
                         "malicious".to_string()
                     } else {
@@ -13904,12 +14056,14 @@ impl EdrOrchestrator {
                         v,
                         conf,
                         act,
-                        format!("Heuristic scan (ML: {:.2}, YARA: {})", ml_score, yara_str),
+                        format!("Heuristic scan (ML: {:.2}, YARA: {}, signed: {})", ml_score, yara_str, is_signed),
                     )
                 }
             }
         } else {
-            let is_mal = is_malware && (ml_score >= 0.80 || yara_str != "none");
+            let is_mal = (is_malware && (ml_score >= 0.80 || yara_str != "none"))
+                || inj_flag
+                || (ml_score >= 0.95);
             let v = if is_mal {
                 "malicious".to_string()
             } else {
@@ -13925,7 +14079,7 @@ impl EdrOrchestrator {
                 v,
                 conf,
                 act,
-                format!("Malware scanner (ML: {:.2}, YARA: {})", ml_score, yara_str),
+                format!("Malware scanner (ML: {:.2}, YARA: {}, signed: {})", ml_score, yara_str, is_signed),
             )
         };
 

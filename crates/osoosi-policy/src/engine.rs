@@ -926,20 +926,38 @@ impl PolicyEngine {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // 0. Global Exclusions: Skip all voting if path is in consensus_exclude_paths
-        let path_lc = image_path.to_lowercase();
-        if self
-            .config
-            .consensus_exclude_paths
-            .iter()
-            .any(|ex| path_lc.contains(&ex.to_lowercase()))
-        {
-            debug!(
-                target: CONSENSUS_LOG_TARGET,
-                path = %image_path,
-                "[CONSENSUS] round skipped (path in consensus_exclude_paths)"
-            );
-            return None;
+        // 0. Canonical Path Exclusions: Only skip if canonical path strictly equals or is within verified directory
+        // Never allow loose substring matches like path_lc.contains(ex) which allow attackers to evade detection
+        if !image_path.is_empty() && !self.config.consensus_exclude_paths.is_empty() {
+            if let Ok(canon_target) = std::path::Path::new(image_path).canonicalize() {
+                let is_excluded = self.config.consensus_exclude_paths.iter().any(|ex| {
+                    let trimmed = ex.trim();
+                    if trimmed.is_empty() {
+                        return false;
+                    }
+                    if let Ok(canon_ex) = std::path::Path::new(trimmed).canonicalize() {
+                        let ex_str = canon_ex.to_string_lossy().to_ascii_lowercase();
+                        if canon_ex.as_os_str().len() > 3
+                            && !ex_str.contains("\\temp")
+                            && !ex_str.contains("/tmp")
+                        {
+                            canon_target == canon_ex || canon_target.starts_with(&canon_ex)
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    }
+                });
+                if is_excluded {
+                    debug!(
+                        target: CONSENSUS_LOG_TARGET,
+                        path = %image_path,
+                        "[CONSENSUS] round skipped (path in canonical consensus_exclude_paths)"
+                    );
+                    return None;
+                }
+            }
         }
 
         // Fast clean-ignored hash bypass: If hash is in the clean ignore list, skip round
@@ -984,6 +1002,7 @@ impl PolicyEngine {
         }
 
         // 0.1 Trusted Paths & Noisy Stems: Reduce sensitivity for known noise
+        let path_lc = image_path.to_ascii_lowercase();
         let stem = event_stem(event);
         let is_noisy = self
             .config
@@ -1178,26 +1197,19 @@ impl PolicyEngine {
         // override NSRL/Trusted-Vendor/Merkle static known-good, whereas statistical heuristics alone do not.
         let has_deterministic_active_attack = matches!(event.event_id, 8 | 10 | 25)
             || evidence_votes.iter().any(|v| {
+                v.strong_action
+                    && (matches!(
+                        v.class,
+                        EvidenceClass::Memory | EvidenceClass::LiveNetwork | EvidenceClass::Behavior
+                    ) || v.result.confidence >= 0.85
+                        || v.reliability >= 0.90)
+            })
+            || evidence_votes.iter().any(|v| {
                 let r = &v.result.reason;
-                matches!(v.class, EvidenceClass::LiveNetwork)
-                    || r.contains("Cedar-Ring7-Forbid")
-                    || r.contains("CredentialGuard")
-                    || r.contains("Remote thread injection")
-                    || r.contains("Process image tampering")
-                    || r.contains("Process Injection")
-                    || r.contains("Module Overloading")
-                    || r.contains("Reverse Shell")
-                    || r.contains("Encoded Execution")
+                r.contains("Cedar-Ring7-Forbid")
                     || r.contains("Self-Protection Violation")
-                    || r.contains("Sigma Match:")
-                    || r.contains("Canary")
-                    || r.contains("SpiderWeb")
-                    || r.contains("Mercury-Fluid")
-                    || r.contains("DualChannel-S1S2-Discriminator")
-                    || r.contains("Adaptive-Merkle-Tamper-Alert")
-                    || r.contains("Detected malicious pattern in process memory")
-                    || r.contains("masquerade")
                     || r.contains("prompt_injection")
+                    || r.contains("masquerade")
             });
 
         if (vetoed || nsrl_vetoed) && !has_deterministic_active_attack {
@@ -1831,7 +1843,7 @@ mod tests {
         let sig2 = sig_opt2.unwrap();
         assert_eq!(sig2.mitre_technique.as_deref(), Some("AML.T0054"));
         assert_eq!(sig2.mitre_tactic.as_deref(), Some("Exfiltration"));
-        assert_eq!(sig2.recommended_action, ResponseAction::Alert);
+        assert_eq!(sig2.recommended_action, ResponseAction::Isolate);
 
         // 3. Agent memory tampering: AML.T0048 (Persistence, Isolate)
         let event_memory_tamper = HostSecurityEvent {

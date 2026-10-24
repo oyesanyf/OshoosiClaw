@@ -15,7 +15,7 @@ use sha2::Sha256;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 #[cfg(target_os = "windows")]
 use wmi::{COMLibrary, WMIConnection};
 
@@ -733,11 +733,13 @@ pub fn assess_security() -> HardenedSecurityStatus {
     let dpu = detect_dpu();
     let mtd_enabled = true; // MTD is always enabled in software
 
-    // Check config integrity with self-healing re-signing if needed
-    let mut tampered = crate::config_integrity::verify_all_critical_configs();
+    // Check config integrity fail-closed on tamper: emit critical integrity alert, refuse to sign attacker's modified files
+    let tampered = crate::config_integrity::verify_all_critical_configs();
     if !tampered.is_empty() {
-        crate::config_integrity::sign_all_critical_configs();
-        tampered = crate::config_integrity::verify_all_critical_configs();
+        error!(
+            "CRITICAL SECURITY ALERT: Config tampering detected! Tampered files: {:?}. Refusing to auto-re-sign modified configs.",
+            tampered
+        );
     }
     let config_integrity_ok = tampered.is_empty();
 

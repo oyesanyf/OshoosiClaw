@@ -280,10 +280,9 @@ impl SafetyFilter {
             return true;
         }
         let name_lower = target_name.to_lowercase();
-        let filename = std::path::Path::new(&name_lower)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(&name_lower);
+        let trimmed = name_lower.trim();
+        let s = trimmed.strip_prefix(r"\\?\").unwrap_or(trimmed);
+        let filename = s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s);
 
         self.protected_binaries.contains(filename) || self.protected_binaries.contains(&name_lower)
     }

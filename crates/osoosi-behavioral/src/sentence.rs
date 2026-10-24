@@ -78,6 +78,13 @@ pub fn extract_sentence_pid(event: &LogEvent) -> Option<u64> {
     extract_event_pid(event)
 }
 
+/// Helper to safely extract the leaf filename from either Windows or Unix paths across platforms.
+pub(crate) fn path_leaf_name(path: &str) -> &str {
+    let trimmed = path.trim().trim_end_matches(|c| c == '/' || c == '\\');
+    let s = trimmed.strip_prefix(r"\\?\").unwrap_or(trimmed);
+    s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s)
+}
+
 /// Helper to extract sentence image from event fields, falling back to PID/System/Process-{pid} invariants.
 pub fn extract_sentence_image(event: &LogEvent) -> String {
     let image_keys = [
@@ -97,10 +104,7 @@ pub fn extract_sentence_image(event: &LogEvent) -> String {
             if let Some(s) = v.as_str() {
                 let trimmed = s.trim();
                 if !trimmed.is_empty() && trimmed != "unknown" {
-                    let file_name = std::path::Path::new(trimmed)
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or(trimmed);
+                    let file_name = path_leaf_name(trimmed);
                     let (sanitized, _) = osoosi_types::sanitize_untrusted_log_field(file_name, 128);
                     if !sanitized.is_empty() && sanitized != "unknown" {
                         resolved = sanitized;
@@ -157,20 +161,14 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .or(event.data.get("Image"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let raw_proc_name = std::path::Path::new(raw_proc_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(raw_proc_path);
+        let raw_proc_name = path_leaf_name(raw_proc_path);
         let raw_parent_path = event
             .data
             .get("ParentProcessName")
             .or(event.data.get("ParentImage"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let raw_parent_name = std::path::Path::new(raw_parent_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(raw_parent_path);
+        let raw_parent_name = path_leaf_name(raw_parent_path);
         let raw_user = event
             .data
             .get("SubjectUserName")
@@ -250,8 +248,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                     .data
                     .get("ParentImage")
                     .and_then(|v| v.as_str())
-                    .and_then(|s| std::path::Path::new(s).file_name())
-                    .and_then(|n| n.to_str())
+                    .map(path_leaf_name)
                     .unwrap_or("unknown");
                 let raw_cmd = event
                     .data
@@ -344,10 +341,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                     .get("ImageLoaded")
                     .and_then(|v| v.as_str())
                     .unwrap_or("module");
-                let loaded_name = std::path::Path::new(loaded_full)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(loaded_full);
+                let loaded_name = path_leaf_name(loaded_full);
                 let (loaded, _) = osoosi_types::sanitize_untrusted_log_field(loaded_name, 128);
                 let sig = event
                     .data
@@ -366,10 +360,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                     .get("TargetImage")
                     .and_then(|v| v.as_str())
                     .unwrap_or("target");
-                let target_name = std::path::Path::new(target_full)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(target_full);
+                let target_name = path_leaf_name(target_full);
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(target_name, 128);
                 let start_addr = event
                     .data
@@ -400,10 +391,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                     .get("TargetImage")
                     .and_then(|v| v.as_str())
                     .unwrap_or("target");
-                let target_name = std::path::Path::new(target_full)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(target_full);
+                let target_name = path_leaf_name(target_full);
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(target_name, 128);
                 let access = event
                     .data

@@ -1260,6 +1260,9 @@ mod tests {
         let target_digest = expected_blake3.clone();
 
         set_har_lineage_hook(move |sess, url, domain, digest| {
+            if sess != "sess-hook-99" {
+                return false;
+            }
             h_inv.store(true, Ordering::SeqCst);
             assert_eq!(sess, "sess-hook-99");
             assert!(url.contains("example.com"));

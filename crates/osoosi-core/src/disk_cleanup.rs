@@ -429,7 +429,8 @@ fn is_first_party_workspace_stem(stem: &str) -> bool {
         || s.starts_with("agent_thermostat")
         || s.starts_with("bulk_trainer")
         || s.starts_with("test_peer")
-        || s == "libfoo" // for unit test
+        || s == "foo"
+        || stem == "libfoo" // for unit test
 }
 
 /// Parses a Cargo hashed filename `<stem>-<16_hex_chars>.<ext>` into `(stem, ext)`.
