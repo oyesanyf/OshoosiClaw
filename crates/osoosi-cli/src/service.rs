@@ -64,8 +64,10 @@ pub enum ServiceAction {
 
 #[cfg(target_os = "windows")]
 fn run_sc_cmd(args: &[&str]) -> anyhow::Result<std::process::Output> {
+    use std::os::windows::process::CommandExt;
     let output = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
         .args(args)
+        .creation_flags(osoosi_types::CREATE_NO_WINDOW)
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to execute sc.exe: {}", e))?;
     Ok(output)
@@ -81,9 +83,11 @@ pub fn force_terminate_service_pid() -> anyhow::Result<()> {
                     if let Ok(pid) = pid_str.trim().parse::<u32>() {
                         if pid > 4 {
                             info!("Force terminating stuck service PID {}", pid);
+                            use std::os::windows::process::CommandExt;
                             let _ =
                                 Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
                                     .args(["/F", "/T", "/PID", &pid.to_string()])
+                                    .creation_flags(osoosi_types::CREATE_NO_WINDOW)
                                     .stdout(std::process::Stdio::null())
                                     .stderr(std::process::Stdio::null())
                                     .status();
@@ -438,13 +442,11 @@ pub fn install_service() -> anyhow::Result<()> {
     let _ = run_sc_cmd(&["failure", SERVICE_NAME, "reset=", "0", "actions=", ""]);
 
     // Grant Interactive Users (IU) and Authenticated Users (AU) service restart privileges without UAC errors
-    let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
-        .args([
-            "sdset",
-            SERVICE_NAME,
-            "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
-        ])
-        .output();
+    let _ = run_sc_cmd(&[
+        "sdset",
+        SERVICE_NAME,
+        "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+    ]);
 
     println!("Service '{}' installed successfully.", SERVICE_NAME);
     println!("Binary Path: {}", bin_path);
@@ -1078,6 +1080,7 @@ mod win_scm {
         _dw_num_services_args: u32,
         _lp_service_arg_vectors: *mut PWSTR,
     ) {
+        let _ = crate::console_hardening::detach_console();
         let service_name_w = w!("OsoosiEDR");
         let handle = match RegisterServiceCtrlHandlerExW(
             service_name_w,
@@ -1115,16 +1118,12 @@ mod win_scm {
         info!("OsoosiEDR Windows Service is now running under SCM control.");
 
         // Ensure Interactive Users (IU) and Authenticated Users (AU) can query/stop/start service and clear forced restart actions
-        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
-            .args(["failure", "OsoosiEDR", "reset=", "0", "actions=", ""])
-            .output();
-        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
-            .args([
-                "sdset",
-                "OsoosiEDR",
-                "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
-            ])
-            .output();
+        let _ = run_sc_cmd(&["failure", "OsoosiEDR", "reset=", "0", "actions=", ""]);
+        let _ = run_sc_cmd(&[
+            "sdset",
+            "OsoosiEDR",
+            "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+        ]);
 
         // Keep C:\Program Files\OshoosiClaw\osoosi.exe synchronized with the active service binary
         if let Ok(cur_exe) = std::env::current_exe() {

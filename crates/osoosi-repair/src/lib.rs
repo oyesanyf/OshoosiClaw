@@ -821,20 +821,21 @@ impl PatchEngine {
         #[cfg(not(target_os = "windows"))]
         let check_cmd = "ss -tulpn";
 
-        let cmd_prog = if cfg!(target_os = "windows") {
-            "cmd.exe"
-        } else {
-            "sh"
+        #[cfg(target_os = "windows")]
+        let net_ok = {
+            use std::os::windows::process::CommandExt;
+            let mut cmd = Command::new(osoosi_types::resolve_system_binary("netstat.exe"));
+            cmd.arg("-an");
+            cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
+            cmd.output().map(|o| o.status.success()).unwrap_or(false)
         };
-        let net_ok = Command::new(osoosi_types::resolve_system_binary(cmd_prog))
-            .args(if cfg!(target_os = "windows") {
-                vec!["/C", check_cmd]
-            } else {
-                vec!["-c", check_cmd]
-            })
+        #[cfg(not(target_os = "windows"))]
+        let net_ok = Command::new("ss")
+            .arg("-tulpn")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
+
         metrics.push(HealthMetric {
             component: "Network Stack".to_string(),
             score: if net_ok { 0.99 } else { 0.3 },
@@ -987,14 +988,15 @@ impl PatchEngine {
                     let kb_num = kb.trim_start_matches("KB");
                     info!("Attempting wusa rollback for {}...", kb);
 
-                    let wusa_fut = Command::new(osoosi_types::resolve_system_binary("wusa.exe"))
-                        .args([
-                            "/uninstall",
-                            &format!("/kb:{}", kb_num),
-                            "/quiet",
-                            "/norestart",
-                        ])
-                        .status();
+                    let mut wusa_cmd = Command::new(osoosi_types::resolve_system_binary("wusa.exe"));
+                    wusa_cmd.args([
+                        "/uninstall",
+                        &format!("/kb:{}", kb_num),
+                        "/quiet",
+                        "/norestart",
+                    ]);
+                    wusa_cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
+                    let wusa_fut = wusa_cmd.status();
 
                     let wusa_res = timeout(Duration::from_secs(300), wusa_fut).await;
 
@@ -1026,10 +1028,10 @@ impl PatchEngine {
                                 "/Quiet"
                             ];
 
-                            let dism_fut =
-                                Command::new(osoosi_types::resolve_system_binary("dism.exe"))
-                                    .args(dism_args)
-                                    .status();
+                            let mut dism_cmd = Command::new(osoosi_types::resolve_system_binary("dism.exe"));
+                            dism_cmd.args(dism_args);
+                            dism_cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
+                            let dism_fut = dism_cmd.status();
                             let dism_status =
                                 match timeout(Duration::from_secs(600), dism_fut).await {
                                     Ok(res) => res?,
@@ -1043,16 +1045,16 @@ impl PatchEngine {
 
                             if !dism_status.success() {
                                 // Try generic package name if specific one fails
-                                let dism_fallback_fut =
-                                    Command::new(osoosi_types::resolve_system_binary("dism.exe"))
-                                        .args([
-                                            "/Online",
-                                            "/Remove-Package",
-                                            &format!("/PackageName:{}", kb),
-                                            "/NoRestart",
-                                            "/Quiet",
-                                        ])
-                                        .status();
+                                let mut dism_fallback_cmd = Command::new(osoosi_types::resolve_system_binary("dism.exe"));
+                                dism_fallback_cmd.args([
+                                    "/Online",
+                                    "/Remove-Package",
+                                    &format!("/PackageName:{}", kb),
+                                    "/NoRestart",
+                                    "/Quiet",
+                                ]);
+                                dism_fallback_cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
+                                let dism_fallback_fut = dism_fallback_cmd.status();
                                 let _ = timeout(Duration::from_secs(300), dism_fallback_fut).await;
                             }
 

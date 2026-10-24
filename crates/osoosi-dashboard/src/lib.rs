@@ -3859,35 +3859,56 @@ async fn post_system_disk_cleanup(
 
     match &state.backend {
         Some(orch) => {
+            // Fast in-memory working-set eviction (< 20ms)
+            let (imm_freed, in_mem_details) = orch.fast_in_memory_eviction();
+            let working_set_trimmed = osoosi_core::memory_watchdog::trim_process_working_set();
+            let job_id = format!("cleanup-{}", uuid::Uuid::new_v4());
+
+            let progress = osoosi_core::DiskCleanupJobProgress {
+                job_id: job_id.clone(),
+                is_active: true,
+                phase: "scheduled".to_string(),
+                files_pruned: 0,
+                bytes_freed: imm_freed,
+                error: None,
+                started_at: Some(chrono::Utc::now().to_rfc3339()),
+                completed_at: None,
+                progress_pct: 5,
+            };
+            osoosi_core::set_current_cleanup_job(progress);
+
+            // Spawn background task running heavy filesystem traversal and SQLite vacuum
             let orch_clone = orch.clone();
-            let res = tokio::task::spawn_blocking(move || orch_clone.cleanup_memory_and_disk(days))
-                .await
-                .unwrap_or_else(
-                    |_| json!({ "status": "error", "message": "Cleanup worker task failed" }),
-                );
-            Json(res)
+            let job_id_clone = job_id.clone();
+            tokio::task::spawn_blocking(move || {
+                orch_clone.cleanup_disk_background(days, job_id_clone);
+            });
+
+            Json(json!({
+                "job_id": job_id,
+                "status": "scheduled",
+                "immediate_freed_bytes": imm_freed,
+                "effective_retention_days": days,
+                "pressure_tier": "NOMINAL",
+                "in_memory_evicted": in_mem_details,
+                "os_working_set_trimmed": working_set_trimmed,
+                "background_purge_active": true,
+                "message": "Fast in-memory working set evicted; heavy filesystem purge scheduled in background worker."
+            }))
         }
         None => {
             let working_set_trimmed = osoosi_core::memory_watchdog::trim_process_working_set();
+            let job_id = format!("cleanup-{}", uuid::Uuid::new_v4());
             Json(json!({
-                "status": "success",
+                "job_id": job_id,
+                "status": "scheduled",
+                "immediate_freed_bytes": 0,
                 "effective_retention_days": days,
                 "pressure_tier": "NOMINAL",
-                "bytes_freed": 0,
-                "formatted_bytes_freed": "0 B",
                 "in_memory_evicted": {},
-                "disk_cleaned": {
-                    "locked_swap_files": 0,
-                    "quarantine_files": 0,
-                    "temp_files": 0,
-                    "db_pruned": false,
-                    "logs_maintained": false,
-                },
                 "os_working_set_trimmed": working_set_trimmed,
-                "disk_status": {
-                    "pressure_tier": "NOMINAL",
-                    "free_gb": 0.0,
-                }
+                "background_purge_active": false,
+                "message": "Process working set trimmed; no backend orchestrator attached."
             }))
         }
     }
@@ -5032,7 +5053,7 @@ async fn post_blocking_rule(
         if !stripped.is_empty() {
             stripped.to_lowercase()
         } else if std::path::Path::new(trimmed_path).is_file() {
-            match std::fs::read(trimmed_path) {
+            match tokio::fs::read(trimmed_path).await {
                 Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
                 Err(_) => blake3::hash(trimmed_path.as_bytes()).to_hex().to_string(),
             }
@@ -5040,7 +5061,7 @@ async fn post_blocking_rule(
             blake3::hash(trimmed_path.as_bytes()).to_hex().to_string()
         }
     } else if std::path::Path::new(trimmed_path).is_file() {
-        match std::fs::read(trimmed_path) {
+        match tokio::fs::read(trimmed_path).await {
             Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
             Err(_) => blake3::hash(trimmed_path.as_bytes()).to_hex().to_string(),
         }
@@ -5179,7 +5200,7 @@ async fn post_blocking_unlock(
         Some(orch) => match orch.blocking_manager.remove_rule(trimmed_path).await {
             Ok(_) => {
                 let computed_hash = if std::path::Path::new(trimmed_path).is_file() {
-                    match std::fs::read(trimmed_path) {
+                    match tokio::fs::read(trimmed_path).await {
                         Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
                         Err(_) => blake3::hash(trimmed_path.as_bytes()).to_hex().to_string(),
                     }
@@ -5281,7 +5302,7 @@ async fn post_blocking_purge_benign(State(state): State<DashboardState>) -> Json
             Ok(purged) => {
                 for p in &purged {
                     let computed_hash = if std::path::Path::new(p).is_file() {
-                        match std::fs::read(p) {
+                        match tokio::fs::read(p).await {
                             Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
                             Err(_) => blake3::hash(p.as_bytes()).to_hex().to_string(),
                         }
@@ -7246,7 +7267,7 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
         }
     }
 
-    match std::fs::read(&path) {
+    match tokio::fs::read(&path).await {
         Ok(bytes) => {
             let blake3_hash = blake3::hash(&bytes).to_hex().to_string();
             let object_count = count_stix_objects_fast(&bytes);
@@ -7366,7 +7387,7 @@ async fn post_mitre_stix_update(
     }
 
     // Read current bundle and compute manifest
-    let bytes = match std::fs::read(&bundle_path) {
+    let bytes = match tokio::fs::read(&bundle_path).await {
         Ok(b) => b,
         Err(e) => {
             return api_error(
@@ -9233,7 +9254,8 @@ pub async fn handle_audit_nsrl_aslr_merkle() -> impl IntoResponse {
             p
         } else {
             let exe_path = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("Cargo.toml"));
-            let bytes = std::fs::read(&exe_path)
+            let bytes = tokio::fs::read(&exe_path)
+                .await
                 .unwrap_or_else(|_| b"[package]\nname = \"osoosi\"\n".to_vec());
             let tree = osoosi_audit::NsrlDemandPagedMerkleTree::from_bytes(
                 &exe_path.to_string_lossy(),

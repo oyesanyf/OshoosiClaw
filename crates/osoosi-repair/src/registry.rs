@@ -203,9 +203,11 @@ impl RegistryRemediator {
                         // Disable service (Start = 4)
                         let _ = svc_key.set_value("Start", &4u32);
                         // Also try to stop it via sc.exe (standard command)
-                        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
-                            .args(["stop", &name])
-                            .status();
+                        use std::os::windows::process::CommandExt;
+                        let mut sc_cmd = Command::new(osoosi_types::resolve_system_binary("sc.exe"));
+                        sc_cmd.args(["stop", &name]);
+                        sc_cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
+                        let _ = sc_cmd.status();
                         disabled_services.push(name);
                     }
                 }

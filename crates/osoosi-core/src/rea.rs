@@ -1077,6 +1077,7 @@ static CANONICAL_PROTECTED_NAMES_SET: std::sync::OnceLock<dashmap::DashSet<Strin
 /// with the current process executable name.
 pub fn get_canonical_protected_binary_names() -> &'static dashmap::DashSet<String> {
     CANONICAL_PROTECTED_NAMES_SET.get_or_init(|| {
+        let set = dashmap::DashSet::new();
         for name in CANONICAL_PROTECTED_BINARY_NAMES {
             set.insert(name.to_ascii_lowercase());
         }
@@ -5779,19 +5780,18 @@ pub fn veto_peer_kill_switch_candidate(
     // 2. Dynamic Process & Authenticode/Voter-Calibration REA Check:
     if let Some(p) = proc_name {
         let p_trim = p.trim();
-            let is_benign_via_engine = if !rea_engine_constructing_on_this_thread() {
-                global_rea_engine()
-                    .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
-                    .0
-            } else {
-                is_canonical_protected_binary_name(p_trim)
-            };
-            if is_rea_benign_system_or_dev_process(p_trim, reason) || is_benign_via_engine {
-                return Some(format!(
-                    "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
-                    p_trim
-                ));
-            }
+        let is_benign_via_engine = if !rea_engine_constructing_on_this_thread() {
+            global_rea_engine()
+                .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
+                .0
+        } else {
+            is_canonical_protected_binary_name(p_trim)
+        };
+        if is_rea_benign_system_or_dev_process(p_trim, reason) || is_benign_via_engine {
+            return Some(format!(
+                "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
+                p_trim
+            ));
         }
     } else if let Some(r) = reason {
         if is_uncalibrated_single_voter_false_positive(&r.to_ascii_lowercase()) {
