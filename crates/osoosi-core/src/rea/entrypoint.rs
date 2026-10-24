@@ -470,7 +470,6 @@ pub fn detect_target_kind(path: Option<&Path>, bytes: &[u8]) -> ReaTargetKind {
     ReaTargetKind::NativeBinary
 }
 
-
 // ============================================================================
 // Unified REA Entrypoint (`analyze_target_bytes` & `analyze_target_path`)
 // ============================================================================
@@ -944,4 +943,3 @@ pub const SAMPLE_EVM_CONTRACT_HEX: &str = "0x6080604052348015600f57600080fd5b506
 
 /// Built-in sample WebAssembly module bytes (`add(i32, i32) -> i32` + imported `env.log_event`).
 pub const SAMPLE_WASM_MODULE_HEX: &str = "0061736d01000000010b0260017f0060027f7f017f02110103656e76096c6f675f6576656e740000030201010707010361646400010a09010700200020016a0b";
-

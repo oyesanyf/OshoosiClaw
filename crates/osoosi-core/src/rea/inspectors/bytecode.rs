@@ -407,7 +407,6 @@ pub fn inspect_wasm_artifact(
     (metadata, findings, evidence, limitations, wat)
 }
 
-
 // ============================================================================
 // 5. EVM Smart Contract Bytecode Inspector (Dispatch Table + Selectors + Solidity)
 // ============================================================================
@@ -648,7 +647,6 @@ pub fn inspect_evm_bytecode(
 
     (metadata, findings, evidence, limitations, sol)
 }
-
 
 // ============================================================================
 // 7. JavaScript / Electron & ASAR Archive Inspector
@@ -912,4 +910,3 @@ pub fn inspect_javascript_electron(
 
     (metadata, findings, evidence, limitations, reconstructed)
 }
-

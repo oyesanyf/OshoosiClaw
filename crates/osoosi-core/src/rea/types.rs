@@ -641,7 +641,6 @@ pub fn verify_rea_report_seal(report: &ReaInvestigationReport) -> bool {
     diff == 0
 }
 
-
 /// Verdict returned by `AutonomousReaEngine::inspect_and_vet_mesh_frame` when inspecting
 /// outbound or inbound P2P / GossipSub / Nostr mesh threat frames.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -710,4 +709,3 @@ pub struct ReaConsensusVote {
 }
 
 pub type ReaVoteResult = ReaConsensusVote;
-

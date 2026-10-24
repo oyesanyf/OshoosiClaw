@@ -202,4 +202,3 @@ pub fn extract_printable_strings(bytes: &[u8], min_len: usize, max_count: usize)
     }
     results
 }
-

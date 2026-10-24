@@ -162,7 +162,10 @@ Connection: close\r\n\
 0\r\n\
 \r\n";
 
-    stream.write_all(raw_req.as_bytes()).await.expect("Write raw request");
+    stream
+        .write_all(raw_req.as_bytes())
+        .await
+        .expect("Write raw request");
 
     let mut buf = vec![0u8; 1024];
     let n = stream.read(&mut buf).await.unwrap_or(0);
@@ -174,7 +177,6 @@ Connection: close\r\n\
         resp
     );
 }
-
 
 #[tokio::test]
 async fn test_edr_vec_19_rea_analysis_requires_authentication() {
@@ -352,7 +354,8 @@ async fn test_ab_vec_06_dlp_inspect_blocks_secret_exfiltration() {
 
     if resp.status() == StatusCode::OK {
         let body: Value = resp.json().await.unwrap();
-        let allowed = body.get("tier1_verdict")
+        let allowed = body
+            .get("tier1_verdict")
             .and_then(|v| v.get("allowed"))
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
@@ -381,8 +384,14 @@ async fn test_ab_vec_07_cicd_protection_gauntlets_blocked() {
 
     if resp.status() == StatusCode::OK {
         let body: Value = resp.json().await.unwrap();
-        if let Some(gauntlets) = body.get("breakout_gauntlet_results").and_then(|g| g.as_array()) {
-            let blocked_count = gauntlets.iter().filter(|g| g.get("blocked").and_then(|b| b.as_bool()).unwrap_or(false)).count();
+        if let Some(gauntlets) = body
+            .get("breakout_gauntlet_results")
+            .and_then(|g| g.as_array())
+        {
+            let blocked_count = gauntlets
+                .iter()
+                .filter(|g| g.get("blocked").and_then(|b| b.as_bool()).unwrap_or(false))
+                .count();
             assert_eq!(
                 blocked_count, 6,
                 "AB-VEC-07 VIOLATION: All 6 CI/CD breakout gauntlet vectors must be blocked"

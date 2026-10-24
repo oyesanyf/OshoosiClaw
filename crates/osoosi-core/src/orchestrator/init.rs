@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
-use super::*;
 use super::types::*;
+use super::*;
 use crate::causal_graph::*;
 use crate::console_defense::*;
 use crate::disk_cleanup::*;
@@ -26,7 +26,10 @@ impl EdrOrchestrator {
         out
     }
 
-    pub(crate) async fn lookup_domain_age_days(&self, query_name: &str) -> anyhow::Result<Option<i64>> {
+    pub(crate) async fn lookup_domain_age_days(
+        &self,
+        query_name: &str,
+    ) -> anyhow::Result<Option<i64>> {
         if std::env::var("OSOOSI_OFFLINE_MODE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
@@ -1365,5 +1368,4 @@ impl EdrOrchestrator {
 
         Ok(())
     }
-
 }

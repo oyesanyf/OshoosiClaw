@@ -15,7 +15,10 @@ async fn run_live_port_3030_daemon() {
     let bound = match spawn_dashboard_with_backend(port, None, None).await {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("[!] Failed to bind port {}: {}. Trying ephemeral port...", port, e);
+            eprintln!(
+                "[!] Failed to bind port {}: {}. Trying ephemeral port...",
+                port, e
+            );
             spawn_dashboard_with_backend(0, None, None)
                 .await
                 .expect("Failed to bind ephemeral dashboard port")
@@ -31,5 +34,8 @@ async fn run_live_port_3030_daemon() {
         .unwrap_or(600);
 
     tokio::time::sleep(Duration::from_secs(duration_secs)).await;
-    println!("[*] Live dashboard test harness finished after {}s.", duration_secs);
+    println!(
+        "[*] Live dashboard test harness finished after {}s.",
+        duration_secs
+    );
 }

@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 
-use super::*;
 use super::types::*;
+use super::*;
 use crate::causal_graph::*;
 use crate::console_defense::*;
 use crate::disk_cleanup::*;
@@ -966,7 +966,10 @@ impl EdrOrchestrator {
         Ok(())
     }
 
-    pub(crate) fn feedback_file_path(process_name: Option<&str>, file_path: Option<&str>) -> Option<String> {
+    pub(crate) fn feedback_file_path(
+        process_name: Option<&str>,
+        file_path: Option<&str>,
+    ) -> Option<String> {
         [file_path, process_name]
             .into_iter()
             .flatten()
@@ -1885,5 +1888,4 @@ impl EdrOrchestrator {
             anyhow::bail!("Pending action not found")
         }
     }
-
 }

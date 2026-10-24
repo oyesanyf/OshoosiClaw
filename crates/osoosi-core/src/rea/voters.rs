@@ -573,4 +573,3 @@ impl osoosi_policy::engine::ThreatVoter for OpenJevVoter {
         openjev_voter_stats_snapshot()
     }
 }
-

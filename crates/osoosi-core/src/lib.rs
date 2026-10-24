@@ -93,6 +93,12 @@ pub mod yara_gen;
 
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
+pub use causal_graph::{
+    AdversarialRegressionCase, AuthorityLevel, CausalEdgeType, CausalEventRecord,
+    CausalSecurityGraph, CausalVerdict, ConfusedDeputyBrokerRouter, DeclassificationResult,
+    FileClassification, OsEffectType, ProcessInstanceIdentity, ServiceIdentityKeyStore,
+    TransitiveTaintReport, WorkflowSequenceMatch,
+};
 pub use disk_cleanup::{
     evaluate_disk_pressure, get_current_cleanup_job, get_disk_cleanup_policy,
     get_disk_cleanup_status_snapshot, run_autonomous_disk_cleanup_sweep, set_current_cleanup_job,
@@ -100,19 +106,13 @@ pub use disk_cleanup::{
     DiskCleanupJobProgress, DiskCleanupJobResponse, DiskCleanupPolicy, DiskCleanupStatusSnapshot,
     DiskCleanupSweepReport, DiskCleanupTierResult, DiskPressureLevel,
 };
-pub use memory_watchdog::{
-    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel,
-    MemoryWatchdogDebouncer,
-};
 pub use hybrid_runtime::{
     init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
     spawn_smart, tokio_worker_threads,
 };
-pub use causal_graph::{
-    AdversarialRegressionCase, AuthorityLevel, CausalEdgeType, CausalEventRecord,
-    CausalSecurityGraph, CausalVerdict, ConfusedDeputyBrokerRouter, DeclassificationResult,
-    FileClassification, OsEffectType, ProcessInstanceIdentity, ServiceIdentityKeyStore,
-    TransitiveTaintReport, WorkflowSequenceMatch,
+pub use memory_watchdog::{
+    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel,
+    MemoryWatchdogDebouncer,
 };
 pub use orchestrator::*;
 pub use rea::*;

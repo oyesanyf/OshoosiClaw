@@ -18,8 +18,8 @@
 
 use anyhow::{anyhow, Result};
 
-pub mod entrypoint;
 pub mod engine;
+pub mod entrypoint;
 pub mod inspectors;
 pub mod path_security;
 pub mod prompt_injection;
@@ -29,8 +29,8 @@ pub mod voters;
 #[cfg(test)]
 mod tests;
 
-pub use entrypoint::*;
 pub use engine::*;
+pub use entrypoint::*;
 pub use inspectors::*;
 pub use path_security::*;
 pub use prompt_injection::*;

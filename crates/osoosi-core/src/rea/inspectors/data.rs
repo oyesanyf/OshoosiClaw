@@ -245,7 +245,6 @@ pub fn inspect_sqlite_database(
     (metadata, findings, evidence, limitations, reconstructed)
 }
 
-
 // ============================================================================
 // 9. Network Capture Inspector (`.har` HTTP Archive & `.pcap` / `.pcapng`)
 // ============================================================================
@@ -620,7 +619,6 @@ pub fn inspect_network_capture(
     (metadata, findings, evidence, limitations, reconstructed)
 }
 
-
 // ============================================================================
 // 10. Firmware & Android / Flutter APK Inspector
 // ============================================================================
@@ -764,7 +762,6 @@ pub fn inspect_firmware_or_apk(
     (metadata, findings, evidence, limitations, layout)
 }
 
-
 // ============================================================================
 // Auto-Synthesized Multi-Token YARA Rule Generator
 // ============================================================================
@@ -864,7 +861,6 @@ pub fn synthesize_rea_yara_rule(
 
     rule
 }
-
 
 // ============================================================================
 // Provider Discovery & Bounded Subprocess Execution (4 MiB Cap)
@@ -1031,4 +1027,3 @@ pub async fn run_external_rea_cli(
         )),
     }
 }
-
