@@ -47,8 +47,8 @@ pub fn is_console_mode_hardened(mode: u32) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+#[allow(unused_imports, dead_code)]
 mod win32 {
-    use super::*;
 
     #[link(name = "kernel32")]
     extern "system" {

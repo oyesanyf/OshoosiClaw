@@ -150,6 +150,48 @@ jobs:
             logs/adversarial_proof_report.json
             logs/adversarial_proof_report.md
 
+  # ── Live Multi-Trial CI Verification on Port 3030 (R5) ───────────────────────
+  live-verification:
+    name: Live Multi-Trial Port 3030 Verification
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: live-verification-windows
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run Live Multi-Trial CI Suite (6-Vector Breakout + 15-Vector Gauntlet)
+        env:
+          OSOOSI_DASHBOARD_PORT: "3030"
+          OSOOSI_DASHBOARD_BIND_ALL: "1"
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: python -u scripts/run_live_multi_trial_suite.py --port 3030 --trials 3 --suite all
+
+      - name: Upload Live Multi-Trial Verification Artifacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: live-multi-trial-report
+          path: |
+            logs/live_multi_trial_report.json
+            logs/live_multi_trial_report.md
+
   # ── Format check ─────────────────────────────────────────────────────────────
   fmt:
     name: Format Check (rustfmt)

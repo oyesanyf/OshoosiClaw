@@ -31,6 +31,29 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BASE_URL = os.environ.get("OSOOSI_DASHBOARD_URL", "http://127.0.0.1:3030").rstrip("/")
 
 
+def read_rea_source() -> str:
+    """Reads REA engine source from single-file rea.rs or modular rea/ directory."""
+    rea_file = REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea.rs"
+    if rea_file.exists():
+        return rea_file.read_text(encoding="utf-8")
+    rea_dir = REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea"
+    if rea_dir.exists():
+        return "\n".join(f.read_text(encoding="utf-8") for f in sorted(rea_dir.rglob("*.rs")))
+    return ""
+
+
+def read_orchestrator_source() -> str:
+    """Reads orchestrator source from single-file lib.rs or modular orchestrator/ directory."""
+    lib_file = REPO_ROOT / "crates" / "osoosi-core" / "src" / "lib.rs"
+    orch_dir = REPO_ROOT / "crates" / "osoosi-core" / "src" / "orchestrator"
+    chunks = []
+    if lib_file.exists():
+        chunks.append(lib_file.read_text(encoding="utf-8"))
+    if orch_dir.exists():
+        chunks.extend(f.read_text(encoding="utf-8") for f in sorted(orch_dir.rglob("*.rs")))
+    return "\n".join(chunks)
+
+
 def _load_dashboard_token() -> Tuple[str, Optional[str]]:
     token = os.environ.get("OSOOSI_DASHBOARD_API_TOKEN", "").strip()
     cookie_header: Optional[str] = None
@@ -680,7 +703,7 @@ class Test15BreakoutAndEdrCompromiseVectors(unittest.TestCase):
 
     def test_08_edr_vec_01_binary_masquerading_and_static_allowlist_abuse(self) -> None:
         """EDR-VEC-01: Binary Masquerading & Static Allowlist Abuse (MITRE T1036.005)."""
-        rea_src = (REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea.rs").read_text(encoding="utf-8")
+        rea_src = read_rea_source()
         wt_src = (REPO_ROOT / "crates" / "osoosi-core" / "src" / "win_trust.rs").read_text(encoding="utf-8")
         utils_src = (REPO_ROOT / "crates" / "osoosi-types" / "src" / "utils.rs").read_text(encoding="utf-8")
         self.assertIn("detect_binary_masquerade_spoof", rea_src)
@@ -708,7 +731,7 @@ class Test15BreakoutAndEdrCompromiseVectors(unittest.TestCase):
 
     def test_09_edr_vec_02_counter_ai_disassembler_and_telemetry_poisoning(self) -> None:
         """EDR-VEC-02: Counter-AI Disassembler & Telemetry Poisoning (OWASP LLM01 / MITRE T1027)."""
-        rea_src = (REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea.rs").read_text(encoding="utf-8")
+        rea_src = read_rea_source()
         self.assertIn("scan_and_sanitize_counter_ai_strings", rea_src)
         self.assertIn("REA_ANTI_ANALYSIS_PROMPT_INJECTION", rea_src)
         self.assertIn("[REDACTED_COUNTER_AI_PROMPT_INJECTION]", rea_src)
@@ -719,7 +742,7 @@ class Test15BreakoutAndEdrCompromiseVectors(unittest.TestCase):
 
     def test_10_edr_vec_03_p2p_mesh_poisoning_and_false_positive_kill_switch(self) -> None:
         """EDR-VEC-03: P2P Mesh Poisoning & False-Positive Kill-Switch Attacks (MITRE T1562.001)."""
-        rea_src = (REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea.rs").read_text(encoding="utf-8")
+        rea_src = read_rea_source()
         self.assertIn("inspect_and_vet_mesh_frame", rea_src)
         self.assertIn("inspect_mesh_threat_frame", rea_src)
         self.assertIn("veto_peer_kill_switch_candidate", rea_src)
@@ -771,7 +794,7 @@ class Test15BreakoutAndEdrCompromiseVectors(unittest.TestCase):
     def test_13_edr_vec_06_usermode_hook_evasion_direct_syscalls_and_unhooking(self) -> None:
         """EDR-VEC-06: User-Mode Hook Evasion via Direct/Indirect Syscalls & Unhooking (MITRE T1562.001 / T1106)."""
         hollow_path = REPO_ROOT / "crates" / "osoosi-telemetry" / "src" / "hollowing.rs"
-        rea_src = (REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea.rs").read_text(encoding="utf-8")
+        rea_src = read_rea_source()
         self.assertTrue(hollow_path.exists(), "crates/osoosi-telemetry/src/hollowing.rs must exist")
         hollow_src = hollow_path.read_text(encoding="utf-8")
         self.assertTrue(len(hollow_src) > 100)
@@ -791,7 +814,7 @@ class Test15BreakoutAndEdrCompromiseVectors(unittest.TestCase):
 
     def test_14_edr_vec_07_parser_exploitation_inside_edr(self) -> None:
         """EDR-VEC-07: Parser Exploitation inside the EDR — Malformed PE/ELF/WASM/HAR (CWE-125 / CWE-787)."""
-        rea_src = (REPO_ROOT / "crates" / "osoosi-core" / "src" / "rea.rs").read_text(encoding="utf-8")
+        rea_src = read_rea_source()
         self.assertIn("MAX_REA_FILE_BYTES: u64 = REA_MAX_FILE_READ_BYTES", rea_src)
         self.assertIn("analyze_target_bytes", rea_src)
         self.assertIn("catch_unwind", rea_src)
