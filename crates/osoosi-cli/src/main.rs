@@ -12,6 +12,81 @@ use osoosi_types::extract_zip;
 use osoosi_types::SecuredExecutor;
 
 pub mod service;
+
+#[cfg(target_os = "windows")]
+pub mod console_hardening {
+    pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+    pub const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
+    pub const ENABLE_LINE_INPUT: u32 = 0x0002;
+    pub const ENABLE_ECHO_INPUT: u32 = 0x0004;
+    pub const ENABLE_WINDOW_INPUT: u32 = 0x0008;
+    pub const ENABLE_MOUSE_INPUT: u32 = 0x0010;
+    pub const ENABLE_INSERT_MODE: u32 = 0x0020;
+    pub const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
+    pub const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+    pub const ENABLE_AUTO_POSITION: u32 = 0x0100;
+    pub const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x0200;
+
+    /// Computes the hardened console input mode mask:
+    /// Clears ENABLE_QUICK_EDIT_MODE (0x0040), ENABLE_INSERT_MODE (0x0020),
+    /// and ENABLE_MOUSE_INPUT (0x0010), while setting ENABLE_EXTENDED_FLAGS (0x0080).
+    pub fn compute_hardened_console_mode(current_mode: u32) -> u32 {
+        (current_mode & !(ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_MOUSE_INPUT))
+            | ENABLE_EXTENDED_FLAGS
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(nStdHandle: u32) -> isize;
+        fn GetConsoleMode(hConsoleHandle: isize, lpMode: *mut u32) -> i32;
+        fn SetConsoleMode(hConsoleHandle: isize, dwMode: u32) -> i32;
+        fn FreeConsole() -> i32;
+    }
+    const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6;
+    const INVALID_HANDLE_VALUE: isize = -1;
+
+    /// Hardens the current Windows console input mode to prevent interactive QuickEdit / Select freezes.
+    pub fn harden_windows_console() -> bool {
+        unsafe {
+            let handle = GetStdHandle(STD_INPUT_HANDLE);
+            if handle != 0 && handle != INVALID_HANDLE_VALUE {
+                let mut mode: u32 = 0;
+                if GetConsoleMode(handle, &mut mode) != 0 {
+                    let hardened = compute_hardened_console_mode(mode);
+                    return SetConsoleMode(handle, hardened) != 0;
+                }
+            }
+        }
+        false
+    }
+
+    /// Detaches the process from any attached console window.
+    pub fn detach_console() -> bool {
+        unsafe { FreeConsole() != 0 }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub mod console_hardening {
+    pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+    pub const ENABLE_MOUSE_INPUT: u32 = 0x0010;
+    pub const ENABLE_INSERT_MODE: u32 = 0x0020;
+    pub const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
+    pub const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
+
+    pub fn compute_hardened_console_mode(current_mode: u32) -> u32 {
+        (current_mode & !(ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_MOUSE_INPUT))
+            | ENABLE_EXTENDED_FLAGS
+    }
+
+    pub fn harden_windows_console() -> bool {
+        false
+    }
+
+    pub fn detach_console() -> bool {
+        false
+    }
+}
 use hf_hub::api::tokio::ApiBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -117,6 +192,9 @@ struct Cli {
     /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
     #[arg(short, long, global = true)]
     debug: bool,
+    /// Detach from console window (headless daemon mode)
+    #[arg(long, global = true, default_value_t = false)]
+    pub detach: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -145,6 +223,9 @@ enum Commands {
             alias = "nobroswer"
         )]
         no_browser: bool,
+        /// Detach from console window (headless daemon mode)
+        #[arg(long, default_value_t = false)]
+        detach: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
         sandbox: bool,
@@ -795,6 +876,11 @@ pub enum ReaAction {
 fn main() -> anyhow::Result<()> {
     osoosi_types::persist_environment_paths();
 
+    #[cfg(target_os = "windows")]
+    {
+        console_hardening::harden_windows_console();
+    }
+
     // Fast-path zero-overhead (< 1ms) exit for synthetic telemetry canary probes:
     // If any CLI argument matches polymorphic canary flags or --canary-probe, exit immediately
     for arg in std::env::args().skip(1) {
@@ -1023,6 +1109,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             no_dashboard: false,
             lite: true,
             no_browser: cli.no_browser,
+            detach: cli.detach,
             sandbox: false,
             sandbox_name: "osoosi".to_string(),
             sandbox_deploy_gateway: false,
@@ -1035,6 +1122,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             no_dashboard: false,
             lite: cli.lite,
             no_browser: true,
+            detach: true,
             sandbox: false,
             sandbox_name: "osoosi".to_string(),
             sandbox_deploy_gateway: false,
@@ -1048,6 +1136,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             no_dashboard: false,
             lite: cli.lite,
             no_browser: cli.no_browser,
+            detach: cli.detach,
             sandbox: false,
             sandbox_name: "osoosi".to_string(),
             sandbox_deploy_gateway: false,
@@ -1060,6 +1149,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             no_dashboard: false,
             lite: cli.lite,
             no_browser: cli.no_browser,
+            detach: cli.detach,
             sandbox: false,
             sandbox_name: "osoosi".to_string(),
             sandbox_deploy_gateway: false,
@@ -1073,11 +1163,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             no_dashboard,
             lite,
             no_browser,
+            detach,
             sandbox: start_in_sandbox,
             sandbox_name,
             sandbox_deploy_gateway,
             wsl,
         }) => {
+            if detach || cli.detach {
+                console_hardening::detach_console();
+            }
             let lite_mode = lite
                 || cli.lite
                 || std::env::var("OSOOSI_LITE_MODE")
@@ -2747,10 +2841,23 @@ fn start_inside_wsl(
         cmdline
     );
 
+    let bootstrap_script_name = format!(".oshoosi_wsl_start_{}.sh", std::process::id());
+    let bootstrap_path = repo_root.join(&bootstrap_script_name);
+    let unix_script = format!("#!/bin/sh\n{}", script.replace("\r\n", "\n"));
+    let _ = std::fs::write(&bootstrap_path, unix_script);
+
     info!("Starting Oshoosi inside WSL2 at {}", wsl_cwd);
-    let status = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"))
-        .args(["sh", "-lc", &script])
-        .status()?;
+    let mut wsl_cmd = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"));
+    wsl_cmd.args([
+        "--cd",
+        &wsl_cwd,
+        "-e",
+        "/bin/sh",
+        &bootstrap_script_name,
+    ]);
+    let status = wsl_cmd.status();
+    let _ = std::fs::remove_file(&bootstrap_path);
+    let status = status?;
     if status.success() {
         Ok(())
     } else {
@@ -8777,5 +8884,40 @@ mod tests {
             },
             _ => panic!("Expected Commands::Harness"),
         }
+    }
+
+    #[test]
+    fn test_console_mode_hardening_mask_and_create_no_window() {
+        let raw_mode = 0x0040 | 0x0020 | 0x0010 | 0x0001;
+        let hardened = console_hardening::compute_hardened_console_mode(raw_mode);
+
+        assert_eq!(
+            hardened & console_hardening::ENABLE_QUICK_EDIT_MODE,
+            0,
+            "ENABLE_QUICK_EDIT_MODE (0x0040) must be cleared to prevent Select freeze"
+        );
+        assert_eq!(
+            hardened & console_hardening::ENABLE_INSERT_MODE,
+            0,
+            "ENABLE_INSERT_MODE (0x0020) must be cleared"
+        );
+        assert_eq!(
+            hardened & console_hardening::ENABLE_MOUSE_INPUT,
+            0,
+            "ENABLE_MOUSE_INPUT (0x0010) must be cleared"
+        );
+        assert_ne!(
+            hardened & console_hardening::ENABLE_EXTENDED_FLAGS,
+            0,
+            "ENABLE_EXTENDED_FLAGS (0x0080) must be set"
+        );
+        assert_ne!(
+            hardened & 0x0001,
+            0,
+            "Standard processed input flags (0x0001) must be preserved"
+        );
+
+        assert_eq!(console_hardening::CREATE_NO_WINDOW, 0x08000000);
+        assert_eq!(osoosi_types::CREATE_NO_WINDOW, 0x08000000);
     }
 }

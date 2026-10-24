@@ -35,6 +35,9 @@ pub use threat::*;
 pub use trust::*;
 pub use utils::*;
 
+/// Windows process creation flag to suppress interactive console windows (Feature 19).
+pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
 )]
