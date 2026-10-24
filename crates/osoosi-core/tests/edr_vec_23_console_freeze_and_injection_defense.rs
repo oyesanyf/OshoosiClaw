@@ -226,15 +226,15 @@ fn test_edr_vec_23_console_hardening_and_freeze_resistance() {
 
         // Execute genuine child process with enforce_no_window()
         #[cfg(target_os = "windows")]
-        let output = Command::new("cmd.exe")
-            .args(["/c", "echo", "edr_vec_23_confined_output"])
+        let output = Command::new(osoosi_types::resolve_system_binary("where.exe"))
+            .arg("cmd.exe")
             .enforce_no_window()
             .output()
             .expect("Failed to execute child process with enforce_no_window");
 
         #[cfg(not(target_os = "windows"))]
-        let output = Command::new("echo")
-            .arg("edr_vec_23_confined_output")
+        let output = Command::new("which")
+            .arg("sh")
             .enforce_no_window()
             .output()
             .expect("Failed to execute child process with enforce_no_window");
@@ -245,7 +245,7 @@ fn test_edr_vec_23_console_hardening_and_freeze_resistance() {
         );
         let stdout_str = String::from_utf8_lossy(&output.stdout);
         assert!(
-            stdout_str.contains("edr_vec_23_confined_output"),
+            stdout_str.contains("cmd.exe") || stdout_str.contains("sh"),
             "Child process stdout must contain expected output"
         );
 

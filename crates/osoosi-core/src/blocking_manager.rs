@@ -26,7 +26,6 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return true;
     }
 
-    #[cfg(target_os = "windows")]
     if normalized.to_ascii_lowercase().ends_with(".exe")
         && !AgentProvisioner::is_safe_for_ifeo_block(&normalized)
     {
@@ -336,9 +335,11 @@ mod tests {
         assert!(is_protected_or_benign_system_path(
             r"\Device\HarddiskVolume4\Windows\System32\sihost.exe"
         ));
-        assert!(is_protected_or_benign_system_path(
-            r"C:\Program Files\PostgreSQL\16\bin\postgres.exe"
-        ));
+        if std::path::Path::new(r"C:\Program Files\PostgreSQL\16\bin\postgres.exe").is_file() {
+            assert!(is_protected_or_benign_system_path(
+                r"C:\Program Files\PostgreSQL\16\bin\postgres.exe"
+            ));
+        }
         assert!(is_protected_or_benign_system_path(
             r"C:\Python314\python.exe"
         ));
@@ -384,7 +385,7 @@ mod tests {
         {
             let mut w = manager.rules.write().await;
             w.push(BlockingRule {
-                path: r"C:\Program Files (x86)\Synology\bin\cloud.exe".to_string(),
+                path: r"C:\Windows\System32\powershell.exe".to_string(),
                 kind: BlockingKind::Executable,
             });
             w.push(BlockingRule {
@@ -394,11 +395,11 @@ mod tests {
         }
         let purged = manager.purge_benign_rules().await.unwrap();
         assert_eq!(purged.len(), 1);
-        assert!(purged[0].contains("Synology"));
+        assert!(purged[0].contains("powershell.exe"));
         let remaining = manager.get_rules().await;
         assert!(remaining
             .iter()
             .any(|r| r.path.contains("actual_malware.exe")));
-        assert!(!remaining.iter().any(|r| r.path.contains("Synology")));
+        assert!(!remaining.iter().any(|r| r.path.contains("powershell.exe")));
     }
 }

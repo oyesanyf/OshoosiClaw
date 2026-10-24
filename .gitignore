@@ -102,6 +102,8 @@ runs/
 /malware/
 /cache/
 /rules/osoosi_generated/
+rules/osoosi_generated/
+yara/osoosi_generated/
 
 # ---------- Build Check Artifacts ----------
 build_check_*.txt
