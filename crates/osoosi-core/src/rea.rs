@@ -842,6 +842,13 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
         r"\recycler\",
         r"\$recycle.bin\",
         r"\perflogs\",
+        r"\desktop\",
+        r"\target\debug\",
+        r"\target\release\",
+        r"\target\",
+        r"\node_modules\",
+        r"\.venv\",
+        r"\venv\",
     ];
     for marker in &untrusted_markers {
         if norm.contains(marker) || norm.ends_with(marker.trim_end_matches('\\')) {
@@ -855,9 +862,21 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
         "/dev/shm/",
         "/downloads/",
         "/users/public/",
+        "/desktop/",
+        "/target/",
+        "/node_modules/",
+        "/.venv/",
+        "/venv/",
     ];
     for marker in &unix_markers {
         if unix_norm.contains(marker) || unix_norm.starts_with(marker) {
+            return true;
+        }
+    }
+
+    if let Ok(sys_temp) = std::env::var("TEMP").or_else(|_| std::env::var("TMP")) {
+        let st = sys_temp.replace('/', "\\").to_ascii_lowercase();
+        if !st.is_empty() && (norm.starts_with(&st) || norm.contains(&format!("\\{}\\", st.trim_matches('\\')))) {
             return true;
         }
     }
@@ -873,248 +892,212 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
     false
 }
 
-static DYNAMIC_TRUSTED_DIR_PREFIXES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-fn get_dynamic_trusted_dir_prefixes() -> &'static Vec<String> {
-    DYNAMIC_TRUSTED_DIR_PREFIXES.get_or_init(|| {
-        let mut prefixes = Vec::new();
-        let mut add_prefix = |p: PathBuf| {
-            let mut s = p.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
-            if !s.is_empty() && !is_untrusted_writable_or_temp_path(&s) {
-                if !s.ends_with('\\') {
-                    s.push('\\');
-                }
-                if !prefixes.contains(&s) {
-                    prefixes.push(s);
-                }
-            }
-        };
-
-        for env_key in [
-            "SystemRoot",
-            "WINDIR",
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "ProgramW6432",
-            "CARGO_HOME",
-            "RUSTUP_HOME",
-            "CARGO_TARGET_DIR",
-        ] {
-            if let Some(val) = std::env::var_os(env_key) {
-                let base = PathBuf::from(val);
-                if env_key.eq_ignore_ascii_case("SystemRoot")
-                    || env_key.eq_ignore_ascii_case("WINDIR")
-                {
-                    for sub in [
-                        "System32",
-                        "SysWOW64",
-                        "WinSxS",
-                        "servicing",
-                        "SystemApps",
-                        "ImmersiveControlPanel",
-                        "Microsoft.NET",
-                    ] {
-                        add_prefix(base.join(sub));
-                    }
-                } else {
-                    add_prefix(base);
-                }
-            }
-        }
-
-        if let Some(up) = std::env::var_os("USERPROFILE") {
-            let base = PathBuf::from(up);
-            add_prefix(base.join(".cargo").join("bin"));
-            add_prefix(base.join(".rustup").join("toolchains"));
-        }
-        if let Some(lad) = std::env::var_os("LOCALAPPDATA") {
-            let base = PathBuf::from(lad);
-            add_prefix(base.join("Programs"));
-            add_prefix(base.join("Microsoft").join("WindowsApps"));
-        }
-        if let Some(ad) = std::env::var_os("APPDATA") {
-            let base = PathBuf::from(ad);
-            add_prefix(base.join("Zoom").join("bin"));
-        }
-        if let Ok(cur_exe) = std::env::current_exe() {
-            if let Some(parent) = cur_exe.parent() {
-                add_prefix(parent.to_path_buf());
-            }
-        }
-        let ws_target = osoosi_types::resolve_base_dir().join("target");
-        add_prefix(ws_target.join("release"));
-        add_prefix(ws_target.join("debug"));
-
-        if let Some(path_var) = std::env::var_os("PATH") {
-            for dir in std::env::split_paths(&path_var) {
-                if dir.is_dir() {
-                    add_prefix(dir);
-                }
-            }
-        }
-        prefixes
-    })
-}
-
-/// Returns `true` if `path_str` resides inside a canonical trusted OS, toolchain,
-/// or workspace installation directory derived dynamically from OS environment variables.
+/// Returns `true` only if `path_str` points to an existing file that is cryptographically trusted
+/// (Authenticode, Windows Catalog, or BLAKE3 protected hash inventory).
+///
+/// NOTE: Directory-prefix, PATH-derived, and substring trust heuristics have been decommissioned.
 pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
     let raw = path_str.trim().trim_matches('"');
     if raw.is_empty() || is_untrusted_writable_or_temp_path(raw) {
         return false;
     }
-    let norm = raw.replace('/', "\\").to_ascii_lowercase();
-    let unix_norm = raw.replace('\\', "/").to_ascii_lowercase();
-
-    for prefix in get_dynamic_trusted_dir_prefixes() {
-        if norm.starts_with(prefix) {
-            return true;
-        }
-    }
-
-    // Also check direct SystemRoot root-level binaries (e.g. explorer.exe, regedit.exe, notepad.exe, py.exe)
-    if let Some(sys_root) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR")) {
-        let sr = PathBuf::from(sys_root)
-            .to_string_lossy()
-            .replace('/', "\\")
-            .to_ascii_lowercase();
-        if let Some(rest) = norm.strip_prefix(&format!("{}\\", sr.trim_end_matches('\\'))) {
-            if !rest.contains('\\') && rest.ends_with(".exe") {
-                return true;
-            }
-        }
-    }
-
-    // Windows standard root & system directories (cross-platform / Linux fallback)
-    if norm.starts_with(r"c:\windows\system32\")
-        || norm.starts_with(r"c:\windows\syswow64\")
-        || norm.starts_with(r"c:\windows\winsxs\")
-        || norm.starts_with(r"c:\windows\systemapps\")
-        || norm.starts_with(r"c:\windows\microsoft.net\")
-        || norm.starts_with(r"c:\program files\")
-        || norm.starts_with(r"c:\program files (x86)\")
-    {
-        return true;
-    }
-
-    if norm.starts_with(r"c:\windows\") {
-        if let Some(rest) = norm.strip_prefix(r"c:\windows\") {
-            if !rest.contains('\\') && rest.ends_with(".exe") {
-                return true;
-            }
-        }
-    }
-
-    if norm.contains(r"\.cargo\bin\")
-        || norm.contains(r"\.rustup\toolchains\")
-        || norm.contains(r"\target\release\")
-        || norm.contains(r"\target\debug\")
-        || unix_norm.starts_with("/usr/bin/")
-        || unix_norm.starts_with("/usr/sbin/")
-        || unix_norm.starts_with("/bin/")
-        || unix_norm.starts_with("/sbin/")
-        || unix_norm.starts_with("/usr/local/bin/")
-        || unix_norm.starts_with("/usr/lib/")
-        || unix_norm.starts_with("/lib/")
-    {
-        return true;
-    }
-
-    false
+    let p = Path::new(raw);
+    verify_dynamic_binary_trust(p)
 }
 
-static DYNAMIC_MASQUERADE_PROTECTED_NAMES: std::sync::OnceLock<dashmap::DashSet<String>> =
+// ============================================================================
+// Protection Layer 1: Canonical Masquerade Protection & Host-Independent Names
+// ============================================================================
+
+/// Canonical, immutable, versioned reference list of protected Windows, Linux,
+/// and developer toolchain binary names.
+///
+/// Guaranteed to be protected on ANY host, whether running on a full developer
+/// workstation, a headless Linux container, or a minimal CI runner with empty PATH.
+pub static CANONICAL_PROTECTED_BINARY_NAMES: &[&str] = &[
+    // Core Windows System Services & Daemons
+    "svchost.exe",
+    "lsass.exe",
+    "csrss.exe",
+    "smss.exe",
+    "services.exe",
+    "explorer.exe",
+    "winlogon.exe",
+    "taskhostw.exe",
+    "runtimebroker.exe",
+    "sihost.exe",
+    "dwm.exe",
+    "conhost.exe",
+    "spoolsv.exe",
+    "wininit.exe",
+    "msmpeng.exe",
+    "nissrv.exe",
+    "securityhealthservice.exe",
+    "searchindexer.exe",
+    "audiodg.exe",
+    "fontdrvhost.exe",
+
+    // Windows Administrative & Diagnostic Executables (frequently abused LOTL)
+    "rundll32.exe",
+    "regsvr32.exe",
+    "msiexec.exe",
+    "cmd.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "wscript.exe",
+    "cscript.exe",
+    "certutil.exe",
+    "schtasks.exe",
+    "sc.exe",
+    "net.exe",
+    "net1.exe",
+    "nltest.exe",
+    "whoami.exe",
+    "fltmc.exe",
+    "vssadmin.exe",
+    "bcdedit.exe",
+    "wbadmin.exe",
+    "robocopy.exe",
+    "xcopy.exe",
+    "icacls.exe",
+    "takeown.exe",
+    "attrib.exe",
+    "mshta.exe",
+    "bitsadmin.exe",
+    "curl.exe",
+    "tar.exe",
+    "wsl.exe",
+    "wslhost.exe",
+
+    // Core Windows Dynamic Link Libraries
+    "ntdll.dll",
+    "kernel32.dll",
+    "kernelbase.dll",
+    "user32.dll",
+    "gdi32.dll",
+    "advapi32.dll",
+    "shell32.dll",
+    "ole32.dll",
+    "oleaut32.dll",
+    "ws2_32.dll",
+    "crypt32.dll",
+    "wintrust.dll",
+    "sechost.dll",
+    "rpcrt4.dll",
+    "shlwapi.dll",
+    "bcrypt.dll",
+    "ncrypt.dll",
+    "amsi.dll",
+    "clbcatq.dll",
+    "version.dll",
+
+    // Developer Toolchains, Compilers & Linkers
+    "cl.exe",
+    "link.exe",
+    "lib.exe",
+    "ml64.exe",
+    "rc.exe",
+    "nmake.exe",
+    "msbuild.exe",
+    "csc.exe",
+    "vbc.exe",
+    "cvtres.exe",
+    "cargo.exe",
+    "rustc.exe",
+    "rustup.exe",
+    "rustdoc.exe",
+    "rust-lld.exe",
+    "lld-link.exe",
+    "lld.exe",
+    "clang.exe",
+    "clang++.exe",
+    "gcc.exe",
+    "g++.exe",
+    "ld.exe",
+    "cmake.exe",
+    "ninja.exe",
+    "git.exe",
+    "git-remote-https.exe",
+    "ssh.exe",
+    "scp.exe",
+    "sftp.exe",
+    "gpg.exe",
+    "python.exe",
+    "pythonw.exe",
+    "pip.exe",
+    "node.exe",
+    "npm.exe",
+    "npx.exe",
+    "yarn.exe",
+    "deno.exe",
+    "bun.exe",
+    "go.exe",
+    "javac.exe",
+    "java.exe",
+    "dotnet.exe",
+
+    // OshoosiClaw Production & Security Binaries
+    "osoosi.exe",
+    "osoosi-cli.exe",
+    "osoosi-auditor.exe",
+    "osoosi-relay.exe",
+    "osoosi_inject.dll",
+    "otx-taxii-rs.exe",
+    "bulk_trainer.exe",
+    "test-peer.exe",
+
+    // Unix / Linux Core Binaries & Daemons
+    "systemd",
+    "init",
+    "bash",
+    "sh",
+    "zsh",
+    "sudo",
+    "su",
+    "sshd",
+    "login",
+    "passwd",
+    "iptables",
+    "nftables",
+    "systemctl",
+    "journalctl",
+    "crond",
+    "cron",
+    "dockerd",
+    "docker",
+    "containerd",
+    "runc",
+    "auditd",
+];
+
+static CANONICAL_PROTECTED_NAMES_SET: std::sync::OnceLock<dashmap::DashSet<String>> =
     std::sync::OnceLock::new();
 
-fn get_dynamic_masquerade_protected_names() -> &'static dashmap::DashSet<String> {
-    DYNAMIC_MASQUERADE_PROTECTED_NAMES.get_or_init(|| {
-        let set = dashmap::DashSet::new();
-        // Baseline core protected OS and developer toolchain binary names
-        for name in &[
-            "svchost.exe",
-            "csrss.exe",
-            "smss.exe",
-            "lsass.exe",
-            "services.exe",
-            "winlogon.exe",
-            "explorer.exe",
-            "cl.exe",
-            "cmd.exe",
-            "powershell.exe",
-            "pwsh.exe",
-            "python.exe",
-            "git.exe",
-            "cargo.exe",
-            "rustc.exe",
-            "node.exe",
-            "osoosi.exe",
-            "osoosi-cli.exe",
-            "osoosi_inject.dll",
-        ] {
-            set.insert((*name).to_string());
-        }
-
-        let mut scan_dirs = Vec::new();
-        let wsl_win = Path::new("/mnt/c/Windows");
-        if wsl_win.exists() {
-            scan_dirs.push(wsl_win.join("System32"));
-            scan_dirs.push(wsl_win.to_path_buf());
-        }
-        if let Some(sr) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR")) {
-            let base = PathBuf::from(sr);
-            scan_dirs.push(base.join("System32"));
-            scan_dirs.push(base);
-        }
-        if let Some(up) = std::env::var_os("USERPROFILE") {
-            scan_dirs.push(PathBuf::from(up).join(".cargo").join("bin"));
+/// Returns the concurrent set of canonical protected binary names, augmented dynamically
+/// with the current process executable name.
+pub fn get_canonical_protected_binary_names() -> &'static dashmap::DashSet<String> {
+    CANONICAL_PROTECTED_NAMES_SET.get_or_init(|| {
+        for name in CANONICAL_PROTECTED_BINARY_NAMES {
+            set.insert(name.to_ascii_lowercase());
         }
         if let Ok(cur_exe) = std::env::current_exe() {
             if let Some(name) = cur_exe.file_name().and_then(|n| n.to_str()) {
                 set.insert(name.to_ascii_lowercase());
             }
-            if let Some(parent) = cur_exe.parent() {
-                scan_dirs.push(parent.to_path_buf());
-            }
-        }
-        if let Some(path_var) = std::env::var_os("PATH") {
-            for dir in std::env::split_paths(&path_var) {
-                if !is_untrusted_writable_or_temp_path(&dir.to_string_lossy()) {
-                    scan_dirs.push(dir);
-                }
-            }
-        }
-        for dir in scan_dirs {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    if let Some(name) = entry.file_name().to_str() {
-                        let lower = name.to_ascii_lowercase();
-                        if lower.ends_with(".exe") || lower.ends_with(".dll") {
-                            // Skip generic installer filenames so legitimate temp installers are evaluated by signature, not name collision
-                            let stem = lower
-                                .strip_suffix(".exe")
-                                .or_else(|| lower.strip_suffix(".dll"))
-                                .unwrap_or(&lower);
-                            if !matches!(
-                                stem,
-                                "setup"
-                                    | "install"
-                                    | "installer"
-                                    | "update"
-                                    | "updater"
-                                    | "uninstall"
-                            ) {
-                                set.insert(lower.clone());
-                                if lower.len() > 14 {
-                                    set.insert(lower[..14].to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
         set
     })
+}
+
+/// Backwards-compatible alias for existing callers.
+pub fn get_dynamic_masquerade_protected_names() -> &'static dashmap::DashSet<String> {
+    get_canonical_protected_binary_names()
+}
+
+/// Check if a binary or process name is canonically protected against masquerading.
+pub fn is_canonical_protected_binary_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    get_canonical_protected_binary_names().contains(&lower)
 }
 
 /// Detect whether a target binary or process is masquerading as a protected OS or developer binary
@@ -1137,7 +1120,7 @@ pub fn detect_binary_masquerade_spoof(
     let base = norm.rsplit('\\').next().unwrap_or(raw).trim();
     let base_lower = base.to_ascii_lowercase();
 
-    let is_protected_name = get_dynamic_masquerade_protected_names().contains(&base_lower);
+    let is_protected_name = is_canonical_protected_binary_name(base);
     let has_dir_sep = raw.contains('\\') || raw.contains('/');
 
     if is_protected_name && has_dir_sep {
@@ -1148,19 +1131,18 @@ pub fn detect_binary_masquerade_spoof(
             ));
         }
 
-        if !is_canonical_trusted_binary_dir(raw) {
-            let p = Path::new(raw);
-            let signed = if p.is_file() {
-                crate::win_trust::is_trusted_signed_binary(p)
-            } else {
-                false
-            };
-            if !signed {
-                return Some(format!(
-                    "REA_MASQUERADE_SPOOF_DETECTED: Protected binary '{}' resides in non-canonical directory '{}' without a valid Authenticode signature",
-                    base_lower, raw
-                ));
-            }
+        // All protected system and developer binaries must possess valid cryptographic verification
+        let p = Path::new(raw);
+        let is_trusted = if p.is_file() {
+            verify_dynamic_binary_trust(p)
+        } else {
+            false
+        };
+        if !is_trusted {
+            return Some(format!(
+                "REA_MASQUERADE_SPOOF_DETECTED: Protected binary '{}' at '{}' lacks valid cryptographic signature or hash inventory verification",
+                base_lower, raw
+            ));
         }
     }
 
@@ -5357,51 +5339,29 @@ pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
     if path_str.is_empty()
         || is_untrusted_writable_or_temp_path(&path_str)
         || !path.is_file()
-        || detect_binary_masquerade_spoof(&path_str, Some(path), None).is_some()
     {
         cache.insert(path.to_path_buf(), false);
         return false;
     }
 
-    // 1. Authenticode X.509 or Windows Security Catalog verification
+    // 1. Authenticode X.509 or Windows Security Catalog verification via win_trust
     if crate::win_trust::is_trusted_signed_binary(path) {
         cache.insert(path.to_path_buf(), true);
         return true;
     }
 
-    // 2. Structural PE/ELF + VS_VERSIONINFO / .dep-v0 / BLAKE3 verification in canonical directory
-    let in_canonical_dir = is_canonical_trusted_binary_dir(&path_str)
-        || crate::blocking_manager::is_protected_or_benign_system_path(&path_str);
-
+    // 2. Cryptographic BLAKE3 digest verification against the pre-approved local binary hash inventory.
+    // Unverified files on disk are NEVER dynamically registered into the inventory.
     if let Ok(meta) = path.metadata() {
-        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES {
-            // Read up to 64 KiB header or full file if <= 16 MiB for BLAKE3 / .dep-v0 check
-            if meta.len() <= 16 * 1024 * 1024 {
-                if let Ok(bytes) = std::fs::read(path) {
-                    let b3 = blake3::hash(&bytes)
-                        .to_hex()
-                        .to_string()
-                        .to_ascii_lowercase();
-                    if is_protected_local_binary_hash(&b3) {
-                        cache.insert(path.to_path_buf(), true);
-                        return true;
-                    }
-                    let valid_magic = bytes.starts_with(b"MZ") || bytes.starts_with(b"\x7fELF");
-                    if valid_magic && in_canonical_dir {
-                        register_protected_binary_hash(&b3);
-                        cache.insert(path.to_path_buf(), true);
-                        return true;
-                    }
-                }
-            } else if in_canonical_dir {
-                if let Ok(mut f) = std::fs::File::open(path) {
-                    let mut hdr = [0u8; 4];
-                    if f.read(&mut hdr).unwrap_or(0) >= 2
-                        && (hdr.starts_with(b"MZ") || hdr.starts_with(b"\x7fELF"))
-                    {
-                        cache.insert(path.to_path_buf(), true);
-                        return true;
-                    }
+        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES && meta.len() <= 16 * 1024 * 1024 {
+            if let Ok(bytes) = std::fs::read(path) {
+                let b3 = blake3::hash(&bytes)
+                    .to_hex()
+                    .to_string()
+                    .to_ascii_lowercase();
+                if is_protected_local_binary_hash(&b3) {
+                    cache.insert(path.to_path_buf(), true);
+                    return true;
                 }
             }
         }
@@ -5668,7 +5628,7 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
 pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&str>) -> bool {
     let raw = proc_or_path.trim().trim_matches('"');
     if raw.is_empty() {
-        return true;
+        return false;
     }
 
     let reason_lower = reason.unwrap_or("").to_ascii_lowercase();
@@ -5695,41 +5655,9 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         return false;
     }
 
-    if reason_lower == "ispe64"
-        || reason_lower == "ispe32"
-        || reason_lower == "isdll"
-        || reason_lower == "anti_dbg"
-        || reason_lower.starts_with("debuggercheck__")
-        || reason_lower.starts_with("debuggerexception__")
-        || reason_lower.starts_with("debuggerhiding__")
-        || reason_lower.starts_with("seh__")
-    {
-        return true;
-    }
-
     // Root-cause voter calibration gate (zero hardcoded process names)
     if is_uncalibrated_single_voter_false_positive(&reason_lower) {
         return true;
-    }
-
-    let norm = raw.replace('/', "\\");
-    let base = norm.rsplit('\\').next().unwrap_or(raw).trim();
-    let base_lower = base.to_ascii_lowercase();
-
-    if base_lower == "<unknown process>"
-        || base_lower == "unknown"
-        || base_lower == "anti-chaff alert"
-        || base_lower.is_empty()
-    {
-        if reason_lower.contains("t1082")
-            || reason_lower.contains("anti-chaff")
-            || reason_lower.contains("system discovery")
-            || reason_lower.contains("behavioral")
-            || reason_lower.contains("suspicion")
-            || reason_lower.is_empty()
-        {
-            return true;
-        }
     }
 
     let has_taint_or_unsigned = reason_lower.contains("untrusted_taint")
@@ -5741,7 +5669,7 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         return false;
     }
 
-    // Dynamic Binary Path Resolution + Cryptographic/Structural Trust Verification
+    // Dynamic Binary Path Resolution + Cryptographic Trust Verification
     if let Some(resolved_path) = resolve_candidate_binary_path(Some(raw), reason) {
         if verify_dynamic_binary_trust(&resolved_path) {
             return true;
@@ -5750,6 +5678,9 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
 
     // Dynamic Workspace Cargo Build/Test Artifact Verification:
     // Rust test/build binaries follow `<crate_stem>-<8..16 hex>` or `build-script-*` inside workspace `target/`
+    let norm = raw.replace('/', "\\");
+    let base = norm.rsplit('\\').next().unwrap_or(raw).trim();
+    let base_lower = base.to_ascii_lowercase();
     let stem = base_lower.strip_suffix(".exe").unwrap_or(&base_lower);
     let is_cargo_hashed_artifact = if stem.starts_with("build-script-") {
         true
@@ -5761,10 +5692,8 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         false
     };
     if is_cargo_hashed_artifact {
-        let ws_target = osoosi_types::resolve_base_dir().join("target");
-        if ws_target.is_dir()
-            && (!(raw.contains('\\') || raw.contains('/')) || is_canonical_trusted_binary_dir(raw))
-        {
+        let p = Path::new(raw);
+        if p.is_file() && verify_dynamic_binary_trust(p) {
             return true;
         }
     }
@@ -5824,108 +5753,10 @@ pub fn extract_process_from_summary(summary: &str) -> Option<&str> {
 // Layer 3: Protected Local Binary Hash Inventory & Anti-Spoofing Kill-Switch Veto
 // ============================================================================
 
-static PROTECTED_LOCAL_BINARY_HASHES: std::sync::OnceLock<dashmap::DashSet<String>> =
-    std::sync::OnceLock::new();
-
-fn get_protected_local_binary_hashes() -> &'static dashmap::DashSet<String> {
-    PROTECTED_LOCAL_BINARY_HASHES.get_or_init(init_protected_local_binary_hashes)
-}
-
-fn init_protected_local_binary_hashes() -> dashmap::DashSet<String> {
-    let set = dashmap::DashSet::new();
-
-    // 1. Current running executable and sibling companion binaries in its directory
-    if let Ok(exe_path) = std::env::current_exe() {
-        if exe_path.is_file() {
-            if let Ok(metadata) = exe_path.metadata() {
-                if metadata.len() <= MAX_REA_FILE_BYTES {
-                    if let Ok(bytes) = std::fs::read(&exe_path) {
-                        let hash = blake3::hash(&bytes)
-                            .to_hex()
-                            .to_string()
-                            .to_ascii_lowercase();
-                        set.insert(hash);
-                    }
-                }
-            }
-        }
-        if let Some(parent) = exe_path.parent() {
-            if let Ok(entries) = std::fs::read_dir(parent) {
-                for entry in entries.flatten().take(32) {
-                    let p = entry.path();
-                    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if (ext.eq_ignore_ascii_case("exe") || ext.eq_ignore_ascii_case("dll"))
-                        && p.is_file()
-                    {
-                        if let Ok(meta) = p.metadata() {
-                            if meta.len() > 0 && meta.len() <= 64 * 1024 * 1024 {
-                                if let Ok(bytes) = std::fs::read(&p) {
-                                    set.insert(
-                                        blake3::hash(&bytes)
-                                            .to_hex()
-                                            .to_string()
-                                            .to_ascii_lowercase(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Dynamically hash active running OS processes from canonical directories
-    {
-        use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
-        let sys = System::new_with_specifics(
-            RefreshKind::new()
-                .with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
-        );
-        for proc in sys.processes().values().take(64) {
-            if let Some(exe) = proc.exe() {
-                let exe_str = exe.to_string_lossy();
-                if is_canonical_trusted_binary_dir(&exe_str) && exe.is_file() {
-                    if let Ok(meta) = exe.metadata() {
-                        if meta.len() > 0 && meta.len() <= 32 * 1024 * 1024 {
-                            if let Ok(bytes) = std::fs::read(exe) {
-                                set.insert(
-                                    blake3::hash(&bytes)
-                                        .to_hex()
-                                        .to_string()
-                                        .to_ascii_lowercase(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. Seed deterministic reference hashes for unit tests and telemetry
-    set.insert("__protected_svchost_canonical_blake3__".to_string());
-    set.insert("__protected_python_canonical_blake3__".to_string());
-
-    set
-}
-
-/// Register a known protected OS or developer binary BLAKE3 hash into the global protection inventory.
-pub fn register_protected_binary_hash(hash_hex: &str) {
-    let normalized = hash_hex.trim().to_ascii_lowercase();
-    if !normalized.is_empty() {
-        get_protected_local_binary_hashes().insert(normalized);
-    }
-}
-
-/// Checks whether a given BLAKE3 hash matches a protected local operating system or developer toolchain binary.
-pub fn is_protected_local_binary_hash(hash_hex: &str) -> bool {
-    let normalized = hash_hex.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return false;
-    }
-    get_protected_local_binary_hashes().contains(&normalized)
-}
+pub use crate::win_trust::{
+    get_protected_local_binary_hashes, is_protected_local_binary_hash,
+    register_protected_binary_hash, BinaryTrustVerdict,
+};
 
 /// Vetoes peer kill-switch threats, gossiped signatures, or YARA rules targeting protected binaries.
 pub fn veto_peer_kill_switch_candidate(
@@ -5948,13 +5779,14 @@ pub fn veto_peer_kill_switch_candidate(
     // 2. Dynamic Process & Authenticode/Voter-Calibration REA Check:
     if let Some(p) = proc_name {
         let p_trim = p.trim();
-        if !p_trim.is_empty() {
-            if is_rea_benign_system_or_dev_process(p_trim, reason)
-                || (!rea_engine_constructing_on_this_thread()
-                    && global_rea_engine()
-                        .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
-                        .0)
-            {
+            let is_benign_via_engine = if !rea_engine_constructing_on_this_thread() {
+                global_rea_engine()
+                    .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
+                    .0
+            } else {
+                is_canonical_protected_binary_name(p_trim)
+            };
+            if is_rea_benign_system_or_dev_process(p_trim, reason) || is_benign_via_engine {
                 return Some(format!(
                     "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
                     p_trim
@@ -5975,7 +5807,9 @@ pub fn veto_peer_kill_switch_candidate(
         for token in yara_lower
             .split(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '-' && c != '_')
         {
-            if token.ends_with(".exe") && get_dynamic_masquerade_protected_names().contains(token) {
+            if (token.ends_with(".exe") || token.ends_with(".dll"))
+                && is_canonical_protected_binary_name(token)
+            {
                 return Some(format!(
                     "POISONED_YARA_PROTECTED_BINARY_VETO: YARA rule targets protected OS/developer binary {}",
                     token
@@ -8771,17 +8605,80 @@ mod tests {
             );
         }
 
-        // Canonical trusted paths must pass
+        // Canonical trusted paths must pass when they exist on disk
         assert!(is_canonical_trusted_binary_dir(
             r"C:\Windows\System32\svchost.exe"
         ));
-        assert!(is_canonical_trusted_binary_dir(
-            r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.42.34433\bin\Hostx64\x64\cl.exe"
-        ));
+        let vs_cl = r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.42.34433\bin\Hostx64\x64\cl.exe";
+        if Path::new(vs_cl).is_file() {
+            assert!(is_canonical_trusted_binary_dir(vs_cl));
+        }
         assert!(is_rea_benign_system_or_dev_process(
             r"C:\Windows\System32\svchost.exe",
             None
         ));
+    }
+
+    #[test]
+    fn test_masquerade_detection_host_independent_with_empty_or_minimal_path() {
+        let engine = AutonomousReaEngine::new();
+        let fake_pe = b"MZ\x90\x00\x03\x00\x00\x00\x04\x00\x00\x00\xff\xff\x00\x00\xb8\x00\x00\x00";
+
+        // 1. Verify that CANONICAL_PROTECTED_BINARY_NAMES is static, populated, and covers key binaries
+        assert!(CANONICAL_PROTECTED_BINARY_NAMES.len() >= 20);
+        for expected in [
+            "svchost.exe",
+            "lsass.exe",
+            "csrss.exe",
+            "powershell.exe",
+            "cmd.exe",
+            "cl.exe",
+            "cargo.exe",
+            "rustc.exe",
+            "git.exe",
+        ] {
+            assert!(
+                is_canonical_protected_binary_name(expected),
+                "Binary '{}' must be registered as a canonical protected binary name",
+                expected
+            );
+        }
+
+        // 2. Verify that masquerade spoof detection functions even when PATH is empty or missing
+        for spoof in [
+            r"C:\Users\Public\Downloads\cl.exe",
+            r"C:\Temp\cargo.exe",
+            r"/tmp/rustc.exe",
+            r"C:\Users\User\AppData\Local\Temp\powershell.exe",
+        ] {
+            assert!(
+                is_untrusted_writable_or_temp_path(spoof),
+                "Path '{}' must be flagged untrusted writable",
+                spoof
+            );
+            assert!(
+                detect_binary_masquerade_spoof(
+                    spoof,
+                    Some(Path::new(spoof)),
+                    Some(fake_pe)
+                )
+                .is_some(),
+                "Spoofed binary '{}' must be flagged by detect_binary_masquerade_spoof",
+                spoof
+            );
+            assert!(
+                !is_rea_benign_system_or_dev_process(spoof, None),
+                "Spoofed binary '{}' must never be considered benign",
+                spoof
+            );
+            let (is_benign, adj_msg, _) = engine.adjudicate_process_or_binary_alert(
+                Some(spoof),
+                Some(spoof),
+                Some("suspicious toolchain process"),
+            );
+            assert!(!is_benign, "Spoofed binary '{}' must not be adjudicated benign", spoof);
+            assert!(adj_msg.contains("REA_MASQUERADE_SPOOF_DETECTED"));
+        }
     }
 
     #[test]

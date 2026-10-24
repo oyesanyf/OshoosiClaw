@@ -1,26 +1,9 @@
 use async_trait::async_trait;
-use osoosi_model::malware::is_ide_or_build_path;
 use osoosi_model::{MalwareScanResult, MalwareScanner};
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
 use osoosi_types::{HostSecurityEvent, Priority, ResourceCategory};
 use std::path::Path;
 use std::sync::Arc;
-
-fn trusted_operational_path(path: &str) -> bool {
-    let p = path.replace('/', "\\").to_ascii_lowercase();
-    is_ide_or_build_path(&p)
-        || p.contains("\\windows\\system32\\")
-        || p.contains("\\windows\\syswow64\\")
-        || p.contains("\\program files\\")
-        || p.contains("\\program files (x86)\\")
-        || p.contains("\\programdata\\chocolatey\\")
-        || p.contains("\\programdata\\scoop\\")
-        || p.contains("\\tools\\git\\")
-        || p.contains("\\tools\\")
-        || p.contains("\\target\\")
-        || p.contains("\\vscode-win32-x64\\")
-        || p.contains("\\modelfusion\\ide\\")
-}
 
 fn event_text_field<'a>(event: &'a HostSecurityEvent, key: &str) -> Option<&'a str> {
     event
@@ -32,11 +15,8 @@ fn event_text_field<'a>(event: &'a HostSecurityEvent, key: &str) -> Option<&'a s
 }
 
 fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
-    if !trusted_operational_path(path) {
-        return false;
-    }
-
-    if osoosi_types::is_trusted_signed_binary(Path::new(path)) {
+    let p = Path::new(path);
+    if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
         return true;
     }
 
@@ -53,7 +33,6 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
     let trusted_publisher = [
         "microsoft",
         "khronos",
-        "hugos",
         "electron",
         "vulkan",
         "git",
@@ -64,7 +43,6 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
         "openai",
         "cursor",
         "anysphere",
-        "patientpoint",
         "jetbrains",
         "google",
         "docker",
@@ -72,50 +50,17 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
     .iter()
     .any(|needle| publisher.contains(needle));
 
-    if valid_signature && trusted_publisher {
-        return true;
-    }
-
-    event
-        .data
-        .get("ProductVersion")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .is_some_and(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
+    valid_signature && trusted_publisher
 }
 
 pub(crate) fn scanner_skip_path(path: &str) -> bool {
-    let p = path.replace('/', "\\").to_ascii_lowercase();
-    if is_ide_or_build_path(&p)
-        || p.contains("\\vscode-win32-x64\\")
-        || p.contains("\\modelfusion\\ide\\")
-        || p.contains("\\.codex\\")
-        || p.contains("\\.gemini\\")
-        || p.contains("\\antigravity\\brain\\")
-        || p.contains("\\.system_generated\\logs\\")
-        || p.contains("\\hugos ide\\")
-        || p.contains("\\resources\\app\\out\\vs\\")
-        || p.contains("microsoft.powershell.psreadline")
-        || p.contains("\\dashboard\\")
-        || p.contains("\\logs\\")
-        || p.contains("threat_model.json")
-        || p.contains("\\program files\\git\\")
-        || p.contains("\\git\\mingw64\\")
-        || p.contains("\\mingw64\\libexec\\")
-        || p.contains("\\git-core\\")
-        || p.contains("\\.tmp.driveupload\\")
-        || p.contains("\\.tmp.drivedownload\\")
-        || p.contains("\\appdata\\local\\google\\drivefs\\")
-        || p.contains("\\dell\\updateservice\\")
-        || p.contains("\\dell\\commandupdate\\")
-        || p.contains("\\dell\\supportassist\\")
-        || p.contains("\\invcolpc\\")
-        || p.contains("\\program files (x86)\\dell\\")
-        || p.contains("\\program files\\dell\\")
-        || p.contains("\\microsoft\\edge\\")
-        || p.contains("\\google\\chrome\\")
-        || p.contains("\\mozilla firefox\\")
-        || p.contains("\\bravesoftware\\")
+    // Only non-executable telemetry logs and drive metadata files may bypass scanner pipelines
+    if p.contains("\\.system_generated\\logs\\")
+        || p.contains("\\.tmp.driveupload")
+        || p.contains("\\.tmp.drivedownload")
+        || p.ends_with(".log")
+        || p.ends_with(".db-journal")
+        || p.ends_with(".db-wal")
     {
         return true;
     }
@@ -350,7 +295,7 @@ impl ThreatVoter for MalConvVoter {
 
         let conf = (res.combined_score.min(1.0)) as f32;
         let mut weight = 0.88f32;
-        if is_ide_or_build_path(path_note) || scanner_skip_path(path_note) {
+        if scanner_skip_path(path_note) {
             weight *= 0.25;
         } else if trusted_identity_signal(event, path_note)
             || osoosi_types::is_trusted_signed_binary(Path::new(path_note))
@@ -418,7 +363,7 @@ impl ThreatVoter for CapaVoter {
             // If CAPA found specific persistence/c2 capabilities, we yield a vote
             if res.confidence > 0.4 {
                 let mut weight = 0.85f32;
-                if is_ide_or_build_path(image_path) || scanner_skip_path(image_path) {
+                if scanner_skip_path(image_path) {
                     weight *= 0.25;
                 } else if trusted_identity_signal(event, image_path)
                     || osoosi_types::is_trusted_signed_binary(Path::new(image_path))
@@ -484,7 +429,7 @@ impl ThreatVoter for CompositionVoter {
             // If it looks like a composition threat (ID starts with COMP-)
             if res.id.starts_with("COMP-") && res.confidence >= 0.5 {
                 let mut weight = 0.9f32;
-                if is_ide_or_build_path(image_path) || scanner_skip_path(image_path) {
+                if scanner_skip_path(image_path) {
                     weight *= 0.25;
                 } else if trusted_identity_signal(event, image_path)
                     || osoosi_types::is_trusted_signed_binary(Path::new(image_path))
@@ -750,7 +695,7 @@ impl ThreatVoter for BehavioralClassifierVoter {
         let mut downweight = 1.0f32;
         for key in ["Image", "TargetImage", "TargetFilename", "FilePath"] {
             if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
-                if is_ide_or_build_path(p) || scanner_skip_path(p) {
+                if scanner_skip_path(p) {
                     downweight = 0.25;
                     break;
                 }
@@ -840,22 +785,6 @@ mod tests {
         assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\vsda.node"));
         assert!(!scanner_skip_path(
             r"C:\Windows\Temp\win32-app-container-tokens.node"
-        ));
-
-        assert!(trusted_operational_path(
-            r"C:\Program Files\Git\bin\git.exe"
-        ));
-        assert!(trusted_operational_path(
-            r"D:\dev\project\.vscode\extensions\bin\tool.exe"
-        ));
-        assert!(trusted_operational_path(
-            r"D:\dev\project\target\release\my_tool.exe"
-        ));
-        assert!(trusted_operational_path(
-            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
-        ));
-        assert!(trusted_operational_path(
-            r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"
         ));
     }
 

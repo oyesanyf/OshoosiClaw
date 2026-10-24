@@ -12,16 +12,15 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return false;
     }
 
-    // Bare filenames without directory separators (e.g. "git.exe", "systray.exe", "chrome.exe")
-    // must never be added to persistent IFEO or Sysmon blocklists.
-    if !trimmed.contains('\\') && !trimmed.contains('/') {
-        return true;
+    // Never protect binaries in user-writable, temp, or untrusted locations
+    if crate::rea::is_untrusted_writable_or_temp_path(trimmed) {
+        return false;
     }
 
     let normalized = osoosi_types::normalize_nt_device_path(trimmed);
 
+    // Core OS kernel and session managers (PIDs 0, 4, smss, csrss, lsass) must not be permanently blocked via IFEO
     if osoosi_types::is_protected_os_shell_or_desktop_binary(&normalized)
-        || crate::system_check::is_administrative_lolbin(&normalized)
         || osoosi_runtime::tarpit::is_protected_system_or_security_process(999_999, &normalized)
     {
         return true;
@@ -34,76 +33,8 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return true;
     }
 
-    let p_norm = normalized.replace('/', "\\").to_lowercase();
+    // Non-executable extensions should not be IFEO blocked
     let p_fwd = normalized.replace('\\', "/").to_lowercase();
-
-    let win_protected = [
-        r"c:\windows\",
-        r"\windows\",
-        r"\windows\system32\",
-        r"\windows\syswow64\",
-        r"\windows\winsxs\",
-        r"\windows\systemapps\",
-        r"\windows\immersivecontrolpanel\",
-        r"\program files\google\chrome\",
-        r"\program files (x86)\google\chrome\",
-        r"\program files\microsoft\edge\",
-        r"\program files (x86)\microsoft\edge\",
-        r"\program files\mozilla firefox\",
-        r"\program files\bravesoftware\",
-        r"\program files\windowsapps\",
-        r"\program files\git\",
-        r"\program files\nodejs\",
-        r"\program files\docker\",
-        r"\program files\wsl\",
-        r"\program files (x86)\windows kits\",
-        r"\program files\windows kits\",
-        r"\program files (x86)\reference assemblies\",
-        r"\microsoft visual studio\",
-        r"\program files\postgresql\",
-        r"\program files (x86)\synology\",
-        r"c:\python",
-        r"\python",
-        r"\site-packages\",
-        r"\.rustup\",
-        r"\.cargo\",
-        r"c:\strawberry\",
-        r"\wix_tools\",
-        r"\edb_mtk.exe",
-        r"\edb_pgagent",
-        r"\edb_pem_agent",
-    ];
-
-    if win_protected.iter().any(|pattern| p_norm.contains(pattern)) {
-        return true;
-    }
-
-    let unix_protected = [
-        "/bin/",
-        "/sbin/",
-        "/usr/bin/",
-        "/usr/sbin/",
-        "/usr/lib/",
-        "/usr/libexec/",
-        "/lib/",
-        "/lib64/",
-        "/etc/",
-        "/system/library/",
-        "/system/applications/",
-        "/library/apple/",
-        "/applications/",
-        "/.rustup/",
-        "/.cargo/",
-        "/site-packages/",
-    ];
-
-    if unix_protected
-        .iter()
-        .any(|pattern| p_fwd.starts_with(pattern) || p_fwd.contains(pattern))
-    {
-        return true;
-    }
-
     let non_executable_exts = [
         ".dll", ".winmd", ".so", ".dylib", ".pyd", ".xs.dll", ".cpl", ".msc", ".sys", ".drv",
     ];
@@ -111,8 +42,9 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return true;
     }
 
+    // Verified cryptographic signature or Windows Security Catalog check
     let p = std::path::Path::new(&normalized);
-    if p.exists() && crate::win_trust::is_trusted_signed_binary(p) {
+    if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
         return true;
     }
 
