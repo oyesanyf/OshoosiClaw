@@ -456,7 +456,19 @@ if (-not $SkipWix) {
             Test-And-Handle-LockedFile -FilePath $RootMsi
             Test-And-Handle-LockedFile -FilePath $DeployMsi
 
-            & wix build $WixWxs -arch x64 -out $RootMsi
+            # Pack the Browser DLP Sensor CRX for Chromium enterprise force-install. Non-fatal:
+            # when packing is unavailable the MSI still ships the unpacked extension + policy script.
+            $wixDefines = @()
+            try {
+                & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot "scripts\pack_browser_extension.ps1")
+                if (Test-Path (Join-Path $ProjectRoot "dist\browser-extension\oshoosi-browser-sensor.crx")) {
+                    $wixDefines = @("-d", "BrowserSensorPacked=1")
+                }
+            } catch {
+                Write-Warning "Browser DLP Sensor CRX packing skipped: $_"
+            }
+
+            & wix build $WixWxs -arch x64 @wixDefines -out $RootMsi
             if ($LASTEXITCODE -ne 0 -or (-not (Test-Path $RootMsi))) {
                 Write-Error "WiX MSI build failed with exit code $LASTEXITCODE"
                 exit 1

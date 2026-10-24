@@ -86,6 +86,14 @@ pub fn allowed_sensor_origins() -> Vec<String> {
     let file = osoosi_types::resolve_project_root()
         .map(|p| p.join("config").join("browser_sensor_origins.txt"))
         .unwrap_or_else(|| PathBuf::from("config").join("browser_sensor_origins.txt"));
+    // Packed (force-installed) CRX ID shipped next to the daemon by the MSI.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            if let Ok(id) = std::fs::read_to_string(dir.join("browser-extension").join("extension_id.txt")) {
+                push(&id);
+            }
+        }
+    }
     if let Ok(content) = std::fs::read_to_string(file) {
         for line in content.lines() {
             push(line);

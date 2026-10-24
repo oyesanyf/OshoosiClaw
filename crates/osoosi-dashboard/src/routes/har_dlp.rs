@@ -34,6 +34,8 @@ pub const MAX_HAR_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_QUEUED_REQUESTS: usize = 4096;
 /// Requests inspected per worker cycle (bounded work, keeps lock hold times short).
 const MAX_REQUESTS_PER_CYCLE: usize = 256;
+/// Background (file / collector) requests inspected between queue checks.
+const BACKLOG_CHUNK: usize = 16;
 /// Dedupe memory (in-process); the SQLite table keeps the same window across restarts.
 const MAX_SEEN_KEYS: usize = 50_000;
 /// Body-bearing requests kept for on-demand sweeps (`POST /api/dlp/scan-har`).
@@ -444,10 +446,11 @@ fn load_seen_keys_from_db(seen: &mut SeenKeys) {
     else {
         return;
     };
-    let keys: Vec<String> = stmt
-        .query_map([MAX_SEEN_KEYS as i64], |r| r.get::<_, String>(0))
-        .map(|rows| rows.flatten().collect())
-        .unwrap_or_default();
+    let mut keys: Vec<String> = Vec::new();
+    if let Ok(rows) = stmt.query_map([MAX_SEEN_KEYS as i64], |r| r.get::<_, String>(0)) {
+        keys.extend(rows.flatten());
+    }
+    drop(stmt);
     for k in keys.into_iter().rev() {
         seen.insert(&k);
     }
@@ -468,19 +471,18 @@ fn persist_seen_keys(keys: &[String]) {
         [],
     );
     let now = chrono::Utc::now().to_rfc3339();
-    if let Ok(tx) = conn.transaction() {
-        for k in keys {
-            let _ = tx.execute(
-                "INSERT OR IGNORE INTO dlp_har_seen (entry_key, seen_at) VALUES (?1, ?2)",
-                rusqlite::params![k, now],
-            );
-        }
+    let Ok(tx) = conn.transaction() else { return };
+    for k in keys {
         let _ = tx.execute(
-            "DELETE FROM dlp_har_seen WHERE entry_key NOT IN (SELECT entry_key FROM dlp_har_seen ORDER BY seen_at DESC LIMIT ?1)",
-            [MAX_SEEN_KEYS as i64],
+            "INSERT OR IGNORE INTO dlp_har_seen (entry_key, seen_at) VALUES (?1, ?2)",
+            rusqlite::params![k, now],
         );
-        let _ = tx.commit();
     }
+    let _ = tx.execute(
+        "DELETE FROM dlp_har_seen WHERE entry_key NOT IN (SELECT entry_key FROM dlp_har_seen ORDER BY seen_at DESC LIMIT ?1)",
+        [MAX_SEEN_KEYS as i64],
+    );
+    let _ = tx.commit();
 }
 
 /// Inspects one request through the shared DLP decision path, persists it, raises alerts and
@@ -738,8 +740,10 @@ fn worker_loop() {
             // 3. URL-only collector rows (browser history).
             backlog.extend(collector_url_only_requests(&mut last_sweep));
         }
+        // Background backlog is processed in small chunks so queued sensor/import jobs (which
+        // may be awaiting inline verdicts) are picked up between chunks.
         if !backlog.is_empty() {
-            let n = backlog.len().min(MAX_REQUESTS_PER_CYCLE);
+            let n = backlog.len().min(BACKLOG_CHUNK);
             let batch: Vec<HarDlpRequest> = backlog.drain(..n).collect();
             let _ = process_batch(&batch);
         }

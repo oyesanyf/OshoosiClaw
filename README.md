@@ -2443,6 +2443,125 @@ Whenever sensitive data is intercepted:
 - **Zero-Information Projection**: Memory vectors undergo orthogonal projection ($I(S; Y) = 0$), mathematically preventing information leakage.
 - **ZK-BFT Quarantine Proof**: The engine generates a Schnorr-BLAKE3 zero-knowledge proof paired with an `ML-DSA-65` quantum-resistant digital signature, guaranteeing verifiable proof of quarantine across the P2P mesh while ensuring **0 bytes** of protected data are exfiltrated.
 
+### 4. Autonomous Browser & HAR Request-Body DLP
+
+Browser HTTPS POST bodies are encrypted on the wire, so the EDR cannot see them from the network.
+OshoosiClaw closes this gap two ways, both feeding **one autonomous HAR → DLP pipeline**
+(`crates/osoosi-dashboard/src/routes/har_dlp.rs`) that runs on a dedicated worker thread from
+daemon start. You do not need to click "Scan HAR":
+
+- **Browser DLP Sensor extension** (`browser-extension/`, Manifest V3, Chrome / Edge / Firefox 121+).
+  It observes outgoing `POST`/`PUT`/`PATCH` bodies (form data, urlencoded, JSON, text; capped at
+  256 KB per request). It sends them as HAR 1.2 entries **only** to the local daemon on loopback.
+- **HAR sources the collector already reads**:
+  - `.har` files in the working directory, `logs/har_inbox/`, every user's `Downloads` folder, and
+    `OSOOSI_HAR_WATCH_DIRS`.
+  - `POST /api/har/inspect` imports.
+  - URL-only browser-history rows.
+
+  The pipeline inspects `request.postData.text` and `postData.params` whenever a source carries them.
+
+Each new entry is processed like this:
+
+- **Deduplication.** Entries are keyed by `method + url + startedDateTime + blake3(body)`. The key is
+  persisted in SQLite, so old entries are never re-inspected, even after a restart.
+- **Inspection.** Each entry runs through Tier-1, Cedar egress, Crown-Jewels, REA, Presidio/GLiNER,
+  and **RedactX-v3 OpenJEV**:
+  - Luhn-validated PANs (contiguous or grouped `4532 0151 1283 0366`) and SSA-valid SSNs become
+    RedactX-confirmed spans.
+  - Identifiers are masked in every verdict.
+- **Recording.** The event is recorded in the DLP dashboard (`/api/dlp/status`) and persisted to the
+  `dlp_events` table. Flagged events raise alerts in `threats`, `consensus_findings`, and the audit
+  activity feed.
+
+```mermaid
+flowchart LR
+    EXT["Browser DLP Sensor (MV3)<br/>webRequest requestBody"] -->|"HAR 1.2 + origin-bound token<br/>POST /api/browser-sensor/har"| Q["Autonomous HAR→DLP worker<br/>(dedicated thread, bounded cycles,<br/>blake3 dedupe in SQLite)"]
+    FILES["Watched .har files<br/>(cwd, logs/har_inbox, Downloads)"] --> Q
+    IMPORT["POST /api/har/inspect"] --> Q
+    HIST["Browser history (URL-only)"] --> Q
+    Q --> DLP["Two-Tier DLP + Cedar + Crown-Jewels<br/>RedactX-v3 (zero_leakage alerts)<br/>OpenJEV Noul/Choice/Score"]
+    DLP --> EV["DLP dashboard event<br/>channel BROWSER_HTTP_POST / HAR_HTTP_BODY<br/>SQLite dlp_events"]
+    DLP -->|flagged| GATE{"Containment gate<br/>REA malicious AND RedactX(balanced_utility)<br/>AND OpenJEV enforce AND voter quorum"}
+    GATE -->|"unsigned / masquerading / hollowed actor"| CONTAIN["Block destination → suspend process<br/>→ vault binary (reversible)"]
+    GATE -->|"verified-signed browser"| DEST["Per-program destination block (10 min TTL)<br/>+ alert; browser untouched"]
+    GATE -->|"otherwise"| ALERT["Alert only<br/>threats + consensus_findings + audit"]
+```
+
+#### Install the Browser DLP Sensor
+
+You don't need to paste a token. The extension pairs with the daemon automatically through
+`POST /api/browser-sensor/pair`. The daemon accepts only allowlisted `chrome-extension://` /
+`moz-extension://` origins, which web pages cannot forge. It returns a token bound to that origin
+and derived from the dashboard secret. The token can only submit HAR telemetry, and it is compared
+in constant time.
+
+**Developer / home PC (load unpacked):**
+1. Start the daemon (`osoosi start --dashboard`) so `http://127.0.0.1:3030` is up.
+2. Open `chrome://extensions` (Chrome) or `edge://extensions` (Edge) and enable **Developer mode**.
+3. Click **Load unpacked** and select the `browser-extension/` folder (in an MSI install:
+   `C:\Program Files\OshoosiClaw\browser-extension`). The manifest `key` pins the extension ID to
+   `mgkckbmpncmidjdkfeamongahgbheocl`, which the daemon allowlists by default.
+4. Click the toolbar icon to open the status page. It should show **Paired automatically**.
+5. Re-test: submit sample data at <https://dlptest.com/http-post/>. The extension badge counts the
+   detection, and the DLP view shows a `BROWSER_HTTP_POST` event from your browser
+   (`allowed=false`, `CREDIT_CARD_PAN` / `US_SSN`).
+
+**Firefox (121+):**
+1. Open `about:debugging#/runtime/this-firefox` and choose **Load Temporary Add-on**. Select
+   `browser-extension/manifest.json`.
+2. Grant the site permission when prompted.
+3. Add the `moz-extension://<uuid>` origin shown there to `config/browser_sensor_origins.txt`.
+   Firefox origins are random per profile, so they cannot be pre-allowlisted.
+
+**Managed fleets (zero-touch force-install):**
+- `scripts/build_and_submit.ps1` runs `scripts/pack_browser_extension.ps1`. That script packs a
+  signed CRX with Edge/Chrome, using the key in git-ignored `certs/`. It also writes `update.xml`
+  and adds the packed ID to `config/browser_sensor_origins.txt`.
+- The MSI installs `browser-extension\` (unpacked files, CRX, `update.xml`, and
+  `browser_sensor_policy.ps1`). It then adds the extension to
+  `HKLM\SOFTWARE\Policies\{Google\Chrome,Microsoft\Edge}\ExtensionInstallForcelist` with the update
+  URL `http://127.0.0.1:3030/browser-sensor/update.xml`, which the daemon serves.
+- The helper appends at the first free index and compacts on uninstall, so existing enterprise
+  entries are never overwritten. Only policy keys are written; `PATH` and environment variables are
+  never touched.
+- To opt out: `msiexec /i OshoosiClaw.msi BROWSERSENSOR=0`.
+- Chrome and Edge honour off-store force-install only on **managed** devices (domain, Entra/Azure AD,
+  or MDM). Unmanaged home PCs use the load-unpacked flow above.
+
+#### Consensus-gated containment (home-user safe)
+
+`crates/osoosi-dashboard/src/routes/dlp_containment.rs`:
+
+- **When it contains.** A process is contained only when all four agree:
+  1. **REA** adjudicates the actor as malicious or untrusted (masquerade, unsigned binary in a
+     user-writable path, failed signature/catalog/inventory trust).
+  2. **RedactX-v3** confirmed spans clear the `balanced_utility` thresholds (doc/span ≥ 0.5,
+     precision 0.946). Detection and alerting use `zero_leakage`.
+  3. **OpenJEV** routes to `QUARANTINE_ENFORCE`/`BLOCK_AND_SCRUB` with confirmed categories or
+     Noul p ≥ 0.85.
+  4. The **decision-model voters** (OpenJEV voter, REA voter, RedactX validators, Cedar egress)
+     reach a weighted quorum (p ≥ 0.85 with ≥ 2 escalations).
+
+  DLP-only or REA-only findings produce an alert.
+- **What it does.** Containment blocks the destination for that program first (netsh with a hidden
+  window, or iptables). It then suspends the process (terminating only if suspension fails) and
+  moves the binary into the vault with its BLAKE3 digest and manifest.
+- **Signed binaries.** Verified-signed browsers are never suspended. Their sensitive POST
+  gets a 10-minute per-program destination block plus an alert. A signed binary loses that
+  protection only when there is evidence of code injection or process hollowing. Its on-disk image
+  is then copied into the vault for forensics and left in place.
+- **Restoring.** Every action is reversible with one call: `POST /api/dlp/containment/restore
+  {"containment_id": "..."}`, or the **Restore** button in the DLP view.
+  - Status: `GET /api/dlp/containment/status`.
+  - Turn containment off: `POST /api/dlp/containment/config {"enabled": false}`, or set
+    `OSOOSI_DLP_CONTAINMENT=0`.
+  - Bursts are debounced to one containment per process per 120 s.
+- **Monitor vs Enforce.** The global autonomy mode wins. When the daemon runs in **Monitor/Audit
+  mode** (`EdrOrchestrator::is_monitor_only()`), or with `OSOOSI_DRY_RUN=1`, DLP containment is
+  downgraded to alert-only and records what it would have done. In **Enforce** (Active/Lockdown)
+  mode with the DLP containment switch on (the home-profile default), the gate above applies.
+
 ---
 
 </details>
