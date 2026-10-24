@@ -95,6 +95,61 @@ jobs:
           name: mesh-fault-injection-report
           path: logs/multi_node_mesh_benchmark_report.json
 
+      - name: Launch live daemon and run 43-vector proof suite
+        shell: powershell
+        run: |
+          $env:OSOOSI_DASHBOARD_PORT = "3030"
+          $env:OSOOSI_DASHBOARD_BIND_ALL = "1"
+          $env:OSOOSI_NO_ORT = "1"
+          $env:OSOOSI_NO_AI = "1"
+
+          # Start daemon in background
+          $daemonJob = Start-Job -ScriptBlock {
+            cargo test -p osoosi-dashboard --test port3030_daemon run_live_port_3030_daemon -- --nocapture
+          }
+
+          # Wait for port 3030 to respond
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3030/api/status" -TimeoutSec 2 -UseBasicParsing
+              if ($resp.StatusCode -eq 200) {
+                Write-Host "Live dashboard daemon ready on port 3030"
+                $ready = $true
+                break
+              }
+            } catch {
+              # Not ready yet
+            }
+          }
+
+          if (-not $ready) {
+            Write-Host "Daemon failed to start or bind port 3030"
+            Receive-Job $daemonJob
+            Stop-Job $daemonJob
+            exit 1
+          }
+
+          # Execute 43-vector multi-trial proof runner
+          python -u scripts/run_live_adversarial_proof_suite.py --url http://127.0.0.1:3030 --trials 3
+          $suiteExit = $LASTEXITCODE
+
+          # Stop daemon job
+          Stop-Job $daemonJob
+          Remove-Job $daemonJob -Force
+
+          exit $suiteExit
+
+      - name: Upload Adversarial Proof Artifacts
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        if: always()
+        with:
+          name: adversarial-proof-report
+          path: |
+            logs/adversarial_proof_report.json
+            logs/adversarial_proof_report.md
+
   # ── Format check ─────────────────────────────────────────────────────────────
   fmt:
     name: Format Check (rustfmt)
