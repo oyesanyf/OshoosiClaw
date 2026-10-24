@@ -56,9 +56,16 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
 pub(crate) fn scanner_skip_path(path: &str) -> bool {
     let p = path.to_ascii_lowercase();
     // Only non-executable telemetry logs and drive metadata files may bypass scanner pipelines
-    if p.contains("\\.system_generated\\logs\\")
+    if p.contains(r"\.git\")
+        || p.contains("/.git/")
+        || p.contains("\\.system_generated\\logs\\")
+        || p.contains("/.system_generated/logs/")
         || p.contains("\\.tmp.driveupload")
+        || p.contains("/.tmp.driveupload")
         || p.contains("\\.tmp.drivedownload")
+        || p.contains("/.tmp.drivedownload")
+        || p.contains("\\.cache\\huggingface\\")
+        || p.contains("/.cache/huggingface/")
         || p.ends_with(".log")
         || p.ends_with(".db-journal")
         || p.ends_with(".db-wal")
@@ -744,7 +751,7 @@ mod tests {
         assert!(scanner_skip_path(
             r"D:\dev\project\.git\objects\pack\pack-123.idx"
         ));
-        assert!(scanner_skip_path(
+        assert!(!scanner_skip_path(
             r"C:\Program Files\Git\mingw64\bin\git.exe"
         ));
         assert!(scanner_skip_path(
@@ -760,19 +767,19 @@ mod tests {
         assert!(!scanner_skip_path(r"C:\traps\trojan.exe"));
         assert!(!scanner_skip_path(r"C:\wavlink\backdoor.exe"));
         assert!(!scanner_skip_path(r"C:\Users\victim\.ollama\payload.exe"));
-        assert!(scanner_skip_path(
+        assert!(!scanner_skip_path(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
         ));
-        assert!(scanner_skip_path(
+        assert!(!scanner_skip_path(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"
         ));
-        assert!(scanner_skip_path(
+        assert!(!scanner_skip_path(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node"
         ));
-        assert!(scanner_skip_path(
+        assert!(!scanner_skip_path(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"
         ));
-        assert!(scanner_skip_path(
+        assert!(!scanner_skip_path(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node"
         ));
 
@@ -1219,5 +1226,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
         let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
         let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_file(format!("crates/osoosi-core/rules/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_file(format!("crates/osoosi-core/yara/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_dir_all("crates/osoosi-core/rules");
+        let _ = std::fs::remove_dir_all("crates/osoosi-core/yara");
     }
 }

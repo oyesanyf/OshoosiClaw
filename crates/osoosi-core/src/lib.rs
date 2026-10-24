@@ -1151,7 +1151,7 @@ pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool
         return crate::rea::verify_dynamic_binary_trust(p);
     }
 
-    false
+    is_dev_name
 }
 
 pub fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
@@ -1248,7 +1248,7 @@ pub fn is_cloud_storage_service(name: &str, exe_path: Option<&std::path::Path>) 
         return crate::win_trust::is_trusted_signed_binary(p);
     }
 
-    false
+    is_name_match
 }
 
 fn register_internal_assets(memory: &MemoryStore) {
@@ -14388,11 +14388,11 @@ mod tests {
         assert!(is_developer_tool("wininit.exe", None));
         assert!(is_developer_tool("services.exe", None));
         assert!(is_developer_tool("lsass.exe", None));
-        assert!(is_developer_tool(
+        assert!(!is_developer_tool(
             "custom-runner.exe",
             Some(Path::new(r"D:\project\.vscode\extensions\runner.exe"))
         ));
-        assert!(is_developer_tool(
+        assert!(!is_developer_tool(
             "worker.exe",
             Some(Path::new(r"D:\project\target\debug\worker.exe"))
         ));
@@ -14434,19 +14434,19 @@ mod tests {
         assert!(should_skip_file_malware_scan(Path::new(
             r"C:\Users\dev\.cargo\config.toml"
         )));
-        assert!(should_skip_file_malware_scan(Path::new(
+        assert!(!should_skip_file_malware_scan(Path::new(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
         )));
-        assert!(should_skip_file_malware_scan(Path::new(
+        assert!(!should_skip_file_malware_scan(Path::new(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"
         )));
-        assert!(should_skip_file_malware_scan(Path::new(
+        assert!(!should_skip_file_malware_scan(Path::new(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node"
         )));
-        assert!(should_skip_file_malware_scan(Path::new(
+        assert!(!should_skip_file_malware_scan(Path::new(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"
         )));
-        assert!(should_skip_file_malware_scan(Path::new(
+        assert!(!should_skip_file_malware_scan(Path::new(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node"
         )));
 
@@ -15109,19 +15109,19 @@ mod tests {
         assert!(is_cloud_storage_service("Box.exe", None));
         assert!(is_cloud_storage_service("iCloudServices.exe", None));
         assert!(is_cloud_storage_service("rclone.exe", None));
-        assert!(is_cloud_storage_service(
+        assert!(!is_cloud_storage_service(
             "custom_sync.exe",
             Some(std::path::Path::new(
                 r"C:\Program Files\Google\DriveFS\custom_sync.exe"
             ))
         ));
-        assert!(is_cloud_storage_service(
+        assert!(!is_cloud_storage_service(
             "custom_sync.exe",
             Some(std::path::Path::new(
                 "C:/Program Files/Google/DriveFS/custom_sync.exe"
             ))
         ));
-        assert!(is_cloud_storage_service(
+        assert!(!is_cloud_storage_service(
             "sync_daemon.exe",
             Some(std::path::Path::new(
                 "C:/Users/dev/AppData/Local/Microsoft/OneDrive/sync_daemon.exe"
