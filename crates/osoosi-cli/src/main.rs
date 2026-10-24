@@ -13,81 +13,8 @@ use osoosi_types::SecuredExecutor;
 
 pub mod service;
 
-#[cfg(target_os = "windows")]
-pub mod console_hardening {
-    pub const CREATE_NO_WINDOW: u32 = 0x08000000;
-    pub const ENABLE_PROCESSED_INPUT: u32 = 0x0001;
-    pub const ENABLE_LINE_INPUT: u32 = 0x0002;
-    pub const ENABLE_ECHO_INPUT: u32 = 0x0004;
-    pub const ENABLE_WINDOW_INPUT: u32 = 0x0008;
-    pub const ENABLE_MOUSE_INPUT: u32 = 0x0010;
-    pub const ENABLE_INSERT_MODE: u32 = 0x0020;
-    pub const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
-    pub const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
-    pub const ENABLE_AUTO_POSITION: u32 = 0x0100;
-    pub const ENABLE_VIRTUAL_TERMINAL_INPUT: u32 = 0x0200;
-
-    /// Computes the hardened console input mode mask:
-    /// Clears ENABLE_QUICK_EDIT_MODE (0x0040), ENABLE_INSERT_MODE (0x0020),
-    /// and ENABLE_MOUSE_INPUT (0x0010), while setting ENABLE_EXTENDED_FLAGS (0x0080).
-    pub fn compute_hardened_console_mode(current_mode: u32) -> u32 {
-        (current_mode & !(ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_MOUSE_INPUT))
-            | ENABLE_EXTENDED_FLAGS
-    }
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn GetStdHandle(nStdHandle: u32) -> isize;
-        fn GetConsoleMode(hConsoleHandle: isize, lpMode: *mut u32) -> i32;
-        fn SetConsoleMode(hConsoleHandle: isize, dwMode: u32) -> i32;
-        fn FreeConsole() -> i32;
-    }
-    const STD_INPUT_HANDLE: u32 = 0xFFFFFFF6;
-    const INVALID_HANDLE_VALUE: isize = -1;
-
-    /// Hardens the current Windows console input mode to prevent interactive QuickEdit / Select freezes.
-    pub fn harden_windows_console() -> bool {
-        unsafe {
-            let handle = GetStdHandle(STD_INPUT_HANDLE);
-            if handle != 0 && handle != INVALID_HANDLE_VALUE {
-                let mut mode: u32 = 0;
-                if GetConsoleMode(handle, &mut mode) != 0 {
-                    let hardened = compute_hardened_console_mode(mode);
-                    return SetConsoleMode(handle, hardened) != 0;
-                }
-            }
-        }
-        false
-    }
-
-    /// Detaches the process from any attached console window.
-    pub fn detach_console() -> bool {
-        unsafe { FreeConsole() != 0 }
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub mod console_hardening {
-    pub const CREATE_NO_WINDOW: u32 = 0x08000000;
-    pub const ENABLE_MOUSE_INPUT: u32 = 0x0010;
-    pub const ENABLE_INSERT_MODE: u32 = 0x0020;
-    pub const ENABLE_QUICK_EDIT_MODE: u32 = 0x0040;
-    pub const ENABLE_EXTENDED_FLAGS: u32 = 0x0080;
-
-    pub fn compute_hardened_console_mode(current_mode: u32) -> u32 {
-        (current_mode & !(ENABLE_QUICK_EDIT_MODE | ENABLE_INSERT_MODE | ENABLE_MOUSE_INPUT))
-            | ENABLE_EXTENDED_FLAGS
-    }
-
-    pub fn harden_windows_console() -> bool {
-        false
-    }
-
-    pub fn detach_console() -> bool {
-        false
-    }
-}
 use hf_hub::api::tokio::ApiBuilder;
+pub use osoosi_core::console_defense as console_hardening;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -193,7 +120,7 @@ struct Cli {
     #[arg(short, long, global = true)]
     debug: bool,
     /// Detach from console window (headless daemon mode)
-    #[arg(long, global = true, default_value_t = false)]
+    #[arg(long, global = true, default_value_t = false, alias = "headless")]
     pub detach: bool,
     #[command(subcommand)]
     command: Option<Commands>,
@@ -224,7 +151,7 @@ enum Commands {
         )]
         no_browser: bool,
         /// Detach from console window (headless daemon mode)
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, alias = "headless")]
         detach: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
@@ -878,7 +805,18 @@ fn main() -> anyhow::Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        console_hardening::harden_windows_console();
+        let is_early_headless = std::env::args().any(|a| {
+            a == "--headless"
+                || a == "-headless"
+                || a == "daemon"
+                || a == "--detach"
+                || a == "-detach"
+        });
+        if is_early_headless {
+            console_hardening::detach_console();
+        } else {
+            console_hardening::harden_windows_console();
+        }
     }
 
     // Fast-path zero-overhead (< 1ms) exit for synthetic telemetry canary probes:
@@ -897,7 +835,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // Ultra-forgiving argument normalization:
-    // Seamlessly map common PowerShell/Windows CMD single-dash forms (-no-browser, -lite, -no-ai, -no-dashboard)
+    // Seamlessly map common PowerShell/Windows CMD single-dash forms (-no-browser, -lite, -no-ai, -no-dashboard, -headless, -detach)
     // to their standard clap long flag representations.
     let normalized_args: Vec<String> = std::env::args()
         .map(|arg| {
@@ -920,6 +858,10 @@ fn main() -> anyhow::Result<()> {
                 "--debug".to_string()
             } else if arg == "-grant-access" {
                 "--grant-access".to_string()
+            } else if arg == "-headless" {
+                "--headless".to_string()
+            } else if arg == "-detach" {
+                "--detach".to_string()
             } else {
                 arg
             }
@@ -929,6 +871,30 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse_from(normalized_args);
     if let Some(_uuid_str) = cli.canary_probe.as_ref() {
         return Ok(());
+    }
+
+    let is_headless_or_daemon = cli.detach
+        || matches!(
+            cli.command,
+            Some(Commands::Service {
+                action: service::ServiceAction::Run
+            })
+        )
+        || matches!(cli.command, Some(Commands::Start { detach: true, .. }))
+        || std::env::args().any(|a| {
+            a == "daemon"
+                || a == "--headless"
+                || a == "-headless"
+                || a == "--detach"
+                || a == "-detach"
+        });
+
+    if is_headless_or_daemon {
+        #[cfg(target_os = "windows")]
+        {
+            console_hardening::detach_console();
+        }
+        std::env::set_var("OSOOSI_HEADLESS_MODE", "1");
     }
 
     // Windows Service CLI handling:
@@ -1169,7 +1135,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox_deploy_gateway,
             wsl,
         }) => {
-            if detach || cli.detach {
+            if detach || cli.detach || std::env::var("OSOOSI_HEADLESS_MODE").is_ok() {
                 console_hardening::detach_console();
             }
             let lite_mode = lite
@@ -2354,13 +2320,26 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             AuthAction::Token => {
                 let token = osoosi_dashboard::get_or_init_dashboard_api_token();
-                println!("============================================================");
-                println!("  OpenỌ̀ṣọ́ọ̀sì Master Admin Token");
-                println!("============================================================");
-                println!("{}", token);
-                println!("------------------------------------------------------------");
-                println!("Use this token in the WebUI 'Master Admin Token' tab or");
-                println!("via HTTP header: 'x-osoosi-token: {}'", token);
+                let is_headless = cli.detach
+                    || std::env::var("OSOOSI_HEADLESS_MODE").is_ok()
+                    || std::env::args().any(|a| {
+                        a == "--headless"
+                            || a == "-headless"
+                            || a == "daemon"
+                            || a == "--detach"
+                            || a == "-detach"
+                    });
+                if is_headless {
+                    tracing::info!("Master Admin Token initialized (token display suppressed in headless/detached mode)");
+                } else {
+                    println!("============================================================");
+                    println!("  OpenỌ̀ṣọ́ọ̀sì Master Admin Token");
+                    println!("============================================================");
+                    println!("{}", token);
+                    println!("------------------------------------------------------------");
+                    println!("Use this token in the WebUI 'Master Admin Token' tab or");
+                    println!("via HTTP header: 'x-osoosi-token: {}'", token);
+                }
             }
             AuthAction::SetPassword { password } => {
                 let trimmed = password.trim();
@@ -2390,6 +2369,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     .map(|p| p.join("config").join("admin_password.hash"))
                     .unwrap_or_else(|| PathBuf::from("config").join("admin_password.hash"));
                 let has_password = hash_path.is_file();
+                let is_headless = cli.detach
+                    || std::env::var("OSOOSI_HEADLESS_MODE").is_ok()
+                    || std::env::args().any(|a| {
+                        a == "--headless"
+                            || a == "-headless"
+                            || a == "daemon"
+                            || a == "--detach"
+                            || a == "-detach"
+                    });
 
                 println!("============================================================");
                 println!("  OpenỌ̀ṣọ́ọ̀sì Authentication & Security Lockout Status");
@@ -2411,7 +2399,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     }
                 );
                 println!("Windows Hello/WebAuthn: Supported (Platform Authenticator)");
-                println!("Master Admin Token:     {}", token);
+                if is_headless {
+                    println!("Master Admin Token:     [SUPPRESSED IN HEADLESS MODE]");
+                } else {
+                    println!("Master Admin Token:     {}", token);
+                }
                 println!("============================================================");
             }
         },
@@ -2848,13 +2840,7 @@ fn start_inside_wsl(
 
     info!("Starting Oshoosi inside WSL2 at {}", wsl_cwd);
     let mut wsl_cmd = std::process::Command::new(osoosi_types::resolve_system_binary("wsl.exe"));
-    wsl_cmd.args([
-        "--cd",
-        &wsl_cwd,
-        "-e",
-        "/bin/sh",
-        &bootstrap_script_name,
-    ]);
+    wsl_cmd.args(["--cd", &wsl_cwd, "-e", "/bin/sh", &bootstrap_script_name]);
     let status = wsl_cmd.status();
     let _ = std::fs::remove_file(&bootstrap_path);
     let status = status?;

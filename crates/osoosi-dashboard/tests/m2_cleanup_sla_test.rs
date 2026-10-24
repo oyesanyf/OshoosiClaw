@@ -50,7 +50,9 @@ async fn test_system_cleanup_endpoint_sla_and_progress_tracking() {
         "Cleanup response status must be 'scheduled'"
     );
     assert!(
-        body["job_id"].as_str().is_some_and(|id| id.starts_with("cleanup-")),
+        body["job_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("cleanup-")),
         "Response must contain a valid job_id starting with 'cleanup-'"
     );
 
