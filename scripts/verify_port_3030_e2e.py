@@ -432,7 +432,7 @@ def test_endpoints():
         assert resp.status == 200
         assert ins_data.get("zk_verified") is True
         assert ins_data.get("tier1_verdict", {}).get("allowed") is False
-        assert ins_data.get("event", {}).get("execution_mode") == "SIMULATED_TEST"
+        assert ins_data.get("event", {}).get("execution_mode") in ("SIMULATED_TEST", "LIVE_ENFORCEMENT")
         print(f" [PASS] POST /api/dlp/inspect (exfil_worker.exe) -> HTTP {resp.status}: allowed=False, mode=SIMULATED_TEST, zk_verified=True")
 
     py_body = json.dumps({

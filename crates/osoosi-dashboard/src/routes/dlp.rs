@@ -748,7 +748,7 @@ pub async fn post_dlp_inspect(Json(body): Json<Value>) -> Json<Value> {
     let simulated = body
         .get("simulated")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     let mut state = get_global_dlp_state().write();
     let (tier1, proof, event) = inspect_and_record_with_options(
