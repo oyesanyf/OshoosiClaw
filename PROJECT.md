@@ -60,8 +60,8 @@ OshoosiClaw is upgraded from heuristic, path-based trust to a hardened cryptogra
 | M2 | Argument-Safe Execution (R2), Async Hygiene (R7) & Console DoS Immunity | Discrete argv execution (eliminate `cmd /C`, `sh -c`); `CREATE_NO_WINDOW (0x08000000)`; disable QuickEdit mode via `SetConsoleMode` + `FreeConsole`; non-blocking `/api/system/cleanup` (< 500ms); audit Axum handlers; CI shell check. | M1 | DONE (PR #195, commit 4e0df1b4) |
 | M3 | Fast Hermetic Test Suite (R3) & CRT Mixing LNK4098 Fix (R6) | Opt-in `fhe` cargo feature (< 120s suite); patch `esaxx-rs` to remove `.static_crt(true)`; remove `#![allow(linker_messages)]`; hermetic fixtures. | M1, M2 | DONE (PR #198, #199; commits 95c21992, 7e5347db) |
 | M4 | Modular Decomposition of rea.rs and lib.rs (R4) | Split `rea.rs` into `rea/` (8 submodules, all <= 1,500 lines); split `lib.rs` into `orchestrator/` (8 submodules, all <= 2,300 lines) + slim `lib.rs`; re-exports. | M1, M2, M3 | DONE (PR #202, commit ac9e422e) |
-| M5 | Live Multi-Trial CI Verification on Port 3030 (R5) | Multi-trial test runner ($T \ge 3$ trials, `NonReproducibleTransient` fail-closed); GitHub Actions `live-verification` job. | M2, M3, M4 | DONE |
-| M6 | Final Verification, Documentation & Diagrams, Release Packaging & Microsoft Submission | Full verification, update README.md and mermaid diagrams, build MSI/Linux/Docker, WDSI submission, ship final PR. | M1-M5 | PLANNED |
+| M5 | Live Multi-Trial CI Verification on Port 3030 (R5) | Multi-trial test runner ($T \ge 3$ trials, `NonReproducibleTransient` fail-closed); GitHub Actions `live-verification` job. | M2, M3, M4 | DONE (PR #204, commit c489f2d3) |
+| M6 | Final Verification, Documentation & Diagrams, Release Packaging & Microsoft Submission | Full verification, update README.md and mermaid diagrams, build MSI/Linux/Docker, WDSI submission, ship final PR. | M1-M5 | DONE |
 
 ## Interface Contracts
 
