@@ -47,6 +47,126 @@ struct FwpmSession0 {
 }
 
 #[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct WfpGuid {
+    pub data1: u32,
+    pub data2: u16,
+    pub data3: u16,
+    pub data4: [u8; 8],
+}
+
+#[cfg(windows)]
+const FWPM_LAYER_ALE_AUTH_CONNECT_V4: WfpGuid = WfpGuid {
+    data1: 0xc38d57d1,
+    data2: 0x05a7,
+    data3: 0x4c33,
+    data4: [0x90, 0x4f, 0x7f, 0xbc, 0xee, 0xe6, 0x0e, 0x82],
+};
+
+#[cfg(windows)]
+const FWPM_LAYER_OUTBOUND_TRANSPORT_V4: WfpGuid = WfpGuid {
+    data1: 0x09e61aea,
+    data2: 0xd214,
+    data3: 0x46e2,
+    data4: [0x9b, 0x21, 0xb2, 0x6b, 0x0b, 0x2f, 0x28, 0xc8],
+};
+
+#[cfg(windows)]
+const FWPM_LAYER_ALE_AUTH_CONNECT_V6: WfpGuid = WfpGuid {
+    data1: 0x4a72393b,
+    data2: 0x319f,
+    data3: 0x44bc,
+    data4: [0x84, 0xc3, 0xba, 0x54, 0xdc, 0xb3, 0xb6, 0xb4],
+};
+
+#[cfg(windows)]
+const FWPM_LAYER_OUTBOUND_TRANSPORT_V6: WfpGuid = WfpGuid {
+    data1: 0xe1735bde,
+    data2: 0x013f,
+    data3: 0x4655,
+    data4: [0xb3, 0x51, 0xa4, 0x9e, 0x15, 0x76, 0x2d, 0xf0],
+};
+
+#[cfg(windows)]
+const FWPM_CONDITION_IP_REMOTE_ADDRESS: WfpGuid = WfpGuid {
+    data1: 0xb235ae9a,
+    data2: 0x1d64,
+    data3: 0x49b8,
+    data4: [0xa4, 0x4c, 0x5f, 0xf3, 0xd9, 0x09, 0x50, 0x45],
+};
+
+#[cfg(windows)]
+const FWP_EMPTY: u32 = 0;
+#[cfg(windows)]
+const FWP_UINT32: u32 = 3;
+#[cfg(windows)]
+const FWP_BYTE_ARRAY16_TYPE: u32 = 11;
+#[cfg(windows)]
+const FWP_MATCH_EQUAL: u32 = 0;
+#[cfg(windows)]
+const FWP_ACTION_BLOCK: u32 = 0x0000_1001;
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FwpValue0 {
+    type_: u32,
+    _pad: u32,
+    value: usize,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FwpByteBlob {
+    size: u32,
+    _pad: u32,
+    data: *mut u8,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FwpmFilterCondition0 {
+    field_key: WfpGuid,
+    match_type: u32,
+    _pad: u32,
+    condition_value: FwpValue0,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct FwpmAction0 {
+    type_: u32,
+    filter_type: WfpGuid,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct FwpmFilter0 {
+    filter_key: WfpGuid,
+    display_data: FwpmDisplayData0,
+    flags: u32,
+    _pad0: u32,
+    provider_key: *mut WfpGuid,
+    provider_data: FwpByteBlob,
+    layer_key: WfpGuid,
+    sub_layer_key: WfpGuid,
+    weight: FwpValue0,
+    num_filter_conditions: u32,
+    _pad1: u32,
+    filter_condition: *mut FwpmFilterCondition0,
+    action: FwpmAction0,
+    _pad2: u32,
+    raw_context_or_provider_context_key: [u64; 2],
+    reserved: *mut WfpGuid,
+    filter_id: u64,
+    effective_weight: FwpValue0,
+}
+
+#[cfg(windows)]
 type FnFwpmEngineOpen0 = unsafe extern "system" fn(
     server_name: *const u16,
     authn_service: u32,
@@ -69,6 +189,14 @@ type FnFwpmTransactionCommit0 = unsafe extern "system" fn(engine_handle: *mut c_
 type FnFwpmTransactionAbort0 = unsafe extern "system" fn(engine_handle: *mut c_void) -> u32;
 
 #[cfg(windows)]
+type FnFwpmFilterAdd0 = unsafe extern "system" fn(
+    engine_handle: *mut c_void,
+    filter: *const FwpmFilter0,
+    sd: *mut c_void,
+    id: *mut u64,
+) -> u32;
+
+#[cfg(windows)]
 type FnFwpmFilterDeleteById0 =
     unsafe extern "system" fn(engine_handle: *mut c_void, id: u64) -> u32;
 
@@ -84,6 +212,8 @@ pub struct WfpDynamicSession {
     fn_txn_commit: Option<FnFwpmTransactionCommit0>,
     #[cfg(windows)]
     fn_txn_abort: Option<FnFwpmTransactionAbort0>,
+    #[cfg(windows)]
+    fn_filter_add: Option<FnFwpmFilterAdd0>,
     #[cfg(windows)]
     fn_filter_delete_by_id: Option<FnFwpmFilterDeleteById0>,
     #[cfg(windows)]
@@ -142,6 +272,8 @@ impl WfpDynamicSession {
                     anyhow!("FwpmTransactionAbort0 symbol not found in fwpuclnt.dll")
                 })?)
             };
+            let fn_filter_add: Option<FnFwpmFilterAdd0> =
+                unsafe { get_func(b"FwpmFilterAdd0\0").map(|p| std::mem::transmute(p)) };
             let fn_filter_delete_by_id: Option<FnFwpmFilterDeleteById0> =
                 unsafe { get_func(b"FwpmFilterDeleteById0\0").map(|p| std::mem::transmute(p)) };
 
@@ -193,6 +325,7 @@ impl WfpDynamicSession {
                 fn_txn_begin: Some(fn_txn_begin),
                 fn_txn_commit: Some(fn_txn_commit),
                 fn_txn_abort: Some(fn_txn_abort),
+                fn_filter_add,
                 fn_filter_delete_by_id,
                 in_transaction: AtomicBool::new(false),
             })
@@ -314,6 +447,187 @@ impl WfpDynamicSession {
         }
     }
 
+    /// Installs kernel-level `FWP_ACTION_BLOCK` filters via `FwpmFilterAdd0` across both
+    /// `FWPM_LAYER_ALE_AUTH_CONNECT_V4/V6` (new connection attempts) and
+    /// `FWPM_LAYER_OUTBOUND_TRANSPORT_V4/V6` (existing sockets / UDP QUIC packets) for every IP in `ips`.
+    pub fn add_outbound_ip_block_filters(
+        &self,
+        rule_name: &str,
+        ips: &[std::net::IpAddr],
+    ) -> Vec<u64> {
+        #[cfg(windows)]
+        {
+            if self.engine_handle.is_null() || ips.is_empty() {
+                return Vec::new();
+            }
+            let Some(fn_add) = self.fn_filter_add else {
+                return Vec::new();
+            };
+
+            let mut filter_ids = Vec::new();
+            let mut w_name: Vec<u16> = format!("{}\0", rule_name).encode_utf16().collect();
+            if *w_name.last().unwrap_or(&1) != 0 {
+                w_name.push(0);
+            }
+            let mut w_desc: Vec<u16> = "OpenOsoosi Native Kernel WFP Outbound Block\0"
+                .encode_utf16()
+                .collect();
+
+            let txn_ok = self.begin_transaction().is_ok();
+
+            for ip in ips {
+                match ip {
+                    std::net::IpAddr::V4(v4) => {
+                        let host_u32 = u32::from_be_bytes(v4.octets());
+                        for layer in [
+                            FWPM_LAYER_ALE_AUTH_CONNECT_V4,
+                            FWPM_LAYER_OUTBOUND_TRANSPORT_V4,
+                        ] {
+                            let mut cond = FwpmFilterCondition0 {
+                                field_key: FWPM_CONDITION_IP_REMOTE_ADDRESS,
+                                match_type: FWP_MATCH_EQUAL,
+                                _pad: 0,
+                                condition_value: FwpValue0 {
+                                    type_: FWP_UINT32,
+                                    _pad: 0,
+                                    value: host_u32 as usize,
+                                },
+                            };
+                            let filter = FwpmFilter0 {
+                                filter_key: WfpGuid::default(),
+                                display_data: FwpmDisplayData0 {
+                                    name: w_name.as_mut_ptr(),
+                                    description: w_desc.as_mut_ptr(),
+                                },
+                                flags: 0,
+                                _pad0: 0,
+                                provider_key: std::ptr::null_mut(),
+                                provider_data: FwpByteBlob {
+                                    size: 0,
+                                    _pad: 0,
+                                    data: std::ptr::null_mut(),
+                                },
+                                layer_key: layer,
+                                sub_layer_key: WfpGuid::default(),
+                                weight: FwpValue0 {
+                                    type_: FWP_EMPTY,
+                                    _pad: 0,
+                                    value: 0,
+                                },
+                                num_filter_conditions: 1,
+                                _pad1: 0,
+                                filter_condition: &mut cond,
+                                action: FwpmAction0 {
+                                    type_: FWP_ACTION_BLOCK,
+                                    filter_type: WfpGuid::default(),
+                                },
+                                _pad2: 0,
+                                raw_context_or_provider_context_key: [0; 2],
+                                reserved: std::ptr::null_mut(),
+                                filter_id: 0,
+                                effective_weight: FwpValue0 {
+                                    type_: FWP_EMPTY,
+                                    _pad: 0,
+                                    value: 0,
+                                },
+                            };
+                            let mut assigned_id: u64 = 0;
+                            let status = unsafe {
+                                fn_add(
+                                    self.engine_handle,
+                                    &filter,
+                                    std::ptr::null_mut(),
+                                    &mut assigned_id,
+                                )
+                            };
+                            if status == ERROR_SUCCESS && assigned_id != 0 {
+                                filter_ids.push(assigned_id);
+                            }
+                        }
+                    }
+                    std::net::IpAddr::V6(v6) => {
+                        let octets = v6.octets();
+                        for layer in [
+                            FWPM_LAYER_ALE_AUTH_CONNECT_V6,
+                            FWPM_LAYER_OUTBOUND_TRANSPORT_V6,
+                        ] {
+                            let mut cond = FwpmFilterCondition0 {
+                                field_key: FWPM_CONDITION_IP_REMOTE_ADDRESS,
+                                match_type: FWP_MATCH_EQUAL,
+                                _pad: 0,
+                                condition_value: FwpValue0 {
+                                    type_: FWP_BYTE_ARRAY16_TYPE,
+                                    _pad: 0,
+                                    value: octets.as_ptr() as usize,
+                                },
+                            };
+                            let filter = FwpmFilter0 {
+                                filter_key: WfpGuid::default(),
+                                display_data: FwpmDisplayData0 {
+                                    name: w_name.as_mut_ptr(),
+                                    description: w_desc.as_mut_ptr(),
+                                },
+                                flags: 0,
+                                _pad0: 0,
+                                provider_key: std::ptr::null_mut(),
+                                provider_data: FwpByteBlob {
+                                    size: 0,
+                                    _pad: 0,
+                                    data: std::ptr::null_mut(),
+                                },
+                                layer_key: layer,
+                                sub_layer_key: WfpGuid::default(),
+                                weight: FwpValue0 {
+                                    type_: FWP_EMPTY,
+                                    _pad: 0,
+                                    value: 0,
+                                },
+                                num_filter_conditions: 1,
+                                _pad1: 0,
+                                filter_condition: &mut cond,
+                                action: FwpmAction0 {
+                                    type_: FWP_ACTION_BLOCK,
+                                    filter_type: WfpGuid::default(),
+                                },
+                                _pad2: 0,
+                                raw_context_or_provider_context_key: [0; 2],
+                                reserved: std::ptr::null_mut(),
+                                filter_id: 0,
+                                effective_weight: FwpValue0 {
+                                    type_: FWP_EMPTY,
+                                    _pad: 0,
+                                    value: 0,
+                                },
+                            };
+                            let mut assigned_id: u64 = 0;
+                            let status = unsafe {
+                                fn_add(
+                                    self.engine_handle,
+                                    &filter,
+                                    std::ptr::null_mut(),
+                                    &mut assigned_id,
+                                )
+                            };
+                            if status == ERROR_SUCCESS && assigned_id != 0 {
+                                filter_ids.push(assigned_id);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if txn_ok {
+                let _ = self.commit_transaction();
+            }
+            filter_ids
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = (rule_name, ips);
+            Vec::new()
+        }
+    }
+
     /// Check if native WFP is available and accessible with current privileges.
     pub fn is_available() -> bool {
         #[cfg(windows)]
@@ -380,6 +694,8 @@ pub struct NativeDestinationBlockRule {
     pub pid: Option<u32>,
     pub ips: Vec<String>,
     pub wfp_session_committed: bool,
+    #[serde(default)]
+    pub wfp_filter_ids: Vec<u64>,
     pub bfe_registry_applied: bool,
     pub terminated_tcp_sockets: usize,
     pub created_at: String,
@@ -388,6 +704,47 @@ pub struct NativeDestinationBlockRule {
 static NATIVE_DESTINATION_BLOCKS: LazyLock<
     dashmap::DashMap<String, NativeDestinationBlockRule>,
 > = LazyLock::new(dashmap::DashMap::new);
+
+static GLOBAL_WFP_SESSION: LazyLock<parking_lot::Mutex<Option<WfpDynamicSession>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(WfpDynamicSession::open().ok()));
+
+static TCP_RESET_GUARDIAN_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn ensure_tcp_reset_guardian_started() {
+    if TCP_RESET_GUARDIAN_STARTED
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_ok()
+    {
+        std::thread::Builder::new()
+            .name("osoosi-wfp-tcp-guardian".to_string())
+            .spawn(|| loop {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                if NATIVE_DESTINATION_BLOCKS.is_empty() {
+                    continue;
+                }
+                let mut blocked_ips: Vec<std::net::IpAddr> = Vec::new();
+                for entry in NATIVE_DESTINATION_BLOCKS.iter() {
+                    for s in &entry.value().ips {
+                        if let Ok(ip) = s.parse::<std::net::IpAddr>() {
+                            if !blocked_ips.contains(&ip) {
+                                blocked_ips.push(ip);
+                            }
+                        }
+                    }
+                }
+                if !blocked_ips.is_empty() {
+                    let _ = terminate_active_tcp_sockets_for_ips(&blocked_ips);
+                }
+            })
+            .ok();
+    }
+}
 
 /// Returns all currently active native destination block rules.
 pub fn active_native_destination_blocks() -> Vec<NativeDestinationBlockRule> {
@@ -403,6 +760,90 @@ pub fn is_destination_blocked_native(ip: &std::net::IpAddr) -> bool {
     NATIVE_DESTINATION_BLOCKS
         .iter()
         .any(|entry| entry.value().ips.iter().any(|blocked| blocked == &ip_str))
+}
+
+/// Checks whether any active IPv4 TCP socket (`SYN_SENT`, `SYN_RCVD`, `ESTABLISHED`, `CLOSE_WAIT`)
+/// currently exists to any of the specified remote IP addresses via `iphlpapi.dll` (`GetTcpTable`).
+pub fn has_active_tcp_socket_for_ips(ips: &[std::net::IpAddr]) -> bool {
+    #[cfg(windows)]
+    {
+        use std::collections::HashSet;
+        use windows::core::{PCSTR, PCWSTR};
+        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct MibTcpRow {
+            dw_state: u32,
+            dw_local_addr: u32,
+            dw_local_port: u32,
+            dw_remote_addr: u32,
+            dw_remote_port: u32,
+        }
+
+        type FnGetTcpTable = unsafe extern "system" fn(
+            p_tcp_table: *mut u8,
+            pdw_size: *mut u32,
+            b_order: i32,
+        ) -> u32;
+
+        const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+
+        let target_v4_addrs: HashSet<u32> = ips
+            .iter()
+            .filter_map(|ip| match ip {
+                std::net::IpAddr::V4(v4) => Some(u32::from_ne_bytes(v4.octets())),
+                std::net::IpAddr::V6(_) => None,
+            })
+            .collect();
+        if target_v4_addrs.is_empty() {
+            return false;
+        }
+
+        let dll_name: Vec<u16> = "iphlpapi.dll\0".encode_utf16().collect();
+        let Ok(h_mod) = (unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }) else {
+            return false;
+        };
+        let Some(p_get) = (unsafe { GetProcAddress(h_mod, PCSTR(b"GetTcpTable\0".as_ptr())) })
+        else {
+            return false;
+        };
+        let fn_get: FnGetTcpTable = unsafe { std::mem::transmute(p_get as *const ()) };
+
+        let mut size: u32 = 0;
+        let first_status = unsafe { fn_get(std::ptr::null_mut(), &mut size, 0) };
+        if first_status != ERROR_INSUFFICIENT_BUFFER || size < 4 {
+            return false;
+        }
+
+        let mut buf = vec![0u8; size as usize + 256];
+        let mut actual_size = buf.len() as u32;
+        let status = unsafe { fn_get(buf.as_mut_ptr(), &mut actual_size, 0) };
+        if status != ERROR_SUCCESS || actual_size < 4 {
+            return false;
+        }
+
+        let num_entries = u32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        let row_size = std::mem::size_of::<MibTcpRow>();
+        let max_entries = (buf.len().saturating_sub(4)) / row_size;
+        let count = num_entries.min(max_entries);
+        let rows_ptr = unsafe { buf.as_ptr().add(4) as *const MibTcpRow };
+
+        for i in 0..count {
+            let row = unsafe { *rows_ptr.add(i) };
+            if matches!(row.dw_state, 3 | 4 | 5 | 8)
+                && target_v4_addrs.contains(&row.dw_remote_addr)
+            {
+                return true;
+            }
+        }
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ips;
+        false
+    }
 }
 
 /// Terminates any active IPv4 TCP connections to the specified remote IP addresses directly
@@ -609,16 +1050,18 @@ pub fn block_destination_native(
         anyhow::bail!("block_destination_native requires at least one IP or program path");
     }
 
-    let wfp_session_committed = match WfpDynamicSession::open() {
-        Ok(session) => {
-            if session.begin_transaction().is_ok() {
-                session.commit_transaction().is_ok()
-            } else {
-                false
-            }
+    let wfp_filter_ids = {
+        let mut guard = GLOBAL_WFP_SESSION.lock();
+        if guard.is_none() {
+            *guard = WfpDynamicSession::open().ok();
         }
-        Err(_) => false,
+        if let Some(ref session) = *guard {
+            session.add_outbound_ip_block_filters(rule, ips)
+        } else {
+            Vec::new()
+        }
     };
+    let wfp_session_committed = !wfp_filter_ids.is_empty();
 
     #[cfg(windows)]
     let bfe_registry_applied = apply_native_bfe_registry_rule(rule, "out", program, ips);
@@ -633,6 +1076,7 @@ pub fn block_destination_native(
         pid,
         ips: ips.iter().map(|i| i.to_string()).collect(),
         wfp_session_committed,
+        wfp_filter_ids: wfp_filter_ids.clone(),
         bfe_registry_applied,
         terminated_tcp_sockets,
         created_at: chrono::Utc::now().to_rfc3339(),
@@ -644,12 +1088,14 @@ pub fn block_destination_native(
         pid = ?pid,
         ips = ?record.ips,
         wfp_session_committed,
+        wfp_filter_count = wfp_filter_ids.len(),
         bfe_registry_applied,
         terminated_tcp_sockets,
-        "🛡️ [WFP-NATIVE] Applied native Rust destination block (zero netsh subprocesses)"
+        "🛡️ [WFP-NATIVE] Applied native Rust kernel WFP + BFE destination block (zero netsh subprocesses)"
     );
 
     NATIVE_DESTINATION_BLOCKS.insert(rule.to_string(), record.clone());
+    ensure_tcp_reset_guardian_started();
     Ok(record)
 }
 
@@ -660,11 +1106,20 @@ pub fn unblock_destination_native(
     _pid: Option<u32>,
     _ips: &[std::net::IpAddr],
 ) -> Result<()> {
-    NATIVE_DESTINATION_BLOCKS.remove(rule);
+    let removed_rule = NATIVE_DESTINATION_BLOCKS.remove(rule).map(|(_, v)| v);
 
-    if let Ok(session) = WfpDynamicSession::open() {
-        if session.begin_transaction().is_ok() {
-            let _ = session.commit_transaction();
+    if let Some(rec) = removed_rule {
+        if !rec.wfp_filter_ids.is_empty() {
+            let guard = GLOBAL_WFP_SESSION.lock();
+            if let Some(ref session) = *guard {
+                let txn_ok = session.begin_transaction().is_ok();
+                for fid in rec.wfp_filter_ids {
+                    let _ = session.delete_filter_by_id(fid);
+                }
+                if txn_ok {
+                    let _ = session.commit_transaction();
+                }
+            }
         }
     }
 

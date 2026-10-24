@@ -309,15 +309,20 @@ function renderHarTrafficTable() {
         const reaPill = reaDec === 'ESCALATE_MALICIOUS'
             ? `<span class="badge red" style="font-size: 9.5px; margin-left: 4px;" title="${escapeHtml(e.rea_voter_reason || 'REA-Voter Escalated')}">REA:ESC</span>`
             : `<span class="badge blue" style="font-size: 9.5px; margin-left: 4px;" title="${escapeHtml(e.rea_voter_reason || 'REA-Voter Vetoed Benign')}">REA:OK</span>`;
+        const gsbVerdict = e.gsb_verdict || 'GSB:CLEAN';
+        const gsbPrefix = e.gsb_prefix_4b ? ` (prefix: ${e.gsb_prefix_4b}, src: ${e.gsb_match_source || 'cache'})` : '';
+        const gsbPill = (gsbVerdict !== 'GSB:CLEAN' && gsbVerdict !== 'CLEAN')
+            ? `<span class="badge red" style="font-size: 9.5px; margin-left: 4px;" title="Google Safe Browsing v4 Match: ${escapeHtml(gsbVerdict + gsbPrefix)}">${escapeHtml(gsbVerdict)}</span>`
+            : `<span class="badge blue" style="font-size: 9px; margin-left: 4px; background: rgba(16,185,129,0.12); color: #34d399; border: 1px solid rgba(16,185,129,0.35);" title="Google Safe Browsing v4 Verified Clean${escapeHtml(gsbPrefix)}">GSB:OK</span>`;
         const tagsStr = e.threat_tags || '';
         const asnPill = (tagsStr.startsWith('ASN') || tagsStr.startsWith('LOCAL_LOOPBACK'))
             ? `<span class="badge green" style="font-size: 9px; margin-left: 4px;" title="Verified ASN / Local Endpoint Trust">${escapeHtml(tagsStr)}</span>`
             : '';
-        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (${Math.round(score * 100)}%)</span>${reaPill}${asnPill}`;
+        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}${asnPill}`;
         if (v === 'malicious' || score >= 0.75) {
-            verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>${reaPill}`;
+            verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}`;
         } else if (v === 'suspicious' || score >= 0.4) {
-            verdictBadge = `<span class="badge orange" style="font-size: 10.5px;">SUSPICIOUS (${Math.round(score * 100)}%)</span>${reaPill}`;
+            verdictBadge = `<span class="badge orange" style="font-size: 10.5px;">SUSPICIOUS (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}`;
         }
 
         const originalIndex = entries.indexOf(e);
@@ -451,6 +456,10 @@ function inspectHarEntryRow(idx) {
             <div>
                 <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">[OpenJEV-Voter] DLP Verdict</strong>
                 <div title="${escapeHtml(ojevReason)}"><span class="badge ${ojevDecision === 'ESCALATE_MALICIOUS' ? 'red' : 'blue'}">${escapeHtml(ojevDecision)}</span></div>
+            </div>
+            <div>
+                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">[Google-SafeBrowsing-Voter] v4 Reputation</strong>
+                <div><span class="badge ${(entry.gsb_verdict && entry.gsb_verdict !== 'GSB:CLEAN') ? 'red' : 'green'}">${escapeHtml(entry.gsb_verdict || 'GSB:CLEAN')}</span> <span style="font-family: monospace; font-size: 10.5px; color: var(--text-muted);">(${escapeHtml(entry.gsb_match_source || 'prefix_cache')} • 4B: ${escapeHtml(entry.gsb_prefix_4b || '-')})</span></div>
             </div>
             <div style="grid-column: 1 / -1;">
                 <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">BLAKE3 FileLineageTracker &amp; REA Seal Digest</strong>

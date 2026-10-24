@@ -494,7 +494,10 @@ function renderDlpEventsTable() {
             verdictBadge = '<span class="badge green">🔓 RELEASED (False Positive)</span>';
         } else if (ev.verdict === 'BLOCKED' || authDec === 'DENY' || dlpResp === 'QUARANTINE' || ev.allowed === false) {
             verdictBadge = `<span class="badge red">🛡️ ${escapeHtml(authDec)} / ${escapeHtml(dlpResp)}</span>`;
-            verdictBadge += `<div style="margin-top: 4px;"><button class="btn btn-sm btn-outline-warning release-dlp-btn" onclick="window.osoosiDlp.releaseEvent('${escapeHtml(ev.zkProofCommitment || ev.commitment || '')}', '${escapeHtml(ev.destinationSink || ev.sink || '')}', '${escapeHtml(ev.scrubbedPreview || ev.scrubbed || '')}')">🔓 Release False Positive</button></div>`;
+            const safeCommitment = escapeHtml(String(ev.zkProofCommitment || ev.commitment || '').replace(/[\r\n'"]/g, ' '));
+            const safeSink = escapeHtml(String(ev.destinationSink || ev.sink || '').replace(/[\r\n'"]/g, ' '));
+            const safePreview = escapeHtml(String(ev.scrubbedPreview || ev.scrubbed || '').slice(0, 140).replace(/[\r\n'"]/g, ' '));
+            verdictBadge += `<div style="margin-top: 5px;"><button type="button" class="btn-secondary release-dlp-btn" style="font-size: 10px; padding: 3px 8px; background: rgba(245, 158, 11, 0.14); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 5px; cursor: pointer; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;" onclick="window.osoosiDlp.releaseEvent('${safeCommitment}', '${safeSink}', '${safePreview}')">🔓 Release FP</button></div>`;
         } else if (ev.verdict === 'SCRUBBED') {
             verdictBadge = '<span class="badge yellow">🧼 SCRUBBED</span>';
         }

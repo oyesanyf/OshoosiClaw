@@ -620,10 +620,10 @@ pub fn load_persisted_dlp_events(limit: usize) -> Vec<DlpInspectionEventRecord> 
     if !path.is_file() {
         return Vec::with_capacity(limit);
     }
-    // Purge stale false positives from SQLite dlp_events table
+    // Purge stale false positives and pre-Magika raw ZIP header rows from SQLite dlp_events table
     if let Ok(write_conn) = rusqlite::Connection::open(&path) {
         let _ = write_conn.execute(
-            "DELETE FROM dlp_events WHERE (source = 'HAR_COLLECTOR' OR channel = 'HAR_TRAFFIC') AND allowed = 0 AND (event_json LIKE '%\"detected_categories\":[]%' OR event_json LIKE '%\"sensitivity_potential_phi\":0.0%')",
+            "DELETE FROM dlp_events WHERE ((source = 'HAR_COLLECTOR' OR channel = 'HAR_TRAFFIC') AND allowed = 0 AND (event_json LIKE '%\"detected_categories\":[]%' OR event_json LIKE '%\"sensitivity_potential_phi\":0.0%')) OR event_json LIKE '% bytes) ---\\nPK%'",
             [],
         );
     }
@@ -642,7 +642,9 @@ pub fn load_persisted_dlp_events(limit: usize) -> Vec<DlpInspectionEventRecord> 
     if let Ok(rows) = rows {
         for json in rows.flatten() {
             if let Ok(ev) = serde_json::from_str::<DlpInspectionEventRecord>(&json) {
-                let is_stale_fp = !ev.allowed && (ev.detected_categories.is_empty() || ev.sensitivity_potential_phi == 0.0);
+                let is_stale_fp = (!ev.allowed
+                    && (ev.detected_categories.is_empty() || ev.sensitivity_potential_phi == 0.0))
+                    || ev.scrubbed_preview.contains(" bytes) ---\nPK");
                 if !is_stale_fp {
                     out.push(ev);
                 }

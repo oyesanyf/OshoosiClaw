@@ -74,6 +74,7 @@ pub mod quarantine;
 pub mod rea;
 pub mod relativistic;
 pub mod remediation;
+pub mod safe_browsing;
 pub mod secured_executor;
 pub mod self_healing;
 pub mod shield;

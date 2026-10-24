@@ -133,17 +133,19 @@ Following comprehensive adversarial auditing and verification by an independent 
 ---
 
 
-### 🛡️ Autonomous Browser DLP (`dlptest.com` PHI), False-Positive Release, YARA Semantic Hardening & 17-Control CIS Benchmark
+### 🛡️ Autonomous Browser DLP (`dlptest.com` PHI), Google Safe Browsing v4, 4-Voter Consensus Containment & Kernel WFP (`FwpmFilterAdd0`)
 
 ```mermaid
 flowchart LR
     subgraph BrowserHAR["Autonomous Browser & HAR Sensor (3s Loop)"]
-        B1["Browser Upload / Egress<br/>(dlptest.com, Webhooks, Local Files)"] --> B2["resolve_local_uploaded_file<br/>(Downloads / Desktop / Temp)"]
+        B1["Browser Upload / Egress<br/>(dlptest.com, Webhooks, Local Files)"] --> B2["resolve_local_uploaded_file<br/>(Google Magika v1.0 Deep Type ID)"]
+        B1 --> GSB["Google Safe Browsing v4<br/>(threatMatches:find + 4B SHA-256 Prefix Cache)"]
     end
-    subgraph TwoTierDLP["Two-Tier Zero-Exploit DLP & OpenJEV"]
-        B2 --> D1["Tier-1 O(N) Hot Scanner<br/>(ISO/IEC 7812 PAN, Context NANP, OAuth GET Allowlist)"]
-        D1 --> D2["Tier-2 Presidio + GLiNER + OpenJEV<br/>('/' Delimiter Split & Probe Coalescing ×N)"]
-        D2 --> D3["One-Click False-Positive Release<br/>(POST /api/dlp/release -> Allowlist + SQLite Sync)"]
+    subgraph TwoTierDLP["Two-Tier Zero-Exploit DLP & 4-Voter Quorum"]
+        B2 --> D1["Tier-1 O(N) Hot Scanner + Tier-2 RedactX OpenJEV"]
+        GSB --> D2["4-Voter Containment Quorum<br/>(OpenJEV + REA + RedactX + Google-SafeBrowsing-Voter)"]
+        D1 --> D2
+        D2 --> D3["Kernel WFP FwpmFilterAdd0 + 200ms SetTcpEntry<br/>& One-Click Release FP (POST /api/dlp/release)"]
     end
     subgraph YaraCIS["YARA Semantic Hardening & 17-Control CIS Benchmark"]
         Y1["harden_yara.py<br/>(0 Corrupted Strings, 0 Vacuous Rules)"] --> Y2["CIS 2.2 UTS #39 Skeleton<br/>CIS 3.3 Extended IP/Hex/Int SSRF<br/>CIS 4.4 cgroup.kill + Key Revocation"]
@@ -151,7 +153,9 @@ flowchart LR
     D3 --> Y2
 ```
 
-- **Autonomous 3-Second Browser & Local File DLP (`crates/osoosi-dashboard/src/routes/har_dlp.rs`)**: Automatically sweeps live browser/OS HAR traffic every 3 seconds without manual clicks, resolves locally uploaded files (`sample-data.xlsx`, `.csv`, `.pdf`, `.docx`, `.txt`) for `dlptest.com` and cloud upload sinks, coalesces repeated multi-trial probes with a `×N TRIALS` badge, and provides one-click **Release False Positive** (`POST /api/dlp/release`) persisting to `database/dlp_released_allowlist.json` and SQLite `dlp_events`.
+- **Google Safe Browsing v4 Dual-Mode Reputation & 4th Containment Voter (`crates/osoosi-core/src/safe_browsing.rs`, `crates/osoosi-dashboard/src/routes/dlp_containment.rs`)**: Canonicalizes every URL swept from browser history, live OS sockets, and HAR streams per Google Safe Browsing v4 rules, checks a local 4-byte SHA-256 prefix + SQLite TTL cache (`gsb_url_cache`), batch-queries `https://safebrowsing.googleapis.com/v4/threatMatches:find` across `MALWARE`, `SOCIAL_ENGINEERING`, `UNWANTED_SOFTWARE`, and `POTENTIALLY_HARMFUL_APPLICATION`, surfaces `GSB:OK` / `GSB:SOCIAL_ENGINEERING` / `GSB:MALWARE` badges in `#har-traffic`, and casts the 4th production containment ballot (`Google-SafeBrowsing-Voter`).
+- **Kernel-Level Native Rust WFP (`FwpmFilterAdd0`) & 200ms TCP TCB Guardian (`crates/osoosi-core/src/wfp.rs`)**: Installs real Windows Filtering Platform (`FWP_ACTION_BLOCK = 0x00001001`) filters across `FWPM_LAYER_ALE_AUTH_CONNECT_V4/V6` and `FWPM_LAYER_OUTBOUND_TRANSPORT_V4/V6` in a persistent `GLOBAL_WFP_SESSION` paired with a 200ms `GetExtendedTcpTable` + `SetTcpEntry(MIB_TCP_STATE_DELETE_TCB)` socket reset loop—with zero `netsh advfirewall` calls.
+- **Autonomous 3-Second Browser & Local File DLP (`crates/osoosi-dashboard/src/routes/har_dlp.rs`)**: Automatically sweeps live browser/OS HAR traffic and active TCP sockets every 3 seconds without manual clicks, resolves locally uploaded files (`sample-data.xlsx`, `.csv`, `.pdf`, `.docx`, `.txt`) via **Google Magika v1.0** deep content-type identification + OOXML extraction, coalesces repeated multi-trial probes with a `×N TRIALS` badge, and provides one-click **Release FP** (`POST /api/dlp/release`) persisting to `database/dlp_released_allowlist.json` and SQLite `dlp_events`.
 - **Zero-Corruption YARA Rule Hardening (`harden_yara.py`, `crates/osoosi-model/src/malware.rs`)**: Preserves double-quoted string literals (`$s = "..."`) without escaping `{`/`}`, surgically strips unsupported external conjuncts while keeping real string patterns active, and disables vacuous zero-string rules instead of compiling dead `condition: false` rules.
 - **17-Recommendation CIS Benchmark (`docs/CIS_BENCHMARK_OSHOOSICLAW.md`)**: Fail-closed audit scripts for **1.4**, **4.3**, and **5.1** (rejecting missing/empty logs or zero confined workers), **2.2** Unicode Case Folding + NFKC + UTS #39 confusable-skeleton normalization, **3.3** complete special-purpose IPv4/IPv6 ranges (`0.0.0.0/8`, `198.18.0.0/15`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`, multicast) and non-standard IP encodings (`http://2130706433`, hex, octal, shortened quad), and **4.4** atomic `cgroup v2 cgroup.kill` + credential revocation.
 
