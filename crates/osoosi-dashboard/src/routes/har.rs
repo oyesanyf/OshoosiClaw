@@ -547,6 +547,16 @@ pub async fn post_har_inspect(
 
     match osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&har_str, label) {
         Ok(report) => {
+            // Feed every imported request (with postData bodies) to the autonomous HAR→DLP
+            // pipeline; inspection runs on the pipeline worker thread.
+            if let Ok(doc) = serde_json::from_str::<Value>(&har_str) {
+                crate::routes::har_dlp::enqueue_har_document(
+                    &doc,
+                    label,
+                    crate::routes::har_dlp::HarSourceKind::HarImport,
+                    None,
+                );
+            }
             // Deep-inspect the HAR archive with AutonomousReaEngine + OpenJEV-Voter and record in REA investigations
             let rea_engine = osoosi_core::rea::global_rea_engine();
             let rea_har = rea_engine.analyze_har_entry_or_archive(

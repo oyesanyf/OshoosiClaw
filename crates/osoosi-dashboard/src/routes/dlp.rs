@@ -60,12 +60,53 @@ pub struct DlpInspectionEventRecord {
     pub rea_actor_verdict: String,
     #[serde(default)]
     pub rea_asset_kind: String,
+    /// Where the inspected bytes came from (e.g. `BROWSER_EXTENSION`, `HAR_FILE`, `HAR_IMPORT`, `API`).
+    #[serde(default)]
+    pub source: String,
+    /// RedactX operating mode used for detection/alerting.
+    #[serde(default)]
+    pub redactx_detection_mode: String,
+    /// RedactX operating mode autonomous containment must clear.
+    #[serde(default)]
+    pub redactx_containment_mode: String,
+    /// RedactX validator-confirmed categories (Luhn PAN, SSA SSN, NPI, MRN, ...).
+    #[serde(default)]
+    pub redactx_validated_categories: Vec<String>,
+    #[serde(default)]
+    pub redactx_doc_score: f64,
+    #[serde(default)]
+    pub redactx_max_span_score: f64,
+    /// RedactX confirmed spans clear the detection-mode thresholds (alerting).
+    #[serde(default)]
+    pub redactx_confirmed_detection: bool,
+    /// RedactX confirmed spans clear the containment-mode thresholds (precision gate).
+    #[serde(default)]
+    pub redactx_confirmed_containment: bool,
+    /// OpenJEV Choice routes to enforcement with the evidence guard satisfied.
+    #[serde(default)]
+    pub openjev_enforcement_agreed: bool,
+    /// Consensus-gated containment outcome, when the containment engine evaluated the event.
+    #[serde(default)]
+    pub containment: Option<Value>,
+}
+
+/// Per-call inspection options.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DlpInspectOptions {
+    /// The caller explicitly marks this inspection as a what-if simulation (nothing was sent).
+    pub simulated: bool,
+    /// Skip recording allowed (clean) verdicts in `recent_events` (used for URL-only sweeps).
+    pub skip_recording_allowed: bool,
 }
 
 pub struct DlpDashboardState {
     pub engine: osoosi_dp::OsoosiTwoTierDlpEngine,
     pub policy_mode: String,
     pub min_phi_threshold: f64,
+    /// RedactX operating mode used for detection and alerting (high recall).
+    pub redactx_detection_mode: String,
+    /// RedactX operating mode whose thresholds autonomous containment must clear (high precision).
+    pub redactx_containment_mode: String,
     pub total_inspections: u64,
     pub blocked_exfiltrations: u64,
     pub scrubbed_pii_entities: u64,
@@ -89,7 +130,6 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
             ("database/tpm_attestation_seed.bin", "TPM_HARDWARE_ROOT_OF_TRUST"),
         ];
 
-        let mut pfx_merkle_root_seed = String::new();
         for (path_str, classification) in initial_crown_jewel_targets {
             let bytes = std::fs::read(path_str).unwrap_or_else(|_| {
                 format!(
@@ -101,9 +141,6 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
             let byte_size = bytes.len();
             let merkle_root_hex = engine.crown_jewels.register_crown_jewel_bytes(path_str, &bytes);
             engine.crown_jewels.register_asset_metadata(path_str, classification);
-            if path_str == "certs/OshoosiClaw_Signing.pfx" {
-                pfx_merkle_root_seed = merkle_root_hex.clone();
-            }
             let chunk_count = byte_size.div_ceil(4096);
             let rea_artifact_kind = if path_str.ends_with(".pfx") || path_str.ends_with(".p12") {
                 "PKCS12_PFX_KEYSTORE"
@@ -128,73 +165,19 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
             });
         }
 
-        let mut state = DlpDashboardState {
+        let state = DlpDashboardState {
             engine,
             policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
             min_phi_threshold: 0.70,
+            redactx_detection_mode: "zero_leakage".to_string(),
+            redactx_containment_mode: "balanced_utility".to_string(),
             total_inspections: 0,
             blocked_exfiltrations: 0,
             scrubbed_pii_entities: 0,
             zk_bft_proofs_verified: 0,
             crown_jewels,
-            recent_events: Vec::with_capacity(256),
+            recent_events: load_persisted_dlp_events(250),
         };
-
-        // Initial self-verification inspections through inspect_and_record_internal:
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "git-remote-https.exe",
-            "https://github.com/oyesanyf/OshoosiClaw.git/info/refs?service=git-receive-pack",
-            "HTTPS_POST",
-            "POST /oyesanyf/OshoosiClaw.git/git-receive-pack refs/heads/main src/lib.rs (Clean source commit - 0 secrets)",
-        );
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "cargo.exe",
-            "local_workspace_build",
-            "LOCAL_IPC",
-            "fn main() { println!(\"OshoosiClaw workspace build clean\"); }",
-        );
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "python.exe",
-            "https://pypi.org/simple/osoosi-sdk/",
-            "HTTPS_POST",
-            "GET /simple/osoosi-sdk/ (REA verified benign Python developer telemetry — 0 secrets)",
-        );
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "exfil_worker.exe",
-            "https://paste.external.org/upload",
-            "HTTPS_POST",
-            "POST /upload env: AWS_KEY=AKIAIOSFODNN7EXAMPLE user=secops@oshoosi.io card=4532015112830366",
-        );
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "exfil_worker.exe",
-            "https://webhook.attacker.io/exfil",
-            "WEBHOOK_SINK",
-            "POST /exfil token=QUtJQUlPU0ZPRE5ON0VYQU1QTEU= ssn=123-45-6789",
-        );
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "exfil_worker.exe",
-            "https://files.external.io/drop",
-            "HTTPS_POST",
-            "api_key=sk-proj-9876543210abcdef1234567890 gh=ghp_1234567890abcdef1234567890abcdef1234",
-        );
-        // Crown-Jewel Exfiltration Regression Test (exfil_worker.exe -> certs/OshoosiClaw_Signing.pfx):
-        let pfx_reg_payload = format!(
-            "EXFILTRATE CROWN_JEWEL [certs/OshoosiClaw_Signing.pfx]: MERKLE_CHUNK_0=a3b8c4d9e0f1 MERKLE_ROOT={} content_sample=certs/OshoosiClaw_Signing.pfx_proprietary_weights_header_data",
-            pfx_merkle_root_seed
-        );
-        let _ = inspect_and_record_internal(
-            &mut state,
-            "exfil_worker.exe",
-            "https://attacker-c2.net/leak-vault",
-            "HTTPS_POST",
-            &pfx_reg_payload,
-        );
 
         osoosi_core::parking_lot::RwLock::new(state)
     })
@@ -206,6 +189,36 @@ pub fn inspect_and_record_internal(
     destination_sink: &str,
     channel: &str,
     payload_str: &str,
+) -> (
+    osoosi_dp::DlpTier1FastScanVerdict,
+    osoosi_dp::ZkBftQuarantineProof,
+    DlpInspectionEventRecord,
+) {
+    inspect_and_record_with_options(
+        state,
+        actor_process,
+        destination_sink,
+        channel,
+        payload_str,
+        "API",
+        DlpInspectOptions::default(),
+    )
+}
+
+/// Runs the Two-Tier DLP engine, Cedar egress policy, Crown-Jewel matcher, REA actor
+/// adjudication, Presidio/GLiNER ZK scrubber and the RedactX-v3 OpenJEV hybrid over one payload
+/// and records the resulting [`DlpInspectionEventRecord`].
+///
+/// Execution mode is `SIMULATED_TEST` only when the caller explicitly sets
+/// [`DlpInspectOptions::simulated`]; actor trust comes solely from REA adjudication.
+pub fn inspect_and_record_with_options(
+    state: &mut DlpDashboardState,
+    actor_process: &str,
+    destination_sink: &str,
+    channel: &str,
+    payload_str: &str,
+    source: &str,
+    options: DlpInspectOptions,
 ) -> (
     osoosi_dp::DlpTier1FastScanVerdict,
     osoosi_dp::ZkBftQuarantineProof,
@@ -233,48 +246,16 @@ pub fn inspect_and_record_internal(
             .engine
             .evaluate_egress_destination_policy(actor_process, destination_sink, channel);
     let dest_categories: Vec<String> = dest_reason.iter().cloned().collect();
-    let actor_lower = actor_process.to_ascii_lowercase();
-    let sink_lower = destination_sink.to_ascii_lowercase();
-    let is_python_actor = actor_lower == "python.exe"
-        || actor_lower == "python3.exe"
-        || actor_lower == "python"
-        || actor_lower.ends_with("\\python.exe")
-        || actor_lower.ends_with("/python.exe")
-        || actor_lower.ends_with("/python3");
-    let is_simulated_test = !is_python_actor
-        && (actor_lower.contains("exfil_worker")
-            || actor_lower.contains("stealth_exfil")
-            || actor_lower.contains("c2_beacon")
-            || actor_lower.contains("worker_agent")
-            || actor_lower.contains("ehr_export_sync")
-            || actor_lower.contains("sim")
-            || sink_lower.contains("attacker-c2.net")
-            || sink_lower.contains("paste.external.org")
-            || sink_lower.contains("webhook.attacker.io")
-            || sink_lower.contains("files.external.io")
-            || sink_lower.contains("webhook.site")
-            || sink_lower.contains("untrusted-thirdparty.io")
-            || sink_lower.contains("covert-c2.darknet.io")
-            || payload_str.contains("EXFILTRATE CROWN_JEWEL")
-            || payload_str.contains("AKIAIOSFODNN7EXAMPLE"));
 
-    // REA binary provenance & artifact format vetting
-    let rea_actor_trusted = is_python_actor
-        || osoosi_core::rea::is_rea_benign_system_or_dev_process(
-            actor_process,
-            Some(destination_sink),
-        );
+    // REA binary provenance & artifact format vetting (the only source of actor trust).
+    let rea_actor_trusted = osoosi_core::rea::is_rea_benign_system_or_dev_process(
+        actor_process,
+        Some(destination_sink),
+    );
     let (rea_adjudicated_benign, _rea_score, rea_reason) = osoosi_core::rea::global_rea_engine()
         .adjudicate_process_or_binary_alert(Some(actor_process), None, Some(destination_sink));
-    let rea_untrusted_synthetic_actor = !is_python_actor
-        && (actor_lower.contains("exfil_worker")
-            || actor_lower.contains("stealth_exfil")
-            || actor_lower.contains("c2_beacon")
-            || actor_lower.contains("worker_agent")
-            || actor_lower.contains("ehr_export_sync")
-            || is_simulated_test
-            || (!rea_actor_trusted && !rea_adjudicated_benign && dest_forbid));
-    let rea_actor_verdict = if rea_untrusted_synthetic_actor {
+    let rea_untrusted_actor = !rea_actor_trusted && !rea_adjudicated_benign && dest_forbid;
+    let rea_actor_verdict = if rea_untrusted_actor {
         "REA_UNTRUSTED_EXFIL_ACTOR".to_string()
     } else if rea_actor_trusted || rea_adjudicated_benign {
         "REA_VERIFIED_BENIGN_ACTOR".to_string()
@@ -299,7 +280,7 @@ pub fn inspect_and_record_internal(
             tier1.detected_categories.push(cat.clone());
         }
     }
-    if rea_untrusted_synthetic_actor
+    if rea_untrusted_actor
         && !tier1
             .detected_categories
             .iter()
@@ -317,63 +298,62 @@ pub fn inspect_and_record_internal(
         combined_for_scrub.push_str(layer);
     }
 
-    let mut proof =
+    let proof =
         osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(&combined_for_scrub, 5501, 6.42, 4);
     let zk_ok = osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&proof);
 
     // Memory scrub of temporary plaintext view
     osoosi_dp::volatile_scrub_bytes(unsafe { combined_for_scrub.as_bytes_mut() });
 
-    let mut openjev = state.engine.evaluate_openjev_hybrid(
+    // RedactX-v3 OpenJEV hybrid: detection runs at the (high-recall) detection mode; the
+    // (high-precision) containment mode thresholds are evaluated on the same calibrated scores.
+    let detection_mode = osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode);
+    let containment_mode =
+        osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_containment_mode);
+    let openjev = state.engine.evaluate_openjev_hybrid(
         actor_process,
         destination_sink,
         payload_str,
-        Some(&state.policy_mode),
+        Some(&detection_mode.mode_name),
     );
-
-    let rea_voted_benign_veto =
-        rea_actor_verdict == "REA_VERIFIED_BENIGN_ACTOR" && is_python_actor && !cj_export_denied;
-
-    let final_verdict = if rea_voted_benign_veto {
-        tier1.allowed = true;
-        tier1.escalate_to_tier2 = false;
-        tier1.sensitivity_potential_phi = 0.0;
-        tier1.detected_categories.clear();
-        tier1.rationale =
-            "Veto [REA-Voter]: REA verified python.exe benign developer execution (ALLOW / OK)"
-                .to_string();
-        proof.redacted_entity_count = 0;
-        openjev.noul_contains_phi_pii.value = false;
-        openjev.noul_contains_phi_pii.p_true_phi_pii = 0.005;
-        openjev.noul_contains_phi_pii.p_false_clean = 0.995;
-        openjev.choice_routing_action.selection = "PASS_CLEAN".to_string();
-        openjev.score_privacy_risk.expected_value = 1.0;
-        osoosi_dp::DlpVerdict::Allow
-    } else {
-        let voter_quarantine = openjev.choice_routing_action.selection == "QUARANTINE_ENFORCE"
-            || openjev.choice_routing_action.selection == "BLOCK_AND_SCRUB"
-            || rea_untrusted_synthetic_actor;
-        let dlp_detected = !tier1.allowed || proof.redacted_entity_count > 0;
-        let v = osoosi_dp::aggregate_dlp_decision(
-            dest_forbid,
-            cj_export_denied,
-            voter_quarantine,
-            dlp_detected,
-        );
-        tier1.allowed = v == osoosi_dp::DlpVerdict::Allow;
-        if !tier1.allowed {
-            tier1.escalate_to_tier2 = true;
-            if cj_export_denied || dest_forbid {
-                tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
-            } else if voter_quarantine {
-                tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
-            }
-            if let Some(r) = cj_reason.or(dest_reason) {
-                tier1.rationale = r;
-            }
+    let openjev_enforcement_agreed = openjev.openjev_enforcement_agreed();
+    let redactx_confirmed_detection = openjev.redactx_confirmed_at(&detection_mode);
+    let redactx_confirmed_containment = openjev.redactx_confirmed_at(&containment_mode);
+    for cat in &openjev.validator_confirmed_categories {
+        if !tier1.detected_categories.contains(cat) {
+            tier1.detected_categories.push(cat.clone());
         }
-        v
-    };
+    }
+
+    let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
+    let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
+    let final_verdict = osoosi_dp::aggregate_dlp_decision(
+        dest_forbid,
+        cj_export_denied,
+        voter_quarantine,
+        dlp_detected,
+    );
+    tier1.allowed = final_verdict == osoosi_dp::DlpVerdict::Allow;
+    if !tier1.allowed {
+        tier1.escalate_to_tier2 = true;
+        if cj_export_denied || dest_forbid {
+            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
+        } else if voter_quarantine {
+            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
+        }
+        if let Some(r) = cj_reason.or(dest_reason) {
+            tier1.rationale = r;
+        } else if tier1.rationale.starts_with("[DLP-Tier1-Clean]") {
+            tier1.rationale = format!(
+                "[DLP-Hybrid-Intercept]: '{}' -> '{}': categories={:?}, OpenJEV={} (Noul p={:.3})",
+                actor_process,
+                destination_sink,
+                tier1.detected_categories,
+                openjev.choice_routing_action.selection,
+                openjev.noul_contains_phi_pii.p_true_phi_pii
+            );
+        }
+    }
 
     state.total_inspections += 1;
     if !tier1.allowed {
@@ -393,39 +373,24 @@ pub fn inspect_and_record_internal(
     } else {
         proof.pqc_mldsa65_signature_hex.clone()
     };
-    let scrubbed_preview = if rea_voted_benign_veto {
-        if payload_str.len() > 180 {
-            format!("{}...", &payload_str[..180])
-        } else {
-            payload_str.to_string()
-        }
-    } else if proof.scrubbed_payload.len() > 180 {
-        format!("{}...", &proof.scrubbed_payload[..180])
-    } else {
-        proof.scrubbed_payload.clone()
-    };
+    let scrubbed_preview = truncate_chars(&proof.scrubbed_payload, 180);
 
-    let authorization_decision = if tier1.allowed {
-        "ALLOW".to_string()
-    } else {
-        "DENY".to_string()
-    };
+    let authorization_decision = final_verdict.as_authorization_str().to_string();
     let dlp_response = match final_verdict {
         osoosi_dp::DlpVerdict::Allow => "ALLOW".to_string(),
-        osoosi_dp::DlpVerdict::Quarantine => "QUARANTINE".to_string(),
-        osoosi_dp::DlpVerdict::Deny => "QUARANTINE".to_string(),
+        osoosi_dp::DlpVerdict::Quarantine | osoosi_dp::DlpVerdict::Deny => "QUARANTINE".to_string(),
     };
-    let execution_mode = if is_simulated_test {
+    let execution_mode = if options.simulated {
         "SIMULATED_TEST".to_string()
     } else {
         "LIVE_ENFORCEMENT".to_string()
     };
-    let external_transmission = if is_simulated_test {
+    let external_transmission = if options.simulated {
         "None in simulated mode".to_string()
     } else if tier1.allowed {
         "Permitted after Two-Tier DLP & REA check".to_string()
     } else {
-        "Blocked by Two-Tier DLP & Cedar Policy (0 bytes transmitted)".to_string()
+        "Flagged by Two-Tier DLP; containment requires REA + voter consensus".to_string()
     };
 
     let event = DlpInspectionEventRecord {
@@ -446,6 +411,14 @@ pub fn inspect_and_record_internal(
         pqc_signature_prefix: pqc_prefix,
         pii_leakage_bits: proof.pii_leakage_bits,
         zk_verified: zk_ok,
+        redactx_detection_mode: detection_mode.mode_name.clone(),
+        redactx_containment_mode: containment_mode.mode_name.clone(),
+        redactx_validated_categories: openjev.validator_confirmed_categories.clone(),
+        redactx_doc_score: openjev.redactx_doc_score,
+        redactx_max_span_score: openjev.redactx_max_span_score,
+        redactx_confirmed_detection,
+        redactx_confirmed_containment,
+        openjev_enforcement_agreed,
         openjev_decision: Some(openjev),
         authorization_decision,
         dlp_response,
@@ -456,12 +429,112 @@ pub fn inspect_and_record_internal(
         rea_actor_trusted: rea_actor_trusted || rea_adjudicated_benign,
         rea_actor_verdict,
         rea_asset_kind,
+        source: source.to_string(),
+        containment: None,
     };
 
-    state.recent_events.insert(0, event.clone());
-    state.recent_events.truncate(250);
+    if !(options.skip_recording_allowed && event.allowed) {
+        state.recent_events.insert(0, event.clone());
+        state.recent_events.truncate(250);
+    }
 
     (tier1, proof, event)
+}
+
+/// Truncates on a char boundary and appends an ellipsis.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(max_chars).collect();
+        format!("{}...", cut)
+    }
+}
+
+/// Attaches a containment outcome to an already-recorded event (by id).
+pub fn attach_containment_to_event(state: &mut DlpDashboardState, event_id: &str, outcome: Value) {
+    if let Some(ev) = state.recent_events.iter_mut().find(|e| e.id == event_id) {
+        ev.containment = Some(outcome);
+    }
+}
+
+fn dlp_db_path() -> std::path::PathBuf {
+    let p = std::path::PathBuf::from("database").join("osoosi.db");
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    p
+}
+
+fn ensure_dlp_events_table(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS dlp_events (
+            id TEXT PRIMARY KEY,
+            recorded_at TEXT NOT NULL,
+            channel TEXT,
+            source TEXT,
+            actor_process TEXT,
+            destination_sink TEXT,
+            allowed INTEGER NOT NULL,
+            event_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_dlp_events_recorded_at ON dlp_events(recorded_at);",
+    )
+}
+
+/// Persists a DLP event (scrubbed preview + masked identifiers only — never the raw payload) to
+/// `database/osoosi.db`, keeping the newest 5000 rows. Blocking I/O: call off the async executor.
+pub fn persist_dlp_event(event: &DlpInspectionEventRecord) -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open(dlp_db_path())?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+    ensure_dlp_events_table(&conn)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO dlp_events (id, recorded_at, channel, source, actor_process, destination_sink, allowed, event_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            event.id,
+            event.timestamp,
+            event.channel,
+            event.source,
+            event.actor_process,
+            event.destination_sink,
+            event.allowed as i64,
+            serde_json::to_string(event)?,
+        ],
+    )?;
+    conn.execute(
+        "DELETE FROM dlp_events WHERE id NOT IN (SELECT id FROM dlp_events ORDER BY recorded_at DESC LIMIT 5000)",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Loads the newest persisted DLP events so recorded verdicts survive daemon restarts.
+pub fn load_persisted_dlp_events(limit: usize) -> Vec<DlpInspectionEventRecord> {
+    let path = std::path::PathBuf::from("database").join("osoosi.db");
+    if !path.is_file() {
+        return Vec::with_capacity(limit);
+    }
+    let Ok(conn) =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
+        return Vec::with_capacity(limit);
+    };
+    let Ok(mut stmt) =
+        conn.prepare("SELECT event_json FROM dlp_events ORDER BY recorded_at DESC LIMIT ?1")
+    else {
+        return Vec::with_capacity(limit);
+    };
+    let rows = stmt.query_map([limit as i64], |row| row.get::<_, String>(0));
+    let mut out = Vec::with_capacity(limit);
+    if let Ok(rows) = rows {
+        for json in rows.flatten() {
+            if let Ok(ev) = serde_json::from_str::<DlpInspectionEventRecord>(&json) {
+                out.push(ev);
+            }
+        }
+    }
+    out
 }
 
 pub async fn get_dlp_status() -> Json<Value> {
@@ -490,6 +563,7 @@ pub async fn get_dlp_status() -> Json<Value> {
         "REDACTX_ISO7064_MOD11_MRN",
         "REDACTX_NANP_PHONE_FAX",
         "REDACTX_SSA_SSN_VOIDED",
+        "REDACTX_LUHN_PAN_GROUPED",
         "OPENJEV_NOUL_PRIMITIVE",
         "OPENJEV_CHOICE_PRIMITIVE",
         "OPENJEV_SCORE_PRIMITIVE",
@@ -517,6 +591,11 @@ pub async fn get_dlp_status() -> Json<Value> {
         "pqc_signature_scheme": "NIST FIPS 204 ML-DSA-65 + Ed25519",
         "policy_mode": state.policy_mode,
         "min_phi_threshold": state.min_phi_threshold,
+        "redactx_detection_mode": state.redactx_detection_mode,
+        "redactx_containment_mode": state.redactx_containment_mode,
+        "autonomous_har_pipeline": crate::routes::har_dlp::pipeline_status(),
+        "browser_sensor": crate::routes::browser_sensor::sensor_status(),
+        "containment": crate::routes::dlp_containment::containment_status(),
         "stats": {
             "total_inspections": state.total_inspections,
             "blocked_exfiltrations": state.blocked_exfiltrations,
@@ -549,14 +628,25 @@ pub async fn post_dlp_inspect(Json(body): Json<Value>) -> Json<Value> {
         .and_then(|v| v.as_str())
         .unwrap_or("HTTPS_POST");
     let payload = body.get("payload").and_then(|v| v.as_str()).unwrap_or("");
+    // Simulation is an explicit caller decision (e.g. the dashboard what-if inspector), never
+    // inferred from actor or destination names.
+    let simulated = body
+        .get("simulated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let mut state = get_global_dlp_state().write();
-    let (tier1, proof, event) = inspect_and_record_internal(
+    let (tier1, proof, event) = inspect_and_record_with_options(
         &mut state,
         actor_process,
         destination_sink,
         channel,
         payload,
+        "API",
+        DlpInspectOptions {
+            simulated,
+            skip_recording_allowed: false,
+        },
     );
 
     Json(json!({
@@ -625,60 +715,48 @@ pub async fn post_dlp_register_crown_jewel(Json(body): Json<Value>) -> Json<Valu
     }))
 }
 
+/// On-demand HAR sweep. The autonomous HAR→DLP pipeline (`routes::har_dlp`) already inspects
+/// every new HAR entry in the background; this endpoint re-inspects the most recent 30 requests,
+/// including request bodies (`request.postData.text` / `params`) whenever the HAR source carried
+/// them, and falls back to method + URL for URL-only sources (browser history).
 pub async fn post_dlp_scan_har() -> Json<Value> {
-    crate::routes::har::ensure_continuous_har_collector_started();
-
-    let cached = {
-        let cache_lock = crate::routes::har::LIVE_HAR_CACHE
-            .get_or_init(|| osoosi_core::parking_lot::RwLock::new(None));
-        let read = cache_lock.read();
-        read.clone()
-    };
-    let base_payload = cached.unwrap_or_else(crate::routes::har::refresh_live_har_cache_now);
-    let entries = base_payload
-        .get("entries")
-        .and_then(|e| e.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut scanned = 0usize;
-    let mut blocked = 0usize;
-
-    let mut state = get_global_dlp_state().write();
-    for entry in entries.iter().take(30) {
-        let url = entry
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let host = entry
-            .get("host")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
-        let method = entry
-            .get("method")
-            .and_then(|v| v.as_str())
-            .unwrap_or("GET");
-        let source_file = entry
-            .get("source_file")
-            .and_then(|v| v.as_str())
-            .unwrap_or("har_collector");
-        let payload = format!("{} {} HTTP/1.1\r\nHost: {}\r\n", method, url, host);
-
-        let (verdict, _, _) =
-            inspect_and_record_internal(&mut state, source_file, url, "HAR_TRAFFIC", &payload);
-        scanned += 1;
-        if !verdict.allowed {
-            blocked += 1;
+    let result = tokio::task::spawn_blocking(|| {
+        crate::routes::har::ensure_continuous_har_collector_started();
+        let requests = crate::routes::har_dlp::recent_requests_for_sweep(30);
+        let mut scanned = 0usize;
+        let mut blocked = 0usize;
+        let mut with_body = 0usize;
+        let mut state = get_global_dlp_state().write();
+        for req in &requests {
+            if !req.body_text.is_empty() {
+                with_body += 1;
+            }
+            let payload = req.to_inspection_payload();
+            let (verdict, _, _) = inspect_and_record_with_options(
+                &mut state,
+                &req.actor,
+                &req.url,
+                req.channel(),
+                &payload,
+                req.source_kind.as_str(),
+                DlpInspectOptions::default(),
+            );
+            scanned += 1;
+            if !verdict.allowed {
+                blocked += 1;
+            }
         }
-    }
-    let total_inspections = state.total_inspections;
-
-    Json(json!({
-        "ok": true,
-        "scanned_count": scanned,
-        "blocked_count": blocked,
-        "total_inspections": total_inspections
-    }))
+        json!({
+            "ok": true,
+            "scanned_count": scanned,
+            "scanned_with_body": with_body,
+            "blocked_count": blocked,
+            "total_inspections": state.total_inspections
+        })
+    })
+    .await
+    .unwrap_or_else(|e| json!({ "ok": false, "error": format!("scan task failed: {}", e) }));
+    Json(result)
 }
 
 pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
@@ -689,14 +767,24 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     if let Some(threshold) = body.get("min_phi_threshold").and_then(|v| v.as_f64()) {
         state.min_phi_threshold = threshold.clamp(0.0, 1.0);
     }
+    if let Some(mode) = body.get("redactx_detection_mode").and_then(|v| v.as_str()) {
+        state.redactx_detection_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
+    }
+    if let Some(mode) = body
+        .get("redactx_containment_mode")
+        .and_then(|v| v.as_str())
+    {
+        state.redactx_containment_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
+    }
 
     Json(json!({
         "ok": true,
         "policy_mode": state.policy_mode,
-        "min_phi_threshold": state.min_phi_threshold
+        "min_phi_threshold": state.min_phi_threshold,
+        "redactx_detection_mode": state.redactx_detection_mode,
+        "redactx_containment_mode": state.redactx_containment_mode
     }))
 }
-
 /// Mounts all Two-Tier DLP routes and legacy aliases.
 pub fn routes() -> Router<DashboardState> {
     Router::new()
