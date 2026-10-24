@@ -81,6 +81,7 @@ body::before {
 /* Sidebar Styling */
 .sidebar {
     width: var(--sidebar-width);
+    flex-shrink: 0;
     height: 100vh;
     background-color: var(--bg-sidebar);
     border-right: 1px solid var(--glass-border);
@@ -422,6 +423,9 @@ details.nav-category-group[open] > summary.nav-category-summary .cat-chevron {
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    overflow-x: hidden;
+    min-width: 0;
+    min-inline-size: 0;
     background: radial-gradient(circle at top right, #11141b, #07090d);
     padding: 32px;
     scroll-behavior: smooth;
@@ -788,12 +792,25 @@ details.nav-category-group[open] > summary.nav-category-summary .cat-chevron {
 .view-content.active {
     display: flex;
     flex-direction: column;
-    align-items: center;
+    align-items: stretch;
     width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    box-sizing: border-box;
+    animation: fadeIn 0.3s ease-out;
 }
 
 .view-content > * {
-    max-width: 1400px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    box-sizing: border-box;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes viewFadeIn {
@@ -1721,9 +1738,29 @@ details.nav-category-group[open] > summary.nav-category-summary .cat-chevron {
 /* ==========================================
    MITRE ATT&CK Enterprise Matrix Styles
    ========================================== */
+.mitre-matrix-scroll-wrapper {
+    width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    overflow-x: hidden;
+    padding-bottom: 8px;
+}
+
+.mitre-matrix-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    align-items: start;
+}
+
 .mitre-tactic-col {
-    width: 250px;
-    min-width: 250px;
+    width: 100%;
+    min-width: 0;
+    min-inline-size: 0;
+    box-sizing: border-box;
     background: rgba(13, 17, 23, 0.65);
     border: 1px solid var(--glass-border);
     border-radius: 12px;
@@ -1731,12 +1768,72 @@ details.nav-category-group[open] > summary.nav-category-summary .cat-chevron {
     flex-direction: column;
     overflow: hidden;
     backdrop-filter: blur(12px);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.mitre-tactic-col.collapsed .mitre-techniques-list {
+    display: none !important;
+}
+
+.mitre-tactic-col.collapsed .mitre-tactic-header {
+    border-bottom: none;
 }
 
 .mitre-tactic-header {
-    background: rgba(0, 0, 0, 0.4);
     padding: 12px 14px;
+    background: rgba(255, 255, 255, 0.03);
     border-bottom: 1px solid var(--glass-border);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+}
+
+.mitre-tactic-header:hover {
+    background: rgba(88, 166, 255, 0.08);
+}
+
+.mitre-tactic-chevron {
+    font-size: 11px;
+    color: var(--text-muted);
+    transition: transform 0.2s ease;
+    display: inline-block;
+    margin-left: 6px;
+}
+
+.mitre-tactic-col.collapsed .mitre-tactic-chevron {
+    transform: rotate(-90deg);
+}
+
+.mitre-technique-card.collapsed .mitre-tech-body {
+    display: none !important;
+}
+
+.mitre-technique-card.collapsed {
+    padding: 7px 10px;
+}
+
+.mitre-technique-card.collapsed .mitre-tech-header {
+    margin-bottom: 0;
+}
+
+.mitre-tech-collapse-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: var(--text-muted);
+    border-radius: 4px;
+    font-size: 10px;
+    line-height: 1;
+    padding: 2px 5px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+
+.mitre-tech-collapse-btn:hover {
+    background: rgba(88, 166, 255, 0.2);
+    color: #fff;
 }
 
 .mitre-tactic-id {

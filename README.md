@@ -4701,6 +4701,25 @@ For vulnerability reports, see [SECURITY.md](SECURITY.md).
 
 ---
 
+### 🛡️ Magika Multi-Format DLP Exfiltration Prevention & Native Rust WFP/BFE Containment
+
+OshoosiClaw stops sensitive file and web exfiltration end-to-end across both the **Agent DLP Gate** and **EDR Containment Engine** with zero external shell subprocesses (`zero netsh.exe`):
+
+```mermaid
+flowchart LR
+    A["Browser / Agent Upload<br/>(PDF, Word, Excel, XML, CSV, Text)"] --> B["Google Magika ONNX Classifier<br/>(magika::Session::identify_content_sync)"]
+    B --> C["Format-Aware Stream Decompressor<br/>• Office OpenXML ZIP (xl/sharedStrings.xml, word/document.xml)<br/>• PDF FlateDecode (Zlib/Deflate)<br/>• OLE2 BIFF8 / UTF-16LE / XML / Text"]
+    C --> D["Two-Tier DLP Engine (RedactX-v3 + OpenJEV)<br/>• Luhn PAN & US SSN Deterministic Validators<br/>• <ZK_PII> Cryptographic Scrubbing (φ = 0.99)"]
+    D --> E{"3-Voter Consensus<br/>OpenJEV + REA + RedactX"}
+    E -- "Quorum >= 0.85" --> F["Native Rust WFP/BFE Isolation (osoosi_core::wfp)<br/>1. fwpuclnt.dll WfpDynamicSession Transaction<br/>2. Native BFE Registry FirewallRules Policy<br/>3. iphlpapi.dll SetTcpEntry Socket Reset"]
+    D -. "Operator Release FP" .-> G["User-Controlled Allowlist<br/>(database/dlp_released_allowlist.json)"]
+```
+
+- **Google Magika Content Identification**: Streams up to `2 MB` of any candidate upload (supporting files up to `500 MB` in `C:\exfil`, `Downloads`, `Desktop`, `Documents`) through `magika::Session` and extracts plaintext from `.xlsx`/`.docx`/`.pptx` ZIP XML entries (`xl/sharedStrings.xml`, `word/document.xml`), PDF `FlateDecode` streams, OLE2 `.xls`/`.doc`, XML, CSV, JSON, and Markdown.
+- **Native Rust Network Isolation (Zero `netsh`)**: `SystemContainmentPlatform::block_destination` and `unblock_destination` invoke `osoosi_core::wfp::block_destination_native` and `unblock_destination_native`, combining `fwpuclnt.dll` dynamic WFP transactions, direct `winreg` BFE policy rules, and `iphlpapi.dll` (`GetTcpTable` + `SetTcpEntry` `MIB_TCP_STATE_DELETE_TCB`) active TCP socket termination.
+- **User-Controlled Exclusions Only**: Zero hardcoded query-parameter or domain exclusions; operators release false positives and manage exclusions directly from the **Continuous Web Request Stream (`#har-traffic`)** and **Two-Tier DLP (`#dlp`)** views (`POST /api/dlp/release`, `POST /api/dlp/release-all`).
+- **Universal Collapsible MITRE ATT&CK® + ATLAS Matrix**: Every section (`Overview`, `Filters`, `Techniques Page`), every `Tactic` column (`TA0043`–`TA0040`), and every individual `Technique` card (`AML.T0000`, `T1595`, etc.) can be collapsed or expanded individually or globally with zero layout overflow.
+
 ---
 
 <a id="license"></a>

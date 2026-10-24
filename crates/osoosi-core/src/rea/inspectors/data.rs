@@ -1027,3 +1027,412 @@ pub async fn run_external_rea_cli(
         )),
     }
 }
+
+
+/// Extracts plaintext from Office Open XML (`.xlsx`, `.docx`, `.pptx`) or `.zip` containers
+/// by scanning `PK\x03\x04` local file headers and decompressing `xl/sharedStrings.xml`,
+/// `word/document.xml`, `xl/worksheets/*.xml`, or embedded `.csv`/`.txt`/`.json` streams.
+pub fn extract_office_openxml_text(bytes: &[u8], max_out_bytes: usize) -> Option<String> {
+    if bytes.len() < 30 || &bytes[0..4] != b"PK\x03\x04" {
+        return None;
+    }
+    let mut extracted = String::new();
+    let mut pos = 0usize;
+    while pos + 30 <= bytes.len() && extracted.len() < max_out_bytes {
+        if &bytes[pos..pos + 4] != b"PK\x03\x04" {
+            if let Some(next_rel) = bytes[pos + 1..].windows(4).position(|w| w == b"PK\x03\x04") {
+                pos = pos + 1 + next_rel;
+                continue;
+            } else {
+                break;
+            }
+        }
+        let compression = u16::from_le_bytes([bytes[pos + 8], bytes[pos + 9]]);
+        let comp_size = u32::from_le_bytes([
+            bytes[pos + 18],
+            bytes[pos + 19],
+            bytes[pos + 20],
+            bytes[pos + 21],
+        ]) as usize;
+        let name_len = u16::from_le_bytes([bytes[pos + 26], bytes[pos + 27]]) as usize;
+        let extra_len = u16::from_le_bytes([bytes[pos + 28], bytes[pos + 29]]) as usize;
+        let header_end = pos.saturating_add(30).saturating_add(name_len);
+        if header_end > bytes.len() {
+            break;
+        }
+        let entry_name = String::from_utf8_lossy(&bytes[pos + 30..header_end]).to_ascii_lowercase();
+        let data_start = header_end.saturating_add(extra_len);
+        if data_start >= bytes.len() {
+            break;
+        }
+
+        let is_content_entry = entry_name.contains("sharedstrings.xml")
+            || entry_name.contains("word/document.xml")
+            || entry_name.contains("xl/worksheets/sheet")
+            || entry_name.contains("ppt/slides/slide")
+            || entry_name.ends_with(".csv")
+            || entry_name.ends_with(".txt")
+            || entry_name.ends_with(".json")
+            || entry_name.ends_with(".md")
+            || entry_name.ends_with(".hl7");
+
+        if is_content_entry {
+            let remaining_cap = max_out_bytes.saturating_sub(extracted.len()).max(4096);
+            let slice_end = if comp_size > 0 {
+                data_start.saturating_add(comp_size).min(bytes.len())
+            } else {
+                bytes.len()
+            };
+            let compressed_slice = &bytes[data_start..slice_end];
+            let mut raw_entry_bytes = Vec::new();
+            if compression == 8 {
+                let decoder = flate2::read::DeflateDecoder::new(compressed_slice);
+                let _ = decoder
+                    .take((remaining_cap * 3) as u64)
+                    .read_to_end(&mut raw_entry_bytes);
+            } else if compression == 0 {
+                let take_len = compressed_slice.len().min(remaining_cap * 2);
+                raw_entry_bytes.extend_from_slice(&compressed_slice[..take_len]);
+            }
+
+            if !raw_entry_bytes.is_empty() {
+                if entry_name.ends_with(".xml") {
+                    let mut in_tag = false;
+                    let mut last_was_space = false;
+                    for &b in &raw_entry_bytes {
+                        if b == b'<' {
+                            in_tag = true;
+                            if !last_was_space && !extracted.is_empty() {
+                                extracted.push(' ');
+                                last_was_space = true;
+                            }
+                        } else if b == b'>' {
+                            in_tag = false;
+                        } else if !in_tag {
+                            let ch = if b.is_ascii_graphic() {
+                                b as char
+                            } else {
+                                ' '
+                            };
+                            if ch == ' ' {
+                                if !last_was_space {
+                                    extracted.push(' ');
+                                    last_was_space = true;
+                                }
+                            } else {
+                                extracted.push(ch);
+                                last_was_space = false;
+                            }
+                        }
+                        if extracted.len() >= max_out_bytes {
+                            break;
+                        }
+                    }
+                    extracted.push('\n');
+                } else {
+                    let text = String::from_utf8_lossy(&raw_entry_bytes);
+                    let take_chars: String = text.chars().take(remaining_cap).collect();
+                    extracted.push_str(&take_chars);
+                    extracted.push('\n');
+                }
+            }
+        }
+
+        if comp_size > 0 && data_start.saturating_add(comp_size) <= bytes.len() {
+            pos = data_start + comp_size;
+        } else {
+            pos = data_start + 1;
+        }
+    }
+
+    if extracted.trim().is_empty() {
+        None
+    } else {
+        Some(extracted)
+    }
+}
+
+
+/// Uses Google Magika ONNX content-type identification (`magika::Session`) combined with structural
+/// header verification to classify ANY file (PDF, Word `.docx`/`.doc`, Excel `.xlsx`/`.xls`, PowerPoint `.pptx`,
+/// XML, HTML, CSV, JSON, Markdown, RTF, or extensionless files) and extract its inspectable plaintext.
+pub fn identify_and_extract_document_text(
+    bytes: &[u8],
+    file_hint: Option<&str>,
+    max_out_bytes: usize,
+) -> Option<(String, String)> {
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let sample = if bytes.len() > 262_144 {
+        &bytes[..262_144]
+    } else {
+        bytes
+    };
+    let mut magika_label = super::super::identify_with_magika(file_hint.map(Path::new), sample)
+        .label
+        .to_ascii_lowercase();
+
+    // Refine Magika label with structural magic headers when needed
+    if bytes.starts_with(b"PK\x03\x04") {
+        let header_preview = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_ascii_lowercase();
+        if header_preview.contains("xl/") {
+            magika_label = "xlsx".to_string();
+        } else if header_preview.contains("word/") {
+            magika_label = "docx".to_string();
+        } else if header_preview.contains("ppt/") {
+            magika_label = "pptx".to_string();
+        } else if magika_label == "unknown" {
+            magika_label = "zip".to_string();
+        }
+    } else if bytes.starts_with(b"%PDF") {
+        magika_label = "pdf".to_string();
+    } else if bytes.starts_with(b"\xD0\xCF\x11\xE0") {
+        if magika_label == "unknown" {
+            magika_label = "ole2_office".to_string();
+        }
+    } else if bytes.starts_with(b"MZ") || bytes.starts_with(b"\x7fELF") {
+        return None;
+    }
+
+    // Skip pure native binaries or OS installer bundles
+    if matches!(
+        magika_label.as_str(),
+        "pebin" | "elf" | "macho" | "dex" | "wasm" | "apk" | "msi" | "deb" | "rpm" | "iso"
+    ) {
+        return None;
+    }
+    if let Some(hint) = file_hint {
+        let hint_low = hint.to_ascii_lowercase();
+        if hint_low.ends_with(".msixbundle")
+            || hint_low.ends_with(".msi")
+            || hint_low.ends_with(".exe")
+            || hint_low.ends_with(".dll")
+            || hint_low.ends_with(".sys")
+        {
+            return None;
+        }
+    }
+
+    // 1. Office Open XML (.xlsx, .docx, .pptx) or ZIP container
+    if bytes.starts_with(b"PK\x03\x04")
+        || matches!(magika_label.as_str(), "xlsx" | "docx" | "pptx" | "odt" | "ods" | "zip")
+    {
+        if let Some(text) = extract_office_openxml_text(bytes, max_out_bytes) {
+            return Some((magika_label, text));
+        }
+    }
+
+    // 2. PDF Document (%PDF)
+    if bytes.starts_with(b"%PDF") || magika_label == "pdf" {
+        if let Some(text) = extract_pdf_text(bytes, max_out_bytes) {
+            return Some((magika_label, text));
+        }
+    }
+
+    // 3. Legacy OLE2 Office (.doc, .xls, .ppt)
+    if bytes.starts_with(b"\xD0\xCF\x11\xE0")
+        || matches!(magika_label.as_str(), "doc" | "xls" | "ppt" | "ole2_office")
+    {
+        if let Some(text) = extract_ole2_text(bytes, max_out_bytes) {
+            return Some((magika_label, text));
+        }
+    }
+
+    // 4. XML / HTML / SVG
+    if matches!(magika_label.as_str(), "xml" | "html" | "svg")
+        || bytes.starts_with(b"<?xml")
+        || bytes.starts_with(b"<html")
+        || bytes.starts_with(b"<!DOCTYPE")
+    {
+        let mut out = String::with_capacity(bytes.len().min(max_out_bytes));
+        let mut in_tag = false;
+        let mut last_space = false;
+        for &b in bytes.iter().take(max_out_bytes * 2) {
+            if b == b'<' {
+                in_tag = true;
+                if !last_space && !out.is_empty() {
+                    out.push(' ');
+                    last_space = true;
+                }
+            } else if b == b'>' {
+                in_tag = false;
+            } else if !in_tag {
+                let ch = if b.is_ascii_graphic() { b as char } else { ' ' };
+                if ch == ' ' {
+                    if !last_space {
+                        out.push(' ');
+                        last_space = true;
+                    }
+                } else {
+                    out.push(ch);
+                    last_space = false;
+                }
+            }
+            if out.len() >= max_out_bytes {
+                break;
+            }
+        }
+        if !out.trim().is_empty() {
+            return Some((magika_label, out));
+        }
+    }
+
+    // 5. Plaintext, CSV, TSV, JSON, Markdown, RTF, YAML, Log, or extensionless text
+    let take_len = bytes.len().min(max_out_bytes);
+    let slice = &bytes[..take_len];
+    let printable_count = slice
+        .iter()
+        .filter(|&&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+        .count();
+    if slice.is_empty() || printable_count * 10 < slice.len() * 6 {
+        return None;
+    }
+    let text = String::from_utf8_lossy(slice).to_string();
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some((magika_label, text))
+    }
+}
+
+/// Extracts plaintext from PDF files, decoding both literal `(text) Tj`/`TJ` strings and
+/// `FlateDecode` (`zlib` / `deflate`) compressed content streams.
+pub fn extract_pdf_text(bytes: &[u8], max_out_bytes: usize) -> Option<String> {
+    let mut out = String::new();
+    let scan_cap = bytes.len().min(max_out_bytes * 4);
+    let slice = &bytes[..scan_cap];
+
+    // 1. Decompress FlateDecode `stream ... endstream` blocks
+    let mut pos = 0usize;
+    while pos + 16 < slice.len() && out.len() < max_out_bytes {
+        let Some(rel) = slice[pos..].windows(6).position(|w| w == b"stream") else {
+            break;
+        };
+        let mut s_start = pos + rel + 6;
+        if s_start < slice.len() && slice[s_start] == b'\r' {
+            s_start += 1;
+        }
+        if s_start < slice.len() && slice[s_start] == b'\n' {
+            s_start += 1;
+        }
+        let Some(end_rel) = slice[s_start..].windows(9).position(|w| w == b"endstream") else {
+            break;
+        };
+        let stream_bytes = &slice[s_start..s_start + end_rel];
+        let mut decompressed = Vec::new();
+        let _ = ZlibDecoder::new(stream_bytes)
+            .take((max_out_bytes * 2) as u64)
+            .read_to_end(&mut decompressed);
+        if decompressed.is_empty() {
+            let _ = flate2::read::DeflateDecoder::new(stream_bytes)
+                .take((max_out_bytes * 2) as u64)
+                .read_to_end(&mut decompressed);
+        }
+        let target = if !decompressed.is_empty() {
+            &decompressed[..]
+        } else {
+            stream_bytes
+        };
+        extract_pdf_parenthesized_strings(target, &mut out, max_out_bytes);
+        pos = s_start + end_rel + 9;
+    }
+
+    // 2. Also extract any uncompressed parenthesized strings or readable runs in the PDF
+    if out.len() < max_out_bytes / 2 {
+        extract_pdf_parenthesized_strings(slice, &mut out, max_out_bytes);
+    }
+
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn extract_pdf_parenthesized_strings(buf: &[u8], out: &mut String, max_out_bytes: usize) {
+    let mut in_parens = false;
+    let mut escaped = false;
+    for &b in buf {
+        if out.len() >= max_out_bytes {
+            break;
+        }
+        if escaped {
+            if b.is_ascii_graphic() || b == b' ' {
+                out.push(b as char);
+            }
+            escaped = false;
+            continue;
+        }
+        if b == b'\\' {
+            escaped = true;
+            continue;
+        }
+        if b == b'(' {
+            in_parens = true;
+            continue;
+        }
+        if b == b')' {
+            if in_parens {
+                out.push(' ');
+            }
+            in_parens = false;
+            continue;
+        }
+        if in_parens && (b.is_ascii_graphic() || b == b' ') {
+            out.push(b as char);
+        }
+    }
+}
+
+/// Extracts ASCII and UTF-16LE text runs from legacy Office OLE2 Compound Documents (`.doc`, `.xls`, `.ppt`).
+pub fn extract_ole2_text(bytes: &[u8], max_out_bytes: usize) -> Option<String> {
+    let mut out = String::new();
+    let scan_len = bytes.len().min(max_out_bytes * 4);
+    let slice = &bytes[..scan_len];
+
+    // 1. ASCII runs >= 4 chars
+    let mut cur = String::new();
+    for &b in slice {
+        if b.is_ascii_graphic() || b == b' ' {
+            cur.push(b as char);
+        } else {
+            if cur.trim().len() >= 4 {
+                out.push_str(cur.trim());
+                out.push(' ');
+                if out.len() >= max_out_bytes {
+                    break;
+                }
+            }
+            cur.clear();
+        }
+    }
+    if cur.trim().len() >= 4 && out.len() < max_out_bytes {
+        out.push_str(cur.trim());
+        out.push(' ');
+    }
+
+    // 2. UTF-16LE runs >= 4 chars (used in BIFF8 .xls SST and Word .doc Unicode streams)
+    let mut cur16 = String::new();
+    for pair in slice.chunks_exact(2) {
+        if pair[1] == 0 && (pair[0].is_ascii_graphic() || pair[0] == b' ') {
+            cur16.push(pair[0] as char);
+        } else {
+            if cur16.trim().len() >= 4 {
+                out.push_str(cur16.trim());
+                out.push(' ');
+                if out.len() >= max_out_bytes {
+                    break;
+                }
+            }
+            cur16.clear();
+        }
+    }
+
+    if out.trim().is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}

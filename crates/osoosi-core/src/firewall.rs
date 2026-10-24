@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use std::collections::{BTreeSet, HashSet};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::Path;
+#[cfg(target_os = "linux")]
 use std::process::Command;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -972,38 +973,10 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
         if windows_firewall_rule_exists_native(name) {
             return Ok(());
         }
-        let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
-        }
-        let output = cmd
-            .args([
-                "advfirewall",
-                "firewall",
-                "add",
-                "rule",
-                &format!("name={}", name),
-                &format!("dir={}", dir),
-                "action=block",
-                &format!("program={}", image),
-                "enable=yes",
-                "profile=any",
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let err_msg = if stderr.contains("elevation")
-                || stderr.contains("administrator")
-                || stderr.contains("0x80070005")
-            {
-                "Requires Administrator. Run agent as Administrator to apply firewall blocks."
-            } else {
-                stderr.trim()
-            };
-            return Err(anyhow!("netsh add rule failed: {}", err_msg));
+        if !crate::wfp::apply_native_bfe_registry_rule(name, dir, Some(image), &[]) {
+            return Err(anyhow!(
+                "Requires Administrator. Run agent as Administrator to apply native BFE firewall blocks."
+            ));
         }
         Ok(())
     };
@@ -1023,18 +996,17 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
 
 #[cfg(target_os = "windows")]
 fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> {
-    #[allow(unused_imports)]
-    use std::os::windows::process::CommandExt;
-
+    let mut valid_ips = Vec::new();
     let mut valid_targets = Vec::new();
     for t in targets {
         if let Ok(ip) = t.trim().parse::<std::net::IpAddr>() {
             if !ip.is_loopback() && !ip.is_unspecified() {
+                valid_ips.push(ip);
                 valid_targets.push(ip.to_string());
             }
         }
     }
-    if valid_targets.is_empty() {
+    if valid_ips.is_empty() {
         return Err(anyhow!(
             "No valid non-loopback remote IPs provided to Windows firewall block"
         ));
@@ -1043,44 +1015,7 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
     let payload = valid_targets.join(",");
     let name = dns_rule_name(prefix, &payload);
 
-    let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    cmd.creation_flags(0x08000000);
-    cmd.args([
-        "advfirewall",
-        "firewall",
-        "add",
-        "rule",
-        &format!("name={}", name),
-        "dir=out",
-        "action=block",
-        "enable=yes",
-        "profile=any",
-        &format!("remoteip={}", payload),
-    ]);
-    let status = cmd.status()?;
-
-    if !status.success() {
-        let mut retry_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
-        retry_cmd
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        #[cfg(windows)]
-        retry_cmd.creation_flags(0x08000000);
-        let _ = retry_cmd
-            .args([
-                "advfirewall",
-                "firewall",
-                "set",
-                "rule",
-                &format!("name={}", name),
-                "new",
-                "enable=yes",
-            ])
-            .status();
-    }
+    crate::wfp::block_destination_native(&name, None, None, &valid_ips)?;
 
     save_blocked_rule(BlockedTarget::DnsIps {
         prefix: prefix.to_string(),
@@ -1088,31 +1023,20 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
     });
 
     Ok(format!(
-        "Windows firewall DNS destination block applied for {} IP(s)",
+        "Native Windows WFP/BFE DNS destination block applied for {} IP(s)",
         targets.len()
     ))
 }
 
 #[cfg(target_os = "windows")]
 fn unblock_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<()> {
-    #[allow(unused_imports)]
-    use std::os::windows::process::CommandExt;
     let payload = targets.join(",");
     let name = dns_rule_name(prefix, &payload);
-    let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
-    cmd.stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    cmd.creation_flags(0x08000000);
-    let _ = cmd
-        .args([
-            "advfirewall",
-            "firewall",
-            "delete",
-            "rule",
-            &format!("name={}", name),
-        ])
-        .status();
+    let ips: Vec<std::net::IpAddr> = targets
+        .iter()
+        .filter_map(|t| t.trim().parse::<std::net::IpAddr>().ok())
+        .collect();
+    let _ = crate::wfp::unblock_destination_native(&name, None, None, &ips);
     Ok(())
 }
 

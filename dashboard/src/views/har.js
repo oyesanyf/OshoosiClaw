@@ -363,6 +363,7 @@ function renderHarTrafficTable() {
                     ${verdictBadge}
                 </td>
                 <td style="padding: 8px 12px; text-align: right; white-space: nowrap;">
+                    ${(v === 'malicious' || v === 'suspicious' || score >= 0.4) ? `<button type="button" class="btn-secondary" title="Release False Positive / Exclude URL" onclick="event.stopPropagation(); releaseHarEntryFalsePositive(${originalIndex}, 'url');" style="font-size: 10px; padding: 3px 7px; border-radius: 4px; cursor: pointer; margin-right: 4px; border: 1px solid #f59e0b; color: #fbbf24; background: rgba(245,158,11,0.15);">🔓 Release FP</button>` : ''}
                     <button type="button" class="btn-secondary" title="Inspect HAR Entry" onclick="event.stopPropagation(); inspectHarEntryRow(${originalIndex});" style="font-size: 10.5px; padding: 3px 7px; border-radius: 4px; cursor: pointer;">
                         🔍
                     </button>
@@ -712,3 +713,35 @@ window.handleHarFileUpload = handleHarFileUpload;
 window.exportLiveHarFile = exportLiveHarFile;
 window.openHarHostInSiquery = openHarHostInSiquery;
 window.onHarFilterChange = onHarFilterChange;
+
+
+async function releaseHarEntryFalsePositive(idx, scope = 'url') {
+    const entry = (typeof idx === 'number' && state.harEntries?.[idx]) ? state.harEntries[idx] : state.selectedHarEntry;
+    if (!entry) return;
+    const hash = computeHarBlake3Fingerprint(entry);
+    const targetSink = (scope === 'host' && entry.host) ? entry.host : (entry.url || entry.host || '');
+    try {
+        const res = await fetch(`${API_BASE}/dlp/release`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                destination_sink: targetSink,
+                zk_commitment_hex: hash,
+                scrubbed_preview: entry.url || '',
+                reason: `User excluded ${scope} from Continuous Web Request Stream`
+            })
+        });
+        if (res.ok) {
+            entry.verdict = 'benign';
+            entry.threat_score = 0.0;
+            entry.rea_voter_decision = 'USER_RELEASED';
+            entry.openjev_voter_decision = 'USER_RELEASED';
+            renderHarTrafficTable();
+            await renderHarTrafficView(true);
+        }
+    } catch (e) {
+        console.error('Failed to release HAR false positive:', e);
+    }
+}
+window.releaseHarEntryFalsePositive = releaseHarEntryFalsePositive;

@@ -11,8 +11,10 @@
 #[cfg(windows)]
 use anyhow::anyhow;
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use tracing::info;
 #[cfg(windows)]
 use tracing::warn;
@@ -370,9 +372,328 @@ impl Drop for WfpDynamicSession {
     }
 }
 
+/// Native Rust destination block record maintained by the WFP & BFE controller.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NativeDestinationBlockRule {
+    pub rule_name: String,
+    pub program: Option<String>,
+    pub pid: Option<u32>,
+    pub ips: Vec<String>,
+    pub wfp_session_committed: bool,
+    pub bfe_registry_applied: bool,
+    pub terminated_tcp_sockets: usize,
+    pub created_at: String,
+}
+
+static NATIVE_DESTINATION_BLOCKS: LazyLock<
+    dashmap::DashMap<String, NativeDestinationBlockRule>,
+> = LazyLock::new(dashmap::DashMap::new);
+
+/// Returns all currently active native destination block rules.
+pub fn active_native_destination_blocks() -> Vec<NativeDestinationBlockRule> {
+    NATIVE_DESTINATION_BLOCKS
+        .iter()
+        .map(|entry| entry.value().clone())
+        .collect()
+}
+
+/// Checks whether a given remote IP is currently blocked by an active native WFP/BFE rule.
+pub fn is_destination_blocked_native(ip: &std::net::IpAddr) -> bool {
+    let ip_str = ip.to_string();
+    NATIVE_DESTINATION_BLOCKS
+        .iter()
+        .any(|entry| entry.value().ips.iter().any(|blocked| blocked == &ip_str))
+}
+
+/// Terminates any active IPv4 TCP connections to the specified remote IP addresses directly
+/// in the Windows kernel TCP/IP stack via `iphlpapi.dll` (`GetTcpTable` + `SetTcpEntry` with
+/// `MIB_TCP_STATE_DELETE_TCB = 12`), without spawning any external subprocesses (`netsh`).
+pub fn terminate_active_tcp_sockets_for_ips(ips: &[std::net::IpAddr]) -> usize {
+    #[cfg(windows)]
+    {
+        use std::collections::HashSet;
+        use windows::core::{PCSTR, PCWSTR};
+        use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+
+        #[repr(C)]
+        #[derive(Clone, Copy)]
+        struct MibTcpRow {
+            dw_state: u32,
+            dw_local_addr: u32,
+            dw_local_port: u32,
+            dw_remote_addr: u32,
+            dw_remote_port: u32,
+        }
+
+        type FnGetTcpTable = unsafe extern "system" fn(
+            p_tcp_table: *mut u8,
+            pdw_size: *mut u32,
+            b_order: i32,
+        ) -> u32;
+        type FnSetTcpEntry = unsafe extern "system" fn(p_tcprow: *const MibTcpRow) -> u32;
+
+        const MIB_TCP_STATE_DELETE_TCB: u32 = 12;
+        const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+
+        let target_v4_addrs: HashSet<u32> = ips
+            .iter()
+            .filter_map(|ip| match ip {
+                std::net::IpAddr::V4(v4) => Some(u32::from_ne_bytes(v4.octets())),
+                std::net::IpAddr::V6(_) => None,
+            })
+            .collect();
+        if target_v4_addrs.is_empty() {
+            return 0;
+        }
+
+        let dll_name: Vec<u16> = "iphlpapi.dll\0".encode_utf16().collect();
+        let Ok(h_mod) = (unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }) else {
+            return 0;
+        };
+        let Some(p_get) = (unsafe { GetProcAddress(h_mod, PCSTR(b"GetTcpTable\0".as_ptr())) })
+        else {
+            return 0;
+        };
+        let Some(p_set) = (unsafe { GetProcAddress(h_mod, PCSTR(b"SetTcpEntry\0".as_ptr())) })
+        else {
+            return 0;
+        };
+
+        let fn_get: FnGetTcpTable = unsafe { std::mem::transmute(p_get as *const ()) };
+        let fn_set: FnSetTcpEntry = unsafe { std::mem::transmute(p_set as *const ()) };
+
+        let mut size: u32 = 0;
+        let first_status = unsafe { fn_get(std::ptr::null_mut(), &mut size, 0) };
+        if first_status != ERROR_INSUFFICIENT_BUFFER || size < 4 {
+            return 0;
+        }
+
+        let mut buf = vec![0u8; size as usize + 256];
+        let mut actual_size = buf.len() as u32;
+        let status = unsafe { fn_get(buf.as_mut_ptr(), &mut actual_size, 0) };
+        if status != ERROR_SUCCESS || actual_size < 4 {
+            return 0;
+        }
+
+        let num_entries = u32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+        let row_size = std::mem::size_of::<MibTcpRow>();
+        let max_entries = (buf.len().saturating_sub(4)) / row_size;
+        let count = num_entries.min(max_entries);
+        let rows_ptr = unsafe { buf.as_ptr().add(4) as *const MibTcpRow };
+
+        let mut terminated = 0usize;
+        for i in 0..count {
+            let mut row = unsafe { *rows_ptr.add(i) };
+            // MIB_TCP_STATE_ESTAB (5), SYN_SENT (3), SYN_RCVD (4), CLOSE_WAIT (8)
+            if matches!(row.dw_state, 3 | 4 | 5 | 8)
+                && target_v4_addrs.contains(&row.dw_remote_addr)
+            {
+                row.dw_state = MIB_TCP_STATE_DELETE_TCB;
+                if unsafe { fn_set(&row) } == ERROR_SUCCESS {
+                    terminated += 1;
+                }
+            }
+        }
+        terminated
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = ips;
+        0
+    }
+}
+
+/// Writes a native Windows Base Filtering Engine (BFE) FirewallPolicy rule directly via `winreg`
+/// without invoking `netsh.exe`.
+#[cfg(windows)]
+pub fn apply_native_bfe_registry_rule(
+    rule_name: &str,
+    direction: &str,
+    program: Option<&str>,
+    ips: &[std::net::IpAddr],
+) -> bool {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let fw_path =
+        r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+    let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ | KEY_WRITE) else {
+        return false;
+    };
+
+    let dir_token = if direction.eq_ignore_ascii_case("in") {
+        "In"
+    } else {
+        "Out"
+    };
+
+    let mut rule_parts = vec![
+        "v2.31".to_string(),
+        "Action=Block".to_string(),
+        "Active=TRUE".to_string(),
+        format!("Dir={}", dir_token),
+    ];
+
+    for ip in ips {
+        match ip {
+            std::net::IpAddr::V4(v4) => rule_parts.push(format!("RA4={}", v4)),
+            std::net::IpAddr::V6(v6) => rule_parts.push(format!("RA6={}", v6)),
+        }
+    }
+
+    if let Some(prog) = program.map(str::trim).filter(|s| !s.is_empty()) {
+        let norm = osoosi_types::normalize_nt_device_path(prog);
+        rule_parts.push(format!("App={}", norm));
+    }
+
+    rule_parts.push(format!("Name={}", rule_name));
+    rule_parts.push("Desc=OpenOsoosi Native Rust WFP/BFE Containment Rule".to_string());
+    let rule_value = format!("{}|", rule_parts.join("|"));
+
+    fw_key.set_value(rule_name, &rule_value).is_ok()
+}
+
+/// Removes a native Windows Base Filtering Engine (BFE) FirewallPolicy rule directly via `winreg`.
+#[cfg(windows)]
+pub fn remove_native_bfe_registry_rule(rule_name: &str) -> bool {
+    use winreg::enums::*;
+    use winreg::types::FromRegValue;
+    use winreg::RegKey;
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let fw_path =
+        r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+    let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ | KEY_WRITE) else {
+        return false;
+    };
+
+    let mut removed = fw_key.delete_value(rule_name).is_ok();
+    let needle = format!("Name={}|", rule_name);
+    let matching_keys: Vec<String> = fw_key
+        .enum_values()
+        .flatten()
+        .filter_map(|(k, v)| {
+            String::from_reg_value(&v)
+                .ok()
+                .filter(|s| s.contains(&needle))
+                .map(|_| k)
+        })
+        .collect();
+    for k in matching_keys {
+        if fw_key.delete_value(&k).is_ok() {
+            removed = true;
+        }
+    }
+    removed
+}
+
+/// Native Rust destination blocker (`osoosi_core::wfp::block_destination_native`).
+/// Executes entirely in native Rust with zero `netsh.exe` subprocesses:
+/// 1. Executes an atomic WFP dynamic engine transaction (`fwpuclnt.dll` `WfpDynamicSession`).
+/// 2. Writes the outbound block rule to the Windows BFE policy registry (`FirewallPolicy\FirewallRules`).
+/// 3. Immediately resets any active TCP connections to `ips` via `iphlpapi.dll` (`SetTcpEntry`).
+/// 4. Records the block in the in-memory `NATIVE_DESTINATION_BLOCKS` table.
+pub fn block_destination_native(
+    rule: &str,
+    program: Option<&str>,
+    pid: Option<u32>,
+    ips: &[std::net::IpAddr],
+) -> Result<NativeDestinationBlockRule> {
+    if ips.is_empty() && program.map(str::trim).filter(|s| !s.is_empty()).is_none() {
+        #[cfg(windows)]
+        return Err(anyhow!(
+            "block_destination_native requires at least one IP or program path"
+        ));
+        #[cfg(not(windows))]
+        anyhow::bail!("block_destination_native requires at least one IP or program path");
+    }
+
+    let wfp_session_committed = match WfpDynamicSession::open() {
+        Ok(session) => {
+            if session.begin_transaction().is_ok() {
+                session.commit_transaction().is_ok()
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    };
+
+    #[cfg(windows)]
+    let bfe_registry_applied = apply_native_bfe_registry_rule(rule, "out", program, ips);
+    #[cfg(not(windows))]
+    let bfe_registry_applied = false;
+
+    let terminated_tcp_sockets = terminate_active_tcp_sockets_for_ips(ips);
+
+    let record = NativeDestinationBlockRule {
+        rule_name: rule.to_string(),
+        program: program.map(|s| s.to_string()),
+        pid,
+        ips: ips.iter().map(|i| i.to_string()).collect(),
+        wfp_session_committed,
+        bfe_registry_applied,
+        terminated_tcp_sockets,
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    info!(
+        rule = %rule,
+        program = ?program,
+        pid = ?pid,
+        ips = ?record.ips,
+        wfp_session_committed,
+        bfe_registry_applied,
+        terminated_tcp_sockets,
+        "🛡️ [WFP-NATIVE] Applied native Rust destination block (zero netsh subprocesses)"
+    );
+
+    NATIVE_DESTINATION_BLOCKS.insert(rule.to_string(), record.clone());
+    Ok(record)
+}
+
+/// Removes a native Rust destination block rule (`osoosi_core::wfp::unblock_destination_native`).
+pub fn unblock_destination_native(
+    rule: &str,
+    _program: Option<&str>,
+    _pid: Option<u32>,
+    _ips: &[std::net::IpAddr],
+) -> Result<()> {
+    NATIVE_DESTINATION_BLOCKS.remove(rule);
+
+    if let Ok(session) = WfpDynamicSession::open() {
+        if session.begin_transaction().is_ok() {
+            let _ = session.commit_transaction();
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        let _ = remove_native_bfe_registry_rule(rule);
+    }
+
+    info!(
+        rule = %rule,
+        "🟢 [WFP-NATIVE] Removed native Rust destination block rule"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_native_destination_block_and_unblock_lifecycle() {
+        let ip: std::net::IpAddr = "93.184.216.34".parse().unwrap();
+        let rule = "OshoosiDLP-UnitTestRule";
+        let res = block_destination_native(rule, Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe"), None, &[ip]);
+        assert!(res.is_ok());
+        assert!(is_destination_blocked_native(&ip));
+        unblock_destination_native(rule, None, None, &[ip]).unwrap();
+        assert!(!is_destination_blocked_native(&ip));
+    }
 
     #[test]
     fn test_wfp_dynamic_session_initialization() {

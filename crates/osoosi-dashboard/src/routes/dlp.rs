@@ -969,8 +969,9 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
     }
     if let Some(ref finfo) = resolved_file_info {
         payload_builder.push_str(&format!(
-            "--- UPLOADED FILE: {} (size: {} bytes) ---\n",
+            "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n",
             finfo.resolved_path.display(),
+            finfo.magika_label,
             finfo.byte_size
         ));
     }
@@ -1117,19 +1118,39 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
 
     state.blocked_exfiltrations = state.blocked_exfiltrations.saturating_sub(decrement_count);
 
+    // Also record direct user exclusion from HAR or DLP if specified even when not in recent_events
+    if newly_released_entries.is_empty()
+        && (req.destination_sink.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+            || req.zk_commitment_hex.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
+            || req.scrubbed_preview.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+    {
+        newly_released_entries.push(DlpReleasedAllowlistEntry {
+            destination_sink: req.destination_sink.clone().unwrap_or_default(),
+            zk_commitment_hex: req.zk_commitment_hex.clone().unwrap_or_default(),
+            scrubbed_preview: req.scrubbed_preview.clone().unwrap_or_default(),
+            released_at: chrono::Utc::now().to_rfc3339(),
+        });
+        released_count = released_count.max(1);
+    }
+
     // Persist to database/dlp_released_allowlist.json
     if !newly_released_entries.is_empty() {
         let mut allowlist = load_released_allowlist();
         for entry in newly_released_entries {
             if !allowlist.iter().any(|e| {
                 (!e.zk_commitment_hex.is_empty() && e.zk_commitment_hex == entry.zk_commitment_hex)
-                    || (e.destination_sink == entry.destination_sink && e.scrubbed_preview == entry.scrubbed_preview)
+                    || (!e.destination_sink.is_empty() && e.destination_sink == entry.destination_sink && e.scrubbed_preview == entry.scrubbed_preview)
             }) {
                 allowlist.push(entry);
             }
         }
         let _ = save_released_allowlist(&allowlist);
     }
+
+    // Trigger background refresh of LIVE_HAR_CACHE so released URLs/hosts update in Continuous Web Request Stream
+    std::thread::spawn(|| {
+        let _ = crate::routes::har::refresh_live_har_cache_now();
+    });
 
     // Update SQLite dlp_events table so release persists across restarts
     let db_path = dlp_db_path();
