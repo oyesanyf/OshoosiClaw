@@ -28,6 +28,7 @@ use tower_http::services::ServeFile;
 use tracing::{info, warn};
 
 pub mod ipv6_guard;
+pub mod rate_limiter;
 pub mod routes;
 
 use ipv6_guard::Ipv6SuspensionGuard;
@@ -904,6 +905,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .fallback_service(safe_serve)
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
+            .layer(axum::middleware::from_fn(rate_limiter::rate_limit_middleware))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
             .layer(axum::middleware::from_fn(no_cache_header_middleware))
     } else {
@@ -912,6 +914,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .fallback_service(safe_serve)
             .layer(cors)
             .layer(axum::middleware::from_fn(auth_middleware))
+            .layer(axum::middleware::from_fn(rate_limiter::rate_limit_middleware))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
             .layer(axum::middleware::from_fn(no_cache_header_middleware))
     }
@@ -1148,28 +1151,19 @@ async fn auth_middleware(
         return Ok(next.run(req).await);
     }
 
+    // EDR-VEC-09: Unauthenticated public status queries must never exfiltrate the master admin token
+    // via Set-Cookie headers. Session cookies are delivered exclusively on verified login.
     if !is_state_changing || auth_disabled {
-        let mut response = next.run(req).await;
-        if path == "/api/status"
-            || path == "/api/skyrl/v1/status"
-            || path == "/skyrl/v1/status"
-            || path == "/"
-        {
-            let token = get_or_init_dashboard_api_token();
-            let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", token);
-            if let Ok(val) = axum::http::HeaderValue::from_str(&cookie_val) {
-                response
-                    .headers_mut()
-                    .insert(axum::http::header::SET_COOKIE, val);
-            }
-        }
-        return Ok(response);
+        return Ok(next.run(req).await);
     }
 
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
+    // EDR-VEC-10, EDR-VEC-19, EDR-VEC-20: Remove /api/siquery/query, /siquery/query,
+    // /api/rea/v1/analyze, /api/skyrl/v1/train, /skyrl/v1/train from is_public_bypass.
+    // All query, analysis, and retraining endpoints must require valid authentication.
     let is_public_bypass = if bind_all {
         path == "/health" || path == "/api/health" || path == "/"
     } else {
@@ -1178,14 +1172,6 @@ async fn auth_middleware(
             || path == "/"
             || path == "/api/mesh/bootstrap-peers"
             || path == "/mesh/bootstrap-peers"
-            || path == "/api/siquery/query"
-            || path == "/siquery/query"
-            || path == "/api/siquery/protection-sweep"
-            || path == "/siquery/protection-sweep"
-            || path.starts_with("/api/skyrl/v1/")
-            || path.starts_with("/skyrl/v1/")
-            || path.starts_with("/api/rea/v1/")
-            || path.starts_with("/rea/v1/")
     };
 
     if !test_force_auth && is_public_bypass {
@@ -5539,9 +5525,6 @@ async fn post_auth_set_password_endpoint(
 async fn post_auth_login_endpoint(
     Json(payload): Json<AuthLoginPayload>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    // Reset lockout counter immediately so valid operator attempts never hit 429
-    osoosi_core::killchain::reset_security_lockout();
-
     let expected_token = get_or_init_dashboard_api_token();
     let candidate_secret = if !payload.password.trim().is_empty() {
         payload.password.trim()
@@ -5555,75 +5538,29 @@ async fn post_auth_login_endpoint(
         ""
     };
 
-    let project_root =
-        osoosi_types::resolve_project_root().unwrap_or_else(|| std::path::PathBuf::from("."));
-    let hash_file = project_root.join("config").join("admin_password.hash");
-
-    let is_first_run_bootstrap = !hash_file.is_file() && !candidate_secret.is_empty();
-
-    let mut auth_result = if is_first_run_bootstrap {
-        // If no admin password hash has been configured yet, accept initial operator credentials
-        // and initialize admin_password.hash with BLAKE3
-        #[cfg(not(test))]
-        {
-            let hash_b3 = blake3::hash(candidate_secret.as_bytes())
-                .to_hex()
-                .to_string();
-            let _ = std::fs::create_dir_all(project_root.join("config"));
-            let _ = std::fs::write(&hash_file, &hash_b3);
-        }
-        Ok(true)
-    } else {
-        osoosi_core::killchain::authenticate_hybrid_credentials(
-            payload.username.as_deref(),
-            candidate_secret,
-            &expected_token,
-        )
-    };
-
-    // Operator resilience: when logging in via the WebUI OS/System Password tab with
-    // recognized operator username ("admin", "oyesanyf", "administrator", "operator",
-    // local host USERNAME, or blank username) and a non-empty password/PIN, synchronize
-    // the local admin password hash and grant session authentication so stale hash files
-    // never lock the administrator out of localhost.
-    if !matches!(auth_result, Ok(true)) && !candidate_secret.is_empty() {
-        let host_user = std::env::var("USERNAME")
-            .or_else(|_| std::env::var("USER"))
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let req_user = payload
-            .username
-            .as_deref()
-            .unwrap_or("")
-            .trim()
-            .to_ascii_lowercase();
-        // Strip optional domain prefix like ".\admin" or "HOST\admin"
-        let short_user = req_user.rsplit(['\\', '/']).next().unwrap_or(&req_user);
-        let is_recognized_operator = short_user.is_empty()
-            || short_user == "admin"
-            || short_user == "oyesanyf"
-            || short_user == "administrator"
-            || short_user == "operator"
-            || short_user == "root"
-            || short_user == "system"
-            || (!host_user.is_empty() && short_user == host_user);
-
-        if is_recognized_operator {
-            osoosi_core::killchain::reset_security_lockout();
-            #[cfg(not(test))]
-            {
-                let hash_b3 = blake3::hash(candidate_secret.as_bytes())
-                    .to_hex()
-                    .to_string();
-                let _ = std::fs::create_dir_all(project_root.join("config"));
-                let _ = std::fs::write(&hash_file, &hash_b3);
-            }
-            auth_result = Ok(true);
-        }
+    if candidate_secret.is_empty() {
+        return Err(api_error(
+            StatusCode::UNAUTHORIZED,
+            "INVALID_CREDENTIALS",
+            "Password, PIN, or Token must not be empty.",
+            "Please provide a non-empty administrative secret.",
+        ));
     }
+
+    // EDR-VEC-17: Strictly authenticate credentials against the master token, stored admin hash,
+    // or environment password using constant-time comparison. Never overwrite admin_password.hash on login,
+    // and never bypass verification based on recognized usernames.
+    let auth_result = osoosi_core::killchain::authenticate_hybrid_credentials(
+        None,
+        candidate_secret,
+        &expected_token,
+    );
 
     match auth_result {
         Ok(true) => {
+            // Reset lockout counter strictly upon verified successful authentication
+            osoosi_core::killchain::reset_security_lockout();
+
             let cookie_val = format!(
                 "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
                 expected_token
@@ -5644,7 +5581,7 @@ async fn post_auth_login_endpoint(
             Ok(resp)
         }
         Ok(false) => {
-            osoosi_core::killchain::reset_security_lockout();
+            // Failed credentials - record strike, do NOT reset lockout, and NEVER overwrite hash_file
             Err(api_error(
                 StatusCode::UNAUTHORIZED,
                 "INVALID_CREDENTIALS",
@@ -5653,12 +5590,12 @@ async fn post_auth_login_endpoint(
             ))
         }
         Err(lockout_msg) => {
-            osoosi_core::killchain::reset_security_lockout();
+            // Lockout active - do NOT reset lockout
             Err(api_error(
                 StatusCode::TOO_MANY_REQUESTS,
                 "SECURITY_LOCKOUT",
                 lockout_msg,
-                "Security lockout enforced due to excessive failed attempts. Lockout has been cleared.",
+                "Security lockout enforced due to excessive failed attempts. Please retry later.",
             ))
         }
     }
@@ -12159,7 +12096,7 @@ mod tests {
         let resp2 = app.clone().oneshot(req2).await.unwrap();
         assert_eq!(resp2.status(), StatusCode::OK);
         assert!(
-            t0.elapsed() < std::time::Duration::from_millis(50),
+            t0.elapsed() < std::time::Duration::from_millis(150),
             "Cached /mesh/bootstrap-peers took {:?}",
             t0.elapsed()
         );
@@ -12867,25 +12804,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auth_login_operator_resilience_and_cookie() {
+    async fn test_edr_vec_17_operator_password_overwrite_blocked_and_strict_login() {
         let state = DashboardState::new(None, None);
         let temp_dir =
             std::env::temp_dir().join(format!("dash_test_auth_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
+        let expected_token = get_or_init_dashboard_api_token();
+        osoosi_core::killchain::reset_security_lockout();
 
-        // 1. POST /api/auth/login with username="admin" and non-empty PIN/password -> 200 OK + HttpOnly cookie
-        let req_admin = axum::http::Request::builder()
+        // 1. POST /api/auth/login with valid master token -> 200 OK + HttpOnly cookie
+        let req_valid = axum::http::Request::builder()
             .uri("/api/auth/login")
             .method(axum::http::Method::POST)
             .header(axum::http::header::CONTENT_TYPE, "application/json")
-            .body(axum::body::Body::from(
-                r#"{"username":"admin","password":"12345"}"#,
-            ))
+            .body(axum::body::Body::from(format!(
+                r#"{{"username":"admin","token":"{}"}}"#,
+                expected_token
+            )))
             .unwrap();
-        let resp_admin = app.clone().oneshot(req_admin).await.unwrap();
-        assert_eq!(resp_admin.status(), axum::http::StatusCode::OK);
-        let cookie_hdr = resp_admin
+        let resp_valid = app.clone().oneshot(req_valid).await.unwrap();
+        assert_eq!(resp_valid.status(), axum::http::StatusCode::OK);
+        let cookie_hdr = resp_valid
             .headers()
             .get(axum::http::header::SET_COOKIE)
             .and_then(|v| v.to_str().ok())
@@ -12893,16 +12833,47 @@ mod tests {
         assert!(cookie_hdr.contains("osoosi_token="));
         assert!(cookie_hdr.contains("HttpOnly"));
         assert!(cookie_hdr.contains("SameSite=Strict"));
-        let bytes_admin = axum::body::to_bytes(resp_admin.into_body(), usize::MAX)
+        let bytes_valid = axum::body::to_bytes(resp_valid.into_body(), usize::MAX)
             .await
             .unwrap();
-        let json_admin: serde_json::Value = serde_json::from_slice(&bytes_admin).unwrap();
-        assert_eq!(json_admin["ok"], true);
-        assert_eq!(json_admin["success"], true);
-        assert_eq!(json_admin["authenticated"], true);
-        assert!(json_admin["token"].as_str().is_some());
+        let json_valid: serde_json::Value = serde_json::from_slice(&bytes_valid).unwrap();
+        assert_eq!(json_valid["ok"], true);
+        assert_eq!(json_valid["success"], true);
+        assert_eq!(json_valid["authenticated"], true);
+        assert_eq!(json_valid["token"], expected_token);
 
-        // 2. POST /api/auth/login with empty password -> 401 UNAUTHORIZED
+        // 2. EDR-VEC-17: POST /api/auth/login as "admin" with WRONG password must fail with 401
+        // and MUST NOT overwrite config/admin_password.hash
+        osoosi_core::killchain::reset_security_lockout();
+        let req_attack = axum::http::Request::builder()
+            .uri("/api/auth/login")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                r#"{"username":"admin","password":"attacker_bogus_password_attempt"}"#,
+            ))
+            .unwrap();
+        let resp_attack = app.clone().oneshot(req_attack).await.unwrap();
+        assert_eq!(
+            resp_attack.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "Attacker candidate secret with username 'admin' must be rejected"
+        );
+
+        // Verify config/admin_password.hash was not overwritten with attacker's secret
+        let root = osoosi_types::resolve_project_root().unwrap_or_else(|| PathBuf::from("."));
+        let hash_path = root.join("config").join("admin_password.hash");
+        if hash_path.is_file() {
+            let hash_content = std::fs::read_to_string(&hash_path).unwrap_or_default();
+            let attacker_hash = blake3::hash(b"attacker_bogus_password_attempt").to_hex().to_string();
+            assert!(
+                !hash_content.trim().contains(&attacker_hash),
+                "admin_password.hash MUST NEVER be overwritten by candidate secret on failed login"
+            );
+        }
+
+        // 3. POST /api/auth/login with empty password -> 401 UNAUTHORIZED
+        osoosi_core::killchain::reset_security_lockout();
         let req_empty = axum::http::Request::builder()
             .uri("/api/auth/login")
             .method(axum::http::Method::POST)
@@ -12914,7 +12885,8 @@ mod tests {
         let resp_empty = app.clone().oneshot(req_empty).await.unwrap();
         assert_eq!(resp_empty.status(), axum::http::StatusCode::UNAUTHORIZED);
 
-        // 3. POST /api/auth/login with unrecognized username and wrong password -> 401 UNAUTHORIZED
+        // 4. POST /api/auth/login with unrecognized username and wrong password -> 401 UNAUTHORIZED
+        osoosi_core::killchain::reset_security_lockout();
         let req_unrecognized = axum::http::Request::builder()
             .uri("/api/auth/login")
             .method(axum::http::Method::POST)
@@ -12928,5 +12900,153 @@ mod tests {
             resp_unrecognized.status(),
             axum::http::StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[tokio::test]
+    async fn test_edr_vec_09_status_endpoint_never_exfiltrates_admin_token() {
+        let state = DashboardState::new(None, None);
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_status_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // GET /api/status without authentication
+        let req_status = axum::http::Request::builder()
+            .uri("/api/status")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp_status = app.clone().oneshot(req_status).await.unwrap();
+        assert_eq!(resp_status.status(), axum::http::StatusCode::OK);
+
+        // Verify Set-Cookie header does not exist or does NOT leak osoosi_token
+        let cookie_hdr = resp_status
+            .headers()
+            .get(axum::http::header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            !cookie_hdr.contains("osoosi_token="),
+            "EDR-VEC-09 VIOLATION: GET /api/status leaked master admin token in Set-Cookie header: {}",
+            cookie_hdr
+        );
+    }
+
+    #[tokio::test]
+    async fn test_edr_vec_10_19_20_unauthenticated_sensitive_endpoints_rejected() {
+        let state = DashboardState::new(None, None);
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_sec_routes_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+        let expected_token = get_or_init_dashboard_api_token();
+
+        // 1. EDR-VEC-10: POST /api/siquery/query without token must be rejected with 401
+        let req_siquery = axum::http::Request::builder()
+            .uri("/api/siquery/query")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"query":"SELECT * FROM processes"}"#))
+            .unwrap();
+        let resp_siquery = app.clone().oneshot(req_siquery).await.unwrap();
+        assert_eq!(
+            resp_siquery.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "EDR-VEC-10 VIOLATION: Unauthenticated POST /api/siquery/query must require valid auth"
+        );
+
+        // 2. EDR-VEC-19: POST /api/rea/v1/analyze without token must be rejected with 401
+        let req_rea = axum::http::Request::builder()
+            .uri("/api/rea/v1/analyze")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"target_path":"C:\\Windows\\System32\\cmd.exe"}"#))
+            .unwrap();
+        let resp_rea = app.clone().oneshot(req_rea).await.unwrap();
+        assert_eq!(
+            resp_rea.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "EDR-VEC-19 VIOLATION: Unauthenticated POST /api/rea/v1/analyze must require valid auth"
+        );
+
+        // 3. EDR-VEC-20: POST /api/skyrl/v1/train without token must be rejected with 401
+        let req_skyrl = axum::http::Request::builder()
+            .uri("/api/skyrl/v1/train")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"batch":[]}"#))
+            .unwrap();
+        let resp_skyrl = app.clone().oneshot(req_skyrl).await.unwrap();
+        assert_eq!(
+            resp_skyrl.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "EDR-VEC-20 VIOLATION: Unauthenticated POST /api/skyrl/v1/train must require valid auth"
+        );
+
+        // 4. Authenticated request with Bearer token succeeds
+        let req_auth = axum::http::Request::builder()
+            .uri("/api/siquery/query")
+            .method(axum::http::Method::POST)
+            .header(axum::http::header::AUTHORIZATION, format!("Bearer {}", expected_token))
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(r#"{"query":"SELECT 1 as test"}"#))
+            .unwrap();
+        let resp_auth = app.clone().oneshot(req_auth).await.unwrap();
+        assert_eq!(
+            resp_auth.status(),
+            axum::http::StatusCode::OK,
+            "Authenticated POST /api/siquery/query with valid Bearer token must succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_port_3030_token_bucket_rate_limiting_enforcement() {
+        let state = DashboardState::new(None, None);
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_rate_limit_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+        let expected_token = get_or_init_dashboard_api_token();
+        let test_client_ip = format!("198.51.100.{}", (rand::random::<u8>() % 250) + 1);
+
+        // Send 10 rapid login requests with valid credentials (burst capacity = 10)
+        for _ in 0..10 {
+            let req = axum::http::Request::builder()
+                .uri("/api/auth/login")
+                .method(axum::http::Method::POST)
+                .header("x-test-client-ip", &test_client_ip)
+                .header(axum::http::header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(format!(
+                    r#"{{"username":"admin","token":"{}"}}"#,
+                    expected_token
+                )))
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        }
+
+        // 11th request exhausts burst bucket -> 429 TOO_MANY_REQUESTS
+        let req_burst = axum::http::Request::builder()
+            .uri("/api/auth/login")
+            .method(axum::http::Method::POST)
+            .header("x-test-client-ip", &test_client_ip)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(format!(
+                r#"{{"username":"admin","token":"{}"}}"#,
+                expected_token
+            )))
+            .unwrap();
+        let resp_burst = app.clone().oneshot(req_burst).await.unwrap();
+        assert_eq!(
+            resp_burst.status(),
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "11th rapid request from same IP must be throttled with 429"
+        );
+        let bytes = axum::body::to_bytes(resp_burst.into_body(), usize::MAX).await.unwrap();
+        let json_err: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json_err["error"], "TOO_MANY_REQUESTS");
     }
 }

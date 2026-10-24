@@ -80,9 +80,9 @@ pub fn extract_sentence_pid(event: &LogEvent) -> Option<u64> {
 
 /// Helper to safely extract the leaf filename from either Windows or Unix paths across platforms.
 pub(crate) fn path_leaf_name(path: &str) -> &str {
-    let trimmed = path.trim().trim_end_matches(|c| c == '/' || c == '\\');
+    let trimmed = path.trim().trim_end_matches(['/', '\\']);
     let s = trimmed.strip_prefix(r"\\?\").unwrap_or(trimmed);
-    s.rsplit(|c| c == '/' || c == '\\').next().unwrap_or(s)
+    s.rsplit(['/', '\\']).next().unwrap_or(s)
 }
 
 /// Helper to extract sentence image from event fields, falling back to PID/System/Process-{pid} invariants.
