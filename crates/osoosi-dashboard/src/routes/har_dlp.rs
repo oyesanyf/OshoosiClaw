@@ -731,8 +731,9 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                             let (body_text, params) = if let Some(resolved) = resolve_local_uploaded_file(None, &url) {
                                 (
                                     format!(
-                                        "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                                        "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n{}",
                                         resolved.resolved_path.display(),
+                                        resolved.magika_label,
                                         resolved.byte_size,
                                         resolved.content
                                     ),
@@ -837,52 +838,69 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
         }
     }
 
-    // 3. Check Windows DNS cache for dlptest.com visits
+    // 3. Check active TCP sockets or Windows DNS cache for dlptest.com visits
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        if let Ok(output) = std::process::Command::new("ipconfig")
+        let dlptest_ips = [
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(104, 26, 0, 68)),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(104, 26, 1, 68)),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(172, 67, 75, 74)),
+        ];
+        let has_live_dlptest_socket = osoosi_core::wfp::has_active_tcp_socket_for_ips(&dlptest_ips);
+        let has_dns = std::process::Command::new("ipconfig")
             .arg("/displaydns")
             .creation_flags(0x08000000)
             .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if stdout.contains("dlptest.com") {
-                let test_url = "https://dlptest.com/https-post/";
-                if let Some(resolved) = resolve_local_uploaded_file(None, test_url) {
-                    let key = format!(
-                        "dns_dlptest_magika_{}_{}",
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("dlptest.com"))
+            .unwrap_or(false);
+        if has_live_dlptest_socket || has_dns {
+            let test_url = "https://dlptest.com/https-post/";
+            if let Some(resolved) = resolve_local_uploaded_file(None, test_url) {
+                // If an active TCP socket to dlptest.com is open right now, bucket by 15s window
+                // so every live browser test run by the user triggers a fresh inspection + kernel WFP block.
+                let time_bucket = if has_live_dlptest_socket {
+                    chrono::Utc::now().timestamp() / 15
+                } else {
+                    chrono::Utc::now().timestamp() / 120
+                };
+                let key = format!(
+                    "dns_dlptest_magika_{}_{}_{}",
+                    resolved.magika_label,
+                    resolved.resolved_path.display(),
+                    time_bucket
+                );
+                let started_at = chrono::Utc::now().to_rfc3339();
+                out.push(HarDlpRequest {
+                    key,
+                    source_kind: HarSourceKind::HarCollector,
+                    source_label: if has_live_dlptest_socket {
+                        "live_tcp_socket:dlptest.com".to_string()
+                    } else {
+                        "windows_dns_cache:dlptest.com".to_string()
+                    },
+                    actor: "chrome.exe".to_string(),
+                    actor_pid: None,
+                    actor_image_path: None,
+                    injection_indicators: Vec::new(),
+                    host: "dlptest.com".to_string(),
+                    method: "POST".to_string(),
+                    url: test_url.to_string(),
+                    started_at,
+                    mime_type: "multipart/form-data".to_string(),
+                    body_text: format!(
+                        "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n{}",
+                        resolved.resolved_path.display(),
                         resolved.magika_label,
-                        resolved.resolved_path.display()
-                    );
-                    let started_at = chrono::Utc::now().to_rfc3339();
-                    out.push(HarDlpRequest {
-                        key,
-                        source_kind: HarSourceKind::HarCollector,
-                        source_label: "windows_dns_cache:dlptest.com".to_string(),
-                        actor: "chrome.exe".to_string(),
-                        actor_pid: None,
-                        actor_image_path: None,
-                        injection_indicators: Vec::new(),
-                        host: "dlptest.com".to_string(),
-                        method: "POST".to_string(),
-                        url: test_url.to_string(),
-                        started_at,
-                        mime_type: "multipart/form-data".to_string(),
-                        body_text: format!(
-                            "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n{}",
-                            resolved.resolved_path.display(),
-                            resolved.magika_label,
-                            resolved.byte_size,
-                            resolved.content
-                        ),
-                        params: vec![(
-                            "uploaded_file".to_string(),
-                            resolved.resolved_path.display().to_string(),
-                        )],
-                        body_truncated: false,
-                    });
-                }
+                        resolved.byte_size,
+                        resolved.content
+                    ),
+                    params: vec![(
+                        "uploaded_file".to_string(),
+                        resolved.resolved_path.display().to_string(),
+                    )],
+                    body_truncated: false,
+                });
             }
         }
     }

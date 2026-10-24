@@ -1292,6 +1292,46 @@ pub fn production_voter_ballots(
         weight: 1.5,
         reason: format!("validated {:?}", event.redactx_validated_categories),
     });
+    let gsb_url = if ctx.destination_url.is_empty() {
+        format!("https://{}/", ctx.destination_host)
+    } else {
+        ctx.destination_url.clone()
+    };
+    let gsb = osoosi_core::safe_browsing::global_gsb_engine().check_url(&gsb_url);
+    ballots.push(if gsb.is_threat {
+        VoterBallot {
+            voter: "Google-SafeBrowsing-Voter".to_string(),
+            escalate: true,
+            confidence: 0.99,
+            weight: 1.5,
+            reason: format!(
+                "Escalate [Google-SafeBrowsing-Voter]: Destination '{}' matched Google Safe Browsing v4 ({}, source={})",
+                gsb_url, gsb.primary_tag, gsb.match_source
+            ),
+        }
+    } else if confirmed_dlp_exfil {
+        VoterBallot {
+            voter: "Google-SafeBrowsing-Voter".to_string(),
+            escalate: true,
+            confidence: 0.94,
+            weight: 1.25,
+            reason: format!(
+                "Escalate [Google-SafeBrowsing-Voter]: External upload sink '{}' corroborated for confirmed PII/Crown-Jewel exfiltration (prefix={})",
+                ctx.destination_host, gsb.prefix_4b_hex
+            ),
+        }
+    } else {
+        VoterBallot {
+            voter: "Google-SafeBrowsing-Voter".to_string(),
+            escalate: false,
+            confidence: 0.95,
+            weight: 1.0,
+            reason: format!(
+                "Veto [Google-SafeBrowsing-Voter]: Destination '{}' verified clean ({}, prefix={})",
+                ctx.destination_host, gsb.primary_tag, gsb.prefix_4b_hex
+            ),
+        }
+    });
     if event.cedar_forbid {
         ballots.push(VoterBallot {
             voter: "Cedar-Egress-Policy".to_string(),

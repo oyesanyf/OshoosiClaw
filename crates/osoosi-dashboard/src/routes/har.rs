@@ -137,6 +137,14 @@ pub fn refresh_live_har_cache_now() -> Value {
     let engine = osoosi_agent_anomaly::SiqueryEngine::new();
     let mut entries = engine.collect_live_har_entries_fast(400);
     let rea_engine = osoosi_core::rea::global_rea_engine();
+    let gsb_engine = osoosi_core::safe_browsing::global_gsb_engine();
+
+    let unique_urls: Vec<String> = entries
+        .iter()
+        .filter_map(|e| e.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    let gsb_batch = gsb_engine.check_urls_batch(&unique_urls);
 
     let total_entries = entries.len();
     let mut unique_hosts_set = std::collections::HashSet::new();
@@ -192,6 +200,7 @@ pub fn refresh_live_har_cache_now() -> Value {
             .to_string();
         let user_allowlisted =
             crate::routes::har_dlp::is_har_entry_allowlisted(&url, &host_str, &hash_blake3);
+        let gsb_verdict = gsb_batch.get(&url).cloned();
 
         let rea_har = rea_engine.analyze_har_entry_with_context(
             &source_file,
@@ -233,6 +242,14 @@ pub fn refresh_live_har_cache_now() -> Value {
                 "rea_seal_blake3".to_string(),
                 json!(rea_har.rea_seal_blake3),
             );
+            if let Some(ref gsb) = gsb_verdict {
+                obj.insert("gsb_verdict".to_string(), json!(gsb.primary_tag));
+                obj.insert("gsb_threat_types".to_string(), json!(gsb.threat_types));
+                obj.insert("gsb_match_source".to_string(), json!(gsb.match_source));
+                obj.insert("gsb_prefix_4b".to_string(), json!(gsb.prefix_4b_hex));
+            } else {
+                obj.insert("gsb_verdict".to_string(), json!("GSB:CLEAN"));
+            }
             let cur_score = obj
                 .get("threat_score")
                 .and_then(|v| v.as_f64())
@@ -250,6 +267,19 @@ pub fn refresh_live_har_cache_now() -> Value {
                     "openjev_voter_reason".to_string(),
                     json!("User Exclusion: Released as false positive by operator"),
                 );
+                obj.insert("gsb_verdict".to_string(), json!("USER_RELEASED"));
+            } else if gsb_verdict.as_ref().map(|g| g.is_threat).unwrap_or(false) {
+                let gsb = gsb_verdict.as_ref().unwrap();
+                obj.insert("threat_score".to_string(), json!(cur_score.max(0.95)));
+                obj.insert("verdict".to_string(), json!("malicious"));
+                let merged_tags = if tags.is_empty() {
+                    gsb.primary_tag.clone()
+                } else if !tags.contains(&gsb.primary_tag) {
+                    format!("{},{}", tags, gsb.primary_tag)
+                } else {
+                    tags.clone()
+                };
+                obj.insert("threat_tags".to_string(), json!(merged_tags));
             } else if rea_har.rea_voter_decision == "ESCALATE_MALICIOUS"
                 && (rea_har.threat_score as f64) > cur_score
             {
@@ -804,6 +834,26 @@ pub async fn get_har_export() -> impl IntoResponse {
     )
 }
 
+pub async fn get_gsb_status() -> Json<Value> {
+    Json(osoosi_core::safe_browsing::global_gsb_engine().status_json())
+}
+
+pub async fn post_gsb_config(Json(body): Json<Value>) -> Json<Value> {
+    if let Some(key) = body.get("api_key").and_then(|v| v.as_str()) {
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            std::env::set_var("GOOGLE_SAFE_BROWSING_API_KEY", trimmed);
+        }
+    }
+    if let (Some(url), Some(ttype)) = (
+        body.get("register_threat_url").and_then(|v| v.as_str()),
+        body.get("threat_type").and_then(|v| v.as_str()),
+    ) {
+        osoosi_core::safe_browsing::global_gsb_engine().register_threat_url(url, ttype);
+    }
+    Json(osoosi_core::safe_browsing::global_gsb_engine().status_json())
+}
+
 /// Mounts all Continuous HAR routes and legacy aliases.
 pub fn routes() -> Router<DashboardState> {
     Router::new()
@@ -820,4 +870,6 @@ pub fn routes() -> Router<DashboardState> {
         .route("/har/refresh", post(post_har_refresh))
         .route("/api/har/export", get(get_har_export))
         .route("/har/export", get(get_har_export))
+        .route("/api/har/gsb/status", get(get_gsb_status))
+        .route("/api/har/gsb/config", post(post_gsb_config))
 }
