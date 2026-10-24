@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OshoosiClaw Browser DLP Sensor</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main>
+    <h1>OshoosiClaw Browser DLP Sensor</h1>
+    <p class="lead">Outgoing form and API submissions (POST / PUT / PATCH) are checked for sensitive data.
+      Captured request bodies are sent <strong>only</strong> to the OshoosiClaw agent on this computer
+      (loopback address) and never to any other server.</p>
+
+    <section aria-labelledby="status-heading">
+      <h2 id="status-heading">Status</h2>
+      <dl class="grid">
+        <dt>Pairing</dt><dd id="pairing">…</dd>
+        <dt>Browser</dt><dd id="browser">…</dd>
+        <dt>Local agent</dt><dd id="daemon">…</dd>
+        <dt>Requests forwarded</dt><dd id="forwarded">0</dd>
+        <dt>Sensitive-data detections</dt><dd id="detections">0</dd>
+        <dt>Waiting to send</dt><dd id="pending">0</dd>
+        <dt>Last detection</dt><dd id="last-detection">None</dd>
+        <dt>Last error</dt><dd id="last-error">None</dd>
+      </dl>
+      <div class="actions">
+        <button type="button" id="repair">Re-pair with local agent</button>
+        <button type="button" id="reset">Clear detection counter</button>
+      </div>
+      <p id="message" role="status" aria-live="polite"></p>
+    </section>
+
+    <section aria-labelledby="advanced-heading">
+      <h2 id="advanced-heading">Advanced</h2>
+      <form id="daemon-form">
+        <label for="daemon-url">Local agent address (loopback only)</label>
+        <div class="row">
+          <input id="daemon-url" name="daemon-url" type="url" inputmode="url" required
+                 pattern="https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?/?"
+                 placeholder="http://127.0.0.1:3030">
+          <button type="submit">Save</button>
+        </div>
+      </form>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

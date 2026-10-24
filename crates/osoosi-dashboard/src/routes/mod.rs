@@ -1,5 +1,8 @@
+pub mod browser_sensor;
 pub mod dlp;
+pub mod dlp_containment;
 pub mod har;
+pub mod har_dlp;
 pub mod mesh;
 pub mod owasp;
 pub mod skyrl;
@@ -14,6 +17,8 @@ use axum::Router;
 pub fn mount_routes() -> Router<DashboardState> {
     Router::new()
         .merge(dlp::routes())
+        .merge(dlp_containment::routes())
+        .merge(browser_sensor::routes())
         .merge(mesh::routes())
         .merge(har::routes())
         .merge(owasp::routes())

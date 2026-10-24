@@ -5878,9 +5878,10 @@ pub fn veto_peer_kill_switch_candidate(
         let p_trim = p.trim();
         if !p_trim.is_empty() {
             if is_rea_benign_system_or_dev_process(p_trim, reason)
-                || global_rea_engine()
-                    .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
-                    .0
+                || (!rea_engine_constructing_on_this_thread()
+                    && global_rea_engine()
+                        .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
+                        .0)
             {
                 return Some(format!(
                     "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
@@ -7358,8 +7359,24 @@ impl AutonomousReaEngine {
     }
 }
 
-static GLOBAL_REA_ENGINE: LazyLock<Arc<AutonomousReaEngine>> =
-    LazyLock::new(|| Arc::new(AutonomousReaEngine::new()));
+thread_local! {
+    /// Set while `GLOBAL_REA_ENGINE` is being constructed on this thread. `AutonomousReaEngine::new`
+    /// runs self-verification that reaches `veto_peer_kill_switch_candidate`; calling
+    /// `global_rea_engine()` from there would re-enter the `LazyLock` initializer and deadlock
+    /// (observed on Linux, where the seed process names do not resolve to signed binaries).
+    static REA_ENGINE_CONSTRUCTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn rea_engine_constructing_on_this_thread() -> bool {
+    REA_ENGINE_CONSTRUCTING.with(|c| c.get())
+}
+
+static GLOBAL_REA_ENGINE: LazyLock<Arc<AutonomousReaEngine>> = LazyLock::new(|| {
+    REA_ENGINE_CONSTRUCTING.with(|c| c.set(true));
+    let engine = Arc::new(AutonomousReaEngine::new());
+    REA_ENGINE_CONSTRUCTING.with(|c| c.set(false));
+    engine
+});
 static REA_LOOP_STARTED: AtomicBool = AtomicBool::new(false);
 
 /// Retrieve the global singleton `AutonomousReaEngine`.

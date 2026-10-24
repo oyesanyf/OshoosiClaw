@@ -329,7 +329,8 @@ async function renderDlpView(forceRefresh = false) {
                             chunkHashes: cj.chunk_hashes || cj.chunkHashes || []
                         }));
                     }
-                    if (Array.isArray(data.recent_events) && data.recent_events.length > 0 && (forceRefresh || dlpState.events.length === 0)) {
+                    // Server events are authoritative: the autonomous HAR->DLP pipeline and browser sensor add events in the background.
+                    if (Array.isArray(data.recent_events) && (data.recent_events.length > 0 || forceRefresh)) {
                         dlpState.events = data.recent_events.map(ev => ({
                             id: ev.id,
                             timestamp: ev.timestamp ? ev.timestamp.slice(11, 19) : '',
@@ -348,7 +349,9 @@ async function renderDlpView(forceRefresh = false) {
                             scrubbed: ev.scrubbed_preview || ev.scrubbed || '',
                             commitment: ev.zk_proof_commitment || ev.commitment || '',
                             pqcSig: ev.pqc_signature_prefix || ev.pqcSig || 'ML-DSA-65',
-                            ed25519Sig: ev.ed25519_signature || 'Ed25519'
+                            ed25519Sig: ev.ed25519_signature || 'Ed25519',
+                            source: ev.source || '',
+                            containment: ev.containment || null
                         }));
                     }
                 }
@@ -487,6 +490,17 @@ function renderDlpEventsTable() {
         if (execMode === 'SIMULATED_TEST') {
             verdictBadge += '<div style="margin-top: 3px;"><span class="badge purple" style="font-size: 9px; padding: 1px 4px;">SIMULATED_TEST</span></div>';
         }
+        if (ev.source) {
+            verdictBadge += `<div style="margin-top: 3px;"><span class="badge blue" style="font-size: 9px; padding: 1px 4px;">${escapeHtml(ev.source)}</span></div>`;
+        }
+        if (ev.containment && ev.containment.decision && ev.containment.decision !== 'AlertOnly') {
+            const c = ev.containment;
+            const label = c.decision === 'ProcessContained' ? 'PROCESS CONTAINED' : (c.decision === 'DestinationBlocked' ? 'DESTINATION BLOCKED' : String(c.decision));
+            const restoreBtn = (!c.restored && c.containment_id && c.decision !== 'Debounced')
+                ? ` <button type="button" class="btn-secondary" style="font-size: 9px; padding: 1px 6px;" data-dlp-restore="${escapeHtml(c.containment_id)}">Restore</button>`
+                : (c.restored ? ' <span class="badge green" style="font-size: 9px; padding: 1px 4px;">RESTORED</span>' : '');
+            verdictBadge += `<div style="margin-top: 3px;" title="${escapeHtml((c.reasons || []).join(' | '))}"><span class="badge red" style="font-size: 9px; padding: 1px 4px;">${escapeHtml(label)}</span>${restoreBtn}</div>`;
+        }
 
         const phiFormatted = (typeof ev.sensitivityPhi === 'number') ? ev.sensitivityPhi.toFixed(2) : '0.00';
         let phiColor = '#10b981';
@@ -556,6 +570,8 @@ async function submitDlpInspection() {
                     channel,
                     payload,
                     policy_mode: dlpState.policyMode,
+                    // The manual inspector is a what-if analysis: nothing is transmitted.
+                    simulated: true,
                     process,
                     sink
                 })
@@ -567,29 +583,8 @@ async function submitDlpInspection() {
 
         // Fallback / local client-side analysis
         const analysis = await dlpAnalyzeAndScrub(payload);
-        const procLower = process.toLowerCase();
-        const sinkLower = sink.toLowerCase();
-        const isPythonActor = procLower === 'python.exe' || procLower === 'python3.exe' || procLower === 'python' || procLower.endsWith('\\python.exe') || procLower.endsWith('/python.exe');
-        const isSimulatedActor = !isPythonActor && (
-            procLower.includes('exfil_worker') ||
-            procLower.includes('stealth_exfil') ||
-            procLower.includes('worker_agent') ||
-            procLower.includes('ehr_export_sync') ||
-            sinkLower.includes('attacker-c2.net') ||
-            sinkLower.includes('paste.external.org') ||
-            sinkLower.includes('webhook.attacker.io') ||
-            sinkLower.includes('files.external.io') ||
-            sinkLower.includes('webhook.site') ||
-            sinkLower.includes('untrusted-thirdparty.io') ||
-            sinkLower.includes('covert-c2.darknet.io')
-        );
-
         let verdict = 'ALLOWED';
-        if (isPythonActor && !analysis.hasCrownJewel) {
-            verdict = 'ALLOWED';
-            analysis.categories = [];
-            analysis.sensitivityPhi = 0.0;
-        } else if (serverResult && serverResult.event) {
+        if (serverResult && serverResult.event) {
             verdict = serverResult.event.allowed ? 'ALLOWED' : 'BLOCKED';
         } else if (dlpState.policyMode === 'ENFORCE_BLOCK_AND_SCRUB' || dlpState.policyMode === 'ENFORCE_STRICT') {
             verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'BLOCKED' : 'ALLOWED';
@@ -610,27 +605,13 @@ async function submitDlpInspection() {
 
         const commitmentStr = String(serverResult?.event?.zk_proof_commitment || analysis.zkProof?.schnorrFiatShamirCommitment || '0000000000000000');
         const pqcSigStr = String(serverResult?.event?.pqc_signature_prefix || analysis.zkProof?.mlDsa65Signature || 'ML-DSA-65');
-        const scrubbedStr = (isPythonActor && !analysis.hasCrownJewel)
-            ? payload
-            : String(serverResult?.event?.scrubbed_preview ?? analysis.scrubbed ?? '');
-        const sensitivityPhi = (isPythonActor && !analysis.hasCrownJewel)
-            ? 0.0
-            : Number(serverResult?.event?.sensitivity_potential_phi ?? analysis.sensitivityPhi ?? 0.0);
-        const authorizationDecision = (isPythonActor && !analysis.hasCrownJewel)
-            ? 'ALLOW'
-            : String(serverResult?.event?.authorization_decision || (verdict === 'ALLOWED' ? 'ALLOW' : 'DENY'));
-        const dlpResponse = (isPythonActor && !analysis.hasCrownJewel)
-            ? 'ALLOW'
-            : String(serverResult?.event?.dlp_response || (verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE'));
-        const executionMode = (isPythonActor && !analysis.hasCrownJewel)
-            ? 'LIVE_ENFORCEMENT'
-            : String(serverResult?.event?.execution_mode || (isSimulatedActor ? 'SIMULATED_TEST' : 'LIVE_ENFORCEMENT'));
-        const externalTransmission = (isPythonActor && !analysis.hasCrownJewel)
-            ? 'Permitted after Two-Tier DLP & REA check'
-            : String(serverResult?.event?.external_transmission || (executionMode === 'SIMULATED_TEST' ? 'None in simulated mode' : (verdict === 'ALLOWED' ? 'Permitted' : 'Blocked (0 bytes)')));
-        const reaActorVerdict = (isPythonActor && !analysis.hasCrownJewel)
-            ? 'REA_VERIFIED_BENIGN_ACTOR'
-            : String(serverResult?.event?.rea_actor_verdict || (isSimulatedActor ? 'REA_UNTRUSTED_EXFIL_ACTOR' : 'REA_VERIFIED_BENIGN_ACTOR'));
+        const scrubbedStr = String(serverResult?.event?.scrubbed_preview ?? analysis.scrubbed ?? '');
+        const sensitivityPhi = Number(serverResult?.event?.sensitivity_potential_phi ?? analysis.sensitivityPhi ?? 0.0);
+        const authorizationDecision = String(serverResult?.event?.authorization_decision || (verdict === 'ALLOWED' ? 'ALLOW' : 'DENY'));
+        const dlpResponse = String(serverResult?.event?.dlp_response || (verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE'));
+        const executionMode = String(serverResult?.event?.execution_mode || 'SIMULATED_TEST');
+        const externalTransmission = String(serverResult?.event?.external_transmission || (executionMode === 'SIMULATED_TEST' ? 'None in simulated mode' : (verdict === 'ALLOWED' ? 'Permitted' : 'Blocked (0 bytes)')));
+        const reaActorVerdict = String(serverResult?.event?.rea_actor_verdict || 'REA_INSPECTED');
         const reaAssetKind = String(serverResult?.event?.rea_asset_kind || 'TEXT_STREAM');
 
         const eventRecord = {
@@ -647,7 +628,7 @@ async function submitDlpInspection() {
             reaActorVerdict,
             reaAssetKind,
             sensitivityPhi,
-            categories: (isPythonActor && !analysis.hasCrownJewel) ? [] : (serverResult?.event?.detected_categories || analysis.categories),
+            categories: serverResult?.event?.detected_categories || analysis.categories,
             scrubbed: scrubbedStr,
             commitment: commitmentStr,
             pqcSig: pqcSigStr,
@@ -932,7 +913,9 @@ async function testCrownJewelExfilBlock(label) {
 // Sweeps Live Captured HAR Web Traffic for Leaked Tokens / PII
 async function runDlpLiveHarSweep() {
     try {
-        let sweptCount = 14;
+        let sweptCount = 0;
+        let sweptWithBody = 0;
+        let flaggedCount = 0;
         try {
             const res = await fetch(`${API_BASE}/dlp/scan-har`, {
                 method: 'POST',
@@ -941,14 +924,12 @@ async function runDlpLiveHarSweep() {
             if (res.ok) {
                 const data = await res.json();
                 if (data) {
-                    sweptCount = data.scanned_count ?? data.inspected_count ?? 14;
+                    sweptCount = data.scanned_count ?? data.inspected_count ?? 0;
+                    sweptWithBody = data.scanned_with_body ?? 0;
+                    flaggedCount = data.blocked_count ?? 0;
                 }
             }
         } catch (_) {}
-
-        dlpState.inspectedCount += sweptCount;
-        dlpState.zkProofsVerified += sweptCount;
-        dlpState.lineageTrackedCount += sweptCount;
 
         await renderDlpView(true);
         const resultBox = document.getElementById('dlp-inspect-result-box');
@@ -956,7 +937,7 @@ async function runDlpLiveHarSweep() {
             resultBox.innerHTML = `
                 <div style="padding: 14px; background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.4); border-radius: 6px; color: #10b981;">
                     <div style="font-weight: 700; font-size: 13px; margin-bottom: 4px;">✅ Live HAR Web Traffic Sweep Completed (${sweptCount} Entries Swept)</div>
-                    <div style="font-size: 12px; color: #e6edf3;">Analyzed active browser sockets, downloaded payloads, and outgoing POST bodies. Zero unredacted tokens detected in flight. Two-Tier DLP verified.</div>
+                    <div style="font-size: 12px; color: #e6edf3;">${sweptWithBody} request bodies inspected, ${flaggedCount} flagged. New HAR entries are also inspected automatically in the background.</div>
                 </div>
             `;
         }
@@ -1163,3 +1144,27 @@ window.runDlpLiveHarSweep = runDlpLiveHarSweep;
 window.runDlpExfilSimulationGauntlet = runDlpExfilSimulationGauntlet;
 window.updateDlpPolicyMode = updateDlpPolicyMode;
 window.onDlpFilterChange = onDlpFilterChange;
+
+// One-click, non-modal restore of a DLP containment (unblock destination, resume process, restore binary).
+document.addEventListener('click', async (event) => {
+    const btn = event.target && event.target.closest ? event.target.closest('[data-dlp-restore]') : null;
+    if (!btn) return;
+    const containmentId = btn.getAttribute('data-dlp-restore');
+    btn.disabled = true;
+    try {
+        const res = await fetch(`${API_BASE}/dlp/containment/restore`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ containment_id: containmentId, operator: 'dashboard' })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (typeof showSkyrlToast === 'function') {
+            showSkyrlToast(res.ok ? 'DLP containment restored.' : `Restore failed: ${data.message || res.status}`, res.ok ? 'success' : 'warning');
+        }
+        await renderDlpView(true);
+    } catch (err) {
+        btn.disabled = false;
+        if (typeof showSkyrlToast === 'function') showSkyrlToast(`Restore failed: ${err.message || err}`, 'warning');
+    }
+});

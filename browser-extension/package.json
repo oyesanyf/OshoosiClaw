@@ -1,0 +1,10 @@
+{
+  "name": "oshoosiclaw-browser-dlp-sensor",
+  "version": "1.2.0",
+  "private": true,
+  "type": "module",
+  "description": "OshoosiClaw Browser DLP Sensor (MV3). package.json exists only so node --test treats lib/*.js as ES modules.",
+  "scripts": {
+    "test": "node --test test/"
+  }
+}
