@@ -1,5 +1,4 @@
 #![allow(
-    linker_messages,
     clippy::collapsible_if,
     clippy::suspicious_open_options
 )]
