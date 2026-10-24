@@ -10006,15 +10006,15 @@ async function loadDynamicDiskStatus() {
         if (statSweeps) {
             const sweeps = Number(autoSnap.total_sweep_count || 0);
             const filesRemoved = Number(autoSnap.total_files_removed_lifetime || 0);
-            statSweeps.innerText = `${sweeps} Sweeps ? ${filesRemoved.toLocaleString()} Files Purged`;
+            statSweeps.innerText = `${sweeps} Sweeps \u2022 ${filesRemoved.toLocaleString()} Files Purged`;
         }
         const watchdogBadge = document.getElementById('disk-watchdog-badge');
         if (watchdogBadge) {
             const active = autoSnap.watchdog_active !== false;
             const intervalMin = Math.round(((autoSnap.policy && autoSnap.policy.interval_secs) || 900) / 60);
             watchdogBadge.innerText = active
-                ? `?? AUTONOMOUS WATCHDOG ACTIVE ? ${intervalMin}m`
-                : `?? WATCHDOG PAUSED`;
+                ? `\u{1F6E1}\u{FE0F} AUTONOMOUS WATCHDOG ACTIVE \u2022 ${intervalMin}m`
+                : `\u23F8\u{FE0F} WATCHDOG PAUSED`;
         }
 
     } catch (err) {
@@ -10061,7 +10061,8 @@ async function runDynamicDiskCleanup(aggressive = false) {
         const resp = await fetchWithRetry(`${API_BASE}/system/cleanup`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            timeoutMs: 60000
         }, 1, 500);
 
         if (!resp || !resp.ok) {
