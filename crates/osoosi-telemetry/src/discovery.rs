@@ -237,9 +237,11 @@ impl RouteScraper {
         #[cfg(target_os = "windows")]
         {
             // Windows: route print -4
-            if let Ok(output) = Command::new(osoosi_types::resolve_system_binary("route.exe"))
-                .args(["print", "-4"])
-                .output()
+            use std::os::windows::process::CommandExt;
+            let mut route_cmd = Command::new(osoosi_types::resolve_system_binary("route.exe"));
+            route_cmd.args(["print", "-4"]);
+            route_cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
+            if let Ok(output) = route_cmd.output()
             {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut in_table = false;
