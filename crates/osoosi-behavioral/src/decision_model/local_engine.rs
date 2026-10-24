@@ -91,15 +91,10 @@ impl Default for LocalClefWeights {
         benign.insert("cargo.exe".to_string(), 3.5);
         benign.insert("git.exe".to_string(), 3.0);
         benign.insert("code.exe".to_string(), 2.5);
-        benign.insert("svchost.exe".to_string(), 2.2);
         benign.insert("explorer.exe".to_string(), 2.2);
         benign.insert("msmpeng.exe".to_string(), 3.5);
         benign.insert("sysmon64.exe".to_string(), 4.0);
         benign.insert("osoosi.exe".to_string(), 4.5);
-        benign.insert("python.exe".to_string(), 3.0);
-        benign.insert("python".to_string(), 2.5);
-        benign.insert("python3".to_string(), 2.5);
-        benign.insert("pythonsoftwarefoundation".to_string(), 3.5);
         benign.insert("windowsapps".to_string(), 2.5);
         benign.insert("target: file".to_string(), 1.5);
         benign.insert(".pyd".to_string(), 3.0);
@@ -617,7 +612,10 @@ impl LocalDecisionEngine {
                             && (process_name == "python3.exe" || process_name.contains("python3")))
                         || (token == "pythonsoftwarefoundation"
                             && process_name.contains("pythonsoftwarefoundation"));
-                    if matches_process {
+                    // INVARIANT: Never grant benign credit merely for unverified filenames.
+                    // Binary name tokens strictly require genuine digital signature verification (is_signed && !is_unsigned)
+                    // and must not be an active LOLBIN attack.
+                    if matches_process && is_signed && !is_unsigned && !is_lolbin_attack {
                         ben_score += weight;
                     }
                 } else if token == "signed: true" || token == "issigned: true" {

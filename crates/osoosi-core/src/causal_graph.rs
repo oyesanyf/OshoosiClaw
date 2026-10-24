@@ -1149,9 +1149,9 @@ impl CausalSecurityGraph {
                 }
             }
 
-            // 3. Find all inbound sources (source_id -> current)
+            // 3. Find all inbound sources (source_id -> current), respecting declassification cuts
             let mut stmt = lock.prepare(
-                "SELECT source_id, taint_propagated, has_crown_jewel_taint FROM causal_edges WHERE target_id = ?1",
+                "SELECT source_id, taint_propagated, has_crown_jewel_taint FROM causal_edges WHERE target_id = ?1 AND edge_type != 'DeclassifiedInto'",
             )?;
             let rows = stmt.query_map(params![current], |r| {
                 Ok((

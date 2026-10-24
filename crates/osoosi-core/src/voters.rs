@@ -96,14 +96,8 @@ pub(crate) fn scanner_skip_path(path: &str) -> bool {
         || p.contains("\\hugos ide\\")
         || p.contains("\\resources\\app\\out\\vs\\")
         || p.contains("microsoft.powershell.psreadline")
-        || p.contains("\\tools\\hayabusa\\rules\\")
-        || p.contains("\\tools\\rules\\")
         || p.contains("\\dashboard\\")
-        || p.contains("\\cache\\")
-        || p.contains("\\models\\")
         || p.contains("\\logs\\")
-        || p.contains("\\traps\\")
-        || p.contains("\\wavlink\\")
         || p.contains("threat_model.json")
         || p.contains("\\program files\\git\\")
         || p.contains("\\git\\mingw64\\")
@@ -112,8 +106,6 @@ pub(crate) fn scanner_skip_path(path: &str) -> bool {
         || p.contains("\\.tmp.driveupload\\")
         || p.contains("\\.tmp.drivedownload\\")
         || p.contains("\\appdata\\local\\google\\drivefs\\")
-        || p.contains("\\.cache\\huggingface\\")
-        || p.contains("\\.ollama\\")
         || p.contains("\\dell\\updateservice\\")
         || p.contains("\\dell\\commandupdate\\")
         || p.contains("\\dell\\supportassist\\")
@@ -156,6 +148,8 @@ pub(crate) fn scanner_skip_path(path: &str) -> bool {
             | "rmeta"
             | "tmp"
             | "lock"
+            | "idx"
+            | "pack"
             | "rs"
             | "go"
             | "py"
@@ -813,9 +807,13 @@ mod tests {
         assert!(scanner_skip_path(
             r"C:\Users\dev\.cache\huggingface\hub\models--bert\snapshots\model.bin"
         ));
-        assert!(scanner_skip_path(
-            r"C:\Users\dev\.ollama\models\blobs\sha256-abc"
-        ));
+        // Verify that blind folder exemptions are removed: executable binaries are NOT skipped
+        assert!(!scanner_skip_path(r"C:\cache\malware.exe"));
+        assert!(!scanner_skip_path(r"C:\models\agent_exploit.exe"));
+        assert!(!scanner_skip_path(r"C:\tools\hack.exe"));
+        assert!(!scanner_skip_path(r"C:\traps\trojan.exe"));
+        assert!(!scanner_skip_path(r"C:\wavlink\backdoor.exe"));
+        assert!(!scanner_skip_path(r"C:\Users\victim\.ollama\payload.exe"));
         assert!(scanner_skip_path(
             r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"
         ));

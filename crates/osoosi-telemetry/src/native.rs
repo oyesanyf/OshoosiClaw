@@ -841,7 +841,31 @@ async fn run_hook_telemetry_listener(
             .and_then(|h| h.into_string().ok())
             .unwrap_or_else(|| "localhost".to_string());
 
-        info!("🚀 [HOOK-LISTENER] Starting Oshoosi Injection Telemetry Listener (Named Pipe)...");
+        #[repr(C)]
+        struct SecurityAttributes {
+            n_length: u32,
+            lp_security_descriptor: *mut std::ffi::c_void,
+            b_inherit_handle: i32,
+        }
+
+        const SDDL_REVISION_1: u32 = 1;
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                string_security_descriptor: *const u16,
+                string_sd_revision: u32,
+                security_descriptor: *mut *mut std::ffi::c_void,
+                security_descriptor_size: *mut u32,
+            ) -> i32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LocalFree(h_mem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        }
+
+        // Strict Protected DACL: Allow SYSTEM (SY) and Builtin Administrators (BA) only
+        let sddl = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+        let wide_sddl: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
 
         loop {
             let event = unsafe {
@@ -849,6 +873,25 @@ async fn run_hook_telemetry_listener(
                     .encode_utf16()
                     .chain(std::iter::once(0))
                     .collect::<Vec<u16>>();
+
+                let mut sd_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+                let mut sa = SecurityAttributes {
+                    n_length: std::mem::size_of::<SecurityAttributes>() as u32,
+                    lp_security_descriptor: std::ptr::null_mut(),
+                    b_inherit_handle: 0,
+                };
+                let sa_ptr = if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    wide_sddl.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut sd_ptr,
+                    std::ptr::null_mut(),
+                ) != 0 && !sd_ptr.is_null() {
+                    sa.lp_security_descriptor = sd_ptr;
+                    &mut sa as *mut SecurityAttributes as *mut _
+                } else {
+                    std::ptr::null_mut()
+                };
+
                 let h_pipe = CreateNamedPipeW(
                     pipe_name.as_ptr(),
                     PIPE_ACCESS_INBOUND,
@@ -857,8 +900,12 @@ async fn run_hook_telemetry_listener(
                     4096,
                     4096,
                     0,
-                    std::ptr::null_mut(),
+                    sa_ptr,
                 );
+
+                if !sd_ptr.is_null() {
+                    LocalFree(sd_ptr);
+                }
 
                 if h_pipe == winapi::um::handleapi::INVALID_HANDLE_VALUE {
                     std::thread::sleep(std::time::Duration::from_millis(500));

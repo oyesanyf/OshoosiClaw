@@ -20,9 +20,46 @@
 //! that a human operator can issue to allow temporary high CPU usage
 //! (e.g., during a legitimate full-disk scan).
 
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{error, info, warn};
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Derive or load the shared HMAC key for the USB serial kill-switch.
+pub fn get_usb_kill_switch_key() -> Vec<u8> {
+    if let Ok(k) = std::env::var("OSOOSI_USB_KILL_KEY") {
+        if let Ok(bytes) = hex::decode(k.trim()) {
+            if bytes.len() >= 16 {
+                return bytes;
+            }
+        }
+        return k.as_bytes().to_vec();
+    }
+    blake3::hash(b"OSOOSI_USB_SERIAL_KILL_SWITCH_SECRET_V1").as_bytes().to_vec()
+}
+
+/// Computes the expected HMAC-SHA256 for a given nonce challenge.
+pub fn compute_usb_kill_hmac(key: &[u8], nonce: &str) -> String {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+    mac.update(b"KILL_CHALLENGE:");
+    mac.update(nonce.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+/// Verifies whether the provided response HMAC matches the expected HMAC for the nonce using constant-time verification.
+pub fn verify_usb_kill_challenge_response(nonce: &str, response_hmac: &str, key: &[u8]) -> bool {
+    if let Ok(resp_bytes) = hex::decode(response_hmac.trim()) {
+        if let Ok(mut mac) = HmacSha256::new_from_slice(key) {
+            mac.update(b"KILL_CHALLENGE:");
+            mac.update(nonce.as_bytes());
+            return mac.verify_slice(&resp_bytes).is_ok();
+        }
+    }
+    false
+}
 
 pub use crate::memory_watchdog::spawn_memory_watchdog;
 
@@ -332,9 +369,11 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
 /// ```
 fn start_usb_kill_switch_monitor(port: String, baud_rate: u32, state: Arc<WatchdogState>) {
     info!(
-        "USB kill-switch: monitoring serial port {} @ {} baud",
+        "USB kill-switch: monitoring serial port {} @ {} baud (HMAC challenge-response protected)",
         port, baud_rate
     );
+
+    let kill_key = get_usb_kill_switch_key();
 
     std::thread::spawn(move || {
         // Use raw serial I/O (avoids adding serialport crate dependency)
@@ -343,6 +382,7 @@ fn start_usb_kill_switch_monitor(port: String, baud_rate: u32, state: Arc<Watchd
                 info!("USB kill-switch: connected to {}", port);
                 let mut buf = [0u8; 256];
                 let mut line_buf = String::new();
+                let mut active_challenge: Option<(String, std::time::Instant)> = None;
 
                 loop {
                     // Read available bytes
@@ -352,29 +392,54 @@ fn start_usb_kill_switch_monitor(port: String, baud_rate: u32, state: Arc<Watchd
 
                             // Process complete lines
                             while let Some(newline_pos) = line_buf.find('\n') {
-                                let line = line_buf[..newline_pos].trim().to_uppercase();
+                                let line = line_buf[..newline_pos].trim().to_string();
                                 line_buf = line_buf[newline_pos + 1..].to_string();
 
-                                match line.as_str() {
-                                    "KILL" => {
-                                        error!("USB HARDWARE KILL-SWITCH TRIGGERED from {}!", port);
-                                        trigger_kill(&state, "usb_hardware_kill_switch");
-                                        return;
+                                if line.eq_ignore_ascii_case("KILL") {
+                                    error!(
+                                        "UNAUTHORIZED USB KILL-SWITCH ATTEMPT: Plain unauthenticated 'KILL' rejected from {}! HMAC challenge-response required.",
+                                        port
+                                    );
+                                    let _ = write_serial(&mut port_handle, b"ERROR:UNAUTHORIZED_HMAC_CHALLENGE_REQUIRED\n");
+                                } else if line.to_ascii_uppercase().starts_with("KILL:") {
+                                    // Protocol: KILL:<nonce>:<hmac_hex>
+                                    let parts: Vec<&str> = line.split(':').collect();
+                                    if parts.len() == 3 {
+                                        let nonce = parts[1].trim();
+                                        let hmac_hex = parts[2].trim();
+                                        let is_challenge_valid = active_challenge.as_ref().map(|(c_nonce, c_time)| {
+                                            c_nonce == nonce && c_time.elapsed() < std::time::Duration::from_secs(30)
+                                        }).unwrap_or(false);
+
+                                        if is_challenge_valid && verify_usb_kill_challenge_response(nonce, hmac_hex, &kill_key) {
+                                            error!("USB HARDWARE KILL-SWITCH TRIGGERED (HMAC AUTHENTICATED) from {}!", port);
+                                            let _ = write_serial(&mut port_handle, b"OK:KILL_AUTHENTICATED\n");
+                                            trigger_kill(&state, "usb_hardware_kill_switch");
+                                            return;
+                                        } else {
+                                            error!("UNAUTHORIZED USB KILL-SWITCH ATTEMPT: Invalid HMAC or expired challenge nonce from {}!", port);
+                                            let _ = write_serial(&mut port_handle, b"ERROR:INVALID_HMAC_OR_EXPIRED_CHALLENGE\n");
+                                        }
+                                    } else {
+                                        error!("MALFORMED USB KILL-SWITCH COMMAND from {}: expected KILL:<nonce>:<hmac_hex>", port);
+                                        let _ = write_serial(&mut port_handle, b"ERROR:MALFORMED_KILL_COMMAND\n");
                                     }
-                                    "HEARTBEAT" => {
-                                        // Device is alive — send status back
-                                        let cpu = state.current_cpu.load(Ordering::Relaxed) as f64
-                                            / 100.0;
-                                        let mem = state.current_memory.load(Ordering::Relaxed)
-                                            / (1024 * 1024);
-                                        let status =
-                                            format!("STATUS:CPU={:.1},MEM={}MB\n", cpu, mem);
-                                        let _ = write_serial(&mut port_handle, status.as_bytes());
-                                    }
-                                    other if !other.is_empty() => {
-                                        warn!("USB kill-switch: unknown command: {}", other);
-                                    }
-                                    _ => {}
+                                } else if line.eq_ignore_ascii_case("CHALLENGE") {
+                                    let nonce = format!("{:016x}", rand::random::<u64>());
+                                    active_challenge = Some((nonce.clone(), std::time::Instant::now()));
+                                    let challenge_msg = format!("CHALLENGE:{}\n", nonce);
+                                    let _ = write_serial(&mut port_handle, challenge_msg.as_bytes());
+                                } else if line.eq_ignore_ascii_case("HEARTBEAT") {
+                                    // Device is alive — send status back
+                                    let cpu = state.current_cpu.load(Ordering::Relaxed) as f64
+                                        / 100.0;
+                                    let mem = state.current_memory.load(Ordering::Relaxed)
+                                        / (1024 * 1024);
+                                    let status =
+                                        format!("STATUS:CPU={:.1},MEM={}MB\n", cpu, mem);
+                                    let _ = write_serial(&mut port_handle, status.as_bytes());
+                                } else if !line.is_empty() {
+                                    warn!("USB kill-switch: unknown command from {}: {}", port, line);
                                 }
                             }
                         }
@@ -537,4 +602,30 @@ fn write_serial(handle: &mut SerialHandle, data: &[u8]) -> anyhow::Result<()> {
     handle.write_all(data)?;
     handle.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_usb_kill_challenge_response_authentication() {
+        let key = b"TEST_SHARED_SECRET_KEY_12345678";
+        let nonce = "a1b2c3d4e5f60718";
+        let valid_hmac = compute_usb_kill_hmac(key, nonce);
+
+        // 1. Valid HMAC challenge-response must pass
+        assert!(verify_usb_kill_challenge_response(nonce, &valid_hmac, key));
+
+        // 2. Tampered HMAC must fail
+        let invalid_hmac = format!("{}deadbeef", &valid_hmac[..valid_hmac.len().saturating_sub(8)]);
+        assert!(!verify_usb_kill_challenge_response(nonce, &invalid_hmac, key));
+
+        // 3. Different nonce must fail
+        assert!(!verify_usb_kill_challenge_response("wrong_nonce_12345", &valid_hmac, key));
+
+        // 4. Wrong key must fail
+        let wrong_key = b"WRONG_SHARED_SECRET_KEY_0000000";
+        assert!(!verify_usb_kill_challenge_response(nonce, &valid_hmac, wrong_key));
+    }
 }

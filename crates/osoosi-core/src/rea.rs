@@ -985,6 +985,26 @@ pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
         }
     }
 
+    // Windows standard root & system directories (cross-platform / Linux fallback)
+    if norm.starts_with(r"c:\windows\system32\")
+        || norm.starts_with(r"c:\windows\syswow64\")
+        || norm.starts_with(r"c:\windows\winsxs\")
+        || norm.starts_with(r"c:\windows\systemapps\")
+        || norm.starts_with(r"c:\windows\microsoft.net\")
+        || norm.starts_with(r"c:\program files\")
+        || norm.starts_with(r"c:\program files (x86)\")
+    {
+        return true;
+    }
+
+    if norm.starts_with(r"c:\windows\") {
+        if let Some(rest) = norm.strip_prefix(r"c:\windows\") {
+            if !rest.contains('\\') && rest.ends_with(".exe") {
+                return true;
+            }
+        }
+    }
+
     if norm.contains(r"\.cargo\bin\")
         || norm.contains(r"\.rustup\toolchains\")
         || norm.contains(r"\target\release\")
@@ -1009,7 +1029,37 @@ static DYNAMIC_MASQUERADE_PROTECTED_NAMES: std::sync::OnceLock<dashmap::DashSet<
 fn get_dynamic_masquerade_protected_names() -> &'static dashmap::DashSet<String> {
     DYNAMIC_MASQUERADE_PROTECTED_NAMES.get_or_init(|| {
         let set = dashmap::DashSet::new();
+        // Baseline core protected OS and developer toolchain binary names
+        for name in &[
+            "svchost.exe",
+            "csrss.exe",
+            "smss.exe",
+            "lsass.exe",
+            "services.exe",
+            "winlogon.exe",
+            "explorer.exe",
+            "cl.exe",
+            "cmd.exe",
+            "powershell.exe",
+            "pwsh.exe",
+            "python.exe",
+            "git.exe",
+            "cargo.exe",
+            "rustc.exe",
+            "node.exe",
+            "osoosi.exe",
+            "osoosi-cli.exe",
+            "osoosi_inject.dll",
+        ] {
+            set.insert((*name).to_string());
+        }
+
         let mut scan_dirs = Vec::new();
+        let wsl_win = Path::new("/mnt/c/Windows");
+        if wsl_win.exists() {
+            scan_dirs.push(wsl_win.join("System32"));
+            scan_dirs.push(wsl_win.to_path_buf());
+        }
         if let Some(sr) = std::env::var_os("SystemRoot").or_else(|| std::env::var_os("WINDIR")) {
             let base = PathBuf::from(sr);
             scan_dirs.push(base.join("System32"));
@@ -5719,6 +5769,28 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         }
     }
 
+    if (!raw.contains('\\') && !raw.contains('/')) || is_canonical_trusted_binary_dir(raw) {
+        if matches!(
+            base_lower.as_str(),
+            "python.exe"
+                | "python"
+                | "python3"
+                | "git.exe"
+                | "git"
+                | "cargo.exe"
+                | "cargo"
+                | "rustc.exe"
+                | "rustc"
+                | "node.exe"
+                | "node"
+                | "osoosi.exe"
+                | "osoosi-cli.exe"
+                | "svchost.exe"
+        ) {
+            return true;
+        }
+    }
+
     false
 }
 
@@ -5855,6 +5927,10 @@ pub fn is_protected_local_binary_hash(hash_hex: &str) -> bool {
     get_protected_local_binary_hashes().contains(&normalized)
 }
 
+thread_local! {
+    static REA_ENGINE_CONSTRUCTING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Vetoes peer kill-switch threats, gossiped signatures, or YARA rules targeting protected binaries.
 pub fn veto_peer_kill_switch_candidate(
     proc_name: Option<&str>,
@@ -5877,11 +5953,16 @@ pub fn veto_peer_kill_switch_candidate(
     if let Some(p) = proc_name {
         let p_trim = p.trim();
         if !p_trim.is_empty() {
-            if is_rea_benign_system_or_dev_process(p_trim, reason)
-                || global_rea_engine()
+            let is_benign = is_rea_benign_system_or_dev_process(p_trim, reason);
+            let is_constructing = REA_ENGINE_CONSTRUCTING.with(|c| c.get());
+            let rea_veto = if !is_benign && !is_constructing {
+                global_rea_engine()
                     .adjudicate_process_or_binary_alert(Some(p_trim), None, reason)
                     .0
-            {
+            } else {
+                false
+            };
+            if is_benign || rea_veto {
                 return Some(format!(
                     "REA_AUTHENTICODE_OR_IMMUNE_BINARY_VETO: process '{}' is a verified benign OS/developer binary",
                     p_trim
@@ -6179,6 +6260,15 @@ pub fn run_caged_rea_detonation_probe(
 
 impl AutonomousReaEngine {
     pub fn new() -> Self {
+        struct ReaConstructGuard;
+        impl Drop for ReaConstructGuard {
+            fn drop(&mut self) {
+                REA_ENGINE_CONSTRUCTING.with(|c| c.set(false));
+            }
+        }
+        REA_ENGINE_CONSTRUCTING.with(|c| c.set(true));
+        let _guard = ReaConstructGuard;
+
         let mut init_detector_counts = HashMap::new();
         for det in [
             "Process/ETW/CLI",
