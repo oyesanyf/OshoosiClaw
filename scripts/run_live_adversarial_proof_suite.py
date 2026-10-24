@@ -39,6 +39,8 @@ LOGS_DIR = REPO_ROOT / "logs"
 
 # Default configuration
 DEFAULT_BASE_URL = os.environ.get("OSOOSI_DASHBOARD_URL", "http://127.0.0.1:3030").rstrip("/")
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = int(os.environ.get("OSOOSI_DASHBOARD_PORT", "3030"))
 DEFAULT_TRIALS = 3
 
 
@@ -255,8 +257,157 @@ def read_rea_source() -> str:
 
 
 # =============================================================================
+# Daemon Lifecycle Manager
+# =============================================================================
+
+class DaemonLifecycle:
+    """Manages the background execution of the live OshoosiClaw daemon on port 3030."""
+
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        timeout: float = 60.0,
+        no_spawn: bool = False,
+    ):
+        self.host = host
+        self.port = port
+        self.base_url = f"http://{host}:{port}"
+        self.timeout = timeout
+        self.no_spawn = no_spawn
+        self.proc: Optional[subprocess.Popen] = None
+        self.we_spawned: bool = False
+
+    def is_healthy(self, timeout: float = 1.5) -> bool:
+        """Polls status or health endpoint to check daemon responsiveness."""
+        for ep in ("/api/status", "/health", "/api/health"):
+            url = f"{self.base_url}{ep}"
+            status, hdrs, _ = http_request(url, method="GET", timeout=timeout)
+            if status == 200:
+                if "osoosi_token=" in hdrs.get("set-cookie", ""):
+                    continue
+                return True
+        return False
+
+    def start(self) -> None:
+        """Starts daemon if not already responding."""
+        if self.is_healthy():
+            print(f"[+] Live daemon already responding at {self.base_url} (attaching).")
+            return
+
+        if self.no_spawn:
+            raise RuntimeError(
+                f"Daemon not responsive at {self.base_url} and --no-spawn was specified."
+            )
+
+        print(f"[*] Starting live daemon on port {self.port} (--no-browser --lite)...")
+
+        release_bin = REPO_ROOT / "target" / "release" / ("osoosi.exe" if sys.platform == "win32" else "osoosi")
+        debug_bin = REPO_ROOT / "target" / "debug" / ("osoosi.exe" if sys.platform == "win32" else "osoosi")
+        deploy_bin = REPO_ROOT / "deploy" / ("osoosi.exe" if sys.platform == "win32" else "osoosi")
+        harfile_bin = Path(r"d:\harfile\OshoosiClaw\target\release\osoosi.exe")
+
+        env = dict(os.environ)
+        env["OSOOSI_DASHBOARD_PORT"] = str(self.port)
+        env["OSOOSI_DASHBOARD_BIND_ALL"] = "1"
+        env["OSOOSI_NO_ORT"] = "1"
+        env["OSOOSI_NO_AI"] = "1"
+        env["OSOOSI_DAEMON_DURATION_SECS"] = "3600"
+
+        cmd: List[str] = []
+        if release_bin.exists():
+            cmd = [str(release_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
+        elif debug_bin.exists():
+            cmd = [str(debug_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
+        elif deploy_bin.exists():
+            cmd = [str(deploy_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
+        elif sys.platform == "win32":
+            wsl_repo = "/mnt/" + str(REPO_ROOT).replace(":", "").replace("\\", "/").lower()
+            wsl_cmd = (
+                f"export OSOOSI_DASHBOARD_PORT={self.port}; "
+                f"export OSOOSI_DASHBOARD_BIND_ALL=1; "
+                f"export OSOOSI_DAEMON_DURATION_SECS=3600; "
+                f"export PATH=/root/.cargo/bin:/usr/bin:/bin; "
+                f"export CARGO_TARGET_DIR=/root/osoosi-linux-target-aplus; "
+                f"cd {wsl_repo}; "
+                f"bin=$(ls -t /root/osoosi-linux-target-aplus/debug/deps/port3030_daemon* 2>/dev/null | grep -v '\\.d$' | head -n1); "
+                f"if [ -n \"$bin\" ] && [ -x \"$bin\" ]; then "
+                f"  exec \"$bin\" --nocapture; "
+                f"elif [ -x /root/osoosi-linux-target-aplus/debug/osoosi ]; then "
+                f"  exec /root/osoosi-linux-target-aplus/debug/osoosi dashboard -p {self.port} --no-browser --lite; "
+                f"else "
+                f"  exec cargo test -p osoosi-dashboard --test port3030_daemon run_live_port_3030_daemon -- --nocapture; "
+                f"fi"
+            )
+            cmd = ["wsl", "-u", "root", "--", "bash", "-c", wsl_cmd]
+        elif harfile_bin.exists():
+            cmd = [str(harfile_bin), "dashboard", "-p", str(self.port), "--no-browser", "--lite"]
+        else:
+            cmd = [
+                "cargo", "test", "-p", "osoosi-dashboard",
+                "--test", "port3030_daemon", "run_live_port_3030_daemon",
+                "--", "--nocapture"
+            ]
+
+        print(f"[*] Launching daemon subprocess: {' '.join(cmd[:4])}...")
+        self.proc = subprocess.Popen(
+            cmd,
+            cwd=str(REPO_ROOT),
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.we_spawned = True
+
+        t0 = time.time()
+        while time.time() - t0 < self.timeout:
+            if self.proc.poll() is not None:
+                raise RuntimeError(
+                    f"Daemon process terminated prematurely with exit code {self.proc.returncode}"
+                )
+            if self.is_healthy():
+                elapsed = time.time() - t0
+                print(f"[+] Live daemon ready and responsive on port {self.port} ({elapsed:.2f}s, PID {self.proc.pid})")
+                return
+            time.sleep(0.5)
+
+        self.stop()
+        raise TimeoutError(
+            f"Daemon failed to bind and become healthy on port {self.port} within {self.timeout}s"
+        )
+
+    def stop(self) -> None:
+        """Terminates spawned daemon cleanly on exit."""
+        if not self.we_spawned or not self.proc:
+            return
+        print(f"[*] Stopping spawned daemon process (PID {self.proc.pid})...")
+        try:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                print(f"[!] Process {self.proc.pid} did not exit after 5s; killing forcefully...")
+                self.proc.kill()
+                self.proc.wait(timeout=3)
+        except Exception as e:
+            print(f"[!] Warning during daemon shutdown: {e}")
+        finally:
+            self.proc = None
+            self.we_spawned = False
+            print("[+] Daemon shutdown complete.")
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+
+
+# =============================================================================
 # 43 Adversarial Vector Provers
 # =============================================================================
+
 
 class VectorProver:
     """Executes multi-trial verification for each vector."""
@@ -730,13 +881,13 @@ class VectorProver:
 
 VECTORS_META = [
     # Domain 1 (21 Vectors)
-    ("EDR-VEC-01", "Domain 1: EDR Compromise", "Binary Masquerading & Static Path Abuse", "T1036.005", "crates/osoosi-core/src/rea.rs:480", "prove_edr_vec_01"),
-    ("EDR-VEC-02", "Domain 1: EDR Compromise", "Counter-AI Prompt Injection & Redirection", "LLM01, T1027", "crates/osoosi-core/src/rea.rs:5690", "prove_edr_vec_02"),
-    ("EDR-VEC-03", "Domain 1: EDR Compromise", "P2P Mesh Kill-Switch & Hash Poisoning", "T1562.001", "crates/osoosi-core/src/rea.rs:5970", "prove_edr_vec_03"),
+    ("EDR-VEC-01", "Domain 1: EDR Compromise", "Binary Masquerading & Static Path Abuse", "T1036.005", "crates/osoosi-core/src/rea/path_security.rs:480", "prove_edr_vec_01"),
+    ("EDR-VEC-02", "Domain 1: EDR Compromise", "Counter-AI Prompt Injection & Redirection", "LLM01, T1027", "crates/osoosi-core/src/rea/prompt_injection.rs:5690", "prove_edr_vec_02"),
+    ("EDR-VEC-03", "Domain 1: EDR Compromise", "P2P Mesh Kill-Switch & Hash Poisoning", "T1562.001", "crates/osoosi-core/src/rea/engine.rs:5970", "prove_edr_vec_03"),
     ("EDR-VEC-04", "Domain 1: EDR Compromise", "ETW Channel Blinding & Suppression", "T1562.006", "crates/osoosi-telemetry/src/host_events.rs:299", "prove_edr_vec_04"),
     ("EDR-VEC-05", "Domain 1: EDR Compromise", "BYOVD Driver & Kernel DKOM", "T1068, T1014", "crates/osoosi-runtime/src/kernel_driver.rs:106", "prove_edr_vec_05"),
     ("EDR-VEC-06", "Domain 1: EDR Compromise", "Usermode Hook Evasion & Hollowing", "T1562, T1055", "crates/osoosi-telemetry/src/hollowing.rs:25", "prove_edr_vec_06"),
-    ("EDR-VEC-07", "Domain 1: EDR Compromise", "Parser Memory Safety & Resource Bounds", "CWE-125/787", "crates/osoosi-core/src/rea.rs:85", "prove_edr_vec_07"),
+    ("EDR-VEC-07", "Domain 1: EDR Compromise", "Parser Memory Safety & Resource Bounds", "CWE-125/787", "crates/osoosi-core/src/rea/engine.rs:85", "prove_edr_vec_07"),
     ("EDR-VEC-08", "Domain 1: EDR Compromise", "Audit Log & Merkle Tampering", "T1070, T1565", "crates/osoosi-audit/src/lib.rs:50", "prove_edr_vec_08"),
     ("EDR-VEC-09", "Domain 1: EDR Compromise", "Admin Token Exfiltration via Status Endpoint", "CWE-306, T1562", "crates/osoosi-dashboard/src/lib.rs:1158", "prove_edr_vec_09"),
     ("EDR-VEC-10", "Domain 1: EDR Compromise", "Arbitrary Host Siquery SQL Exfiltration", "CWE-306, T1082", "crates/osoosi-dashboard/src/lib.rs:1168", "prove_edr_vec_10"),
@@ -960,6 +1111,8 @@ def main():
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="OshoosiClaw 43-Vector Multi-Trial Adversarial Proof Suite")
     parser.add_argument("--url", default=DEFAULT_BASE_URL, help=f"Dashboard base URL (default: {DEFAULT_BASE_URL})")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Port for auto-spawned daemon (default: {DEFAULT_PORT})")
+    parser.add_argument("--no-spawn", action="store_true", help="Do not auto-spawn daemon if port inactive")
     parser.add_argument("--trials", type=int, default=DEFAULT_TRIALS, help=f"Number of trials per vector (default: {DEFAULT_TRIALS})")
     parser.add_argument("--wsl-distro", default="Ubuntu", help="WSL distro for Linux toolchain fallback (default: Ubuntu)")
     parser.add_argument("--output-json", default=str(LOGS_DIR / "adversarial_proof_report.json"), help="Output JSON report path")
@@ -968,29 +1121,39 @@ def main():
 
     assert args.trials >= 3, "Multi-Trial Invariant requires >= 3 trials per vector"
 
-    LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    report_dict, md_report = run_proof_suite(
-        base_url=args.url,
-        num_trials=args.trials,
-        wsl_distro=args.wsl_distro,
-    )
+    parsed_url = urllib.parse.urlparse(args.url)
+    host = parsed_url.hostname or DEFAULT_HOST
+    port = parsed_url.port or args.port
 
-    out_json = Path(args.output_json)
-    out_json.write_text(json.dumps(report_dict, indent=2), encoding="utf-8")
-    print(f"\n[+] Wrote machine-readable proof JSON: {out_json}")
+    daemon = DaemonLifecycle(host=host, port=port, no_spawn=args.no_spawn)
+    try:
+        daemon.start()
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        report_dict, md_report = run_proof_suite(
+            base_url=f"http://{host}:{port}",
+            num_trials=args.trials,
+            wsl_distro=args.wsl_distro,
+        )
 
-    out_md = Path(args.output_md)
-    out_md.write_text(md_report, encoding="utf-8")
-    print(f"[+] Wrote markdown proof report:      {out_md}")
+        out_json = Path(args.output_json)
+        out_json.write_text(json.dumps(report_dict, indent=2), encoding="utf-8")
+        print(f"\n[+] Wrote machine-readable proof JSON: {out_json}")
 
-    passed = report_dict["passed_vectors"]
-    total = report_dict["total_vectors"]
-    grade = report_dict["overall_grade"]
-    print("\n" + "=" * 90)
-    print(f"  FINAL CERTIFICATION RESULT: {passed}/{total} VECTORS PASSED (GRADE: {grade})")
-    print("=" * 90 + "\n")
+        out_md = Path(args.output_md)
+        out_md.write_text(md_report, encoding="utf-8")
+        print(f"[+] Wrote markdown proof report:      {out_md}")
 
-    sys.exit(0 if passed == total else 1)
+        passed = report_dict["passed_vectors"]
+        total = report_dict["total_vectors"]
+        grade = report_dict["overall_grade"]
+        print("\n" + "=" * 90)
+        print(f"  FINAL CERTIFICATION RESULT: {passed}/{total} VECTORS PASSED (GRADE: {grade})")
+        print("=" * 90 + "\n")
+
+        sys.exit(0 if passed == total else 1)
+    finally:
+        daemon.stop()
+
 
 
 if __name__ == "__main__":
