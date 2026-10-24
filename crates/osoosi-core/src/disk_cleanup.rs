@@ -221,16 +221,35 @@ pub fn evaluate_disk_pressure(
     }
 }
 
-/// Resolves the workspace root directory (handling execution from either repo root or `target/release`).
+/// Resolves the workspace root directory (handling execution from either repo root, member crate, or `target/release`).
 pub fn resolve_workspace_root() -> PathBuf {
-    if let Ok(cwd) = std::env::current_dir() {
-        if cwd.join("Cargo.toml").exists() {
-            return cwd;
+    if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+        let p = PathBuf::from(manifest_dir);
+        if p.join("Cargo.toml").exists() && p.join("crates").exists() {
+            return p;
         }
-        if let Some(parent) = cwd.parent().and_then(|p| p.parent()) {
-            if parent.join("Cargo.toml").exists() {
+        if let Some(parent) = p.parent() {
+            if parent.join("Cargo.toml").exists() && parent.join("crates").exists() {
                 return parent.to_path_buf();
             }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        if cwd.join("Cargo.toml").exists() && cwd.join("crates").exists() {
+            return cwd;
+        }
+        if let Some(parent) = cwd.parent() {
+            if parent.join("Cargo.toml").exists() && parent.join("crates").exists() {
+                return parent.to_path_buf();
+            }
+            if let Some(gp) = parent.parent() {
+                if gp.join("Cargo.toml").exists() && gp.join("crates").exists() {
+                    return gp.to_path_buf();
+                }
+            }
+        }
+        if cwd.join("Cargo.toml").exists() {
+            return cwd;
         }
         return cwd;
     }

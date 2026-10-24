@@ -155,6 +155,7 @@ rhai = { version = "1.26.1", features = ["sync"] }
 
 [patch.crates-io]
 wasm-bindgen-futures = { path = "crates/wasm-bindgen-futures" }
+esaxx-rs = { path = "crates/esaxx-rs" }
 
 [profile.dev]
 debug = 0

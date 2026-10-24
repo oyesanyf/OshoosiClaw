@@ -1,5 +1,3 @@
-#![allow(linker_messages)]
-
 use futures::StreamExt;
 use libp2p::{identify, relay, PeerId, SwarmBuilder};
 use std::error::Error;

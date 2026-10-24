@@ -459,6 +459,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fhe")]
     fn test_fhe_coordinator_p2p_and_merkle_protection() {
         let coord = FheCoordinator::new();
 
@@ -486,6 +487,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fhe")]
     fn test_fhe_blind_threat_scoring() {
         let coord = FheCoordinator::new();
 
@@ -514,6 +516,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "fhe")]
     fn test_fhe_fleet_anomaly_telemetry_and_merkle() {
         let coord = FheCoordinator::new();
 

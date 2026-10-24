@@ -8544,7 +8544,7 @@ mod tests {
 
         for spoof_path in [
             r"C:\Users\Public\Downloads\cl.exe",
-            r"C:\Users\oyesanyf\AppData\Local\Temp\svchost.exe",
+            r"C:\Users\Default\AppData\Local\Temp\svchost.exe",
             r"/tmp/powershell.exe",
             r"C:\Temp\osoosi.exe",
         ] {
@@ -9080,7 +9080,7 @@ mod tests {
             ("build-script-b", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'build-script-build.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
             ("cli-c179367de5", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'cli-c179367de5f7da7c.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
             ("multi_node_fau", "Consensus Threat Identified (Confidence: 50.8%). Supporting Signals: OpenJEV-Voter: Process 'multi_node_fault_injection-dc872094be809096.exe' detected sensitive/exfil tokens [] (Noul p=0.015, Clef risk=0.450)"),
-            ("setup.exe", "Consensus Threat Identified (Confidence: 68.1%). Supporting Signals: KEV-Threat-Intel: Process C:\\Users\\oyesanyf\\AppData\\Local\\Temp\\vscode-stable-user-x64\\CodeSetup-stable.tmp\\setup.exe matches KEV product action-setup (CVE-2025-30066)"),
+            ("setup.exe", "Consensus Threat Identified (Confidence: 68.1%). Supporting Signals: KEV-Threat-Intel: Process C:\\Users\\Default\\AppData\\Local\\Temp\\vscode-stable-user-x64\\CodeSetup-stable.tmp\\setup.exe matches KEV product action-setup (CVE-2025-30066)"),
             ("file.exe", "Consensus Threat Identified (Confidence: 68.1%). Supporting Signals: KEV-Threat-Intel: Process C:\\msys64\\usr\\bin\\file.exe matches KEV product HTTP File Server (CVE-2024-23692)"),
             ("Anti-Chaff Alert", "Anti-Chaff Alert: 15 low-confidence events detected in 10s window. Possible evasion swarm."),
         ];

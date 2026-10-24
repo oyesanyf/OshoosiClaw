@@ -35,6 +35,8 @@
 *.intoto.jsonl
 *.sfx
 *.wasm
+*.pt
+*.safetensors
 /bin/
 /tests/poison_tests/
 *.locked.*
