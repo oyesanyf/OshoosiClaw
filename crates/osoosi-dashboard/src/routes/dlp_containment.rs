@@ -104,7 +104,11 @@ impl VoterConsensus {
                 num -= w * b.confidence.clamp(0.0, 1.0);
             }
         }
-        let weighted_probability = if den > 0.0 { (num / den).clamp(0.0, 1.0) } else { 0.0 };
+        let weighted_probability = if den > 0.0 {
+            (num / den).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let reached = weighted_probability >= VOTER_CONSENSUS_THRESHOLD
             && escalations >= VOTER_MIN_ESCALATIONS;
         Self {
@@ -136,11 +140,27 @@ pub trait ContainmentPlatform: Send + Sync {
     fn rea_malicious(&self, ctx: &ActorContext, resolved: &ResolvedActor) -> Option<String>;
     /// Additional injection / hollowing evidence beyond the event context.
     fn injection_evidence(&self, ctx: &ActorContext, resolved: &ResolvedActor) -> Vec<String>;
-    fn voter_ballots(&self, event: &DlpInspectionEventRecord, ctx: &ActorContext) -> Vec<VoterBallot>;
+    fn voter_ballots(
+        &self,
+        event: &DlpInspectionEventRecord,
+        ctx: &ActorContext,
+    ) -> Vec<VoterBallot>;
     fn is_protected_process(&self, pid: u32, name: &str) -> bool;
     fn resolve_destination(&self, host: &str) -> Vec<IpAddr>;
-    fn block_destination(&self, rule: &str, program: Option<&str>, pid: Option<u32>, ips: &[IpAddr]) -> anyhow::Result<()>;
-    fn unblock_destination(&self, rule: &str, program: Option<&str>, pid: Option<u32>, ips: &[IpAddr]) -> anyhow::Result<()>;
+    fn block_destination(
+        &self,
+        rule: &str,
+        program: Option<&str>,
+        pid: Option<u32>,
+        ips: &[IpAddr],
+    ) -> anyhow::Result<()>;
+    fn unblock_destination(
+        &self,
+        rule: &str,
+        program: Option<&str>,
+        pid: Option<u32>,
+        ips: &[IpAddr],
+    ) -> anyhow::Result<()>;
     fn suspend(&self, pid: u32) -> anyhow::Result<()>;
     fn resume(&self, pid: u32) -> anyhow::Result<()>;
     fn terminate(&self, pid: u32) -> anyhow::Result<()>;
@@ -223,7 +243,11 @@ fn now_rfc3339() -> String {
 }
 
 impl DlpContainmentEngine {
-    pub fn new(platform: Arc<dyn ContainmentPlatform>, vault_dir: PathBuf, registry_path: Option<PathBuf>) -> Self {
+    pub fn new(
+        platform: Arc<dyn ContainmentPlatform>,
+        vault_dir: PathBuf,
+        registry_path: Option<PathBuf>,
+    ) -> Self {
         let registry = registry_path
             .as_ref()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -276,7 +300,10 @@ impl DlpContainmentEngine {
         backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
     ) -> ContainmentOutcome {
         let resolved = self.platform.resolve_actor(ctx);
-        let image_path = resolved.image_path.clone().or_else(|| ctx.image_path.clone());
+        let image_path = resolved
+            .image_path
+            .clone()
+            .or_else(|| ctx.image_path.clone());
         let signature_verified = image_path
             .as_deref()
             .map(|p| self.platform.signature_verified(p))
@@ -289,12 +316,19 @@ impl DlpContainmentEngine {
         }
         let injected = !injection.is_empty();
         let rea_malicious_reason = self.platform.rea_malicious(ctx, &resolved).or_else(|| {
-            injected.then(|| format!("REA: code injection / hollowing indicators [{}]", injection.join(", ")))
+            injected.then(|| {
+                format!(
+                    "REA: code injection / hollowing indicators [{}]",
+                    injection.join(", ")
+                )
+            })
         });
         let voters = VoterConsensus::from_ballots(self.platform.voter_ballots(event, ctx));
 
         let oj = event.openjev_decision.as_ref();
-        let dlp_side = event.redactx_confirmed_containment && event.openjev_enforcement_agreed && voters.reached;
+        let dlp_side = event.redactx_confirmed_containment
+            && event.openjev_enforcement_agreed
+            && voters.reached;
         let pid = resolved.pid.or(ctx.pid);
         let actor_name = image_path
             .as_deref()
@@ -309,11 +343,15 @@ impl DlpContainmentEngine {
         if !event.redactx_confirmed_containment {
             reasons.push(format!(
                 "RedactX: confirmed spans do not clear {} thresholds (doc={:.3}, span={:.3})",
-                event.redactx_containment_mode, event.redactx_doc_score, event.redactx_max_span_score
+                event.redactx_containment_mode,
+                event.redactx_doc_score,
+                event.redactx_max_span_score
             ));
         }
         if !event.openjev_enforcement_agreed {
-            reasons.push("OpenJEV: routing/evidence guard does not agree with enforcement".to_string());
+            reasons.push(
+                "OpenJEV: routing/evidence guard does not agree with enforcement".to_string(),
+            );
         }
         if !voters.reached {
             reasons.push(format!(
@@ -322,8 +360,13 @@ impl DlpContainmentEngine {
             ));
         }
 
-        let monitor_only = backend.as_ref().map(|b| b.is_monitor_only()).unwrap_or(false);
-        let dry_run = std::env::var("OSOOSI_DRY_RUN").map(|v| v == "1").unwrap_or(false);
+        let monitor_only = backend
+            .as_ref()
+            .map(|b| b.is_monitor_only())
+            .unwrap_or(false);
+        let dry_run = std::env::var("OSOOSI_DRY_RUN")
+            .map(|v| v == "1")
+            .unwrap_or(false);
 
         let process_gate = dlp_side
             && rea_malicious_reason.is_some()
@@ -351,7 +394,9 @@ impl DlpContainmentEngine {
             }
             ContainmentDecision::AlertOnly
         };
-        if decision != ContainmentDecision::AlertOnly && (!self.is_enabled() || monitor_only || dry_run) {
+        if decision != ContainmentDecision::AlertOnly
+            && (!self.is_enabled() || monitor_only || dry_run)
+        {
             reasons.push(if !self.is_enabled() {
                 "DLP containment disabled by configuration: alert only".to_string()
             } else if monitor_only {
@@ -365,7 +410,11 @@ impl DlpContainmentEngine {
         let debounce_key = match (&decision, pid, image_path.as_deref()) {
             (ContainmentDecision::ProcessContained, Some(p), _) => format!("pid:{}", p),
             (ContainmentDecision::DestinationBlocked, _, Some(img)) => {
-                format!("dest:{}|{}", img.to_ascii_lowercase(), ctx.destination_host.to_ascii_lowercase())
+                format!(
+                    "dest:{}|{}",
+                    img.to_ascii_lowercase(),
+                    ctx.destination_host.to_ascii_lowercase()
+                )
             }
             _ => String::new(),
         };
@@ -374,7 +423,8 @@ impl DlpContainmentEngine {
             st.debounce.retain(|_, t| t.elapsed() < DEBOUNCE_WINDOW);
             if st.debounce.contains_key(&debounce_key) {
                 decision = ContainmentDecision::Debounced;
-                reasons.push("Debounced: containment already applied inside the window".to_string());
+                reasons
+                    .push("Debounced: containment already applied inside the window".to_string());
             } else {
                 st.debounce.insert(debounce_key.clone(), Instant::now());
             }
@@ -402,9 +452,15 @@ impl DlpContainmentEngine {
             redactx_doc_score: event.redactx_doc_score,
             redactx_max_span_score: event.redactx_max_span_score,
             redactx_confirmed_containment: event.redactx_confirmed_containment,
-            openjev_choice: oj.map(|o| o.choice_routing_action.selection.clone()).unwrap_or_default(),
-            openjev_noul_p: oj.map(|o| o.noul_contains_phi_pii.p_true_phi_pii).unwrap_or(0.0),
-            openjev_score: oj.map(|o| o.score_privacy_risk.expected_value).unwrap_or(0.0),
+            openjev_choice: oj
+                .map(|o| o.choice_routing_action.selection.clone())
+                .unwrap_or_default(),
+            openjev_noul_p: oj
+                .map(|o| o.noul_contains_phi_pii.p_true_phi_pii)
+                .unwrap_or(0.0),
+            openjev_score: oj
+                .map(|o| o.score_privacy_risk.expected_value)
+                .unwrap_or(0.0),
             openjev_enforcement_agreed: event.openjev_enforcement_agreed,
             voters,
             actions: Vec::new(),
@@ -458,12 +514,20 @@ impl DlpContainmentEngine {
             outcome.actions.push(ContainmentActionRecord {
                 kind: "network_block".to_string(),
                 ok: false,
-                detail: format!("could not resolve public IPs for '{}'", outcome.destination_host),
+                detail: format!(
+                    "could not resolve public IPs for '{}'",
+                    outcome.destination_host
+                ),
                 reverted: false,
             });
             return;
         }
-        let res = self.platform.block_destination(&rule, outcome.image_path.as_deref(), outcome.pid, &ips);
+        let res = self.platform.block_destination(
+            &rule,
+            outcome.image_path.as_deref(),
+            outcome.pid,
+            &ips,
+        );
         outcome.actions.push(ContainmentActionRecord {
             kind: "network_block".to_string(),
             ok: res.is_ok(),
@@ -480,12 +544,17 @@ impl DlpContainmentEngine {
         });
         if let Some(ttl) = ttl {
             outcome.expires_at = Some(
-                (chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default()).to_rfc3339(),
+                (chrono::Utc::now() + chrono::Duration::from_std(ttl).unwrap_or_default())
+                    .to_rfc3339(),
             );
         }
     }
 
-    fn apply_process_containment(&self, outcome: &mut ContainmentOutcome, signature_verified: bool) {
+    fn apply_process_containment(
+        &self,
+        outcome: &mut ContainmentOutcome,
+        signature_verified: bool,
+    ) {
         // 1. Stop the exfiltration first.
         self.apply_destination_block(outcome, None);
         // 2. Suspend (terminate only if suspension fails).
@@ -514,13 +583,25 @@ impl DlpContainmentEngine {
         }
         // 3. Vault the on-disk binary (signed images hollowed in memory get a forensic copy).
         if let Some(img) = outcome.image_path.clone() {
-            let mode = if signature_verified { "forensic_copy" } else { "moved" };
-            match vault_binary(&self.vault_dir, &outcome.containment_id, Path::new(&img), mode) {
+            let mode = if signature_verified {
+                "forensic_copy"
+            } else {
+                "moved"
+            };
+            match vault_binary(
+                &self.vault_dir,
+                &outcome.containment_id,
+                Path::new(&img),
+                mode,
+            ) {
                 Ok(rec) => {
                     outcome.actions.push(ContainmentActionRecord {
                         kind: "quarantine_binary".to_string(),
                         ok: true,
-                        detail: format!("{} -> {} ({})", rec.original_path, rec.vault_path, rec.mode),
+                        detail: format!(
+                            "{} -> {} ({})",
+                            rec.original_path, rec.vault_path, rec.mode
+                        ),
                         reverted: false,
                     });
                     outcome.vault = Some(rec);
@@ -548,7 +629,11 @@ impl DlpContainmentEngine {
     }
 
     /// Reverses every action of a containment (unblock, resume, restore binary).
-    pub fn restore(&self, containment_id: &str, operator: &str) -> anyhow::Result<ContainmentOutcome> {
+    pub fn restore(
+        &self,
+        containment_id: &str,
+        operator: &str,
+    ) -> anyhow::Result<ContainmentOutcome> {
         let mut outcome = {
             let st = self.state.lock();
             st.registry
@@ -571,7 +656,12 @@ impl DlpContainmentEngine {
             }
             let res = match action.kind.as_str() {
                 "network_block" => match &outcome.rule_name {
-                    Some(rule) => self.platform.unblock_destination(rule, outcome.image_path.as_deref(), outcome.pid, &ips),
+                    Some(rule) => self.platform.unblock_destination(
+                        rule,
+                        outcome.image_path.as_deref(),
+                        outcome.pid,
+                        &ips,
+                    ),
                     None => Ok(()),
                 },
                 "suspend" => match outcome.pid {
@@ -595,7 +685,8 @@ impl DlpContainmentEngine {
             .push(format!("Restored by {} at {}", operator, now_rfc3339()));
         let snapshot = {
             let mut st = self.state.lock();
-            st.registry.insert(containment_id.to_string(), outcome.clone());
+            st.registry
+                .insert(containment_id.to_string(), outcome.clone());
             st.registry.clone()
         };
         self.persist_registry(&snapshot);
@@ -653,7 +744,12 @@ fn blake3_file(path: &Path) -> anyhow::Result<(String, u64)> {
 }
 
 /// Moves (or forensically copies) a binary into the vault, preserving hash and metadata.
-pub fn vault_binary(vault_dir: &Path, containment_id: &str, original: &Path, mode: &str) -> anyhow::Result<VaultRecord> {
+pub fn vault_binary(
+    vault_dir: &Path,
+    containment_id: &str,
+    original: &Path,
+    mode: &str,
+) -> anyhow::Result<VaultRecord> {
     let md = std::fs::symlink_metadata(original)?;
     if !md.is_file() {
         anyhow::bail!("not a regular file: {}", original.display());
@@ -721,7 +817,10 @@ fn record_alert_and_audit(
     let summary = match outcome.decision {
         ContainmentDecision::ProcessContained => format!(
             "DLP containment: {} (pid {:?}) blocked from {} and suspended; categories {:?}",
-            outcome.actor, outcome.pid, outcome.destination_host, outcome.redactx_validated_categories
+            outcome.actor,
+            outcome.pid,
+            outcome.destination_host,
+            outcome.redactx_validated_categories
         ),
         ContainmentDecision::DestinationBlocked => format!(
             "DLP: sensitive data from {} to {} — destination blocked for {} min; browser untouched",
@@ -743,8 +842,16 @@ fn record_alert_and_audit(
     };
     let mut sig = osoosi_types::ThreatSignature::new(orch.trust.did().to_string());
     sig.id = format!("dlp_{}", outcome.containment_id);
-    sig.process_name = Some(outcome.image_path.clone().unwrap_or_else(|| outcome.actor.clone()));
-    sig.confidence = outcome.voters.weighted_probability.max(event.sensitivity_potential_phi) as f32;
+    sig.process_name = Some(
+        outcome
+            .image_path
+            .clone()
+            .unwrap_or_else(|| outcome.actor.clone()),
+    );
+    sig.confidence = outcome
+        .voters
+        .weighted_probability
+        .max(event.sensitivity_potential_phi) as f32;
     sig.detector_count = outcome.voters.escalations as u32;
     sig.is_signed = outcome.signature_verified;
     sig.recommended_action = if outcome.decision == ContainmentDecision::ProcessContained {
@@ -779,7 +886,14 @@ fn record_alert_and_audit(
             .voters
             .ballots
             .iter()
-            .map(|b| format!("{}:{}({:.2})", b.voter, if b.escalate { "escalate" } else { "abstain" }, b.confidence))
+            .map(|b| {
+                format!(
+                    "{}:{}({:.2})",
+                    b.voter,
+                    if b.escalate { "escalate" } else { "abstain" },
+                    b.confidence
+                )
+            })
             .collect::<Vec<_>>()
             .join(", "),
         action_taken: action_taken.to_string(),
@@ -819,8 +933,18 @@ fn record_alert_and_audit(
 // ---------------------------------------------------------------------------------------------
 
 const BROWSER_IMAGES: &[&str] = &[
-    "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe", "chrome", "chromium",
-    "msedge", "microsoft-edge", "firefox", "brave", "opera",
+    "chrome.exe",
+    "msedge.exe",
+    "firefox.exe",
+    "brave.exe",
+    "opera.exe",
+    "chrome",
+    "chromium",
+    "msedge",
+    "microsoft-edge",
+    "firefox",
+    "brave",
+    "opera",
 ];
 
 /// Real OS integration: sysinfo process resolution, Authenticode/catalog trust, REA
@@ -879,11 +1003,15 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         let lower = ctx.actor.to_ascii_lowercase();
         let is_browser_name = BROWSER_IMAGES.contains(&lower.as_str());
         let sys = System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
+            RefreshKind::new()
+                .with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
         );
         if let Some(pid) = ctx.pid {
             if let Some(p) = sys.process(sysinfo::Pid::from_u32(pid)) {
-                let exe = p.exe().map(|e| e.display().to_string()).or_else(|| ctx.image_path.clone());
+                let exe = p
+                    .exe()
+                    .map(|e| e.display().to_string())
+                    .or_else(|| ctx.image_path.clone());
                 let name = p.name().to_ascii_lowercase();
                 return ResolvedActor {
                     pid: Some(pid),
@@ -919,10 +1047,15 @@ impl ContainmentPlatform for SystemContainmentPlatform {
     }
 
     fn rea_malicious(&self, ctx: &ActorContext, resolved: &ResolvedActor) -> Option<String> {
-        let path = resolved.image_path.as_deref().or(ctx.image_path.as_deref())?;
-        if let Some(spoof) =
-            osoosi_core::rea::detect_binary_masquerade_spoof(&ctx.actor, Some(Path::new(path)), None)
-        {
+        let path = resolved
+            .image_path
+            .as_deref()
+            .or(ctx.image_path.as_deref())?;
+        if let Some(spoof) = osoosi_core::rea::detect_binary_masquerade_spoof(
+            &ctx.actor,
+            Some(Path::new(path)),
+            None,
+        ) {
             return Some(format!("REA masquerade: {}", spoof));
         }
         let user_writable = osoosi_core::rea::is_untrusted_writable_or_temp_path(path);
@@ -949,7 +1082,11 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         Vec::new()
     }
 
-    fn voter_ballots(&self, event: &DlpInspectionEventRecord, ctx: &ActorContext) -> Vec<VoterBallot> {
+    fn voter_ballots(
+        &self,
+        event: &DlpInspectionEventRecord,
+        ctx: &ActorContext,
+    ) -> Vec<VoterBallot> {
         production_voter_ballots(event, ctx)
     }
 
@@ -960,7 +1097,11 @@ impl ContainmentPlatform for SystemContainmentPlatform {
     fn resolve_destination(&self, host: &str) -> Vec<IpAddr> {
         use std::net::ToSocketAddrs;
         if let Ok(ip) = host.parse::<IpAddr>() {
-            return if is_public_ip(&ip) { vec![ip] } else { Vec::new() };
+            return if is_public_ip(&ip) {
+                vec![ip]
+            } else {
+                Vec::new()
+            };
         }
         let mut ips: Vec<IpAddr> = (host, 443)
             .to_socket_addrs()
@@ -972,8 +1113,18 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         ips
     }
 
-    fn block_destination(&self, rule: &str, program: Option<&str>, pid: Option<u32>, ips: &[IpAddr]) -> anyhow::Result<()> {
-        let ip_list = ips.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    fn block_destination(
+        &self,
+        rule: &str,
+        program: Option<&str>,
+        pid: Option<u32>,
+        ips: &[IpAddr],
+    ) -> anyhow::Result<()> {
+        let ip_list = ips
+            .iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         if cfg!(windows) {
             let mut args = vec![
                 "advfirewall".to_string(),
@@ -1000,7 +1151,13 @@ impl ContainmentPlatform for SystemContainmentPlatform {
         }
     }
 
-    fn unblock_destination(&self, rule: &str, _program: Option<&str>, pid: Option<u32>, ips: &[IpAddr]) -> anyhow::Result<()> {
+    fn unblock_destination(
+        &self,
+        rule: &str,
+        _program: Option<&str>,
+        pid: Option<u32>,
+        ips: &[IpAddr],
+    ) -> anyhow::Result<()> {
         if cfg!(windows) {
             run_hidden(
                 "netsh",
@@ -1039,7 +1196,9 @@ impl ContainmentPlatform for SystemContainmentPlatform {
 
     fn terminate(&self, pid: u32) -> anyhow::Result<()> {
         use sysinfo::{ProcessRefreshKind, RefreshKind, System};
-        let sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
+        let sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+        );
         match sys.process(sysinfo::Pid::from_u32(pid)) {
             Some(p) if p.kill() => Ok(()),
             _ => anyhow::bail!("terminate of pid {} failed", pid),
@@ -1048,9 +1207,19 @@ impl ContainmentPlatform for SystemContainmentPlatform {
 }
 
 fn linux_rule_args(op: &str, rule: &str, ip: &IpAddr, uid: Option<u32>) -> Vec<String> {
-    let mut args = vec![op.to_string(), "OUTPUT".to_string(), "-d".to_string(), ip.to_string()];
+    let mut args = vec![
+        op.to_string(),
+        "OUTPUT".to_string(),
+        "-d".to_string(),
+        ip.to_string(),
+    ];
     if let Some(uid) = uid {
-        args.extend(["-m".to_string(), "owner".to_string(), "--uid-owner".to_string(), uid.to_string()]);
+        args.extend([
+            "-m".to_string(),
+            "owner".to_string(),
+            "--uid-owner".to_string(),
+            uid.to_string(),
+        ]);
     }
     args.extend([
         "-m".to_string(),
@@ -1075,20 +1244,33 @@ fn linux_uid_of(pid: u32) -> Option<u32> {
 
 /// Production decision-model ballots: OpenJEV voter (REA engine), REA consensus voter, Cedar
 /// egress policy, Tier-1/RedactX deterministic validators, and the Clef decision engine.
-pub fn production_voter_ballots(event: &DlpInspectionEventRecord, ctx: &ActorContext) -> Vec<VoterBallot> {
+pub fn production_voter_ballots(
+    event: &DlpInspectionEventRecord,
+    ctx: &ActorContext,
+) -> Vec<VoterBallot> {
     let mut ballots = Vec::new();
     let payload_view = format!(
         "{} {}",
         event.scrubbed_preview,
         event.redactx_validated_categories.join(" ")
     );
-    let oj = osoosi_core::rea::evaluate_openjev_consensus_vote(&ctx.actor, &ctx.destination_url, &payload_view);
+    let oj = osoosi_core::rea::evaluate_openjev_consensus_vote(
+        &ctx.actor,
+        &ctx.destination_url,
+        &payload_view,
+    );
     let oj_escalate = oj.decision == "ESCALATE_MALICIOUS" || event.openjev_enforcement_agreed;
     ballots.push(VoterBallot {
         voter: "OpenJEV-Voter".to_string(),
         escalate: oj_escalate,
         confidence: if oj_escalate {
-            oj.confidence.max(event.openjev_decision.as_ref().map(|o| o.noul_contains_phi_pii.p_true_phi_pii).unwrap_or(0.0))
+            oj.confidence.max(
+                event
+                    .openjev_decision
+                    .as_ref()
+                    .map(|o| o.noul_contains_phi_pii.p_true_phi_pii)
+                    .unwrap_or(0.0),
+            )
         } else {
             oj.confidence
         },
@@ -1139,7 +1321,8 @@ static GLOBAL_ENGINE: OnceLock<Arc<DlpContainmentEngine>> = OnceLock::new();
 pub fn global_containment_engine() -> Arc<DlpContainmentEngine> {
     GLOBAL_ENGINE
         .get_or_init(|| {
-            let vault = PathBuf::from(osoosi_types::load_autonomy_config().quarantine_path).join("dlp");
+            let vault =
+                PathBuf::from(osoosi_types::load_autonomy_config().quarantine_path).join("dlp");
             Arc::new(DlpContainmentEngine::new(
                 Arc::new(SystemContainmentPlatform),
                 vault,
@@ -1178,9 +1361,15 @@ pub struct RestoreRequest {
 pub async fn post_containment_restore(Json(req): Json<RestoreRequest>) -> Response {
     let operator = req.operator.unwrap_or_else(|| "dashboard".to_string());
     let id = req.containment_id.clone();
-    let result = tokio::task::spawn_blocking(move || global_containment_engine().restore(&id, &operator)).await;
+    let result =
+        tokio::task::spawn_blocking(move || global_containment_engine().restore(&id, &operator))
+            .await;
     match result {
-        Ok(Ok(outcome)) => (StatusCode::OK, Json(json!({ "status": "ok", "restored": outcome }))).into_response(),
+        Ok(Ok(outcome)) => (
+            StatusCode::OK,
+            Json(json!({ "status": "ok", "restored": outcome })),
+        )
+            .into_response(),
         Ok(Err(e)) => (
             StatusCode::CONFLICT,
             Json(json!({ "status": "error", "message": e.to_string() })),
@@ -1204,7 +1393,10 @@ pub async fn post_containment_config(Json(body): Json<Value>) -> Json<Value> {
 pub fn routes() -> Router<DashboardState> {
     Router::new()
         .route("/api/dlp/containment/status", get(get_containment_status))
-        .route("/api/dlp/containment/restore", post(post_containment_restore))
+        .route(
+            "/api/dlp/containment/restore",
+            post(post_containment_restore),
+        )
         .route("/api/dlp/containment/config", post(post_containment_config))
 }
 
@@ -1237,18 +1429,27 @@ mod tests {
 
     impl ContainmentPlatform for FixturePlatform {
         fn resolve_actor(&self, _ctx: &ActorContext) -> ResolvedActor {
-            ResolvedActor { pid: self.pid, image_path: self.image.clone(), is_browser: self.browser }
+            ResolvedActor {
+                pid: self.pid,
+                image_path: self.image.clone(),
+                is_browser: self.browser,
+            }
         }
         fn signature_verified(&self, _p: &str) -> bool {
             self.signed
         }
         fn rea_malicious(&self, _c: &ActorContext, _r: &ResolvedActor) -> Option<String> {
-            self.rea_malicious.then(|| "fixture: unsigned binary in user-writable temp dir".to_string())
+            self.rea_malicious
+                .then(|| "fixture: unsigned binary in user-writable temp dir".to_string())
         }
         fn injection_evidence(&self, _c: &ActorContext, _r: &ResolvedActor) -> Vec<String> {
             self.injection.clone()
         }
-        fn voter_ballots(&self, _e: &DlpInspectionEventRecord, _c: &ActorContext) -> Vec<VoterBallot> {
+        fn voter_ballots(
+            &self,
+            _e: &DlpInspectionEventRecord,
+            _c: &ActorContext,
+        ) -> Vec<VoterBallot> {
             let mk = |n: &str| VoterBallot {
                 voter: n.to_string(),
                 escalate: self.voters_escalate,
@@ -1264,11 +1465,23 @@ mod tests {
         fn resolve_destination(&self, _h: &str) -> Vec<IpAddr> {
             vec!["93.184.216.34".parse().unwrap()]
         }
-        fn block_destination(&self, rule: &str, program: Option<&str>, _pid: Option<u32>, _ips: &[IpAddr]) -> anyhow::Result<()> {
+        fn block_destination(
+            &self,
+            rule: &str,
+            program: Option<&str>,
+            _pid: Option<u32>,
+            _ips: &[IpAddr],
+        ) -> anyhow::Result<()> {
             self.log(format!("block:{}:{}", rule, program.unwrap_or("-")));
             Ok(())
         }
-        fn unblock_destination(&self, rule: &str, _p: Option<&str>, _pid: Option<u32>, _ips: &[IpAddr]) -> anyhow::Result<()> {
+        fn unblock_destination(
+            &self,
+            rule: &str,
+            _p: Option<&str>,
+            _pid: Option<u32>,
+            _ips: &[IpAddr],
+        ) -> anyhow::Result<()> {
             self.log(format!("unblock:{}", rule));
             Ok(())
         }
@@ -1287,13 +1500,22 @@ mod tests {
     }
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("osoosi_dlpc_{}_{}", tag, uuid::Uuid::new_v4().simple()));
+        let d = std::env::temp_dir().join(format!(
+            "osoosi_dlpc_{}_{}",
+            tag,
+            uuid::Uuid::new_v4().simple()
+        ));
         std::fs::create_dir_all(&d).unwrap();
         d
     }
 
     /// Runs the real DLP inspection path on a payload to build the event under test.
-    fn real_event(actor: &str, sink: &str, payload: &str, containment_mode: &str) -> DlpInspectionEventRecord {
+    fn real_event(
+        actor: &str,
+        sink: &str,
+        payload: &str,
+        containment_mode: &str,
+    ) -> DlpInspectionEventRecord {
         let mut engine = osoosi_dp::OsoosiTwoTierDlpEngine::new();
         let _ = &mut engine;
         let mut state = crate::routes::dlp::DlpDashboardState {
@@ -1340,7 +1562,8 @@ mod tests {
 
     fn engine_with(platform: Arc<FixturePlatform>, tag: &str) -> (DlpContainmentEngine, PathBuf) {
         let dir = temp_dir(tag);
-        let e = DlpContainmentEngine::new(platform, dir.join("vault"), Some(dir.join("registry.json")));
+        let e =
+            DlpContainmentEngine::new(platform, dir.join("vault"), Some(dir.join("registry.json")));
         e.set_enabled(true);
         (e, dir)
     }
@@ -1358,24 +1581,47 @@ mod tests {
             ..Default::default()
         });
         let (engine, edir) = engine_with(platform.clone(), "contain");
-        let ev = real_event("updater_helper.exe", "https://dlptest.com/http-post/", SENSITIVE, "balanced_utility");
+        let ev = real_event(
+            "updater_helper.exe",
+            "https://dlptest.com/http-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
         assert!(!ev.allowed);
         assert!(ev.redactx_confirmed_containment);
         assert!(ev.openjev_enforcement_agreed);
-        let out = engine.evaluate_and_respond(&ev, &ctx(Some(4242), Some(bin.display().to_string())), None);
-        assert_eq!(out.decision, ContainmentDecision::ProcessContained, "{:?}", out.reasons);
+        let out = engine.evaluate_and_respond(
+            &ev,
+            &ctx(Some(4242), Some(bin.display().to_string())),
+            None,
+        );
+        assert_eq!(
+            out.decision,
+            ContainmentDecision::ProcessContained,
+            "{:?}",
+            out.reasons
+        );
         let calls = platform.calls();
         assert!(calls.iter().any(|c| c.starts_with("block:OshoosiDLP-")));
         assert!(calls.contains(&"suspend:4242".to_string()));
         assert!(!bin.exists(), "binary must be moved to the vault");
         let vault = out.vault.clone().expect("vault record");
         assert!(Path::new(&vault.vault_path).exists());
-        assert_eq!(vault.blake3, blake3::hash(b"MZ fixture binary bytes").to_hex().to_string());
+        assert_eq!(
+            vault.blake3,
+            blake3::hash(b"MZ fixture binary bytes")
+                .to_hex()
+                .to_string()
+        );
         assert!(edir.join("registry.json").exists(), "registry persisted");
         assert_eq!(out.openjev_choice, "BLOCK_AND_SCRUB");
-        assert!(out.redactx_validated_categories.contains(&"CREDIT_CARD_PAN".to_string()));
+        assert!(out
+            .redactx_validated_categories
+            .contains(&"CREDIT_CARD_PAN".to_string()));
 
-        let restored = engine.restore(&out.containment_id, "test").expect("restore");
+        let restored = engine
+            .restore(&out.containment_id, "test")
+            .expect("restore");
         assert!(restored.restored);
         let calls = platform.calls();
         assert!(calls.iter().any(|c| c.starts_with("unblock:OshoosiDLP-")));
@@ -1395,14 +1641,29 @@ mod tests {
             ..Default::default()
         });
         let (engine, _d) = engine_with(platform.clone(), "browser");
-        let ev = real_event("msedge.exe", "https://dlptest.com/http-post/", SENSITIVE, "balanced_utility");
+        let ev = real_event(
+            "msedge.exe",
+            "https://dlptest.com/http-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
         let out = engine.evaluate_and_respond(&ev, &ctx(None, platform.image.clone()), None);
-        assert_eq!(out.decision, ContainmentDecision::DestinationBlocked, "{:?}", out.reasons);
+        assert_eq!(
+            out.decision,
+            ContainmentDecision::DestinationBlocked,
+            "{:?}",
+            out.reasons
+        );
         let calls = platform.calls();
         assert!(calls.iter().any(|c| c.contains("msedge.exe")));
-        assert!(!calls.iter().any(|c| c.starts_with("suspend:") || c.starts_with("terminate:")));
+        assert!(!calls
+            .iter()
+            .any(|c| c.starts_with("suspend:") || c.starts_with("terminate:")));
         assert!(out.vault.is_none());
-        assert!(out.expires_at.is_some(), "browser destination blocks auto-expire");
+        assert!(
+            out.expires_at.is_some(),
+            "browser destination blocks auto-expire"
+        );
     }
 
     #[test]
@@ -1420,9 +1681,23 @@ mod tests {
             ..Default::default()
         });
         let (engine, _d) = engine_with(platform.clone(), "hollow");
-        let ev = real_event("msedge.exe", "https://dlptest.com/http-post/", SENSITIVE, "balanced_utility");
-        let out = engine.evaluate_and_respond(&ev, &ctx(Some(5150), Some(bin.display().to_string())), None);
-        assert_eq!(out.decision, ContainmentDecision::ProcessContained, "{:?}", out.reasons);
+        let ev = real_event(
+            "msedge.exe",
+            "https://dlptest.com/http-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
+        let out = engine.evaluate_and_respond(
+            &ev,
+            &ctx(Some(5150), Some(bin.display().to_string())),
+            None,
+        );
+        assert_eq!(
+            out.decision,
+            ContainmentDecision::ProcessContained,
+            "{:?}",
+            out.reasons
+        );
         assert!(platform.calls().contains(&"suspend:5150".to_string()));
         let vault = out.vault.expect("forensic copy");
         assert_eq!(vault.mode, "forensic_copy");
@@ -1440,8 +1715,17 @@ mod tests {
             ..Default::default()
         });
         let (engine, _d) = engine_with(platform.clone(), "reaonly");
-        let ev = real_event("agent", "https://example.org/search", "q=weather+tomorrow", "balanced_utility");
-        let out = engine.evaluate_and_respond(&ev, &ctx(Some(777), Some("/tmp/x/agent".to_string())), None);
+        let ev = real_event(
+            "agent",
+            "https://example.org/search",
+            "q=weather+tomorrow",
+            "balanced_utility",
+        );
+        let out = engine.evaluate_and_respond(
+            &ev,
+            &ctx(Some(777), Some("/tmp/x/agent".to_string())),
+            None,
+        );
         assert_eq!(out.decision, ContainmentDecision::AlertOnly);
         assert!(platform.calls().is_empty());
 
@@ -1454,8 +1738,17 @@ mod tests {
             ..Default::default()
         });
         let (engine2, _d2) = engine_with(platform2.clone(), "dlponly");
-        let ev2 = real_event("sync", "https://dlptest.com/http-post/", SENSITIVE, "balanced_utility");
-        let out2 = engine2.evaluate_and_respond(&ev2, &ctx(Some(778), Some("/opt/app/sync".to_string())), None);
+        let ev2 = real_event(
+            "sync",
+            "https://dlptest.com/http-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
+        let out2 = engine2.evaluate_and_respond(
+            &ev2,
+            &ctx(Some(778), Some("/opt/app/sync".to_string())),
+            None,
+        );
         assert_eq!(out2.decision, ContainmentDecision::AlertOnly);
         assert!(platform2.calls().is_empty());
     }
@@ -1470,9 +1763,18 @@ mod tests {
             ..Default::default()
         });
         let (engine, _d) = engine_with(platform.clone(), "lowp");
-        let ev = real_event("beacon", "https://example.org/x", "hello world", "balanced_utility");
+        let ev = real_event(
+            "beacon",
+            "https://example.org/x",
+            "hello world",
+            "balanced_utility",
+        );
         assert!(!ev.openjev_enforcement_agreed);
-        let out = engine.evaluate_and_respond(&ev, &ctx(Some(900), Some("/tmp/y/beacon".to_string())), None);
+        let out = engine.evaluate_and_respond(
+            &ev,
+            &ctx(Some(900), Some("/tmp/y/beacon".to_string())),
+            None,
+        );
         assert_eq!(out.decision, ContainmentDecision::AlertOnly);
         assert!(platform.calls().is_empty());
     }
@@ -1487,10 +1789,19 @@ mod tests {
             ..Default::default()
         });
         let (engine, _d) = engine_with(platform.clone(), "span");
-        let ev = real_event("mailer", "https://example.org/contact", "contact=jane.doe@example.org", "balanced_utility");
+        let ev = real_event(
+            "mailer",
+            "https://example.org/contact",
+            "contact=jane.doe@example.org",
+            "balanced_utility",
+        );
         assert!(ev.redactx_confirmed_detection);
         assert!(!ev.redactx_confirmed_containment);
-        let out = engine.evaluate_and_respond(&ev, &ctx(Some(901), Some("/tmp/z/mailer".to_string())), None);
+        let out = engine.evaluate_and_respond(
+            &ev,
+            &ctx(Some(901), Some("/tmp/z/mailer".to_string())),
+            None,
+        );
         assert_eq!(out.decision, ContainmentDecision::AlertOnly);
         assert!(platform.calls().is_empty());
     }
@@ -1508,7 +1819,12 @@ mod tests {
             ..Default::default()
         });
         let (engine, _d) = engine_with(platform.clone(), "debounce");
-        let ev = real_event("dropper.exe", "https://dlptest.com/http-post/", SENSITIVE, "balanced_utility");
+        let ev = real_event(
+            "dropper.exe",
+            "https://dlptest.com/http-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
         let c = ctx(Some(6060), Some(bin.display().to_string()));
         let first = engine.evaluate_and_respond(&ev, &c, None);
         let second = engine.evaluate_and_respond(&ev, &c, None);
@@ -1516,7 +1832,11 @@ mod tests {
         assert_eq!(first.decision, ContainmentDecision::ProcessContained);
         assert_eq!(second.decision, ContainmentDecision::Debounced);
         assert_eq!(third.decision, ContainmentDecision::Debounced);
-        let suspends = platform.calls().iter().filter(|c| c.starts_with("suspend:")).count();
+        let suspends = platform
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("suspend:"))
+            .count();
         assert_eq!(suspends, 1);
     }
 
@@ -1531,17 +1851,40 @@ mod tests {
         });
         let (engine, _d) = engine_with(platform.clone(), "disabled");
         engine.set_enabled(false);
-        let ev = real_event("tool", "https://dlptest.com/http-post/", SENSITIVE, "balanced_utility");
-        let out = engine.evaluate_and_respond(&ev, &ctx(Some(4343), Some("/tmp/q/tool".to_string())), None);
+        let ev = real_event(
+            "tool",
+            "https://dlptest.com/http-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
+        let out = engine.evaluate_and_respond(
+            &ev,
+            &ctx(Some(4343), Some("/tmp/q/tool".to_string())),
+            None,
+        );
         assert_eq!(out.decision, ContainmentDecision::AlertOnly);
         assert!(platform.calls().is_empty());
     }
 
     #[test]
     fn voter_quorum_requires_probability_and_two_escalations() {
-        let b = |e: bool, c: f64| VoterBallot { voter: "v".into(), escalate: e, confidence: c, weight: 1.0, reason: String::new() };
+        let b = |e: bool, c: f64| VoterBallot {
+            voter: "v".into(),
+            escalate: e,
+            confidence: c,
+            weight: 1.0,
+            reason: String::new(),
+        };
         assert!(!VoterConsensus::from_ballots(vec![b(true, 0.99)]).reached);
         assert!(VoterConsensus::from_ballots(vec![b(true, 0.95), b(true, 0.9)]).reached);
-        assert!(!VoterConsensus::from_ballots(vec![b(true, 0.95), b(true, 0.9), b(false, 0.5), b(false, 0.5)]).reached);
+        assert!(
+            !VoterConsensus::from_ballots(vec![
+                b(true, 0.95),
+                b(true, 0.9),
+                b(false, 0.5),
+                b(false, 0.5)
+            ])
+            .reached
+        );
     }
 }

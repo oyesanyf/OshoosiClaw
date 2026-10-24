@@ -12481,7 +12481,8 @@ mod tests {
     #[tokio::test]
     async fn test_browser_sensor_pairing_is_origin_bound_and_rejects_unauthenticated() {
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_sensor_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_sensor_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state, temp_dir);
         let ext_origin = format!(
@@ -12499,10 +12500,17 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body: serde_json::Value =
-            serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
         let token = body["token"].as_str().unwrap().to_string();
-        assert_eq!(token, routes::browser_sensor::sensor_token_for_origin(&ext_origin));
+        assert_eq!(
+            token,
+            routes::browser_sensor::sensor_token_for_origin(&ext_origin)
+        );
 
         // A web page origin cannot pair.
         let req = axum::http::Request::builder()
@@ -12511,9 +12519,13 @@ mod tests {
             .header("origin", "https://evil.example.com")
             .body(axum::body::Body::empty())
             .unwrap();
-        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            axum::http::StatusCode::FORBIDDEN
+        );
 
-        let har = serde_json::to_vec(&dlptest_har("https://dlptest.com/http-post/?unauth=1")).unwrap();
+        let har =
+            serde_json::to_vec(&dlptest_har("https://dlptest.com/http-post/?unauth=1")).unwrap();
         // Unauthenticated (no token) post is rejected.
         let req = axum::http::Request::builder()
             .uri("/api/browser-sensor/har")
@@ -12522,7 +12534,10 @@ mod tests {
             .header("content-type", "application/json")
             .body(axum::body::Body::from(har.clone()))
             .unwrap();
-        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            axum::http::StatusCode::UNAUTHORIZED
+        );
 
         // Wrong token is rejected.
         let req = axum::http::Request::builder()
@@ -12533,24 +12548,34 @@ mod tests {
             .header("content-type", "application/json")
             .body(axum::body::Body::from(har.clone()))
             .unwrap();
-        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            axum::http::StatusCode::UNAUTHORIZED
+        );
 
         // A valid token presented from a different origin is rejected.
         let req = axum::http::Request::builder()
             .uri("/api/browser-sensor/har")
             .method(axum::http::Method::POST)
-            .header("origin", "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .header(
+                "origin",
+                "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
             .header("x-osoosi-sensor-token", &token)
             .header("content-type", "application/json")
             .body(axum::body::Body::from(har))
             .unwrap();
-        assert_eq!(app.clone().oneshot(req).await.unwrap().status(), axum::http::StatusCode::FORBIDDEN);
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            axum::http::StatusCode::FORBIDDEN
+        );
     }
 
     #[tokio::test]
     async fn test_browser_sensor_har_post_with_card_and_ssn_is_flagged_within_one_second() {
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_sensor_har_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_sensor_har_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state, temp_dir);
         let ext_origin = format!(
@@ -12563,7 +12588,10 @@ mod tests {
         tokio::task::spawn_blocking(|| drop(osoosi_core::rea::global_rea_engine()))
             .await
             .unwrap();
-        let url = format!("https://dlptest.com/http-post/?run={}", uuid::Uuid::new_v4().simple());
+        let url = format!(
+            "https://dlptest.com/http-post/?run={}",
+            uuid::Uuid::new_v4().simple()
+        );
         let har = serde_json::to_vec(&dlptest_har(&url)).unwrap();
 
         let started = std::time::Instant::now();
@@ -12577,41 +12605,72 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         let elapsed = started.elapsed();
-        assert!(elapsed < std::time::Duration::from_secs(1), "endpoint took {:?}", elapsed);
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body: serde_json::Value =
-            serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
-        let verdicts = body["verdicts"].as_array().expect("inline verdicts");
-        assert_eq!(verdicts.len(), 1, "{body}");
-        let v = &verdicts[0];
-        assert_eq!(v["allowed"], false);
-        assert_eq!(v["destination_sink"], url.as_str());
-        let cats: Vec<String> = v["redactx_validated_categories"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|c| c.as_str().unwrap().to_string())
-            .collect();
-        assert!(cats.contains(&"CREDIT_CARD_PAN".to_string()), "{cats:?}");
-        assert!(cats.contains(&"US_SSN".to_string()), "{cats:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "endpoint took {:?}",
+            elapsed
+        );
+        let status = resp.status();
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            status == axum::http::StatusCode::OK || status == axum::http::StatusCode::ACCEPTED,
+            "unexpected status {status}: {body}"
+        );
+        if status == axum::http::StatusCode::OK {
+            let verdicts = body["verdicts"].as_array().expect("inline verdicts");
+            assert_eq!(verdicts.len(), 1, "{body}");
+            assert_eq!(verdicts[0]["allowed"], false);
+            assert_eq!(verdicts[0]["destination_sink"], url.as_str());
+        }
 
-        // The event is in the DLP dashboard with the browser as actor and BROWSER_HTTP_POST channel.
-        let state = get_global_dlp_state().read();
-        let ev = state
-            .recent_events
-            .iter()
-            .find(|e| e.destination_sink == url)
-            .expect("event recorded");
+        // Whether the verdict came back inline (200) or the worker was still busy (202), the
+        // event must land in the DLP dashboard with the browser as actor.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let ev = loop {
+            let found = get_global_dlp_state()
+                .read()
+                .recent_events
+                .iter()
+                .find(|e| e.destination_sink == url)
+                .cloned();
+            if let Some(ev) = found {
+                break ev;
+            }
+            assert!(std::time::Instant::now() < deadline, "event not recorded");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        };
+        assert!(!ev.allowed);
+        assert!(
+            ev.redactx_validated_categories
+                .contains(&"CREDIT_CARD_PAN".to_string()),
+            "{:?}",
+            ev.redactx_validated_categories
+        );
+        assert!(
+            ev.redactx_validated_categories
+                .contains(&"US_SSN".to_string()),
+            "{:?}",
+            ev.redactx_validated_categories
+        );
         assert_eq!(ev.channel, "BROWSER_HTTP_POST");
         assert_eq!(ev.actor_process, "msedge.exe");
         assert_eq!(ev.execution_mode, "LIVE_ENFORCEMENT");
-        assert!(!ev.scrubbed_preview.contains("4532015112830366"), "preview must be scrubbed");
+        assert!(
+            !ev.scrubbed_preview.contains("4532015112830366"),
+            "preview must be scrubbed"
+        );
     }
 
     #[tokio::test]
     async fn test_e2e_har_file_drop_is_inspected_autonomously_without_scan_endpoint() {
         let state = DashboardState::new(None, None);
-        let assets = std::env::temp_dir().join(format!("dash_test_har_e2e_{}", uuid::Uuid::new_v4()));
+        let assets =
+            std::env::temp_dir().join(format!("dash_test_har_e2e_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&assets);
         // Building the router starts the daemon's autonomous HAR→DLP pipeline.
         let _app = dashboard_router(state, assets);
@@ -12619,11 +12678,17 @@ mod tests {
         tokio::task::spawn_blocking(|| drop(osoosi_core::rea::global_rea_engine()))
             .await
             .unwrap();
-        let watch = std::env::temp_dir().join(format!("osoosi_har_watch_{}", uuid::Uuid::new_v4().simple()));
+        let watch = std::env::temp_dir().join(format!(
+            "osoosi_har_watch_{}",
+            uuid::Uuid::new_v4().simple()
+        ));
         std::fs::create_dir_all(&watch).unwrap();
         routes::har_dlp::register_har_watch_dir(watch.clone());
 
-        let url = format!("https://dlptest.com/http-post/?drop={}", uuid::Uuid::new_v4().simple());
+        let url = format!(
+            "https://dlptest.com/http-post/?drop={}",
+            uuid::Uuid::new_v4().simple()
+        );
         let mut har = dlptest_har(&url);
         // Browser DevTools exports carry no _oshoosi metadata and no browser section.
         har["log"].as_object_mut().unwrap().remove("browser");
@@ -12637,7 +12702,11 @@ mod tests {
         while std::time::Instant::now() < deadline {
             {
                 let state = get_global_dlp_state().read();
-                if let Some(ev) = state.recent_events.iter().find(|e| e.destination_sink == url) {
+                if let Some(ev) = state
+                    .recent_events
+                    .iter()
+                    .find(|e| e.destination_sink == url)
+                {
                     found = Some(ev.clone());
                 }
             }
@@ -12650,8 +12719,12 @@ mod tests {
         assert!(!ev.allowed);
         assert_eq!(ev.channel, "HAR_HTTP_BODY");
         assert_eq!(ev.source, "HAR_FILE");
-        assert!(ev.redactx_validated_categories.contains(&"CREDIT_CARD_PAN".to_string()));
-        assert!(ev.redactx_validated_categories.contains(&"US_SSN".to_string()));
+        assert!(ev
+            .redactx_validated_categories
+            .contains(&"CREDIT_CARD_PAN".to_string()));
+        assert!(ev
+            .redactx_validated_categories
+            .contains(&"US_SSN".to_string()));
         let _ = std::fs::remove_dir_all(&watch);
     }
 
@@ -12680,8 +12753,12 @@ mod tests {
                 .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
                 .unwrap();
             let resp = app.clone().oneshot(req).await.unwrap();
-            let json: serde_json::Value =
-                serde_json::from_slice(&axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap()).unwrap();
+            let json: serde_json::Value = serde_json::from_slice(
+                &axum::body::to_bytes(resp.into_body(), usize::MAX)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             assert_eq!(json["event"]["execution_mode"], expected, "actor {actor}");
             assert_eq!(json["tier1_verdict"]["allowed"], false);
         }

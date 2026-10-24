@@ -3315,7 +3315,9 @@ mod tests_dlp_evasion {
         );
         // Random 16-digit non-Luhn number, SSNs, phones and embedded digits are not PANs.
         assert!(RedactXStructuredValidator::pan_scan("id 4532015112830367").is_empty());
-        assert!(RedactXStructuredValidator::pan_scan("ssn 123-45-6789 tel 415-555-2671").is_empty());
+        assert!(
+            RedactXStructuredValidator::pan_scan("ssn 123-45-6789 tel 415-555-2671").is_empty()
+        );
         assert!(RedactXStructuredValidator::pan_scan("order#A4532015112830366").is_empty());
         assert!(RedactXStructuredValidator::pan_scan("ts 1111111111111111").is_empty());
     }
@@ -3333,7 +3335,9 @@ mod tests_dlp_evasion {
         assert!(v
             .validator_confirmed_categories
             .contains(&"CREDIT_CARD_PAN".to_string()));
-        assert!(v.validator_confirmed_categories.contains(&"US_SSN".to_string()));
+        assert!(v
+            .validator_confirmed_categories
+            .contains(&"US_SSN".to_string()));
         assert!(v.openjev_enforcement_agreed());
         assert!(v.redactx_confirmed_at(&RedactXOperatingMode::zero_leakage()));
         assert!(v.redactx_confirmed_at(&RedactXOperatingMode::balanced_utility()));

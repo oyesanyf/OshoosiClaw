@@ -34,8 +34,8 @@ pub const DEFAULT_SENSOR_EXTENSION_ID: &str = "mgkckbmpncmidjdkfeamongahgbheocl"
 const SENSOR_KEY_CONTEXT: &str = "oshoosiclaw browser-dlp-sensor v1";
 /// Maximum HAR batch accepted from the sensor (25 entries x 256 KB bodies + overhead).
 pub const MAX_SENSOR_BATCH_BYTES: usize = 8 * 1024 * 1024;
-/// How long the ingest endpoint waits for inline verdicts before answering 202.
-const INLINE_VERDICT_WAIT: Duration = Duration::from_millis(800);
+/// How long the ingest endpoint waits for inline verdicts before answering 202 (keeps the endpoint well under 1 s).
+const INLINE_VERDICT_WAIT: Duration = Duration::from_millis(600);
 
 static PAIRINGS: AtomicU64 = AtomicU64::new(0);
 static PAIR_REJECTIONS: AtomicU64 = AtomicU64::new(0);
@@ -54,7 +54,10 @@ fn is_valid_chromium_id(id: &str) -> bool {
 /// e.g. the ID of a CRX packed by `scripts/pack_browser_extension.ps1`, or a Firefox
 /// `moz-extension://<uuid>` origin shown in about:debugging).
 pub fn allowed_sensor_origins() -> Vec<String> {
-    let mut out = vec![format!("chrome-extension://{}", DEFAULT_SENSOR_EXTENSION_ID)];
+    let mut out = vec![format!(
+        "chrome-extension://{}",
+        DEFAULT_SENSOR_EXTENSION_ID
+    )];
     let mut push = |raw: &str| {
         let item = raw.trim().trim_end_matches('/');
         if item.is_empty() || item.starts_with('#') {
@@ -89,7 +92,9 @@ pub fn allowed_sensor_origins() -> Vec<String> {
     // Packed (force-installed) CRX ID shipped next to the daemon by the MSI.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            if let Ok(id) = std::fs::read_to_string(dir.join("browser-extension").join("extension_id.txt")) {
+            if let Ok(id) =
+                std::fs::read_to_string(dir.join("browser-extension").join("extension_id.txt"))
+            {
                 push(&id);
             }
         }
@@ -106,7 +111,9 @@ pub fn allowed_sensor_origins() -> Vec<String> {
 pub fn sensor_token_for_origin(origin: &str) -> String {
     let secret = crate::get_or_init_dashboard_api_token();
     let key = blake3::derive_key(SENSOR_KEY_CONTEXT, secret.as_bytes());
-    blake3::keyed_hash(&key, origin.as_bytes()).to_hex().to_string()
+    blake3::keyed_hash(&key, origin.as_bytes())
+        .to_hex()
+        .to_string()
 }
 
 fn request_origin(headers: &HeaderMap) -> Option<String> {
@@ -134,7 +141,7 @@ fn json_error(status: StatusCode, code: &str, message: &str) -> Response {
 /// Authorizes a sensor submission. Accepts (a) an allowlisted extension origin with a valid
 /// origin-bound sensor token, or (b) the dashboard API token (scripts / enterprise collectors).
 /// Comparisons are constant-time.
-fn authorize_sensor(headers: &HeaderMap) -> Result<String, Response> {
+fn authorize_sensor(headers: &HeaderMap) -> Result<String, Box<Response>> {
     let dashboard_token = crate::get_or_init_dashboard_api_token();
     let presented_dashboard = headers
         .get("x-osoosi-token")
@@ -143,7 +150,10 @@ fn authorize_sensor(headers: &HeaderMap) -> Result<String, Response> {
             headers
                 .get(header::AUTHORIZATION)
                 .and_then(|v| v.to_str().ok())
-                .and_then(|a| a.strip_prefix("Bearer ").or_else(|| a.strip_prefix("bearer ")))
+                .and_then(|a| {
+                    a.strip_prefix("Bearer ")
+                        .or_else(|| a.strip_prefix("bearer "))
+                })
         });
     if let Some(tok) = presented_dashboard {
         if crate::constant_time_eq_token(tok.trim(), &dashboard_token) {
@@ -153,38 +163,38 @@ fn authorize_sensor(headers: &HeaderMap) -> Result<String, Response> {
 
     let Some(origin) = request_origin(headers) else {
         AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
-        return Err(json_error(
+        return Err(Box::new(json_error(
             StatusCode::UNAUTHORIZED,
             "SENSOR_UNAUTHENTICATED",
             "Missing extension Origin and sensor token",
-        ));
+        )));
     };
     if !allowed_sensor_origins().contains(&origin) {
         AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
-        return Err(json_error(
+        return Err(Box::new(json_error(
             StatusCode::FORBIDDEN,
             "SENSOR_ORIGIN_NOT_ALLOWED",
             "Origin is not an allowlisted OshoosiClaw browser sensor",
-        ));
+        )));
     }
     let Some(token) = headers
         .get("x-osoosi-sensor-token")
         .and_then(|v| v.to_str().ok())
     else {
         AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
-        return Err(json_error(
+        return Err(Box::new(json_error(
             StatusCode::UNAUTHORIZED,
             "SENSOR_UNAUTHENTICATED",
             "Missing X-Osoosi-Sensor-Token (pair via /api/browser-sensor/pair)",
-        ));
+        )));
     };
     if !crate::constant_time_eq_token(token.trim(), &sensor_token_for_origin(&origin)) {
         AUTH_FAILURES.fetch_add(1, Ordering::Relaxed);
-        return Err(json_error(
+        return Err(Box::new(json_error(
             StatusCode::UNAUTHORIZED,
             "SENSOR_TOKEN_INVALID",
             "Sensor token is invalid or was rotated; re-pair",
-        ));
+        )));
     }
     Ok(origin)
 }
@@ -201,7 +211,11 @@ pub async fn post_sensor_pair(headers: HeaderMap) -> Response {
     }
     let Some(origin) = request_origin(&headers) else {
         PAIR_REJECTIONS.fetch_add(1, Ordering::Relaxed);
-        return json_error(StatusCode::FORBIDDEN, "PAIRING_ORIGIN_REQUIRED", "Missing Origin");
+        return json_error(
+            StatusCode::FORBIDDEN,
+            "PAIRING_ORIGIN_REQUIRED",
+            "Missing Origin",
+        );
     };
     if !allowed_sensor_origins().contains(&origin) {
         PAIR_REJECTIONS.fetch_add(1, Ordering::Relaxed);
@@ -221,21 +235,23 @@ pub async fn post_sensor_pair(headers: HeaderMap) -> Response {
     }))
     .into_response();
     if let Ok(v) = header::HeaderValue::from_str(&origin) {
-        resp.headers_mut().insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
+        resp.headers_mut()
+            .insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
     }
     resp
 }
 
 /// `POST /api/browser-sensor/har` — HAR 1.2 batch from the sensor. Requests are queued into the
-/// autonomous HAR→DLP worker (off the async executor); the handler waits up to 800 ms for
+/// autonomous HAR→DLP worker (off the async executor); the handler waits up to 600 ms for
 /// inline verdicts and otherwise answers `202 Accepted`.
 pub async fn post_sensor_har(headers: HeaderMap, Json(doc): Json<Value>) -> Response {
     let origin = match authorize_sensor(&headers) {
         Ok(o) => o,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     let label = format!("browser-sensor:{}", origin);
-    let requests = har_dlp::extract_requests_from_har(&doc, &label, HarSourceKind::BrowserExtension);
+    let requests =
+        har_dlp::extract_requests_from_har(&doc, &label, HarSourceKind::BrowserExtension);
     if requests.is_empty() {
         return json_error(
             StatusCode::BAD_REQUEST,
@@ -245,7 +261,10 @@ pub async fn post_sensor_har(headers: HeaderMap, Json(doc): Json<Value>) -> Resp
     }
     BATCHES.fetch_add(1, Ordering::Relaxed);
     ENTRIES.fetch_add(requests.len() as u64, Ordering::Relaxed);
-    LAST_SEEN_UNIX.store(chrono::Utc::now().timestamp().max(0) as u64, Ordering::Relaxed);
+    LAST_SEEN_UNIX.store(
+        chrono::Utc::now().timestamp().max(0) as u64,
+        Ordering::Relaxed,
+    );
 
     // HAR traffic view parity: the policy-engine HAR inspector records summaries the
     // continuous collector shows in the HAR view. Runs on the blocking pool, not awaited.
@@ -253,7 +272,8 @@ pub async fn post_sensor_har(headers: HeaderMap, Json(doc): Json<Value>) -> Resp
     let label_for_view = label.clone();
     tokio::task::spawn_blocking(move || {
         if let Ok(raw) = serde_json::to_string(&doc_for_view) {
-            let _ = osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&raw, &label_for_view);
+            let _ =
+                osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&raw, &label_for_view);
         }
     });
 
@@ -325,7 +345,10 @@ pub async fn get_sensor_update_xml() -> Response {
 
 /// `GET /browser-sensor/oshoosi-browser-sensor.crx` — packed extension for force-install.
 pub async fn get_sensor_crx() -> Response {
-    serve_package_file("oshoosi-browser-sensor.crx", "application/x-chrome-extension")
+    serve_package_file(
+        "oshoosi-browser-sensor.crx",
+        "application/x-chrome-extension",
+    )
 }
 
 /// Sensor counters for `/api/dlp/status`.

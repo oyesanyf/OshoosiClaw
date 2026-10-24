@@ -327,8 +327,12 @@ pub fn inspect_and_record_with_options(
 
     let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
     let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
-    let final_verdict =
-        osoosi_dp::aggregate_dlp_decision(dest_forbid, cj_export_denied, voter_quarantine, dlp_detected);
+    let final_verdict = osoosi_dp::aggregate_dlp_decision(
+        dest_forbid,
+        cj_export_denied,
+        voter_quarantine,
+        dlp_detected,
+    );
     tier1.allowed = final_verdict == osoosi_dp::DlpVerdict::Allow;
     if !tier1.allowed {
         tier1.escalate_to_tier2 = true;
@@ -511,10 +515,9 @@ pub fn load_persisted_dlp_events(limit: usize) -> Vec<DlpInspectionEventRecord> 
     if !path.is_file() {
         return Vec::with_capacity(limit);
     }
-    let Ok(conn) = rusqlite::Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) else {
+    let Ok(conn) =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+    else {
         return Vec::with_capacity(limit);
     };
     let Ok(mut stmt) =
@@ -767,7 +770,10 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     if let Some(mode) = body.get("redactx_detection_mode").and_then(|v| v.as_str()) {
         state.redactx_detection_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
     }
-    if let Some(mode) = body.get("redactx_containment_mode").and_then(|v| v.as_str()) {
+    if let Some(mode) = body
+        .get("redactx_containment_mode")
+        .and_then(|v| v.as_str())
+    {
         state.redactx_containment_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
     }
 

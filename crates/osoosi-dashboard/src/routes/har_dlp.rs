@@ -103,7 +103,10 @@ impl HarDlpRequest {
     /// card numbers and SSNs are visible to the tokenizers.
     pub fn to_inspection_payload(&self) -> String {
         let mut out = String::with_capacity(self.body_text.len() + 256);
-        out.push_str(&format!("{} {} HTTP/1.1\nHost: {}\n", self.method, self.url, self.host));
+        out.push_str(&format!(
+            "{} {} HTTP/1.1\nHost: {}\n",
+            self.method, self.url, self.host
+        ));
         if !self.mime_type.is_empty() {
             out.push_str(&format!("Content-Type: {}\n", self.mime_type));
         }
@@ -164,7 +167,13 @@ fn host_of(url: &str) -> String {
 }
 
 /// Stable dedupe key: method + url + startedDateTime + blake3(body + params).
-pub fn har_entry_key(method: &str, url: &str, started_at: &str, body: &str, params: &[(String, String)]) -> String {
+pub fn har_entry_key(
+    method: &str,
+    url: &str,
+    started_at: &str,
+    body: &str,
+    params: &[(String, String)],
+) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(body.as_bytes());
     for (k, v) in params {
@@ -204,7 +213,11 @@ fn normalize_actor(name: &str) -> String {
 }
 
 /// Extracts inspectable requests (with bodies when present) from a W3C HAR 1.2 document.
-pub fn extract_requests_from_har(doc: &Value, source_label: &str, kind: HarSourceKind) -> Vec<HarDlpRequest> {
+pub fn extract_requests_from_har(
+    doc: &Value,
+    source_label: &str,
+    kind: HarSourceKind,
+) -> Vec<HarDlpRequest> {
     let log = doc.get("log").unwrap_or(doc);
     let Some(entries) = log.get("entries").and_then(|e| e.as_array()) else {
         return Vec::new();
@@ -225,13 +238,19 @@ pub fn extract_requests_from_har(doc: &Value, source_label: &str, kind: HarSourc
 
     let mut out = Vec::with_capacity(entries.len());
     for entry in entries {
-        let Some(req) = entry.get("request") else { continue };
+        let Some(req) = entry.get("request") else {
+            continue;
+        };
         let method = req
             .get("method")
             .and_then(|v| v.as_str())
             .unwrap_or("GET")
             .to_ascii_uppercase();
-        let url = req.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let url = req
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
         if url.is_empty() {
             continue;
         }
@@ -247,12 +266,17 @@ pub fn extract_requests_from_har(doc: &Value, source_label: &str, kind: HarSourc
             .unwrap_or_default()
             .to_string();
         let (body_text, mut truncated) = truncate_to_bytes(
-            post.and_then(|p| p.get("text")).and_then(|v| v.as_str()).unwrap_or_default(),
+            post.and_then(|p| p.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default(),
             MAX_HAR_BODY_BYTES,
         );
         let mut params = Vec::new();
         let mut budget = MAX_HAR_BODY_BYTES;
-        if let Some(arr) = post.and_then(|p| p.get("params")).and_then(|v| v.as_array()) {
+        if let Some(arr) = post
+            .and_then(|p| p.get("params"))
+            .and_then(|v| v.as_array())
+        {
             for p in arr.iter().take(4096) {
                 let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
                 let value = p.get("value").and_then(|v| v.as_str()).unwrap_or_default();
@@ -380,7 +404,8 @@ fn seen() -> &'static Mutex<SeenKeys> {
 }
 
 fn recent_bodies() -> &'static Mutex<VecDeque<HarDlpRequest>> {
-    RECENT_BODY_REQUESTS.get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_RECENT_BODY_REQUESTS)))
+    RECENT_BODY_REQUESTS
+        .get_or_init(|| Mutex::new(VecDeque::with_capacity(MAX_RECENT_BODY_REQUESTS)))
 }
 
 fn watch_dirs() -> &'static Mutex<Vec<PathBuf>> {
@@ -417,7 +442,12 @@ pub fn enqueue_requests(requests: Vec<HarDlpRequest>, reply: Option<ReplySender>
 }
 
 /// Extracts and queues every request of a HAR document.
-pub fn enqueue_har_document(doc: &Value, source_label: &str, kind: HarSourceKind, reply: Option<ReplySender>) -> usize {
+pub fn enqueue_har_document(
+    doc: &Value,
+    source_label: &str,
+    kind: HarSourceKind,
+    reply: Option<ReplySender>,
+) -> usize {
     let requests = extract_requests_from_har(doc, source_label, kind);
     enqueue_requests(requests, reply)
 }
@@ -435,7 +465,9 @@ fn load_seen_keys_from_db(seen: &mut SeenKeys) {
     if !path.is_file() {
         return;
     }
-    let Ok(conn) = rusqlite::Connection::open(&path) else { return };
+    let Ok(conn) = rusqlite::Connection::open(&path) else {
+        return;
+    };
     let _ = conn.busy_timeout(Duration::from_millis(3000));
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS dlp_har_seen (entry_key TEXT PRIMARY KEY, seen_at TEXT NOT NULL)",
@@ -464,7 +496,9 @@ fn persist_seen_keys(keys: &[String]) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let Ok(mut conn) = rusqlite::Connection::open(&path) else { return };
+    let Ok(mut conn) = rusqlite::Connection::open(&path) else {
+        return;
+    };
     let _ = conn.busy_timeout(Duration::from_millis(3000));
     let _ = conn.execute(
         "CREATE TABLE IF NOT EXISTS dlp_har_seen (entry_key TEXT PRIMARY KEY, seen_at TEXT NOT NULL)",
@@ -520,7 +554,10 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
 }
 
 /// Raises alerts, runs consensus-gated containment for flagged events, and persists the event.
-fn post_process(req: &HarDlpRequest, mut event: DlpInspectionEventRecord) -> DlpInspectionEventRecord {
+fn post_process(
+    req: &HarDlpRequest,
+    mut event: DlpInspectionEventRecord,
+) -> DlpInspectionEventRecord {
     if !event.allowed {
         let ctx = crate::routes::dlp_containment::ActorContext {
             actor: req.actor.clone(),
@@ -544,7 +581,7 @@ fn post_process(req: &HarDlpRequest, mut event: DlpInspectionEventRecord) -> Dlp
     }
     event
 }
-fn dedupe_new<'a>(requests: &'a [HarDlpRequest]) -> (Vec<&'a HarDlpRequest>, Vec<String>) {
+fn dedupe_new(requests: &[HarDlpRequest]) -> (Vec<&HarDlpRequest>, Vec<String>) {
     let mut s = seen().lock();
     load_seen_keys_from_db(&mut s);
     let mut fresh = Vec::new();
@@ -617,7 +654,9 @@ fn default_watch_dirs() -> Vec<PathBuf> {
 fn scan_har_files(file_state: &mut HashMap<PathBuf, (SystemTime, u64)>) -> Vec<HarDlpRequest> {
     let mut out = Vec::new();
     for dir in default_watch_dirs() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut files: Vec<(PathBuf, SystemTime, u64)> = rd
             .flatten()
             .filter_map(|e| {
@@ -636,7 +675,7 @@ fn scan_har_files(file_state: &mut HashMap<PathBuf, (SystemTime, u64)>) -> Vec<H
                 Some((p, md.modified().unwrap_or(SystemTime::UNIX_EPOCH), md.len()))
             })
             .collect();
-        files.sort_by(|a, b| b.1.cmp(&a.1));
+        files.sort_by_key(|f| std::cmp::Reverse(f.1));
         for (path, mtime, len) in files.into_iter().take(MAX_FILES_PER_DIR) {
             if len == 0 || len > MAX_HAR_FILE_BYTES {
                 continue;
@@ -644,7 +683,9 @@ fn scan_har_files(file_state: &mut HashMap<PathBuf, (SystemTime, u64)>) -> Vec<H
             if file_state.get(&path) == Some(&(mtime, len)) {
                 continue;
             }
-            let Ok(raw) = std::fs::read_to_string(&path) else { continue };
+            let Ok(raw) = std::fs::read_to_string(&path) else {
+                continue;
+            };
             let Ok(doc) = serde_json::from_str::<Value>(&raw) else {
                 // Possibly still being written; retry on the next cycle.
                 continue;
@@ -656,7 +697,11 @@ fn scan_har_files(file_state: &mut HashMap<PathBuf, (SystemTime, u64)>) -> Vec<H
                 .and_then(|n| n.to_str())
                 .unwrap_or("archive.har")
                 .to_string();
-            out.extend(extract_requests_from_har(&doc, &label, HarSourceKind::HarFile));
+            out.extend(extract_requests_from_har(
+                &doc,
+                &label,
+                HarSourceKind::HarFile,
+            ));
         }
     }
     out
@@ -667,8 +712,13 @@ fn collector_url_only_requests(last_sweep: &mut u64) -> Vec<HarDlpRequest> {
         .get_or_init(|| osoosi_core::parking_lot::RwLock::new(None))
         .read()
         .clone();
-    let Some(payload) = cache else { return Vec::new() };
-    let seq = payload.get("sweep_sequence").and_then(|v| v.as_u64()).unwrap_or(0);
+    let Some(payload) = cache else {
+        return Vec::new();
+    };
+    let seq = payload
+        .get("sweep_sequence")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     if seq == *last_sweep {
         return Vec::new();
     }
@@ -680,17 +730,32 @@ fn collector_url_only_requests(last_sweep: &mut u64) -> Vec<HarDlpRequest> {
         .unwrap_or_default();
     let mut out = Vec::new();
     for e in entries {
-        let source = e.get("source_file").and_then(|v| v.as_str()).unwrap_or_default();
+        let source = e
+            .get("source_file")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
         // HAR files / imports / sensor batches are inspected with their bodies by the body path.
         if !source.starts_with("browser_history:") {
             continue;
         }
-        let url = e.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let url = e
+            .get("url")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
         if url.is_empty() {
             continue;
         }
-        let method = e.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_string();
-        let started_at = e.get("started_at").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        let method = e
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("GET")
+            .to_string();
+        let started_at = e
+            .get("started_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
         let key = format!("url|{}", har_entry_key(&method, &url, &started_at, "", &[]));
         out.push(HarDlpRequest {
             key,
@@ -834,7 +899,10 @@ mod tests {
         assert_eq!(reqs[0].method, "POST");
         assert_eq!(reqs[0].actor, "msedge.exe");
         assert_eq!(reqs[0].host, "dlptest.com");
-        assert_eq!(reqs[0].params, vec![("ssn".to_string(), "123-45-6789".to_string())]);
+        assert_eq!(
+            reqs[0].params,
+            vec![("ssn".to_string(), "123-45-6789".to_string())]
+        );
         assert_eq!(reqs[0].channel(), "HAR_HTTP_BODY");
         assert_eq!(reqs[1].channel(), "HAR_TRAFFIC");
         assert_ne!(reqs[0].key, reqs[1].key);
@@ -845,7 +913,10 @@ mod tests {
     #[test]
     fn urlencoded_decoding_restores_grouped_card_numbers() {
         let pairs = decode_urlencoded_pairs("card=4532+0151+1283+0366&n=J%C3%BCrgen");
-        assert_eq!(pairs[0], ("card".to_string(), "4532 0151 1283 0366".to_string()));
+        assert_eq!(
+            pairs[0],
+            ("card".to_string(), "4532 0151 1283 0366".to_string())
+        );
         assert_eq!(pairs[1].1, "Jürgen");
     }
 
