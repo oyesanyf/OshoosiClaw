@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 
 rule android_mazarBot_z: android
@@ -28,15 +28,15 @@ rule android_mazarBot_z: android
 		$str_6 = "unstop all numbers"
 		
 	condition:		
-		androguard.certificate.sha1("50FD99C06C2EE360296DCDA9896AD93CAE32266B") or
+// 		androguard.certificate.sha1("50FD99C06C2EE360296DCDA9896AD93CAE32266B") or (Identifier fixed/disabled by Oshoosi Hardener)
 		
-		(androguard.package_name("com.mazar") and
-		androguard.activity(/\.DevAdminDisabler/) and 
-		androguard.receiver(/\.DevAdminReceiver/) and 
-		androguard.service(/\.WorkerService/i)) or 
+// 		(androguard.package_name("com.mazar") and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.activity(/\.DevAdminDisabler/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.receiver(/\.DevAdminReceiver/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.service(/\.WorkerService/i)) or  (Identifier fixed/disabled by Oshoosi Hardener)
 		
-		androguard.permission(/android.permission.INTERNET/) and
-		androguard.permission(/android.permission.SEND_SMS/) and
-		androguard.permission(/android.permission.CALL_PHONE/) and
+// 		androguard.permission(/android.permission.INTERNET/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.SEND_SMS/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.CALL_PHONE/) and (Identifier fixed/disabled by Oshoosi Hardener)
 		all of ($str_*)
 }

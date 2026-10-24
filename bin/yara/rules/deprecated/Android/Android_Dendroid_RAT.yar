@@ -47,16 +47,16 @@ rule Dendroid_3 : android
 
 }
 
-import "androguard"
-rule Android_Dendroid
-{
-	meta:
-		author = "Jacob Soo Lead Re"
-		date = "19-May-2016"
-		description = "This rule try to detect Dendroid"
-		source = "https://blog.lookout.com/blog/2014/03/06/dendroid/"
-
-	condition:
-		androguard.service(/com.connect/i) and
-        androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i)
-}
+// import "androguard" (Disabled by Oshoosi Hardener)
+// rule Android_Dendroid (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Jacob Soo Lead Re" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "19-May-2016" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detect Dendroid" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://blog.lookout.com/blog/2014/03/06/dendroid/" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.service(/com.connect/i) and (Identifier fixed/disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i) (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

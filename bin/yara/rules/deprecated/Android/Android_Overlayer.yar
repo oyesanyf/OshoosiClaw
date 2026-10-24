@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 rule android_overlayer
 {
@@ -21,10 +21,10 @@ rule android_overlayer
 		$str_6 = "filter2" 
 
 	condition:
-		androguard.certificate.sha1("6994ED892E7F0019BCA74B5847C6D5113391D127") or 
+// 		androguard.certificate.sha1("6994ED892E7F0019BCA74B5847C6D5113391D127") or  (Identifier fixed/disabled by Oshoosi Hardener)
 		
-		(androguard.permission(/android.permission.INTERNET/) and
-		androguard.permission(/android.permission.READ_SMS/) and
-		androguard.permission(/android.permission.READ_PHONE_STATE/) and 
+// 		(androguard.permission(/android.permission.INTERNET/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.READ_SMS/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.READ_PHONE_STATE/) and  (Identifier fixed/disabled by Oshoosi Hardener)
 		all of ($str_*))
 }

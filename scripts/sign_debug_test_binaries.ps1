@@ -19,26 +19,30 @@ $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_core-*.exe" 
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_policy-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_agent_anomaly-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_dashboard-*.exe" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
+# $targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\build\*\*.exe" -ErrorAction SilentlyContinue
 
 $signedCount = 0
 foreach ($f in $targets) {
-    $sig = Get-AuthenticodeSignature $f.FullName -ErrorAction SilentlyContinue
-    if ((-not $sig) -or ($sig.SignerCertificate -eq $null)) {
-        if ($Cert) {
-            $res = Set-AuthenticodeSignature -FilePath $f.FullName -Certificate $Cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256 -ErrorAction SilentlyContinue
-            if ($res -and $res.SignerCertificate) {
-                $signedCount++
-                continue
+    try {
+        $sig = Get-AuthenticodeSignature $f.FullName -ErrorAction SilentlyContinue
+        if ((-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.Status -eq "UnknownError")) {
+            $signed = $false
+            if (Test-Path $signtool) {
+                & $signtool sign /sha1 $Thumbprint /fd SHA256 /q $f.FullName 2>$null | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    $signedCount++
+                    $signed = $true
+                }
+            }
+            if ((-not $signed) -and $Cert) {
+                $res = Set-AuthenticodeSignature -FilePath $f.FullName -Certificate $Cert -HashAlgorithm SHA256 -ErrorAction SilentlyContinue
+                if ($res -and $res.SignerCertificate) {
+                    $signedCount++
+                }
             }
         }
-        if (Test-Path $signtool) {
-            & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr "http://timestamp.digicert.com" /td SHA256 /q $f.FullName 2>$null | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                $signedCount++
-            }
-        }
-    }
+    } catch {}
 }
 
 Write-Host "[WDAC] Fast signed $signedCount target test binaries and DLLs."

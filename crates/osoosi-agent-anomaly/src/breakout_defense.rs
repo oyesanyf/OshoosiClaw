@@ -368,12 +368,39 @@ pub struct UnifiedBreakoutEvaluation {
     pub recommended_action_tier: String,
 }
 
-/// Mathematical IPv4/IPv6 SSRF Validator.
+/// Mathematical IPv4/IPv6 SSRF Validator (CIS Benchmark 3.3).
 ///
 /// Validates external URLs against SSRF attacks targeting cloud metadata (169.254.169.254),
-/// CGNAT, unique-local IPv6, unspecified addresses, and loopback (allowing local LLM ports if requested).
+/// CGNAT (100.64.0.0/10), this-network (0.0.0.0/8), benchmark (198.18.0.0/15), multicast (224.0.0.0/4, ff00::/8),
+/// NAT64 (64:ff9b::/96, 64:ff9b:1::/48), 6to4 (2002::/16), unique-local IPv6 (fc00::/7),
+/// non-standard IP encodings (decimal integer http://2130706433, hex http://0x7f000001, octal http://0177.0.0.1,
+/// shortened dotted-quad http://127.1), and loopback (allowing local LLM ports if requested).
 pub fn validate_agent_egress_url(url_str: &str, allow_local_inference: bool) -> Result<(), String> {
-    let parsed = Url::parse(url_str).map_err(|e| format!("Malformed URL: {}", e))?;
+    let trimmed_url = url_str.trim();
+    // Inspect raw authority host before URL parser canonicalization to catch non-standard IP encodings
+    if let Some(after_scheme) = trimmed_url.split("://").nth(1) {
+        let authority = after_scheme
+            .split(&['/', '?', '#'][..])
+            .next()
+            .unwrap_or("");
+        let raw_host_port = authority.rsplit('@').next().unwrap_or(authority);
+        let raw_host = if raw_host_port.starts_with('[') {
+            raw_host_port.split(']').next().unwrap_or(raw_host_port)
+        } else {
+            raw_host_port.split(':').next().unwrap_or(raw_host_port)
+        }
+        .trim()
+        .to_ascii_lowercase();
+
+        if is_non_standard_ip_host_encoding(&raw_host) {
+            return Err(format!(
+                "SSRF Blocked (CIS 3.3): Non-standard IP encoding '{}' is prohibited",
+                raw_host
+            ));
+        }
+    }
+
+    let parsed = Url::parse(trimmed_url).map_err(|e| format!("Malformed URL: {}", e))?;
 
     // Disallow non-http/https schemes
     let scheme = parsed.scheme().to_ascii_lowercase();
@@ -400,13 +427,19 @@ pub fn validate_agent_egress_url(url_str: &str, allow_local_inference: bool) -> 
         url::Host::Ipv6(ip) => validate_ipv6(ip, port, allow_local_inference)?,
         url::Host::Domain(domain) => {
             let lower = domain.to_ascii_lowercase();
+            if is_non_standard_ip_host_encoding(&lower) {
+                return Err(format!(
+                    "SSRF Blocked (CIS 3.3): Non-standard IP host format '{}' is prohibited",
+                    lower
+                ));
+            }
             // Check if domain is a literal IP in disguise
             if let Ok(ip) = lower.parse::<IpAddr>() {
                 match ip {
                     IpAddr::V4(v4) => validate_ipv4(v4, port, allow_local_inference)?,
                     IpAddr::V6(v6) => validate_ipv6(v6, port, allow_local_inference)?,
                 }
-            } else if lower == "localhost" {
+            } else if lower == "localhost" || lower.ends_with(".localhost") {
                 if allow_local_inference
                     && (port == 11434
                         || port == 1234
@@ -424,10 +457,71 @@ pub fn validate_agent_egress_url(url_str: &str, allow_local_inference: bool) -> 
     Ok(())
 }
 
+/// Detects non-standard IP literal formats (CIS Benchmark 3.3):
+/// - Pure decimal integer IP (e.g., `2130706433`)
+/// - Hexadecimal IP or hex octets (e.g., `0x7f000001`, `0x7f.0.0.1`)
+/// - Octal leading-zero IP octets (e.g., `0177.0.0.1`)
+/// - Shortened dotted-quad IPv4 (e.g., `127.1`, `10.0.1`)
+fn is_non_standard_ip_host_encoding(host: &str) -> bool {
+    if host.is_empty() || host.starts_with('[') {
+        return false;
+    }
+    // Single token: pure digits (`2130706433`) or hex literal (`0x7f000001`)
+    if !host.contains('.') {
+        if host.chars().all(|c| c.is_ascii_digit()) {
+            return true;
+        }
+        if let Some(hex_part) = host.strip_prefix("0x") {
+            if !hex_part.is_empty() && hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    let parts: Vec<&str> = host.split('.').collect();
+    let all_numeric_or_hex = parts.iter().all(|part| {
+        if part.is_empty() {
+            return false;
+        }
+        if let Some(hex_part) = part.strip_prefix("0x") {
+            !hex_part.is_empty() && hex_part.chars().all(|c| c.is_ascii_hexdigit())
+        } else {
+            part.chars().all(|c| c.is_ascii_digit())
+        }
+    });
+
+    if !all_numeric_or_hex {
+        return false;
+    }
+
+    // Shortened dotted-quad (e.g., 127.1 or 127.0.1) or >4 numeric parts
+    if parts.len() != 4 {
+        return true;
+    }
+
+    // 4-part numeric IP containing hex (`0x..`) or octal leading zero (`0177`)
+    for part in parts {
+        if part.starts_with("0x") || (part.len() > 1 && part.starts_with('0')) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn validate_ipv4(ip: Ipv4Addr, port: u16, allow_local_inference: bool) -> Result<(), String> {
     let octets = ip.octets();
 
-    // 1. Cloud Metadata (169.254.169.254) and Link-Local (169.254.0.0/16)
+    // 1. "This network" / Current network (0.0.0.0/8, RFC 1122) — CIS 3.3
+    if octets[0] == 0 {
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): 'This network' 0.0.0.0/8 range IP '{}'",
+            ip
+        ));
+    }
+
+    // 2. Cloud Metadata (169.254.169.254) and Link-Local (169.254.0.0/16)
     if octets[0] == 169 && octets[1] == 254 {
         return Err(format!(
             "SSRF Blocked: Prohibited cloud metadata / link-local IP '{}'",
@@ -435,7 +529,7 @@ fn validate_ipv4(ip: Ipv4Addr, port: u16, allow_local_inference: bool) -> Result
         ));
     }
 
-    // 2. Loopback (127.0.0.0/8)
+    // 3. Loopback (127.0.0.0/8)
     if ip.is_loopback() {
         if allow_local_inference
             && (port == 11434 || port == 1234 || port == 8000 || port == 8080 || port == 5000)
@@ -448,18 +542,44 @@ fn validate_ipv4(ip: Ipv4Addr, port: u16, allow_local_inference: bool) -> Result
         ));
     }
 
-    // 3. Unspecified (0.0.0.0) or Broadcast (255.255.255.255)
+    // 4. Unspecified (0.0.0.0) or Broadcast (255.255.255.255)
     if ip.is_unspecified() || ip.is_broadcast() {
         return Err(format!("SSRF Blocked: Unspecified/broadcast IP '{}'", ip));
     }
 
-    // 4. CGNAT (100.64.0.0/10)
+    // 5. CGNAT (100.64.0.0/10)
     if octets[0] == 100 && (octets[1] & 0b1100_0000) == 64 {
         return Err(format!("SSRF Blocked: CGNAT range IP '{}'", ip));
     }
 
-    // 5. RFC 1918 Private Ranges (when strictly evaluated)
-    // For agents, internal LAN exploration is blocked unless explicitly authorized
+    // 6. Benchmarking / Interconnect (198.18.0.0/15, RFC 2544) — CIS 3.3
+    if octets[0] == 198 && (octets[1] & 0xfe) == 18 {
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): Benchmarking range 198.18.0.0/15 IP '{}'",
+            ip
+        ));
+    }
+
+    // 7. IETF Protocol Assignments (192.0.0.0/24) & TEST-NETs (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24)
+    if (octets[0] == 192 && octets[1] == 0 && (octets[2] == 0 || octets[2] == 2))
+        || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+        || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+    {
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): Reserved IETF/TEST-NET IP '{}'",
+            ip
+        ));
+    }
+
+    // 8. Multicast (224.0.0.0/4) & Reserved Future Use (240.0.0.0/4) — CIS 3.3
+    if ip.is_multicast() || (octets[0] & 0xf0) == 240 {
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): Multicast or reserved Class E IP '{}'",
+            ip
+        ));
+    }
+
+    // 9. RFC 1918 Private Ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
     if ip.is_private() {
         return Err(format!(
             "SSRF Blocked: Internal RFC1918 network IP '{}'",
@@ -472,6 +592,7 @@ fn validate_ipv4(ip: Ipv4Addr, port: u16, allow_local_inference: bool) -> Result
 
 fn validate_ipv6(ip: Ipv6Addr, port: u16, allow_local_inference: bool) -> Result<(), String> {
     let octets = ip.octets();
+    let segments = ip.segments();
 
     // 1. Loopback (::1)
     if ip.is_loopback() {
@@ -491,18 +612,63 @@ fn validate_ipv6(ip: Ipv6Addr, port: u16, allow_local_inference: bool) -> Result
         return Err("SSRF Blocked: Unspecified IPv6 address".to_string());
     }
 
-    // 3. Link-local (fe80::/10)
+    // 3. Multicast (ff00::/8) — CIS 3.3
+    if ip.is_multicast() || octets[0] == 0xff {
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): IPv6 multicast address '{}'",
+            ip
+        ));
+    }
+
+    // 4. Link-local (fe80::/10)
     if (octets[0] == 0xfe) && ((octets[1] & 0xc0) == 0x80) {
         return Err(format!("SSRF Blocked: IPv6 link-local address '{}'", ip));
     }
 
-    // 4. Unique local (fc00::/7)
+    // 5. Unique local (fc00::/7)
     if (octets[0] & 0xfe) == 0xfc {
         return Err(format!("SSRF Blocked: IPv6 unique local address '{}'", ip));
     }
 
-    // 5. IPv4-mapped IPv6 (::ffff:0:0/96)
-    if let Some(v4) = ip.to_ipv4_mapped() {
+    // 6. NAT64 Well-Known Prefix (64:ff9b::/96) & Local-Use NAT64 (64:ff9b:1::/48) — CIS 3.3
+    if (segments[0] == 0x0064
+        && segments[1] == 0xff9b
+        && segments[2] == 0
+        && segments[3] == 0
+        && segments[4] == 0
+        && segments[5] == 0)
+        || (segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1)
+    {
+        let embedded_v4 = Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+        validate_ipv4(embedded_v4, port, allow_local_inference)?;
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): NAT64 translation prefix (64:ff9b::/96) address '{}'",
+            ip
+        ));
+    }
+
+    // 7. 6to4 Tunneling Prefix (2002::/16) — CIS 3.3
+    if segments[0] == 0x2002 {
+        let embedded_v4 = Ipv4Addr::new(octets[2], octets[3], octets[4], octets[5]);
+        validate_ipv4(embedded_v4, port, allow_local_inference)?;
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): 6to4 tunneling prefix (2002::/16) address '{}'",
+            ip
+        ));
+    }
+
+    // 8. Teredo (2001:0000::/32), Documentation (2001:db8::/32), and Discard-Only (100::/64)
+    if (segments[0] == 0x2001 && (segments[1] == 0x0000 || segments[1] == 0x0db8))
+        || (segments[0] == 0x0100 && segments[1] == 0 && segments[2] == 0 && segments[3] == 0)
+    {
+        return Err(format!(
+            "SSRF Blocked (CIS 3.3): Teredo/Documentation/Discard IPv6 address '{}'",
+            ip
+        ));
+    }
+
+    // 9. IPv4-mapped IPv6 (::ffff:0:0/96) & IPv4-compatible IPv6
+    if let Some(v4) = ip.to_ipv4_mapped().or_else(|| ip.to_ipv4()) {
         return validate_ipv4(v4, port, allow_local_inference);
     }
 
@@ -1310,5 +1476,26 @@ mod tests {
         assert_eq!(res_nato.residual_mutual_information_bits, 0.0);
         assert!(res_nato.covert_channel_neutralized);
         assert!(res_nato.canonical_output.contains("<ZK_MI_REDACTED>"));
+    }
+
+    #[test]
+    fn test_cis_3_3_extended_ip_ranges_and_non_standard_encodings() {
+        // Missing IPv4 ranges from CIS 3.3 review: 0.0.0.0/8, 198.18.0.0/15, multicast 224.0.0.0/4, reserved 240.0.0.0/4
+        assert!(validate_agent_egress_url("http://0.12.34.56/internal", false).is_err());
+        assert!(validate_agent_egress_url("http://198.18.0.1/bench", false).is_err());
+        assert!(validate_agent_egress_url("http://198.19.255.254/bench", false).is_err());
+        assert!(validate_agent_egress_url("http://224.0.0.1/multicast", false).is_err());
+        assert!(validate_agent_egress_url("http://240.0.0.1/reserved", false).is_err());
+
+        // Missing IPv6 ranges: NAT64 64:ff9b::/96, 6to4 2002::/16, multicast ff00::/8
+        assert!(validate_agent_egress_url("http://[64:ff9b::a9fe:a9fe]/latest", false).is_err());
+        assert!(validate_agent_egress_url("http://[2002:7f00:0001::1]/", false).is_err());
+        assert!(validate_agent_egress_url("http://[ff02::1]/", false).is_err());
+
+        // Non-standard IP formats: decimal integer, hex, octal, shortened dotted-quad
+        assert!(validate_agent_egress_url("http://2130706433/admin", false).is_err());
+        assert!(validate_agent_egress_url("http://0x7f000001/admin", false).is_err());
+        assert!(validate_agent_egress_url("http://0177.0.0.1/admin", false).is_err());
+        assert!(validate_agent_egress_url("http://127.1/admin", false).is_err());
     }
 }

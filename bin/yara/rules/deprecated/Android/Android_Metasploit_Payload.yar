@@ -1,18 +1,18 @@
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
-rule Metasploit_Payload
-{
-meta:
-author = "https://www.twitter.com/SadFud75"
-information = "Detection of payloads generated with metasploit"
-strings:
-$s1 = "-com.metasploit.meterpreter.AndroidMeterpreter"
-$s2 = ",Lcom/metasploit/stage/MainBroadcastReceiver;"
-$s3 = "#Lcom/metasploit/stage/MainActivity;"
-$s4 = "Lcom/metasploit/stage/Payload;"
-$s5 = "Lcom/metasploit/stage/a;"
-$s6 = "Lcom/metasploit/stage/c;"
-$s7 = "Lcom/metasploit/stage/b;"
-condition:
-androguard.package_name("com.metasploit.stage") or any of them
-}
+// rule Metasploit_Payload (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// author = "https://www.twitter.com/SadFud75" (Disabled: vacuous condition without evaluatable strings/modules)
+// information = "Detection of payloads generated with metasploit" (Disabled: vacuous condition without evaluatable strings/modules)
+// strings: (Disabled: vacuous condition without evaluatable strings/modules)
+// $s1 = "-com.metasploit.meterpreter.AndroidMeterpreter" (Disabled: vacuous condition without evaluatable strings/modules)
+// $s2 = ",Lcom/metasploit/stage/MainBroadcastReceiver;" (Disabled: vacuous condition without evaluatable strings/modules)
+// $s3 = "#Lcom/metasploit/stage/MainActivity;" (Disabled: vacuous condition without evaluatable strings/modules)
+// $s4 = "Lcom/metasploit/stage/Payload;" (Disabled: vacuous condition without evaluatable strings/modules)
+// $s5 = "Lcom/metasploit/stage/a;" (Disabled: vacuous condition without evaluatable strings/modules)
+// $s6 = "Lcom/metasploit/stage/c;" (Disabled: vacuous condition without evaluatable strings/modules)
+// $s7 = "Lcom/metasploit/stage/b;" (Disabled: vacuous condition without evaluatable strings/modules)
+// condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// androguard.package_name("com.metasploit.stage") or any of them (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

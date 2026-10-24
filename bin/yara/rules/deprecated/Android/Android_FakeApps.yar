@@ -8,96 +8,96 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
-rule fake_facebook: fake android
-{
-  meta:
-		  author = "https://twitter.com/Diviei"
-		  reference = "https://koodous.com/"
-	condition:
-		androguard.app_name("Facebook")
-		and not androguard.certificate.sha1("A0E980408030C669BCEB38FEFEC9527BE6C3DDD0")
-}
-
-
-rule fake_facebook_2 : fake android
-{
-	meta:
-		author = "https://twitter.com/plutec_net"
-		reference = "https://koodous.com/"
-		description = "Detects fake facebook applications"
-		hash_0 = "7be33c2d27121968d2f7081ae2b04965238a3c15c7aae62d006f629d64e0b58e"
-		hash_1 = "c1264c689393880361409eb02570fd49bec91c88569d39062e13c0c8ae0e1806"
-		hash_2 = "70d5cc909d5718674474a54b44f83bd194cbdd2d99354d52cd868b334fb5f3de"
-		hash_3 = "38e757abd5e015e3c3690ea0fdc2ff1e04b716651645a8c4ca6a63185856fe29"
-		hash_4 = "ba0b8fe37b4874656ad129dd4d96fdec181e2c3488985309241b0449bb4ab84f"
-		hash_5 = "7be33c2d27121968d2f7081ae2b04965238a3c15c7aae62d006f629d64e0b58e"
-		hash_6 = "c1264c689393880361409eb02570fd49bec91c88569d39062e13c0c8ae0e1806"
-		hash_7 = "7345c3124891b34607a07e93c8ab6dcbbf513e24e936c3710434b085981b815a"
-		
-	condition:
-		androguard.app_name("Facebook") and
-		not androguard.package_name(/com.facebook.katana/) and 
-		not androguard.certificate.issuer(/O=Facebook Mobile/)	
-}
-
-rule fake_instagram: fake android
-{
-  meta:
-		  author = "https://twitter.com/Diviei"
-		  reference = "https://koodous.com/"
-	condition:
-		androguard.app_name("Instagram")
-		and not androguard.certificate.sha1("76D72C35164513A4A7EBA098ACCB2B22D2229CBE")
-}
-
-rule fake_king_games: fake android
-{
-	condition:
-		(androguard.app_name("AlphaBetty Saga")
-		or androguard.app_name("Candy Crush Soda Saga")
-		or androguard.app_name("Candy Crush Saga")
-		or androguard.app_name("Farm Heroes Saga")
-		or androguard.app_name("Pet Rescue Saga")
-		or androguard.app_name("Bubble Witch 2 Saga")
-		or androguard.app_name("Scrubby Dubby Saga")
-		or androguard.app_name("Diamond Digger Saga")
-		or androguard.app_name("Papa Pear Saga")
-		or androguard.app_name("Pyramid Solitaire Saga")
-		or androguard.app_name("Bubble Witch Saga")
-		or androguard.app_name("King Challenge"))
-		and not androguard.certificate.sha1("9E93B3336C767C3ABA6FCC4DEADA9F179EE4A05B")
-}
-
-rule fake_market: fake android
-{
-  meta:
-		author = "https://twitter.com/plutec_net"
-		reference = "https://koodous.com/"
-
-	condition:
-		androguard.package_name("com.minitorrent.kimill") 
-}
+// rule fake_facebook: fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+//   meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		  author = "https://twitter.com/Diviei" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		  reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.app_name("Facebook") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		and not androguard.certificate.sha1("A0E980408030C669BCEB38FEFEC9527BE6C3DDD0") (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
 
-rule fake_minecraft: fake android
-{
-  meta:
-		author = "https://twitter.com/plutec_net"
-		reference = "https://koodous.com/"
-	condition:
-		( androguard.app_name("Minecraft: Pocket Edition") or 
-			androguard.app_name("Minecraft - Pocket Edition") )
-		and not androguard.package_name("com.mojang.minecraftpe")
-}
+// rule fake_facebook_2 : fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "https://twitter.com/plutec_net" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "Detects fake facebook applications" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_0 = "7be33c2d27121968d2f7081ae2b04965238a3c15c7aae62d006f629d64e0b58e" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_1 = "c1264c689393880361409eb02570fd49bec91c88569d39062e13c0c8ae0e1806" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_2 = "70d5cc909d5718674474a54b44f83bd194cbdd2d99354d52cd868b334fb5f3de" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_3 = "38e757abd5e015e3c3690ea0fdc2ff1e04b716651645a8c4ca6a63185856fe29" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_4 = "ba0b8fe37b4874656ad129dd4d96fdec181e2c3488985309241b0449bb4ab84f" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_5 = "7be33c2d27121968d2f7081ae2b04965238a3c15c7aae62d006f629d64e0b58e" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_6 = "c1264c689393880361409eb02570fd49bec91c88569d39062e13c0c8ae0e1806" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		hash_7 = "7345c3124891b34607a07e93c8ab6dcbbf513e24e936c3710434b085981b815a" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		 (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.app_name("Facebook") and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		not androguard.package_name(/com.facebook.katana/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		not androguard.certificate.issuer(/O=Facebook Mobile/)	 (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule fake_whatsapp: fake android
-{
-  meta:
-		  author = "https://twitter.com/Diviei"
-		  reference = "https://koodous.com/"
-	condition:
-		androguard.app_name("WhatsApp") and
-		not androguard.certificate.sha1("38A0F7D505FE18FEC64FBF343ECAAAF310DBD799")
-}
+// rule fake_instagram: fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+//   meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		  author = "https://twitter.com/Diviei" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		  reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.app_name("Instagram") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		and not androguard.certificate.sha1("76D72C35164513A4A7EBA098ACCB2B22D2229CBE") (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
+
+// rule fake_king_games: fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		(androguard.app_name("AlphaBetty Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Candy Crush Soda Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Candy Crush Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Farm Heroes Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Pet Rescue Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Bubble Witch 2 Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Scrubby Dubby Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Diamond Digger Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Papa Pear Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Pyramid Solitaire Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Bubble Witch Saga") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.app_name("King Challenge")) (Identifier fixed/disabled by Oshoosi Hardener)
+// 		and not androguard.certificate.sha1("9E93B3336C767C3ABA6FCC4DEADA9F179EE4A05B") (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
+
+// rule fake_market: fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+//   meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "https://twitter.com/plutec_net" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.package_name("com.minitorrent.kimill")  (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
+
+
+// rule fake_minecraft: fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+//   meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "https://twitter.com/plutec_net" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		( androguard.app_name("Minecraft: Pocket Edition") or  (Identifier fixed/disabled by Oshoosi Hardener)
+// 			androguard.app_name("Minecraft - Pocket Edition") ) (Identifier fixed/disabled by Oshoosi Hardener)
+// 		and not androguard.package_name("com.mojang.minecraftpe") (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
+
+// rule fake_whatsapp: fake android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+//   meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		  author = "https://twitter.com/Diviei" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		  reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.app_name("WhatsApp") and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		not androguard.certificate.sha1("38A0F7D505FE18FEC64FBF343ECAAAF310DBD799") (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

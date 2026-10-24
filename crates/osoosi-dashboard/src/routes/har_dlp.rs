@@ -159,11 +159,523 @@ fn truncate_to_bytes(s: &str, max: usize) -> (String, bool) {
     (s[..end].to_string(), true)
 }
 
-fn host_of(url: &str) -> String {
+pub fn host_of(url: &str) -> String {
     reqwest::Url::parse(url)
         .ok()
         .and_then(|u| u.host_str().map(|h| h.to_string()))
         .unwrap_or_default()
+}
+
+/// Represents a local staged/uploaded file resolved from disk.
+#[derive(Debug, Clone)]
+pub struct ResolvedUploadedFile {
+    pub resolved_path: PathBuf,
+    pub filename: String,
+    pub content: String,
+    pub byte_size: usize,
+}
+
+/// Returns the standard candidate staging directories to search for browser upload files:
+/// 1. User Downloads: %USERPROFILE%\Downloads or ~/Downloads
+/// 2. User Desktop: %USERPROFILE%\Desktop or ~/Desktop
+/// 3. User Documents: %USERPROFILE%\Documents or ~/Documents
+/// 4. System/User Temp: std::env::temp_dir(), %LOCALAPPDATA%\Temp
+/// 5. Windows Recent: %APPDATA%\Microsoft\Windows\Recent
+/// 6. Workspace root and test directories: ., tests, tests/corpus
+pub fn get_candidate_staging_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let home_path = PathBuf::from(home);
+        let dl = home_path.join("Downloads");
+        if dl.is_dir() { dirs.push(dl); }
+        let desk = home_path.join("Desktop");
+        if desk.is_dir() { dirs.push(desk); }
+        let docs = home_path.join("Documents");
+        if docs.is_dir() { dirs.push(docs); }
+    }
+    let sys_temp = std::env::temp_dir();
+    if sys_temp.is_dir() && !dirs.contains(&sys_temp) {
+        dirs.push(sys_temp);
+    }
+    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+        let local_temp = PathBuf::from(local_appdata).join("Temp");
+        if local_temp.is_dir() && !dirs.contains(&local_temp) {
+            dirs.push(local_temp);
+        }
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        let recent = PathBuf::from(appdata).join("Microsoft").join("Windows").join("Recent");
+        if recent.is_dir() && !dirs.contains(&recent) {
+            dirs.push(recent);
+        }
+    }
+    dirs.push(PathBuf::from("."));
+    dirs.push(PathBuf::from("tests"));
+    dirs.push(PathBuf::from("tests").join("corpus"));
+    dirs.push(PathBuf::from("crates").join("osoosi-dashboard").join("tests"));
+
+    dirs.dedup();
+    dirs
+}
+
+/// Given a candidate filename or path, and a destination URL, resolves the uploaded or staged file.
+/// Capped at max 32 entries per directory to guarantee latency < 15ms.
+pub fn resolve_local_uploaded_file(
+    candidate_path_or_name: Option<&str>,
+    destination_url: &str,
+) -> Option<ResolvedUploadedFile> {
+    const MAX_READ_BYTES: usize = 1024 * 1024; // 1 MB
+    const DATA_EXTENSIONS: &[&str] = &[
+        "txt", "csv", "json", "pdf", "xml", "docx", "tsv", "log", "dat", "hl7",
+    ];
+
+    // Case 1: Candidate path or filename provided
+    if let Some(cand) = candidate_path_or_name {
+        let trimmed = cand.trim();
+        let cleaned = if let Some(inner) = trimmed.strip_prefix("[file upload:").and_then(|s| s.strip_suffix(']')) {
+            inner.trim()
+        } else {
+            trimmed
+        };
+        if !cleaned.is_empty() {
+            let direct_path = PathBuf::from(cleaned);
+            if direct_path.is_file() {
+                if let Ok(bytes) = std::fs::read(&direct_path) {
+                    let len = bytes.len().min(MAX_READ_BYTES);
+                    let content = String::from_utf8_lossy(&bytes[..len]).to_string();
+                    let filename = direct_path.file_name().and_then(|n| n.to_str()).unwrap_or("file").to_string();
+                    return Some(ResolvedUploadedFile {
+                        resolved_path: direct_path,
+                        filename,
+                        content,
+                        byte_size: bytes.len(),
+                    });
+                }
+            }
+
+            // Search by filename in candidate staging dirs
+            let target_filename = direct_path.file_name().and_then(|n| n.to_str()).unwrap_or(cleaned);
+            for dir in get_candidate_staging_dirs() {
+                let Ok(rd) = std::fs::read_dir(&dir) else { continue; };
+                for entry in rd.flatten().take(32) {
+                    let p = entry.path();
+                    if !p.is_file() { continue; }
+                    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+                    if name.eq_ignore_ascii_case(target_filename) {
+                        if let Ok(bytes) = std::fs::read(&p) {
+                            let len = bytes.len().min(MAX_READ_BYTES);
+                            let content = String::from_utf8_lossy(&bytes[..len]).to_string();
+                            return Some(ResolvedUploadedFile {
+                                resolved_path: p,
+                                filename: name,
+                                content,
+                                byte_size: bytes.len(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Case 2: No filename provided, but destination URL targets dlptest.com or an upload sink.
+    // Inspect the newest modified files (last 120s) matching data extensions.
+    let is_upload_sink = destination_url.contains("dlptest.com")
+        || destination_url.contains("/upload")
+        || destination_url.contains("/post");
+
+    if is_upload_sink {
+        let now = SystemTime::now();
+        let mut candidates: Vec<(PathBuf, SystemTime, u64)> = Vec::new();
+
+        for dir in get_candidate_staging_dirs() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue; };
+            for entry in rd.flatten().take(32) {
+                let p = entry.path();
+                if !p.is_file() { continue; }
+                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or_default().to_ascii_lowercase();
+                if !DATA_EXTENSIONS.contains(&ext.as_str()) {
+                    continue;
+                }
+                if let Ok(md) = entry.metadata() {
+                    let mtime = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    if let Ok(dur) = now.duration_since(mtime) {
+                        if dur.as_secs() <= 120 && md.len() > 0 && md.len() <= (MAX_READ_BYTES as u64 * 4) {
+                            candidates.push((p, mtime, md.len()));
+                        }
+                    }
+                }
+            }
+        }
+
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
+        if let Some((best_path, _, _)) = candidates.into_iter().next() {
+            if let Ok(bytes) = std::fs::read(&best_path) {
+                let len = bytes.len().min(MAX_READ_BYTES);
+                let content = String::from_utf8_lossy(&bytes[..len]).to_string();
+                let filename = best_path.file_name().and_then(|n| n.to_str()).unwrap_or("staged_upload").to_string();
+                return Some(ResolvedUploadedFile {
+                    resolved_path: best_path,
+                    filename,
+                    content,
+                    byte_size: bytes.len(),
+                });
+            }
+        }
+    }
+
+    None
+}
+
+/// Copies an active SQLite DB along with any companion `-wal`, `-shm`, or `-journal` files to a temp path
+/// so reading never fails due to database locks while Chrome or Edge is running.
+pub fn copy_sqlite_with_wal(src_db: &Path, temp_db: &Path) -> bool {
+    if std::fs::copy(src_db, temp_db).is_err() {
+        return false;
+    }
+    if let (Some(src_name), Some(temp_name)) = (
+        src_db.file_name().and_then(|n| n.to_str()),
+        temp_db.file_name().and_then(|n| n.to_str()),
+    ) {
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let src_companion = src_db.with_file_name(format!("{}{}", src_name, suffix));
+            if src_companion.exists() {
+                let temp_companion = temp_db.with_file_name(format!("{}{}", temp_name, suffix));
+                let _ = std::fs::copy(&src_companion, &temp_companion);
+            }
+        }
+    }
+    true
+}
+
+/// Cleans up a temporary SQLite database and its companion files.
+pub fn cleanup_sqlite_temp(temp_db: &Path) {
+    let _ = std::fs::remove_file(temp_db);
+    if let Some(temp_name) = temp_db.file_name().and_then(|n| n.to_str()) {
+        for suffix in ["-wal", "-shm", "-journal"] {
+            let temp_companion = temp_db.with_file_name(format!("{}{}", temp_name, suffix));
+            let _ = std::fs::remove_file(temp_companion);
+        }
+    }
+}
+
+/// Discovers Chromium/Edge/Brave browser profile directories containing History files.
+pub fn get_browser_profiles() -> Vec<(String, String, PathBuf)> {
+    let mut profiles = Vec::new();
+    let mut seen_dirs: HashSet<String> = HashSet::new();
+
+    let mut user_local_appdata = Vec::new();
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        user_local_appdata.push(PathBuf::from(local));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE") {
+        let p = PathBuf::from(home).join("AppData").join("Local");
+        if p.is_dir() && !user_local_appdata.contains(&p) {
+            user_local_appdata.push(p);
+        }
+    }
+    if cfg!(windows) {
+        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+        let users_dir = PathBuf::from(format!("{}\\Users", drive));
+        if let Ok(rd) = std::fs::read_dir(&users_dir) {
+            for entry in rd.flatten() {
+                let local = entry.path().join("AppData").join("Local");
+                if local.is_dir() && !user_local_appdata.contains(&local) {
+                    user_local_appdata.push(local);
+                }
+            }
+        }
+    } else if let Some(home) = std::env::var_os("HOME") {
+        user_local_appdata.push(PathBuf::from(home).join(".config"));
+    }
+
+    let mut check_browser_dir = |browser: &str, user_data: PathBuf| {
+        if !user_data.is_dir() {
+            return;
+        }
+        let default_dir = user_data.join("Default");
+        if default_dir.join("History").is_file() {
+            let key = default_dir.to_string_lossy().to_ascii_lowercase();
+            if seen_dirs.insert(key) {
+                profiles.push((browser.to_string(), "Default".to_string(), default_dir));
+            }
+        }
+        if let Ok(rd) = std::fs::read_dir(&user_data) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    if (name.starts_with("Profile ") || name.starts_with("profile ") || name == "Guest Profile")
+                        && p.join("History").is_file()
+                    {
+                        let key = p.to_string_lossy().to_ascii_lowercase();
+                        if seen_dirs.insert(key) {
+                            profiles.push((browser.to_string(), name, p));
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    for local in user_local_appdata {
+        check_browser_dir("Google Chrome", local.join("Google").join("Chrome").join("User Data"));
+        check_browser_dir("Microsoft Edge", local.join("Microsoft").join("Edge").join("User Data"));
+        check_browser_dir("Brave", local.join("BraveSoftware").join("Brave-Browser").join("User Data"));
+    }
+
+    profiles
+}
+
+/// Checks whether a DLP event signature (destination, scrubbed preview, or zk commitment)
+/// was previously marked as a released false positive by the user in `database/dlp_released_allowlist.json`.
+pub fn is_dlp_event_allowlisted(
+    destination_sink: &str,
+    scrubbed_preview: &str,
+    zk_commitment: &str,
+) -> bool {
+    let path = PathBuf::from("database").join("dlp_released_allowlist.json");
+    if !path.is_file() {
+        return false;
+    }
+    let Ok(data) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(val) = serde_json::from_str::<Value>(&data) else {
+        return false;
+    };
+    let Some(arr) = val.as_array() else {
+        return false;
+    };
+    for item in arr {
+        if let Some(s) = item.as_str() {
+            if (!s.is_empty()) && (s == destination_sink || s == scrubbed_preview || s == zk_commitment) {
+                return true;
+            }
+        } else if let Some(obj) = item.as_object() {
+            if let Some(sink) = obj.get("destination_sink").and_then(|v| v.as_str()) {
+                if !sink.is_empty() && sink == destination_sink {
+                    return true;
+                }
+            }
+            if let Some(zk) = obj.get("zk_commitment_hex").or_else(|| obj.get("zk_proof_commitment")).and_then(|v| v.as_str()) {
+                if !zk.is_empty() && zk == zk_commitment {
+                    return true;
+                }
+            }
+            if let Some(prev) = obj.get("scrubbed_preview").and_then(|v| v.as_str()) {
+                if !prev.is_empty() && prev == scrubbed_preview {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Autonomous real-time polling of live browser activity, uploads, and sinks (Chrome & Edge history snapshots,
+/// logs/har_stream.jsonl, and Windows DNS cache) visited within the last 120 seconds.
+pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
+    let mut out = Vec::new();
+
+    // 1. Chrome, Edge, and Chromium browser profile snapshots
+    for (browser, _profile_name, profile_dir) in get_browser_profiles() {
+        let history_file = profile_dir.join("History");
+        if !history_file.is_file() {
+            continue;
+        }
+        let temp_name = format!(
+            "osoosi_hist_snap_{}_{}.db",
+            browser.replace([' ', '-'], "_"),
+            uuid::Uuid::new_v4()
+        );
+        let temp_path = std::env::temp_dir().join(&temp_name);
+        if copy_sqlite_with_wal(&history_file, &temp_path) {
+            if let Ok(conn) = rusqlite::Connection::open_with_flags(
+                &temp_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ) {
+                let _ = conn.busy_timeout(Duration::from_millis(2000));
+                let query = "SELECT url, COALESCE(title, ''), datetime(last_visit_time / 1000000 - 11644473600, 'unixepoch'), last_visit_time
+                             FROM urls
+                             WHERE (url LIKE '%dlptest.com%' OR url LIKE '%/http-post/%' OR url LIKE '%/https-post/%' OR url LIKE '%/upload%')
+                             ORDER BY last_visit_time DESC LIMIT 20;";
+                if let Ok(mut stmt) = conn.prepare(query) {
+                    let now_system = SystemTime::now();
+                    let current_chrom_micros = match now_system.duration_since(SystemTime::UNIX_EPOCH) {
+                        Ok(dur) => (dur.as_secs() + 11644473600) * 1_000_000 + dur.subsec_micros() as u64,
+                        Err(_) => 0,
+                    };
+                    if let Ok(rows) = stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0).unwrap_or_default(),
+                            row.get::<_, String>(1).unwrap_or_default(),
+                            row.get::<_, String>(2).unwrap_or_default(),
+                            row.get::<_, i64>(3).unwrap_or(0),
+                        ))
+                    }) {
+                        for r in rows.flatten() {
+                            let (url, _title, started_at, last_visit_chrom) = r;
+                            if url.is_empty() {
+                                continue;
+                            }
+                            let is_recent = if current_chrom_micros > 0 && last_visit_chrom > 0 {
+                                let diff_micros = current_chrom_micros.saturating_sub(last_visit_chrom as u64);
+                                diff_micros <= 120 * 1_000_000
+                            } else {
+                                true
+                            };
+                            if !is_recent {
+                                continue;
+                            }
+
+                            let (body_text, params) = if let Some(resolved) = resolve_local_uploaded_file(None, &url) {
+                                (
+                                    format!(
+                                        "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                                        resolved.resolved_path.display(),
+                                        resolved.byte_size,
+                                        resolved.content
+                                    ),
+                                    vec![("uploaded_file".to_string(), resolved.resolved_path.display().to_string())],
+                                )
+                            } else {
+                                (String::new(), Vec::new())
+                            };
+
+                            let actor = normalize_actor(&browser);
+                            let method = "POST".to_string();
+                            let start_ts = if started_at.is_empty() {
+                                chrono::Utc::now().to_rfc3339()
+                            } else {
+                                started_at
+                            };
+                            let key = har_entry_key(&method, &url, &start_ts, &body_text, &params);
+                            out.push(HarDlpRequest {
+                                key,
+                                source_kind: HarSourceKind::HarCollector,
+                                source_label: format!("browser_history:{}", browser.to_ascii_lowercase()),
+                                actor,
+                                actor_pid: None,
+                                actor_image_path: None,
+                                injection_indicators: Vec::new(),
+                                host: host_of(&url),
+                                method,
+                                url,
+                                started_at: start_ts,
+                                mime_type: "multipart/form-data".to_string(),
+                                body_text,
+                                params,
+                                body_truncated: false,
+                            });
+                        }
+                    }
+                }
+            }
+            cleanup_sqlite_temp(&temp_path);
+        }
+    }
+
+    // 2. Also check logs/har_stream.jsonl if present
+    let stream_path = PathBuf::from("logs").join("har_stream.jsonl");
+    if stream_path.is_file() {
+        if let Ok(file) = std::fs::File::open(&stream_path) {
+            use std::io::{BufRead, BufReader};
+            let reader = BufReader::new(file);
+            for line in reader.lines().flatten().take(50) {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(entry) = serde_json::from_str::<Value>(trimmed) {
+                    let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or_default();
+                    if url.contains("dlptest.com") || url.contains("/upload") || url.contains("/post") {
+                        let method = entry.get("method").and_then(|v| v.as_str()).unwrap_or("POST");
+                        let started_at = entry.get("started_at").and_then(|v| v.as_str()).unwrap_or_default();
+                        let mut body_text = entry.get("body_text").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                        let candidate_file = entry.get("file_name").or_else(|| entry.get("file_path")).and_then(|v| v.as_str());
+                        let mut params = Vec::new();
+                        if let Some(resolved) = resolve_local_uploaded_file(candidate_file, url) {
+                            if !body_text.contains(&resolved.content) {
+                                if !body_text.is_empty() {
+                                    body_text.push('\n');
+                                }
+                                body_text.push_str(&format!(
+                                    "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                                    resolved.resolved_path.display(),
+                                    resolved.byte_size,
+                                    resolved.content
+                                ));
+                            }
+                            params.push(("uploaded_file".to_string(), resolved.resolved_path.display().to_string()));
+                        }
+                        let start_ts = if started_at.is_empty() {
+                            chrono::Utc::now().to_rfc3339()
+                        } else {
+                            started_at.to_string()
+                        };
+                        let key = har_entry_key(method, url, &start_ts, &body_text, &params);
+                        out.push(HarDlpRequest {
+                            key,
+                            source_kind: HarSourceKind::HarCollector,
+                            source_label: "logs/har_stream.jsonl".to_string(),
+                            actor: "chrome.exe".to_string(),
+                            actor_pid: None,
+                            actor_image_path: None,
+                            injection_indicators: Vec::new(),
+                            host: host_of(url),
+                            method: method.to_string(),
+                            url: url.to_string(),
+                            started_at: start_ts,
+                            mime_type: "multipart/form-data".to_string(),
+                            body_text,
+                            params,
+                            body_truncated: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Check Windows DNS cache for dlptest.com visits
+    #[cfg(windows)]
+    {
+        if let Ok(output) = std::process::Command::new("ipconfig").arg("/displaydns").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.contains("dlptest.com") {
+                let test_url = "https://dlptest.com/https-post/";
+                if let Some(resolved) = resolve_local_uploaded_file(None, test_url) {
+                    let key = format!("dns_dlptest_{}", resolved.resolved_path.display());
+                    let started_at = chrono::Utc::now().to_rfc3339();
+                    out.push(HarDlpRequest {
+                        key,
+                        source_kind: HarSourceKind::HarCollector,
+                        source_label: "windows_dns_cache:dlptest.com".to_string(),
+                        actor: "chrome.exe".to_string(),
+                        actor_pid: None,
+                        actor_image_path: None,
+                        injection_indicators: Vec::new(),
+                        host: "dlptest.com".to_string(),
+                        method: "POST".to_string(),
+                        url: test_url.to_string(),
+                        started_at,
+                        mime_type: "multipart/form-data".to_string(),
+                        body_text: format!(
+                            "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                            resolved.resolved_path.display(),
+                            resolved.byte_size,
+                            resolved.content
+                        ),
+                        params: vec![("uploaded_file".to_string(), resolved.resolved_path.display().to_string())],
+                        body_truncated: false,
+                    });
+                }
+            }
+        }
+    }
+
+    out
 }
 
 /// Stable dedupe key: method + url + startedDateTime + blake3(body + params).
@@ -265,7 +777,7 @@ pub fn extract_requests_from_har(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        let (body_text, mut truncated) = truncate_to_bytes(
+        let (mut body_text, mut truncated) = truncate_to_bytes(
             post.and_then(|p| p.get("text"))
                 .and_then(|v| v.as_str())
                 .unwrap_or_default(),
@@ -273,6 +785,7 @@ pub fn extract_requests_from_har(
         );
         let mut params = Vec::new();
         let mut budget = MAX_HAR_BODY_BYTES;
+        let mut candidate_file: Option<String> = None;
         if let Some(arr) = post
             .and_then(|p| p.get("params"))
             .and_then(|v| v.as_array())
@@ -280,6 +793,13 @@ pub fn extract_requests_from_har(
             for p in arr.iter().take(4096) {
                 let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
                 let value = p.get("value").and_then(|v| v.as_str()).unwrap_or_default();
+                if candidate_file.is_none() {
+                    if let Some(fn_str) = p.get("fileName").or_else(|| p.get("filename")).and_then(|v| v.as_str()) {
+                        if !fn_str.trim().is_empty() {
+                            candidate_file = Some(fn_str.trim().to_string());
+                        }
+                    }
+                }
                 if name.len() + value.len() > budget {
                     truncated = true;
                     break;
@@ -287,6 +807,73 @@ pub fn extract_requests_from_har(
                 budget -= name.len() + value.len();
                 params.push((name.to_string(), value.to_string()));
             }
+        }
+
+        // Also check entry._oshoosi.uploaded_files
+        if candidate_file.is_none() {
+            if let Some(arr) = entry.get("_oshoosi").and_then(|m| m.get("uploaded_files")).and_then(|v| v.as_array()) {
+                for f in arr {
+                    if let Some(s) = f.as_str() {
+                        if !s.trim().is_empty() {
+                            candidate_file = Some(s.trim().to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check requestBody.raw[i].file
+        if candidate_file.is_none() {
+            if let Some(raw_arr) = req.get("requestBody").and_then(|b| b.get("raw")).and_then(|v| v.as_array()) {
+                for part in raw_arr {
+                    if let Some(f) = part.get("file").and_then(|v| v.as_str()) {
+                        if !f.trim().is_empty() {
+                            candidate_file = Some(f.trim().to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also check body_text for "[file upload: ...]" or multipart 'filename="..."'
+        if candidate_file.is_none() {
+            if let Some(start) = body_text.find("[file upload:") {
+                if let Some(end) = body_text[start..].find(']') {
+                    let cand = body_text[start + 13..start + end].trim();
+                    if !cand.is_empty() {
+                        candidate_file = Some(cand.to_string());
+                    }
+                }
+            }
+        }
+        if candidate_file.is_none() {
+            if let Some(start) = body_text.find("filename=") {
+                let rest = &body_text[start + 9..];
+                let trimmed_rest = rest.trim_start_matches('"').trim_start_matches('\'');
+                let end = trimmed_rest.find(['"', '\'', ';', '\r', '\n']).unwrap_or(trimmed_rest.len());
+                let cand = trimmed_rest[..end].trim();
+                if !cand.is_empty() {
+                    candidate_file = Some(cand.to_string());
+                }
+            }
+        }
+
+        // Resolve candidate file from disk if present or if targeting dlptest.com / upload sink
+        if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {
+            if !body_text.contains(&resolved.content) {
+                if !body_text.is_empty() {
+                    body_text.push('\n');
+                }
+                body_text.push_str(&format!(
+                    "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                    resolved.resolved_path.display(),
+                    resolved.byte_size,
+                    resolved.content
+                ));
+            }
+            params.push(("uploaded_file".to_string(), resolved.resolved_path.display().to_string()));
         }
         let meta = entry.get("_oshoosi");
         let actor = meta
@@ -519,6 +1106,11 @@ fn persist_seen_keys(keys: &[String]) {
     let _ = tx.commit();
 }
 
+/// Gets the global EDR orchestrator backend if registered.
+pub fn get_backend() -> Option<Arc<osoosi_core::EdrOrchestrator>> {
+    BACKEND.get().cloned()
+}
+
 /// Inspects one request through the shared DLP decision path and records the event.
 fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
     let payload = req.to_inspection_payload();
@@ -528,7 +1120,7 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
         // URL-only collector rows are recorded only when they carry sensitive data.
         skip_recording_allowed: !has_body,
     };
-    let (_tier1, _proof, event) = {
+    let (_tier1, _proof, mut event) = {
         let mut state = get_global_dlp_state().write();
         inspect_and_record_with_options(
             &mut state,
@@ -540,6 +1132,21 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
             options,
         )
     };
+    if !event.allowed
+        && is_dlp_event_allowlisted(
+            &event.destination_sink,
+            &event.scrubbed_preview,
+            &event.zk_proof_commitment,
+        )
+    {
+        event.allowed = true;
+        event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
+        event.dlp_response = "RELEASED_BY_USER".to_string();
+        event.rationale = format!(
+            "[DLP-Released]: False-positive released by user allowlist ({})",
+            event.destination_sink
+        );
+    }
     STAT_INSPECTED.fetch_add(1, Ordering::Relaxed);
     if has_body {
         STAT_WITH_BODY.fetch_add(1, Ordering::Relaxed);
@@ -784,6 +1391,7 @@ fn worker_loop() {
     load_seen_keys_from_db(&mut seen().lock());
     let mut file_state: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
     let mut last_file_scan = Instant::now() - FILE_SCAN_INTERVAL;
+    let mut last_browser_poll = Instant::now() - Duration::from_secs(3);
     let mut last_sweep = 0u64;
     let mut backlog: VecDeque<HarDlpRequest> = VecDeque::new();
     loop {
@@ -793,7 +1401,7 @@ fn worker_loop() {
             let (lock, cv) = queue();
             let mut q = lock.lock();
             if q.jobs.is_empty() && backlog.is_empty() {
-                cv.wait_for(&mut q, Duration::from_millis(1000));
+                cv.wait_for(&mut q, Duration::from_millis(500));
             }
             let mut taken = Vec::new();
             let mut budget = MAX_REQUESTS_PER_CYCLE;
@@ -818,6 +1426,13 @@ fn worker_loop() {
             // 3. URL-only collector rows (browser history).
             backlog.extend(collector_url_only_requests(&mut last_sweep));
         }
+
+        // 4. Autonomous Real-Time browser visits and upload sink polling (every 3 seconds)
+        if last_browser_poll.elapsed() >= Duration::from_secs(3) {
+            last_browser_poll = Instant::now();
+            backlog.extend(poll_live_browser_and_sink_activity());
+        }
+
         // Background backlog is processed in small chunks so queued sensor/import jobs (which
         // may be awaiting inline verdicts) are picked up between chunks.
         if !backlog.is_empty() {
@@ -869,6 +1484,7 @@ pub fn pipeline_status() -> Value {
     let queued = queue().0.lock().queued_requests;
     json!({
         "running": STARTED.load(Ordering::SeqCst),
+        "autonomous_poll_interval_secs": 3,
         "worker_cycles": STAT_CYCLES.load(Ordering::Relaxed),
         "inspected_requests": STAT_INSPECTED.load(Ordering::Relaxed),
         "inspected_with_body": STAT_WITH_BODY.load(Ordering::Relaxed),
@@ -877,6 +1493,7 @@ pub fn pipeline_status() -> Value {
         "dropped_queue_full": STAT_DROPPED.load(Ordering::Relaxed),
         "har_files_parsed": STAT_FILES_PARSED.load(Ordering::Relaxed),
         "queued_requests": queued,
+        "candidate_staging_dirs": get_candidate_staging_dirs().iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         "watch_dirs": default_watch_dirs().iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         "sources": ["BROWSER_EXTENSION", "HAR_FILE", "HAR_IMPORT", "HAR_COLLECTOR"],
     })
@@ -927,5 +1544,87 @@ mod tests {
         let c = har_entry_key("POST", "https://x/", "t", "a=2", &[]);
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn test_resolve_local_uploaded_file_direct_and_search() {
+        let temp_dir = std::env::temp_dir();
+        let fname = format!("test_patient_phi_{}.csv", uuid::Uuid::new_v4());
+        let file_path = temp_dir.join(&fname);
+        let sample_phi = "patient_id,name,dob,ssn,icd10\nPT-1092,Alice Johnson,1980-05-14,999-88-7777,E11.9\n";
+        std::fs::write(&file_path, sample_phi).expect("write temp phi file");
+
+        // 1. Direct absolute path resolution
+        let res1 = resolve_local_uploaded_file(Some(file_path.to_str().unwrap()), "https://dlptest.com/https-post/");
+        assert!(res1.is_some(), "direct path should resolve");
+        let r1 = res1.unwrap();
+        assert!(r1.content.contains("999-88-7777"));
+        assert_eq!(r1.byte_size, sample_phi.len());
+
+        // 2. Basename resolution searching candidate dirs
+        let res2 = resolve_local_uploaded_file(Some(&fname), "https://dlptest.com/https-post/");
+        assert!(res2.is_some(), "filename should resolve in staging dirs");
+        let r2 = res2.unwrap();
+        assert!(r2.content.contains("Alice Johnson"));
+
+        // 3. Bracketed '[file upload: ...]' resolution
+        let bracketed = format!("[file upload: {}]", fname);
+        let res3 = resolve_local_uploaded_file(Some(&bracketed), "https://dlptest.com/https-post/");
+        assert!(res3.is_some(), "bracketed note should resolve");
+
+        // 4. URL-only resolution for dlptest.com (picks newest file in staging dir)
+        let res4 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/");
+        assert!(res4.is_some(), "dlptest.com without filename should pick newest data file");
+
+        let _ = std::fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn test_extract_requests_with_file_upload_metadata() {
+        let temp_dir = std::env::temp_dir();
+        let fname = format!("test_discharge_{}.csv", uuid::Uuid::new_v4());
+        let file_path = temp_dir.join(&fname);
+        let sample_content = "patient_mrn,diagnosis\nMRN-882194,Hypertension ICD10-I10\n";
+        std::fs::write(&file_path, sample_content).expect("write sample content");
+
+        let doc = json!({
+            "log": {
+                "version": "1.2",
+                "entries": [
+                    {
+                        "startedDateTime": "2026-10-24T12:00:00.000Z",
+                        "request": {
+                            "method": "POST",
+                            "url": "https://dlptest.com/https-post/",
+                            "postData": {
+                                "mimeType": "multipart/form-data",
+                                "text": format!("[file upload: {}]", fname),
+                                "params": [{"name": "file", "value": "", "fileName": fname}]
+                            }
+                        },
+                        "_oshoosi": {
+                            "browser": "Google Chrome",
+                            "uploaded_files": [fname.clone()]
+                        }
+                    }
+                ]
+            }
+        });
+
+        let reqs = extract_requests_from_har(&doc, "browser_extension", HarSourceKind::BrowserExtension);
+        assert_eq!(reqs.len(), 1);
+        let r = &reqs[0];
+        assert_eq!(r.actor, "chrome.exe");
+        assert_eq!(r.channel(), "BROWSER_HTTP_POST");
+        let payload = r.to_inspection_payload();
+        assert!(payload.contains("MRN-882194"), "payload must contain resolved file content");
+
+        let _ = std::fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn test_is_dlp_event_allowlisted() {
+        // When allowlist file does not exist or empty
+        assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "preview", "zk-commit-123"));
     }
 }

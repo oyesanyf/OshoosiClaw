@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 rule Android_Triada : android
 {
@@ -23,7 +23,7 @@ rule Android_Triada : android
 		$string_1 = "android/system/PopReceiver"
 	condition:
 		all of ($string_*) and
-		androguard.permission(/android.permission.KILL_BACKGROUND_PROCESSES/) and
-		androguard.permission(/android.permission.SYSTEM_ALERT_WINDOW/) and
-		androguard.permission(/android.permission.GET_TASKS/)
+// 		androguard.permission(/android.permission.KILL_BACKGROUND_PROCESSES/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.SYSTEM_ALERT_WINDOW/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.GET_TASKS/) (Identifier fixed/disabled by Oshoosi Hardener)
 }

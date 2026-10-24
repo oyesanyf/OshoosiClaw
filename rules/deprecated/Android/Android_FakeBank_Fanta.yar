@@ -5,18 +5,18 @@
 
 // // import "androguard"
 
-rule Android_FakeBank_Fanta
-{
-	meta:
-		author = "Jacob Soo Lead Re"
-		date = "14-July-2016"
-		description = "This rule try to detects Android FakeBank_Fanta"
-		source = "https://blog.trendmicro.com/trendlabs-security-intelligence/fake-bank-app-phishes-credentials-locks-users-out/"
-
-	condition:
+// rule Android_FakeBank_Fanta (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Jacob Soo Lead Re" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "14-July-2016" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detects Android FakeBank_Fanta" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://blog.trendmicro.com/trendlabs-security-intelligence/fake-bank-app-phishes-credentials-locks-users-out/" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.service(/SocketService/i) and  (Disabled by Oshoosi Hardener)
 // 		androguard.receiver(/MyAdmin/i) and  (Disabled by Oshoosi Hardener)
 // 		androguard.receiver(/Receiver/i) and  (Disabled by Oshoosi Hardener)
 // 		androguard.receiver(/NetworkChangeReceiver/i) (Disabled by Oshoosi Hardener)
-		
-}
+// 		 (Disabled: vacuous condition without evaluatable strings/modules)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

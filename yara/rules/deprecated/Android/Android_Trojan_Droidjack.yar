@@ -10,10 +10,10 @@
 
 // // import "androguard"
 
-rule Trojan_Droidjack
-{
-meta:
-author = "https://twitter.com/SadFud75"
-condition:
+// rule Trojan_Droidjack (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// author = "https://twitter.com/SadFud75" (Disabled: vacuous condition without evaluatable strings/modules)
+// condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // androguard.package_name("net.droidjack.server") or androguard.activity(/net.droidjack.server/i) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
