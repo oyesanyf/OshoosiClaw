@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "OshoosiClaw Browser DLP Sensor",
+  "short_name": "OshoosiClaw DLP",
+  "version": "1.2.0",
+  "description": "Checks outgoing form and API submissions for sensitive data and reports them only to the OshoosiClaw agent running on this computer.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqzgXxI5trwhIAx2cOt8U8MercG52OUA8VYiolYJgTSE9zpXRhas6T0fsTzUsVb56gPFuwRQuLrmusV67pvPp+fga973Z1eHnspj2o1yZH72CFpIL81vfGBkuuGICeNvKXFIyuVh2qUA41W9H/UoGGcwIxvoTsFPj29TY4IQufVsqC2oFMGL3siQKovnwuY29fzK2lQwYddwxTYzpKnmA5wLZynkFngIdGsrUQXJ16n5NUpTpLxkshxK4g3qk28xUGPZHV3L6MhqSMDlhQ2z/g7ZylJ+WSzrEiTdmrtx/RgTps0EtBU37HIbi09O2RzFVqgFLziha3e9CQIEKV4f9hQIDAQAB",
+  "minimum_chrome_version": "121",
+  "permissions": ["webRequest", "storage", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "OshoosiClaw Browser DLP Sensor"
+  },
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "browser-dlp-sensor@oshoosiclaw.local",
+      "strict_min_version": "121.0"
+    }
+  }
+}

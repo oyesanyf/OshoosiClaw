@@ -1487,6 +1487,14 @@ impl OsoosiTwoTierDlpEngine {
                 }
             }
 
+            // Grouped PANs ("4532 0151 1283 0366") are split by the whitespace tokenizer above;
+            // the RedactX separator-aware scanner recovers them.
+            if !detected_categories.contains(&"CREDIT_CARD_LUHN".to_string())
+                && !RedactXStructuredValidator::pan_scan(view).is_empty()
+            {
+                detected_categories.push("CREDIT_CARD_LUHN".to_string());
+            }
+
             // Scan for Medical Record Numbers (MRN)
             for _mrn in RedactXStructuredValidator::mrn_scan(view) {
                 if !detected_categories.contains(&"HIPAA_MRN".to_string()) {
@@ -1686,21 +1694,30 @@ impl OsoosiTwoTierDlpEngine {
         text: &str,
         operating_mode: Option<&str>,
     ) -> OpenJevDecisionVerdict {
-        let mode = match operating_mode.unwrap_or("zero_leakage") {
-            "balanced_utility" => RedactXOperatingMode::balanced_utility(),
-            _ => RedactXOperatingMode::zero_leakage(),
-        };
+        let mode = RedactXOperatingMode::from_name(operating_mode.unwrap_or("zero_leakage"));
 
         let tier1 = self.inspect_hot_tier1(actor_process, destination_sink, text.as_bytes());
 
-        // Run deterministic RedactX 18 HIPAA Safe Harbor validations
+        // Run deterministic RedactX 18 HIPAA Safe Harbor validations. Identifiers recorded for
+        // audit display are masked (last 4 kept) so verdicts never re-leak the raw PII.
         let mut validator_cats = Vec::new();
         let mut hipaa_ids = Vec::new();
 
+        for pan in RedactXStructuredValidator::pan_scan(text) {
+            let tag = format!("PAN:{}", redactx_mask_identifier(&pan, 4));
+            if !hipaa_ids.contains(&tag) {
+                hipaa_ids.push(tag);
+            }
+            if !validator_cats.contains(&"CREDIT_CARD_PAN".to_string()) {
+                validator_cats.push("CREDIT_CARD_PAN".to_string());
+            }
+        }
+
         let mrns = RedactXStructuredValidator::mrn_scan(text);
         for m in &mrns {
-            if !hipaa_ids.contains(m) {
-                hipaa_ids.push(format!("MRN:{}", m));
+            let tag = format!("MRN:{}", redactx_mask_identifier(m, 4));
+            if !hipaa_ids.contains(&tag) {
+                hipaa_ids.push(tag);
             }
             if !validator_cats.contains(&"HIPAA_MRN".to_string()) {
                 validator_cats.push("HIPAA_MRN".to_string());
@@ -1709,7 +1726,7 @@ impl OsoosiTwoTierDlpEngine {
 
         let phone_faxes = RedactXStructuredValidator::nanp_phone_fax_scan(text);
         for (num, cat) in &phone_faxes {
-            let tag = format!("{}:{}", cat, num);
+            let tag = format!("{}:{}", cat, redactx_mask_identifier(num, 4));
             if !hipaa_ids.contains(&tag) {
                 hipaa_ids.push(tag);
             }
@@ -1745,7 +1762,7 @@ impl OsoosiTwoTierDlpEngine {
                     if !validator_cats.contains(&"US_SSN".to_string()) {
                         validator_cats.push("US_SSN".to_string());
                     }
-                    let tag = format!("SSN:{}", clean);
+                    let tag = format!("SSN:{}", redactx_mask_identifier(clean, 4));
                     if !hipaa_ids.contains(&tag) {
                         hipaa_ids.push(tag);
                     }
@@ -1754,7 +1771,13 @@ impl OsoosiTwoTierDlpEngine {
                 if !validator_cats.contains(&"EMAIL_ADDRESS".to_string()) {
                     validator_cats.push("EMAIL_ADDRESS".to_string());
                 }
-                let tag = format!("EMAIL:{}", clean);
+                let tag = format!(
+                    "EMAIL:{}",
+                    clean
+                        .split_once('@')
+                        .map(|(_, domain)| format!("***@{}", domain))
+                        .unwrap_or_else(|| redactx_mask_identifier(clean, 4))
+                );
                 if !hipaa_ids.contains(&tag) {
                     hipaa_ids.push(tag);
                 }
@@ -1811,7 +1834,21 @@ impl OsoosiTwoTierDlpEngine {
             1
         };
 
-        let noul_value = (p_true_phi_pii >= mode.doc_threshold) && !canonical_git_push_allowed;
+        // RedactX span scoring: one calibrated score per validator-confirmed category. The
+        // operating mode's span threshold is enforced together with its document threshold.
+        let redactx_span_scores: Vec<RedactXSpanScore> = validator_cats
+            .iter()
+            .map(|c| RedactXSpanScore::for_category(c))
+            .collect();
+        let redactx_max_span_score = redactx_span_scores
+            .iter()
+            .map(|s| s.score)
+            .fold(0.0f64, f64::max);
+        let has_redactx_spans = !redactx_span_scores.is_empty();
+        let span_admitted = !has_redactx_spans || redactx_max_span_score >= mode.span_threshold;
+
+        let noul_value = mode.admits(p_true_phi_pii, redactx_max_span_score, has_redactx_spans)
+            && !canonical_git_push_allowed;
 
         let noul_primitive = OpenJevNoulPrimitive {
             p_true_phi_pii,
@@ -1830,7 +1867,9 @@ impl OsoosiTwoTierDlpEngine {
             choice_dist.insert("QUARANTINE_ENFORCE".to_string(), 0.003);
             choice_dist.insert("BLOCK_AND_SCRUB".to_string(), 0.002);
             ("PASS_CLEAN".to_string(), 0.995)
-        } else if has_crown_jewel || total_detected >= 2 || p_true_phi_pii >= 0.85 {
+        } else if has_crown_jewel
+            || ((total_detected >= 2 || p_true_phi_pii >= 0.85) && span_admitted)
+        {
             choice_dist.insert("BLOCK_AND_SCRUB".to_string(), 0.920);
             choice_dist.insert("QUARANTINE_ENFORCE".to_string(), 0.075);
             choice_dist.insert("PASS_CLEAN".to_string(), 0.005);
@@ -1934,6 +1973,9 @@ impl OsoosiTwoTierDlpEngine {
             hipaa_safe_harbor_identifiers: hipaa_ids,
             hybrid_sources,
             canonical_git_push_allowed,
+            redactx_doc_score: p_true_phi_pii,
+            redactx_span_scores,
+            redactx_max_span_score,
         }
     }
 }
@@ -2312,6 +2354,82 @@ impl RedactXOperatingMode {
             precision: 0.9460,
         }
     }
+
+    /// Resolves an operating mode by name (`zero_leakage` / `balanced_utility`).
+    /// Unknown names fail safe to the high-recall `zero_leakage` mode.
+    pub fn from_name(name: &str) -> Self {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "balanced_utility" | "balanced" => Self::balanced_utility(),
+            _ => Self::zero_leakage(),
+        }
+    }
+
+    /// Returns `true` when a document-level score and the strongest RedactX-confirmed span score
+    /// both clear this mode's calibrated thresholds. Documents with no structured spans are
+    /// admitted on the document score alone (e.g. credential/secret tokens that RedactX does
+    /// not model as Safe Harbor spans).
+    pub fn admits(&self, doc_score: f64, max_span_score: f64, has_spans: bool) -> bool {
+        doc_score >= self.doc_threshold && (!has_spans || max_span_score >= self.span_threshold)
+    }
+}
+
+/// Calibrated RedactX span score for one validator-confirmed identifier category.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RedactXSpanScore {
+    pub category: String,
+    /// Validator class: `checksum` (Luhn / ISO 7064), `issuance_rule` (SSA), or `format` (syntax only).
+    pub validator: String,
+    /// Platt-calibrated (T = 1.08) span probability.
+    pub score: f64,
+}
+
+impl RedactXSpanScore {
+    /// Platt temperature shared with the OpenJEV Noul primitive.
+    pub const PLATT_TEMPERATURE: f64 = 1.08;
+
+    /// Evidence logit per validator class. Checksum validators (Luhn PAN / CMS NPI / ISO 7064
+    /// MRN) carry the strongest evidence, SSA issuance-rule validation is next, and syntax-only
+    /// matches (email, NANP phone/fax) are deliberately kept below the `balanced_utility` span
+    /// threshold (0.5) so they can alert but never drive autonomous containment on their own.
+    fn validator_class_and_logit(category: &str) -> (&'static str, f64) {
+        match category {
+            "CREDIT_CARD_PAN" | "HIPAA_NPI" | "HIPAA_MRN" => ("checksum", 3.7),
+            "US_SSN" => ("issuance_rule", 3.0),
+            _ => ("format", -0.3),
+        }
+    }
+
+    pub fn for_category(category: &str) -> Self {
+        let (validator, logit) = Self::validator_class_and_logit(category);
+        let score = (1.0 / (1.0 + (-logit / Self::PLATT_TEMPERATURE).exp())).clamp(0.0001, 0.9999);
+        Self {
+            category: category.to_string(),
+            validator: validator.to_string(),
+            score,
+        }
+    }
+}
+
+/// Masks an identifier for audit display, keeping only the last `keep_tail` alphanumerics.
+pub fn redactx_mask_identifier(raw: &str, keep_tail: usize) -> String {
+    let chars: Vec<char> = raw.chars().collect();
+    let alnum_total = chars.iter().filter(|c| c.is_ascii_alphanumeric()).count();
+    let mut alnum_seen = 0usize;
+    chars
+        .iter()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                alnum_seen += 1;
+                if alnum_seen + keep_tail > alnum_total {
+                    *c
+                } else {
+                    '*'
+                }
+            } else {
+                *c
+            }
+        })
+        .collect()
 }
 
 /// Structured deterministic identifier validator for 18 HIPAA Safe Harbor categories.
@@ -2319,6 +2437,77 @@ impl RedactXOperatingMode {
 pub struct RedactXStructuredValidator;
 
 impl RedactXStructuredValidator {
+    /// Scans Luhn-valid payment card numbers (PANs, 13..=19 digits) written contiguously or in
+    /// space/dash separated groups (`4532 0151 1283 0366`, `3782-822463-10005`). Requires a
+    /// major-network leading digit (2-6) and a token boundary on both sides.
+    pub fn pan_scan(text: &str) -> Vec<String> {
+        let bytes = text.as_bytes();
+        let len = bytes.len();
+        let mut results: Vec<String> = Vec::new();
+        let mut i = 0usize;
+        while i < len {
+            if !bytes[i].is_ascii_digit() || (i > 0 && bytes[i - 1].is_ascii_alphanumeric()) {
+                i += 1;
+                continue;
+            }
+            // Collect digit groups joined by exactly one ' ' or '-' separator.
+            let mut groups: Vec<(usize, usize)> = Vec::new();
+            let mut j = i;
+            loop {
+                let start = j;
+                while j < len && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                groups.push((start, j));
+                if groups.len() < 8
+                    && j + 1 < len
+                    && matches!(bytes[j], b' ' | b'-')
+                    && bytes[j + 1].is_ascii_digit()
+                {
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            let right_boundary_ok = j >= len || !bytes[j].is_ascii_alphanumeric();
+            if right_boundary_ok {
+                for a in 0..groups.len() {
+                    let mut digits: Vec<u8> = Vec::with_capacity(19);
+                    for (b, &(s, e)) in groups.iter().enumerate().skip(a) {
+                        let glen = e - s;
+                        let single_group = b == a;
+                        let group_ok = if single_group {
+                            (13..=19).contains(&glen) || (3..=6).contains(&glen)
+                        } else {
+                            (3..=6).contains(&glen)
+                        };
+                        if !group_ok {
+                            break;
+                        }
+                        digits.extend_from_slice(&bytes[s..e]);
+                        if digits.len() > 19 {
+                            break;
+                        }
+                        let complete_contiguous = single_group && (13..=19).contains(&glen);
+                        let complete_grouped = !single_group && (13..=19).contains(&digits.len());
+                        if (complete_contiguous || complete_grouped)
+                            && matches!(digits[0], b'2'..=b'6')
+                            && OsoosiTwoTierDlpEngine::verify_luhn_pan(&digits)
+                        {
+                            let pan = String::from_utf8_lossy(&digits).into_owned();
+                            if !results.contains(&pan) {
+                                results.push(pan);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            i = j.max(i + 1);
+        }
+        results
+    }
+
     /// Validates CMS 10-digit National Provider Identifier (NPI) via standard Luhn mod-10 over prefix "80840".
     pub fn npi_valid(npi: &str) -> bool {
         let clean = npi.trim();
@@ -2618,6 +2807,36 @@ pub struct OpenJevDecisionVerdict {
     pub hipaa_safe_harbor_identifiers: Vec<String>,
     pub hybrid_sources: Vec<String>,
     pub canonical_git_push_allowed: bool,
+    /// RedactX document-level score (calibrated Noul probability) compared with `doc_threshold`.
+    #[serde(default)]
+    pub redactx_doc_score: f64,
+    /// RedactX calibrated span scores, one per validator-confirmed category.
+    #[serde(default)]
+    pub redactx_span_scores: Vec<RedactXSpanScore>,
+    /// Strongest RedactX span score compared with `span_threshold`.
+    #[serde(default)]
+    pub redactx_max_span_score: f64,
+}
+
+impl OpenJevDecisionVerdict {
+    /// OpenJEV routing agrees with enforcement (`QUARANTINE_ENFORCE` / `BLOCK_AND_SCRUB`) AND the
+    /// evidence guard holds: at least one RedactX validator-confirmed category, or a calibrated
+    /// Noul probability >= 0.85. Empty-category, low-probability results never qualify.
+    pub fn openjev_enforcement_agreed(&self) -> bool {
+        let routes_to_enforcement = matches!(
+            self.choice_routing_action.selection.as_str(),
+            "QUARANTINE_ENFORCE" | "BLOCK_AND_SCRUB"
+        );
+        let evidence_guard = !self.validator_confirmed_categories.is_empty()
+            || self.noul_contains_phi_pii.p_true_phi_pii >= 0.85;
+        routes_to_enforcement && evidence_guard && !self.canonical_git_push_allowed
+    }
+
+    /// RedactX confirmed spans clear the given operating mode's document and span thresholds.
+    pub fn redactx_confirmed_at(&self, mode: &RedactXOperatingMode) -> bool {
+        !self.redactx_span_scores.is_empty()
+            && mode.admits(self.redactx_doc_score, self.redactx_max_span_score, true)
+    }
 }
 
 #[cfg(test)]
@@ -3076,5 +3295,125 @@ mod tests_dlp_evasion {
             .detected_categories
             .contains(&"HIPAA_PHONE".to_string()));
         assert!(tier1.detected_categories.contains(&"HIPAA_FAX".to_string()));
+    }
+
+    #[test]
+    fn test_redactx_pan_scan_contiguous_grouped_and_rejections() {
+        // Luhn-valid Visa test number in contiguous, space-grouped and dash-grouped forms.
+        assert_eq!(
+            RedactXStructuredValidator::pan_scan("card=4532015112830366&x=1"),
+            vec!["4532015112830366".to_string()]
+        );
+        assert_eq!(
+            RedactXStructuredValidator::pan_scan("Card: 4532 0151 1283 0366."),
+            vec!["4532015112830366".to_string()]
+        );
+        // Amex 4-6-5 grouping.
+        assert_eq!(
+            RedactXStructuredValidator::pan_scan("amex 3782-822463-10005"),
+            vec!["378282246310005".to_string()]
+        );
+        // Random 16-digit non-Luhn number, SSNs, phones and embedded digits are not PANs.
+        assert!(RedactXStructuredValidator::pan_scan("id 4532015112830367").is_empty());
+        assert!(RedactXStructuredValidator::pan_scan("ssn 123-45-6789 tel 415-555-2671").is_empty());
+        assert!(RedactXStructuredValidator::pan_scan("order#A4532015112830366").is_empty());
+        assert!(RedactXStructuredValidator::pan_scan("ts 1111111111111111").is_empty());
+    }
+
+    #[test]
+    fn test_redactx_confirms_card_and_ssn_in_har_post_body() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let body = "POST https://dlptest.com/http-post/ HTTP/1.1\nHost: dlptest.com\n\nname=Jane+Doe&ssn=123-45-6789&card=4532+0151+1283+0366\nname=Jane Doe\nssn=123-45-6789\ncard=4532 0151 1283 0366";
+        let v = engine.evaluate_openjev_hybrid(
+            "msedge.exe",
+            "https://dlptest.com/http-post/",
+            body,
+            Some("zero_leakage"),
+        );
+        assert!(v
+            .validator_confirmed_categories
+            .contains(&"CREDIT_CARD_PAN".to_string()));
+        assert!(v.validator_confirmed_categories.contains(&"US_SSN".to_string()));
+        assert!(v.openjev_enforcement_agreed());
+        assert!(v.redactx_confirmed_at(&RedactXOperatingMode::zero_leakage()));
+        assert!(v.redactx_confirmed_at(&RedactXOperatingMode::balanced_utility()));
+        // Audit identifiers are masked: the raw PAN/SSN never appear in the verdict.
+        let ids = v.hipaa_safe_harbor_identifiers.join(" ");
+        assert!(!ids.contains("4532015112830366"), "raw PAN leaked: {ids}");
+        assert!(!ids.contains("123-45-6789"), "raw SSN leaked: {ids}");
+        assert!(ids.contains("0366"));
+        assert!(ids.contains("6789"));
+    }
+
+    #[test]
+    fn test_redactx_invalid_card_and_voided_ssn_not_confirmed() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        for body in [
+            "ref=4532015112830367",
+            "ssn=000-12-3456",
+            "ssn=666-12-3456",
+            "ssn=912-34-5678",
+        ] {
+            let v = engine.evaluate_openjev_hybrid(
+                "unknown.exe",
+                "https://example.org/upload",
+                body,
+                Some("zero_leakage"),
+            );
+            assert!(
+                !v.validator_confirmed_categories
+                    .iter()
+                    .any(|c| c == "CREDIT_CARD_PAN" || c == "US_SSN"),
+                "{body} must not produce a RedactX-confirmed card/SSN: {:?}",
+                v.validator_confirmed_categories
+            );
+            assert!(!v.redactx_confirmed_at(&RedactXOperatingMode::balanced_utility()));
+        }
+    }
+
+    #[test]
+    fn test_redactx_format_only_span_alerts_but_does_not_clear_balanced_utility() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let v = engine.evaluate_openjev_hybrid(
+            "unknown.exe",
+            "https://example.org/contact",
+            "contact=jane.doe@example.org",
+            Some("zero_leakage"),
+        );
+        assert!(v
+            .validator_confirmed_categories
+            .contains(&"EMAIL_ADDRESS".to_string()));
+        let zl = RedactXOperatingMode::zero_leakage();
+        let bu = RedactXOperatingMode::balanced_utility();
+        assert!(v.redactx_max_span_score > zl.span_threshold);
+        assert!(v.redactx_max_span_score < bu.span_threshold);
+        assert!(v.redactx_confirmed_at(&zl), "zero_leakage must alert");
+        assert!(
+            !v.redactx_confirmed_at(&bu),
+            "balanced_utility must not admit a format-only span"
+        );
+        // Under balanced_utility routing, the format-only span does not route to enforcement.
+        let vb = engine.evaluate_openjev_hybrid(
+            "unknown.exe",
+            "https://example.org/contact",
+            "contact=jane.doe@example.org",
+            Some("balanced_utility"),
+        );
+        assert_eq!(vb.operating_mode, "balanced_utility");
+        assert!(!vb.noul_contains_phi_pii.value);
+    }
+
+    #[test]
+    fn test_openjev_empty_categories_low_p_never_agrees() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let v = engine.evaluate_openjev_hybrid(
+            "unknown.exe",
+            "https://example.org/search",
+            "q=weather+tomorrow",
+            Some("zero_leakage"),
+        );
+        assert!(v.validator_confirmed_categories.is_empty());
+        assert!(v.noul_contains_phi_pii.p_true_phi_pii < 0.85);
+        assert!(!v.openjev_enforcement_agreed());
     }
 }
