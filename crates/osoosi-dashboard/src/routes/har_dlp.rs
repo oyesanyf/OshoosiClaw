@@ -485,9 +485,8 @@ fn persist_seen_keys(keys: &[String]) {
     let _ = tx.commit();
 }
 
-/// Inspects one request through the shared DLP decision path, persists it, raises alerts and
-/// runs consensus-gated containment. Returns the recorded event (None for skipped duplicates).
-fn inspect_request(req: &HarDlpRequest) -> Option<DlpInspectionEventRecord> {
+/// Inspects one request through the shared DLP decision path and records the event.
+fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
     let payload = req.to_inspection_payload();
     let has_body = req.has_body();
     let options = DlpInspectOptions {
@@ -514,9 +513,15 @@ fn inspect_request(req: &HarDlpRequest) -> Option<DlpInspectionEventRecord> {
         ring.push_front(req.clone());
         ring.truncate(MAX_RECENT_BODY_REQUESTS);
     }
-    let mut event = event;
     if !event.allowed {
         STAT_BLOCKED.fetch_add(1, Ordering::Relaxed);
+    }
+    event
+}
+
+/// Raises alerts, runs consensus-gated containment for flagged events, and persists the event.
+fn post_process(req: &HarDlpRequest, mut event: DlpInspectionEventRecord) -> DlpInspectionEventRecord {
+    if !event.allowed {
         let ctx = crate::routes::dlp_containment::ActorContext {
             actor: req.actor.clone(),
             pid: req.actor_pid,
@@ -532,14 +537,13 @@ fn inspect_request(req: &HarDlpRequest) -> Option<DlpInspectionEventRecord> {
         let mut state = get_global_dlp_state().write();
         crate::routes::dlp::attach_containment_to_event(&mut state, &event.id, outcome_json);
     }
-    if has_body || !event.allowed {
+    if req.has_body() || !event.allowed {
         if let Err(e) = persist_dlp_event(&event) {
             tracing::debug!("DLP event persistence failed: {}", e);
         }
     }
-    Some(event)
+    event
 }
-
 fn dedupe_new<'a>(requests: &'a [HarDlpRequest]) -> (Vec<&'a HarDlpRequest>, Vec<String>) {
     let mut s = seen().lock();
     load_seen_keys_from_db(&mut s);
@@ -556,11 +560,20 @@ fn dedupe_new<'a>(requests: &'a [HarDlpRequest]) -> (Vec<&'a HarDlpRequest>, Vec
     (fresh, keys)
 }
 
-/// Processes a batch synchronously (dedupe → inspect). Used by the worker.
-fn process_batch(requests: &[HarDlpRequest]) -> Vec<DlpInspectionEventRecord> {
+/// Processes a batch on the worker: dedupe → inspect → (reply with verdicts) → containment and
+/// persistence. Verdicts are sent before containment so the sensor endpoint stays fast; the
+/// containment outcome is attached to the recorded dashboard event afterwards.
+fn process_batch(requests: &[HarDlpRequest], reply: Option<ReplySender>) {
     let (fresh, keys) = dedupe_new(requests);
+    let inspected: Vec<(&HarDlpRequest, DlpInspectionEventRecord)> =
+        fresh.into_iter().map(|r| (r, inspect_only(r))).collect();
+    if let Some(reply) = reply {
+        let _ = reply.send(inspected.iter().map(|(_, e)| e.clone()).collect());
+    }
     persist_seen_keys(&keys);
-    fresh.into_iter().filter_map(inspect_request).collect()
+    for (req, event) in inspected {
+        let _ = post_process(req, event);
+    }
 }
 
 fn default_watch_dirs() -> Vec<PathBuf> {
@@ -701,6 +714,9 @@ fn collector_url_only_requests(last_sweep: &mut u64) -> Vec<HarDlpRequest> {
 }
 
 fn worker_loop() {
+    // Build the REA engine once up front so the first inspected request is not delayed by it.
+    drop(osoosi_core::rea::global_rea_engine());
+    load_seen_keys_from_db(&mut seen().lock());
     let mut file_state: HashMap<PathBuf, (SystemTime, u64)> = HashMap::new();
     let mut last_file_scan = Instant::now() - FILE_SCAN_INTERVAL;
     let mut last_sweep = 0u64;
@@ -727,10 +743,7 @@ fn worker_loop() {
             taken
         };
         for job in jobs {
-            let events = process_batch(&job.requests);
-            if let Some(reply) = job.reply {
-                let _ = reply.send(events);
-            }
+            process_batch(&job.requests, job.reply);
         }
 
         // 2. Watched-folder HAR files (bodies included).
@@ -745,7 +758,7 @@ fn worker_loop() {
         if !backlog.is_empty() {
             let n = backlog.len().min(BACKLOG_CHUNK);
             let batch: Vec<HarDlpRequest> = backlog.drain(..n).collect();
-            let _ = process_batch(&batch);
+            process_batch(&batch, None);
         }
     }
 }

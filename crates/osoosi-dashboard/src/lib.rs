@@ -12558,6 +12558,11 @@ mod tests {
             routes::browser_sensor::DEFAULT_SENSOR_EXTENSION_ID
         );
         let token = routes::browser_sensor::sensor_token_for_origin(&ext_origin);
+        // The latency budget is for a running daemon: warm the REA engine (built once at daemon
+        // start by the pipeline worker) before timing the request.
+        tokio::task::spawn_blocking(|| drop(osoosi_core::rea::global_rea_engine()))
+            .await
+            .unwrap();
         let url = format!("https://dlptest.com/http-post/?run={}", uuid::Uuid::new_v4().simple());
         let har = serde_json::to_vec(&dlptest_har(&url)).unwrap();
 
@@ -12611,6 +12616,9 @@ mod tests {
         // Building the router starts the daemon's autonomous HAR→DLP pipeline.
         let _app = dashboard_router(state, assets);
 
+        tokio::task::spawn_blocking(|| drop(osoosi_core::rea::global_rea_engine()))
+            .await
+            .unwrap();
         let watch = std::env::temp_dir().join(format!("osoosi_har_watch_{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&watch).unwrap();
         routes::har_dlp::register_har_watch_dir(watch.clone());
