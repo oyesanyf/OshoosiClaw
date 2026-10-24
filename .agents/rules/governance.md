@@ -44,3 +44,7 @@ model: gemini-3.1-pro
    - **User Preferences**: `"NO COMMIT SHOULD WAIT , WE MAY LOSE CODE CHANGE"` and `"ALWAY FIX PR AND WORKFLOW ISSUES"`.
    - Commit and ship incremental checkpoints immediately via `scripts/solo_pr_ship.ps1` rather than batching uncommitted changes across long runs; verify `git status -s` is empty at the end of every turn.
    - Continuously check open Pull Requests and GitHub Actions workflow runs; immediately diagnose and fix any failing GitHub Actions workflow, CI check, or blocked PR until merged and green.
+
+## Mandatory Cross-Repository Synchronization (`D:\harfile\AgentOctopus`)
+- **User Preference:** "alway update agentoctopus when you update here"
+- **Rule:** Whenever security controls, containment rings, breakout defenses, CIS Benchmark rules, DLP logic, console suppression, or documentation are updated in `D:\harfile\OshoosiClaw`, always synchronize the corresponding changes to `D:\harfile\AgentOctopus` (`https://github.com/oyesanyf/AgentOctopus.git`), verify zero compiler warnings, commit, and push so both repositories remain in lockstep.

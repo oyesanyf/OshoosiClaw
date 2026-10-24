@@ -60,7 +60,7 @@ impl Default for DiskCleanupPolicy {
             max_log_retention_mb: 50,
             max_sqlite_wal_mb: 32,
             keep_release_dep_revisions: 2,
-            prune_debug_target: true,
+            prune_debug_target: false,
             max_events_rows: 25_000,
             max_har_rows: 2_000,
             max_threats_rows: 5_000,
@@ -442,7 +442,15 @@ pub fn clean_tier1_scratch_and_debug_targets(
         }
 
         let debug_dir = target_dir.join("debug");
-        if prune_debug && debug_dir.exists() {
+        let cargo_lock_recent = debug_dir
+            .join(".cargo-lock")
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .map(|age| age < Duration::from_secs(900))
+            .unwrap_or(false);
+        if prune_debug && debug_dir.exists() && !cargo_lock_recent {
             #[cfg(target_os = "windows")]
             let (approx_b, approx_f) = compute_path_footprint(&debug_dir, 10_000);
             let purge_dir = target_dir.join(format!(
