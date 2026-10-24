@@ -1566,6 +1566,30 @@ fn freeze_untrusted_processes() -> Result<Vec<u32>> {
     Ok(frozen)
 }
 
+/// Suspends a single process (Windows `NtSuspendProcess`, Linux `SIGSTOP`). Reversible with
+/// [`resume_process_by_pid`]. Returns `true` on success. Used by reversible DLP containment.
+pub fn suspend_process_by_pid(pid: u32) -> bool {
+    if pid <= 4 || pid == std::process::id() {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        suspend_process_win32(pid)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        unsafe { libc::kill(pid as i32, libc::SIGSTOP) == 0 }
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        false
+    }
+}
+
+/// Resumes a process previously suspended by [`suspend_process_by_pid`].
+pub fn resume_process_by_pid(pid: u32) -> bool {
+    resume_frozen_processes(&[pid]) == 1
+}
 fn resume_frozen_processes(pids: &[u32]) -> usize {
     let mut count = 0;
     for &pid in pids {

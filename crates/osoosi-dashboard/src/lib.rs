@@ -550,6 +550,9 @@ impl Service<Request<Body>> for SafeServeDir {
 
 fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     ensure_continuous_har_collector_started();
+    // Autonomous HAR→DLP pipeline: every new HAR entry (files, imports, browser sensor) is
+    // inspected in the background, including request bodies.
+    routes::har_dlp::ensure_har_dlp_pipeline_started(state.backend.clone());
     let index_html = asset_path.join("index.html");
     let api = Router::new()
         .route("/health", get(dashboard_health))
@@ -1137,6 +1140,10 @@ async fn auth_middleware(
         || path == "/api/killchain/disarm"
         || path == "/api/killchain/health-probe"
         || path == "/killchain/health-probe"
+        // Browser DLP sensor: handlers enforce origin-bound sensor-token (or dashboard-token)
+        // authentication themselves with constant-time comparison.
+        || path == "/api/browser-sensor/pair"
+        || path == "/api/browser-sensor/har"
     {
         return Ok(next.run(req).await);
     }
