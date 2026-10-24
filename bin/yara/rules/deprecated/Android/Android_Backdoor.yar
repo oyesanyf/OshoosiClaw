@@ -8,20 +8,20 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
-rule backdoor: dropper
-{
-	meta:
-		author = "Antonio Sanchez <asanchez@koodous.com>"
-		description = "This rule detects fake samples with a backdoor/dropper"
-		sample = "0c3bc51952c71e5bb05c35346005da3baa098faf3911b9b45c3487844de9f539"
-		source = "https://koodous.com/rulesets/1765"
-
-	condition:
-		androguard.url("http://sys.wksnkys7.com") 
-		or androguard.url("http://sys.hdyfhpoi.com") 
-		or androguard.url("http://sys.syllyq1n.com") 
-		or androguard.url("http://sys.aedxdrcb.com")
-		or androguard.url("http://sys.aedxdrcb.com")
-}
+// rule backdoor: dropper (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Antonio Sanchez <asanchez@koodous.com>" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule detects fake samples with a backdoor/dropper" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		sample = "0c3bc51952c71e5bb05c35346005da3baa098faf3911b9b45c3487844de9f539" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://koodous.com/rulesets/1765" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.url("http://sys.wksnkys7.com")  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.hdyfhpoi.com")  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.syllyq1n.com")  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.aedxdrcb.com") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.aedxdrcb.com") (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

@@ -6166,8 +6166,8 @@ rule DEADBITS_Jsworm : MALWARE FILE
 		$str03 = "/c reg add HKCU\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\\\\\Run /v \"zapiska\" /d \"C:\\\\\\\\\\ProgramData\\"
 		$str04 = /\/c taskkill.exe taskkill \/f \/im (store|sqlserver|dns|sqlwriter)\.exe\//		$str05 = "/c start C:\\\\\\ProgramData\\"
 		$str06 = "/c vssadmin.exe delete shadows /all /quiet"
-		$str07 = "/c bcdedit /set \{default\} bootstatuspolicy ignoreallfailures -y"
-		$str08 = "/c bcdedit /set \{default\} recoveryenabled No -y"
+		$str07 = "/c bcdedit /set {default} bootstatuspolicy ignoreallfailures -y"
+		$str08 = "/c bcdedit /set {default} recoveryenabled No -y"
 		$str09 = "/c wbadmin delete catalog -quiet"
 		$str10 = "/c wmic shadowcopy delete -y"
 		$uniq00 = "fuckav"
@@ -79655,10 +79655,10 @@ rule TRELLIX_ARC_Nemty_Ransomware : RANSOMWARE FILE
 		actor_group = "Unknown"
 
 	strings:
-		$x1 = "/c vssadmin.exe delete shadows /all /quiet & bcdedit /set \{default\} bootstatuspolicy ignoreallfailures & bcdedit /set \{default\}" fullword ascii
+		$x1 = "/c vssadmin.exe delete shadows /all /quiet & bcdedit /set {default} bootstatuspolicy ignoreallfailures & bcdedit /set {default}" fullword ascii
 		$s2 = "https://pbs.twimg.com/media/Dn4vwaRW0AY-tUu.jpg:large :D" fullword ascii
 		$s3 = "MSDOS.SYS" fullword wide
-		$s4 = "/c vssadmin.exe delete shadows /all /quiet & bcdedit /set \{default\} bootstatuspolicy ignoreallfailures & bcdedit /set \{default\} " ascii
+		$s4 = "/c vssadmin.exe delete shadows /all /quiet & bcdedit /set {default} bootstatuspolicy ignoreallfailures & bcdedit /set {default} " ascii
 		$s5 = "recoveryenabled no & wbadmin delete catalog -quiet & wmic shadowcopy delete" fullword ascii
 		$s6 = "DECRYPT.txt" fullword ascii
 		$s7 = "pv3mi+NQplLqkkJpTNmji/M6mL4NGe5IHsRFJirV6HSyx8mC8goskf5lXH2d57vh52iqhhEc5maLcSrIKbukcnmUwym+In1OnvHp070=" fullword ascii
@@ -83988,7 +83988,7 @@ rule ARKBIRD_SOLG_Ran_Ruyk_Oct_2020_1 : FILE
 		$c3 = "C:\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" fullword ascii
 		$c4 = "cmd.exe /c \"WMIC.exe shadowcopy delete\"" fullword ascii
 		$c5 = "cmd.exe /c \"vssadmin.exe Delete Shadows /all /quiet\"" fullword ascii
-		$c6 = "cmd.exe /c \"bcdedit /set \{default\} recoveryenabled No & bcdedit /set \{default\}\"" fullword ascii
+		$c6 = "cmd.exe /c \"bcdedit /set {default} recoveryenabled No & bcdedit /set {default}\"" fullword ascii
 		$r1 = "/C REG ADD \"HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run\" /v \"EV\" /t REG_SZ /d \"" fullword wide
 		$r2 = "/C REG DELETE \"HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run\" /v \"EV\" /f" fullword wide
 		$ref1 = "lsaas.exe" fullword wide
@@ -84600,9 +84600,9 @@ rule ARKBIRD_SOLG_Ran_Regretlocker_Oct_2020_1 : FILE
 	strings:
 		$seq1 = { b8 05 dd 44 00 e8 07 7d 00 00 81 ec b0 06 00 00 53 56 33 db c7 45 cc 07 00 00 00 33 c0 89 5d c8 57 66 89 45 b8 40 c7 85 7c ff ff ff 02 00 00 00 c7 45 e0 ec 4a 98 ec 8d 75 e0 c7 45 e4 f9 a0 e9 47 8d 7d 80 c7 45 e8 90 1f 71 41 c7 45 ec 5a 66 34 5b 89 45 90 89 45 b0 89 45 b4 8d 45 d0 50 a5 8d 45 b0 50 53 68 00 00 3f 00 ff 75 0c a5 8d 85 7c ff ff ff 50 89 5d fc a5 a5 e8 76 50 00 00 85 c0 74 32 ff 15 74 00 45 00 50 68 88 1b 45 00 e8 ab de ff ff 8b 75 08 8d 45 b8 59 59 88 5d f0 8b ce ff 75 f0 89 5e 10 50 89 5e 14 e8 bb 50 ff ff e9 cb 01 00 00 53 8d 45 90 50 53 6a 04 53 ff 75 d0 e8 35 50 00 00 85 c0 74 08 50 68 bc 1b 45 00 eb bd 33 c0 8d bd 4c fb ff ff b9 82 00 00 00 be 04 01 00 00 f3 ab 8d 85 4c fb ff ff 89 75 d4 50 8d 45 d4 83 cb ff 50 ff 75 d0 e8 02 50 00 00 83 65 e8 00 8d 4d d8 33 c0 6a 07 5f 66 89 45 d8 8d 85 4c fb ff ff 50 89 7d ec e8 c6 6d ff ff 6a ff 68 f4 1b 45 00 8d 4d d8 c6 45 fc 01 e8 fd e8 ff ff 83 f8 ff 74 38 83 65 a8 00 33 c9 6a ff 50 8d 45 d8 66 89 4d 98 50 8d 4d 98 89 7d ac e8 3d df ff ff 83 7d ac 08 8d 45 98 0f 43 45 98 50 e8 bc 58 02 00 59 8d 4d 98 8b d8 e8 dd 69 ff ff 56 8d 85 54 fd ff ff 50 ff 15 f0 00 45 00 8b f8 8d 85 54 fd ff ff 50 8d 4d d8 e8 57 6d ff ff 8b 4d ec 8d 45 d8 8b 55 d8 83 f9 08 8b 75 e8 0f 43 c2 66 83 7c 70 fe 5c 75 16 83 f9 08 8d 45 d8 0f 43 c2 33 c9 66 89 4c 70 fe 8b 4d ec 8b 55 d8 83 f9 08 8d 45 d8 0f 43 c2 33 c9 51 51 6a 03 51 6a 03 51 50 ff 15 dc 00 45 00 8b f0 83 fe ff 74 7e 33 c9 8d 45 d4 51 50 68 04 01 00 00 8d 85 5c ff ff ff 50 51 51 68 00 00 56 00 56 ff 15 84 01 45 00 39 9d 64 ff ff ff 75 2c 8d 45 d4 50 68 04 01 00 00 8d 85 44 f9 ff ff 50 8d 85 54 fd ff ff 50 ff 15 08 01 45 00 8d 85 44 f9 ff ff 50 8d 4d b8 e8 b1 6c ff ff 56 ff 15 a8 00 45 00 68 04 01 00 00 8d 85 54 fd ff ff 50 57 ff 15 f8 00 45 00 85 c0 0f 85 29 ff ff ff 57 ff 15 fc 00 45 00 8b 75 08 33 c0 88 45 f0 8b ce ff 75 f0 89 46 10 89 46 14 8d 45 b8 50 e8 f3 4e ff ff 8d 4d d8 e8 cb 68 ff ff 8d 4d b8 e8 c3 68 ff ff 8b 4d f4 8b c6 5f 5e 5b 64 89 0d 00 00 00 00 c9 }
 		$seq2 = { 89 7d e4 e8 d5 a9 ff ff c7 04 24 88 02 00 00 6a 40 ff 15 28 01 45 00 8b f0 c7 45 d4 88 02 00 00 8d 45 d4 89 75 e8 50 56 e8 78 1b 00 00 83 f8 6f 75 17 56 ff 15 2c 01 45 00 ff 75 d4 6a 40 ff 15 28 01 45 00 8b f0 89 45 e8 8d 45 d4 50 56 e8 52 1b 00 00 85 c0 0f 84 }
-		$com1 = "bcdedit.exe / set\{ default \} bootstatuspolicy ignoreallfailures" fullword ascii
+		$com1 = "bcdedit.exe / set{ default } bootstatuspolicy ignoreallfailures" fullword ascii
 		$com2 = { 63 6d 64 2e 65 78 65 00 20 26 20 00 2f 43 20 70 69 6e 67 20 31 2e 31 2e 31 2e 31 20 2d 6e 20 31 20 2d 77 20 33 30 30 30 20 3e 20 4e 75 6c 20 26 20 44 65 6c 20 2f 66 20 2f 71 20 22 25 73 22 }
-		$com3 = "bcdedit.exe / set\{ default \} recoveryenabled No" fullword ascii
+		$com3 = "bcdedit.exe / set{ default } recoveryenabled No" fullword ascii
 		$com4 = "vssadmin.exe Delete Shadows / All / Quiet" fullword ascii
 		$com5 = "schtasks /Create /SC MINUTE /TN " fullword ascii
 		$com6 = "schtasks /Delete /TN " fullword ascii
@@ -86957,7 +86957,7 @@ rule VOLEXITY_Apt_Malware_Macos_Reloadext_Installer : STORMBAMBOO FILE MEMORY
 		$str1 = "/CustomPlug1n/"
 		$str2 = "Chrome NOT installed."
 		$str3 = "-f force kill Chrome"
-		$str4 = "/*\} &&cp -rf $\{"
+		$str4 = "/*} &&cp -rf ${"
 
 	condition:
 		3 of them
@@ -97946,7 +97946,7 @@ rule DITEKSHEN_MALWARE_Multi_Exaramel : FILE
 		$cmd6 = "IO.WriteFile" ascii
 		$cmd7 = "IO.ReadFile" ascii
 		$cmd8 = "OS.ShellExecute" ascii
-		$cmd9 = "awk 'match($0, /(upstart|systemd|sysvinit)/)\{ print substr($0, RSTART, RLENGTH);exit;" ascii
+		$cmd9 = "awk 'match($0, /(upstart|systemd|sysvinit)/){ print substr($0, RSTART, RLENGTH);exit;" ascii
 		$ws1 = "/commands/@slp" wide
 		$ws2 = "/commands/cmd" wide
 		$ws3 = "/settings/proxy/@password" wide
@@ -100138,7 +100138,7 @@ rule DITEKSHEN_MALWARE_Linux_Xorddos : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "for i in `cat /proc/net/dev|grep :|awk -F: \{'print $1'\}`; do ifconfig $i up& done" fullword ascii
+		$s1 = "for i in `cat /proc/net/dev|grep :|awk -F: {'print $1'}`; do ifconfig $i up& done" fullword ascii
 		$s2 = "cp /lib/libudev.so /lib/libudev.so.6" fullword ascii
 		$s3 = "sed -i '/\\/etc\\/cron.hourly\\/gcc.sh/d' /etc/crontab && echo '*/3 * * * * root /etc/cron.hourly/gcc.sh' >> /etc/crontab" fullword ascii
 		$s4 = "User-Agent: Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; SV1; TencentTraveler ; .NET CLR 1.1.4322)" fullword ascii
@@ -100464,7 +100464,7 @@ rule DITEKSHEN_MALWARE_Win_Medusalocker : FILE
 		$s8 = "KEY.FILE" ascii
 		$cmd1 = { 2f 00 63 00 20 00 64 00 65 00 6c 00 20 00 00 00 20 00 3e 00 3e 00 20 00 4e 00 55 00 4c 00 }
 		$cmd2 = "vssadmin.exe delete" wide nocase
-		$cmd3 = "bcdedit.exe /set \{default\}" wide
+		$cmd3 = "bcdedit.exe /set {default}" wide
 		$cmd4 = "wbadmin delete systemstatebackup" wide nocase
 		$mut1 = "{8761ABBD-7F85-42EE-B272-A76179687C63}" fullword wide
 		$mut2 = "{3E5FC7F9-9A51-4367-9063-A120244FBEC7}" fullword wide
@@ -106032,7 +106032,7 @@ rule DITEKSHEN_MALWARE_Win_Nodachi : FILE
 
 	strings:
 		$x1 = "//AppData//Roaming//kavachdb//kavach.db" ascii
-		$s1 = "/upload/drive/v3/files/\{fileId\}" ascii
+		$s1 = "/upload/drive/v3/files/{fileId}" ascii
 		$s2 = "main.getTokenFromWeb" ascii
 		$s3 = "main.tokenFromFile" ascii
 		$s4 = "/goLazagne/" ascii
@@ -107098,7 +107098,7 @@ rule DITEKSHEN_MALWARE_Win_Neptune : FILE
 		$x1 = "your keylogger has been freshly installed on" wide
 		$x2 = "Attached is a screenshot of the victim" wide
 		$x3 = "color: rgb(2, 84, 138);'>Project Neptune</span><br>" wide
-		$x4 = ">\{Monitor Everything\}</span><br><br>" wide
+		$x4 = ">{Monitor Everything}</span><br><br>" wide
 		$x5 = "[First Run] Neptune" wide
 		$x6 = "Neptune - " wide
 		$s1 = "Melt" fullword wide
@@ -108631,7 +108631,7 @@ rule DITEKSHEN_MALWARE_Win_Blackcat : FILE
 		$s4 = "-u-p-s-d-f-cpropagate::attempt=" ascii
 		$s5 = "masquerade_peb" ascii
 		$s6 = "RECOVER-${EXTENSION}-FILES.txt" ascii
-		$s7 = ".onion/?access-key=$\{ACCESS_KEY\}" ascii
+		$s7 = ".onion/?access-key=${ACCESS_KEY}" ascii
 		$s8 = "-vm-killno-vm-snapshot-killno-vm-kill-" ascii
 		$s9 = "esxi_vm_killenable_esxi_vm_snapshot_killstrict_" ascii
 		$s10 = /enum_(shares|servers)_sync::ok\/ fullwor\/ asci\//		$s11 = "hidden_partitions::mount_all::mounting=" ascii
@@ -114432,7 +114432,7 @@ rule DITEKSHEN_INDICATOR_TOOL_PET_Botb : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "to unallocated span%%!%c(*big.Float=%s), RecursionDesired: /usr/share/zoneinfo//\{Bucket\}/\{Key+\}?acl/\{Bucket\}?accelerate/\{Bucket\}?encryption/\{Bucket\}?" ascii
+		$s1 = "to unallocated span%%!%c(*big.Float=%s), RecursionDesired: /usr/share/zoneinfo//{Bucket}/{Key+}?acl/{Bucket}?accelerate/{Bucket}?encryption/{Bucket}?" ascii
 		$s2 = "exploit CVE-2019-5736 with command: [ERROR] In Enabling CGROUP Notifications -> 'echo 1 > [INFO] CGROUP may exist, attempting exploit regardless" ascii
 		$s3 = "main.execShellCmd" ascii
 		$s4 = "[*] Data uploaded to:[+]" ascii
@@ -115252,8 +115252,8 @@ rule DITEKSHEN_INDICATOR_TOOL_Ngrok : FILE
 		$s2 = "go.ngrok.com/cmd/ngrok/main.go" ascii
 		$s3 = "ngrok agent" ascii
 		$s4 = "*ngrok.clientInfo" ascii
-		$s5 = "'%s'  socket: '%s'  port: %d/edges/https/\{\{ .EdgeID \}\}/routes/\{\{ .ID \}\}/webhook_" ascii
-		$s6 = "/\{\{ .ID \}\}/tunnel_sessions/\{\{ .ID \}\}/restart" ascii
+		$s5 = "'%s'  socket: '%s'  port: %d/edges/https/{{ .EdgeID }}/routes/{{ .ID }}/webhook_" ascii
+		$s6 = "/{{ .ID }}/tunnel_sessions/{{ .ID }}/restart" ascii
 
 	condition:
 		( uint16( 0 ) == 0x5a4d or uint16( 0 ) == 0x457f or uint16( 0 ) == 0xfacf ) and ( 3 of them )
@@ -126805,7 +126805,7 @@ rule SEKOIA_Bot_Lin_Xorddos_Strings : FILE
 	strings:
 		$s1 = "User-Agent: Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.2; SV1; TencentTraveler ; .NET CLR 1.1.4322)" ascii fullword
 		$s2 = "sed -i '/\\/etc\\/cron.hourly\\/gcc.sh/d' /etc/crontab && echo '*/3 * * * * root /etc/cron.hourly/gcc.sh' >> /etc/crontab" ascii fullword
-		$s3 = "for i in `cat /proc/net/dev|grep :|awk -F: \{'print $1'\}`; do ifconfig $i up& done"
+		$s3 = "for i in `cat /proc/net/dev|grep :|awk -F: {'print $1'}`; do ifconfig $i up& done"
 
 	condition:
 		uint32( 0 ) == 0x464c457f and filesize > 600KB and filesize < 700KB and 3 of them
@@ -139674,7 +139674,7 @@ rule SEKOIA_Tool_Enum4Linux_Strings
 		$ = "my $os_info = `$command`;"
 		$ = "($global_workgroup) = $os_info =~"
 		$ = "sub enum_groups {"
-		$ = "if ($shares =~ /NT_STATUS_ACCESS_DENIED/) \{"
+		$ = "if ($shares =~ /NT_STATUS_ACCESS_DENIED/) {"
 		$ = "Can't open share list file $shares_file"
 		$ = "my $users = `$command`;"
 		$ = "my @shares = <SHARES>;"
@@ -140303,7 +140303,7 @@ rule SEKOIA_Apt_Gelsemium_Firewood_Backdoor : FILE
 
 	strings:
 		$ = "root dir:%s"
-		$ = "df -h|grep 'dev' |grep -v none|awk '/dev/\{print $6\}'"
+		$ = "df -h|grep 'dev' |grep -v none|awk '/dev/{print $6}'"
 		$ = "rm -rf ../lib/%s"
 		$ = "Total Disk space:%luG, Free Disk spae:%luG"
 
@@ -145586,7 +145586,7 @@ rule SIGNATURE_BASE_APT_UNC4841_ESG_Barracuda_CVE_2023_2868_Forensic_Artifacts_J
 		$x06 = "setsid sh -c \"/sbin/BarracudaMailService eth0\""
 		$x07 = "echo \"set the bvp ok\""
 		$x08 = "find ${path} -type f ! -name $excludeFileNameKeyword | while read line ;"
-		$x09 = " /mail/mstore | xargs -i cp \{\} /usr/share/.uc/"
+		$x09 = " /mail/mstore | xargs -i cp {} /usr/share/.uc/"
 		$x10 = "tar -T /mail/mstore/tmplist -czvf "
 		$sa1 = "sh -c wget --no-check-certificate http"
 		$sa2 = ".tar;chmod +x "
@@ -146202,7 +146202,7 @@ rule SIGNATURE_BASE_WEBSHELL_PAS_Webshell_Perlnetworkscript : FILE
 		tags = "FILE"
 
 	strings:
-		$pl_start = "#!/usr/bin/perl\n$SIG\{'CHLD'\}='IGNORE'; use IO::Socket; use FileHandle;"
+		$pl_start = "#!/usr/bin/perl\n$SIG{'CHLD'}='IGNORE'; use IO::Socket; use FileHandle;"
 		$pl_status = "$o=\" [OK]\";$e=\" Error: \""
 		$pl_socket = "socket(SOCKET, PF_INET, SOCK_STREAM,$tcp) or die print \"$l$e$!$l"
 		$msg1 = "print \"$l OK! I\\'m successful connected.$l\""
@@ -166873,7 +166873,7 @@ rule SIGNATURE_BASE_WEBSHELL_G_APT_Backdoorwebshell_SLAYSTYLE_1 : FILE
 	strings:
 		$str1_alt = "=request.getParameter(\""
 		$str2 = "=new String(java.util.Base64.getDecoder().decode(" ascii wide nocase
-		$str21_alt = "=\{\"/bin/sh\",\"-c\"," ascii
+		$str21_alt = "={\"/bin/sh\",\"-c\"," ascii
 		$str3 = "= Runtime.getRuntime().exec(" ascii
 		$str4 = "java.io.InputStream" ascii
 		$str5 = "java.util.Base64.getEncoder().encodeToString(org.apache.commons.io.IOUtils.toByteArray(" ascii
@@ -167058,7 +167058,7 @@ rule SIGNATURE_BASE_APT_WEBSHELL_HAFNIUM_Secchecker_Mar21_1 : FILE
 
 	strings:
 		$x1 = "<%if(System.IO.File.Exists(\"c:\\\\\\\\\\\\\\\\\\\\program files (x86)\\\\\\\\\\\\\\\\\\\\fireeye\\\\xagt.exe" ascii
-		$x2 = "\\\\\\\\\\\\\\\\\\\\\\csfalconservice.exe\"))\{Response.Write( \"3\");\}%></head>" ascii fullword
+		$x2 = "\\\\\\\\\\\\\\\\\\\\\\csfalconservice.exe\")){Response.Write( \"3\");}%></head>" ascii fullword
 
 	condition:
 		uint16( 0 ) == 0x253c and filesize < 1KB and 1 of them or 2 of them
@@ -167696,7 +167696,7 @@ rule SIGNATURE_BASE_MAL_Ransom_Ragnarlocker_July_2020_1 : FILE
 		$r3 = "!$R4GN4R_" wide
 		$r4 = "RAGNRPW" fullword ascii
 		$r5 = "---END KEY R_R---" fullword ascii
-		$a1 = "+RhRR!-uD8'O&Wjq1_P#Rw<9Oy?n^qSP6N\{BngxNK!:TG*\}\\|W]o?/]H*8z;26X0" fullword ascii
+		$a1 = "+RhRR!-uD8'O&Wjq1_P#Rw<9Oy?n^qSP6N{BngxNK!:TG*}\\|W]o?/]H*8z;26X0" fullword ascii
 		$a2 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\PHYSICALDRIVE%d" fullword wide
 		$a3 = "WinSta0\\Default" fullword wide
 		$a4 = "%s-%s-%s-%s-%s" fullword wide
@@ -170801,7 +170801,7 @@ rule SIGNATURE_BASE_EXPL_WSUS_Exploitation_Indicators_Oct25 : CVE_2025_59287
 		$sl3 = "at System.Runtime.Serialization.ObjectManager.CompleteISerializableObject" ascii wide
 		$sl4 = "System.Reflection.TargetInvocationException: Exception has been thrown by the target of an invocation." ascii wide
 		$sl5 = "ErrorWsusService.9HmtWebServices.CheckReportingWebServiceReporting WebService WebException:System.Net.WebException: Unable to connect to the remote server" ascii wide
-		$se1 = "powershell -ec try\{$r= (&\{echo https://" ascii wide base64 base64wide
+		$se1 = "powershell -ec try{$r= (&{echo https://" ascii wide base64 base64wide
 		$se2 = ":8531; net user /domain; ipconfig " ascii wide base64 base64wide
 		$sa1 = "whoami;net user /domain" ascii wide base64 base64wide
 		$sa2 = "net user /domain; ipconfig /all" ascii wide base64 base64wide

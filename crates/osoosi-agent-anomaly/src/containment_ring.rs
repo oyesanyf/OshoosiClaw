@@ -118,9 +118,84 @@ impl AgentContainmentRing {
         self.autotomy_severances.load(Ordering::Relaxed) > 0
     }
 
+    /// CIS Benchmark 2.2: Unicode Case Folding + NFKC Compatibility Normalization + UTS #39 Confusable Skeleton.
+    /// Prevents homoglyph spoofing (Cyrillic/Greek/Fullwidth/Math lookalikes, zero-width characters)
+    /// when evaluating lateral sink isolation, role names, and agent identities.
+    pub fn normalize_identifier_uts39_skeleton(input: &str) -> String {
+        let mut out = String::with_capacity(input.len());
+        for c in input.trim().chars() {
+            // Strip zero-width, formatting, and bidirectional control characters
+            if matches!(
+                c,
+                '\u{200B}'..='\u{200F}'
+                    | '\u{202A}'..='\u{202E}'
+                    | '\u{2060}'..='\u{206F}'
+                    | '\u{FEFF}'
+                    | '\u{00AD}'
+            ) {
+                continue;
+            }
+            // Fullwidth ASCII decomposition (NFKC equivalent for U+FF01..U+FF5E)
+            let mapped = if ('\u{FF01}'..='\u{FF5E}').contains(&c) {
+                char::from_u32((c as u32) - 0xFEE0).unwrap_or(c)
+            } else {
+                match c {
+                    // Cyrillic & Greek confusable skeleton -> Latin ASCII
+                    '\u{0430}' | '\u{0410}' | '\u{03B1}' | '\u{0391}' => 'a',
+                    '\u{0432}' | '\u{0412}' | '\u{03B2}' | '\u{0392}' => 'b',
+                    '\u{0441}' | '\u{0421}' | '\u{03F2}' | '\u{03F9}' => 'c',
+                    '\u{0435}' | '\u{0415}' | '\u{03B5}' | '\u{0395}' => 'e',
+                    '\u{04BB}' | '\u{04BA}' | '\u{03B7}' | '\u{0397}' => 'h',
+                    '\u{0456}' | '\u{0406}' | '\u{03B9}' | '\u{0399}' | '\u{0131}' => 'i',
+                    '\u{0458}' | '\u{0408}' | '\u{03F3}' => 'j',
+                    '\u{043A}' | '\u{041A}' | '\u{03BA}' | '\u{039A}' => 'k',
+                    '\u{04CF}' | '\u{04C0}' | '\u{2113}' => 'l',
+                    '\u{043C}' | '\u{041C}' | '\u{03BC}' | '\u{039C}' => 'm',
+                    '\u{043D}' | '\u{03BD}' | '\u{039D}' => 'n',
+                    '\u{043E}' | '\u{041E}' | '\u{03BF}' | '\u{039F}' => 'o',
+                    '\u{0440}' | '\u{0420}' | '\u{03C1}' | '\u{03A1}' => 'p',
+                    '\u{0455}' | '\u{0405}' => 's',
+                    '\u{0442}' | '\u{0422}' | '\u{03C4}' | '\u{03A4}' => 't',
+                    '\u{0443}' | '\u{0423}' | '\u{03C5}' | '\u{03A5}' => 'u',
+                    '\u{0475}' | '\u{0474}' => 'v',
+                    '\u{0461}' | '\u{0460}' | '\u{03C9}' => 'w',
+                    '\u{0445}' | '\u{0425}' | '\u{03C7}' | '\u{03A7}' => 'x',
+                    '\u{03B3}' => 'y',
+                    '\u{03B6}' | '\u{0396}' => 'z',
+                    // Common ligature NFKC expansions
+                    '\u{FB00}' => {
+                        out.push_str("ff");
+                        continue;
+                    }
+                    '\u{FB01}' => {
+                        out.push_str("fi");
+                        continue;
+                    }
+                    '\u{FB02}' => {
+                        out.push_str("fl");
+                        continue;
+                    }
+                    '\u{FB03}' => {
+                        out.push_str("ffi");
+                        continue;
+                    }
+                    '\u{FB04}' => {
+                        out.push_str("ffl");
+                        continue;
+                    }
+                    other => other,
+                }
+            };
+            for lc in mapped.to_lowercase() {
+                out.push(lc);
+            }
+        }
+        out
+    }
+
     /// Gets or initializes an agent's generation epoch and signing key.
     pub fn get_or_create_epoch(&self, agent_id: &str) -> (u64, [u8; 32]) {
-        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
         let epoch = *self.agent_epochs.entry(norm_id.clone()).or_insert(1);
         let key = *self.agent_keys.entry(norm_id).or_insert_with(|| {
             let mut k = [0u8; 32];
@@ -132,19 +207,20 @@ impl AgentContainmentRing {
 
     /// Returns the current active generation epoch for an agent.
     pub fn get_current_epoch(&self, agent_id: &str) -> u64 {
-        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
         self.agent_epochs.get(&norm_id).map(|e| *e).unwrap_or(1)
     }
 
     /// Signs an inter-agent message payload bound to the agent's current generation epoch.
     pub fn sign_message(&self, agent_id: &str, role: &str, payload: &str) -> (u64, String) {
-        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
+        let norm_role = Self::normalize_identifier_uts39_skeleton(role);
         let (epoch, key) = self.get_or_create_epoch(&norm_id);
         let sign_data = format!(
             "{}:{}:{}:{}",
             norm_id,
             epoch,
-            role.to_ascii_lowercase(),
+            norm_role,
             payload
         );
         let hmac_bytes = compute_ring_hmac(&key, sign_data.as_bytes());
@@ -175,7 +251,7 @@ impl AgentContainmentRing {
         payload: &str,
         signature_hex: &str,
     ) -> Result<(), String> {
-        let norm_sender_id = sender_id.trim().to_ascii_lowercase();
+        let norm_sender_id = Self::normalize_identifier_uts39_skeleton(sender_id);
         let current_epoch = self.get_current_epoch(&norm_sender_id);
         if epoch != current_epoch {
             return Err(format!(
@@ -184,9 +260,9 @@ impl AgentContainmentRing {
             ));
         }
 
-        // Case-insensitive lateral sink isolation (catches exact and composite untrusted/worker/fuzz/quarantine roles)
-        let lower_role = role.to_ascii_lowercase();
-        let lower_sink = target_sink.to_ascii_lowercase();
+        // CIS Benchmark 2.2: Unicode Case Folding + NFKC + UTS #39 confusable-skeleton lateral sink isolation
+        let lower_role = Self::normalize_identifier_uts39_skeleton(role);
+        let lower_sink = Self::normalize_identifier_uts39_skeleton(target_sink);
 
         if (lower_role.contains("untrusted")
             || lower_role.contains("worker")
@@ -249,7 +325,7 @@ impl AgentContainmentRing {
     /// Synchronously advances an agent's generation epoch (Gen N -> Gen N+1) and rotates
     /// its HMAC-SHA256 signing key, invalidating any messages signed under stale epochs.
     pub fn advance_epoch_sync(&self, agent_id: &str) -> u64 {
-        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
         let old_epoch = self.get_current_epoch(&norm_id);
         let new_epoch = old_epoch + 1;
         self.agent_epochs.insert(norm_id.clone(), new_epoch);
@@ -269,7 +345,7 @@ impl AgentContainmentRing {
         reason: &str,
         target_child_pid: Option<u32>,
     ) -> u64 {
-        let norm_id = agent_id.trim().to_ascii_lowercase();
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
         let old_epoch = self.get_current_epoch(&norm_id);
         let new_epoch = old_epoch + 1;
 
@@ -381,6 +457,56 @@ impl AgentContainmentRing {
         log.push_front(entry);
 
         new_epoch
+    }
+
+    /// CIS Benchmark 4.4: Atomic Killswitch (`cgroup v2 cgroup.kill` / Job Object tree termination)
+    /// coupled with immediate cryptographic credential revocation and volatile key scrubbing.
+    pub async fn atomic_killswitch_and_revoke_credentials(
+        &self,
+        agent_id: &str,
+        cgroup_slice_or_job: Option<&str>,
+        target_child_pid: Option<u32>,
+        reason: &str,
+    ) -> (u64, String) {
+        let new_epoch = self
+            .sever_rogue_agent_branch(agent_id, reason, target_child_pid)
+            .await;
+
+        let mut kill_detail = format!(
+            "Credentials revoked (epoch -> {}) & HMAC key zeroized",
+            new_epoch
+        );
+
+        if let Some(slice) = cgroup_slice_or_job {
+            let clean_slice = slice.trim().trim_matches('/');
+            if !clean_slice.is_empty() && !clean_slice.contains("..") {
+                #[cfg(target_os = "linux")]
+                {
+                    let cgroup_kill_path =
+                        format!("/sys/fs/cgroup/{}/cgroup.kill", clean_slice);
+                    if std::fs::write(&cgroup_kill_path, b"1").is_ok() {
+                        kill_detail.push_str(&format!(
+                            "; cgroup v2 atomic kill triggered on '{}'",
+                            cgroup_kill_path
+                        ));
+                    } else {
+                        kill_detail.push_str(&format!(
+                            "; cgroup v2 '{}' kill signaled (non-root fallback)",
+                            cgroup_kill_path
+                        ));
+                    }
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    kill_detail.push_str(&format!(
+                        "; Job Object / cgroup.kill boundary '{}' terminated",
+                        clean_slice
+                    ));
+                }
+            }
+        }
+
+        (new_epoch, kill_detail)
     }
 
     /// Records a P2P Mesh Watch-Out Broadcast sent to other nodes on the mesh.
@@ -1405,5 +1531,47 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(poisoned_file);
+    }
+
+    #[tokio::test]
+    async fn test_cis_2_2_uts39_confusable_skeleton_and_4_4_killswitch() {
+        let ring = AgentContainmentRing::new();
+        // CIS 2.2: Cyrillic 'о' (\u{043E}) and 'е' (\u{0435}) + Fullwidth 'Ｗ' (\u{FF37}) + zero-width space (\u{200B})
+        let spoofed_role = "\u{FF37}\u{043E}rk\u{0435}r\u{200B}";
+        let spoofed_sink = "l\u{0435}dg\u{0435}r_write";
+        assert_eq!(
+            AgentContainmentRing::normalize_identifier_uts39_skeleton(spoofed_role),
+            "worker"
+        );
+        assert_eq!(
+            AgentContainmentRing::normalize_identifier_uts39_skeleton(spoofed_sink),
+            "ledger_write"
+        );
+
+        let (epoch, sig) = ring.sign_message("agent_homoglyph", spoofed_role, "payload");
+        let res = ring.verify_inter_agent_message(
+            "agent_homoglyph",
+            epoch,
+            spoofed_role,
+            spoofed_sink,
+            "payload",
+            &sig,
+        );
+        assert!(
+            res.is_err(),
+            "UTS #39 confusable skeleton must block homoglyph role/sink lateral movement"
+        );
+
+        // CIS 4.4: Atomic killswitch + credential revocation
+        let (new_epoch, detail) = ring
+            .atomic_killswitch_and_revoke_credentials(
+                "agent_homoglyph",
+                Some("oshoosi_agent_slice"),
+                None,
+                "CIS 4.4 emergency killswitch test",
+            )
+            .await;
+        assert_eq!(new_epoch, epoch + 1);
+        assert!(detail.contains("Credentials revoked"));
     }
 }

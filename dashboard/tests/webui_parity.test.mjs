@@ -371,6 +371,23 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                     );
                 }
 
+                assert.ok(env.mockWindow.osoosiDlp, `Expected window.osoosiDlp to exist in dashboard/${targetDirName}`);
+                assert.strictEqual(
+                    typeof env.mockWindow.osoosiDlp.releaseEvent,
+                    'function',
+                    `Expected window.osoosiDlp.releaseEvent to be a function in dashboard/${targetDirName}`
+                );
+                assert.strictEqual(
+                    typeof env.mockWindow.osoosiDlp.releaseAllFalsePositives,
+                    'function',
+                    `Expected window.osoosiDlp.releaseAllFalsePositives to be a function in dashboard/${targetDirName}`
+                );
+                assert.strictEqual(
+                    typeof env.mockWindow.osoosiDlp.refreshStatus,
+                    'function',
+                    `Expected window.osoosiDlp.refreshStatus to be a function in dashboard/${targetDirName}`
+                );
+
                 // 6. Auth resilience & zero Failed-to-fetch exports
                 for (const authFn of ['sanitizeAuthNetworkError', 'authFetchWithFallback', 'activateLocalSessionFallback']) {
                     assert.strictEqual(

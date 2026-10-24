@@ -7,7 +7,7 @@
 
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 
 rule koodous : official
@@ -21,5 +21,5 @@ rule koodous : official
 
 	condition:
 		$str_1 and 
-		androguard.receiver(/\.AppBoot$/)		
+// 		androguard.receiver(/\.AppBoot$/)		 (Identifier fixed/disabled by Oshoosi Hardener)
 }

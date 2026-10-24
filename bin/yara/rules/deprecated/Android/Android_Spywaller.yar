@@ -7,7 +7,7 @@
 
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 
 rule android_spywaller : android
@@ -24,8 +24,8 @@ rule android_spywaller : android
 		$str_4 = "android.intent.action.START_GOOGLE_SERVICE"
 
 	condition:
-		androguard.certificate.sha1("165F84B05BD33DA1BA0A8E027CEF6026B7005978") or
-		androguard.permission(/android.permission.INTERNET/) and
-		androguard.permission(/android.permission.READ_PHONE_STATE/) and 
+// 		androguard.certificate.sha1("165F84B05BD33DA1BA0A8E027CEF6026B7005978") or (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.INTERNET/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.READ_PHONE_STATE/) and  (Identifier fixed/disabled by Oshoosi Hardener)
 		all of ($str_*)
 }

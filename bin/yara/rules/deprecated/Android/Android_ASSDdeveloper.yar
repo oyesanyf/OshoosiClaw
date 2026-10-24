@@ -8,17 +8,17 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
-rule assd_developer : official android
-{
-	meta:
-		author = "Fernando Denis Ramirez https://twitter.com/fdrg21"
-		reference = "https://koodous.com/"
-		description = "This rule detects apks fom ASSD developer"
-		sample = "cb9721c524f155478e9402d213e240b9f99eaba86fcbce0571cd7da4e258a79e"
-
-	condition:
-		androguard.certificate.sha1("ED9A1CE1F18A1097DCCC5C0CB005E3861DA9C34A")
-		
-}
+// rule assd_developer : official android (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Fernando Denis Ramirez https://twitter.com/fdrg21" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		reference = "https://koodous.com/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule detects apks fom ASSD developer" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		sample = "cb9721c524f155478e9402d213e240b9f99eaba86fcbce0571cd7da4e258a79e" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.certificate.sha1("ED9A1CE1F18A1097DCCC5C0CB005E3861DA9C34A") (Identifier fixed/disabled by Oshoosi Hardener)
+// 		 (Disabled: vacuous condition without evaluatable strings/modules)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

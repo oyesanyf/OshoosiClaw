@@ -1,4 +1,4 @@
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 rule bankbot_polish_banks : banker
 {
@@ -31,10 +31,10 @@ rule bankbot_polish_banks : banker
 
     condition:
         all of ($s*) and 1 of ($bank*) and 
-        androguard.permission(/android.permission.INTERNET/) and 
-        androguard.permission(/android.permission.WAKE_LOCK/) and
-        androguard.permission(/android.permission.READ_EXTERNAL_STORAGE/) and
-        androguard.permission(/android.permission.RECEIVE_MMS/) and
-        androguard.permission(/android.permission.READ_SMS/) and
-        androguard.permission(/android.permission.RECEIVE_SMS/)
+//         androguard.permission(/android.permission.INTERNET/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.WAKE_LOCK/) and (Identifier fixed/disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.READ_EXTERNAL_STORAGE/) and (Identifier fixed/disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.RECEIVE_MMS/) and (Identifier fixed/disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.READ_SMS/) and (Identifier fixed/disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.RECEIVE_SMS/) (Identifier fixed/disabled by Oshoosi Hardener)
 }

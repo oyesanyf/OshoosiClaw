@@ -4,38 +4,38 @@
 
 // // import "androguard"
 
-rule Android_RuMMS
-{
-	meta:
-		author = "reverseShell - https://twitter.com/JReyCastro"
-		date = "2016/04/02"
-		description = "This rule try to detects Android.Banking.RuMMS"
-		sample = "13569bc8343e2355048a4bccbe92a362dde3f534c89acff306c800003d1d10c6 "
-		source = "https://www.fireeye.com/blog/threat-research/2016/04/rumms-android-malware.html"
-
-	condition:
+// rule Android_RuMMS (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "reverseShell - https://twitter.com/JReyCastro" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "2016/04/02" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detects Android.Banking.RuMMS" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		sample = "13569bc8343e2355048a4bccbe92a362dde3f534c89acff306c800003d1d10c6 " (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://www.fireeye.com/blog/threat-research/2016/04/rumms-android-malware.html" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.package_name("org.starsizew") or (Disabled by Oshoosi Hardener)
 // 		androguard.package_name("com.tvone.untoenynh") or (Disabled by Oshoosi Hardener)
 // 		androguard.package_name("org.zxformat") and (Disabled by Oshoosi Hardener)
 // 		androguard.permission(/android.permission.RECEIVE_SMS/) and (Disabled by Oshoosi Hardener)
 // 		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/) (Disabled by Oshoosi Hardener)
-		
-}
+// 		 (Disabled: vacuous condition without evaluatable strings/modules)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule Android_RuMMS_0
-{
-	meta:
-		author = "Jacob Soo Lead Re"
-		date = "19-May-2016"
-		description = "This rule try to detects Android.Banking.RuMMS"
-		source = "https://www.fireeye.com/blog/threat-research/2016/04/rumms-android-malware.html"
-
-	condition:
+// rule Android_RuMMS_0 (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Jacob Soo Lead Re" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "19-May-2016" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detects Android.Banking.RuMMS" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://www.fireeye.com/blog/threat-research/2016/04/rumms-android-malware.html" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		(androguard.service(/\.Tb/) and  (Disabled by Oshoosi Hardener)
 // 		 androguard.service(/\.Ad/) and  (Disabled by Oshoosi Hardener)
 // 		 androguard.receiver(/\.Ac/) and  (Disabled by Oshoosi Hardener)
 // 		 androguard.receiver(/\.Ma/)) or (Disabled by Oshoosi Hardener)
 //         (androguard.url(/http\\\\\:\/\/37\.1\.207/) and  (Disabled by Oshoosi Hardener)
 // 		 androguard.url(/\/api\/\?id\\\\\=7/)) (Disabled by Oshoosi Hardener)
-		
-}
+// 		 (Disabled: vacuous condition without evaluatable strings/modules)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

@@ -7,39 +7,39 @@
 /\/ More info: http:\/\/amtrckr.info\//// Last update: 2016/05/19 - 10:00:02
 
 
-rule coudw: amtrckr
-{
-	meta:
-		family = "coudw"
-
-	condition:
+// rule coudw: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "coudw" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/s\.cloudsota\.com/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule z3core: amtrckr
-{
-	meta:
-		family = "z3core"
-
-	condition:
+// rule z3core: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "z3core" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/lexsmilefux\.link/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule gtalocker: amtrckr
-{
-	meta:
-		family = "gtalocker"
-
-	condition:
+// rule gtalocker: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "gtalocker" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/niktoegoneyznaet0kol\.pw/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule marcher: amtrckr
-{
-	meta:
-		family = "marcher"
-
-	condition:
+// rule marcher: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "marcher" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/104\.238\.176\.9/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/golioni\.tk/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/poloclubs\.tk/) or  (Disabled by Oshoosi Hardener)
@@ -53,95 +53,95 @@ rule marcher: amtrckr
 // 		androguard.url(/manaclubs\.tk/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/151\.248\.126\.183/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/188\.209\.49\.198/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule lenovo_reaper: amtrckr
-{
-	meta:
-		family = "lenovo_reaper"
-
-	condition:
+// rule lenovo_reaper: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "lenovo_reaper" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/uefsr\.lenovomm\.com/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule unknown_1: amtrckr
-{
-	meta:
-		family = "unknown"
-
-	condition:
+// rule unknown_1: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "unknown" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/222\.76\.213\.20/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/103\.38\.42\.236/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/103\.243\.181\.41/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/123\.1\.157\.4/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule jagonca: amtrckr
-{
-	meta:
-		family = "jagonca"
-
-	condition:
+// rule jagonca: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "jagonca" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/abra-k0dabra\.com/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/heibe-titten\.com/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule thoughtcrime: amtrckr
-{
-	meta:
-		family = "thoughtcrime"
-
-	condition:
+// rule thoughtcrime: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "thoughtcrime" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/losbalonazos\.com/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/www\.oguhtell\.ch/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/szaivert-numis\.at/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/edda-mally\.at/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/clubk-ginza\.net/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule slocker: amtrckr
-{
-	meta:
-		family = "slocker"
-
-	condition:
+// rule slocker: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "slocker" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/aerofigg\.org/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule infostealer: amtrckr
-{
-	meta:
-		family = "infostealer"
-
-	condition:
+// rule infostealer: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "infostealer" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/koko02\.ru/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule pornlocker: amtrckr
-{
-	meta:
-		family = "pornlocker"
-
-	condition:
+// rule pornlocker: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "pornlocker" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/playmarketcheck\.com/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/pornigy\.biz/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule droidian: amtrckr
-{
-	meta:
-		family = "droidian"
-
-	condition:
+// rule droidian: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "droidian" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/z0\.tkurd\.net/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule androrat: amtrckr
-{
-	meta:
-		family = "androrat"
-
-	condition:
+// rule androrat: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "androrat" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/toyman6699\.no-ip\.info/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/aerror\.no-ip\.biz/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/androrat\.servegame\.com/) or  (Disabled by Oshoosi Hardener)
@@ -296,14 +296,14 @@ rule androrat: amtrckr
 // 		androguard.url(/makarand\.no-ip\.org/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/isamdonita\.no-ip\.org/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/anagliz\.ddns\.net/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule sandrorat: amtrckr
-{
-	meta:
-		family = "sandrorat"
-
-	condition:
+// rule sandrorat: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "sandrorat" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/tak\.no-ip\.info/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/maskaralama\.ddns\.net/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/sondres1\.ddns\.net/) or  (Disabled by Oshoosi Hardener)
@@ -605,14 +605,14 @@ rule sandrorat: amtrckr
 // 		androguard.url(/mehost\.ddns\.net/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/xmohcine\.ddns\.net/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/alabama192837\.no-ip\.org/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-rule ibanking: amtrckr
-{
-	meta:
-		family = "ibanking"
-
-	condition:
+// rule ibanking: amtrckr (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		family = "ibanking" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
 // 		androguard.url(/www\.irmihan\.ir/) or  (Disabled by Oshoosi Hardener)
 // 		androguard.url(/emberaer\.com/) (Disabled by Oshoosi Hardener)
-}
+// } (Disabled: vacuous condition without evaluatable strings/modules)

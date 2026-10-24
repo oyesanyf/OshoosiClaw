@@ -3,17 +3,17 @@
 
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
-rule Android_Clicker_G
-{
-	meta:
-		author = "Jacob Soo Lead Re"
-		date = "01-July-2016"
-		description = "This rule try to detects Clicker.G samples"
-		reference = "https://blogs.mcafee.com/mcafee-labs/android-malware-clicker-dgen-found-google-play/"
-	strings:
-		$a = "upd.php?text="
-	condition:
-		androguard.receiver(/MyBroadCastReceiver/i) and $a
-}
+// rule Android_Clicker_G (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Jacob Soo Lead Re" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "01-July-2016" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detects Clicker.G samples" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		reference = "https://blogs.mcafee.com/mcafee-labs/android-malware-clicker-dgen-found-google-play/" (Disabled: vacuous condition without evaluatable strings/modules)
+// 	strings: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		$a = "upd.php?text=" (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.receiver(/MyBroadCastReceiver/i) and $a (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)

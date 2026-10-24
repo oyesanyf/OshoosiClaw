@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
 
 rule Android_Switcher
@@ -31,8 +31,8 @@ rule Android_Switcher
 
 
 	condition:
-		androguard.certificate.sha1("2421686AE7D976D19AB72DA1BDE273C537D2D4F9") or 
-		(androguard.permission(/android.permission.INTERNET/) and
-		androguard.permission(/android.permission.ACCESS_WIFI_STATE/) and 
+// 		androguard.certificate.sha1("2421686AE7D976D19AB72DA1BDE273C537D2D4F9") or  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		(androguard.permission(/android.permission.INTERNET/) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.ACCESS_WIFI_STATE/) and  (Identifier fixed/disabled by Oshoosi Hardener)
 		($dns_2 or $dns_3 or $dns_4) and all of ($str_*))
 }

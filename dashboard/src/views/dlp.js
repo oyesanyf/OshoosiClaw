@@ -351,7 +351,12 @@ async function renderDlpView(forceRefresh = false) {
                             pqcSig: ev.pqc_signature_prefix || ev.pqcSig || 'ML-DSA-65',
                             ed25519Sig: ev.ed25519_signature || 'Ed25519',
                             source: ev.source || '',
-                            containment: ev.containment || null
+                            containment: ev.containment || null,
+                            repeat_count: ev.repeat_count || 1,
+                            allowed: ev.allowed ?? (ev.verdict === 'ALLOWED'),
+                            zkProofCommitment: ev.zk_proof_commitment || ev.commitment || '',
+                            destinationSink: ev.destination_sink || ev.sink || '',
+                            scrubbedPreview: ev.scrubbed_preview || ev.scrubbed || ''
                         }));
                     }
                 }
@@ -409,6 +414,9 @@ async function renderDlpView(forceRefresh = false) {
 
         renderDlpCrownJewelsTable();
         renderDlpEventsTable();
+        if (isDlpViewActive()) {
+            startDlpAutoPolling();
+        }
     } catch (err) {
         console.error('Error rendering DLP view:', err);
     }
@@ -482,10 +490,16 @@ function renderDlpEventsTable() {
         const dlpResp = ev.dlpResponse || (ev.verdict === 'ALLOWED' ? 'ALLOW' : 'QUARANTINE');
         const execMode = ev.executionMode || 'LIVE_ENFORCEMENT';
         let verdictBadge = '<span class="badge green">✅ ALLOW</span>';
-        if (ev.verdict === 'BLOCKED' || authDec === 'DENY') {
+        if (authDec === 'ALLOW (USER_RELEASED)' || dlpResp === 'RELEASED_BY_USER') {
+            verdictBadge = '<span class="badge green">🔓 RELEASED (False Positive)</span>';
+        } else if (ev.verdict === 'BLOCKED' || authDec === 'DENY' || dlpResp === 'QUARANTINE' || ev.allowed === false) {
             verdictBadge = `<span class="badge red">🛡️ ${escapeHtml(authDec)} / ${escapeHtml(dlpResp)}</span>`;
+            verdictBadge += `<div style="margin-top: 4px;"><button class="btn btn-sm btn-outline-warning release-dlp-btn" onclick="window.osoosiDlp.releaseEvent('${escapeHtml(ev.zkProofCommitment || ev.commitment || '')}', '${escapeHtml(ev.destinationSink || ev.sink || '')}', '${escapeHtml(ev.scrubbedPreview || ev.scrubbed || '')}')">🔓 Release False Positive</button></div>`;
         } else if (ev.verdict === 'SCRUBBED') {
             verdictBadge = '<span class="badge yellow">🧼 SCRUBBED</span>';
+        }
+        if (ev.repeat_count && ev.repeat_count > 1) {
+            verdictBadge += `<div style="margin-top: 3px;"><span class="badge blue">×${ev.repeat_count} TRIALS</span></div>`;
         }
         if (execMode === 'SIMULATED_TEST') {
             verdictBadge += '<div style="margin-top: 3px;"><span class="badge purple" style="font-size: 9px; padding: 1px 4px;">SIMULATED_TEST</span></div>';
@@ -632,7 +646,12 @@ async function submitDlpInspection() {
             scrubbed: scrubbedStr,
             commitment: commitmentStr,
             pqcSig: pqcSigStr,
-            ed25519Sig: analysis.zkProof?.ed25519Signature || 'Ed25519'
+            ed25519Sig: analysis.zkProof?.ed25519Signature || 'Ed25519',
+            repeat_count: serverResult?.event?.repeat_count || 1,
+            allowed: serverResult?.event?.allowed ?? (verdict === 'ALLOWED'),
+            zkProofCommitment: commitmentStr,
+            destinationSink: sink,
+            scrubbedPreview: scrubbedStr
         };
         dlpState.events.unshift(eventRecord);
         if (dlpState.events.length > 50) dlpState.events.pop();
@@ -1168,3 +1187,119 @@ document.addEventListener('click', async (event) => {
         if (typeof showSkyrlToast === 'function') showSkyrlToast(`Restore failed: ${err.message || err}`, 'warning');
     }
 });
+
+// =========================================================================
+// Auto-Polling & User PHI False-Positive Release API (window.osoosiDlp)
+// =========================================================================
+
+let dlpPollingTimer = null;
+let dlpPollingInFlight = false;
+
+function isDlpViewActive() {
+    const dlpEl = typeof document !== 'undefined' ? document.getElementById('dlp-view') : null;
+    const isHashDlp = (typeof window !== 'undefined' && window.location && window.location.hash === '#dlp');
+    const isStateDlp = (typeof state !== 'undefined' && state && state.current_view === 'dlp');
+    const hasActiveClass = Boolean(dlpEl && dlpEl.classList && dlpEl.classList.contains('active'));
+    return Boolean(isHashDlp || isStateDlp || hasActiveClass);
+}
+
+function startDlpAutoPolling() {
+    if (dlpPollingTimer) return;
+    dlpPollingTimer = setInterval(async () => {
+        if (!isDlpViewActive()) {
+            stopDlpAutoPolling();
+            return;
+        }
+        if (dlpPollingInFlight) return;
+        dlpPollingInFlight = true;
+        try {
+            await renderDlpView(false);
+        } catch (_) {
+        } finally {
+            dlpPollingInFlight = false;
+        }
+    }, 4000);
+}
+
+function stopDlpAutoPolling() {
+    if (dlpPollingTimer) {
+        clearInterval(dlpPollingTimer);
+        dlpPollingTimer = null;
+    }
+}
+
+if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('hashchange', () => {
+        if (isDlpViewActive()) {
+            startDlpAutoPolling();
+        } else {
+            stopDlpAutoPolling();
+        }
+    });
+}
+
+const osoosiDlp = {
+    releaseEvent: async function(zkCommitmentHex, destinationSink, scrubbedPreview) {
+        try {
+            const payload = {
+                zk_commitment_hex: zkCommitmentHex || null,
+                destination_sink: destinationSink || null,
+                scrubbed_preview: scrubbedPreview || null,
+                release_all_false_positives: false,
+                reason: 'User manual false-positive release'
+            };
+            const res = await fetch(`${API_BASE}/dlp/release`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(res.ok ? `DLP false positive released (${data.released_count || 1} event).` : `Release failed: ${data.message || res.status}`, res.ok ? 'success' : 'warning');
+            }
+            await renderDlpView(true);
+            return data;
+        } catch (err) {
+            console.error('Failed to release DLP event:', err);
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Release failed: ${err.message || err}`, 'warning');
+            }
+            throw err;
+        }
+    },
+    releaseAllFalsePositives: async function() {
+        try {
+            const payload = {
+                release_all_false_positives: true,
+                reason: 'User manual release of all isolated false positives'
+            };
+            const res = await fetch(`${API_BASE}/dlp/release`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json().catch(() => ({}));
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(res.ok ? `All false positives released (${data.released_count || 0} events).` : `Release failed: ${data.message || res.status}`, res.ok ? 'success' : 'warning');
+            }
+            await renderDlpView(true);
+            return data;
+        } catch (err) {
+            console.error('Failed to release all DLP false positives:', err);
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Release failed: ${err.message || err}`, 'warning');
+            }
+            throw err;
+        }
+    },
+    refreshStatus: async function() {
+        return await renderDlpView(true);
+    },
+    startPolling: startDlpAutoPolling,
+    stopPolling: stopDlpAutoPolling
+};
+
+window.osoosiDlp = osoosiDlp;
+

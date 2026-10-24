@@ -684,6 +684,32 @@ pub struct DlpTier1FastScanVerdict {
     pub rationale: String,
 }
 
+pub const STANDARD_EXEMPT_WEB_PARAMS: &[&str] = &[
+    "state",
+    "code",
+    "code_challenge",
+    "nonce",
+    "sig",
+    "signature",
+    "guce_referrer_sig",
+    "session_id",
+    "cs_live_",
+    "client_id",
+    "redirect_uri",
+];
+
+/// Checks if a query parameter key is a standard web token/signature parameter exempt from cipher exfiltration.
+pub fn is_exempt_query_param_key(key: &str) -> bool {
+    let lower = key.trim().to_ascii_lowercase();
+    STANDARD_EXEMPT_WEB_PARAMS.iter().any(|&p| lower == p || lower.ends_with(p))
+}
+
+/// Mathematical Luhn mod-10 AND ISO/IEC 7812 network length & prefix verifier for PANs.
+#[inline]
+pub fn is_valid_credit_card_pan(digits: &[u8]) -> bool {
+    OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(digits)
+}
+
 /// Milestone J: Two-Tier Zero-Exploit Cross-Platform Data Loss Prevention (DLP) Engine.
 /// - **Tier 1 (Hot Path)**: $O(N)$ deterministic prefix/checksum/Merkle-chunk scanner capped at
 ///   `MAX_DLP_HOT_SCAN_BYTES = 262_144` (256 KB) with zero backtracking regular expressions.
@@ -725,6 +751,78 @@ impl OsoosiTwoTierDlpEngine {
             sum += d;
         }
         sum.is_multiple_of(10)
+    }
+
+    /// Validates Luhn mod-10 AND ISO/IEC 7812 network length & prefix:
+    /// - Visa (4): 13, 16, or 19 digits.
+    /// - Mastercard: (51..=55 or 2221..=2720) and 16 digits.
+    /// - Amex: (34, 37) and strictly 15 digits.
+    /// - Diners Club: (30, 36, 38) and 14 or 16 digits.
+    /// - JCB: (3528..=3589) and 16 digits.
+    /// - Discover: (6011, 65, 644..=649, 622126..=622925) and strictly 16 or 19 digits (NEVER 15!).
+    /// - China UnionPay: (62) and 16..=19 digits.
+    pub fn is_valid_credit_card_pan(digits: &[u8]) -> bool {
+        let len = digits.len();
+        if !(13..=19).contains(&len) || !digits.iter().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        if !Self::verify_luhn_pan(digits) {
+            return false;
+        }
+        match digits[0] {
+            b'4' => len == 13 || len == 16 || len == 19, // Visa
+            b'5' => (b'1'..=b'5').contains(&digits[1]) && len == 16, // Mastercard
+            b'2' => {
+                // Mastercard 2221..=2720, 16 digits
+                if len != 16 {
+                    return false;
+                }
+                let p4 = (digits[0] - b'0') as u32 * 1000
+                    + (digits[1] - b'0') as u32 * 100
+                    + (digits[2] - b'0') as u32 * 10
+                    + (digits[3] - b'0') as u32;
+                (2221..=2720).contains(&p4)
+            }
+            b'3' => {
+                if digits[1] == b'4' || digits[1] == b'7' {
+                    len == 15 // American Express: strictly 15 digits
+                } else if digits[1] == b'0' || digits[1] == b'6' || digits[1] == b'8' {
+                    len == 14 || len == 16 // Diners Club
+                } else if digits[1] == b'5' {
+                    // JCB: 3528..=3589 and 16 digits
+                    if len != 16 {
+                        return false;
+                    }
+                    let p4 = 3500 + (digits[2] - b'0') as u32 * 10 + (digits[3] - b'0') as u32;
+                    (3528..=3589).contains(&p4)
+                } else {
+                    false
+                }
+            }
+            b'6' => {
+                // Discover: strictly 16 or 19 digits (NEVER 15!)
+                // China UnionPay: 16..=19 digits
+                if digits.starts_with(b"6011") || digits.starts_with(b"65") {
+                    len == 16 || len == 19
+                } else if digits.starts_with(b"64") && (b'4'..=b'9').contains(&digits[2]) {
+                    len == 16 || len == 19
+                } else if digits.starts_with(b"622") {
+                    let p6 = digits[..6].iter().fold(0u32, |acc, &d| acc * 10 + (d - b'0') as u32);
+                    if (622126..=622925).contains(&p6) {
+                        len == 16 || len == 19
+                    } else {
+                        // China UnionPay
+                        (16..=19).contains(&len)
+                    }
+                } else if digits.starts_with(b"62") {
+                    // China UnionPay: 16..=19 digits
+                    (16..=19).contains(&len)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Decodes URL `%XX` percent-encoding in linear $O(N)$ time.
@@ -1145,38 +1243,63 @@ impl OsoosiTwoTierDlpEngine {
             return false;
         }
 
-        for raw_tok in
-            text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';'))
+        let is_http_get = text.starts_with("GET ")
+            || text.contains("GET /")
+            || text.starts_with("http://")
+            || text.starts_with("https://")
+            || (text.contains("://") && !text.contains('\n') && !text.contains("\r\n\r\n"));
+
+        // When inspecting HTTP GET URLs, require explicit cipher markers to declare custom cipher exfiltration.
+        if is_http_get && !has_cipher_marker {
+            return false;
+        }
+
+        for raw_segment in
+            text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&' | '?'))
         {
-            let tok = raw_tok.trim();
-            if tok.len() < 64 {
+            let seg = raw_segment.trim();
+            if seg.is_empty() {
                 continue;
             }
-
-            // 1. Raw string byte entropy
-            let raw_h = Self::compute_shannon_entropy(tok.as_bytes());
-            if raw_h >= 5.65 {
-                return true;
+            if let Some((k, v)) = seg.split_once('=') {
+                if is_exempt_query_param_key(k) || v.starts_with("cs_live_") {
+                    continue;
+                }
             }
+            for raw_tok in seg.split(|c: char| matches!(c, '=' | '/')) {
+                let tok = raw_tok.trim();
+                if tok.len() < 64 {
+                    continue;
+                }
+                if tok.starts_with("cs_live_") || is_exempt_query_param_key(tok) {
+                    continue;
+                }
 
-            // 2. Hex decoded binary entropy
-            if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
-                if let Ok(bytes) = hex::decode(tok) {
+                // 1. Raw string byte entropy
+                let raw_h = Self::compute_shannon_entropy(tok.as_bytes());
+                if raw_h >= 5.65 {
+                    return true;
+                }
+
+                // 2. Hex decoded binary entropy
+                if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    if let Ok(bytes) = hex::decode(tok) {
+                        if bytes.len() >= 32 {
+                            let bin_h = Self::compute_shannon_entropy(&bytes);
+                            if bin_h >= 5.2 {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                // 3. Base64 decoded binary entropy
+                if let Some(bytes) = Self::decode_raw_base64_bytes(tok) {
                     if bytes.len() >= 32 {
                         let bin_h = Self::compute_shannon_entropy(&bytes);
                         if bin_h >= 5.2 {
                             return true;
                         }
-                    }
-                }
-            }
-
-            // 3. Base64 decoded binary entropy
-            if let Some(bytes) = Self::decode_raw_base64_bytes(tok) {
-                if bytes.len() >= 32 {
-                    let bin_h = Self::compute_shannon_entropy(&bytes);
-                    if bin_h >= 5.2 {
-                        return true;
                     }
                 }
             }
@@ -1354,30 +1477,60 @@ impl OsoosiTwoTierDlpEngine {
         let is_canonical_github = sink_lower.contains("github.com/oyesanyf/oshoosiclaw")
             || sink_lower.contains("api.github.com/repos/oyesanyf/oshoosiclaw");
 
+        let is_http_get = text.starts_with("GET ")
+            || text.contains("GET /")
+            || text.starts_with("http://")
+            || text.starts_with("https://")
+            || (text.contains("://") && !text.contains('\n') && !text.contains("\r\n\r\n"));
+
+        let text_lower = text.to_ascii_lowercase();
+        let has_cipher_marker = text_lower.contains("cipher=")
+            || text_lower.contains("enc=")
+            || text_lower.contains("aes256:")
+            || text_lower.contains("chacha20:")
+            || text_lower.contains("ciphertext");
+
         // High-entropy / custom multi-round cipher exfil detection (exempt clean git source commits on canonical github)
-        let is_cipher_exfil = Self::detect_custom_multi_round_cipher_exfil(
-            &text,
-            is_external_sink && !(is_dev_tool && is_canonical_github),
-        ) || (is_external_sink
-            && !(is_dev_tool && is_canonical_github)
-            && text
-                .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';'))
-                .any(|tok| {
-                    let trimmed = tok.trim();
-                    if trimmed.len() >= 32 {
-                        if let Ok(b) = hex::decode(trimmed) {
-                            if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
-                                return true;
+        let is_cipher_exfil = if is_http_get && !has_cipher_marker {
+            false
+        } else {
+            Self::detect_custom_multi_round_cipher_exfil(
+                &text,
+                is_external_sink && !(is_dev_tool && is_canonical_github),
+            ) || (is_external_sink
+                && !(is_dev_tool && is_canonical_github)
+                && text
+                    .split(|c: char| {
+                        c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&' | '?')
+                    })
+                    .any(|seg| {
+                        let trimmed_seg = seg.trim();
+                        if let Some((k, v)) = trimmed_seg.split_once('=') {
+                            if is_exempt_query_param_key(k) || v.starts_with("cs_live_") {
+                                return false;
                             }
                         }
-                        if let Some(b) = Self::decode_raw_base64_bytes(trimmed) {
-                            if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
-                                return true;
+                        for raw_tok in trimmed_seg.split(|c: char| matches!(c, '=' | '/')) {
+                            let trimmed = raw_tok.trim();
+                            if trimmed.starts_with("cs_live_") || is_exempt_query_param_key(trimmed) {
+                                continue;
+                            }
+                            if trimmed.len() >= 32 {
+                                if let Ok(b) = hex::decode(trimmed) {
+                                    if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
+                                        return true;
+                                    }
+                                }
+                                if let Some(b) = Self::decode_raw_base64_bytes(trimmed) {
+                                    if b.len() >= 16 && Self::compute_shannon_entropy(&b) >= 5.0 {
+                                        return true;
+                                    }
+                                }
                             }
                         }
-                    }
-                    false
-                }));
+                        false
+                    }))
+        };
 
         if is_cipher_exfil
             && !detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string())
@@ -1466,13 +1619,13 @@ impl OsoosiTwoTierDlpEngine {
                         }
                     }
 
-                    // Check Luhn PAN (13..=19 digits)
+                    // Check ISO/IEC 7812 & Luhn PAN (13..=19 digits)
                     let digits: Vec<u8> = bytes
                         .iter()
                         .copied()
                         .filter(|b| b.is_ascii_digit())
                         .collect();
-                    if Self::verify_luhn_pan(&digits)
+                    if Self::is_valid_credit_card_pan(&digits)
                         && !detected_categories.contains(&"CREDIT_CARD_LUHN".to_string())
                     {
                         detected_categories.push("CREDIT_CARD_LUHN".to_string());
@@ -2081,6 +2234,9 @@ impl PresidioGlinerPiiZeroGuard {
                         && tok.contains('.')
                         && !tok.starts_with('@')
                         && !tok.ends_with('.')
+                        && !tok.contains('/')
+                        && !tok.contains('\\')
+                        && !tok.contains("://")
                     {
                         Some("EMAIL_ADDRESS")
                     } else if tok.len() == 11
@@ -2102,7 +2258,7 @@ impl PresidioGlinerPiiZeroGuard {
                         Some("HIPAA_MRN")
                     } else {
                         let digits: Vec<u8> = tok.bytes().filter(|b| b.is_ascii_digit()).collect();
-                        if OsoosiTwoTierDlpEngine::verify_luhn_pan(&digits) {
+                        if OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(&digits) {
                             Some("CREDIT_CARD")
                         } else {
                             None
@@ -2201,7 +2357,7 @@ impl PresidioGlinerPiiZeroGuard {
             };
 
         for ch in raw_text.chars() {
-            if ch.is_whitespace() || matches!(ch, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':') {
+            if ch.is_whitespace() || matches!(ch, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':' | '/') {
                 classify_and_redact(
                     &mut token_buf,
                     &mut scrubbed,
@@ -2492,7 +2648,7 @@ impl RedactXStructuredValidator {
                         let complete_grouped = !single_group && (13..=19).contains(&digits.len());
                         if (complete_contiguous || complete_grouped)
                             && matches!(digits[0], b'2'..=b'6')
-                            && OsoosiTwoTierDlpEngine::verify_luhn_pan(&digits)
+                            && OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(&digits)
                         {
                             let pan = String::from_utf8_lossy(&digits).into_owned();
                             if !results.contains(&pan) {
@@ -2673,12 +2829,35 @@ impl RedactXStructuredValidator {
             // Ensure we start on a token boundary (not in the middle of an IP address, hex string, or port)
             if i > 0 {
                 let prev = bytes[i - 1];
+                let start_back = i.saturating_sub(48);
+                let ctx_before = String::from_utf8_lossy(&bytes[start_back..i]).to_ascii_lowercase();
+                let is_phone_field = ["phone", "tel", "cell", "call", "mobile", "fax", "contact"]
+                    .iter()
+                    .any(|&k| ctx_before.contains(k));
                 if prev.is_ascii_alphanumeric()
-                    || matches!(prev, b'.' | b'/' | b':' | b'=' | b'&' | b'?' | b'_' | b'-')
+                    || (matches!(
+                        prev,
+                        b'.' | b'/' | b':' | b'=' | b'&' | b'?' | b'_' | b'-' | b'"' | b'\'' | b'%'
+                    ) && !(matches!(prev, b'=' | b'&' | b'?' | b'"' | b'\'' | b'%') && is_phone_field))
                 {
                     i += 1;
                     continue;
                 }
+            }
+
+            // Reject if preceded by parameter names ending in id, _id, Id, ID (e.g. currentJobId=)
+            let start_back = i.saturating_sub(48);
+            let context_before_slice = String::from_utf8_lossy(&bytes[start_back..i]);
+            let trimmed_before = context_before_slice.trim_end_matches(|c: char| {
+                matches!(c, '=' | ':' | '"' | '\'' | ' ' | '%' | '&' | '?' | '\n' | '\r' | '\t')
+            });
+            if trimmed_before.ends_with("id")
+                || trimmed_before.ends_with("_id")
+                || trimmed_before.ends_with("Id")
+                || trimmed_before.ends_with("ID")
+            {
+                i += 1;
+                continue;
             }
 
             // Check for standard format XXX-XXX-XXXX or (XXX) XXX-XXXX
@@ -2700,6 +2879,21 @@ impl RedactXStructuredValidator {
 
             if digits.len() == 10 && !followed_by_ip_or_port {
                 let trimmed_cand = cand_slice.trim();
+                // For 10 unformatted contiguous digits, require nearby phone/fax context keywords within +/- 32 bytes
+                let is_unformatted_10 = trimmed_cand.len() == 10 && trimmed_cand.chars().all(|c| c.is_ascii_digit());
+                if is_unformatted_10 {
+                    let ctx_start = i.saturating_sub(32);
+                    let ctx_end = (next_byte_idx + 32).min(len);
+                    let nearby = String::from_utf8_lossy(&bytes[ctx_start..ctx_end]).to_ascii_lowercase();
+                    let has_phone_keyword = ["phone", "tel", "cell", "call", "mobile", "fax", "contact"]
+                        .iter()
+                        .any(|&k| nearby.contains(k));
+                    if !has_phone_keyword {
+                        i += 1;
+                        continue;
+                    }
+                }
+
                 // Require standard NANP grouping (10 contiguous digits, or XXX-XXX-XXXX, or (XXX) XXX-XXXX)
                 let valid_grouping = trimmed_cand.len() == 10
                     || (trimmed_cand.len() == 12
@@ -2739,12 +2933,18 @@ impl RedactXStructuredValidator {
     /// RFC 5321 / 5322 Email syntax and boundary validation.
     pub fn rfc5321_email_valid(addr: &str) -> bool {
         let clean = addr.trim();
+        if clean.contains("://") || clean.contains('/') || clean.contains('\\') {
+            return false;
+        }
         let parts: Vec<&str> = clean.split('@').collect();
         if parts.len() != 2 {
             return false;
         }
         let local = parts[0];
         let domain = parts[1];
+        if local.contains('/') || domain.contains('/') {
+            return false;
+        }
         if local.is_empty() || local.len() > 64 || domain.is_empty() || domain.len() > 253 {
             return false;
         }
@@ -3419,5 +3619,100 @@ mod tests_dlp_evasion {
         assert!(v.validator_confirmed_categories.is_empty());
         assert!(v.noul_contains_phi_pii.p_true_phi_pii < 0.85);
         assert!(!v.openjev_enforcement_agreed());
+    }
+
+    #[test]
+    fn test_benign_temu_goods_id_and_creative_id_zero_false_positive() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let url = "https://www.temu.com/ul/kuiper/un1.html?goods_id=601103334308570&_x_ads_creative_id=4317503380002857";
+        let tier1 = engine.inspect_hot_tier1("msedge.exe", url, url.as_bytes());
+        assert!(tier1.allowed, "Temu URL must be allowed: {:?}", tier1.rationale);
+        assert_eq!(tier1.detected_categories, Vec::<String>::new());
+        assert_eq!(tier1.sensitivity_potential_phi, 0.0);
+
+        let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(url, 5501, 6.42, 4);
+        assert_eq!(proof.redacted_entity_count, 0);
+        assert_eq!(proof.redacted_categories, Vec::<String>::new());
+        assert!(RedactXStructuredValidator::pan_scan(url).is_empty());
+        assert!(!OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"601103334308570"));
+    }
+
+    #[test]
+    fn test_benign_linkedin_current_job_id_zero_false_positive() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let url = "https://www.linkedin.com/jobs/search-results/?currentJobId=4449786300";
+        let tier1 = engine.inspect_hot_tier1("chrome.exe", url, url.as_bytes());
+        assert!(tier1.allowed, "LinkedIn URL must be allowed: {:?}", tier1.rationale);
+        assert_eq!(tier1.detected_categories, Vec::<String>::new());
+        assert!(RedactXStructuredValidator::nanp_phone_fax_scan(url).is_empty());
+    }
+
+    #[test]
+    fn test_benign_medium_author_handle_zero_false_positive() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let url = "https://medium.com/@juanabascal78/understanding-causal-security-graphs";
+        let tier1 = engine.inspect_hot_tier1("chrome.exe", url, url.as_bytes());
+        assert!(tier1.allowed, "Medium URL must be allowed: {:?}", tier1.rationale);
+        assert_eq!(tier1.detected_categories, Vec::<String>::new());
+
+        let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(url, 5501, 6.42, 4);
+        assert_eq!(proof.redacted_entity_count, 0);
+        assert_eq!(proof.redacted_categories, Vec::<String>::new());
+
+        assert!(!RedactXStructuredValidator::rfc5321_email_valid("//medium.com/@juanabascal78/some-slug"));
+        assert!(!RedactXStructuredValidator::rfc5321_email_valid("@juanabascal78"));
+        assert!(!RedactXStructuredValidator::rfc5321_email_valid("https://medium.com/@juanabascal78"));
+    }
+
+    #[test]
+    fn test_oauth_sso_and_payment_tokens_zero_false_positive() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        let urls = [
+            "https://auth.openai.com/oauth/authorize?client_id=app-123456&response_type=code&scope=openid&state=AQAAAKdRPEK9812345abcdef678901234567890abcdef678901234567890abcdef678901234567890&code_challenge=AQAAAKdRPEK9812345abcdef678901234567890abcdef678901234567890abcdef678901234567890&nonce=1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            "https://finance.yahoo.com/quote/AAPL?guce_referrer=aHR0cHM6Ly93d3cuZ29vZ2xlLmNvbS8&guce_referrer_sig=AQAAAKdRPEK9812345abcdef678901234567890abcdef678901234567890abcdef678901234567890",
+            "https://checkout.stripe.com/c/pay/cs_live_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0u1v2w3x4y5z6",
+        ];
+
+        for url in urls {
+            let tier1 = engine.inspect_hot_tier1("msedge.exe", url, url.as_bytes());
+            assert!(tier1.allowed, "Token URL must be allowed: {url} -> {:?}", tier1.rationale);
+            assert!(
+                !tier1.detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string()),
+                "{url} must not trigger CUSTOM_MULTI_ROUND_CIPHER_EXFIL"
+            );
+        }
+    }
+
+    #[test]
+    fn test_genuine_pan_and_phones_in_post_bodies_100_percent_detected() {
+        let engine = OsoosiTwoTierDlpEngine::new();
+        // Visa
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"4532015112830366"));
+        // Mastercard
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"5500000000000004"));
+        // Amex (15 digits)
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"378282246310005"));
+        // Discover 16
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"6011000990139424"));
+
+        // POST body with genuine Visa
+        let post_visa = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\ncard_number=4532015112830366";
+        let tier1_visa = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_visa.as_bytes());
+        assert!(tier1_visa.detected_categories.contains(&"CREDIT_CARD_LUHN".to_string()));
+
+        // POST body with genuine Amex
+        let post_amex = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\npayment_method=amex&card=3782 822463 10005";
+        let tier1_amex = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_amex.as_bytes());
+        assert!(tier1_amex.detected_categories.contains(&"CREDIT_CARD_LUHN".to_string()));
+
+        // POST body with formatted HIPAA phone
+        let post_phone = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\npatient_phone=(415) 555-2671";
+        let tier1_phone = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_phone.as_bytes());
+        assert!(tier1_phone.detected_categories.contains(&"HIPAA_PHONE".to_string()));
+
+        // POST body with unformatted phone and context keyword
+        let post_unformatted_phone = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\nEmergency contact call: 4155552671";
+        let tier1_unformatted = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_unformatted_phone.as_bytes());
+        assert!(tier1_unformatted.detected_categories.contains(&"HIPAA_PHONE".to_string()));
     }
 }

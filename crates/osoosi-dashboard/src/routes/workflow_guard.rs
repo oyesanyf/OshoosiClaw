@@ -329,7 +329,7 @@ impl Default for WorkflowGuardState {
                     title: "Multi-Ring Agent Lateral Movement & Capability Forgery".to_string(),
                     enabled: true,
                     status: "STANDBY_OFF".to_string(),
-                    invariant_summary: "Constant-time HMAC-SHA256 verification bound to (arm_id, epoch, role), monotonic epoch advancement (N -> N + 1) on quarantine/regeneration, and case-insensitive (to_ascii_lowercase()) sink isolation blocking untrusted/fuzzing roles from privileged sinks.".to_string(),
+                    invariant_summary: "Constant-time HMAC-SHA256 verification bound to (arm_id, epoch, role), monotonic epoch advancement (N -> N + 1) on quarantine/regeneration, and CIS 2.2 Unicode Case Folding + NFKC + UTS #39 confusable-skeleton sink isolation blocking homoglyph-spoofed untrusted/fuzzing roles from privileged sinks.".to_string(),
                     implementation_files: vec![
                         "crates/osoosi-agent-anomaly/src/breakout_defense.rs".to_string(),
                         "crates/osoosi-agent-anomaly/src/containment_ring.rs".to_string(),
@@ -393,7 +393,7 @@ impl Default for WorkflowGuardState {
                     title: "SSRF & Cloud Metadata / Local Service Pivot".to_string(),
                     enabled: true,
                     status: "STANDBY_OFF".to_string(),
-                    invariant_summary: "Mathematical Ipv4Addr / Ipv6Addr parsing blocking RFC 1918 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), loopback (127.0.0.0/8, ::1), link-local/IMDS (169.254.0.0/16, fe80::/10), CGNAT (100.64.0.0/10), unique local (fc00::/7), unspecified (0.0.0.0, ::), and IPv4-mapped IPv6 (::ffff:0:0/96).".to_string(),
+                    invariant_summary: "CIS 3.3 Mathematical Ipv4Addr / Ipv6Addr + raw-authority inspection blocking RFC 1918, loopback (127.0.0.0/8, ::1), link-local/IMDS (169.254.0.0/16, fe80::/10), CGNAT (100.64.0.0/10), this-network (0.0.0.0/8), benchmark (198.18.0.0/15), NAT64 (64:ff9b::/96), 6to4 (2002::/16), multicast (224.0.0.0/4, ff00::/8), IPv4-mapped IPv6, and non-standard IP encodings (http://2130706433, hex, octal, shortened quad).".to_string(),
                     implementation_files: vec![
                         "crates/osoosi-sandbox/src/lib.rs".to_string(),
                         "crates/osoosi-agent-anomaly/src/siquery.rs".to_string(),
@@ -441,7 +441,7 @@ impl Default for WorkflowGuardState {
                     title: "Automated Emergency Isolation & Verified Rollback".to_string(),
                     enabled: true,
                     status: "STANDBY_OFF".to_string(),
-                    invariant_summary: "60-second intermediate process-tree telemetry integrity health probes (requiring 3 consecutive clean BLAKE3-verified OS anchor sweeps for early auto-rollback) backed by a 30-minute hard dead-man failsafe ceiling.".to_string(),
+                    invariant_summary: "CIS 4.4 Atomic Killswitch (cgroup v2 cgroup.kill + Windows Job Object termination + immediate HMAC/epoch credential revocation) paired with 60-second BLAKE3 health probes (3 clean sweeps for auto-rollback) and a 30-minute dead-man failsafe ceiling.".to_string(),
                     implementation_files: vec![
                         "crates/osoosi-core/src/killchain.rs".to_string(),
                     ],

@@ -1,33 +1,33 @@
-import "androguard"
+// import "androguard" (Disabled by Oshoosi Hardener)
 
-rule Android_AVITOMMS_Variant
-{
-	meta:
-		author = "Jacob Soo Lead Re"
-		date = "28-May-2016"
-		description = "This rule try to detects Spy.Banker AVITO-MMS Variant"
-		source = "https://blog.avast.com/android-banker-trojan-preys-on-credit-card-information"
+// rule Android_AVITOMMS_Variant (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Jacob Soo Lead Re" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "28-May-2016" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detects Spy.Banker AVITO-MMS Variant" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://blog.avast.com/android-banker-trojan-preys-on-credit-card-information" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		(androguard.receiver(/AlarmReceiverKnock/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		 androguard.receiver(/BootReciv/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		 androguard.receiver(/AlarmReceiverAdm/)) (Identifier fixed/disabled by Oshoosi Hardener)
+// 		 (Disabled: vacuous condition without evaluatable strings/modules)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
 
-	condition:
-		(androguard.receiver(/AlarmReceiverKnock/) and 
-		 androguard.receiver(/BootReciv/) and 
-		 androguard.receiver(/AlarmReceiverAdm/))
-		
-}
-
-rule Android_AVITOMMS_Rule2
-{
-	meta:
-		author = "Jacob Soo Lead Re"
-		date = "01-July-2016"
-		description = "This rule try to detects Spy.Banker AVITO-MMS Variant"
-		source = "https://blog.avast.com/android-banker-trojan-preys-on-credit-card-information"
-
-	condition:
-		androguard.service(/IMService/) and 
-		androguard.receiver(/BootReciv/) and 
-		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i) and 
-		androguard.permission(/android.permission.KILL_BACKGROUND_PROCESSES/i) and 
-		androguard.permission(/android.permission.SEND_SMS/i) and
-		androguard.permission(/android.permission.INTERNET/i)
-}
+// rule Android_AVITOMMS_Rule2 (Disabled: vacuous condition without evaluatable strings/modules)
+// { (Disabled: vacuous condition without evaluatable strings/modules)
+// 	meta: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		author = "Jacob Soo Lead Re" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		date = "01-July-2016" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		description = "This rule try to detects Spy.Banker AVITO-MMS Variant" (Disabled: vacuous condition without evaluatable strings/modules)
+// 		source = "https://blog.avast.com/android-banker-trojan-preys-on-credit-card-information" (Disabled: vacuous condition without evaluatable strings/modules)
+//  (Disabled: vacuous condition without evaluatable strings/modules)
+// 	condition: (Disabled: vacuous condition without evaluatable strings/modules)
+// 		androguard.service(/IMService/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.receiver(/BootReciv/) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.KILL_BACKGROUND_PROCESSES/i) and  (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.SEND_SMS/i) and (Identifier fixed/disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.INTERNET/i) (Identifier fixed/disabled by Oshoosi Hardener)
+// } (Disabled: vacuous condition without evaluatable strings/modules)
