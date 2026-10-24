@@ -92,10 +92,10 @@ function Ensure-ToolchainInPath {
     if (Test-Path (Join-Path $rustupToolchain "bin\cargo.exe")) {
         if (-not (Test-Path (Join-Path $toolchainBin "cargo.exe"))) {
             New-Item -ItemType Directory -Path $toolchainBin -Force | Out-Null
-            & "C:\Windows\System32\cmd.exe" /c "copy /y `"$rustupToolchain\bin\*.exe`" `"$toolchainBin\`" >nul & copy /y `"$rustupToolchain\bin\*.dll`" `"$toolchainBin\`" >nul"
+            Copy-Item -Path (Join-Path $rustupToolchain "bin\*.exe"), (Join-Path $rustupToolchain "bin\*.dll") -Destination "$toolchainBin\" -Force -ErrorAction SilentlyContinue
         }
         if (-not (Test-Path $stagedLib)) {
-            & "C:\Windows\System32\cmd.exe" /c "mklink /J `"$stagedLib`" `"$rustupToolchain\lib`" >nul"
+            New-Item -ItemType Junction -Path "$stagedLib" -Target "$rustupToolchain\lib" -Force -ErrorAction SilentlyContinue | Out-Null
         }
         $env:PATH = "$toolchainBin;$env:PATH"
         $env:RUSTC = Join-Path $toolchainBin "rustc.exe"
@@ -187,9 +187,9 @@ function Invoke-AuthenticodeSigning {
             $hlOut = & fsutil hardlink list $file 2>$null
             if ($hlOut -and ($hlOut.Count -gt 1)) {
                 $unlinkedTmp = "$file.unlinked_tmp"
-                & "C:\Windows\System32\cmd.exe" /c "copy /y `"$file`" `"$unlinkedTmp`" >nul"
+                Copy-Item -Path $file -Destination $unlinkedTmp -Force -ErrorAction SilentlyContinue
                 Remove-Item -Path $file -Force -ErrorAction SilentlyContinue
-                & "C:\Windows\System32\cmd.exe" /c "copy /y `"$unlinkedTmp`" `"$file`" >nul"
+                Copy-Item -Path $unlinkedTmp -Destination $file -Force -ErrorAction SilentlyContinue
                 Remove-Item -Path $unlinkedTmp -Force -ErrorAction SilentlyContinue
             }
             Write-Host "       Signing '$file' (SHA-256 + RFC 3161 timestamp)..." -ForegroundColor Cyan
@@ -283,7 +283,9 @@ if (-not $SkipBuild) {
                 $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
             }
         }
-        & cmd.exe /c "attrib -r target\release\*.exe 2>nul & attrib -r target\release\*.dll 2>nul & attrib -r target\release\deps\*.exe 2>nul & attrib -r target\release\deps\*.dll 2>nul" | Out-Null
+        Get-ChildItem -Path (Join-Path $ProjectRoot "target\release"), (Join-Path $ProjectRoot "target\release\deps") -Include "*.exe", "*.dll" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.IsReadOnly) { $_.IsReadOnly = $false }
+        }
 
         if ($buildSigntool -and (-not $SkipSigning)) {
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe") -ErrorAction SilentlyContinue | Where-Object {
