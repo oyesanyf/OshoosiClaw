@@ -53,7 +53,8 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
     valid_signature && trusted_publisher
 }
 
-pub(crate) fn scanner_skip_path(p: &str) -> bool {
+pub(crate) fn scanner_skip_path(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
     // Only non-executable telemetry logs and drive metadata files may bypass scanner pipelines
     if p.contains("\\.system_generated\\logs\\")
         || p.contains("\\.tmp.driveupload")

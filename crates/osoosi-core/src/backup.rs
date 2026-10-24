@@ -118,9 +118,11 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
     });
 
     // Bypass 24-hour frequency limit via registry
+    use std::os::windows::process::CommandExt;
     let reg_path = "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore";
     let reg_bin = osoosi_types::resolve_system_binary("reg.exe");
-    let _ = Command::new(&reg_bin)
+    let mut reg_add_cmd = Command::new(&reg_bin);
+    reg_add_cmd
         .args([
             "add",
             reg_path,
@@ -132,9 +134,10 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
             "0",
             "/f",
         ])
+        .creation_flags(osoosi_types::CREATE_NO_WINDOW)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    let _ = reg_add_cmd.status();
 
     // Build RESTOREPOINTINFOW
     let mut info: RESTOREPOINTINFOW = unsafe { std::mem::zeroed() };
@@ -156,7 +159,8 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
     let result: BOOL = unsafe { SRSetRestorePointW(&info, &mut status) };
 
     // Clean up registry key
-    let _ = Command::new(&reg_bin)
+    let mut reg_del_cmd = Command::new(&reg_bin);
+    reg_del_cmd
         .args([
             "delete",
             reg_path,
@@ -164,9 +168,10 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
             "SystemRestorePointCreationFrequency",
             "/f",
         ])
+        .creation_flags(osoosi_types::CREATE_NO_WINDOW)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    let _ = reg_del_cmd.status();
 
     if result.as_bool() {
         let seq = status.llSequenceNumber;
@@ -253,20 +258,22 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
 
 #[cfg(target_os = "windows")]
 fn run_full_image(config: &BackupConfig) -> anyhow::Result<String> {
+    use std::os::windows::process::CommandExt;
     use std::process::Stdio;
     let target = config.target.trim().trim_end_matches('\\');
-    let status = Command::new(osoosi_types::resolve_system_binary("wbadmin.exe"))
-        .args([
-            "start",
-            "backup",
-            &format!("-backupTarget:{}", target),
-            "-include:C:",
-            "-allCritical",
-            "-quiet",
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .status()?;
+    let mut cmd = Command::new(osoosi_types::resolve_system_binary("wbadmin.exe"));
+    cmd.args([
+        "start",
+        "backup",
+        &format!("-backupTarget:{}", target),
+        "-include:C:",
+        "-allCritical",
+        "-quiet",
+    ])
+    .creation_flags(osoosi_types::CREATE_NO_WINDOW)
+    .stdout(Stdio::null())
+    .stderr(Stdio::piped());
+    let status = cmd.status()?;
     if status.success() {
         Ok(format!("Full image backup started to {}", target))
     } else {
@@ -341,7 +348,9 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("data")
         );
-        let status = Command::new(osoosi_types::resolve_system_binary("robocopy.exe"))
+        use std::os::windows::process::CommandExt;
+        let mut robo_cmd = Command::new(osoosi_types::resolve_system_binary("robocopy.exe"));
+        robo_cmd
             .args([
                 src.as_str(),
                 &dest,
@@ -354,9 +363,10 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
                 "/NJH",
                 "/NJS",
             ])
+            .creation_flags(osoosi_types::CREATE_NO_WINDOW)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
+            .stderr(Stdio::null());
+        let status = robo_cmd.status()?;
         // Robocopy exit: 0-7 = success, 8+ = errors
         if status.code().map(|c| c < 8).unwrap_or(false) {
             synced += 1;

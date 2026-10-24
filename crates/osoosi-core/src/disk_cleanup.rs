@@ -102,6 +102,59 @@ pub struct DiskCleanupSweepReport {
     pub tiers: Vec<DiskCleanupTierResult>,
 }
 
+/// Active progress of an asynchronous disk cleanup job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskCleanupJobProgress {
+    pub job_id: String,
+    pub is_active: bool,
+    pub phase: String,
+    pub files_pruned: u64,
+    pub bytes_freed: u64,
+    pub error: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub progress_pct: u8,
+}
+
+/// Response contract for `POST /api/system/cleanup`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiskCleanupJobResponse {
+    pub job_id: String,
+    pub status: String,
+    pub immediate_freed_bytes: u64,
+    pub effective_retention_days: u32,
+    pub pressure_tier: String,
+    pub os_working_set_trimmed: bool,
+    pub background_purge_active: bool,
+    pub message: String,
+}
+
+static CURRENT_CLEANUP_JOB: OnceLock<RwLock<Option<DiskCleanupJobProgress>>> = OnceLock::new();
+
+pub fn get_current_cleanup_job() -> Option<DiskCleanupJobProgress> {
+    CURRENT_CLEANUP_JOB
+        .get_or_init(|| RwLock::new(None))
+        .read()
+        .clone()
+}
+
+pub fn set_current_cleanup_job(progress: DiskCleanupJobProgress) {
+    let lock = CURRENT_CLEANUP_JOB.get_or_init(|| RwLock::new(None));
+    let mut guard = lock.write();
+    *guard = Some(progress);
+}
+
+pub fn update_current_cleanup_job<F: FnOnce(&mut DiskCleanupJobProgress)>(updater: F) {
+    let lock = CURRENT_CLEANUP_JOB.get_or_init(|| RwLock::new(None));
+    let mut guard = lock.write();
+    if let Some(ref mut job) = *guard {
+        updater(job);
+    }
+}
+
 /// Live status snapshot returned by `GET /api/disk-cleanup/status`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiskCleanupStatusSnapshot {
@@ -123,6 +176,20 @@ pub struct DiskCleanupStatusSnapshot {
     pub estimated_reclaimable_mb: f64,
     pub last_sweep: Option<DiskCleanupSweepReport>,
     pub recent_sweeps: Vec<DiskCleanupSweepReport>,
+    #[serde(default)]
+    pub job_id: Option<String>,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default)]
+    pub phase: String,
+    #[serde(default)]
+    pub files_pruned: u64,
+    #[serde(default)]
+    pub bytes_freed: u64,
+    #[serde(default)]
+    pub error: Option<String>,
+    #[serde(default)]
+    pub active_job: Option<DiskCleanupJobProgress>,
 }
 
 pub fn get_disk_cleanup_policy() -> DiskCleanupPolicy {
@@ -267,31 +334,29 @@ fn safe_remove_dir_all(path: &Path) -> (u64, u64) {
 
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
         let empty_dir = std::env::temp_dir().join(format!("osoosi_empty_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&empty_dir);
-        let _ = std::process::Command::new("robocopy")
-            .args([
-                empty_dir.to_string_lossy().as_ref(),
-                path.to_string_lossy().as_ref(),
-                "/MIR",
-                "/NFL",
-                "/NDL",
-                "/NJH",
-                "/NJS",
-                "/NC",
-                "/NS",
-                "/NP",
-                "/MT:32",
-            ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let mut robo = std::process::Command::new(osoosi_types::resolve_system_binary("robocopy.exe"));
+        robo.args([
+            empty_dir.to_string_lossy().as_ref(),
+            path.to_string_lossy().as_ref(),
+            "/MIR",
+            "/NFL",
+            "/NDL",
+            "/NJH",
+            "/NJS",
+            "/NC",
+            "/NS",
+            "/NP",
+            "/MT:32",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(0x08000000);
+        let _ = robo.status();
         let _ = std::fs::remove_dir(&empty_dir);
-        let _ = std::process::Command::new("cmd")
-            .args(["/C", "rmdir", "/S", "/Q", &path.to_string_lossy()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let _ = std::fs::remove_dir(path).or_else(|_| std::fs::remove_dir_all(path));
         if !path.exists() {
             return (approx_bytes, approx_files.max(1));
         }
@@ -378,17 +443,25 @@ pub fn clean_tier1_scratch_and_debug_targets(
                 let empty_dir =
                     std::env::temp_dir().join(format!("osoosi_empty_bg_{}", std::process::id()));
                 let _ = std::fs::create_dir_all(&empty_dir);
-                let cmd_str = format!(
-                    r#"robocopy "{}" "{}" /MIR /NFL /NDL /NJH /NJS /NC /NS /NP /MT:128 >nul 2>&1 & rmdir /s /q "{}" >nul 2>&1"#,
-                    empty_dir.display(),
-                    target_to_wipe.display(),
-                    target_to_wipe.display()
-                );
-                let _ = std::process::Command::new("cmd")
-                    .args(["/C", &cmd_str])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
+                let empty_clone = empty_dir.clone();
+                let target_clone = target_to_wipe.clone();
+                let _ = std::thread::Builder::new()
+                    .name("osoosi-bg-purge".to_string())
+                    .spawn(move || {
+                        use std::os::windows::process::CommandExt;
+                        let mut robo = std::process::Command::new(osoosi_types::resolve_system_binary("robocopy.exe"));
+                        robo.args([
+                            empty_clone.to_string_lossy().as_ref(),
+                            target_clone.to_string_lossy().as_ref(),
+                            "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP", "/MT:128",
+                        ])
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .creation_flags(0x08000000);
+                        let _ = robo.status();
+                        let _ = std::fs::remove_dir(&empty_clone);
+                        let _ = std::fs::remove_dir(&target_clone).or_else(|_| std::fs::remove_dir_all(&target_clone));
+                    });
                 freed_bytes = freed_bytes.saturating_add(approx_b);
                 files_removed = files_removed.saturating_add(approx_f.max(1));
                 details.push(format!(
@@ -1209,6 +1282,19 @@ pub fn get_disk_cleanup_status_snapshot() -> DiskCleanupStatusSnapshot {
         .read()
         .clone();
 
+    let job_opt = get_current_cleanup_job();
+    let (job_id, is_active, phase, files_pruned, bytes_freed, error) = match &job_opt {
+        Some(j) => (
+            Some(j.job_id.clone()),
+            j.is_active,
+            j.phase.clone(),
+            j.files_pruned,
+            j.bytes_freed,
+            j.error.clone(),
+        ),
+        None => (None, false, "idle".to_string(), 0, 0, None),
+    };
+
     DiskCleanupStatusSnapshot {
         status: "ok".to_string(),
         watchdog_active: DISK_WATCHDOG_ACTIVE.load(Ordering::Relaxed),
@@ -1230,6 +1316,13 @@ pub fn get_disk_cleanup_status_snapshot() -> DiskCleanupStatusSnapshot {
         estimated_reclaimable_mb: (reclaimable_mb * 100.0).round() / 100.0,
         last_sweep,
         recent_sweeps,
+        job_id,
+        is_active,
+        phase,
+        files_pruned,
+        bytes_freed,
+        error,
+        active_job: job_opt,
     }
 }
 
