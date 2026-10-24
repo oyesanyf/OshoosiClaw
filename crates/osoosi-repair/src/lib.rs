@@ -988,7 +988,8 @@ impl PatchEngine {
                     let kb_num = kb.trim_start_matches("KB");
                     info!("Attempting wusa rollback for {}...", kb);
 
-                    let mut wusa_cmd = Command::new(osoosi_types::resolve_system_binary("wusa.exe"));
+                    let mut wusa_cmd =
+                        Command::new(osoosi_types::resolve_system_binary("wusa.exe"));
                     wusa_cmd.args([
                         "/uninstall",
                         &format!("/kb:{}", kb_num),
@@ -1028,7 +1029,8 @@ impl PatchEngine {
                                 "/Quiet"
                             ];
 
-                            let mut dism_cmd = Command::new(osoosi_types::resolve_system_binary("dism.exe"));
+                            let mut dism_cmd =
+                                Command::new(osoosi_types::resolve_system_binary("dism.exe"));
                             dism_cmd.args(dism_args);
                             dism_cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
                             let dism_fut = dism_cmd.status();
@@ -1045,7 +1047,8 @@ impl PatchEngine {
 
                             if !dism_status.success() {
                                 // Try generic package name if specific one fails
-                                let mut dism_fallback_cmd = Command::new(osoosi_types::resolve_system_binary("dism.exe"));
+                                let mut dism_fallback_cmd =
+                                    Command::new(osoosi_types::resolve_system_binary("dism.exe"));
                                 dism_fallback_cmd.args([
                                     "/Online",
                                     "/Remove-Package",

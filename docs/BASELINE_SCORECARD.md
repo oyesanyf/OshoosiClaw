@@ -75,6 +75,8 @@ Every vector across both domains is audited against three strict, objective chec
 | **EDR-VEC-18** | HTTP Dual Framing & Desync Attacks | RFC 9112 | `crates/osoosi-dashboard/src/lib.rs:1050` | **PASS**: Framing defense middleware rejects dual framing & HEAD body | **FAIL**: Unit test in `lib.rs:12520`; no multi-trial wire test | **FAIL** |
 | **EDR-VEC-19** | Arbitrary File Decompilation / REA Oracle | CWE-200, T1083 | **FAIL**: `dashboard/src/lib.rs:1180` | **FAIL**: `/api/rea/v1/analyze` in `is_public_bypass`; disassembles any host file | **FAIL**: NONE | **FAIL** |
 | **EDR-VEC-20** | SkyRL Model Retraining & Adapter Tampering | T1565.001 | **FAIL**: `dashboard/src/lib.rs:1178` | **FAIL**: `/api/skyrl/v1/train` in `is_public_bypass`; unauthenticated model mutation | **FAIL**: NONE | **FAIL** |
+| **EDR-VEC-23** | Interactive Elevated Console / QuickEdit Freeze & Injection | T1562.001, T1055.011 | `crates/osoosi-core/src/console_defense.rs:75` | **PASS**: `harden_windows_console()` clears QuickEdit/Insert/Mouse & sets Extended Flags; FreeConsole() in headless mode; CREATE_NO_WINDOW child spawns; ElevatedConsoleHijackDetector | **PASS**: `edr_vec_23_console_freeze_and_injection_defense.rs` (3 agreeing trials) | **PASS** |
+
 
 ### Domain 1 Baseline Summary:
 - **Total Vectors**: 20
@@ -153,6 +155,17 @@ During independent adversarial auditing of the codebase, 4 previously uncataloge
 - **Citation**: `crates/osoosi-sandbox/src/lib.rs:528`
 - **Mechanism**: In `run_script`, the WASI context is constructed via `let wasi_p1 = wasmtime_wasi::WasiCtxBuilder::new().build_p1();` without constraining preopened directories. Furthermore, `validate_sandbox_relative_path` (line 640) is never called on paths accessed during execution, allowing WASM modules to bypass sandbox path boundaries.
 - **Grading**: Check 1 = FAIL, Check 2 = FAIL, Check 3 = FAIL.
+
+### 5. EDR-VEC-23: Interactive Elevated Console / Conhost QuickEdit Freeze, WriteConsoleInput Injection, & Parent cmd.exe Shell Drop
+- **Citation**: `crates/osoosi-core/src/console_defense.rs`, `crates/osoosi-behavioral/src/detectors.rs`, `crates/osoosi-cli/src/main.rs:811, 861`
+- **Mechanism**: On Windows, interactive conhost windows default to `ENABLE_QUICK_EDIT_MODE (0x0040)`. Clicking inside the window enters `Select` mode and blocks `stdout`/`stderr` writes, freezing any security/agent daemon that logs to the console. Furthermore, processes attaching to interactive consoles could inject input records via `WriteConsoleInputW` or scrape sensitive tokens, while Ctrl+C could drop into an elevated cmd.exe parent.
+- **Remediation**:
+  1. `harden_windows_console()` strips `ENABLE_QUICK_EDIT_MODE (0x0040)`, `ENABLE_INSERT_MODE (0x0020)`, and `ENABLE_MOUSE_INPUT (0x0010)` while setting `ENABLE_EXTENDED_FLAGS (0x0080)` and flushes console input buffer on Windows startup.
+  2. FreeConsole() detaches console in headless/service/daemon mode (`--headless`, `service run`, `daemon`, `--detach`), suppressing raw token emission.
+  3. `CommandConsoleExt` enforces `CREATE_NO_WINDOW (0x08000000)` on all Windows child process spawns.
+  4. `ElevatedConsoleHijackDetector` behaviorally detects QuickEdit freeze, buffer injection, and unsigned long-running processes on interactive elevated conhost windows.
+- **Grading**: Check 1 = PASS, Check 2 = PASS, Check 3 = PASS (`edr_vec_23_console_freeze_and_injection_defense.rs` with 3 agreeing trials).
+
 
 ---
 

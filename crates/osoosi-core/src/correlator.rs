@@ -181,6 +181,48 @@ impl EventCorrelator {
                     alert_score = 0.3;
                     reason = format!("Suspicious command line execution: {}", command_line);
                 }
+
+                // EDR-VEC-23: Interactive elevated console hijack, buffer injection, and QuickEdit freeze detector
+                let parent_lower = parent_image.to_ascii_lowercase();
+                let cmd_lower = command_line.to_ascii_lowercase();
+                let is_console_threat = parent_lower.ends_with("cmd.exe")
+                    || parent_lower.ends_with("start.exe")
+                    || cmd_lower.contains("writeconsoleinput")
+                    || cmd_lower.contains("attachconsole");
+
+                if is_console_threat {
+                    let console_ctx = crate::console_defense::ConsoleProcessContext {
+                        pid,
+                        process_name: image.to_string(),
+                        command_line: command_line.to_string(),
+                        parent_name: parent_image.to_string(),
+                        parent_command_line: String::new(),
+                        is_elevated: true,
+                        is_signed: ctx.is_signed,
+                        has_attached_console: true,
+                        console_mode: None,
+                        console_window_title: None,
+                        attempted_buffer_injection: cmd_lower.contains("writeconsoleinput")
+                            || cmd_lower.contains("attachconsole"),
+                        running_duration_secs: 0,
+                    };
+
+                    if let Some(alert) =
+                        crate::console_defense::ElevatedConsoleHijackDetector::evaluate(
+                            &console_ctx,
+                        )
+                    {
+                        alert_score = alert_score.max(0.85);
+                        if !reason.is_empty() {
+                            reason.push_str(" | ");
+                        }
+                        reason.push_str(&format!(
+                            "ConsoleHijack: {} ({}) - {}",
+                            alert.rule_id, alert.mitre_technique, alert.description
+                        ));
+                    }
+                }
+
                 ctx.add_event(
                     "ProcessCreate",
                     &format!("Parent: {} | Cmd: {}", parent_image, command_line),

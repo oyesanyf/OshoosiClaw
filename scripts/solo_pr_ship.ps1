@@ -171,12 +171,24 @@ for attempt in range(1, 6):
                 sys.exit(1)
 " "$prNumber"
 
-# Switch back to main and pull latest
-git checkout main
-git pull origin main
+# Switch back to main and pull latest, or sync worktree to origin/main if main is checked out in another worktree
+$checkoutSuccess = $false
+try {
+    $out = git checkout main 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        $checkoutSuccess = $true
+        git pull origin main
+        git branch -D $branchName 2>$null
+    }
+} catch {
+    $checkoutSuccess = $false
+}
 
-# Delete local branch
-git branch -D $branchName
+if (-not $checkoutSuccess) {
+    Write-Host "Worktree detected or main in use: syncing current worktree branch with origin/main..." -ForegroundColor Yellow
+    git fetch origin main --quiet
+    git reset --hard origin/main
+}
 
 # Delete remote branch if still present
 try {

@@ -31,6 +31,12 @@ pub mod baseline;
 pub mod browser_guard;
 pub mod canary;
 pub mod config_integrity;
+pub mod console_defense;
+pub use console_defense::{
+    compute_hardened_console_mode, detach_console, flush_console_input, harden_windows_console,
+    is_console_mode_hardened, CommandConsoleExt, ConsoleProcessContext, ConsoleSecurityAlert,
+    ElevatedConsoleHijackDetector,
+};
 pub mod disk_cleanup;
 pub mod firewall;
 pub mod forensics;
@@ -41,10 +47,9 @@ pub mod hybrid_runtime;
 pub mod landlock;
 pub use disk_cleanup::{
     evaluate_disk_pressure, get_current_cleanup_job, get_disk_cleanup_policy,
-    get_disk_cleanup_status_snapshot, run_autonomous_disk_cleanup_sweep,
-    set_current_cleanup_job, spawn_autonomous_disk_cleanup_watchdog,
-    update_current_cleanup_job, update_disk_cleanup_policy, DiskCleanupJobProgress,
-    DiskCleanupJobResponse, DiskCleanupPolicy, DiskCleanupStatusSnapshot,
+    get_disk_cleanup_status_snapshot, run_autonomous_disk_cleanup_sweep, set_current_cleanup_job,
+    spawn_autonomous_disk_cleanup_watchdog, update_current_cleanup_job, update_disk_cleanup_policy,
+    DiskCleanupJobProgress, DiskCleanupJobResponse, DiskCleanupPolicy, DiskCleanupStatusSnapshot,
     DiskCleanupSweepReport, DiskCleanupTierResult, DiskPressureLevel,
 };
 pub mod memory_watchdog;
@@ -4405,7 +4410,8 @@ impl EdrOrchestrator {
         }
 
         let compacted_audit_entries = self.audit.compact_memory(4096);
-        let bytes_freed = (evicted_behavioral * 64 + evicted_alerts * 128 + evicted_broadcast * 64) as u64;
+        let bytes_freed =
+            (evicted_behavioral * 64 + evicted_alerts * 128 + evicted_broadcast * 64) as u64;
 
         let details = serde_json::json!({
             "behavioral_debouncer": evicted_behavioral,
@@ -4432,7 +4438,11 @@ impl EdrOrchestrator {
             job.phase = "target_debug".to_string();
             job.progress_pct = 25;
         });
-        let sweep_mode = if days_retention == 0 { "deep_cargo" } else { "standard" };
+        let sweep_mode = if days_retention == 0 {
+            "deep_cargo"
+        } else {
+            "standard"
+        };
         let autonomous_sweep = crate::disk_cleanup::run_autonomous_disk_cleanup_sweep(sweep_mode);
         total_bytes = total_bytes.saturating_add(autonomous_sweep.bytes_freed);
         total_files = total_files.saturating_add(autonomous_sweep.files_removed);
@@ -4457,7 +4467,9 @@ impl EdrOrchestrator {
         });
         let log_dir = osoosi_types::resolve_log_directory();
         let log_cfg = osoosi_types::load_log_retention_config();
-        if let Ok(sum) = crate::log_retention::LogRetentionManager::maintain_logs(&log_dir, &log_cfg) {
+        if let Ok(sum) =
+            crate::log_retention::LogRetentionManager::maintain_logs(&log_dir, &log_cfg)
+        {
             total_bytes = total_bytes.saturating_add(sum.bytes_freed);
             total_files = total_files.saturating_add(sum.files_pruned as u64);
         }
@@ -4471,7 +4483,10 @@ impl EdrOrchestrator {
             job.files_pruned = total_files;
             job.completed_at = Some(chrono::Utc::now().to_rfc3339());
         });
-        info!("[CLEANUP-BG] Completed background cleanup job {}: freed {} bytes across {} files", job_id, total_bytes, total_files);
+        info!(
+            "[CLEANUP-BG] Completed background cleanup job {}: freed {} bytes across {} files",
+            job_id, total_bytes, total_files
+        );
     }
 
     /// Comprehensive memory and disk cleanup routine with dynamic scaling based on real-time disk pressure.

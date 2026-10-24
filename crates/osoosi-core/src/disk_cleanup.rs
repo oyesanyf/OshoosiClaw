@@ -337,7 +337,8 @@ fn safe_remove_dir_all(path: &Path) -> (u64, u64) {
         use std::os::windows::process::CommandExt;
         let empty_dir = std::env::temp_dir().join(format!("osoosi_empty_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&empty_dir);
-        let mut robo = std::process::Command::new(osoosi_types::resolve_system_binary("robocopy.exe"));
+        let mut robo =
+            std::process::Command::new(osoosi_types::resolve_system_binary("robocopy.exe"));
         robo.args([
             empty_dir.to_string_lossy().as_ref(),
             path.to_string_lossy().as_ref(),
@@ -449,18 +450,29 @@ pub fn clean_tier1_scratch_and_debug_targets(
                     .name("osoosi-bg-purge".to_string())
                     .spawn(move || {
                         use std::os::windows::process::CommandExt;
-                        let mut robo = std::process::Command::new(osoosi_types::resolve_system_binary("robocopy.exe"));
+                        let mut robo = std::process::Command::new(
+                            osoosi_types::resolve_system_binary("robocopy.exe"),
+                        );
                         robo.args([
                             empty_clone.to_string_lossy().as_ref(),
                             target_clone.to_string_lossy().as_ref(),
-                            "/MIR", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP", "/MT:128",
+                            "/MIR",
+                            "/NFL",
+                            "/NDL",
+                            "/NJH",
+                            "/NJS",
+                            "/NC",
+                            "/NS",
+                            "/NP",
+                            "/MT:128",
                         ])
                         .stdout(std::process::Stdio::null())
                         .stderr(std::process::Stdio::null())
                         .creation_flags(0x08000000);
                         let _ = robo.status();
                         let _ = std::fs::remove_dir(&empty_clone);
-                        let _ = std::fs::remove_dir(&target_clone).or_else(|_| std::fs::remove_dir_all(&target_clone));
+                        let _ = std::fs::remove_dir(&target_clone)
+                            .or_else(|_| std::fs::remove_dir_all(&target_clone));
                     });
                 freed_bytes = freed_bytes.saturating_add(approx_b);
                 files_removed = files_removed.saturating_add(approx_f.max(1));

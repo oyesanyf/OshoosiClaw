@@ -1042,10 +1042,13 @@ mod tests {
         {
             // Spawn a dummy background process to trap
             use std::os::windows::process::CommandExt;
-            let mut cmd = std::process::Command::new(osoosi_types::resolve_system_binary("ping.exe"));
+            let mut cmd =
+                std::process::Command::new(osoosi_types::resolve_system_binary("ping.exe"));
             cmd.args(["127.0.0.1", "-n", "30"]);
             cmd.creation_flags(osoosi_types::CREATE_NO_WINDOW);
-            let mut child = cmd.spawn().expect("Failed to spawn dummy child process for test");
+            let mut child = cmd
+                .spawn()
+                .expect("Failed to spawn dummy child process for test");
 
             let pid = child.id();
             assert!(pid > 0);

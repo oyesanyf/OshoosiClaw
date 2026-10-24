@@ -19,6 +19,7 @@ mod colog;
 pub mod consensus;
 pub mod deception;
 pub mod decision_model;
+pub mod detectors;
 pub mod ebpf_monitor;
 pub mod embedding_gemma;
 pub mod feedback;
@@ -47,6 +48,7 @@ pub use agentic_arbitrator::{
 };
 pub use analyzer::{AnalysisMode, BehavioralAnalyzer, InvestigativePrompt};
 pub use classifier::{BehavioralClassifier, BehavioralResult};
+pub use detectors::{ConsoleProcessContext, ConsoleSecurityAlert, ElevatedConsoleHijackDetector};
 pub use ebpf_monitor::EbpfMonitor;
 pub use embedding_gemma::{EmbeddingGemma2Engine, MatryoshkaDim};
 pub use feedback::{FeedbackStore, LabeledSample};

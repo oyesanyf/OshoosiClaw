@@ -646,26 +646,26 @@ echo "DONE: YARA provisioning complete"
                 };
             }
 
-            let installer_url = "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh";
-            let temp_script = std::env::temp_dir().join(format!("openshell_install_{}.sh", std::process::id()));
+            let installer_url =
+                "https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh";
+            let temp_script =
+                std::env::temp_dir().join(format!("openshell_install_{}.sh", std::process::id()));
             let curl_res = Command::new("curl")
                 .args(["-LsSf", installer_url, "-o", &temp_script.to_string_lossy()])
                 .output();
 
             let output = match curl_res {
                 Ok(c_out) if c_out.status.success() => {
-                    let sh_res = Command::new("sh")
-                        .arg(&temp_script)
-                        .output();
+                    let sh_res = Command::new("sh").arg(&temp_script).output();
                     let _ = std::fs::remove_file(&temp_script);
                     sh_res
                 }
                 Ok(c_out) => {
                     let _ = std::fs::remove_file(&temp_script);
-                    Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("curl failed to download install script: {}", String::from_utf8_lossy(&c_out.stderr)),
-                    ))
+                    Err(std::io::Error::other(format!(
+                        "curl failed to download install script: {}",
+                        String::from_utf8_lossy(&c_out.stderr)
+                    )))
                 }
                 Err(e) => {
                     let _ = std::fs::remove_file(&temp_script);
