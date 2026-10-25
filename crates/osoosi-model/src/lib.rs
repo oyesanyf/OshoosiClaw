@@ -16,4 +16,4 @@ mod train;
 pub use malconv::{preprocess_binary, preprocess_bytes, MalConv};
 pub use malware::{MalwareScanResult, MalwareScanner, MalwareScannerStats};
 pub use sorel_ffnn::SorelFFNN;
-pub use train::{ModelConfig, ThreatModel};
+pub use train::{ModelConfig, ModelWeights, ThreatModel};

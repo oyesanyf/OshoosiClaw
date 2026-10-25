@@ -538,7 +538,6 @@ impl GoogleSafeBrowsingEngine {
                     continue;
                 }
             }
-            drop(self.verdict_cache.get(&canonical));
             canonical_to_raw
                 .entry(canonical.clone())
                 .or_default()

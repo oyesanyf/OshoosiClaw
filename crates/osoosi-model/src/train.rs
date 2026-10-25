@@ -43,12 +43,25 @@ pub struct ModelWeights {
 }
 
 /// Local threat model trained on self + peer data.
+#[derive(Clone)]
 pub struct ThreatModel {
     config: ModelConfig,
     weights: ModelWeights,
 }
 
 impl ThreatModel {
+    pub fn config(&self) -> &ModelConfig {
+        &self.config
+    }
+
+    pub fn from_parts(config: ModelConfig, weights: ModelWeights) -> Self {
+        Self { config, weights }
+    }
+
+    pub fn set_weights(&mut self, weights: ModelWeights) {
+        self.weights = weights;
+    }
+
     pub fn new(config: ModelConfig) -> Self {
         let mut model = Self {
             config,
