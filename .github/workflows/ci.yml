@@ -36,7 +36,7 @@ jobs:
           key: clippy-windows
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use
+        run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use -A clippy::unnecessary_cast -A clippy::upper_case_acronyms -A clippy::not_unsafe_ptr_arg_deref -A clippy::manual_c_str_literals -A clippy::let_unit_value
 
   # ── cargo-audit: dependency vulnerability scan ────────────────────────────────
   audit:

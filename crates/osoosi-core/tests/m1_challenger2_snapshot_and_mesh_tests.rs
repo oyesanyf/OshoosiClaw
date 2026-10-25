@@ -256,8 +256,13 @@ async fn test_on_demand_sync_execution_and_persistence() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
-    // Copy initial baseline snapshots to temp_dir
-    let repo_dir = PathBuf::from("rules/ai_threat_feeds");
+    let repo_dir = [
+        PathBuf::from("rules/ai_threat_feeds"),
+        PathBuf::from("../../rules/ai_threat_feeds"),
+    ]
+    .into_iter()
+    .find(|p| p.exists())
+    .unwrap_or_else(|| PathBuf::from("rules/ai_threat_feeds"));
     for file in &[
         AVID_SNAPSHOT_FILE,
         AIID_SNAPSHOT_FILE,
@@ -347,7 +352,13 @@ async fn test_mesh_resilience_disabled_and_broken_channel() {
     let _ = fs::remove_dir_all(&temp_dir);
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
-    let repo_dir = PathBuf::from("rules/ai_threat_feeds");
+    let repo_dir = [
+        PathBuf::from("rules/ai_threat_feeds"),
+        PathBuf::from("../../rules/ai_threat_feeds"),
+    ]
+    .into_iter()
+    .find(|p| p.exists())
+    .unwrap_or_else(|| PathBuf::from("rules/ai_threat_feeds"));
     for file in &[
         AVID_SNAPSHOT_FILE,
         AIID_SNAPSHOT_FILE,
