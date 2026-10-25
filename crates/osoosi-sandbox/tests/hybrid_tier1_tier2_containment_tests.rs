@@ -6,8 +6,9 @@
 //! - Unified `TieredExecutionDispatcher` routing Tier 1 vs Tier 2 workloads.
 
 use osoosi_sandbox::{
-    open_confined, ExecutionTier, SandboxJobObject, TieredExecutionDispatcher, TieredToolRequest,
-    WasmSandboxLimits, WasmTier1Executor, INTEGRITY_MEDIUM,
+    detect_renamed_interpreter_marker, open_confined, ExecutableIdentityVerifier, ExecutionTier,
+    MeasuredActuationSample, MercuryContainmentEngine, SandboxJobObject, TieredExecutionDispatcher,
+    TieredToolRequest, WasmSandboxLimits, WasmTier1Executor, WindowsJobObject, INTEGRITY_MEDIUM,
 };
 use osoosi_types::{ArmRole, OctopusSecurityError};
 use serde::{Deserialize, Serialize};
@@ -267,6 +268,20 @@ fn test_tiered_dispatcher_routes_tier1_wasm_and_tier2_win32() {
         .expect("Job accounting snapshot recorded");
     assert!(acct.total_processes >= 1);
 
+    #[cfg(windows)]
+    {
+        assert!(receipt_t2.win32_appcontainer_verification.is_some());
+        let ac_ver = receipt_t2.win32_appcontainer_verification.as_ref().unwrap();
+        assert!(ac_ver.is_appcontainer, "Must be verified inside AppContainer");
+        assert!(ac_ver.job_membership_verified, "Job membership must be verified");
+        assert!(receipt_t2.verified_executable_metadata.is_some());
+        let meta = receipt_t2.verified_executable_metadata.as_ref().unwrap();
+        assert!(meta.is_system32_binary, "cmd.exe must be identified as System32 binary");
+        assert_eq!(meta.sha256_hex.len(), 64);
+        assert!(receipt_t2.job_io_sample.is_some(), "Must include MeasuredActuationSample");
+        assert!(receipt_t2.mercury_evaluation.is_some(), "Must include Mercury evaluation");
+    }
+
     let _ = std::fs::remove_dir_all(&scratch_dir);
 }
 
@@ -382,3 +397,130 @@ fn test_tier2_deelevated_child_denies_sam_and_physical_drive_with_error_5() {
     assert!(!report.reg_save_sam_succeeded);
     assert!(!report.reg_save_file_exists);
 }
+
+#[test]
+fn test_executable_identity_verifier_rejects_forbidden_interpreters() {
+    let verifier = ExecutableIdentityVerifier::default();
+    let forbidden = [
+        "powershell.exe",
+        "powershell",
+        "pwsh.exe",
+        "pwsh",
+        "python.exe",
+        "python",
+        "python3.exe",
+        "mshta.exe",
+        "cscript.exe",
+        "wscript.exe",
+    ];
+
+    for target in forbidden {
+        let err = verifier
+            .verify_and_lock(target, None)
+            .expect_err(&format!("Target '{}' must be rejected", target));
+        match err {
+            OctopusSecurityError::IsolationViolation(msg) => {
+                assert!(
+                    msg.contains("EXEC_ID_FORBIDDEN_INTERPRETER"),
+                    "Target '{}' expected EXEC_ID_FORBIDDEN_INTERPRETER, got: {}",
+                    target,
+                    msg
+                );
+            }
+            other => panic!("Target '{}' expected IsolationViolation, got: {:?}", target, other),
+        }
+    }
+
+    // Space-polluted or non-allowlisted program names must also be rejected fail-closed
+    let unapproved = verifier
+        .verify_and_lock("cmd.exe /c powershell", None)
+        .expect_err("Argument-polluted program target must be rejected");
+    assert!(format!("{}", unapproved).contains("EXEC_ID_NOT_ALLOWLISTED"));
+}
+
+#[test]
+fn test_executable_identity_verifier_renamed_interpreter_pe_markers() {
+    // 1. ASCII marker for PowerShell
+    let mut fake_ps_pe = b"MZ\x90\x00\x03\x00\x00\x00".to_vec();
+    fake_ps_pe.extend_from_slice(b"Some header bytes here");
+    fake_ps_pe.extend_from_slice(b"System.Management.Automation");
+    fake_ps_pe.extend_from_slice(b"More trailing bytes");
+    let marker1 = detect_renamed_interpreter_marker(&fake_ps_pe, "totally_safe_tool");
+    assert_eq!(marker1, Some("powershell".to_string()));
+
+    // 2. UTF-16LE marker for PowerShell PDB
+    let mut fake_ps_pdb_pe = b"MZ\x90\x00\x03\x00\x00\x00".to_vec();
+    let utf16_pdb: Vec<u8> = "powershell.pdb"
+        .encode_utf16()
+        .flat_map(|u| u.to_le_bytes())
+        .collect();
+    fake_ps_pdb_pe.extend_from_slice(&utf16_pdb);
+    let marker2 = detect_renamed_interpreter_marker(&fake_ps_pdb_pe, "my_custom_worker");
+    assert_eq!(marker2, Some("powershell_pdb_utf16".to_string()));
+
+    // 3. Python runtime DLL reference
+    let mut fake_py_pe = b"MZ\x90\x00\x03\x00\x00\x00".to_vec();
+    fake_py_pe.extend_from_slice(b"import dependencies: python311.dll embedded");
+    let marker3 = detect_renamed_interpreter_marker(&fake_py_pe, "harmless_calc");
+    assert_eq!(marker3, Some("python_dll".to_string()));
+
+    // 4. Benign bytes -> None
+    let benign = b"MZ\x90\x00\x03\x00\x00\x00Benign executable content without interpreter signatures";
+    assert_eq!(detect_renamed_interpreter_marker(benign, "my_tool"), None);
+}
+
+#[cfg(windows)]
+#[test]
+fn test_executable_identity_verifier_handle_read_lock_blocks_concurrent_write() {
+    let verifier = ExecutableIdentityVerifier::default();
+    // cmd.exe is guaranteed to exist on Windows in System32
+    let handle = verifier
+        .verify_and_lock("cmd.exe", None)
+        .expect("verify_and_lock on cmd.exe must succeed");
+
+    assert_eq!(handle.metadata.normalized_stem, "cmd");
+    assert!(handle.metadata.is_system32_binary);
+    assert_eq!(handle.metadata.sha256_hex.len(), 64);
+
+    // Attempt concurrent open with write access against canonical path.
+    // Because handle is held with FILE_SHARE_READ (omitting FILE_SHARE_WRITE and FILE_SHARE_DELETE),
+    // opening with write access MUST fail with ERROR_SHARING_VIOLATION (32) or ERROR_ACCESS_DENIED (5).
+    let write_attempt = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&handle.metadata.canonical_path);
+
+    let err = write_attempt.expect_err("Concurrent write access must be blocked by handle read-lock");
+    let raw_err = err.raw_os_error().unwrap_or(0);
+    assert!(
+        raw_err == 32 || raw_err == 5,
+        "Expected OS error 32 (ERROR_SHARING_VIOLATION) or 5 (ERROR_ACCESS_DENIED), got: {}",
+        raw_err
+    );
+
+    // Dropping handle releases the lock
+    drop(handle);
+}
+
+#[cfg(windows)]
+#[test]
+fn test_measured_actuation_sample_mercury_evaluation() {
+    let job = WindowsJobObject::create("OsoosiMercuryTestJob", 4, 32 * 1024 * 1024)
+        .expect("WindowsJobObject::create");
+
+    let sample = MeasuredActuationSample::sample_from_job(&job, 0.5)
+        .expect("sample_from_job must succeed");
+    assert_eq!(sample.total_processes_spawned, 0);
+
+    let engine = MercuryContainmentEngine::new();
+    let eval_clean = engine.evaluate_measured_sample("arm-test-1", &sample);
+    assert!(!eval_clean.sulfur_passivated_hgs);
+    assert!(eval_clean.cumulative_mass_fraction < 1.0);
+
+    // Extreme rogue sample with high derived_fragment_mass
+    let mut rogue_sample = sample.clone();
+    rogue_sample.derived_fragment_mass = 1.5;
+    let eval_rogue = engine.evaluate_measured_sample("arm-rogue-1", &rogue_sample);
+    assert!(eval_rogue.sulfur_passivated_hgs);
+    assert!(eval_rogue.reason.contains("HgS sulfur passivation"));
+}
+

@@ -18,6 +18,7 @@ use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 use wasmtime::*;
 
+pub mod executable_identity;
 pub mod hidden_process_ledger;
 pub mod host_interface;
 pub mod kill_switch;
@@ -30,6 +31,11 @@ pub mod token_posture;
 pub mod wasm_tier1;
 pub mod windows;
 
+pub use executable_identity::{
+    detect_renamed_interpreter_marker, normalize_executable_stem, ExecutableIdentityVerifier,
+    VerifiedExecutableHandle, VerifiedExecutableMetadata, ALLOWED_TIER2_EXECUTABLE_STEMS,
+    FORBIDDEN_TIER2_EXECUTABLE_STEMS,
+};
 pub use hidden_process_ledger::{
     list_hidden_spawns, output_hidden, record_hidden_spawn, spawn_hidden, spawn_hidden_tokio,
     status_hidden, HiddenSpawnRecord, LedgeredCommandExt,
@@ -38,7 +44,9 @@ pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url};
 pub use open_confined::open_confined;
 pub use security::SandboxSecurityConfig;
 pub use tiered_executor::{
-    ExecutionTier, TieredExecutionDispatcher, TieredExecutionReceipt, TieredToolRequest,
+    AppContainerTokenVerification, ExecutionTier, MeasuredActuationSample,
+    MercuryContainmentEngine, MercuryEvaluationResult, Tier2ConfinedChildResult,
+    TieredExecutionDispatcher, TieredExecutionReceipt, TieredToolRequest, WindowsJobObject,
 };
 pub use token_posture::{
     current_token_posture, JobAccountingSnapshot, SandboxJobObject, TokenPosture,
