@@ -6,13 +6,15 @@
 //! - Unified `TieredExecutionDispatcher` routing Tier 1 vs Tier 2 workloads.
 
 use osoosi_sandbox::{
-    detect_renamed_interpreter_marker, open_confined, ExecutableIdentityVerifier, ExecutionTier,
-    MeasuredActuationSample, MercuryContainmentEngine, SandboxJobObject, TieredExecutionDispatcher,
-    TieredToolRequest, WasmSandboxLimits, WasmTier1Executor, WindowsJobObject, INTEGRITY_MEDIUM,
+    build_windows_command_line, detect_renamed_interpreter_marker, open_confined,
+    quote_windows_argv_arg, rollback_appcontainer_profile, ExecutableIdentityVerifier,
+    ExecutionTier, MeasuredActuationSample, MercuryContainmentEngine, SandboxJobObject,
+    TieredExecutionDispatcher, TieredToolRequest, WasmSandboxLimits, WasmTier1Executor,
+    WindowsJobObject, INTEGRITY_MEDIUM,
 };
 use osoosi_types::{ArmRole, OctopusSecurityError};
 use serde::{Deserialize, Serialize};
-use std::io::Read;
+use std::io::{Read, Write};
 
 #[test]
 fn test_tier1_wasm_fuel_metering_halts_infinite_loop() {
@@ -523,4 +525,222 @@ fn test_measured_actuation_sample_mercury_evaluation() {
     assert!(eval_rogue.sulfur_passivated_hgs);
     assert!(eval_rogue.reason.contains("HgS sulfur passivation"));
 }
+
+#[test]
+fn test_open_confined_post_verification_truncation() {
+    let scratch_dir = std::env::temp_dir().join(format!(
+        "osoosi_open_confined_trunc_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&scratch_dir);
+    std::fs::create_dir_all(&scratch_dir).expect("create scratch dir");
+
+    // 1. Write an initial 16-byte file
+    {
+        let mut f1 = open_confined(&scratch_dir, "truncate_test.txt", true).expect("open_confined 1");
+        f1.write_all(b"0123456789ABCDEF").expect("write initial 16 bytes");
+    }
+
+    // Verify initial file has length 16
+    let initial_bytes = std::fs::read(scratch_dir.join("truncate_test.txt")).expect("read initial");
+    assert_eq!(initial_bytes.len(), 16);
+
+    // 2. Open with write=true and write a shorter 5-byte payload
+    {
+        let mut f2 = open_confined(&scratch_dir, "truncate_test.txt", true).expect("open_confined 2");
+        f2.write_all(b"short").expect("write short 5 bytes");
+    }
+
+    // 3. Verify file length is strictly 5 and no stale trailing bytes remain
+    let final_bytes = std::fs::read(scratch_dir.join("truncate_test.txt")).expect("read overwritten");
+    assert_eq!(
+        final_bytes, b"short",
+        "open_confined(write=true) must truncate existing file post-verification so no stale trailing bytes remain"
+    );
+
+    let _ = std::fs::remove_dir_all(&scratch_dir);
+}
+
+#[test]
+fn test_msvcrt_command_line_quoting_and_construction() {
+    // 1. Plain tokens without whitespace or quotes need no quotes
+    assert_eq!(quote_windows_argv_arg("simple"), "simple");
+    assert_eq!(quote_windows_argv_arg("foo.exe"), "foo.exe");
+
+    // 2. Empty string must be rendered as ""
+    assert_eq!(quote_windows_argv_arg(""), "\"\"");
+
+    // 3. Whitespace requires double quotes
+    assert_eq!(quote_windows_argv_arg("hello world"), "\"hello world\"");
+
+    // 4. Trailing backslashes before closing quote must be doubled ($2n$)
+    let tricky_arg = r#"C:\path with spaces\trailing\"#;
+    assert_eq!(
+        quote_windows_argv_arg(tricky_arg),
+        r#""C:\path with spaces\trailing\\""#,
+        "Trailing backslash before closing quote must be doubled per MSVCRT rules"
+    );
+
+    // 5. Backslash preceding embedded quote must be doubled ($2n + 1$)
+    let embedded_quote_arg = r#"foo\"bar"#;
+    assert_eq!(
+        quote_windows_argv_arg(embedded_quote_arg),
+        r#""foo\\\"bar""#,
+        "Backslash immediately preceding quote must be doubled before escaping the quote"
+    );
+
+    // 6. Full command line construction
+    let full_cmd = build_windows_command_line(
+        r"C:\Windows\System32\where.exe",
+        &[tricky_arg.to_string(), "".to_string(), "normal".to_string()],
+    );
+    assert!(full_cmd.starts_with(r#""C:\Windows\System32\where.exe""#));
+    assert!(full_cmd.contains(r#""C:\path with spaces\trailing\\""#));
+    assert!(full_cmd.ends_with(r#" "" normal"#));
+}
+
+#[cfg(windows)]
+#[test]
+fn test_executable_identity_non_system32_spoof_rejection() {
+    let test_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test_spoof_bin");
+    let _ = std::fs::remove_dir_all(&test_dir);
+    std::fs::create_dir_all(&test_dir).expect("create test_spoof_bin dir");
+
+    // Minimal valid DOS PE header
+    let mut pe_bytes = vec![0u8; 128];
+    pe_bytes[0] = b'M';
+    pe_bytes[1] = b'Z';
+    pe_bytes[0x3c] = 0x40; // PE signature offset at 0x40
+    pe_bytes[0x40] = b'P';
+    pe_bytes[0x41] = b'E';
+    pe_bytes[0x42] = 0;
+    pe_bytes[0x43] = 0;
+
+    let verifier = ExecutableIdentityVerifier::new();
+
+    for stem in ["cmd", "where", "curl"] {
+        let fake_path = test_dir.join(format!("{}.exe", stem));
+        std::fs::write(&fake_path, &pe_bytes).expect("write fake binary");
+
+        let err = verifier
+            .verify_and_lock(&fake_path.to_string_lossy(), None)
+            .expect_err(&format!("Fake '{}' outside System32 must be rejected", stem));
+
+        match err {
+            OctopusSecurityError::IsolationViolation(msg) => {
+                assert!(
+                    msg.contains("EXEC_ID_NON_SYSTEM32_SPOOF"),
+                    "Expected EXEC_ID_NON_SYSTEM32_SPOOF for '{}', got: {}",
+                    stem,
+                    msg
+                );
+            }
+            other => panic!("Expected IsolationViolation, got: {:?}", other),
+        }
+    }
+
+    let _ = std::fs::remove_dir_all(&test_dir);
+}
+
+#[cfg(windows)]
+#[test]
+fn test_executable_identity_untrusted_install_root_rejection_and_pinning() {
+    use sha2::{Digest, Sha256};
+
+    let temp_dir = std::env::temp_dir().join(format!(
+        "osoosi_install_root_test_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    std::fs::create_dir_all(&temp_dir).expect("create temp dir");
+
+    let mut pe_bytes = vec![0u8; 128];
+    pe_bytes[0] = b'M';
+    pe_bytes[1] = b'Z';
+    pe_bytes[0x3c] = 0x40;
+    pe_bytes[0x40] = b'P';
+    pe_bytes[0x41] = b'E';
+    pe_bytes[0x42] = 0;
+    pe_bytes[0x43] = 0;
+
+    let test_git = temp_dir.join("git.exe");
+    std::fs::write(&test_git, &pe_bytes).expect("write git.exe");
+
+    // Case 1: Unpinned git.exe in temp_dir is rejected as EXEC_ID_UNTRUSTED_INSTALL_ROOT
+    let verifier_unpinned = ExecutableIdentityVerifier::new();
+    let err = verifier_unpinned
+        .verify_and_lock(&test_git.to_string_lossy(), None)
+        .expect_err("Unpinned git.exe in temp_dir must be rejected");
+    match err {
+        OctopusSecurityError::IsolationViolation(msg) => {
+            assert!(
+                msg.contains("EXEC_ID_UNTRUSTED_INSTALL_ROOT")
+                    || msg.contains("EXEC_ID_UNTRUSTED_DIRECTORY_BLOCKED"),
+                "Expected install root or directory rejection, got: {}",
+                msg
+            );
+        }
+        other => panic!("Expected IsolationViolation, got: {:?}", other),
+    }
+
+    // Now test in a non-temp writable directory (target/test_install_root)
+    let non_temp_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("test_install_root");
+    let _ = std::fs::create_dir_all(&non_temp_dir);
+    let test_git_target = non_temp_dir.join("git.exe");
+    std::fs::write(&test_git_target, &pe_bytes).expect("write git.exe in target");
+
+    // Without pin -> EXEC_ID_UNTRUSTED_INSTALL_ROOT
+    let err_target = verifier_unpinned
+        .verify_and_lock(&test_git_target.to_string_lossy(), None)
+        .expect_err("Unpinned git.exe outside approved roots must fail");
+    match err_target {
+        OctopusSecurityError::IsolationViolation(msg) => {
+            assert!(
+                msg.contains("EXEC_ID_UNTRUSTED_INSTALL_ROOT"),
+                "Expected EXEC_ID_UNTRUSTED_INSTALL_ROOT, got: {}",
+                msg
+            );
+        }
+        other => panic!("Expected IsolationViolation, got: {:?}", other),
+    }
+
+    // With SHA-256 pin -> verification succeeds
+    let mut verifier_pinned = ExecutableIdentityVerifier::new();
+    let digest = hex::encode(Sha256::digest(&pe_bytes));
+    verifier_pinned.pin_executable_sha256("git", &digest);
+
+    let handle = verifier_pinned
+        .verify_and_lock(&test_git_target.to_string_lossy(), None)
+        .expect("SHA-256 pinned git.exe must succeed even outside default install roots");
+    assert_eq!(handle.metadata.normalized_stem, "git");
+    assert_eq!(handle.metadata.sha256_hex, digest);
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    let _ = std::fs::remove_dir_all(&non_temp_dir);
+}
+
+#[cfg(windows)]
+#[test]
+fn test_appcontainer_profile_rollback_cleans_profile() {
+    let name = format!("OsoosiClaw.TestRollback.{}", std::process::id());
+    // Safe to invoke even if profile does not exist yet (DeleteAppContainerProfile returns HRESULT)
+    rollback_appcontainer_profile(&name);
+}
+
 

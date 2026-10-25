@@ -270,7 +270,12 @@ mod win_confined {
             _held_dirs.push(dir_file);
         }
 
-        cursor.push(comps.last().unwrap());
+        let leaf_comp = comps.last().ok_or_else(|| {
+            OctopusSecurityError::IsolationViolation(
+                "CONFINED_OPEN_EMPTY_COMPONENTS: Missing leaf path component".to_string(),
+            )
+        })?;
+        cursor.push(leaf_comp);
         let access = if write {
             GENERIC_READ | GENERIC_WRITE
         } else {
@@ -312,6 +317,15 @@ mod win_confined {
                 "CONFINED_OPEN_ESCAPE_DETECTED: Handle final path '{}' is outside canonical sandbox root '{}'",
                 leaf_final, canonical_root
             )));
+        }
+
+        if write {
+            leaf_file.set_len(0).map_err(|e| {
+                OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_OPEN_TRUNCATE_FAILED: Failed to truncate leaf file '{}' (OS Error {})",
+                    relative_input, e
+                ))
+            })?;
         }
 
         Ok(leaf_file)
@@ -376,7 +390,12 @@ mod unix_confined {
             }
         }
 
-        cursor.push(comps.last().unwrap());
+        let leaf_comp = comps.last().ok_or_else(|| {
+            OctopusSecurityError::IsolationViolation(
+                "CONFINED_OPEN_EMPTY_COMPONENTS: Missing leaf path component".to_string(),
+            )
+        })?;
+        cursor.push(leaf_comp);
         if let Ok(m) = std::fs::symlink_metadata(&cursor) {
             if m.file_type().is_symlink() {
                 return Err(OctopusSecurityError::IsolationViolation(
@@ -410,6 +429,14 @@ mod unix_confined {
             return Err(OctopusSecurityError::IsolationViolation(
                 "CONFINED_OPEN_ESCAPE_DETECTED".to_string(),
             ));
+        }
+        if write {
+            file.set_len(0).map_err(|e| {
+                OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_OPEN_TRUNCATE_FAILED: Failed to truncate leaf file: {}",
+                    e
+                ))
+            })?;
         }
         Ok(file)
     }
