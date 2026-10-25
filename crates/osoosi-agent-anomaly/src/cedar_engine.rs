@@ -16,6 +16,72 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use osoosi_types::{ArmRole, OctopusSecurityError};
+
+/// Maps an authenticated ArmRole to its canonical reserved Cedar principal name.
+pub fn canonical_reserved_principal_for_role(role: &ArmRole) -> &'static str {
+    match role {
+        ArmRole::UntrustedDocIngest => "document_arm",
+        ArmRole::AccountingLedgerWrite => "ledger_arm",
+        ArmRole::NetworkEgress => "network_arm",
+        ArmRole::TarpitDecoyDefense => "tarpit_arm",
+        ArmRole::KernelLevelSentinel => "kernel_sentinel_arm",
+        ArmRole::OutboundNotification => "notifier_arm",
+        ArmRole::CedarPolicyEvaluation => "cedar_arm",
+        ArmRole::AtlasThreatIntelligence => "atlas_arm",
+        ArmRole::AnomalyDetection => "anomaly_arm",
+        ArmRole::VulnerabilityResearch => "vulnerability_arm",
+        ArmRole::ContinuousOssFuzz => "oss_fuzz_arm",
+        ArmRole::ContinuousOsvScanner => "osv_scanner_arm",
+        ArmRole::DifferentialProtocolAnalyzer => "protocol_analyzer_arm",
+        ArmRole::AutonomousProtocolResearch => "protocol_research_arm",
+        ArmRole::PostQuantumAttestation => "pqc_arm",
+        ArmRole::EvolutionaryOptimizer => "evolution_arm",
+        ArmRole::DreamRsiOptimizer => "dream_rsi_arm",
+        ArmRole::RecursiveHarnessOptimizer => "harness2_arm",
+    }
+}
+
+/// Checks if an identifier matches one of the reserved Cedar principal identities.
+pub fn is_reserved_principal(agent_id: &str) -> bool {
+    matches!(
+        agent_id,
+        "document_arm"
+            | "ledger_arm"
+            | "network_arm"
+            | "tarpit_arm"
+            | "kernel_sentinel_arm"
+            | "notifier_arm"
+            | "cedar_arm"
+            | "atlas_arm"
+            | "anomaly_arm"
+            | "vulnerability_arm"
+            | "oss_fuzz_arm"
+            | "osv_scanner_arm"
+            | "protocol_analyzer_arm"
+            | "protocol_research_arm"
+            | "pqc_arm"
+            | "evolution_arm"
+            | "dream_rsi_arm"
+            | "harness2_arm"
+    )
+}
+
+/// Validates that an agent claiming a reserved Cedar principal identity has an authenticated role matching that principal.
+/// Rejects unauthorized or mismatched principal claims with `CEDAR_PRINCIPAL_SPOOF_BLOCKED`.
+pub fn validate_cedar_principal_role(
+    agent_id: &str,
+    role: &ArmRole,
+) -> Result<&'static str, OctopusSecurityError> {
+    let role_principal = canonical_reserved_principal_for_role(role);
+    if is_reserved_principal(agent_id) && agent_id != role_principal {
+        return Err(OctopusSecurityError::CapabilityDenied(format!(
+            "CEDAR_PRINCIPAL_SPOOF_BLOCKED: agent_id '{}' conflicts with authenticated role {:?} (expected '{}')",
+            agent_id, role, role_principal
+        )));
+    }
+    Ok(role_principal)
+}
 
 /// The 127-bit Mersenne prime $p = 2^{127} - 1$.
 pub const MERSENNE_127_PRIME: u128 = (1u128 << 127) - 1;
