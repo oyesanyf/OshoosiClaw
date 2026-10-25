@@ -330,7 +330,8 @@ def compact_sqlite_databases(root: Path) -> Dict[str, Any]:
         "events": ("timestamp", 25000),
         "har_entries": ("id", 2000),
         "threats": ("timestamp", 5000),
-        "consensus_findings": ("updated_at", 5000),
+        "consensus_findings": ("evaluated_at", 5000),
+        "file_integrity": ("last_seen", 50000),
     }
 
     for db_path in db_candidates:

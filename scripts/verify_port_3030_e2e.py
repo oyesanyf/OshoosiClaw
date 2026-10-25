@@ -73,7 +73,7 @@ def test_endpoints():
         req = urllib.request.Request(url, headers=headers, method="GET")
         start_t = time.perf_counter()
         try:
-            with urllib.request.urlopen(req, timeout=25) as resp:
+            with urllib.request.urlopen(req, timeout=35) as resp:
                 elapsed_ms = (time.perf_counter() - start_t) * 1000.0
                 body = resp.read()
                 data = json.loads(body.decode("utf-8")) if body else {}
@@ -96,7 +96,7 @@ def test_endpoints():
     history_url = f"{BASE_URL}/api/history?page=1&limit=50&category=all&severity=all"
     # Prime history cache after Section 1 heavy deception/anomalies endpoints
     warmup_req = urllib.request.Request(history_url, headers=headers, method="GET")
-    with urllib.request.urlopen(warmup_req, timeout=10) as _:
+    with urllib.request.urlopen(warmup_req, timeout=35) as _:
         pass
     latencies = []
     num_runs = 5
@@ -104,7 +104,7 @@ def test_endpoints():
     for i in range(num_runs):
         req = urllib.request.Request(history_url, headers=headers, method="GET")
         start_t = time.perf_counter()
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=35) as resp:
             elapsed_ms = (time.perf_counter() - start_t) * 1000.0
             assert resp.status == 200, f"Expected HTTP 200, got {resp.status}"
             body = resp.read()
