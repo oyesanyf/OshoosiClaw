@@ -564,5 +564,143 @@ mod tests {
         let cpu = f32::from_bits(controller.last_cpu_usage.load(Ordering::Relaxed));
         assert!(cpu >= 0.0);
     }
+
+    #[tokio::test]
+    async fn test_stress_5000_tasks_burst_queue_bounds_and_drop_shedding() {
+        let controller = Arc::new(TelemetryController::new());
+        *controller.current_mode.write().unwrap() = TelemetryMode::Burst;
+
+        assert_eq!(controller.dropped_tasks_count(), 0);
+
+        // 1. Flood with 6,000 low-priority tasks under Burst mode (capacity 4096)
+        for _ in 0..6000 {
+            controller.spawn_adaptive(ResourceCategory::IO, Priority::Low, async {});
+        }
+
+        // Exactly 4096 held in queue, and 6000 - 4096 = 1904 dropped
+        let dropped_low = controller.dropped_tasks_count();
+        assert_eq!(
+            dropped_low, 1904,
+            "Queue depth must cap at 4096 and drop exactly 1904 Low-priority tasks"
+        );
+
+        // 2. Concurrently spawn 250 High and 250 Normal priority tasks under full queue
+        let high_executed = Arc::new(AtomicUsize::new(0));
+        let normal_executed = Arc::new(AtomicUsize::new(0));
+
+        let mut join_set = tokio::task::JoinSet::new();
+        for _ in 0..250 {
+            let ctrl = controller.clone();
+            let h = high_executed.clone();
+            join_set.spawn(async move {
+                ctrl.spawn_adaptive(ResourceCategory::IO, Priority::High, async move {
+                    h.fetch_add(1, Ordering::SeqCst);
+                });
+            });
+
+            let ctrl2 = controller.clone();
+            let n = normal_executed.clone();
+            join_set.spawn(async move {
+                ctrl2.spawn_adaptive(ResourceCategory::Net, Priority::Normal, async move {
+                    n.fetch_add(1, Ordering::SeqCst);
+                });
+            });
+        }
+
+        while let Some(res) = join_set.join_next().await {
+            assert!(res.is_ok());
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        // Verify High and Normal tasks were NEVER dropped
+        assert_eq!(
+            controller.dropped_tasks_count(),
+            1904,
+            "High and Normal priority tasks must never be dropped even under full burst queue"
+        );
+        assert_eq!(high_executed.load(Ordering::SeqCst), 250);
+        assert_eq!(normal_executed.load(Ordering::SeqCst), 250);
+
+        // 3. Start worker and transition to Normal mode to verify deferred queue drains cleanly
+        controller.clone().start_adaptive_loop();
+        *controller.current_mode.write().unwrap() = TelemetryMode::Normal;
+
+        // Allow worker to drain the 4096 tasks in batches of 16
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        // Under Normal mode, Low priority tasks bypass the deferred queue and execute immediately
+        let low_normal_executed = Arc::new(AtomicUsize::new(0));
+        for _ in 0..500 {
+            let l = low_normal_executed.clone();
+            controller.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
+                l.fetch_add(1, Ordering::SeqCst);
+            });
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+
+        assert_eq!(
+            low_normal_executed.load(Ordering::SeqCst),
+            500,
+            "Low priority tasks must execute in Normal mode without dropping"
+        );
+        assert_eq!(controller.dropped_tasks_count(), 1904);
+    }
+
+    #[tokio::test]
+    async fn test_stress_concurrent_parking_lot_mutex_system_adaptation_checks() {
+        let controller = Arc::new(TelemetryController::new());
+
+        // Spawn 16 concurrent tasks performing adaptation checks
+        let mut join_set = tokio::task::JoinSet::new();
+        for _ in 0..16 {
+            let ctrl = controller.clone();
+            join_set.spawn(async move {
+                for _ in 0..10 {
+                    let res = ctrl.run_adaptation_check().await;
+                    assert!(res.is_ok(), "Adaptation check must succeed under concurrency");
+                }
+            });
+        }
+
+        // Spawn 4 concurrent blocking threads directly exercising the parking_lot Mutex
+        let mut thread_handles = Vec::new();
+        for _ in 0..4 {
+            let sys_arc = controller.sys.clone();
+            let handle = std::thread::spawn(move || {
+                for _ in 0..25 {
+                    let mut sys = sys_arc.lock();
+                    sys.refresh_cpu();
+                    sys.refresh_memory();
+                    let cpu = sys.global_cpu_info().cpu_usage();
+                    let mem = sys.used_memory();
+                    assert!(cpu >= 0.0 && cpu <= 100.0);
+                    assert!(mem > 0);
+                }
+            });
+            thread_handles.push(handle);
+        }
+
+        // Await completion within timeout to guarantee 0 deadlocks
+        let timeout_result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            while let Some(res) = join_set.join_next().await {
+                assert!(res.is_ok());
+            }
+            for handle in thread_handles {
+                handle.join().expect("Background sys thread must not panic");
+            }
+        })
+        .await;
+
+        assert!(
+            timeout_result.is_ok(),
+            "Concurrent adaptation checks must complete within timeout (0 deadlocks)"
+        );
+
+        let final_cpu = f32::from_bits(controller.last_cpu_usage.load(Ordering::Relaxed));
+        let final_mem = f32::from_bits(controller.last_mem_usage.load(Ordering::Relaxed));
+        assert!(final_cpu >= 0.0 && final_cpu <= 100.0);
+        assert!(final_mem >= 0.0 && final_mem <= 100.0);
+    }
 }
 
