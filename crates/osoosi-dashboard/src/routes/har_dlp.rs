@@ -699,6 +699,9 @@ pub fn resolve_local_uploaded_file(
                 }
             }
         }
+        // An explicit candidate filename or path was specified but was not found on disk.
+        // Fail resolution rather than picking an unrelated ambient file.
+        return None;
     }
 
     // Case 2: No filename provided, but destination URL targets dlptest.com or an upload sink.
@@ -1066,20 +1069,23 @@ pub fn is_dlp_event_allowlisted(
                 return true;
             }
         } else if let Some(obj) = item.as_object() {
-            if let Some(sink) = obj.get("destination_sink").and_then(|v| v.as_str()) {
-                if !sink.is_empty() && sink == destination_sink {
+            let entry_sink = obj.get("destination_sink").and_then(|v| v.as_str()).unwrap_or("");
+            let entry_zk = obj.get("zk_commitment_hex").or_else(|| obj.get("zk_proof_commitment")).and_then(|v| v.as_str()).unwrap_or("");
+            let entry_prev = obj.get("scrubbed_preview").and_then(|v| v.as_str()).unwrap_or("");
+
+            if !entry_zk.is_empty() && entry_zk == zk_commitment {
+                return true;
+            }
+            if !entry_sink.is_empty() && (entry_sink == destination_sink || host_of(entry_sink) == host_of(destination_sink)) {
+                if !entry_prev.is_empty() && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev)) {
+                    return true;
+                }
+                if entry_zk.is_empty() && entry_prev.is_empty() {
                     return true;
                 }
             }
-            if let Some(zk) = obj.get("zk_commitment_hex").or_else(|| obj.get("zk_proof_commitment")).and_then(|v| v.as_str()) {
-                if !zk.is_empty() && zk == zk_commitment {
-                    return true;
-                }
-            }
-            if let Some(prev) = obj.get("scrubbed_preview").and_then(|v| v.as_str()) {
-                if !prev.is_empty() && prev == scrubbed_preview {
-                    return true;
-                }
+            if entry_sink.is_empty() && !entry_prev.is_empty() && entry_prev == scrubbed_preview {
+                return true;
             }
         }
     }
@@ -2272,8 +2278,11 @@ mod tests {
         assert_ne!(a, c);
     }
 
+    static TEST_HAR_STAGE_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn test_resolve_local_uploaded_file_direct_and_search() {
+        let _guard = TEST_HAR_STAGE_LOCK.lock();
         let temp_dir = std::env::temp_dir();
         let fname = format!("test_patient_phi_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
@@ -2307,6 +2316,7 @@ mod tests {
 
     #[test]
     fn test_extract_requests_with_file_upload_metadata() {
+        let _guard = TEST_HAR_STAGE_LOCK.lock();
         let temp_dir = std::env::temp_dir();
         let fname = format!("test_discharge_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
@@ -2356,6 +2366,7 @@ mod tests {
 
     #[test]
     fn test_recent_touch_and_clean_upload_restores_browser_block() {
+        let _guard = TEST_HAR_STAGE_LOCK.lock();
         // 1. Verify that a newly touched benign file in temp_dir is resolved by URL-only lookup
         //    ahead of any older files on disk because `recent_touch` is sorted first (`b.2.cmp(&a.2)`).
         let temp_dir = std::env::temp_dir();
@@ -2411,6 +2422,7 @@ mod tests {
 
     #[test]
     fn test_rapid_alternating_uploads_within_single_bucket_and_atime_immunity() {
+        let _guard = TEST_HAR_STAGE_LOCK.lock();
         // Verify that rapid alternating uploads (Sensitive A -> Benign B -> Sensitive A) within the
         // EXACT SAME 15-second `time_bucket` produce distinct deduplication keys (`compute_live_sink_dedupe_key`)
         // so `dedupe_new` never drops the re-selected file as a duplicate.

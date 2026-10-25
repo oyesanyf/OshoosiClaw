@@ -27,6 +27,8 @@ pub struct DlpInspectionEventRecord {
     pub timestamp: String,
     pub actor_process: String,
     pub destination_sink: String,
+    #[serde(default)]
+    pub destination: String,
     pub channel: String,
     pub inspected_bytes: usize,
     pub allowed: bool,
@@ -90,6 +92,16 @@ pub struct DlpInspectionEventRecord {
     /// Consensus-gated containment outcome, when the containment engine evaluated the event.
     #[serde(default)]
     pub containment: Option<Value>,
+}
+
+impl DlpInspectionEventRecord {
+    pub fn destination(&self) -> &str {
+        if !self.destination.is_empty() {
+            &self.destination
+        } else {
+            &self.destination_sink
+        }
+    }
 }
 
 fn default_repeat_count() -> u32 {
@@ -477,6 +489,14 @@ pub fn inspect_and_record_with_options(
         timestamp: chrono::Utc::now().to_rfc3339(),
         actor_process: actor_process.to_string(),
         destination_sink: destination_sink.to_string(),
+        destination: {
+            let h = crate::routes::har_dlp::host_of(destination_sink);
+            if h.is_empty() {
+                destination_sink.to_string()
+            } else {
+                h
+            }
+        },
         channel: channel.to_string(),
         inspected_bytes: tier1.inspected_bytes,
         allowed: tier1.allowed,
@@ -767,6 +787,14 @@ pub fn inspect_and_record_shared(
         timestamp: chrono::Utc::now().to_rfc3339(),
         actor_process: actor_process.to_string(),
         destination_sink: destination_sink.to_string(),
+        destination: {
+            let h = crate::routes::har_dlp::host_of(destination_sink);
+            if h.is_empty() {
+                destination_sink.to_string()
+            } else {
+                h
+            }
+        },
         channel: channel.to_string(),
         inspected_bytes: tier1.inspected_bytes,
         allowed: tier1.allowed,
@@ -1273,6 +1301,14 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
         .get("actor_process")
         .and_then(|v| v.as_str())
         .unwrap_or("chrome.exe");
+    let image_path = body
+        .get("image_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let pid = body
+        .get("pid")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as u32);
     let destination_sink = body
         .get("url")
         .or_else(|| body.get("destination_sink"))
@@ -1289,10 +1325,7 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
     let mut resolved_content = raw_content.to_string();
     let mut resolved_file_info: Option<crate::routes::har_dlp::ResolvedUploadedFile> = None;
 
-    if resolved_content.trim().is_empty()
-        || resolved_content.starts_with("[file upload:")
-        || destination_sink.contains("dlptest.com")
-    {
+    if resolved_content.trim().is_empty() || resolved_content.starts_with("[file upload:") {
         let candidate = file_path.or(file_name).or_else(|| {
             if raw_content.starts_with("[file upload:") {
                 Some(raw_content)
@@ -1349,21 +1382,39 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
         event.dlp_response = "RELEASED_BY_USER".to_string();
     }
 
+    let engine = crate::routes::dlp_containment::global_containment_engine();
+    let host = if !event.destination.is_empty() {
+        event.destination.clone()
+    } else {
+        crate::routes::har_dlp::host_of(destination_sink)
+    };
+
     if !event.allowed {
         let ctx = crate::routes::dlp_containment::ActorContext {
             actor: actor_process.to_string(),
-            pid: None,
-            image_path: None,
+            pid,
+            image_path,
             destination_url: destination_sink.to_string(),
-            destination_host: crate::routes::har_dlp::host_of(destination_sink),
+            destination_host: host.clone(),
             injection_indicators: Vec::new(),
         };
-        let outcome = crate::routes::dlp_containment::global_containment_engine()
+        let outcome = engine
             .evaluate_and_respond(&event, &ctx, crate::routes::har_dlp::get_backend());
         let outcome_json = serde_json::to_value(&outcome).unwrap_or(Value::Null);
         event.containment = Some(outcome_json.clone());
         let mut state = get_global_dlp_state().write();
         attach_containment_to_event(&mut state, &event.id, outcome_json);
+    } else {
+        let restored = engine.restore_browser_destination_blocks_for_host(
+            &host,
+            "verified-clean-browser-upload",
+        );
+        if let Some(first_restored) = restored.first() {
+            let outcome_json = serde_json::to_value(first_restored).unwrap_or(Value::Null);
+            event.containment = Some(outcome_json.clone());
+            let mut state = get_global_dlp_state().write();
+            attach_containment_to_event(&mut state, &event.id, outcome_json);
+        }
     }
     if let Err(e) = persist_dlp_event(&event) {
         tracing::debug!("DLP browser event persistence failed: {}", e);
@@ -1396,75 +1447,83 @@ pub struct DlpReleaseRequest {
 }
 
 pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value> {
-    let mut state = get_global_dlp_state().write();
     let mut released_count = 0usize;
     let mut newly_released_entries = Vec::new();
     let mut released_event_ids = Vec::new();
-    let mut decrement_count = 0u64;
 
-    for event in state.recent_events.iter_mut() {
-        let is_quarantined = !event.allowed
-            || event.authorization_decision == "DENY"
-            || event.dlp_response == "QUARANTINE"
-            || event.dlp_response == "DENY";
+    {
+        let mut state = get_global_dlp_state().write();
+        let mut decrement_count = 0u64;
 
-        if !is_quarantined {
-            continue;
-        }
+        for event in state.recent_events.iter_mut() {
+            let is_quarantined = !event.allowed
+                || event.authorization_decision == "DENY"
+                || event.dlp_response == "QUARANTINE"
+                || event.dlp_response == "DENY";
 
-        let is_match = if req.release_all_false_positives {
-            true
-        } else {
-            let comm_match = req.zk_commitment_hex.as_ref()
-                .map(|c| !c.is_empty() && c == &event.zk_proof_commitment)
-                .unwrap_or(false);
-            let sink_match = req.destination_sink.as_ref()
-                .map(|s| !s.is_empty() && s == &event.destination_sink)
-                .unwrap_or(false);
-            let preview_match = req.scrubbed_preview.as_ref()
-                .map(|p| !p.is_empty() && (p == &event.scrubbed_preview || event.scrubbed_preview.contains(p)))
-                .unwrap_or(false);
+            if !is_quarantined {
+                continue;
+            }
 
-            if comm_match {
-                true
-            } else if sink_match && preview_match {
-                true
-            } else if sink_match && req.zk_commitment_hex.as_ref().map(|c| c.is_empty()).unwrap_or(true) && req.scrubbed_preview.as_ref().map(|p| p.is_empty()).unwrap_or(true) {
-                true
-            } else if preview_match && req.destination_sink.is_none() && req.zk_commitment_hex.is_none() {
+            let is_match = if req.release_all_false_positives {
                 true
             } else {
-                false
-            }
-        };
+                let comm_match = req.zk_commitment_hex.as_ref()
+                    .map(|c| !c.is_empty() && c == &event.zk_proof_commitment)
+                    .unwrap_or(false);
+                let sink_match = req.destination_sink.as_ref()
+                    .map(|s| {
+                        !s.is_empty()
+                            && (s == &event.destination_sink
+                                || s == &event.destination
+                                || crate::routes::har_dlp::host_of(s) == event.destination)
+                    })
+                    .unwrap_or(false);
+                let preview_match = req.scrubbed_preview.as_ref()
+                    .map(|p| !p.is_empty() && (p == &event.scrubbed_preview || event.scrubbed_preview.contains(p)))
+                    .unwrap_or(false);
 
-        if is_match {
-            event.allowed = true;
-            event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
-            event.dlp_response = "RELEASED_BY_USER".to_string();
-            decrement_count += 1;
-
-            if let Some(ref mut c) = event.containment {
-                if let Some(obj) = c.as_object_mut() {
-                    obj.insert("restored".to_string(), json!(true));
-                    obj.insert("unquarantined_by_user".to_string(), json!(true));
-                    obj.insert("status".to_string(), json!("RESTORED_BY_USER"));
+                if comm_match {
+                    true
+                } else if sink_match && preview_match {
+                    true
+                } else if sink_match && req.zk_commitment_hex.as_ref().map(|c| c.is_empty()).unwrap_or(true) && req.scrubbed_preview.as_ref().map(|p| p.is_empty()).unwrap_or(true) {
+                    true
+                } else if preview_match && req.destination_sink.is_none() && req.zk_commitment_hex.is_none() {
+                    true
+                } else {
+                    false
                 }
+            };
+
+            if is_match {
+                event.allowed = true;
+                event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
+                event.dlp_response = "RELEASED_BY_USER".to_string();
+                decrement_count += 1;
+
+                if let Some(ref mut c) = event.containment {
+                    if let Some(obj) = c.as_object_mut() {
+                        obj.insert("restored".to_string(), json!(true));
+                        obj.insert("unquarantined_by_user".to_string(), json!(true));
+                        obj.insert("status".to_string(), json!("RESTORED_BY_USER"));
+                    }
+                }
+
+                newly_released_entries.push(DlpReleasedAllowlistEntry {
+                    destination_sink: event.destination_sink.clone(),
+                    zk_commitment_hex: event.zk_proof_commitment.clone(),
+                    scrubbed_preview: event.scrubbed_preview.clone(),
+                    released_at: chrono::Utc::now().to_rfc3339(),
+                });
+
+                released_event_ids.push((event.id.clone(), serde_json::to_string(&event).unwrap_or_default()));
+                released_count += 1;
             }
-
-            newly_released_entries.push(DlpReleasedAllowlistEntry {
-                destination_sink: event.destination_sink.clone(),
-                zk_commitment_hex: event.zk_proof_commitment.clone(),
-                scrubbed_preview: event.scrubbed_preview.clone(),
-                released_at: chrono::Utc::now().to_rfc3339(),
-            });
-
-            released_event_ids.push((event.id.clone(), serde_json::to_string(&event).unwrap_or_default()));
-            released_count += 1;
         }
-    }
 
-    state.blocked_exfiltrations = state.blocked_exfiltrations.saturating_sub(decrement_count);
+        state.blocked_exfiltrations = state.blocked_exfiltrations.saturating_sub(decrement_count);
+    }
 
     // Also record direct user exclusion from HAR or DLP if specified even when not in recent_events
     if newly_released_entries.is_empty()
@@ -1479,6 +1538,39 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
             released_at: chrono::Utc::now().to_rfc3339(),
         });
         released_count = released_count.max(1);
+    }
+
+    // Restore native WFP destination blocks for all released hosts so the destination filter is unblocked immediately
+    let engine = crate::routes::dlp_containment::global_containment_engine();
+    let mut target_destinations = std::collections::HashSet::new();
+
+    for entry in &newly_released_entries {
+        if !entry.destination_sink.is_empty() {
+            target_destinations.insert(entry.destination_sink.clone());
+        }
+    }
+    if let Some(ref sink) = req.destination_sink {
+        if !sink.trim().is_empty() {
+            target_destinations.insert(sink.trim().to_string());
+        }
+    }
+    if req.release_all_false_positives {
+        for outcome in engine.list() {
+            if !outcome.restored
+                && outcome.decision == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
+            {
+                if !outcome.destination_host.is_empty() {
+                    target_destinations.insert(outcome.destination_host.clone());
+                }
+            }
+        }
+    }
+
+    for destination in &target_destinations {
+        engine.restore_browser_destination_blocks_for_host(
+            destination,
+            "user-released-false-positive",
+        );
     }
 
     // Persist to database/dlp_released_allowlist.json
@@ -1652,12 +1744,14 @@ mod tests {
             recent_events: Vec::new(),
         };
 
+        let unique_sink = format!("https://hospital-{}.internal.net/sync", uuid::Uuid::new_v4());
+        let note = format!("clinical note patient ssn 123-45-6789 case {}", uuid::Uuid::new_v4());
         let (_, _, ev) = inspect_and_record_with_options(
             &mut state,
             "clinical_notes.exe",
-            "https://hospital.internal.net/sync",
+            &unique_sink,
             "HTTPS_POST",
-            "clinical note patient ssn 987-65-4321",
+            &note,
             "API",
             DlpInspectOptions::default(),
         );
@@ -1671,7 +1765,7 @@ mod tests {
 
         let req = DlpReleaseRequest {
             zk_commitment_hex: Some(ev.zk_proof_commitment.clone()),
-            destination_sink: Some("https://hospital.internal.net/sync".to_string()),
+            destination_sink: Some(unique_sink),
             scrubbed_preview: None,
             release_all_false_positives: false,
             reason: Some("Legitimate clinical note sync".to_string()),
@@ -1686,5 +1780,109 @@ mod tests {
         assert!(released.allowed, "event must now be allowed");
         assert_eq!(released.authorization_decision, "ALLOW (USER_RELEASED)");
         assert_eq!(released.dlp_response, "RELEASED_BY_USER");
+    }
+
+    #[tokio::test]
+    async fn test_browser_upload_covergeneral_allowed_and_auto_releases_destination_blocks() {
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+        let host = "dlptest.com";
+        let dest_url = "https://dlptest.com/https-post/";
+
+        // 1. Trigger a sensitive upload to block dlptest.com
+        let sens_content = format!("patient_name,dob,ssn,ccn\nAlice Doe,1980-01-01,123-45-6789,4532015112830366,case_{}\n", uuid::Uuid::new_v4());
+        let sens_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "10-MB-Test.xlsx",
+            "content": sens_content
+        });
+        let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
+        assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert!(engine.has_active_browser_block_for_host(host));
+
+        // 2. Uploading benign covergeneral.docx is allowed and automatically releases destination blocks
+        let clean_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "covergeneral.docx",
+            "content": "Dear Hiring Manager,\nPlease find attached my resume and cover letter for the engineering position.\nSincerely,\nJane Candidate\n"
+        });
+        let Json(clean_res) = post_dlp_browser_event(Json(clean_payload)).await;
+        assert_eq!(clean_res.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(clean_res.get("allowed").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(clean_res.get("authorization_decision").and_then(|v| v.as_str()), Some("ALLOW"));
+        assert!(!engine.has_active_browser_block_for_host(host), "destination block must be auto-released on clean upload");
+    }
+
+    #[tokio::test]
+    async fn test_browser_upload_10mb_test_xlsx_triggers_quorum_and_wfp_block() {
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+        let host = "dlptest.com";
+        let dest_url = "https://dlptest.com/https-post/";
+
+        // Uploading 10-MB-Test.xlsx containing PHI/PII
+        let payload = json!({
+            "actor_process": "msedge.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "10-MB-Test.xlsx",
+            "content": "patient_name,patient_mrn,patient_ssn,card_number,diagnosis\nJohn Smith,MRN-998822,123-45-6789,4532015112830366,Diabetes Mellitus ICD10-E11\n"
+        });
+        let Json(res) = post_dlp_browser_event(Json(payload)).await;
+        assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(res.get("authorization_decision").and_then(|v| v.as_str()), Some("DENY"));
+        assert_eq!(res.get("dlp_response").and_then(|v| v.as_str()), Some("QUARANTINE"));
+
+        // Verify native WFP destination block is active
+        assert!(engine.has_active_browser_block_for_host(host));
+
+        // Verify 4-voter quorum in containment outcome
+        let event_obj = res.get("event").and_then(|v| v.as_object()).expect("event object");
+        let containment = event_obj.get("containment").and_then(|v| v.as_object()).expect("containment object");
+        assert_eq!(containment.get("decision").and_then(|v| v.as_str()), Some("DestinationBlocked"));
+        let voters = containment.get("voters").and_then(|v| v.as_object()).expect("voters object");
+        assert_eq!(voters.get("reached").and_then(|v| v.as_bool()), Some(true));
+        let ballots = voters.get("ballots").and_then(|v| v.as_array()).expect("ballots array");
+        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("OpenJEV-Voter")));
+        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("REA-Voter")));
+        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("RedactX-Deterministic-Validators")));
+        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("Google-SafeBrowsing-Voter")));
+    }
+
+    #[tokio::test]
+    async fn test_post_dlp_release_restores_wfp_destination_blocks() {
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+        let host = "dlptest.com";
+        let dest_url = "https://dlptest.com/https-post/";
+
+        // 1. Ensure a block is active
+        let sens_content = format!("patient_id,ssn,dob\nP-1234,123-45-6789,1975-03-21,case_{}\n", uuid::Uuid::new_v4());
+        let sens_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "patient_data.xlsx",
+            "content": sens_content
+        });
+        let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
+        assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert!(engine.has_active_browser_block_for_host(host));
+
+        // 2. Call post_dlp_release with destination_sink
+        let rel_req = DlpReleaseRequest {
+            zk_commitment_hex: None,
+            destination_sink: Some(dest_url.to_string()),
+            scrubbed_preview: None,
+            release_all_false_positives: false,
+            reason: Some("Authorized false positive release".to_string()),
+        };
+        let Json(rel_res) = post_dlp_release(Json(rel_req)).await;
+        assert_eq!(rel_res.get("ok").and_then(|v| v.as_bool()), Some(true));
+
+        // 3. Verify destination block is restored / unblocked
+        assert!(!engine.has_active_browser_block_for_host(host), "destination block must be restored on user release");
     }
 }
