@@ -13,9 +13,47 @@ use std::sync::Mutex;
 
 static DLP_STRESS_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+struct StressTestDiskGuard {
+    backups: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+}
+
+impl StressTestDiskGuard {
+    fn new() -> Self {
+        let paths = vec![
+            std::path::PathBuf::from("database").join("dlp_containment_registry.json"),
+            std::path::PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_containment_registry.json"),
+            std::path::PathBuf::from("database").join("dlp_released_allowlist.json"),
+            std::path::PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_released_allowlist.json"),
+        ];
+        let mut backups = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for p in paths {
+            let key = p.canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or_else(|_| p.to_string_lossy().to_string());
+            if seen.insert(key) {
+                let bytes = std::fs::read(&p).ok();
+                backups.push((p, bytes));
+            }
+        }
+        Self { backups }
+    }
+}
+
+impl Drop for StressTestDiskGuard {
+    fn drop(&mut self) {
+        for (p, orig) in &self.backups {
+            if let Some(ref bytes) = orig {
+                let _ = std::fs::write(p, bytes);
+            } else if p.exists() {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle() {
     let _guard = DLP_STRESS_TEST_LOCK.lock().unwrap();
+    let _disk_guard = StressTestDiskGuard::new();
     let engine = global_containment_engine();
     let unique_host = format!("dlptest-{}.internal.test", uuid::Uuid::new_v4().simple());
     let dest_url = format!("https://{}/https-post/", unique_host);
@@ -117,6 +155,7 @@ async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle()
 #[tokio::test]
 async fn test_rapid_repeated_uploads_debounce_and_reset_behavior() {
     let _guard = DLP_STRESS_TEST_LOCK.lock().unwrap();
+    let _disk_guard = StressTestDiskGuard::new();
     let engine = global_containment_engine();
     let unique_host = format!("debounce-{}.internal.test", uuid::Uuid::new_v4().simple());
     let dest_url = format!("https://{}/https-post/", unique_host);

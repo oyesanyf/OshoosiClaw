@@ -116,7 +116,7 @@ pub struct DlpReleasedAllowlistEntry {
     pub released_at: String,
 }
 
-fn released_allowlist_path() -> std::path::PathBuf {
+pub fn released_allowlist_path() -> std::path::PathBuf {
     let p = std::path::PathBuf::from("database").join("dlp_released_allowlist.json");
     if let Some(parent) = p.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -1487,8 +1487,6 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
                     true
                 } else if sink_match && preview_match {
                     true
-                } else if sink_match && req.zk_commitment_hex.as_ref().map(|c| c.is_empty()).unwrap_or(true) && req.scrubbed_preview.as_ref().map(|p| p.is_empty()).unwrap_or(true) {
-                    true
                 } else if preview_match && req.destination_sink.is_none() && req.zk_commitment_hex.is_none() {
                     true
                 } else {
@@ -1525,12 +1523,11 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
         state.blocked_exfiltrations = state.blocked_exfiltrations.saturating_sub(decrement_count);
     }
 
-    // Also record direct user exclusion from HAR or DLP if specified even when not in recent_events
-    if newly_released_entries.is_empty()
-        && (req.destination_sink.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
-            || req.zk_commitment_hex.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false)
-            || req.scrubbed_preview.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
-    {
+    // Record direct user exclusion from HAR or DLP ONLY if valid payload evidence (commitment or preview) is provided
+    let has_zk = req.zk_commitment_hex.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let has_preview = req.scrubbed_preview.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+
+    if newly_released_entries.is_empty() && (has_zk || has_preview) {
         newly_released_entries.push(DlpReleasedAllowlistEntry {
             destination_sink: req.destination_sink.clone().unwrap_or_default(),
             zk_commitment_hex: req.zk_commitment_hex.clone().unwrap_or_default(),
@@ -1566,17 +1563,31 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
         }
     }
 
+    let mut unblocked_wfp_count = 0usize;
     for destination in &target_destinations {
-        engine.restore_browser_destination_blocks_for_host(
+        let restored = engine.restore_browser_destination_blocks_for_host(
             destination,
             "user-released-false-positive",
         );
+        if !restored.is_empty() {
+            unblocked_wfp_count += restored.len();
+        }
+    }
+    if released_count == 0 && unblocked_wfp_count > 0 {
+        released_count = unblocked_wfp_count;
+    } else if released_count == 0 && !target_destinations.is_empty() {
+        released_count = target_destinations.len();
     }
 
-    // Persist to database/dlp_released_allowlist.json
-    if !newly_released_entries.is_empty() {
+    // Persist to database/dlp_released_allowlist.json ONLY entries with valid cryptographic or content signatures
+    let valid_entries_to_persist: Vec<_> = newly_released_entries
+        .into_iter()
+        .filter(|e| !e.zk_commitment_hex.trim().is_empty() || !e.scrubbed_preview.trim().is_empty())
+        .collect();
+
+    if !valid_entries_to_persist.is_empty() {
         let mut allowlist = load_released_allowlist();
-        for entry in newly_released_entries {
+        for entry in valid_entries_to_persist {
             if !allowlist.iter().any(|e| {
                 (!e.zk_commitment_hex.is_empty() && e.zk_commitment_hex == entry.zk_commitment_hex)
                     || (!e.destination_sink.is_empty() && e.destination_sink == entry.destination_sink && e.scrubbed_preview == entry.scrubbed_preview)
@@ -1645,12 +1656,115 @@ pub fn routes() -> Router<DashboardState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    /// Async test synchronization lock ensuring tests in this module run sequentially.
+    static TEST_DLP_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct FileBackup {
+        path: PathBuf,
+        original_bytes: Option<Vec<u8>>,
+    }
+
+    /// RAII test context providing:
+    /// 1. Sequential serialization via `TEST_DLP_LOCK`.
+    /// 2. Unique subdomains per test case (`case-<uuid>.dlptest.com`).
+    /// 3. Automatic unblocking of tested hosts in `global_containment_engine()` on Drop.
+    /// 4. Disk state preservation: snapshots database files before test and restores exact bytes on Drop.
+    /// 5. In-memory `recent_events` clearing to prevent cross-test leakage.
+    struct DlpTestContext {
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+        backups: Vec<FileBackup>,
+        hosts: Vec<String>,
+    }
+
+    impl DlpTestContext {
+        async fn new() -> Self {
+            let lock = TEST_DLP_LOCK.lock().await;
+
+            let mut paths_to_track = vec![
+                PathBuf::from("database").join("dlp_released_allowlist.json"),
+                PathBuf::from("database").join("dlp_containment_registry.json"),
+                PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_released_allowlist.json"),
+                PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_containment_registry.json"),
+            ];
+
+            if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+                let md = PathBuf::from(manifest_dir);
+                paths_to_track.push(md.join("database").join("dlp_released_allowlist.json"));
+                paths_to_track.push(md.join("database").join("dlp_containment_registry.json"));
+            }
+
+            let mut backups = Vec::new();
+            let mut seen_canonical = std::collections::HashSet::new();
+
+            for p in paths_to_track {
+                let key = if let Ok(canon) = p.canonicalize() {
+                    canon.to_string_lossy().to_string()
+                } else {
+                    p.to_string_lossy().to_string()
+                };
+                if seen_canonical.insert(key) {
+                    let bytes = std::fs::read(&p).ok();
+                    backups.push(FileBackup {
+                        path: p,
+                        original_bytes: bytes,
+                    });
+                }
+            }
+
+            // Clear in-memory recent events for clean test state
+            {
+                let mut state = get_global_dlp_state().write();
+                state.recent_events.clear();
+            }
+
+            Self {
+                _lock: lock,
+                backups,
+                hosts: Vec::new(),
+            }
+        }
+
+        fn new_host(&mut self, prefix: &str) -> (String, String) {
+            let host = format!("{}-{}.dlptest.com", prefix, uuid::Uuid::new_v4().simple());
+            let dest_url = format!("https://{}/https-post/", host);
+            self.hosts.push(host.clone());
+            (host, dest_url)
+        }
+    }
+
+    impl Drop for DlpTestContext {
+        fn drop(&mut self) {
+            // 1. Unblock all hosts tested in this case from global containment engine
+            let engine = crate::routes::dlp_containment::global_containment_engine();
+            for host in &self.hosts {
+                let _ = engine.restore_browser_destination_blocks_for_host(host, "test-teardown");
+            }
+
+            // 2. Restore exact git-tracked database files on disk
+            for backup in &self.backups {
+                if let Some(ref bytes) = backup.original_bytes {
+                    let _ = std::fs::write(&backup.path, bytes);
+                } else if backup.path.exists() {
+                    let _ = std::fs::remove_file(&backup.path);
+                }
+            }
+
+            // 3. Clear in-memory state
+            let mut state = get_global_dlp_state().write();
+            state.recent_events.clear();
+        }
+    }
 
     #[tokio::test]
     async fn test_post_dlp_browser_event_phi_quarantined() {
+        let mut ctx = DlpTestContext::new().await;
+        let (_host, dest_url) = ctx.new_host("phi-quarantine");
+
         let payload = json!({
             "actor_process": "chrome.exe",
-            "url": "https://dlptest.com/https-post/",
+            "url": dest_url,
             "channel": "BROWSER_FILE_UPLOAD",
             "file_name": "patient_health_record.csv",
             "content": "patient_name,dob,ssn,diagnosis\nJane Doe,1982-04-11,123-45-6789,Acute Bronchitis ICD10-J20.9\n"
@@ -1669,6 +1783,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_dlp_browser_event_staging_file_resolution() {
+        let mut ctx = DlpTestContext::new().await;
+        let (_host, dest_url) = ctx.new_host("staging-res");
+
         let temp_dir = std::env::temp_dir();
         let fname = format!("dlptest_staging_upload_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
@@ -1677,7 +1794,7 @@ mod tests {
 
         let payload = json!({
             "actor_process": "msedge.exe",
-            "url": "https://dlptest.com/https-post/",
+            "url": dest_url,
             "channel": "BROWSER_FILE_UPLOAD",
             "file_name": fname,
             "content": ""
@@ -1694,6 +1811,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_probe_deduplication_coalescing() {
+        let _guard = TEST_DLP_LOCK.lock().await;
         let engine = osoosi_dp::OsoosiTwoTierDlpEngine::new();
         let mut state = DlpDashboardState {
             engine,
@@ -1729,6 +1847,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_dlp_release_flow() {
+        let _ctx = DlpTestContext::new().await;
         let engine = osoosi_dp::OsoosiTwoTierDlpEngine::new();
         let mut state = DlpDashboardState {
             engine,
@@ -1784,11 +1903,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_browser_upload_covergeneral_allowed_and_auto_releases_destination_blocks() {
+        let mut ctx = DlpTestContext::new().await;
+        let (host, dest_url) = ctx.new_host("covergeneral-auto-rel");
         let engine = crate::routes::dlp_containment::global_containment_engine();
-        let host = "dlptest.com";
-        let dest_url = "https://dlptest.com/https-post/";
 
-        // 1. Trigger a sensitive upload to block dlptest.com
+        // 1. Trigger a sensitive upload to block this unique host
         let sens_content = format!("patient_name,dob,ssn,ccn\nAlice Doe,1980-01-01,123-45-6789,4532015112830366,case_{}\n", uuid::Uuid::new_v4());
         let sens_payload = json!({
             "actor_process": "chrome.exe",
@@ -1799,7 +1918,7 @@ mod tests {
         });
         let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
         assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
-        assert!(engine.has_active_browser_block_for_host(host));
+        assert!(engine.has_active_browser_block_for_host(&host));
 
         // 2. Uploading benign covergeneral.docx is allowed and automatically releases destination blocks
         let clean_payload = json!({
@@ -1813,14 +1932,14 @@ mod tests {
         assert_eq!(clean_res.get("ok").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(clean_res.get("allowed").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(clean_res.get("authorization_decision").and_then(|v| v.as_str()), Some("ALLOW"));
-        assert!(!engine.has_active_browser_block_for_host(host), "destination block must be auto-released on clean upload");
+        assert!(!engine.has_active_browser_block_for_host(&host), "destination block must be auto-released on clean upload");
     }
 
     #[tokio::test]
     async fn test_browser_upload_10mb_test_xlsx_triggers_quorum_and_wfp_block() {
+        let mut ctx = DlpTestContext::new().await;
+        let (host, dest_url) = ctx.new_host("10mb-quorum");
         let engine = crate::routes::dlp_containment::global_containment_engine();
-        let host = "dlptest.com";
-        let dest_url = "https://dlptest.com/https-post/";
 
         // Uploading 10-MB-Test.xlsx containing PHI/PII
         let payload = json!({
@@ -1836,8 +1955,8 @@ mod tests {
         assert_eq!(res.get("authorization_decision").and_then(|v| v.as_str()), Some("DENY"));
         assert_eq!(res.get("dlp_response").and_then(|v| v.as_str()), Some("QUARANTINE"));
 
-        // Verify native WFP destination block is active
-        assert!(engine.has_active_browser_block_for_host(host));
+        // Verify native WFP destination block is active on this host
+        assert!(engine.has_active_browser_block_for_host(&host));
 
         // Verify 4-voter quorum in containment outcome
         let event_obj = res.get("event").and_then(|v| v.as_object()).expect("event object");
@@ -1854,27 +1973,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_dlp_release_restores_wfp_destination_blocks() {
+        let mut ctx = DlpTestContext::new().await;
+        let (host, dest_url) = ctx.new_host("release-restore");
         let engine = crate::routes::dlp_containment::global_containment_engine();
-        let host = "dlptest.com";
-        let dest_url = "https://dlptest.com/https-post/";
 
         // 1. Ensure a block is active
         let sens_content = format!("patient_id,ssn,dob\nP-1234,123-45-6789,1975-03-21,case_{}\n", uuid::Uuid::new_v4());
         let sens_payload = json!({
             "actor_process": "chrome.exe",
-            "url": dest_url,
+            "url": dest_url.clone(),
             "channel": "BROWSER_FILE_UPLOAD",
             "file_name": "patient_data.xlsx",
             "content": sens_content
         });
         let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
         assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
-        assert!(engine.has_active_browser_block_for_host(host));
+        assert!(engine.has_active_browser_block_for_host(&host));
 
         // 2. Call post_dlp_release with destination_sink
         let rel_req = DlpReleaseRequest {
             zk_commitment_hex: None,
-            destination_sink: Some(dest_url.to_string()),
+            destination_sink: Some(dest_url.clone()),
             scrubbed_preview: None,
             release_all_false_positives: false,
             reason: Some("Authorized false positive release".to_string()),
@@ -1883,6 +2002,6 @@ mod tests {
         assert_eq!(rel_res.get("ok").and_then(|v| v.as_bool()), Some(true));
 
         // 3. Verify destination block is restored / unblocked
-        assert!(!engine.has_active_browser_block_for_host(host), "destination block must be restored on user release");
+        assert!(!engine.has_active_browser_block_for_host(&host), "destination block must be restored on user release");
     }
 }
