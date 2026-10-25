@@ -564,35 +564,49 @@ impl AutonomousAiFeedCollector {
         collector
     }
 
-    /// Return the canonical path to the runtime feeds directory in logs/.
+    /// Return the canonical path to the runtime feeds directory.
     pub fn runtime_feeds_dir(&self) -> PathBuf {
-        osoosi_types::config::resolve_log_directory()
-            .join("runtime_feeds")
-            .join("ai_threat_feeds")
+        let rd = self.rules_dir.read().clone();
+        if rd == PathBuf::from("rules/ai_threat_feeds") {
+            osoosi_types::config::resolve_log_directory()
+                .join("runtime_feeds")
+                .join("ai_threat_feeds")
+        } else {
+            rd.join("runtime_feeds")
+        }
     }
 
-    /// Resolve a feed snapshot file prioritizing the runtime overlay in logs/ and falling back to seed catalogs.
+    /// Resolve a feed snapshot file prioritizing the configured rules directory and falling back to runtime overlays and seed catalogs.
     pub fn resolve_feed_snapshot_path(&self, filename: &str) -> PathBuf {
-        // 1. Check runtime overlay in resolved logs directory
-        let runtime_path = self.runtime_feeds_dir().join(filename);
-        if runtime_path.is_file() {
-            return runtime_path;
-        }
-
-        // 2. Check relative logs path
-        let rel_runtime = PathBuf::from("logs/runtime_feeds/ai_threat_feeds").join(filename);
-        if rel_runtime.is_file() {
-            return rel_runtime;
-        }
-
-        // 3. Check configured rules_dir (e.g., in unit tests or default seed)
+        // 1. Check configured rules_dir first (e.g., in unit tests or default seed)
         let seed_dir = self.rules_dir.read().clone();
         let seed_path = seed_dir.join(filename);
         if seed_path.is_file() {
             return seed_path;
         }
 
-        // 4. Check workspace seed fallback paths
+        // 2. Check runtime feeds directory isolated under rules_dir
+        let runtime_path = self.runtime_feeds_dir().join(filename);
+        if runtime_path.is_file() {
+            return runtime_path;
+        }
+
+        // 3. Check logs directory runtime overlay
+        let logs_runtime = osoosi_types::config::resolve_log_directory()
+            .join("runtime_feeds")
+            .join("ai_threat_feeds")
+            .join(filename);
+        if logs_runtime.is_file() {
+            return logs_runtime;
+        }
+
+        // 4. Check relative logs path
+        let rel_runtime = PathBuf::from("logs/runtime_feeds/ai_threat_feeds").join(filename);
+        if rel_runtime.is_file() {
+            return rel_runtime;
+        }
+
+        // 5. Check workspace seed fallback paths
         let candidates = [
             PathBuf::from("rules/ai_threat_feeds"),
             PathBuf::from("../rules/ai_threat_feeds"),

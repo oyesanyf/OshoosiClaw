@@ -379,7 +379,7 @@ fn test_challenger_appcontainer_verification_fails_closed_when_token_is_not_appc
         .spawn()
         .expect("spawn child for non-appcontainer token test");
 
-    let child_handle = child.as_raw_handle() as *mut std::ffi::c_void;
+    let child_handle = child.as_raw_handle();
 
     // Assign child process to job so job check passes
     let _ = job.assign_process(child_handle);

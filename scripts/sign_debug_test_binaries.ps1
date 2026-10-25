@@ -26,19 +26,28 @@ $signedCount = 0
 foreach ($f in $targets) {
     try {
         $sig = Get-AuthenticodeSignature $f.FullName -ErrorAction SilentlyContinue
-        if ((-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.Status -eq "UnknownError")) {
+        if ((-not $sig) -or ($sig.SignerCertificate -eq $null)) {
             $signed = $false
+            $wt = $f.LastWriteTimeUtc
             if (Test-Path $signtool) {
-                & $signtool sign /sha1 $Thumbprint /fd SHA256 /q $f.FullName 2>$null | Out-Null
+                & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /q $f.FullName 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    & $signtool sign /sha1 $Thumbprint /fd SHA256 /q $f.FullName 2>$null | Out-Null
+                }
                 if ($LASTEXITCODE -eq 0) {
                     $signedCount++
                     $signed = $true
+                    try { (Get-Item $f.FullName).LastWriteTimeUtc = $wt } catch {}
                 }
             }
             if ((-not $signed) -and $Cert) {
-                $res = Set-AuthenticodeSignature -FilePath $f.FullName -Certificate $Cert -HashAlgorithm SHA256 -ErrorAction SilentlyContinue
+                $res = Set-AuthenticodeSignature -FilePath $f.FullName -Certificate $Cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com" -ErrorAction SilentlyContinue
+                if ((-not $res) -or (-not $res.SignerCertificate)) {
+                    $res = Set-AuthenticodeSignature -FilePath $f.FullName -Certificate $Cert -HashAlgorithm SHA256 -ErrorAction SilentlyContinue
+                }
                 if ($res -and $res.SignerCertificate) {
                     $signedCount++
+                    try { (Get-Item $f.FullName).LastWriteTimeUtc = $wt } catch {}
                 }
             }
         }
