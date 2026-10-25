@@ -103,6 +103,9 @@ jobs:
           $env:OSOOSI_NO_ORT = "1"
           $env:OSOOSI_NO_AI = "1"
 
+          # Pre-build dashboard test binary before background execution
+          cargo test --no-run -p osoosi-dashboard --test port3030_daemon
+
           # Start daemon in background
           $daemonJob = Start-Job -ScriptBlock {
             cargo test -p osoosi-dashboard --test port3030_daemon run_live_port_3030_daemon -- --nocapture
@@ -110,7 +113,7 @@ jobs:
 
           # Wait for port 3030 to respond
           $ready = $false
-          for ($i = 0; $i -lt 30; $i++) {
+          for ($i = 0; $i -lt 90; $i++) {
             Start-Sleep -Seconds 2
             try {
               $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3030/api/status" -TimeoutSec 2 -UseBasicParsing
@@ -175,13 +178,20 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Pre-build Dashboard Test Binary
+        shell: bash
+        env:
+          OSOOSI_NO_ORT: "1"
+          OSOOSI_NO_AI: "1"
+        run: cargo test --no-run -p osoosi-dashboard
+
       - name: Run Live Multi-Trial CI Suite (6-Vector Breakout + 15-Vector Gauntlet)
         env:
           OSOOSI_DASHBOARD_PORT: "3030"
           OSOOSI_DASHBOARD_BIND_ALL: "1"
           OSOOSI_NO_ORT: "1"
           OSOOSI_NO_AI: "1"
-        run: python -u scripts/run_live_multi_trial_suite.py --port 3030 --trials 3 --suite all
+        run: python -u scripts/run_live_multi_trial_suite.py --port 3030 --trials 3 --suite all --daemon-timeout 300
 
       - name: Upload Live Multi-Trial Verification Artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
