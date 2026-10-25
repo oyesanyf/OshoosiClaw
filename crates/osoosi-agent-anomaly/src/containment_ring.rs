@@ -723,6 +723,149 @@ impl ArmContainmentRing {
         }
         Ok(())
     }
+
+    /// Issues a capability token bound to this arm's active generation epoch.
+    pub async fn issue_epoch_capability(
+        &self,
+        tool: &str,
+        resource: &str,
+        ttl_secs: u64,
+    ) -> Result<CapabilityToken, OctopusSecurityError> {
+        let current_gen = self.current_generation();
+        self.validate_epoch(current_gen).await?;
+
+        let epoch_key = self.epoch_key(current_gen);
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let expires_at_secs = now_secs + ttl_secs;
+
+        let token_id = format!("cap-{}-{}-{}", self.arm_id, current_gen, now_secs);
+        let policy_fingerprint = format!("arm_ring:epoch={}:arm={}:role={:?}", current_gen, self.arm_id, self.role);
+
+        let signing_content = format!(
+            "{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
+            token_id,
+            "supervisor",
+            self.agent_name,
+            self.role,
+            tool,
+            resource,
+            now_secs,
+            expires_at_secs,
+            policy_fingerprint
+        );
+
+        let sig = compute_ring_hmac(&epoch_key, signing_content.as_bytes());
+        let sig_hex = hex::encode(sig);
+
+        Ok(CapabilityToken {
+            token_id,
+            originator_agent: "supervisor".to_string(),
+            bearer_agent: self.agent_name.clone(),
+            permitted_role: self.role.clone(),
+            permitted_tool: tool.to_string(),
+            resource_uri_prefix: resource.to_string(),
+            issued_at_secs: now_secs,
+            expires_at_secs,
+            policy_fingerprint,
+            signature_hex: sig_hex,
+        })
+    }
+
+    /// Verifies that a presented capability token is bound to this arm's active generation epoch.
+    /// Strictly verifies bearer identity, permitted role, and TTL expiration BEFORE cryptographic HMAC check.
+    pub async fn verify_epoch_capability(
+        &self,
+        token: &CapabilityToken,
+    ) -> Result<(), OctopusSecurityError> {
+        let current_gen = self.current_generation();
+        self.validate_epoch(current_gen).await?;
+
+        // Extract epoch from policy fingerprint
+        let prefix = format!("arm_ring:epoch={}:arm={}:", current_gen, self.arm_id);
+        if !token.policy_fingerprint.starts_with(&prefix) {
+            return Err(OctopusSecurityError::CapabilityDenied(format!(
+                "Capability token policy fingerprint mismatch: token was not issued for arm {} generation {}",
+                self.arm_id, current_gen
+            )));
+        }
+
+        // 1. Verify bearer identity BEFORE cryptographic check
+        if !token.bearer_agent.eq_ignore_ascii_case(&self.agent_name) {
+            return Err(OctopusSecurityError::CapabilityDenied(format!(
+                "Capability token bearer mismatch: token issued to '{}' cannot be exercised by '{}'",
+                token.bearer_agent, self.agent_name
+            )));
+        }
+
+        // 2. Verify permitted role BEFORE cryptographic check
+        if token.permitted_role != self.role {
+            return Err(OctopusSecurityError::CapabilityDenied(format!(
+                "Capability token role mismatch: token role {:?} != arm role {:?}",
+                token.permitted_role, self.role
+            )));
+        }
+
+        // 3. Verify TTL expiration BEFORE cryptographic check
+        let now_secs = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        if token.is_expired(now_secs) {
+            return Err(OctopusSecurityError::CapabilityDenied(
+                "Capability token has expired".to_string(),
+            ));
+        }
+
+        // 4. Verify cryptographic signature against epoch key
+        let epoch_key = self.epoch_key(current_gen);
+        let signing_content = format!(
+            "{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
+            token.token_id,
+            token.originator_agent,
+            token.bearer_agent,
+            token.permitted_role,
+            token.permitted_tool,
+            token.resource_uri_prefix,
+            token.issued_at_secs,
+            token.expires_at_secs,
+            token.policy_fingerprint
+        );
+
+        let expected_sig = compute_ring_hmac(&epoch_key, signing_content.as_bytes());
+        let expected_hex = hex::encode(expected_sig);
+
+        if !constant_time_eq_hex(&token.signature_hex, &expected_hex) {
+            return Err(OctopusSecurityError::CapabilityDenied(
+                "Invalid capability token signature for active epoch".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+/// Short-lived, unforgeable capability token required for arm tool invocations.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CapabilityToken {
+    pub token_id: String,
+    pub originator_agent: String,
+    pub bearer_agent: String,
+    pub permitted_role: ArmRole,
+    pub permitted_tool: String,
+    pub resource_uri_prefix: String,
+    pub issued_at_secs: u64,
+    pub expires_at_secs: u64,
+    pub policy_fingerprint: String,
+    pub signature_hex: String,
+}
+
+impl CapabilityToken {
+    pub fn is_expired(&self, current_time_secs: u64) -> bool {
+        current_time_secs > self.expires_at_secs
+    }
 }
 
 /// A supervisor-managed registry containing Level 1 containment rings.
@@ -895,6 +1038,8 @@ pub struct AgentContainmentRing {
     agent_epochs: DashMap<String, u64>,
     /// Cryptographic signing secret per agent ID
     agent_keys: DashMap<String, [u8; 32]>,
+    /// Set of severed agent IDs under active autotomy veto
+    severed_agents: DashSet<String>,
     /// Audit log ring buffer
     audit_log: Arc<RwLock<VecDeque<ContainmentAuditEntry>>>,
     /// Metrics counters
@@ -923,6 +1068,7 @@ impl AgentContainmentRing {
         Self {
             agent_epochs: DashMap::new(),
             agent_keys: DashMap::new(),
+            severed_agents: DashSet::new(),
             audit_log: Arc::new(RwLock::new(VecDeque::with_capacity(1_000))),
             total_evaluations: AtomicU64::new(0),
             ghostjacking_defanged: AtomicU64::new(0),
@@ -945,6 +1091,7 @@ impl AgentContainmentRing {
         Self {
             agent_epochs: DashMap::new(),
             agent_keys: DashMap::new(),
+            severed_agents: DashSet::new(),
             audit_log: Arc::new(RwLock::new(VecDeque::with_capacity(1_000))),
             total_evaluations: AtomicU64::new(0),
             ghostjacking_defanged: AtomicU64::new(0),
@@ -960,7 +1107,32 @@ impl AgentContainmentRing {
 
     /// Checks if autotomy has been triggered and capability epochs severed.
     pub fn is_severed(&self) -> bool {
-        self.autotomy_severances.load(Ordering::Relaxed) > 0
+        self.autotomy_severances.load(Ordering::Relaxed) > 0 || !self.severed_agents.is_empty()
+    }
+
+    /// Checks whether a specific agent ID is currently severed.
+    pub fn is_agent_severed(&self, agent_id: &str) -> bool {
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
+        self.severed_agents.contains(&norm_id)
+    }
+
+    /// Explicitly regenerates a severed agent branch, lifting the severed veto and advancing generation epoch.
+    pub fn regenerate_agent(&self, agent_id: &str) -> u64 {
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
+        self.severed_agents.remove(&norm_id);
+        self.advance_epoch_sync(agent_id)
+    }
+
+    /// Evaluates an arm operation against the Level 1 Arm Ring severed veto.
+    pub fn evaluate_operation(&self, agent_id: &str, _operation: &str, _target: &str) -> Result<(), String> {
+        let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
+        if self.severed_agents.contains(&norm_id) {
+            return Err(format!(
+                "Level 1 Arm Ring veto: Arm '{}' is severed and cannot execute operations without epoch regeneration",
+                agent_id
+            ));
+        }
+        Ok(())
     }
 
     /// CIS Benchmark 2.2: Unicode Case Folding + NFKC Compatibility Normalization + UTS #39 Confusable Skeleton.
