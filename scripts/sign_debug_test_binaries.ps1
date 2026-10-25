@@ -20,7 +20,7 @@ $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_policy-*.exe
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_agent_anomaly-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_dashboard-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\build\*\*.exe" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\build" -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue
 
 $signedCount = 0
 foreach ($f in $targets) {

@@ -304,7 +304,10 @@ async fn challenge_homological_auditor_and_mesh_guard_proxy_laundering_veto() {
         .sign_mesh_message(9, 1, MessageKind::Finding, "corr-unauth", "hello")
         .await
         .unwrap();
-    let verified_unauth = unauth_worker.verify_incoming_message(&msg_unauth).await.unwrap();
+    let verified_unauth = unauth_worker
+        .verify_incoming_message(&msg_unauth)
+        .await
+        .unwrap();
     let mg_unauth = mesh_guard.validate_message(&verified_unauth).await;
     assert!(
         mg_unauth.is_err(),
@@ -369,12 +372,12 @@ fn challenge_ssrf_non_standard_ip_host_encodings() {
 
     // 2. Hex representations
     let hex_hosts = [
-        "0x7f000001",   // 127.0.0.1
+        "0x7f000001", // 127.0.0.1
         "0x7f.0x0.0x0.0x1",
         "0x7f.1",
-        "0x0a000001",   // 10.0.0.1
-        "0xa9fea9fe",   // 169.254.169.254
-        "0xc0a80001",   // 192.168.0.1
+        "0x0a000001", // 10.0.0.1
+        "0xa9fea9fe", // 169.254.169.254
+        "0xc0a80001", // 192.168.0.1
     ];
     for host in hex_hosts {
         assert!(
@@ -389,7 +392,7 @@ fn challenge_ssrf_non_standard_ip_host_encodings() {
         "0177.0.0.1",
         "0177.000.0000.0001",
         "0177.0.0.01",
-        "0012.0.0.1",   // 10.0.0.1
+        "0012.0.0.1",          // 10.0.0.1
         "0251.0376.0251.0376", // 169.254.169.254
     ];
     for host in octal_hosts {
@@ -402,10 +405,10 @@ fn challenge_ssrf_non_standard_ip_host_encodings() {
 
     // 4. Shortened dotted quad
     let shortened_quads = [
-        "127.1",      // 127.0.0.1
-        "10.1",       // 10.0.0.1
-        "192.168.1",  // 192.168.0.1
-        "172.16.1",   // 172.16.0.1
+        "127.1",     // 127.0.0.1
+        "10.1",      // 10.0.0.1
+        "192.168.1", // 192.168.0.1
+        "172.16.1",  // 172.16.0.1
     ];
     for host in shortened_quads {
         assert!(
@@ -639,7 +642,10 @@ fn challenge_dns_pinning_and_curl_resolve_generation() {
     let pinned = pinned_res.unwrap();
     assert_eq!(pinned.host, "google.com");
     assert_eq!(pinned.port, 443);
-    assert!(!pinned.pinned_addrs.is_empty(), "Must resolve at least 1 IP address");
+    assert!(
+        !pinned.pinned_addrs.is_empty(),
+        "Must resolve at least 1 IP address"
+    );
 
     // All resolved IPs must be public, non-restricted
     for ip in &pinned.pinned_addrs {

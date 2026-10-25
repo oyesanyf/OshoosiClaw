@@ -40,7 +40,10 @@ fn test_finding1_structural_powershell_and_cmd_unwrapping() {
         format!("powershell -e {}", b64),
         format!("powershell /enc {}", b64),
         format!("powershell \u{2013}EncodedCommand {}", b64), // Unicode en-dash
-        format!("cmd.exe /c \"p^o^w^e^r^s^h^e^l^l -NoP -W Hidden -ec {}\"", b64),
+        format!(
+            "cmd.exe /c \"p^o^w^e^r^s^h^e^l^l -NoP -W Hidden -ec {}\"",
+            b64
+        ),
     ] {
         let parsed = analyze_command_line(&cmd);
         assert!(
@@ -93,7 +96,10 @@ async fn test_finding2_authenticated_role_trust_and_multihop_provenance_taint() 
         role_trust_tier(&ArmRole::UntrustedDocIngest),
         TrustTier::Untrusted
     );
-    assert_eq!(role_trust_tier(&ArmRole::AnomalyDetection), TrustTier::Worker);
+    assert_eq!(
+        role_trust_tier(&ArmRole::AnomalyDetection),
+        TrustTier::Worker
+    );
     assert_eq!(
         role_trust_tier(&ArmRole::AccountingLedgerWrite),
         TrustTier::PrivilegedSink
@@ -147,7 +153,13 @@ async fn test_finding2_authenticated_role_trust_and_multihop_provenance_taint() 
     // Hop 3: Relay2 (3) -> LedgerSink (4) — sticky taint_state and multi-hop provenance chain
     // cause LedgerSink (PrivilegedSink) to reject the 4-hop tainted relay!
     let hop3_sticky = relay2
-        .sign_mesh_message(4, 1, MessageKind::Finding, "c-hop3", "settle invoice $99999")
+        .sign_mesh_message(
+            4,
+            1,
+            MessageKind::Finding,
+            "c-hop3",
+            "settle invoice $99999",
+        )
         .await
         .unwrap();
     assert_eq!(hop3_sticky.taint_floor, TrustTier::Untrusted);

@@ -69,8 +69,7 @@ pub struct TelemetryController {
     sys: Arc<parking_lot::Mutex<System>>,
     pub guard: Arc<ResourceGuard>,
     pub(crate) task_sender: tokio::sync::mpsc::Sender<DeferredTask>,
-    pub(crate) task_rx:
-        Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<DeferredTask>>>>,
+    pub(crate) task_rx: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<DeferredTask>>>>,
     pub(crate) socket_exhaustion: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) dropped_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -429,7 +428,9 @@ impl TelemetryController {
                     }
                 }
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                    tracing::debug!("ADAPTIVE CONCURRENCY: Deferred task channel closed, dropping task.");
+                    tracing::debug!(
+                        "ADAPTIVE CONCURRENCY: Deferred task channel closed, dropping task."
+                    );
                 }
             }
             return;
@@ -658,7 +659,10 @@ mod tests {
             join_set.spawn(async move {
                 for _ in 0..10 {
                     let res = ctrl.run_adaptation_check().await;
-                    assert!(res.is_ok(), "Adaptation check must succeed under concurrency");
+                    assert!(
+                        res.is_ok(),
+                        "Adaptation check must succeed under concurrency"
+                    );
                 }
             });
         }
@@ -703,4 +707,3 @@ mod tests {
         assert!(final_mem >= 0.0 && final_mem <= 100.0);
     }
 }
-

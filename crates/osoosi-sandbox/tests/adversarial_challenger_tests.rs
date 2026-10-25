@@ -9,17 +9,16 @@ use osoosi_sandbox::tiered_executor::{
     create_or_open_appcontainer_profile, verify_process_appcontainer_token,
 };
 use osoosi_sandbox::{
-    detect_renamed_interpreter_marker, ExecutableIdentityVerifier,
-    TieredExecutionDispatcher, TieredToolRequest, WindowsJobObject,
-    FORBIDDEN_TIER2_EXECUTABLE_STEMS,
+    detect_renamed_interpreter_marker, ExecutableIdentityVerifier, TieredExecutionDispatcher,
+    TieredToolRequest, WindowsJobObject, FORBIDDEN_TIER2_EXECUTABLE_STEMS,
 };
 use osoosi_types::{ArmRole, OctopusSecurityError};
+use sha2::Digest;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use sha2::Digest;
 
 #[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentProcess;
@@ -88,7 +87,8 @@ fn test_challenger_handle_read_lock_blocks_concurrent_write_and_truncation_on_wr
         .write(true)
         .truncate(true)
         .open(&test_exe);
-    let trunc_err = trunc_res.expect_err("Concurrent truncation MUST fail while handle lock is held");
+    let trunc_err =
+        trunc_res.expect_err("Concurrent truncation MUST fail while handle lock is held");
     assert_eq!(
         trunc_err.raw_os_error().unwrap_or(0),
         32,
@@ -120,7 +120,9 @@ fn test_challenger_handle_read_lock_blocks_concurrent_write_and_truncation_on_wr
             while !stop_clone.load(Ordering::Relaxed) {
                 attempts_clone.fetch_add(1, Ordering::Relaxed);
                 match std::fs::OpenOptions::new().write(true).open(&path_clone) {
-                    Ok(_) => panic!("FATAL: Concurrent write succeeded while handle lock was held!"),
+                    Ok(_) => {
+                        panic!("FATAL: Concurrent write succeeded while handle lock was held!")
+                    }
                     Err(e) => {
                         if e.raw_os_error() == Some(32) {
                             viol_clone.fetch_add(1, Ordering::Relaxed);
@@ -185,26 +187,32 @@ fn test_challenger_exhaustive_forbidden_interpreter_rejection() {
 
         // Lowercase with .exe
         let target_exe = format!("{}.exe", stem);
-        let err2 = verifier.verify_and_lock(&target_exe, None).expect_err(&format!(
-            "Target '{}' must be rejected as forbidden interpreter",
-            target_exe
-        ));
+        let err2 = verifier
+            .verify_and_lock(&target_exe, None)
+            .expect_err(&format!(
+                "Target '{}' must be rejected as forbidden interpreter",
+                target_exe
+            ));
         assert!(format!("{}", err2).contains("EXEC_ID_FORBIDDEN_INTERPRETER"));
 
         // Uppercase variation with .EXE
         let target_upper = format!("{}.EXE", stem.to_ascii_uppercase());
-        let err3 = verifier.verify_and_lock(&target_upper, None).expect_err(&format!(
-            "Target '{}' must be rejected as forbidden interpreter",
-            target_upper
-        ));
+        let err3 = verifier
+            .verify_and_lock(&target_upper, None)
+            .expect_err(&format!(
+                "Target '{}' must be rejected as forbidden interpreter",
+                target_upper
+            ));
         assert!(format!("{}", err3).contains("EXEC_ID_FORBIDDEN_INTERPRETER"));
 
         // Mixed case with quotes
         let target_quoted = format!("\"{}\"", stem);
-        let err4 = verifier.verify_and_lock(&target_quoted, None).expect_err(&format!(
-            "Target '{}' must be rejected as forbidden interpreter",
-            target_quoted
-        ));
+        let err4 = verifier
+            .verify_and_lock(&target_quoted, None)
+            .expect_err(&format!(
+                "Target '{}' must be rejected as forbidden interpreter",
+                target_quoted
+            ));
         assert!(format!("{}", err4).contains("EXEC_ID_FORBIDDEN_INTERPRETER"));
     }
 }
@@ -442,7 +450,8 @@ fn test_challenger_appcontainer_verification_fails_closed_on_sid_tampering() {
 #[test]
 fn test_challenger_tiered_dispatcher_role_mismatch_fails_closed() {
     let dispatcher = TieredExecutionDispatcher::try_new().expect("dispatcher init");
-    let scratch_dir = std::env::temp_dir().join(format!("challenger_scratch_{}", std::process::id()));
+    let scratch_dir =
+        std::env::temp_dir().join(format!("challenger_scratch_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&scratch_dir);
 
     // 1. UntrustedDocIngest attempting Tier 2 CLI spawn
@@ -452,7 +461,10 @@ fn test_challenger_tiered_dispatcher_role_mismatch_fails_closed() {
         tool_name: "doc_extractor".to_string(),
         payload: Vec::new(),
         custom_wat: None,
-        native_command: Some(("cmd.exe".to_string(), vec!["/c".to_string(), "echo".to_string()])),
+        native_command: Some((
+            "cmd.exe".to_string(),
+            vec!["/c".to_string(), "echo".to_string()],
+        )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
     };
@@ -468,7 +480,10 @@ fn test_challenger_tiered_dispatcher_role_mismatch_fails_closed() {
         tool_name: "ledger_writer".to_string(),
         payload: Vec::new(),
         custom_wat: None,
-        native_command: Some(("cmd.exe".to_string(), vec!["/c".to_string(), "echo".to_string()])),
+        native_command: Some((
+            "cmd.exe".to_string(),
+            vec!["/c".to_string(), "echo".to_string()],
+        )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
     };

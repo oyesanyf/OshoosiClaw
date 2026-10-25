@@ -170,6 +170,32 @@ impl FileLineageTracker {
     /// Returns true if the target path or binary is protected under hard immunity invariants.
     /// Repository sources, developer toolchains, and critical OS binaries can NEVER be poisoned or quarantined.
     pub fn is_path_immune(&self, path: &Path) -> bool {
+        let path_str = path.to_string_lossy();
+        let path_lower = path_str.to_lowercase();
+        // Scratchpads and temp directories MUST NEVER be granted path immunity even if containing src/ or Cargo.toml
+        if path_lower.contains("scratchpad")
+            || path_lower.contains("/temp/")
+            || path_lower.contains("\\temp\\")
+            || path_lower.ends_with("/temp")
+            || path_lower.ends_with("\\temp")
+            || path_lower.starts_with("temp/")
+            || path_lower.starts_with("temp\\")
+            || path_lower.contains("/tmp/")
+            || path_lower.contains("\\tmp\\")
+            || path_lower.ends_with("/tmp")
+            || path_lower.ends_with("\\tmp")
+            || path_lower.starts_with("tmp/")
+            || path_lower.starts_with("tmp\\")
+            || path_lower == "temp"
+            || path_lower == "tmp"
+            || path.components().any(|c| {
+                let s = c.as_os_str().to_string_lossy().to_lowercase();
+                s == "scratchpad" || s == "temp" || s == "tmp"
+            })
+        {
+            return false;
+        }
+
         // 1. Check workspace repository root
         if let Some(root) = resolve_project_root() {
             if path.starts_with(&root) {
@@ -658,6 +684,25 @@ mod tests {
             let lineage = tracker.get_session_lineage("test_session");
             assert_eq!(lineage.len(), 1);
             assert!(lineage[0].is_immune);
+        }
+    }
+
+    #[test]
+    fn test_scratchpad_and_temp_dirs_not_immune() {
+        let tracker = FileLineageTracker::new();
+        assert!(!tracker.is_path_immune(Path::new("scratchpad/Cargo.toml")));
+        assert!(!tracker.is_path_immune(Path::new("scratchpad/src/main.rs")));
+        assert!(!tracker.is_path_immune(Path::new("/temp/repo/Cargo.toml")));
+        assert!(!tracker.is_path_immune(Path::new("C:\\temp\\workspace\\src\\lib.rs")));
+        assert!(!tracker.is_path_immune(Path::new("/tmp/test/Cargo.toml")));
+        assert!(!tracker.is_path_immune(Path::new("temp/src/main.rs")));
+        assert!(!tracker.is_path_immune(Path::new("tmp/src/main.rs")));
+
+        if let Some(root) = resolve_project_root() {
+            let scratchpad_path = root.join("scratchpad").join("src").join("main.rs");
+            assert!(!tracker.is_path_immune(&scratchpad_path));
+            let temp_path = root.join("temp").join("Cargo.toml");
+            assert!(!tracker.is_path_immune(&temp_path));
         }
     }
 }

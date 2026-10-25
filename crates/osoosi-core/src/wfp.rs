@@ -701,9 +701,8 @@ pub struct NativeDestinationBlockRule {
     pub created_at: String,
 }
 
-static NATIVE_DESTINATION_BLOCKS: LazyLock<
-    dashmap::DashMap<String, NativeDestinationBlockRule>,
-> = LazyLock::new(dashmap::DashMap::new);
+static NATIVE_DESTINATION_BLOCKS: LazyLock<dashmap::DashMap<String, NativeDestinationBlockRule>> =
+    LazyLock::new(dashmap::DashMap::new);
 
 static GLOBAL_WFP_SESSION: LazyLock<parking_lot::Mutex<Option<WfpDynamicSession>>> =
     LazyLock::new(|| parking_lot::Mutex::new(WfpDynamicSession::open().ok()));
@@ -1168,8 +1167,7 @@ pub fn unblock_all_dlp_rules_for_ips(ips: &[std::net::IpAddr]) -> usize {
         use winreg::RegKey;
 
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-        let fw_path =
-            r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+        let fw_path = r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
         if let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ | KEY_WRITE) {
             let matching_keys: Vec<String> = fw_key
                 .enum_values()
@@ -1194,7 +1192,6 @@ pub fn unblock_all_dlp_rules_for_ips(ips: &[std::net::IpAddr]) -> usize {
     removed_count
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1203,7 +1200,12 @@ mod tests {
     fn test_native_destination_block_and_unblock_lifecycle() {
         let ip: std::net::IpAddr = "93.184.216.34".parse().unwrap();
         let rule = "OshoosiDLP-UnitTestRule";
-        let res = block_destination_native(rule, Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe"), None, &[ip]);
+        let res = block_destination_native(
+            rule,
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            None,
+            &[ip],
+        );
         assert!(res.is_ok());
         assert!(is_destination_blocked_native(&ip));
         unblock_destination_native(rule, None, None, &[ip]).unwrap();

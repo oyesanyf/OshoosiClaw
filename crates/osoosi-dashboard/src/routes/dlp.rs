@@ -142,7 +142,11 @@ pub fn save_released_allowlist(entries: &[DlpReleasedAllowlistEntry]) -> anyhow:
     Ok(())
 }
 
-pub fn is_in_released_allowlist(destination_sink: &str, zk_commitment: &str, scrubbed_preview: &str) -> bool {
+pub fn is_in_released_allowlist(
+    destination_sink: &str,
+    zk_commitment: &str,
+    scrubbed_preview: &str,
+) -> bool {
     let entries = load_released_allowlist();
     entries.iter().any(|entry| {
         (!entry.zk_commitment_hex.is_empty() && entry.zk_commitment_hex == zk_commitment)
@@ -406,7 +410,11 @@ pub fn inspect_and_record_with_options(
 
     // Enforce benign invariant: if tier1.detected_categories.is_empty() and !dest_forbid and !cj_export_denied and !voter_quarantine,
     // then final_verdict = DlpVerdict::Allow, tier1.allowed = true, authorization_decision = "ALLOW", dlp_response = "ALLOW", and tier1.sensitivity_potential_phi = 0.0.
-    if tier1.detected_categories.is_empty() && !dest_forbid && !cj_export_denied && !voter_quarantine {
+    if tier1.detected_categories.is_empty()
+        && !dest_forbid
+        && !cj_export_denied
+        && !voter_quarantine
+    {
         final_verdict = osoosi_dp::DlpVerdict::Allow;
         tier1.allowed = true;
         tier1.escalate_to_tier2 = false;
@@ -467,7 +475,9 @@ pub fn inspect_and_record_with_options(
             final_verdict.as_authorization_str().to_string(),
             match final_verdict {
                 osoosi_dp::DlpVerdict::Allow => "ALLOW".to_string(),
-                osoosi_dp::DlpVerdict::Quarantine | osoosi_dp::DlpVerdict::Deny => "QUARANTINE".to_string(),
+                osoosi_dp::DlpVerdict::Quarantine | osoosi_dp::DlpVerdict::Deny => {
+                    "QUARANTINE".to_string()
+                }
             },
         )
     };
@@ -533,7 +543,13 @@ pub fn inspect_and_record_with_options(
         containment: None,
     };
 
-    if !event.allowed && is_in_released_allowlist(&event.destination_sink, &event.zk_proof_commitment, &event.scrubbed_preview) {
+    if !event.allowed
+        && is_in_released_allowlist(
+            &event.destination_sink,
+            &event.zk_proof_commitment,
+            &event.scrubbed_preview,
+        )
+    {
         event.allowed = true;
         event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
         event.dlp_response = "RELEASED_BY_USER".to_string();
@@ -601,9 +617,11 @@ pub fn inspect_and_record_shared(
             .engine
             .crown_jewels
             .evaluate_crown_jewel_export_attempt(payload_str, actor_process, destination_sink);
-        let (dest_forbid, dest_reason) = state
-            .engine
-            .evaluate_egress_destination_policy(actor_process, destination_sink, channel);
+        let (dest_forbid, dest_reason) = state.engine.evaluate_egress_destination_policy(
+            actor_process,
+            destination_sink,
+            channel,
+        );
         let detection_mode =
             osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode);
         let containment_mode =
@@ -717,7 +735,11 @@ pub fn inspect_and_record_shared(
         dlp_detected,
     );
 
-    if tier1.detected_categories.is_empty() && !dest_forbid && !cj_export_denied && !voter_quarantine {
+    if tier1.detected_categories.is_empty()
+        && !dest_forbid
+        && !cj_export_denied
+        && !voter_quarantine
+    {
         final_verdict = osoosi_dp::DlpVerdict::Allow;
         tier1.allowed = true;
         tier1.escalate_to_tier2 = false;
@@ -765,7 +787,9 @@ pub fn inspect_and_record_shared(
             final_verdict.as_authorization_str().to_string(),
             match final_verdict {
                 osoosi_dp::DlpVerdict::Allow => "ALLOW".to_string(),
-                osoosi_dp::DlpVerdict::Quarantine | osoosi_dp::DlpVerdict::Deny => "QUARANTINE".to_string(),
+                osoosi_dp::DlpVerdict::Quarantine | osoosi_dp::DlpVerdict::Deny => {
+                    "QUARANTINE".to_string()
+                }
             },
         )
     };
@@ -849,11 +873,12 @@ pub fn inspect_and_record_shared(
         if !tier1.allowed {
             state.blocked_exfiltrations += 1;
         }
-        state.scrubbed_pii_entities += (proof.redacted_entity_count as u64).max(if !tier1.allowed {
-            tier1.detected_categories.len() as u64
-        } else {
-            0
-        });
+        state.scrubbed_pii_entities +=
+            (proof.redacted_entity_count as u64).max(if !tier1.allowed {
+                tier1.detected_categories.len() as u64
+            } else {
+                0
+            });
         if zk_ok {
             state.zk_bft_proofs_verified += 1;
         }
@@ -1305,10 +1330,7 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
         .get("image_path")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let pid = body
-        .get("pid")
-        .and_then(|v| v.as_u64())
-        .map(|n| n as u32);
+    let pid = body.get("pid").and_then(|v| v.as_u64()).map(|n| n as u32);
     let destination_sink = body
         .get("url")
         .or_else(|| body.get("destination_sink"))
@@ -1344,7 +1366,10 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
     let mut payload_builder = String::with_capacity(resolved_content.len() + 512);
     if let Some(fields) = body.get("form_fields").and_then(|v| v.as_object()) {
         for (k, v) in fields {
-            let val_str = v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string());
+            let val_str = v
+                .as_str()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| v.to_string());
             payload_builder.push_str(&format!("{}={}\n", k, val_str));
         }
     }
@@ -1398,17 +1423,15 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
             destination_host: host.clone(),
             injection_indicators: Vec::new(),
         };
-        let outcome = engine
-            .evaluate_and_respond(&event, &ctx, crate::routes::har_dlp::get_backend());
+        let outcome =
+            engine.evaluate_and_respond(&event, &ctx, crate::routes::har_dlp::get_backend());
         let outcome_json = serde_json::to_value(&outcome).unwrap_or(Value::Null);
         event.containment = Some(outcome_json.clone());
         let mut state = get_global_dlp_state().write();
         attach_containment_to_event(&mut state, &event.id, outcome_json);
     } else {
-        let restored = engine.restore_browser_destination_blocks_for_host(
-            &host,
-            "verified-clean-browser-upload",
-        );
+        let restored = engine
+            .restore_browser_destination_blocks_for_host(&host, "verified-clean-browser-upload");
         if let Some(first_restored) = restored.first() {
             let outcome_json = serde_json::to_value(first_restored).unwrap_or(Value::Null);
             event.containment = Some(outcome_json.clone());
@@ -1468,10 +1491,14 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
             let is_match = if req.release_all_false_positives {
                 true
             } else {
-                let comm_match = req.zk_commitment_hex.as_ref()
+                let comm_match = req
+                    .zk_commitment_hex
+                    .as_ref()
                     .map(|c| !c.is_empty() && c == &event.zk_proof_commitment)
                     .unwrap_or(false);
-                let sink_match = req.destination_sink.as_ref()
+                let sink_match = req
+                    .destination_sink
+                    .as_ref()
                     .map(|s| {
                         !s.is_empty()
                             && (s == &event.destination_sink
@@ -1479,15 +1506,23 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
                                 || crate::routes::har_dlp::host_of(s) == event.destination)
                     })
                     .unwrap_or(false);
-                let preview_match = req.scrubbed_preview.as_ref()
-                    .map(|p| !p.is_empty() && (p == &event.scrubbed_preview || event.scrubbed_preview.contains(p)))
+                let preview_match = req
+                    .scrubbed_preview
+                    .as_ref()
+                    .map(|p| {
+                        !p.is_empty()
+                            && (p == &event.scrubbed_preview || event.scrubbed_preview.contains(p))
+                    })
                     .unwrap_or(false);
 
                 if comm_match {
                     true
                 } else if sink_match && preview_match {
                     true
-                } else if preview_match && req.destination_sink.is_none() && req.zk_commitment_hex.is_none() {
+                } else if preview_match
+                    && req.destination_sink.is_none()
+                    && req.zk_commitment_hex.is_none()
+                {
                     true
                 } else {
                     false
@@ -1515,7 +1550,10 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
                     released_at: chrono::Utc::now().to_rfc3339(),
                 });
 
-                released_event_ids.push((event.id.clone(), serde_json::to_string(&event).unwrap_or_default()));
+                released_event_ids.push((
+                    event.id.clone(),
+                    serde_json::to_string(&event).unwrap_or_default(),
+                ));
                 released_count += 1;
             }
         }
@@ -1524,8 +1562,16 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
     }
 
     // Record direct user exclusion from HAR or DLP ONLY if valid payload evidence (commitment or preview) is provided
-    let has_zk = req.zk_commitment_hex.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
-    let has_preview = req.scrubbed_preview.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    let has_zk = req
+        .zk_commitment_hex
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let has_preview = req
+        .scrubbed_preview
+        .as_ref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
 
     if newly_released_entries.is_empty() && (has_zk || has_preview) {
         newly_released_entries.push(DlpReleasedAllowlistEntry {
@@ -1554,7 +1600,8 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
     if req.release_all_false_positives {
         for outcome in engine.list() {
             if !outcome.restored
-                && outcome.decision == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
+                && outcome.decision
+                    == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
             {
                 if !outcome.destination_host.is_empty() {
                     target_destinations.insert(outcome.destination_host.clone());
@@ -1590,7 +1637,9 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
         for entry in valid_entries_to_persist {
             if !allowlist.iter().any(|e| {
                 (!e.zk_commitment_hex.is_empty() && e.zk_commitment_hex == entry.zk_commitment_hex)
-                    || (!e.destination_sink.is_empty() && e.destination_sink == entry.destination_sink && e.scrubbed_preview == entry.scrubbed_preview)
+                    || (!e.destination_sink.is_empty()
+                        && e.destination_sink == entry.destination_sink
+                        && e.scrubbed_preview == entry.scrubbed_preview)
             }) {
                 allowlist.push(entry);
             }
@@ -1614,10 +1663,7 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
             );
         }
         if req.release_all_false_positives {
-            let _ = conn.execute(
-                "UPDATE dlp_events SET allowed = 1 WHERE allowed = 0",
-                [],
-            );
+            let _ = conn.execute("UPDATE dlp_events SET allowed = 1 WHERE allowed = 0", []);
         }
     }
 
@@ -1685,8 +1731,14 @@ mod tests {
             let mut paths_to_track = vec![
                 PathBuf::from("database").join("dlp_released_allowlist.json"),
                 PathBuf::from("database").join("dlp_containment_registry.json"),
-                PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_released_allowlist.json"),
-                PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_containment_registry.json"),
+                PathBuf::from("crates")
+                    .join("osoosi-dashboard")
+                    .join("database")
+                    .join("dlp_released_allowlist.json"),
+                PathBuf::from("crates")
+                    .join("osoosi-dashboard")
+                    .join("database")
+                    .join("dlp_containment_registry.json"),
             ];
 
             if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
@@ -1772,13 +1824,37 @@ mod tests {
 
         let Json(res) = post_dlp_browser_event(Json(payload)).await;
         assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(res.get("allowed").and_then(|v| v.as_bool()), Some(false), "PHI post must be denied");
-        assert_eq!(res.get("authorization_decision").and_then(|v| v.as_str()), Some("DENY"));
-        assert_eq!(res.get("dlp_response").and_then(|v| v.as_str()), Some("QUARANTINE"));
-        let phi = res.get("sensitivity_potential_phi").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        assert!(phi >= 0.85, "sensitivity_potential_phi must be >= 0.85, got {}", phi);
-        let preview = res.get("scrubbed_preview").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(preview.contains("<ZK_PII:") || preview.contains("<ZK_"), "preview must contain ZK_PII scrubbed token: {}", preview);
+        assert_eq!(
+            res.get("allowed").and_then(|v| v.as_bool()),
+            Some(false),
+            "PHI post must be denied"
+        );
+        assert_eq!(
+            res.get("authorization_decision").and_then(|v| v.as_str()),
+            Some("DENY")
+        );
+        assert_eq!(
+            res.get("dlp_response").and_then(|v| v.as_str()),
+            Some("QUARANTINE")
+        );
+        let phi = res
+            .get("sensitivity_potential_phi")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        assert!(
+            phi >= 0.85,
+            "sensitivity_potential_phi must be >= 0.85, got {}",
+            phi
+        );
+        let preview = res
+            .get("scrubbed_preview")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert!(
+            preview.contains("<ZK_PII:") || preview.contains("<ZK_"),
+            "preview must contain ZK_PII scrubbed token: {}",
+            preview
+        );
     }
 
     #[tokio::test]
@@ -1789,7 +1865,8 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let fname = format!("dlptest_staging_upload_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
-        let sample_phi = "patient_id,mrn,ssn,icd10\nPT-8891,MRN-102938,456-78-9012,Asthma ICD10-J45\n";
+        let sample_phi =
+            "patient_id,mrn,ssn,icd10\nPT-8891,MRN-102938,456-78-9012,Asthma ICD10-J45\n";
         std::fs::write(&file_path, sample_phi).expect("write sample phi file");
 
         let payload = json!({
@@ -1802,9 +1879,19 @@ mod tests {
 
         let Json(res) = post_dlp_browser_event(Json(payload)).await;
         assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(res.get("allowed").and_then(|v| v.as_bool()), Some(false), "staged file must be resolved and denied");
-        assert_eq!(res.get("authorization_decision").and_then(|v| v.as_str()), Some("DENY"));
-        assert_eq!(res.get("dlp_response").and_then(|v| v.as_str()), Some("QUARANTINE"));
+        assert_eq!(
+            res.get("allowed").and_then(|v| v.as_bool()),
+            Some(false),
+            "staged file must be resolved and denied"
+        );
+        assert_eq!(
+            res.get("authorization_decision").and_then(|v| v.as_str()),
+            Some("DENY")
+        );
+        assert_eq!(
+            res.get("dlp_response").and_then(|v| v.as_str()),
+            Some("QUARANTINE")
+        );
 
         let _ = std::fs::remove_file(file_path);
     }
@@ -1841,8 +1928,15 @@ mod tests {
             assert!(!ev.allowed);
         }
 
-        assert_eq!(state.recent_events.len(), 1, "Repeated probes must coalesce into 1 record");
-        assert_eq!(state.recent_events[0].repeat_count, 3, "repeat_count must equal 3");
+        assert_eq!(
+            state.recent_events.len(),
+            1,
+            "Repeated probes must coalesce into 1 record"
+        );
+        assert_eq!(
+            state.recent_events[0].repeat_count, 3,
+            "repeat_count must equal 3"
+        );
     }
 
     #[tokio::test]
@@ -1863,8 +1957,14 @@ mod tests {
             recent_events: Vec::new(),
         };
 
-        let unique_sink = format!("https://hospital-{}.internal.net/sync", uuid::Uuid::new_v4());
-        let note = format!("clinical note patient ssn 123-45-6789 case {}", uuid::Uuid::new_v4());
+        let unique_sink = format!(
+            "https://hospital-{}.internal.net/sync",
+            uuid::Uuid::new_v4()
+        );
+        let note = format!(
+            "clinical note patient ssn 123-45-6789 case {}",
+            uuid::Uuid::new_v4()
+        );
         let (_, _, ev) = inspect_and_record_with_options(
             &mut state,
             "clinical_notes.exe",
@@ -1895,7 +1995,11 @@ mod tests {
         assert_eq!(res.get("released_count").and_then(|v| v.as_u64()), Some(1));
 
         let global = get_global_dlp_state().read();
-        let released = global.recent_events.iter().find(|e| e.id == ev.id).expect("event must exist");
+        let released = global
+            .recent_events
+            .iter()
+            .find(|e| e.id == ev.id)
+            .expect("event must exist");
         assert!(released.allowed, "event must now be allowed");
         assert_eq!(released.authorization_decision, "ALLOW (USER_RELEASED)");
         assert_eq!(released.dlp_response, "RELEASED_BY_USER");
@@ -1908,7 +2012,10 @@ mod tests {
         let engine = crate::routes::dlp_containment::global_containment_engine();
 
         // 1. Trigger a sensitive upload to block this unique host
-        let sens_content = format!("patient_name,dob,ssn,ccn\nAlice Doe,1980-01-01,123-45-6789,4532015112830366,case_{}\n", uuid::Uuid::new_v4());
+        let sens_content = format!(
+            "patient_name,dob,ssn,ccn\nAlice Doe,1980-01-01,123-45-6789,4532015112830366,case_{}\n",
+            uuid::Uuid::new_v4()
+        );
         let sens_payload = json!({
             "actor_process": "chrome.exe",
             "url": dest_url,
@@ -1917,7 +2024,10 @@ mod tests {
             "content": sens_content
         });
         let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
-        assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            sens_res.get("allowed").and_then(|v| v.as_bool()),
+            Some(false)
+        );
         assert!(engine.has_active_browser_block_for_host(&host));
 
         // 2. Uploading benign covergeneral.docx is allowed and automatically releases destination blocks
@@ -1930,9 +2040,20 @@ mod tests {
         });
         let Json(clean_res) = post_dlp_browser_event(Json(clean_payload)).await;
         assert_eq!(clean_res.get("ok").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(clean_res.get("allowed").and_then(|v| v.as_bool()), Some(true));
-        assert_eq!(clean_res.get("authorization_decision").and_then(|v| v.as_str()), Some("ALLOW"));
-        assert!(!engine.has_active_browser_block_for_host(&host), "destination block must be auto-released on clean upload");
+        assert_eq!(
+            clean_res.get("allowed").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            clean_res
+                .get("authorization_decision")
+                .and_then(|v| v.as_str()),
+            Some("ALLOW")
+        );
+        assert!(
+            !engine.has_active_browser_block_for_host(&host),
+            "destination block must be auto-released on clean upload"
+        );
     }
 
     #[tokio::test]
@@ -1952,23 +2073,53 @@ mod tests {
         let Json(res) = post_dlp_browser_event(Json(payload)).await;
         assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(res.get("allowed").and_then(|v| v.as_bool()), Some(false));
-        assert_eq!(res.get("authorization_decision").and_then(|v| v.as_str()), Some("DENY"));
-        assert_eq!(res.get("dlp_response").and_then(|v| v.as_str()), Some("QUARANTINE"));
+        assert_eq!(
+            res.get("authorization_decision").and_then(|v| v.as_str()),
+            Some("DENY")
+        );
+        assert_eq!(
+            res.get("dlp_response").and_then(|v| v.as_str()),
+            Some("QUARANTINE")
+        );
 
         // Verify native WFP destination block is active on this host
         assert!(engine.has_active_browser_block_for_host(&host));
 
         // Verify 4-voter quorum in containment outcome
-        let event_obj = res.get("event").and_then(|v| v.as_object()).expect("event object");
-        let containment = event_obj.get("containment").and_then(|v| v.as_object()).expect("containment object");
-        assert_eq!(containment.get("decision").and_then(|v| v.as_str()), Some("DestinationBlocked"));
-        let voters = containment.get("voters").and_then(|v| v.as_object()).expect("voters object");
+        let event_obj = res
+            .get("event")
+            .and_then(|v| v.as_object())
+            .expect("event object");
+        let containment = event_obj
+            .get("containment")
+            .and_then(|v| v.as_object())
+            .expect("containment object");
+        assert_eq!(
+            containment.get("decision").and_then(|v| v.as_str()),
+            Some("DestinationBlocked")
+        );
+        let voters = containment
+            .get("voters")
+            .and_then(|v| v.as_object())
+            .expect("voters object");
         assert_eq!(voters.get("reached").and_then(|v| v.as_bool()), Some(true));
-        let ballots = voters.get("ballots").and_then(|v| v.as_array()).expect("ballots array");
-        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("OpenJEV-Voter")));
-        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("REA-Voter")));
-        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("RedactX-Deterministic-Validators")));
-        assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("Google-SafeBrowsing-Voter")));
+        let ballots = voters
+            .get("ballots")
+            .and_then(|v| v.as_array())
+            .expect("ballots array");
+        assert!(ballots
+            .iter()
+            .any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("OpenJEV-Voter")));
+        assert!(ballots
+            .iter()
+            .any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("REA-Voter")));
+        assert!(ballots
+            .iter()
+            .any(|b| b.get("voter").and_then(|v| v.as_str())
+                == Some("RedactX-Deterministic-Validators")));
+        assert!(ballots
+            .iter()
+            .any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("Google-SafeBrowsing-Voter")));
     }
 
     #[tokio::test]
@@ -1978,7 +2129,10 @@ mod tests {
         let engine = crate::routes::dlp_containment::global_containment_engine();
 
         // 1. Ensure a block is active
-        let sens_content = format!("patient_id,ssn,dob\nP-1234,123-45-6789,1975-03-21,case_{}\n", uuid::Uuid::new_v4());
+        let sens_content = format!(
+            "patient_id,ssn,dob\nP-1234,123-45-6789,1975-03-21,case_{}\n",
+            uuid::Uuid::new_v4()
+        );
         let sens_payload = json!({
             "actor_process": "chrome.exe",
             "url": dest_url.clone(),
@@ -1987,7 +2141,10 @@ mod tests {
             "content": sens_content
         });
         let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
-        assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            sens_res.get("allowed").and_then(|v| v.as_bool()),
+            Some(false)
+        );
         assert!(engine.has_active_browser_block_for_host(&host));
 
         // 2. Call post_dlp_release with destination_sink
@@ -2002,6 +2159,9 @@ mod tests {
         assert_eq!(rel_res.get("ok").and_then(|v| v.as_bool()), Some(true));
 
         // 3. Verify destination block is restored / unblocked
-        assert!(!engine.has_active_browser_block_for_host(&host), "destination block must be restored on user release");
+        assert!(
+            !engine.has_active_browser_block_for_host(&host),
+            "destination block must be restored on user release"
+        );
     }
 }

@@ -788,12 +788,15 @@ impl OsoosiTwoTierDlpEngine {
             b'6' => {
                 // Discover: strictly 16 or 19 digits (NEVER 15!)
                 // China UnionPay: 16..=19 digits
-                if digits.starts_with(b"6011") || digits.starts_with(b"65") {
-                    len == 16 || len == 19
-                } else if digits.starts_with(b"64") && (b'4'..=b'9').contains(&digits[2]) {
+                if digits.starts_with(b"6011")
+                    || digits.starts_with(b"65")
+                    || (digits.starts_with(b"64") && (b'4'..=b'9').contains(&digits[2]))
+                {
                     len == 16 || len == 19
                 } else if digits.starts_with(b"622") {
-                    let p6 = digits[..6].iter().fold(0u32, |acc, &d| acc * 10 + (d - b'0') as u32);
+                    let p6 = digits[..6]
+                        .iter()
+                        .fold(0u32, |acc, &d| acc * 10 + (d - b'0') as u32);
                     if (622126..=622925).contains(&p6) {
                         len == 16 || len == 19
                     } else {
@@ -1240,8 +1243,8 @@ impl OsoosiTwoTierDlpEngine {
             return false;
         }
 
-        for raw_segment in
-            text.split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&' | '?'))
+        for raw_segment in text
+            .split(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | ';' | '&' | '?'))
         {
             let seg = raw_segment.trim();
             if seg.is_empty() {
@@ -1252,7 +1255,7 @@ impl OsoosiTwoTierDlpEngine {
                     continue;
                 }
             }
-            for raw_tok in seg.split(|c: char| matches!(c, '=' | '/')) {
+            for raw_tok in seg.split(['=', '/']) {
                 let tok = raw_tok.trim();
                 if tok.len() < 64 {
                     continue;
@@ -1496,9 +1499,10 @@ impl OsoosiTwoTierDlpEngine {
                                 return false;
                             }
                         }
-                        for raw_tok in trimmed_seg.split(|c: char| matches!(c, '=' | '/')) {
+                        for raw_tok in trimmed_seg.split(['=', '/']) {
                             let trimmed = raw_tok.trim();
-                            if trimmed.starts_with("cs_live_") || is_exempt_query_param_key(trimmed) {
+                            if trimmed.starts_with("cs_live_") || is_exempt_query_param_key(trimmed)
+                            {
                                 continue;
                             }
                             if trimmed.len() >= 32 {
@@ -2343,7 +2347,9 @@ impl PresidioGlinerPiiZeroGuard {
             };
 
         for ch in raw_text.chars() {
-            if ch.is_whitespace() || matches!(ch, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':' | '/') {
+            if ch.is_whitespace()
+                || matches!(ch, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':' | '/')
+            {
                 classify_and_redact(
                     &mut token_buf,
                     &mut scrubbed,
@@ -2816,7 +2822,8 @@ impl RedactXStructuredValidator {
             if i > 0 {
                 let prev = bytes[i - 1];
                 let start_back = i.saturating_sub(48);
-                let ctx_before = String::from_utf8_lossy(&bytes[start_back..i]).to_ascii_lowercase();
+                let ctx_before =
+                    String::from_utf8_lossy(&bytes[start_back..i]).to_ascii_lowercase();
                 let is_phone_field = ["phone", "tel", "cell", "call", "mobile", "fax", "contact"]
                     .iter()
                     .any(|&k| ctx_before.contains(k));
@@ -2824,7 +2831,8 @@ impl RedactXStructuredValidator {
                     || (matches!(
                         prev,
                         b'.' | b'/' | b':' | b'=' | b'&' | b'?' | b'_' | b'-' | b'"' | b'\'' | b'%'
-                    ) && !(matches!(prev, b'=' | b'&' | b'?' | b'"' | b'\'' | b'%') && is_phone_field))
+                    ) && !(matches!(prev, b'=' | b'&' | b'?' | b'"' | b'\'' | b'%')
+                        && is_phone_field))
                 {
                     i += 1;
                     continue;
@@ -2835,7 +2843,10 @@ impl RedactXStructuredValidator {
             let start_back = i.saturating_sub(48);
             let context_before_slice = String::from_utf8_lossy(&bytes[start_back..i]);
             let trimmed_before = context_before_slice.trim_end_matches(|c: char| {
-                matches!(c, '=' | ':' | '"' | '\'' | ' ' | '%' | '&' | '?' | '\n' | '\r' | '\t')
+                matches!(
+                    c,
+                    '=' | ':' | '"' | '\'' | ' ' | '%' | '&' | '?' | '\n' | '\r' | '\t'
+                )
             });
             if trimmed_before.ends_with("id")
                 || trimmed_before.ends_with("_id")
@@ -2866,14 +2877,17 @@ impl RedactXStructuredValidator {
             if digits.len() == 10 && !followed_by_ip_or_port {
                 let trimmed_cand = cand_slice.trim();
                 // For 10 unformatted contiguous digits, require nearby phone/fax context keywords within +/- 32 bytes
-                let is_unformatted_10 = trimmed_cand.len() == 10 && trimmed_cand.chars().all(|c| c.is_ascii_digit());
+                let is_unformatted_10 =
+                    trimmed_cand.len() == 10 && trimmed_cand.chars().all(|c| c.is_ascii_digit());
                 if is_unformatted_10 {
                     let ctx_start = i.saturating_sub(32);
                     let ctx_end = (next_byte_idx + 32).min(len);
-                    let nearby = String::from_utf8_lossy(&bytes[ctx_start..ctx_end]).to_ascii_lowercase();
-                    let has_phone_keyword = ["phone", "tel", "cell", "call", "mobile", "fax", "contact"]
-                        .iter()
-                        .any(|&k| nearby.contains(k));
+                    let nearby =
+                        String::from_utf8_lossy(&bytes[ctx_start..ctx_end]).to_ascii_lowercase();
+                    let has_phone_keyword =
+                        ["phone", "tel", "cell", "call", "mobile", "fax", "contact"]
+                            .iter()
+                            .any(|&k| nearby.contains(k));
                     if !has_phone_keyword {
                         i += 1;
                         continue;
@@ -3612,7 +3626,11 @@ mod tests_dlp_evasion {
         let engine = OsoosiTwoTierDlpEngine::new();
         let url = "https://www.temu.com/ul/kuiper/un1.html?goods_id=601103334308570&_x_ads_creative_id=4317503380002857";
         let tier1 = engine.inspect_hot_tier1("msedge.exe", url, url.as_bytes());
-        assert!(tier1.allowed, "Temu URL must be allowed: {:?}", tier1.rationale);
+        assert!(
+            tier1.allowed,
+            "Temu URL must be allowed: {:?}",
+            tier1.rationale
+        );
         assert_eq!(tier1.detected_categories, Vec::<String>::new());
         assert_eq!(tier1.sensitivity_potential_phi, 0.0);
 
@@ -3620,7 +3638,9 @@ mod tests_dlp_evasion {
         assert_eq!(proof.redacted_entity_count, 0);
         assert_eq!(proof.redacted_categories, Vec::<String>::new());
         assert!(RedactXStructuredValidator::pan_scan(url).is_empty());
-        assert!(!OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"601103334308570"));
+        assert!(!OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(
+            b"601103334308570"
+        ));
     }
 
     #[test]
@@ -3628,7 +3648,11 @@ mod tests_dlp_evasion {
         let engine = OsoosiTwoTierDlpEngine::new();
         let url = "https://www.linkedin.com/jobs/search-results/?currentJobId=4449786300";
         let tier1 = engine.inspect_hot_tier1("chrome.exe", url, url.as_bytes());
-        assert!(tier1.allowed, "LinkedIn URL must be allowed: {:?}", tier1.rationale);
+        assert!(
+            tier1.allowed,
+            "LinkedIn URL must be allowed: {:?}",
+            tier1.rationale
+        );
         assert_eq!(tier1.detected_categories, Vec::<String>::new());
         assert!(RedactXStructuredValidator::nanp_phone_fax_scan(url).is_empty());
     }
@@ -3638,16 +3662,26 @@ mod tests_dlp_evasion {
         let engine = OsoosiTwoTierDlpEngine::new();
         let url = "https://medium.com/@juanabascal78/understanding-causal-security-graphs";
         let tier1 = engine.inspect_hot_tier1("chrome.exe", url, url.as_bytes());
-        assert!(tier1.allowed, "Medium URL must be allowed: {:?}", tier1.rationale);
+        assert!(
+            tier1.allowed,
+            "Medium URL must be allowed: {:?}",
+            tier1.rationale
+        );
         assert_eq!(tier1.detected_categories, Vec::<String>::new());
 
         let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(url, 5501, 6.42, 4);
         assert_eq!(proof.redacted_entity_count, 0);
         assert_eq!(proof.redacted_categories, Vec::<String>::new());
 
-        assert!(!RedactXStructuredValidator::rfc5321_email_valid("//medium.com/@juanabascal78/some-slug"));
-        assert!(!RedactXStructuredValidator::rfc5321_email_valid("@juanabascal78"));
-        assert!(!RedactXStructuredValidator::rfc5321_email_valid("https://medium.com/@juanabascal78"));
+        assert!(!RedactXStructuredValidator::rfc5321_email_valid(
+            "//medium.com/@juanabascal78/some-slug"
+        ));
+        assert!(!RedactXStructuredValidator::rfc5321_email_valid(
+            "@juanabascal78"
+        ));
+        assert!(!RedactXStructuredValidator::rfc5321_email_valid(
+            "https://medium.com/@juanabascal78"
+        ));
     }
 
     #[test]
@@ -3661,9 +3695,15 @@ mod tests_dlp_evasion {
 
         for url in urls {
             let tier1 = engine.inspect_hot_tier1("msedge.exe", url, url.as_bytes());
-            assert!(tier1.allowed, "Token URL must be allowed: {url} -> {:?}", tier1.rationale);
             assert!(
-                !tier1.detected_categories.contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string()),
+                tier1.allowed,
+                "Token URL must be allowed: {url} -> {:?}",
+                tier1.rationale
+            );
+            assert!(
+                !tier1
+                    .detected_categories
+                    .contains(&"CUSTOM_MULTI_ROUND_CIPHER_EXFIL".to_string()),
                 "{url} must not trigger CUSTOM_MULTI_ROUND_CIPHER_EXFIL"
             );
         }
@@ -3673,32 +3713,64 @@ mod tests_dlp_evasion {
     fn test_genuine_pan_and_phones_in_post_bodies_100_percent_detected() {
         let engine = OsoosiTwoTierDlpEngine::new();
         // Visa
-        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"4532015112830366"));
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(
+            b"4532015112830366"
+        ));
         // Mastercard
-        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"5500000000000004"));
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(
+            b"5500000000000004"
+        ));
         // Amex (15 digits)
-        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"378282246310005"));
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(
+            b"378282246310005"
+        ));
         // Discover 16
-        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(b"6011000990139424"));
+        assert!(OsoosiTwoTierDlpEngine::is_valid_credit_card_pan(
+            b"6011000990139424"
+        ));
 
         // POST body with genuine Visa
         let post_visa = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\ncard_number=4532015112830366";
-        let tier1_visa = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_visa.as_bytes());
-        assert!(tier1_visa.detected_categories.contains(&"CREDIT_CARD_LUHN".to_string()));
+        let tier1_visa = engine.inspect_hot_tier1(
+            "msedge.exe",
+            "https://dlptest.com/https-post/",
+            post_visa.as_bytes(),
+        );
+        assert!(tier1_visa
+            .detected_categories
+            .contains(&"CREDIT_CARD_LUHN".to_string()));
 
         // POST body with genuine Amex
         let post_amex = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\npayment_method=amex&card=3782 822463 10005";
-        let tier1_amex = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_amex.as_bytes());
-        assert!(tier1_amex.detected_categories.contains(&"CREDIT_CARD_LUHN".to_string()));
+        let tier1_amex = engine.inspect_hot_tier1(
+            "msedge.exe",
+            "https://dlptest.com/https-post/",
+            post_amex.as_bytes(),
+        );
+        assert!(tier1_amex
+            .detected_categories
+            .contains(&"CREDIT_CARD_LUHN".to_string()));
 
         // POST body with formatted HIPAA phone
         let post_phone = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\npatient_phone=(415) 555-2671";
-        let tier1_phone = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_phone.as_bytes());
-        assert!(tier1_phone.detected_categories.contains(&"HIPAA_PHONE".to_string()));
+        let tier1_phone = engine.inspect_hot_tier1(
+            "msedge.exe",
+            "https://dlptest.com/https-post/",
+            post_phone.as_bytes(),
+        );
+        assert!(tier1_phone
+            .detected_categories
+            .contains(&"HIPAA_PHONE".to_string()));
 
         // POST body with unformatted phone and context keyword
         let post_unformatted_phone = "POST https://dlptest.com/https-post/ HTTP/1.1\nHost: dlptest.com\n\nEmergency contact call: 4155552671";
-        let tier1_unformatted = engine.inspect_hot_tier1("msedge.exe", "https://dlptest.com/https-post/", post_unformatted_phone.as_bytes());
-        assert!(tier1_unformatted.detected_categories.contains(&"HIPAA_PHONE".to_string()));
+        let tier1_unformatted = engine.inspect_hot_tier1(
+            "msedge.exe",
+            "https://dlptest.com/https-post/",
+            post_unformatted_phone.as_bytes(),
+        );
+        assert!(tier1_unformatted
+            .detected_categories
+            .contains(&"HIPAA_PHONE".to_string()));
     }
 }

@@ -14,9 +14,9 @@
 //!    $C(x)$ vanishes on all of $H$ if and only if $Z_H(x)$ divides $C(x)$ with **zero remainder**:
 //!    $$C(z) \equiv Q(z) \cdot Z_H(z) \pmod p \iff R(z) = C(z) - Q(z) \cdot Z_H(z) \equiv 0 \pmod p$$
 
+use osoosi_types::{ArmRole, OctopusSecurityError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use osoosi_types::{ArmRole, OctopusSecurityError};
 
 /// Maps an authenticated ArmRole to its canonical reserved Cedar principal name.
 pub fn canonical_reserved_principal_for_role(role: &ArmRole) -> &'static str {

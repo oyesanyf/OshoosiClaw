@@ -51,14 +51,14 @@ pub use tiered_executor::{
     Tier2ConfinedChildResult, TieredExecutionDispatcher, TieredExecutionReceipt, TieredToolRequest,
     WindowsJobObject,
 };
+#[cfg(windows)]
+pub use token_posture::{
+    create_deelevated_token, spawn_deelevated, spawn_deelevated_in_job, DeelevatedChild,
+};
 pub use token_posture::{
     current_token_posture, JobAccountingSnapshot, SandboxJobObject, TokenPosture,
     DANGEROUS_PRIVILEGES, INTEGRITY_HIGH, INTEGRITY_LOW, INTEGRITY_MEDIUM, INTEGRITY_SYSTEM,
     INTEGRITY_UNTRUSTED,
-};
-#[cfg(windows)]
-pub use token_posture::{
-    create_deelevated_token, spawn_deelevated, spawn_deelevated_in_job, DeelevatedChild,
 };
 pub use wasm_tier1::{
     WasmExecutionReceipt, WasmHostState, WasmSandboxLimits, WasmTier1Executor,
@@ -128,21 +128,24 @@ impl SandboxStore {
         &mut self,
         required: &Capability,
     ) -> Result<(), wasmtime::Error> {
-        let pos = self.capabilities.iter().position(|cap| match (cap, required) {
-            (Capability::FileRead(granted), Capability::FileRead(requested)) => {
-                granted == "*" || granted == requested || requested.starts_with(granted)
-            }
-            (Capability::FileWrite(granted), Capability::FileWrite(requested)) => {
-                granted == "*" || granted == requested || requested.starts_with(granted)
-            }
-            (Capability::NetworkOut(granted), Capability::NetworkOut(requested)) => {
-                granted == "*" || granted == requested || requested.starts_with(granted)
-            }
-            (Capability::ExecuteTool(granted), Capability::ExecuteTool(requested)) => {
-                granted == "*" || granted == requested
-            }
-            _ => false,
-        });
+        let pos = self
+            .capabilities
+            .iter()
+            .position(|cap| match (cap, required) {
+                (Capability::FileRead(granted), Capability::FileRead(requested)) => {
+                    granted == "*" || granted == requested || requested.starts_with(granted)
+                }
+                (Capability::FileWrite(granted), Capability::FileWrite(requested)) => {
+                    granted == "*" || granted == requested || requested.starts_with(granted)
+                }
+                (Capability::NetworkOut(granted), Capability::NetworkOut(requested)) => {
+                    granted == "*" || granted == requested || requested.starts_with(granted)
+                }
+                (Capability::ExecuteTool(granted), Capability::ExecuteTool(requested)) => {
+                    granted == "*" || granted == requested
+                }
+                _ => false,
+            });
 
         match pos {
             Some(idx) => {
@@ -190,7 +193,6 @@ impl<T: Send + 'static> CallerFuelExt for Caller<'_, T> {
         Ok(())
     }
 }
-
 
 /// A pending human-in-the-loop approval request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -300,7 +302,9 @@ impl SandboxExecutor {
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
-                    store.validate_and_consume_capability(&Capability::FileRead("scan".to_string()))?;
+                    store.validate_and_consume_capability(&Capability::FileRead(
+                        "scan".to_string(),
+                    ))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -426,7 +430,9 @@ impl SandboxExecutor {
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
-                    store.validate_and_consume_capability(&Capability::ExecuteTool(program.clone()))?;
+                    store.validate_and_consume_capability(&Capability::ExecuteTool(
+                        program.clone(),
+                    ))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -491,7 +497,10 @@ impl SandboxExecutor {
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
-                    store.validate_and_consume_capability(&Capability::FileRead(format!("db:{}", query)))?;
+                    store.validate_and_consume_capability(&Capability::FileRead(format!(
+                        "db:{}",
+                        query
+                    )))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -615,7 +624,9 @@ impl SandboxExecutor {
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
-                    store.validate_and_consume_capability(&Capability::FileWrite("audit".to_string()))?;
+                    store.validate_and_consume_capability(&Capability::FileWrite(
+                        "audit".to_string(),
+                    ))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -948,10 +959,8 @@ mod tests {
 
     #[test]
     fn test_wasm_tier1_scratch_write_quota_and_tier2_control_char_rejection() {
-        let temp_dir = std::env::temp_dir().join(format!(
-            "osoosi_wasm_quota_test_{}",
-            std::process::id()
-        ));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_wasm_quota_test_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         let wat = r#"
@@ -979,7 +988,10 @@ mod tests {
         let receipt = exec
             .execute_wat("quota_test", wat, &[], limits)
             .expect("Wasm execution should complete");
-        assert!(receipt.exit_code < 0, "Quota violation must return negative error code");
+        assert!(
+            receipt.exit_code < 0,
+            "Quota violation must return negative error code"
+        );
         assert_eq!(receipt.scratch_bytes_written, 0);
         assert!(
             receipt
@@ -1015,7 +1027,10 @@ mod tests {
             tool_name: "doc_extractor".to_string(),
             payload: vec![],
             custom_wat: None,
-            native_command: Some(("cmd.exe".to_string(), vec!["/c".to_string(), "whoami".to_string()])),
+            native_command: Some((
+                "cmd.exe".to_string(),
+                vec!["/c".to_string(), "whoami".to_string()],
+            )),
             scratchpad_root: temp_dir.clone(),
             allow_scratch_write: false,
         };
@@ -1027,4 +1042,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
-

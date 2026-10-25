@@ -3503,6 +3503,7 @@ impl Ring7CapabilityEffectAuthorizer {
             process_instance_key: proc_key,
             authority_level: latest_state.authority_level,
             approved_capabilities: Vec::new(),
+            authenticated_role: None,
         };
 
         let context = CedarContext {
@@ -3917,6 +3918,7 @@ mod tests {
             process_instance_key: "proc:7100:1:agent:sess-cache-regression".to_string(),
             authority_level: AuthorityLevel::L2AuthorizedUserObjective,
             approved_capabilities: vec!["ExternalWrite".to_string()],
+            authenticated_role: None,
         };
         auth.set_session_egress_budget(&principal.session_id, 1, 1024);
 

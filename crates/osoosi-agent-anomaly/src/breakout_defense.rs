@@ -117,7 +117,10 @@ impl TechnicalBreakoutGuard {
         } else {
             let cmd_parsed = analyze_command_line(command_or_path);
             let pay_parsed = analyze_command_line(raw_payload);
-            if pay_parsed.is_powershell || pay_parsed.is_cmd_wrapper || pay_parsed.has_breakout_signals() {
+            if pay_parsed.is_powershell
+                || pay_parsed.is_cmd_wrapper
+                || pay_parsed.has_breakout_signals()
+            {
                 raw_payload.to_string()
             } else if cmd_parsed.is_cmd_wrapper {
                 format!("{} /c {}", command_or_path.trim(), raw_payload.trim())

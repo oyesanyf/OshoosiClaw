@@ -8,11 +8,11 @@
 //! 3. Surgical Autotomy: revokes generation epoch token, records audit entry, optionally
 //!    terminates the rogue subprocess, and tracks mesh watch-out broadcasts.
 
+use crate::mesh_guard::{HomologicalBoundaryAuditor, VerifiedMeshMessage};
 use chrono::{DateTime, Utc};
-use dashmap::DashMap;
+use dashmap::{DashMap, DashSet};
 use hmac::{Hmac, Mac};
 use osoosi_types::{role_trust_tier, ArmRole, OctopusSecurityError, TrustTier};
-use crate::mesh_guard::{HomologicalBoundaryAuditor, VerifiedMeshMessage};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -99,7 +99,15 @@ pub fn mesh_signing_content(
         .join(",");
     format!(
         "{}:{}:{}:{}:{:?}:{}:{}|prov=[{}]|floor={:?}",
-        sender_arm_id, sender_generation, target_arm_id, target_generation, kind, correlation_id, payload, prov, taint_floor
+        sender_arm_id,
+        sender_generation,
+        target_arm_id,
+        target_generation,
+        kind,
+        correlation_id,
+        payload,
+        prov,
+        taint_floor
     )
 }
 
@@ -115,14 +123,22 @@ pub fn validate_resource_boundary(
         ));
     }
 
-    if trimmed.chars().any(|c| (c as u32) < 0x20 || (c as u32) == 0x7f) {
+    if trimmed
+        .chars()
+        .any(|c| (c as u32) < 0x20 || (c as u32) == 0x7f)
+    {
         return Err(OctopusSecurityError::EnclaveViolation(
             "Resource contains illegal ASCII control characters or null bytes".to_string(),
         ));
     }
 
     let lower = trimmed.to_lowercase();
-    if lower.contains("%00") || lower.contains("%2e%2e") || lower.contains("%2f") || lower.contains("%5c") || lower.contains("%25") {
+    if lower.contains("%00")
+        || lower.contains("%2e")
+        || lower.contains("%2f")
+        || lower.contains("%5c")
+        || lower.contains("%25")
+    {
         return Err(OctopusSecurityError::EnclaveViolation(
             "Ambiguous or malicious percent-encoding detected in resource identifier".to_string(),
         ));
@@ -203,12 +219,24 @@ pub fn validate_resource_boundary(
         if p.starts_with("http://") || p.starts_with("https://") {
             if trimmed.starts_with(p) {
                 let remainder = &trimmed[p.len()..];
-                if remainder.is_empty() || remainder.starts_with('/') || remainder.starts_with(':') || remainder.starts_with('?') || remainder.starts_with('#') {
+                if remainder.is_empty()
+                    || remainder.starts_with('/')
+                    || remainder.starts_with(':')
+                    || remainder.starts_with('?')
+                    || remainder.starts_with('#')
+                {
                     if let Some(port_rest) = remainder.strip_prefix(':') {
-                        let port_digits: String = port_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        let port_digits: String = port_rest
+                            .chars()
+                            .take_while(|c| c.is_ascii_digit())
+                            .collect();
                         if !port_digits.is_empty() {
                             let after_port = &port_rest[port_digits.len()..];
-                            if after_port.is_empty() || after_port.starts_with('/') || after_port.starts_with('?') || after_port.starts_with('#') {
+                            if after_port.is_empty()
+                                || after_port.starts_with('/')
+                                || after_port.starts_with('?')
+                                || after_port.starts_with('#')
+                            {
                                 matched = true;
                                 break;
                             }
@@ -271,12 +299,7 @@ pub struct ArmContainmentRing {
 }
 
 impl ArmContainmentRing {
-    pub fn new(
-        arm_id: usize,
-        role: ArmRole,
-        initial_generation: u64,
-        master_seed: &[u8],
-    ) -> Self {
+    pub fn new(arm_id: usize, role: ArmRole, initial_generation: u64, master_seed: &[u8]) -> Self {
         let mut seed = [0u8; 32];
         if master_seed.len() >= 32 {
             seed.copy_from_slice(&master_seed[..32]);
@@ -609,11 +632,8 @@ impl ArmContainmentRing {
 
         self.validate_epoch(msg.target_generation).await?;
 
-        let sender_epoch_key = self.derive_arm_epoch_key(
-            msg.sender_arm_id,
-            msg.sender_generation,
-            &msg.sender_role,
-        );
+        let sender_epoch_key =
+            self.derive_arm_epoch_key(msg.sender_arm_id, msg.sender_generation, &msg.sender_role);
         let expected_data = mesh_signing_content(
             msg.sender_arm_id,
             msg.sender_generation,
@@ -625,7 +645,10 @@ impl ArmContainmentRing {
             &msg.provenance,
             msg.taint_floor,
         );
-        let expected_sig = hex::encode(compute_ring_hmac(&sender_epoch_key, expected_data.as_bytes()));
+        let expected_sig = hex::encode(compute_ring_hmac(
+            &sender_epoch_key,
+            expected_data.as_bytes(),
+        ));
         if !constant_time_eq_hex(&msg.signature_hex, &expected_sig) {
             return Err(OctopusSecurityError::IdentitySpoofingDetected(format!(
                 "Cryptographic mesh signature mismatch from sender arm {} ({:?}, gen {}): payload tampering or role spoofing detected",
@@ -652,7 +675,10 @@ impl ArmContainmentRing {
 
         let mut audit = HomologicalBoundaryAuditor::audit_role_chain(&role_chain);
         let recipient_tier = role_trust_tier(&self.role);
-        if audit.allowed && effective_floor == TrustTier::Untrusted && recipient_tier == TrustTier::PrivilegedSink {
+        if audit.allowed
+            && effective_floor == TrustTier::Untrusted
+            && recipient_tier == TrustTier::PrivilegedSink
+        {
             audit.allowed = false;
             audit.proxy_laundering_detected = true;
             audit.reason = format!(
@@ -693,7 +719,11 @@ impl ArmContainmentRing {
                     .cloned();
                 taint.1.drain(0..excess);
                 if let Some(untrusted_hop) = preserved_untrusted {
-                    if !taint.1.iter().any(|h| role_trust_tier(&h.role) == TrustTier::Untrusted) {
+                    if !taint
+                        .1
+                        .iter()
+                        .any(|h| role_trust_tier(&h.role) == TrustTier::Untrusted)
+                    {
                         if !taint.1.is_empty() {
                             taint.1[0] = untrusted_hop;
                         } else {
@@ -742,7 +772,10 @@ impl ArmContainmentRing {
         let expires_at_secs = now_secs + ttl_secs;
 
         let token_id = format!("cap-{}-{}-{}", self.arm_id, current_gen, now_secs);
-        let policy_fingerprint = format!("arm_ring:epoch={}:arm={}:role={:?}", current_gen, self.arm_id, self.role);
+        let policy_fingerprint = format!(
+            "arm_ring:epoch={}:arm={}:role={:?}",
+            current_gen, self.arm_id, self.role
+        );
 
         let signing_content = format!(
             "{}:{}:{}:{:?}:{}:{}:{}:{}:{}",
@@ -945,13 +978,21 @@ impl ArmRingRegistry {
         self.rings.read().await.get(&arm_id).cloned()
     }
 
-    pub async fn get_ring_or_fail(&self, arm_id: usize) -> Result<Arc<ArmContainmentRing>, OctopusSecurityError> {
-        self.rings.read().await.get(&arm_id).cloned().ok_or_else(|| {
-            OctopusSecurityError::IsolationViolation(format!(
-                "Execution halted: Missing mandatory Level 1 ArmContainmentRing for Arm {}",
-                arm_id
-            ))
-        })
+    pub async fn get_ring_or_fail(
+        &self,
+        arm_id: usize,
+    ) -> Result<Arc<ArmContainmentRing>, OctopusSecurityError> {
+        self.rings
+            .read()
+            .await
+            .get(&arm_id)
+            .cloned()
+            .ok_or_else(|| {
+                OctopusSecurityError::IsolationViolation(format!(
+                    "Execution halted: Missing mandatory Level 1 ArmContainmentRing for Arm {}",
+                    arm_id
+                ))
+            })
     }
 
     pub async fn get_security_ring(&self, role: ArmRole) -> Option<Arc<ArmContainmentRing>> {
@@ -972,7 +1013,8 @@ impl ArmRingRegistry {
         let ring = self.get_ring_or_fail(arm_id).await?;
         let old_gen = ring.current_generation();
         ring.sever(reason).await;
-        self.record_mesh_watchout(arm_id, old_gen, old_gen + 1, reason).await;
+        self.record_mesh_watchout(arm_id, old_gen, old_gen + 1, reason)
+            .await;
         Ok(())
     }
 
@@ -980,7 +1022,8 @@ impl ArmRingRegistry {
         let ring = self.get_ring_or_fail(arm_id).await?;
         let old_gen = ring.current_generation();
         let new_gen = ring.sever_and_regenerate().await;
-        self.record_mesh_watchout(arm_id, old_gen, new_gen, "Autotomy Regeneration").await;
+        self.record_mesh_watchout(arm_id, old_gen, new_gen, "Autotomy Regeneration")
+            .await;
         Ok(new_gen)
     }
 
@@ -1124,7 +1167,12 @@ impl AgentContainmentRing {
     }
 
     /// Evaluates an arm operation against the Level 1 Arm Ring severed veto.
-    pub fn evaluate_operation(&self, agent_id: &str, _operation: &str, _target: &str) -> Result<(), String> {
+    pub fn evaluate_operation(
+        &self,
+        agent_id: &str,
+        _operation: &str,
+        _target: &str,
+    ) -> Result<(), String> {
         let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
         if self.severed_agents.contains(&norm_id) {
             return Err(format!(
@@ -1233,13 +1281,7 @@ impl AgentContainmentRing {
         let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
         let norm_role = Self::normalize_identifier_uts39_skeleton(role);
         let (epoch, key) = self.get_or_create_epoch(&norm_id);
-        let sign_data = format!(
-            "{}:{}:{}:{}",
-            norm_id,
-            epoch,
-            norm_role,
-            payload
-        );
+        let sign_data = format!("{}:{}:{}:{}", norm_id, epoch, norm_role, payload);
         let hmac_bytes = compute_ring_hmac(&key, sign_data.as_bytes());
         let sig_hex = hex::encode(hmac_bytes);
 
@@ -1274,6 +1316,13 @@ impl AgentContainmentRing {
             return Err(format!(
                 "Stale generation epoch rejected: message epoch {} != active epoch {} (likely severed)",
                 epoch, current_epoch
+            ));
+        }
+
+        if self.severed_agents.contains(&norm_sender_id) {
+            return Err(format!(
+                "Level 1 Arm Ring veto: Arm '{}' is severed and cannot execute operations without epoch regeneration",
+                sender_id
             ));
         }
 
@@ -1343,6 +1392,7 @@ impl AgentContainmentRing {
     /// its HMAC-SHA256 signing key, invalidating any messages signed under stale epochs.
     pub fn advance_epoch_sync(&self, agent_id: &str) -> u64 {
         let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
+        self.severed_agents.remove(&norm_id);
         let old_epoch = self.get_current_epoch(&norm_id);
         let new_epoch = old_epoch + 1;
         self.agent_epochs.insert(norm_id.clone(), new_epoch);
@@ -1363,6 +1413,7 @@ impl AgentContainmentRing {
         target_child_pid: Option<u32>,
     ) -> u64 {
         let norm_id = Self::normalize_identifier_uts39_skeleton(agent_id);
+        self.severed_agents.insert(norm_id.clone());
         let old_epoch = self.get_current_epoch(&norm_id);
         let new_epoch = old_epoch + 1;
 
@@ -1499,8 +1550,7 @@ impl AgentContainmentRing {
             if !clean_slice.is_empty() && !clean_slice.contains("..") {
                 #[cfg(target_os = "linux")]
                 {
-                    let cgroup_kill_path =
-                        format!("/sys/fs/cgroup/{}/cgroup.kill", clean_slice);
+                    let cgroup_kill_path = format!("/sys/fs/cgroup/{}/cgroup.kill", clean_slice);
                     if std::fs::write(&cgroup_kill_path, b"1").is_ok() {
                         kill_detail.push_str(&format!(
                             "; cgroup v2 atomic kill triggered on '{}'",
@@ -1622,6 +1672,15 @@ impl AgentContainmentRing {
         F: FnOnce() -> R,
     {
         self.total_evaluations.fetch_add(1, Ordering::Relaxed);
+
+        // 0. Level 1 Arm Ring severed veto
+        let norm_agent_id = Self::normalize_identifier_uts39_skeleton(&telemetry.agent_id);
+        if self.severed_agents.contains(&norm_agent_id) {
+            return Err(format!(
+                "[ContainmentRing-Level1-Veto]: Level 1 Arm Ring veto: Arm '{}' is severed and cannot execute operations without epoch regeneration",
+                telemetry.agent_id
+            ));
+        }
 
         // 1. Pre-tool lineage inspection (checks immune paths before poisoned digests)
         if let Err(err) = self.inspect_pre_tool_execution(telemetry, tracker) {
@@ -2590,5 +2649,186 @@ mod tests {
             .await;
         assert_eq!(new_epoch, epoch + 1);
         assert!(detail.contains("Credentials revoked"));
+    }
+
+    #[test]
+    fn test_resource_boundary_single_dot_percent_encoding() {
+        let allowed = vec![
+            "https://example.com/api/".to_string(),
+            "local://data/".to_string(),
+        ];
+
+        // Single dot percent encoding variants must be rejected
+        assert!(validate_resource_boundary("https://example.com/api/%2e", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/.%2e", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/%2e.", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/%2e%2e", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/%00", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/%2f", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/%5c", &allowed).is_err());
+        assert!(validate_resource_boundary("https://example.com/api/%25", &allowed).is_err());
+
+        // Valid resource passes
+        assert!(
+            validate_resource_boundary("https://example.com/api/v1/resource", &allowed).is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_capability_token_pre_hmac_order() {
+        let seed = [42u8; 32];
+        let ring = ArmContainmentRing::new(1, ArmRole::AccountingLedgerWrite, 1, &seed);
+
+        // Issue valid token
+        let token = ring
+            .issue_epoch_capability("ledger_writer", "s3://accounting/ledger.dat", 60)
+            .await
+            .expect("issue token");
+
+        // Valid token succeeds
+        assert!(ring.verify_epoch_capability(&token).await.is_ok());
+
+        // 1. Bearer mismatch fails before crypto check
+        let mut bearer_tampered = token.clone();
+        bearer_tampered.bearer_agent = "attacker_agent".to_string();
+        let err = ring
+            .verify_epoch_capability(&bearer_tampered)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("bearer mismatch"));
+
+        // 2. Role mismatch fails before crypto check
+        let mut role_tampered = token.clone();
+        role_tampered.permitted_role = ArmRole::UntrustedDocIngest;
+        let err = ring
+            .verify_epoch_capability(&role_tampered)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("role mismatch"));
+
+        // 3. Expired token fails before crypto check
+        let mut expired_token = token.clone();
+        expired_token.expires_at_secs = 1; // Expired long ago
+        let err = ring
+            .verify_epoch_capability(&expired_token)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("expired"));
+    }
+
+    #[tokio::test]
+    async fn test_severed_arm_veto_by_agent_id() {
+        let ring = AgentContainmentRing::new();
+        let agent1 = "rogue_worker_alpha";
+        let agent2 = "honest_worker_beta";
+
+        assert!(!ring.is_agent_severed(agent1));
+        assert!(!ring.is_agent_severed(agent2));
+
+        // Sever agent 1
+        ring.sever_rogue_agent_branch(agent1, "Confused deputy detected", None)
+            .await;
+
+        assert!(ring.is_agent_severed(agent1));
+        assert!(!ring.is_agent_severed(agent2));
+
+        // evaluate_operation vetoes agent1
+        let err = ring
+            .evaluate_operation(agent1, "write_file", "secret.txt")
+            .unwrap_err();
+        assert!(err.contains("Level 1 Arm Ring veto"));
+
+        // evaluate_operation allows agent2
+        assert!(ring
+            .evaluate_operation(agent2, "write_file", "secret.txt")
+            .is_ok());
+
+        // verify_inter_agent_message vetoes agent1
+        let (epoch1, sig1) = ring.sign_message(agent1, "worker", "payload");
+        let err_msg = ring
+            .verify_inter_agent_message(agent1, epoch1, "worker", "sink", "payload", &sig1)
+            .unwrap_err();
+        assert!(err_msg.contains("Level 1 Arm Ring veto"));
+
+        // execute_contained_tool vetoes agent1
+        let ticket = DiracDeltaCapabilityTicket::issue(agent1, "read_data", 1, 10_000_000_000);
+        let tracker = crate::file_lineage::FileLineageTracker::new();
+        let telemetry = crate::types::ToolCallTelemetry {
+            session_id: "session_test".to_string(),
+            agent_id: agent1.to_string(),
+            trace_id: None,
+            tool_name: "read_data".to_string(),
+            call_parameters: serde_json::json!({"path": "innocent.txt"}),
+            execution_duration_ms: 10,
+            timestamp: chrono::Utc::now(),
+            tokens_used: None,
+            is_error: false,
+            error_message: None,
+        };
+        let res = ring.execute_contained_tool(&telemetry, &ticket, &tracker, || "data");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("[ContainmentRing-Level1-Veto]"));
+
+        // Regenerate agent 1
+        ring.regenerate_agent(agent1);
+        assert!(!ring.is_agent_severed(agent1));
+        assert!(ring
+            .evaluate_operation(agent1, "write_file", "secret.txt")
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_sticky_untrusted_taint_floor_hop_truncation() {
+        let seed = [77u8; 32];
+        let ring = ArmContainmentRing::new(1, ArmRole::AnomalyDetection, 1, &seed);
+
+        {
+            let mut taint = ring.taint_state.write().await;
+            // Pre-populate with UntrustedDocIngest at hop 0 followed by 17 worker hops
+            taint.1.push(ProvenanceHop {
+                arm_id: 100,
+                role: ArmRole::UntrustedDocIngest,
+                generation: 1,
+            });
+            for i in 1..=17 {
+                taint.1.push(ProvenanceHop {
+                    arm_id: 100 + i,
+                    role: ArmRole::AnomalyDetection,
+                    generation: 1,
+                });
+            }
+            assert_eq!(taint.1.len(), 18);
+
+            // Trigger the truncation logic
+            let excess = taint.1.len().saturating_sub(MAX_RELAY_HOPS - 1);
+            assert!(excess > 0);
+            let preserved_untrusted = taint
+                .1
+                .iter()
+                .take(excess)
+                .find(|h| role_trust_tier(&h.role) == TrustTier::Untrusted)
+                .cloned();
+            taint.1.drain(0..excess);
+            if let Some(untrusted_hop) = preserved_untrusted {
+                if !taint
+                    .1
+                    .iter()
+                    .any(|h| role_trust_tier(&h.role) == TrustTier::Untrusted)
+                {
+                    if !taint.1.is_empty() {
+                        taint.1[0] = untrusted_hop;
+                    } else {
+                        taint.1.push(untrusted_hop);
+                    }
+                }
+            }
+
+            // Assert that the untrusted hop was preserved at index 0 despite being in the drained slice!
+            assert_eq!(taint.1[0].role, ArmRole::UntrustedDocIngest);
+            assert!(taint
+                .1
+                .iter()
+                .any(|h| role_trust_tier(&h.role) == TrustTier::Untrusted));
+        }
     }
 }

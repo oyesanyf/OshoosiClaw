@@ -106,7 +106,13 @@ pub fn is_restricted_rebinding_ip(ip: IpAddr) -> bool {
                 && (seg[1] == 0x0000 || seg[1] == 0x0db8))
                 || (seg[0] == 0x0100 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0);
             // RFC 2765 SIIT IPv4-translated prefix ::ffff:0:0/96
-            if seg[0] == 0 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0 && seg[4] == 0xffff && seg[5] == 0 {
+            if seg[0] == 0
+                && seg[1] == 0
+                && seg[2] == 0
+                && seg[3] == 0
+                && seg[4] == 0xffff
+                && seg[5] == 0
+            {
                 let embedded_v4 = std::net::Ipv4Addr::new(
                     (seg[6] >> 8) as u8,
                     (seg[6] & 0xff) as u8,

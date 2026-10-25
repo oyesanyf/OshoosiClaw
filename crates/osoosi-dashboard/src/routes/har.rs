@@ -334,19 +334,37 @@ pub fn refresh_live_har_cache_now() -> Value {
 
     // Ingest aggregated flow facts into global RETE engine Alpha memories
     {
-        let mut host_samples_map: std::collections::HashMap<String, Vec<osoosi_core::HarEntrySample>> = std::collections::HashMap::new();
+        let mut host_samples_map: std::collections::HashMap<
+            String,
+            Vec<osoosi_core::HarEntrySample>,
+        > = std::collections::HashMap::new();
         for e in &entries {
-            let host = e.get("host").and_then(|v| v.as_str()).unwrap_or_default().trim();
+            let host = e
+                .get("host")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .trim();
             if host.is_empty() {
                 continue;
             }
-            let started_str = e.get("started_at").and_then(|v| v.as_str()).unwrap_or_default();
+            let started_str = e
+                .get("started_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
             let ts_ms = chrono::DateTime::parse_from_rfc3339(started_str)
                 .map(|dt| dt.timestamp_millis() as u64)
                 .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis() as u64);
             let status = e.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u32;
-            let url = e.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-            let method = e.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_string();
+            let url = e
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let method = e
+                .get("method")
+                .and_then(|v| v.as_str())
+                .unwrap_or("GET")
+                .to_string();
             let duration_ms = e.get("duration_ms").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
 
             let sample = osoosi_core::HarEntrySample {
@@ -358,14 +376,18 @@ pub fn refresh_live_har_cache_now() -> Value {
                 protocol: osoosi_core::NetworkProtocol::HttpHttps,
                 duration_ms,
             };
-            host_samples_map.entry(host.to_string()).or_default().push(sample);
+            host_samples_map
+                .entry(host.to_string())
+                .or_default()
+                .push(sample);
         }
 
         let rete = osoosi_core::global_rete_engine();
         for (host, samples) in host_samples_map {
             // Derive a stable synthetic flow PID from host hash
             let hash_bytes = blake3::hash(host.as_bytes());
-            let flow_pid = 1000 + (hash_bytes.as_bytes()[0] as u32 * 100) + (hash_bytes.as_bytes()[1] as u32);
+            let flow_pid =
+                1000 + (hash_bytes.as_bytes()[0] as u32 * 100) + (hash_bytes.as_bytes()[1] as u32);
             let report = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
             let fact = osoosi_core::HarFlowFact {
                 flow_id: format!("flow_{}", host),
@@ -966,13 +988,19 @@ pub async fn post_rate_limit_evaluate(Json(req): Json<RateLimitEvaluateRequest>)
     // 1. Dynamic Evaluation with provided request samples
     let (bundle, eval_name) = if let Some(samples) = req.samples.filter(|s| !s.is_empty()) {
         let pid = req.pid.unwrap_or(1001);
-        let proto = req.protocol.as_deref().map(|p| {
-            osoosi_core::NetworkProtocol::from_str_or_port(p, req.dst_port)
-        }).unwrap_or_else(|| {
-            samples.first().map(|s| s.protocol).unwrap_or(osoosi_core::NetworkProtocol::HttpHttps)
-        });
+        let proto = req
+            .protocol
+            .as_deref()
+            .map(|p| osoosi_core::NetworkProtocol::from_str_or_port(p, req.dst_port))
+            .unwrap_or_else(|| {
+                samples
+                    .first()
+                    .map(|s| s.protocol)
+                    .unwrap_or(osoosi_core::NetworkProtocol::HttpHttps)
+            });
         let dst_host = req.dst_host.unwrap_or_else(|| {
-            samples.first()
+            samples
+                .first()
                 .and_then(|s| s.url.split("://").nth(1))
                 .and_then(|after| after.split('/').next())
                 .unwrap_or("api.target.com")
@@ -980,7 +1008,8 @@ pub async fn post_rate_limit_evaluate(Json(req): Json<RateLimitEvaluateRequest>)
         });
         let dst_port = req.dst_port.unwrap_or(443);
 
-        let report = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &samples);
+        let report =
+            osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &samples);
         let flow_fact = osoosi_core::HarFlowFact {
             flow_id: format!("flow_{}", pid),
             pid,
@@ -1016,19 +1045,30 @@ pub async fn post_rate_limit_evaluate(Json(req): Json<RateLimitEvaluateRequest>)
         };
         rete.insert_rea_fact(binary_fact);
 
-        let joined = rete.evaluate_beta_join(pid).expect("Beta join must succeed after inserting facts");
-        (joined, req.scenario.unwrap_or_else(|| format!("Dynamic Evaluation (PID {})", pid)))
+        let joined = rete
+            .evaluate_beta_join(pid)
+            .expect("Beta join must succeed after inserting facts");
+        (
+            joined,
+            req.scenario
+                .unwrap_or_else(|| format!("Dynamic Evaluation (PID {})", pid)),
+        )
     } else if let Some(pid) = req.pid {
         // 2. Query ReteEngine Beta Join for existing telemetry on this PID
         if let Some(joined) = rete.evaluate_beta_join(pid) {
-            (joined, req.scenario.unwrap_or_else(|| format!("Rete Beta Join (PID {})", pid)))
+            (
+                joined,
+                req.scenario
+                    .unwrap_or_else(|| format!("Rete Beta Join (PID {})", pid)),
+            )
         } else {
             let proto = osoosi_core::NetworkProtocol::from_str_or_port(
                 req.protocol.as_deref().unwrap_or("HTTP/HTTPS"),
                 req.dst_port,
             );
             let dst_host = req.dst_host.unwrap_or_else(|| "api.target.com".to_string());
-            let report = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &[]);
+            let report =
+                osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &[]);
             let flow_fact = osoosi_core::HarFlowFact {
                 flow_id: format!("flow_{}", pid),
                 pid,
@@ -1042,8 +1082,14 @@ pub async fn post_rate_limit_evaluate(Json(req): Json<RateLimitEvaluateRequest>)
                 flood_detected: report.flood_detected,
             };
             rete.insert_har_fact(flow_fact);
-            let joined = rete.evaluate_beta_join(pid).expect("Beta join on empty flow fact");
-            (joined, req.scenario.unwrap_or_else(|| format!("Default Baseline (PID {})", pid)))
+            let joined = rete
+                .evaluate_beta_join(pid)
+                .expect("Beta join on empty flow fact");
+            (
+                joined,
+                req.scenario
+                    .unwrap_or_else(|| format!("Default Baseline (PID {})", pid)),
+            )
         }
     } else {
         // 3. Fallback: dynamic default baseline
@@ -1067,7 +1113,11 @@ pub async fn post_rate_limit_evaluate(Json(req): Json<RateLimitEvaluateRequest>)
         };
         rete.insert_har_fact(flow_fact);
         let joined = rete.evaluate_beta_join(pid).expect("Beta join on default");
-        (joined, req.scenario.unwrap_or_else(|| "Default Evaluation".to_string()))
+        (
+            joined,
+            req.scenario
+                .unwrap_or_else(|| "Default Evaluation".to_string()),
+        )
     };
 
     let consensus = ensemble.evaluate_and_vote(&bundle);
@@ -1083,7 +1133,9 @@ pub async fn post_rate_limit_release(Json(req): Json<RateLimitReleaseRequest>) -
     let host = req.destination_host.unwrap_or_else(|| "*".to_string());
     let proto = req.protocol.unwrap_or_else(|| "*".to_string());
     let operator = req.operator.unwrap_or_else(|| "analyst".to_string());
-    let reason = req.reason.unwrap_or_else(|| "User manual rate-limit override".to_string());
+    let reason = req
+        .reason
+        .unwrap_or_else(|| "User manual rate-limit override".to_string());
 
     let entry = osoosi_core::RateLimitReleaseEntry {
         destination_host: host.clone(),
@@ -1097,7 +1149,11 @@ pub async fn post_rate_limit_release(Json(req): Json<RateLimitReleaseRequest>) -
     let add_res = osoosi_core::RateLimitAllowlist::add_entry(entry.clone());
 
     // If there was an active WFP block for this rule, remove it
-    let rule_name = format!("OSHOOSI_RL_{}_{}", req.pid.unwrap_or(0), host.replace(':', "_"));
+    let rule_name = format!(
+        "OSHOOSI_RL_{}_{}",
+        req.pid.unwrap_or(0),
+        host.replace(':', "_")
+    );
     let _ = osoosi_core::wfp::unblock_destination_native(&rule_name, None, req.pid, &[]);
 
     // Refresh live HAR cache in background
@@ -1136,7 +1192,10 @@ pub fn routes() -> Router<DashboardState> {
         .route("/api/har/gsb/config", post(post_gsb_config))
         .route("/api/har/rate-limit-status", get(get_rate_limit_status))
         .route("/har/rate-limit-status", get(get_rate_limit_status))
-        .route("/api/har/rate-limit-evaluate", post(post_rate_limit_evaluate))
+        .route(
+            "/api/har/rate-limit-evaluate",
+            post(post_rate_limit_evaluate),
+        )
         .route("/har/rate-limit-evaluate", post(post_rate_limit_evaluate))
         .route("/api/har/rate-limit-release", post(post_rate_limit_release))
         .route("/har/rate-limit-release", post(post_rate_limit_release))

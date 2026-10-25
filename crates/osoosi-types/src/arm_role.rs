@@ -168,11 +168,26 @@ mod tests {
 
     #[test]
     fn test_arm_role_trust_tier_mapping() {
-        assert_eq!(role_trust_tier(&ArmRole::UntrustedDocIngest), TrustTier::Untrusted);
-        assert_eq!(role_trust_tier(&ArmRole::AnomalyDetection), TrustTier::Worker);
-        assert_eq!(role_trust_tier(&ArmRole::AccountingLedgerWrite), TrustTier::PrivilegedSink);
-        assert_eq!(ArmRole::CedarPolicyEvaluation.trust_tier(), TrustTier::PrivilegedSink);
-        assert_eq!(ArmRole::DifferentialProtocolAnalyzer.trust_tier(), TrustTier::Untrusted);
+        assert_eq!(
+            role_trust_tier(&ArmRole::UntrustedDocIngest),
+            TrustTier::Untrusted
+        );
+        assert_eq!(
+            role_trust_tier(&ArmRole::AnomalyDetection),
+            TrustTier::Worker
+        );
+        assert_eq!(
+            role_trust_tier(&ArmRole::AccountingLedgerWrite),
+            TrustTier::PrivilegedSink
+        );
+        assert_eq!(
+            ArmRole::CedarPolicyEvaluation.trust_tier(),
+            TrustTier::PrivilegedSink
+        );
+        assert_eq!(
+            ArmRole::DifferentialProtocolAnalyzer.trust_tier(),
+            TrustTier::Untrusted
+        );
     }
 
     #[test]

@@ -21,14 +21,23 @@ impl StressTestDiskGuard {
     fn new() -> Self {
         let paths = vec![
             std::path::PathBuf::from("database").join("dlp_containment_registry.json"),
-            std::path::PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_containment_registry.json"),
+            std::path::PathBuf::from("crates")
+                .join("osoosi-dashboard")
+                .join("database")
+                .join("dlp_containment_registry.json"),
             std::path::PathBuf::from("database").join("dlp_released_allowlist.json"),
-            std::path::PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_released_allowlist.json"),
+            std::path::PathBuf::from("crates")
+                .join("osoosi-dashboard")
+                .join("database")
+                .join("dlp_released_allowlist.json"),
         ];
         let mut backups = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for p in paths {
-            let key = p.canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or_else(|_| p.to_string_lossy().to_string());
+            let key = p
+                .canonicalize()
+                .map(|c| c.to_string_lossy().to_string())
+                .unwrap_or_else(|_| p.to_string_lossy().to_string());
             if seen.insert(key) {
                 let bytes = std::fs::read(&p).ok();
                 backups.push((p, bytes));
@@ -77,25 +86,67 @@ async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle()
 
     let Json(sens_res) = post_dlp_browser_event(Json(sens_payload)).await;
     assert_eq!(sens_res.get("ok").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(sens_res.get("allowed").and_then(|v| v.as_bool()), Some(false), "Sensitive upload must be DENIED");
-    assert_eq!(sens_res.get("authorization_decision").and_then(|v| v.as_str()), Some("DENY"));
-    assert_eq!(sens_res.get("dlp_response").and_then(|v| v.as_str()), Some("QUARANTINE"));
+    assert_eq!(
+        sens_res.get("allowed").and_then(|v| v.as_bool()),
+        Some(false),
+        "Sensitive upload must be DENIED"
+    );
+    assert_eq!(
+        sens_res
+            .get("authorization_decision")
+            .and_then(|v| v.as_str()),
+        Some("DENY")
+    );
+    assert_eq!(
+        sens_res.get("dlp_response").and_then(|v| v.as_str()),
+        Some("QUARANTINE")
+    );
 
     // Verify 4-voter quorum in containment outcome
-    let event_obj = sens_res.get("event").and_then(|v| v.as_object()).expect("event object");
-    let containment = event_obj.get("containment").and_then(|v| v.as_object()).expect("containment object");
-    assert_eq!(containment.get("decision").and_then(|v| v.as_str()), Some("DestinationBlocked"));
-    let voters = containment.get("voters").and_then(|v| v.as_object()).expect("voters object");
-    assert_eq!(voters.get("reached").and_then(|v| v.as_bool()), Some(true), "4-voter quorum must be reached");
+    let event_obj = sens_res
+        .get("event")
+        .and_then(|v| v.as_object())
+        .expect("event object");
+    let containment = event_obj
+        .get("containment")
+        .and_then(|v| v.as_object())
+        .expect("containment object");
+    assert_eq!(
+        containment.get("decision").and_then(|v| v.as_str()),
+        Some("DestinationBlocked")
+    );
+    let voters = containment
+        .get("voters")
+        .and_then(|v| v.as_object())
+        .expect("voters object");
+    assert_eq!(
+        voters.get("reached").and_then(|v| v.as_bool()),
+        Some(true),
+        "4-voter quorum must be reached"
+    );
 
-    let ballots = voters.get("ballots").and_then(|v| v.as_array()).expect("ballots array");
-    assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("OpenJEV-Voter")));
-    assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("REA-Voter")));
-    assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("RedactX-Deterministic-Validators")));
-    assert!(ballots.iter().any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("Google-SafeBrowsing-Voter")));
+    let ballots = voters
+        .get("ballots")
+        .and_then(|v| v.as_array())
+        .expect("ballots array");
+    assert!(ballots
+        .iter()
+        .any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("OpenJEV-Voter")));
+    assert!(ballots
+        .iter()
+        .any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("REA-Voter")));
+    assert!(ballots.iter().any(
+        |b| b.get("voter").and_then(|v| v.as_str()) == Some("RedactX-Deterministic-Validators")
+    ));
+    assert!(ballots
+        .iter()
+        .any(|b| b.get("voter").and_then(|v| v.as_str()) == Some("Google-SafeBrowsing-Voter")));
 
     // Host must now be blocked in WFP/containment engine
-    assert!(engine.has_active_browser_block_for_host(&unique_host), "Host must be blocked after sensitive upload");
+    assert!(
+        engine.has_active_browser_block_for_host(&unique_host),
+        "Host must be blocked after sensitive upload"
+    );
 
     // =========================================================================
     // STEP 2: Upload benign file `covergeneral.docx`
@@ -111,8 +162,17 @@ async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle()
 
     let Json(benign_res) = post_dlp_browser_event(Json(benign_payload)).await;
     assert_eq!(benign_res.get("ok").and_then(|v| v.as_bool()), Some(true));
-    assert_eq!(benign_res.get("allowed").and_then(|v| v.as_bool()), Some(true), "Benign upload must be ALLOWED");
-    assert_eq!(benign_res.get("authorization_decision").and_then(|v| v.as_str()), Some("ALLOW"));
+    assert_eq!(
+        benign_res.get("allowed").and_then(|v| v.as_bool()),
+        Some(true),
+        "Benign upload must be ALLOWED"
+    );
+    assert_eq!(
+        benign_res
+            .get("authorization_decision")
+            .and_then(|v| v.as_str()),
+        Some("ALLOW")
+    );
 
     // Host block must be auto-released!
     assert!(
@@ -136,15 +196,28 @@ async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle()
     });
 
     let Json(sens_res_2) = post_dlp_browser_event(Json(sens_payload_2)).await;
-    assert_eq!(sens_res_2.get("allowed").and_then(|v| v.as_bool()), Some(false), "Re-upload of sensitive file must be DENIED");
+    assert_eq!(
+        sens_res_2.get("allowed").and_then(|v| v.as_bool()),
+        Some(false),
+        "Re-upload of sensitive file must be DENIED"
+    );
     assert!(
         engine.has_active_browser_block_for_host(&unique_host),
         "Host must be immediately re-blocked on subsequent sensitive upload"
     );
 
-    let event_2 = sens_res_2.get("event").and_then(|v| v.as_object()).expect("event 2");
-    let cont_2 = event_2.get("containment").and_then(|v| v.as_object()).expect("containment 2");
-    assert_eq!(cont_2.get("decision").and_then(|v| v.as_str()), Some("DestinationBlocked"));
+    let event_2 = sens_res_2
+        .get("event")
+        .and_then(|v| v.as_object())
+        .expect("event 2");
+    let cont_2 = event_2
+        .get("containment")
+        .and_then(|v| v.as_object())
+        .expect("containment 2");
+    assert_eq!(
+        cont_2.get("decision").and_then(|v| v.as_str()),
+        Some("DestinationBlocked")
+    );
 
     // Cleanup: restore host blocks to leave engine clean
     let _ = engine.restore_browser_destination_blocks_for_host(&unique_host, "test-teardown");
@@ -179,9 +252,18 @@ async fn test_rapid_repeated_uploads_debounce_and_reset_behavior() {
     });
     let Json(res_1) = post_dlp_browser_event(Json(payload_1)).await;
     assert_eq!(res_1.get("allowed").and_then(|v| v.as_bool()), Some(false));
-    let event_1 = res_1.get("event").and_then(|v| v.as_object()).expect("event 1");
-    let cont_1 = event_1.get("containment").and_then(|v| v.as_object()).expect("containment 1");
-    assert_eq!(cont_1.get("decision").and_then(|v| v.as_str()), Some("DestinationBlocked"));
+    let event_1 = res_1
+        .get("event")
+        .and_then(|v| v.as_object())
+        .expect("event 1");
+    let cont_1 = event_1
+        .get("containment")
+        .and_then(|v| v.as_object())
+        .expect("containment 1");
+    assert_eq!(
+        cont_1.get("decision").and_then(|v| v.as_str()),
+        Some("DestinationBlocked")
+    );
     assert!(engine.has_active_browser_block_for_host(&unique_host));
 
     // 2. Second sensitive upload immediately within debounce window (0ms delay)
@@ -194,9 +276,19 @@ async fn test_rapid_repeated_uploads_debounce_and_reset_behavior() {
         "content": sens_content_2
     });
     let Json(res_2) = post_dlp_browser_event(Json(payload_2)).await;
-    assert_eq!(res_2.get("allowed").and_then(|v| v.as_bool()), Some(false), "Debounced repeat upload must STILL be DENIED");
-    let event_2 = res_2.get("event").and_then(|v| v.as_object()).expect("event 2");
-    let cont_2 = event_2.get("containment").and_then(|v| v.as_object()).expect("containment 2");
+    assert_eq!(
+        res_2.get("allowed").and_then(|v| v.as_bool()),
+        Some(false),
+        "Debounced repeat upload must STILL be DENIED"
+    );
+    let event_2 = res_2
+        .get("event")
+        .and_then(|v| v.as_object())
+        .expect("event 2");
+    let cont_2 = event_2
+        .get("containment")
+        .and_then(|v| v.as_object())
+        .expect("containment 2");
     assert_eq!(
         cont_2.get("decision").and_then(|v| v.as_str()),
         Some("Debounced"),
@@ -212,7 +304,10 @@ async fn test_rapid_repeated_uploads_debounce_and_reset_behavior() {
         "content": "Clean cover letter. Attached resume.\n"
     });
     let Json(res_clean) = post_dlp_browser_event(Json(clean_payload)).await;
-    assert_eq!(res_clean.get("allowed").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(
+        res_clean.get("allowed").and_then(|v| v.as_bool()),
+        Some(true)
+    );
     assert!(!engine.has_active_browser_block_for_host(&unique_host));
 
     // 4. Sensitive upload immediately after clean upload -> must get fresh DestinationBlocked (not Debounced!)
@@ -229,8 +324,14 @@ async fn test_rapid_repeated_uploads_debounce_and_reset_behavior() {
     });
     let Json(res_3) = post_dlp_browser_event(Json(payload_3)).await;
     assert_eq!(res_3.get("allowed").and_then(|v| v.as_bool()), Some(false));
-    let event_3 = res_3.get("event").and_then(|v| v.as_object()).expect("event 3");
-    let cont_3 = event_3.get("containment").and_then(|v| v.as_object()).expect("containment 3");
+    let event_3 = res_3
+        .get("event")
+        .and_then(|v| v.as_object())
+        .expect("event 3");
+    let cont_3 = event_3
+        .get("containment")
+        .and_then(|v| v.as_object())
+        .expect("containment 3");
     assert_eq!(
         cont_3.get("decision").and_then(|v| v.as_str()),
         Some("DestinationBlocked"),

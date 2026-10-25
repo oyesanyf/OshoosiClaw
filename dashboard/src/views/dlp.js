@@ -1013,6 +1013,7 @@ async function updateDlpPolicyMode() {
     if (!select) return;
 
     dlpState.policyMode = select.value;
+    syncDlpAutonomyCardsFromPolicy(dlpState.policyMode);
 
     try {
         await fetch(`${API_BASE}/dlp/policy`, {
@@ -1031,7 +1032,149 @@ function onDlpFilterChange() {
 }
 
 // Global window exports
+
+// Syncs DLP 3-Card Autonomy UI from active policy mode
+function syncDlpAutonomyCardsFromPolicy(mode) {
+    const cardAudit = document.getElementById('dlp-preset-audit-card');
+    const cardActive = document.getElementById('dlp-preset-active-card');
+    const cardLockdown = document.getElementById('dlp-preset-lockdown-card');
+    const badge = document.getElementById('dlp-autonomy-current-badge');
+    const actionSlider = document.getElementById('dlp-action-slider');
+    const actionVal = document.getElementById('dlp-action-val');
+    const quaranSlider = document.getElementById('dlp-quarantine-slider');
+    const quaranVal = document.getElementById('dlp-quarantine-val');
+    const chkQuarantine = document.getElementById('dlp-auto-quarantine');
+    const chkZkScrub = document.getElementById('dlp-auto-zk-scrub');
+    const select = document.getElementById('dlp-policy-mode-select');
+    const liveBadge = document.getElementById('dlp-live-status-badge');
+
+    if (select && select.value !== mode) {
+        select.value = mode;
+    }
+
+    // Reset card borders & glows
+    [cardAudit, cardActive, cardLockdown].forEach(c => {
+        if (c) {
+            c.style.border = '1px solid var(--glass-border)';
+            c.style.boxShadow = 'none';
+        }
+    });
+
+    if (mode === 'MONITOR_AND_SCRUB') {
+        if (cardAudit) {
+            cardAudit.style.border = '2px solid var(--accent-blue)';
+            cardAudit.style.boxShadow = '0 0 12px rgba(56, 189, 248, 0.25)';
+        }
+        if (badge) {
+            badge.className = 'badge blue';
+            badge.innerText = 'MODE: AUDIT / MONITOR';
+        }
+        if (liveBadge) {
+            liveBadge.className = 'badge blue';
+            liveBadge.innerText = '🔵 AUDIT: MONITOR & SCRUB';
+        }
+        if (actionSlider) { actionSlider.value = '0.80'; if (actionVal) actionVal.innerText = '0.80'; }
+        if (quaranSlider) { quaranSlider.value = '0.95'; if (quaranVal) quaranVal.innerText = '0.95'; }
+        if (chkQuarantine) chkQuarantine.checked = false;
+        if (chkZkScrub) chkZkScrub.checked = true;
+    } else if (mode === 'QUARANTINE_ON_CROWN_JEWEL') {
+        if (cardLockdown) {
+            cardLockdown.style.border = '2px solid #ef4444';
+            cardLockdown.style.boxShadow = '0 0 12px rgba(239, 68, 68, 0.25)';
+        }
+        if (badge) {
+            badge.className = 'badge red';
+            badge.innerText = 'MODE: STRICT LOCKDOWN';
+        }
+        if (liveBadge) {
+            liveBadge.className = 'badge red';
+            liveBadge.innerText = '🔴 LOCKDOWN: CROWN-JEWEL QUARANTINE';
+        }
+        if (actionSlider) { actionSlider.value = '0.35'; if (actionVal) actionVal.innerText = '0.35'; }
+        if (quaranSlider) { quaranSlider.value = '0.50'; if (quaranVal) quaranVal.innerText = '0.50'; }
+        if (chkQuarantine) chkQuarantine.checked = true;
+        if (chkZkScrub) chkZkScrub.checked = true;
+    } else { // ENFORCE_BLOCK_AND_SCRUB (Active)
+        if (cardActive) {
+            cardActive.style.border = '2px solid var(--accent-green)';
+            cardActive.style.boxShadow = '0 0 12px rgba(16, 185, 129, 0.25)';
+        }
+        if (badge) {
+            badge.className = 'badge green';
+            badge.innerText = 'MODE: ACTIVE ENFORCEMENT';
+        }
+        if (liveBadge) {
+            liveBadge.className = 'badge green';
+            liveBadge.innerText = '🟢 ENFORCE: BLOCK & ZK-SCRUB';
+        }
+        if (actionSlider) { actionSlider.value = '0.50'; if (actionVal) actionVal.innerText = '0.50'; }
+        if (quaranSlider) { quaranSlider.value = '0.80'; if (quaranVal) quaranVal.innerText = '0.80'; }
+        if (chkQuarantine) chkQuarantine.checked = true;
+        if (chkZkScrub) chkZkScrub.checked = true;
+    }
+}
+
+async function applyDlpAutonomyPreset(preset) {
+    let mode = 'ENFORCE_BLOCK_AND_SCRUB';
+    if (preset === 'audit') {
+        mode = 'MONITOR_AND_SCRUB';
+    } else if (preset === 'lockdown') {
+        mode = 'QUARANTINE_ON_CROWN_JEWEL';
+    } else {
+        mode = 'ENFORCE_BLOCK_AND_SCRUB';
+    }
+
+    const select = document.getElementById('dlp-policy-mode-select');
+    if (select) {
+        select.value = mode;
+    }
+
+    syncDlpAutonomyCardsFromPolicy(mode);
+    await updateDlpPolicyMode();
+}
+
+async function saveCustomDlpAutonomySettings() {
+    const statusEl = document.getElementById('dlp-autonomy-save-status');
+    const actionVal = parseFloat(document.getElementById('dlp-action-slider')?.value || '0.50');
+    const quaranVal = parseFloat(document.getElementById('dlp-quarantine-slider')?.value || '0.80');
+    const autoQuarantine = document.getElementById('dlp-auto-quarantine')?.checked ?? true;
+    const autoZkScrub = document.getElementById('dlp-auto-zk-scrub')?.checked ?? true;
+
+    if (statusEl) {
+        statusEl.innerText = 'Saving custom DLP policy...';
+        statusEl.style.color = 'var(--accent-blue)';
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/dlp/policy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                policy_mode: dlpState.policyMode,
+                action_threshold: actionVal,
+                quarantine_threshold: quaranVal,
+                auto_quarantine: autoQuarantine,
+                auto_zk_scrub: autoZkScrub
+            })
+        });
+        if (statusEl) {
+            statusEl.innerText = res.ok ? '✔ DLP Policy Saved' : '❌ Failed to save';
+            statusEl.style.color = res.ok ? 'var(--accent-green)' : '#ef4444';
+            setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
+        }
+    } catch (e) {
+        if (statusEl) {
+            statusEl.innerText = `Error: ${e.message}`;
+            statusEl.style.color = '#ef4444';
+        }
+    }
+}
+
 window.renderDlpView = renderDlpView;
+window.applyDlpAutonomyPreset = applyDlpAutonomyPreset;
+window.saveCustomDlpAutonomySettings = saveCustomDlpAutonomySettings;
+window.syncDlpAutonomyCardsFromPolicy = syncDlpAutonomyCardsFromPolicy;
+
 
 // Helper to render the RedactX-v3 OpenJEV Hybrid Decision Panel
 function renderOpenJevDecisionPanel(oj, verdict, sensitivityPhi) {
