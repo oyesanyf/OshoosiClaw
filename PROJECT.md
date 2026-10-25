@@ -57,8 +57,8 @@ OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) Stage 2 extends the zero-trust EDR & A
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 0 | M0: Live Browser DLP Service Profile & Debounce Fix | `crates/osoosi-dashboard/src/routes/{har_dlp.rs,dlp_containment.rs}` | none | IN_PROGRESS |
-| 1 | M1: Multi-Protocol Rate-Limit Backoff Engine & WebUI | `crates/osoosi-core/src/rate_limit_backoff.rs`, `har.rs`, `dashboard/{src,dist}/views/` | M0 | PLANNED |
+| 0 | M0: Live Browser DLP Service Profile & Debounce Fix | `crates/osoosi-dashboard/src/routes/{har_dlp.rs,dlp_containment.rs}` | none | DONE |
+| 1 | M1: Multi-Protocol Rate-Limit Backoff Engine & WebUI | `crates/osoosi-core/src/rate_limit_backoff.rs`, `har.rs`, `dashboard/{src,dist}/views/` | M0 | DONE |
 | 2 | M2: Confined Truncation, MSVCRT Quoting & Exec Identity | `crates/osoosi-sandbox/src/{open_confined.rs,tiered_executor.rs,executable_identity.rs}` | none | PLANNED |
 | 3 | M3: Containment Ring, Token, Taint Floor & SIIT SSRF | `crates/osoosi-agent-anomaly/src/{containment_ring.rs,mesh_guard.rs,file_lineage.rs,egress_proxy.rs}` | none | PLANNED |
 | 4 | M4: RAPTOR Pentest, CI Remediation, WDSI & Solo PR | `crates/osoosi-runtime`, `osoosi-dp`, `scripts/`, `AgentOctopus` sync, `build_and_submit.ps1` | M0, M1, M2, M3 | PLANNED |

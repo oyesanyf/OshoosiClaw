@@ -318,11 +318,34 @@ function renderHarTrafficTable() {
         const asnPill = (tagsStr.startsWith('ASN') || tagsStr.startsWith('LOCAL_LOOPBACK'))
             ? `<span class="badge green" style="font-size: 9px; margin-left: 4px;" title="Verified ASN / Local Endpoint Trust">${escapeHtml(tagsStr)}</span>`
             : '';
-        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}${asnPill}`;
+
+        // Protocol and Rate-Limit correlation badges
+        let rateLimitPill = '';
+        const protoStr = (e.protocol || e.mime_type || '').toUpperCase();
+        const rlStatus = (e.rate_limit_status || e.backoff_verdict || '').toUpperCase();
+        const isUserRejectedRl = Boolean(e.user_rejected_rl || e.rate_limit_released);
+
+        if (isUserRejectedRl) {
+            rateLimitPill = `<span class="badge green" style="font-size: 9px; margin-left: 4px;" title="User manual rate-limit release override active">USER_REJECTED_RL</span>`;
+        } else if (rlStatus === 'BACKOFF_OK' || e.backoff_compliant) {
+            if (protoStr.includes('TCP')) {
+                rateLimitPill = `<span class="badge blue" style="font-size: 9px; margin-left: 4px;" title="TCP RFC 6298 Compliant Retransmission Backoff">[TCP] BACKOFF:OK</span>`;
+            } else if (protoStr.includes('UDP') || protoStr.includes('QUIC')) {
+                rateLimitPill = `<span class="badge cyan" style="font-size: 9px; margin-left: 4px; background: rgba(6,182,212,0.15); color: #22d3ee; border: 1px solid rgba(6,182,212,0.35);" title="UDP/QUIC RFC 9002 PTO Backoff Verified">[UDP/QUIC] BACKOFF:OK</span>`;
+            } else {
+                rateLimitPill = `<span class="badge blue" style="font-size: 9px; margin-left: 4px;" title="HTTP Google API Backoff Compliant">[HTTP] BACKOFF:OK</span>`;
+            }
+        } else if (rlStatus === 'RATE_LIMIT_BLOCKED' || (v === 'malicious' && protoStr.includes('DNS'))) {
+            rateLimitPill = `<span class="badge red" style="font-size: 9px; margin-left: 4px;" title="DNS Rate-Limit Flood Blocked">[DNS] RATE_LIMIT:BLOCKED</span>`;
+        } else if (rlStatus === 'DEV_SCRIPT_WARN' || (e.is_interactive && status === 429)) {
+            rateLimitPill = `<span class="badge yellow" style="font-size: 9px; margin-left: 4px; background: rgba(245,158,11,0.15); color: #fbbf24; border: 1px solid rgba(245,158,11,0.35);" title="Interactive Developer Script Throttled (Warning)">[HTTP] DEV_SCRIPT:WARN</span>`;
+        }
+
+        let verdictBadge = `<span class="badge green" style="font-size: 10.5px;">BENIGN (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}${asnPill}${rateLimitPill}`;
         if (v === 'malicious' || score >= 0.75) {
-            verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}`;
+            verdictBadge = `<span class="badge red" style="font-size: 10.5px; font-weight: 700;">MALICIOUS (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}${rateLimitPill}`;
         } else if (v === 'suspicious' || score >= 0.4) {
-            verdictBadge = `<span class="badge orange" style="font-size: 10.5px;">SUSPICIOUS (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}`;
+            verdictBadge = `<span class="badge orange" style="font-size: 10.5px;">SUSPICIOUS (${Math.round(score * 100)}%)</span>${reaPill}${gsbPill}${rateLimitPill}`;
         }
 
         const originalIndex = entries.indexOf(e);
@@ -368,6 +391,7 @@ function renderHarTrafficTable() {
                     ${verdictBadge}
                 </td>
                 <td style="padding: 8px 12px; text-align: right; white-space: nowrap;">
+                    <button type="button" class="btn-secondary" title="Reject Rate-Limit / Allow Egress" onclick="event.stopPropagation(); window.osoosiRateLimit.rejectRateLimit(${originalIndex});" data-rate-limit-reject="${originalIndex}" style="font-size: 10px; padding: 3px 7px; border-radius: 4px; cursor: pointer; margin-right: 4px; border: 1px solid #10b981; color: #34d399; background: rgba(16,185,129,0.15);">🔓 Reject Rate-Limit</button>
                     ${(v === 'malicious' || v === 'suspicious' || score >= 0.4) ? `<button type="button" class="btn-secondary" title="Release False Positive / Exclude URL" onclick="event.stopPropagation(); releaseHarEntryFalsePositive(${originalIndex}, 'url');" style="font-size: 10px; padding: 3px 7px; border-radius: 4px; cursor: pointer; margin-right: 4px; border: 1px solid #f59e0b; color: #fbbf24; background: rgba(245,158,11,0.15);">🔓 Release FP</button>` : ''}
                     <button type="button" class="btn-secondary" title="Inspect HAR Entry" onclick="event.stopPropagation(); inspectHarEntryRow(${originalIndex});" style="font-size: 10.5px; padding: 3px 7px; border-radius: 4px; cursor: pointer;">
                         🔍
@@ -754,3 +778,131 @@ async function releaseHarEntryFalsePositive(idx, scope = 'url') {
     }
 }
 window.releaseHarEntryFalsePositive = releaseHarEntryFalsePositive;
+
+const osoosiRateLimit = {
+    rejectRateLimit: async function(idxOrHost) {
+        let host = '';
+        let protocol = '*';
+        let pid = 0;
+        let entry = null;
+
+        if (typeof idxOrHost === 'number') {
+            entry = state.harEntries?.[idxOrHost];
+            if (entry) {
+                host = entry.host || (entry.url ? new URL(entry.url, 'http://localhost').hostname : '');
+                protocol = (entry.protocol || entry.mime_type || '*').toUpperCase();
+                pid = entry.pid || 0;
+            }
+        } else if (typeof idxOrHost === 'string') {
+            host = idxOrHost;
+        } else if (idxOrHost && typeof idxOrHost === 'object') {
+            host = idxOrHost.destination_host || idxOrHost.host || '';
+            protocol = idxOrHost.protocol || '*';
+            pid = idxOrHost.pid || 0;
+        }
+
+        if (!host && state.selectedHarEntry) {
+            entry = state.selectedHarEntry;
+            host = entry.host || '';
+            protocol = entry.protocol || '*';
+            pid = entry.pid || 0;
+        }
+
+        try {
+            const res = await fetch(`${API_BASE}/har/rate-limit-release`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    destination_host: host || '*',
+                    protocol: protocol || '*',
+                    pid: pid || 0,
+                    operator: 'analyst',
+                    reason: 'User manual rate-limit override'
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (entry) {
+                entry.user_rejected_rl = true;
+                entry.rate_limit_released = true;
+                entry.verdict = 'benign';
+                entry.threat_score = 0.0;
+                renderHarTrafficTable();
+            }
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(res.ok ? `Rate-limit override released for ${host || 'endpoint'}` : `Release failed: ${data.message || res.status}`, res.ok ? 'success' : 'warning');
+            }
+            if (typeof renderHarTrafficView === 'function') {
+                await renderHarTrafficView(true);
+            }
+            return data;
+        } catch (err) {
+            console.error('Failed to reject rate-limit:', err);
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Rate-limit release failed: ${err.message || err}`, 'warning');
+            }
+            throw err;
+        }
+    },
+
+    rejectAllRateLimits: async function() {
+        try {
+            const res = await fetch(`${API_BASE}/har/rate-limit-release`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    destination_host: '*',
+                    protocol: '*',
+                    pid: 0,
+                    operator: 'analyst',
+                    reason: 'User manual release of all rate limits'
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (state.harEntries && Array.isArray(state.harEntries)) {
+                state.harEntries.forEach(e => {
+                    e.user_rejected_rl = true;
+                    e.rate_limit_released = true;
+                    e.verdict = 'benign';
+                    e.threat_score = 0.0;
+                });
+                renderHarTrafficTable();
+            }
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(res.ok ? 'All rate limits released' : `Failed: ${data.message || res.status}`, res.ok ? 'success' : 'warning');
+            }
+            if (typeof renderHarTrafficView === 'function') {
+                await renderHarTrafficView(true);
+            }
+            return data;
+        } catch (err) {
+            console.error('Failed to release all rate limits:', err);
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Release failed: ${err.message || err}`, 'warning');
+            }
+            throw err;
+        }
+    },
+
+    evaluateScenario: async function(scenarioName, customPayload = {}) {
+        try {
+            const body = Object.assign({ scenario: scenarioName }, customPayload);
+            const res = await fetch(`${API_BASE}/har/rate-limit-evaluate`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            const data = await res.json().catch(() => ({}));
+            return data;
+        } catch (err) {
+            console.error('Failed to evaluate rate-limit scenario:', err);
+            throw err;
+        }
+    }
+};
+
+window.osoosiRateLimit = osoosiRateLimit;
+window.rejectHarRateLimit = osoosiRateLimit.rejectRateLimit;
+

@@ -71,6 +71,7 @@ pub mod pii;
 pub mod privacy;
 pub mod privilege;
 pub mod quarantine;
+pub mod rate_limit_backoff;
 pub mod rea;
 pub mod relativistic;
 pub mod remediation;
@@ -116,4 +117,5 @@ pub use memory_watchdog::{
     MemoryWatchdogDebouncer,
 };
 pub use orchestrator::*;
+pub use rate_limit_backoff::*;
 pub use rea::*;
