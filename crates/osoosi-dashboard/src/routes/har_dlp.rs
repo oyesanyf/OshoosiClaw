@@ -198,8 +198,18 @@ pub fn get_user_upload_staging_dirs() -> Vec<PathBuf> {
                         if !u_path.is_dir() {
                             continue;
                         }
-                        for sub in ["exfil", "Downloads", "Desktop", "Documents"] {
-                            let sub_dir = u_path.join(sub);
+                        let candidate_subdirs = [
+                            u_path.join("AppData").join("Roaming").join("Microsoft").join("Windows").join("Recent"),
+                            u_path.join("AppData").join("Local").join("Temp"),
+                            u_path.join("exfil"),
+                            u_path.join("Downloads"),
+                            u_path.join("Desktop"),
+                            u_path.join("Documents"),
+                            u_path.join("OneDrive").join("Desktop"),
+                            u_path.join("OneDrive").join("Documents"),
+                            u_path.join("OneDrive").join("Downloads"),
+                        ];
+                        for sub_dir in candidate_subdirs {
                             if sub_dir.is_dir() && !dirs.contains(&sub_dir) {
                                 dirs.push(sub_dir);
                             }
@@ -1197,7 +1207,7 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                                 .get_or_insert_with(|| resolve_local_uploaded_file(None, &url))
                                 .clone();
 
-                            let (body_text, params) = if let Some(resolved) = resolved_opt {
+                            let (body_text, params) = if let Some(ref resolved) = resolved_opt {
                                 (
                                     format!(
                                         "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n{}",
@@ -1219,7 +1229,12 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                             } else {
                                 started_at
                             };
-                            let key = har_entry_key(&method, &url, &start_ts, &body_text, &params);
+                            let mut key = har_entry_key(&method, &url, &start_ts, &body_text, &params);
+                            if let Some(ref resolved) = resolved_opt {
+                                let time_bucket = chrono::Utc::now().timestamp() / 15;
+                                let sink_dedupe_key = compute_live_sink_dedupe_key(resolved, time_bucket);
+                                key = format!("{}_{}", key, sink_dedupe_key);
+                            }
                             out.push(HarDlpRequest {
                                 key,
                                 source_kind: HarSourceKind::HarCollector,
@@ -2592,5 +2607,18 @@ mod tests {
         let _ = std::fs::remove_file(lnk_a_path);
         let _ = std::fs::remove_file(sens_path);
         let _ = std::fs::remove_file(clean_path);
+    }
+
+    #[test]
+    fn test_user_upload_staging_dirs_discovers_recent_and_temp() {
+        let dirs = get_user_upload_staging_dirs();
+        assert!(!dirs.is_empty(), "get_user_upload_staging_dirs must return non-empty staging directories");
+        if cfg!(windows) {
+            let has_recent_or_temp = dirs.iter().any(|d| {
+                let s = d.to_string_lossy().to_ascii_lowercase();
+                s.contains("recent") || s.contains("temp") || s.contains("downloads")
+            });
+            assert!(has_recent_or_temp, "on Windows, staging dirs must include Recent, Temp, or Downloads");
+        }
     }
 }
