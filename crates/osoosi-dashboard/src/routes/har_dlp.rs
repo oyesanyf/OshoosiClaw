@@ -982,7 +982,7 @@ pub fn get_browser_profiles() -> Vec<(String, String, PathBuf)> {
 /// Checks whether a HAR request (URL, host, or BLAKE3 hash) was excluded/released by the user
 /// in `database/dlp_released_allowlist.json`.
 pub fn is_har_entry_allowlisted(url: &str, host: &str, hash_blake3: &str) -> bool {
-    let path = PathBuf::from("database").join("dlp_released_allowlist.json");
+    let path = crate::routes::dlp::released_allowlist_path();
     if !path.is_file() {
         return false;
     }
@@ -1050,7 +1050,7 @@ pub fn is_dlp_event_allowlisted(
     scrubbed_preview: &str,
     zk_commitment: &str,
 ) -> bool {
-    let path = PathBuf::from("database").join("dlp_released_allowlist.json");
+    let path = crate::routes::dlp::released_allowlist_path();
     if !path.is_file() {
         return false;
     }
@@ -1065,26 +1065,35 @@ pub fn is_dlp_event_allowlisted(
     };
     for item in arr {
         if let Some(s) = item.as_str() {
-            if (!s.is_empty()) && (s == destination_sink || s == scrubbed_preview || s == zk_commitment) {
-                return true;
+            // A raw string entry is ONLY valid if it cryptographically matches the zk_commitment
+            // or the exact scrubbed_preview. A raw string matching destination_sink alone is FORBIDDEN.
+            if !s.is_empty() {
+                if (!zk_commitment.is_empty() && s == zk_commitment)
+                    || (!scrubbed_preview.is_empty() && s == scrubbed_preview)
+                {
+                    return true;
+                }
             }
         } else if let Some(obj) = item.as_object() {
             let entry_sink = obj.get("destination_sink").and_then(|v| v.as_str()).unwrap_or("");
             let entry_zk = obj.get("zk_commitment_hex").or_else(|| obj.get("zk_proof_commitment")).and_then(|v| v.as_str()).unwrap_or("");
             let entry_prev = obj.get("scrubbed_preview").and_then(|v| v.as_str()).unwrap_or("");
 
-            if !entry_zk.is_empty() && entry_zk == zk_commitment {
+            // Path 1: Cryptographic Zero-Knowledge Commitment Match
+            if !entry_zk.is_empty() && !zk_commitment.is_empty() && entry_zk == zk_commitment {
                 return true;
             }
+
+            // Path 2: Exact Destination Sink + Non-Empty Content Preview Match
             if !entry_sink.is_empty() && (entry_sink == destination_sink || host_of(entry_sink) == host_of(destination_sink)) {
-                if !entry_prev.is_empty() && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev)) {
+                if !entry_prev.is_empty() && !scrubbed_preview.is_empty() && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev)) {
                     return true;
                 }
-                if entry_zk.is_empty() && entry_prev.is_empty() {
-                    return true;
-                }
+                // Never blanket-allow a destination sink when zk_commitment and preview are empty
             }
-            if entry_sink.is_empty() && !entry_prev.is_empty() && entry_prev == scrubbed_preview {
+
+            // Path 3: Empty Sink but Non-Empty Exact Content Preview Match
+            if entry_sink.is_empty() && !entry_prev.is_empty() && !scrubbed_preview.is_empty() && entry_prev == scrubbed_preview {
                 return true;
             }
         }
@@ -2360,13 +2369,66 @@ mod tests {
 
     #[test]
     fn test_is_dlp_event_allowlisted() {
-        // When allowlist file does not exist or empty
+        let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let allowlist_file = crate::routes::dlp::released_allowlist_path();
+        let orig_content = std::fs::read(&allowlist_file).ok();
+
+        // 1. Non-existent or empty allowlist check
         assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "preview", "zk-commit-123"));
+
+        // 2. Allowlist with empty zk and empty preview for dlptest.com must NEVER return true
+        if let Some(parent) = allowlist_file.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        let dummy_entries = serde_json::json!([
+            {
+                "destination_sink": "https://dlptest.com/https-post/",
+                "zk_commitment_hex": "",
+                "scrubbed_preview": "",
+                "released_at": "2026-10-25T00:00:00Z"
+            },
+            {
+                "destination_sink": "https://dlptest.com/https-post/",
+                "zk_commitment_hex": "valid-zk-commitment-hex",
+                "scrubbed_preview": "specific-scrubbed-preview-content",
+                "released_at": "2026-10-25T00:00:00Z"
+            }
+        ]);
+        std::fs::write(&allowlist_file, serde_json::to_string(&dummy_entries).unwrap()).unwrap();
+
+        // Must NOT match on destination sink alone with empty zk/preview
+        assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "different-unreleased-content", "different-zk"));
+        // Must match on valid zk commitment
+        assert!(is_dlp_event_allowlisted("https://dlptest.com/https-post/", "any-preview", "valid-zk-commitment-hex"));
+        // Must match on destination sink + matching scrubbed preview
+        assert!(is_dlp_event_allowlisted("https://dlptest.com/https-post/", "specific-scrubbed-preview-content", ""));
+
+        // Cleanup: restore exact original bytes so git status -s remains 100% clean
+        if let Some(ref bytes) = orig_content {
+            let _ = std::fs::write(&allowlist_file, bytes);
+        } else {
+            let _ = std::fs::remove_file(&allowlist_file);
+        }
     }
 
     #[test]
     fn test_recent_touch_and_clean_upload_restores_browser_block() {
         let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let reg_paths = vec![
+            std::path::PathBuf::from("database").join("dlp_containment_registry.json"),
+            std::path::PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_containment_registry.json"),
+        ];
+        let mut backups = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for p in reg_paths {
+            let key = p.canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or_else(|_| p.to_string_lossy().to_string());
+            if seen.insert(key) {
+                let bytes = std::fs::read(&p).ok();
+                backups.push((p, bytes));
+            }
+        }
+
         // 1. Verify that a newly touched benign file in temp_dir is resolved by URL-only lookup
         //    ahead of any older files on disk because `recent_touch` is sorted first (`b.2.cmp(&a.2)`).
         let temp_dir = std::env::temp_dir();
@@ -2418,6 +2480,15 @@ mod tests {
 
         let _ = std::fs::remove_file(lnk_path);
         let _ = std::fs::remove_file(clean_path);
+
+        // Restore disk state
+        for (p, orig) in backups {
+            if let Some(ref bytes) = orig {
+                let _ = std::fs::write(&p, bytes);
+            } else if p.exists() {
+                let _ = std::fs::remove_file(&p);
+            }
+        }
     }
 
     #[test]
