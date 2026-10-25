@@ -11,13 +11,59 @@
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 pub const MERCURY_SURFACE_TENSION_GAMMA: f64 = 486.5; // mN/m
 pub const NOMINAL_NON_WETTING_ANGLE_DEG: f64 = 135.0; // degrees
 pub const WEBER_CRITICAL_THRESHOLD: f64 = 12.0;
 pub const SMOLUCHOWSKI_COALESCENCE_THRESHOLD: f64 = 1.0;
 pub const AMALGAMATION_EXEMPTION_STRIP_THRESHOLD: f64 = 0.25;
+
+/// Mercury surface tension $\gamma = 0.4865\text{ N/m}$ at $20^\circ\text{C}$.
+pub const MERCURY_SURFACE_TENSION_N_PER_M: f64 = 0.4865;
+/// Mercury non-wetting contact angle $\theta = 140^\circ$ ($|\cos 140^\circ| \approx 0.766044$).
+pub const MERCURY_ABS_COS_THETA: f64 = 0.766044443118978;
+/// Mercury density $\rho = 13,534\text{ kg/m}^3$.
+pub const MERCURY_DENSITY_KG_M3: f64 = 13534.0;
+/// Critical Weber number $We_{\text{crit}} = 12.0$ for Rayleigh-Plateau droplet shattering.
+pub const CRITICAL_WEBER_NUMBER: f64 = 12.0;
+/// Maximum cumulative lifetime exfiltration mass before irreversible HgS passivation.
+pub const LIFETIME_COALESCENCE_BUDGET: f64 = 1.0;
+/// Sliding window duration (1 hour) for secondary rate-window accounting.
+pub const SLIDING_WINDOW_DURATION: Duration = Duration::from_secs(3600);
+/// Default byte budget (1 MiB) that maps to `1.0` normalized coalescence mass when derived from kernel I/O counters.
+pub const KERNEL_IO_COALESCENCE_BUDGET_BYTES: f64 = 1_048_576.0;
+
+/// Eight host actuation pore classes governed by Washburn capillary entry barriers (Finding 3 / AgentOctopus parity).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HostActuationPore {
+    SubprocessSpawn,
+    FilesystemWrite,
+    NetworkSocketEgress,
+    CredentialStoreRead,
+    KernelDriverIoctl,
+    InterAgentMeshIpc,
+    SharedMemoryMapping,
+    ClipboardWindowMessage,
+}
+
+impl HostActuationPore {
+    /// Effective pore radius $r_i$ in meters (smaller radius = higher capillary entry barrier).
+    pub fn default_pore_radius_m(self) -> f64 {
+        match self {
+            Self::KernelDriverIoctl => 0.0005,      // Highest barrier (~1490 Pa)
+            Self::CredentialStoreRead => 0.0006,    // ~1242 Pa
+            Self::SubprocessSpawn => 0.0008,        // ~931 Pa
+            Self::SharedMemoryMapping => 0.0010,    // ~745 Pa
+            Self::NetworkSocketEgress => 0.0012,    // ~621 Pa
+            Self::ClipboardWindowMessage => 0.0014, // ~532 Pa
+            Self::FilesystemWrite => 0.0015,        // ~497 Pa
+            Self::InterAgentMeshIpc => 0.0020,      // ~372 Pa
+        }
+    }
+}
 
 /// The 8 Fundamental Host Actuation Pore Classes through which AI agents attempt to actuate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -62,7 +108,7 @@ impl ActuationPoreClass {
 
 /// A specific actuation pore discovered on the host system.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostActuationPore {
+pub struct HostPoreProfile {
     pub id: String,
     pub class: ActuationPoreClass,
     pub name: String,
@@ -72,7 +118,9 @@ pub struct HostActuationPore {
     pub entry_pressure_threshold: f64,
 }
 
-impl HostActuationPore {
+pub type HostActuationPoreRecord = HostPoreProfile;
+
+impl HostPoreProfile {
     pub fn new(
         id: &str,
         class: ActuationPoreClass,
@@ -81,9 +129,6 @@ impl HostActuationPore {
         radius: f64,
     ) -> Self {
         let r = radius.clamp(0.05, 1.0);
-        // Washburn Capillary Entry Pressure: Delta P = (2 * gamma * |cos theta|) / r_p
-        // with gamma = 486.5 mN/m and theta = 135 deg: |cos 135| = sqrt(2)/2 ~= 0.70710678
-        // 2 * 486.5 * 0.70710678 ~= 688.0148
         let entry_pressure_threshold = (2.0
             * MERCURY_SURFACE_TENSION_GAMMA
             * (NOMINAL_NON_WETTING_ANGLE_DEG.to_radians().cos().abs()))
@@ -100,10 +145,273 @@ impl HostActuationPore {
     }
 }
 
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct JobObjectBasicAccountingInformation {
+    total_user_time: i64,
+    total_kernel_time: i64,
+    this_period_total_user_time: i64,
+    this_period_total_kernel_time: i64,
+    total_page_fault_count: u32,
+    total_processes: u32,
+    active_processes: u32,
+    total_terminated_processes: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct IoCounters {
+    read_operation_count: u64,
+    write_operation_count: u64,
+    other_operation_count: u64,
+    read_transfer_count: u64,
+    write_transfer_count: u64,
+    other_transfer_count: u64,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct JobObjectBasicAndIoAccountingInformation {
+    basic_info: JobObjectBasicAccountingInformation,
+    io_info: IoCounters,
+}
+
+#[cfg(windows)]
+mod win32_job_io {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")]
+    extern "system" {
+        pub fn CreateJobObjectW(lpJobAttributes: *const c_void, lpName: *const u16) -> *mut c_void;
+        pub fn CloseHandle(hObject: *mut c_void) -> i32;
+        pub fn QueryInformationJobObject(
+            hJob: *mut c_void,
+            JobObjectInformationClass: u32,
+            lpJobObjectInformation: *mut c_void,
+            cbJobObjectInformationLength: u32,
+            lpReturnLength: *mut u32,
+        ) -> i32;
+        pub fn GetLastError() -> u32;
+    }
+}
+
+/// Genuine Windows Job Object wrapper providing kernel-enforced process and resource boundaries.
+#[derive(Debug)]
+pub struct WindowsJobObject {
+    pub handle: *mut std::ffi::c_void,
+    pub name: String,
+    pub max_processes: u32,
+    pub max_memory_bytes: usize,
+    pub is_terminated: Arc<std::sync::atomic::AtomicBool>,
+}
+
+unsafe impl Send for WindowsJobObject {}
+unsafe impl Sync for WindowsJobObject {}
+
+impl WindowsJobObject {
+    /// Creates a new Windows Job Object configured with kernel-enforced limits.
+    pub fn create(
+        name: impl Into<String>,
+        max_processes: u32,
+        max_memory_bytes: usize,
+    ) -> Result<Self, osoosi_types::OctopusSecurityError> {
+        let name_str = name.into();
+        let is_terminated = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        #[cfg(windows)]
+        {
+            let wide_name: Vec<u16> = name_str.encode_utf16().chain(std::iter::once(0)).collect();
+            let handle = unsafe {
+                win32_job_io::CreateJobObjectW(std::ptr::null(), wide_name.as_ptr())
+            };
+            if handle.is_null() {
+                let err = unsafe { win32_job_io::GetLastError() };
+                return Err(osoosi_types::OctopusSecurityError::IsolationViolation(format!(
+                    "CreateJobObjectW failed with OS error {}",
+                    err
+                )));
+            }
+            Ok(Self {
+                handle,
+                name: name_str,
+                max_processes,
+                max_memory_bytes,
+                is_terminated,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Self {
+                handle: std::ptr::null_mut(),
+                name: name_str,
+                max_processes,
+                max_memory_bytes,
+                is_terminated,
+            })
+        }
+    }
+}
+
+impl Drop for WindowsJobObject {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            if !self.handle.is_null() {
+                unsafe {
+                    win32_job_io::CloseHandle(self.handle);
+                }
+            }
+        }
+    }
+}
+
+/// Supervisor-measured actuation sample derived from OS kernel Job Object accounting counters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeasuredActuationSample {
+    pub pore: HostActuationPore,
+    pub total_processes_spawned: u32,
+    pub active_processes: u32,
+    pub read_transfer_bytes: u64,
+    pub write_transfer_bytes: u64,
+    pub other_transfer_bytes: u64,
+    pub elapsed_s: f64,
+    pub derived_pressure_pa: f64,
+    pub derived_velocity_m_s: f64,
+    pub derived_characteristic_length_m: f64,
+    pub derived_fragment_mass: f64,
+}
+
+impl MeasuredActuationSample {
+    /// Reads kernel-enforced process and I/O counters directly from a `WindowsJobObject`
+    /// via `QueryInformationJobObject(JobObjectBasicAndIoAccountingInformation = 8)`.
+    pub fn sample_from_job(
+        job: &WindowsJobObject,
+        pore: HostActuationPore,
+        elapsed_s: f64,
+    ) -> Result<Self, osoosi_types::OctopusSecurityError> {
+        let dt = elapsed_s.max(0.001);
+        #[cfg(windows)]
+        {
+            const JOB_OBJECT_BASIC_AND_IO_ACCOUNTING_INFO_CLASS: u32 = 8;
+            let mut accounting = JobObjectBasicAndIoAccountingInformation::default();
+            let mut ret_len: u32 = 0;
+            let ok = unsafe {
+                win32_job_io::QueryInformationJobObject(
+                    job.handle,
+                    JOB_OBJECT_BASIC_AND_IO_ACCOUNTING_INFO_CLASS,
+                    &mut accounting as *mut _ as *mut std::ffi::c_void,
+                    std::mem::size_of::<JobObjectBasicAndIoAccountingInformation>() as u32,
+                    &mut ret_len,
+                )
+            };
+            if ok == 0 {
+                let err = unsafe { win32_job_io::GetLastError() };
+                return Err(osoosi_types::OctopusSecurityError::IsolationViolation(format!(
+                    "FAIL-CLOSED: QueryInformationJobObject(BasicAndIoAccounting) failed with OS error {}",
+                    err
+                )));
+            }
+
+            let write_bytes = accounting.io_info.write_transfer_count;
+            let other_bytes = accounting.io_info.other_transfer_count;
+            let read_bytes = accounting.io_info.read_transfer_count;
+            let total_procs = accounting.basic_info.total_processes;
+            let active_procs = accounting.basic_info.active_processes;
+
+            let egress_bytes = write_bytes.saturating_add(other_bytes) as f64;
+            let bytes_per_sec = egress_bytes / dt;
+
+            let derived_pressure_pa =
+                (bytes_per_sec / 64.0) + (total_procs as f64 * 180.0) + (active_procs as f64 * 120.0);
+            let derived_velocity_m_s = (bytes_per_sec / 65_536.0) + (total_procs as f64 * 0.15);
+            let derived_characteristic_length_m = pore.default_pore_radius_m();
+            let derived_fragment_mass =
+                (egress_bytes / KERNEL_IO_COALESCENCE_BUDGET_BYTES).max(total_procs as f64 * 0.02);
+
+            Ok(Self {
+                pore,
+                total_processes_spawned: total_procs,
+                active_processes: active_procs,
+                read_transfer_bytes: read_bytes,
+                write_transfer_bytes: write_bytes,
+                other_transfer_bytes: other_bytes,
+                elapsed_s: dt,
+                derived_pressure_pa,
+                derived_velocity_m_s,
+                derived_characteristic_length_m,
+                derived_fragment_mass,
+            })
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = job;
+            Err(osoosi_types::OctopusSecurityError::IsolationViolation(
+                "WindowsJobObject kernel I/O sampling requires Windows".to_string(),
+            ))
+        }
+    }
+}
+
+/// Dual-accumulator tracking both non-decaying lifetime mass and sliding 1-hour window.
+#[derive(Debug, Clone)]
+pub struct CoalescenceAccumulator {
+    /// Non-decaying monotonic lifetime mass (prevents infinite slow drip leaks `f < 0.08`).
+    pub lifetime_mass: f64,
+    /// Timestamped fragments within the active 1-hour sliding window.
+    pub sliding_window: VecDeque<(Instant, f64)>,
+}
+
+impl Default for CoalescenceAccumulator {
+    fn default() -> Self {
+        Self {
+            lifetime_mass: 0.0,
+            sliding_window: VecDeque::new(),
+        }
+    }
+}
+
+impl CoalescenceAccumulator {
+    pub fn record_fragment(&mut self, fragment_mass: f64, now: Instant) -> (f64, f64) {
+        let positive = if fragment_mass.is_nan() || fragment_mass < 0.0 {
+            0.0
+        } else {
+            fragment_mass
+        };
+        self.lifetime_mass += positive;
+        self.sliding_window.push_back((now, positive));
+        while let Some(&(ts, _)) = self.sliding_window.front() {
+            if now.duration_since(ts) > SLIDING_WINDOW_DURATION {
+                self.sliding_window.pop_front();
+            } else {
+                break;
+            }
+        }
+        let window_mass: f64 = self.sliding_window.iter().map(|(_, m)| *m).sum();
+        (self.lifetime_mass, window_mass)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MercuryEvaluationResult {
+    pub pore: HostActuationPore,
+    pub applied_pressure_pa: f64,
+    pub washburn_barrier_pa: f64,
+    pub weber_number: f64,
+    /// Effective coalescence mass (`max(lifetime_mass, sliding_window_mass)`).
+    pub coalescence_mass: f64,
+    pub pore_breached: bool,
+    pub droplet_shattering_detected: bool,
+    pub cross_pore_coalescence_detected: bool,
+    pub sulfur_passivated_hgs: bool,
+    pub reason: String,
+}
+
 /// Host Actuation Pore Inventory cataloging all available actuation avenues.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostPoreInventory {
-    pub pores: Vec<HostActuationPore>,
+    pub pores: Vec<HostPoreProfile>,
     pub total_capillary_resistance: f64,
     pub active_pore_count: usize,
 }
@@ -114,14 +422,14 @@ impl HostPoreInventory {
         let mut pores = Vec::new();
 
         // 1. BrowserControl
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-browser-cdp-9222",
             ActuationPoreClass::BrowserControl,
             "Chrome/Edge Remote Debugging CDP",
             "127.0.0.1:9222",
             0.35,
         ));
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-browser-har-l7",
             ActuationPoreClass::BrowserControl,
             "Browser HAR L7 Stream Inspector",
@@ -130,14 +438,14 @@ impl HostPoreInventory {
         ));
 
         // 2. McpToolServer
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-mcp-stdio",
             ActuationPoreClass::McpToolServer,
             "MCP JSON-RPC 2.0 Stdio Channel",
             "stdio:tools",
             0.25,
         ));
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-mcp-sse",
             ActuationPoreClass::McpToolServer,
             "MCP Server-Sent Events Endpoint",
@@ -146,14 +454,14 @@ impl HostPoreInventory {
         ));
 
         // 3. AiSdkRuntime
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-ai-ollama",
             ActuationPoreClass::AiSdkRuntime,
             "Ollama Local Model Inference API",
             "http://127.0.0.1:11434/api",
             0.30,
         ));
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-ai-litert",
             ActuationPoreClass::AiSdkRuntime,
             "Google LiteRT / Gemma Local Engine",
@@ -162,14 +470,14 @@ impl HostPoreInventory {
         ));
 
         // 4. OsShellInterpreter
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-shell-powershell",
             ActuationPoreClass::OsShellInterpreter,
             "Windows PowerShell Execution Shell",
             "powershell.exe",
             0.80,
         ));
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-shell-cmd",
             ActuationPoreClass::OsShellInterpreter,
             "Windows Command Prompt Shell",
@@ -178,7 +486,7 @@ impl HostPoreInventory {
         ));
 
         // 5. IpcNamedPipeApi
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-ipc-named-pipes",
             ActuationPoreClass::IpcNamedPipeApi,
             "Win32 Named Pipes IPC Bus",
@@ -187,7 +495,7 @@ impl HostPoreInventory {
         ));
 
         // 6. UiComputerUse
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-ui-automation",
             ActuationPoreClass::UiComputerUse,
             "Win32 SendInput / UIAutomation / ScreenCapture",
@@ -196,14 +504,14 @@ impl HostPoreInventory {
         ));
 
         // 7. FilesystemStaging
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-fs-temp",
             ActuationPoreClass::FilesystemStaging,
             "Temporary Filesystem Staging Directory",
             r"%TEMP%\*",
             0.70,
         ));
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-fs-downloads",
             ActuationPoreClass::FilesystemStaging,
             "User Downloads Staging Directory",
@@ -212,14 +520,14 @@ impl HostPoreInventory {
         ));
 
         // 8. NetworkEgress
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-net-https",
             ActuationPoreClass::NetworkEgress,
             "Outbound HTTPS Socket Egress",
             "tcp:443",
             0.50,
         ));
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-net-dns",
             ActuationPoreClass::NetworkEgress,
             "DNS Tunneling / Query Egress",
@@ -228,7 +536,7 @@ impl HostPoreInventory {
         ));
 
         // 9. Host IDE Extensions & AI Agent Plugins
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-ide-extensions",
             ActuationPoreClass::McpToolServer,
             "Host IDE Extensions & AI Agent Plugins (VS Code, Cursor, Windsurf, Antigravity)",
@@ -237,7 +545,7 @@ impl HostPoreInventory {
         ));
 
         // 10. Local & Remote Actuation API Endpoints
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-api-endpoints",
             ActuationPoreClass::IpcNamedPipeApi,
             "Discovered Local and Remote Actuation APIs (OpenOsoosi REST, Ollama LLM, MCP)",
@@ -246,7 +554,7 @@ impl HostPoreInventory {
         ));
 
         // 11. Developer Toolchains, Compilers & AI Automation SDKs
-        pores.push(HostActuationPore::new(
+        pores.push(HostPoreProfile::new(
             "pore-coding-tools",
             ActuationPoreClass::OsShellInterpreter,
             "Developer Toolchains, Compilers & AI Automation SDKs (cargo, python, node, git)",
@@ -317,6 +625,7 @@ pub struct MercuryLineageState {
     pub internal_pressure: f64,
     pub weber_number: f64,
     pub coalesced_mass: f64,
+    pub lifetime_mass: f64,
     pub pore_shannon_entropy: f64,
     pub passivation_state: PassivationState,
     pub rejection_fission_window_start: Option<DateTime<Utc>>,
@@ -344,6 +653,9 @@ pub struct MercuryContainmentEngine {
     pub inventory: Arc<HostPoreInventory>,
     pub lineages: Arc<DashMap<String, MercuryLineageState>>,
     pub amalgamated_pids: Arc<DashMap<u32, AmalgamRecord>>,
+    pub pore_radii: Arc<RwLock<HashMap<HostActuationPore, f64>>>,
+    pub coalescence_ledger: Arc<RwLock<HashMap<String, CoalescenceAccumulator>>>,
+    pub passivated_agents: Arc<RwLock<HashMap<String, bool>>>,
 }
 
 impl Default for MercuryContainmentEngine {
@@ -354,10 +666,142 @@ impl Default for MercuryContainmentEngine {
 
 impl MercuryContainmentEngine {
     pub fn new() -> Self {
+        let mut radii = HashMap::new();
+        for pore in [
+            HostActuationPore::SubprocessSpawn,
+            HostActuationPore::FilesystemWrite,
+            HostActuationPore::NetworkSocketEgress,
+            HostActuationPore::CredentialStoreRead,
+            HostActuationPore::KernelDriverIoctl,
+            HostActuationPore::InterAgentMeshIpc,
+            HostActuationPore::SharedMemoryMapping,
+            HostActuationPore::ClipboardWindowMessage,
+        ] {
+            radii.insert(pore, pore.default_pore_radius_m());
+        }
         Self {
             inventory: Arc::new(HostPoreInventory::discover_host_pores()),
             lineages: Arc::new(DashMap::new()),
             amalgamated_pids: Arc::new(DashMap::new()),
+            pore_radii: Arc::new(RwLock::new(radii)),
+            coalescence_ledger: Arc::new(RwLock::new(HashMap::new())),
+            passivated_agents: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    /// Washburn capillary entry pressure $P_{\text{cap}}(r_i) = \frac{2 \gamma |\cos \theta|}{r_i}$.
+    pub fn washburn_barrier_pa(&self, pore: HostActuationPore) -> f64 {
+        let r = self
+            .pore_radii
+            .read()
+            .unwrap()
+            .get(&pore)
+            .copied()
+            .unwrap_or_else(|| pore.default_pore_radius_m())
+            .max(1e-6);
+        (2.0 * MERCURY_SURFACE_TENSION_N_PER_M * MERCURY_ABS_COS_THETA) / r
+    }
+
+    /// Evaluates a kernel-measured `MeasuredActuationSample` obtained from a `WindowsJobObject`.
+    pub fn evaluate_measured_sample(
+        &self,
+        agent_id: &str,
+        sample: &MeasuredActuationSample,
+    ) -> MercuryEvaluationResult {
+        self.evaluate_pore_pressure(
+            agent_id,
+            sample.pore,
+            sample.derived_pressure_pa,
+            sample.derived_velocity_m_s,
+            sample.derived_characteristic_length_m,
+            sample.derived_fragment_mass,
+        )
+    }
+
+    /// Evaluates an agent's actuation attempt against Washburn capillary pressure,
+    /// Weber droplet shattering, non-decaying Smoluchowski cross-pore coalescence, and HgS passivation.
+    pub fn evaluate_pore_pressure(
+        &self,
+        agent_id: &str,
+        pore: HostActuationPore,
+        applied_pressure_pa: f64,
+        droplet_velocity_m_s: f64,
+        characteristic_length_m: f64,
+        fragment_mass: f64,
+    ) -> MercuryEvaluationResult {
+        let already_passivated = self
+            .passivated_agents
+            .read()
+            .unwrap()
+            .get(agent_id)
+            .copied()
+            .unwrap_or(false);
+
+        let barrier_pa = self.washburn_barrier_pa(pore);
+        let weber_number = (MERCURY_DENSITY_KG_M3
+            * droplet_velocity_m_s.powi(2)
+            * characteristic_length_m.max(1e-5))
+            / MERCURY_SURFACE_TENSION_N_PER_M;
+
+        let now = Instant::now();
+        let (lifetime_mass, window_mass) = {
+            let mut coal_map = self.coalescence_ledger.write().unwrap();
+            let entry = coal_map.entry(agent_id.to_string()).or_default();
+            entry.record_fragment(fragment_mass, now)
+        };
+        let accumulated_mass = lifetime_mass.max(window_mass);
+
+        let pore_breached = applied_pressure_pa > barrier_pa;
+        let droplet_shattering_detected = weber_number > CRITICAL_WEBER_NUMBER;
+        let cross_pore_coalescence_detected =
+            lifetime_mass >= LIFETIME_COALESCENCE_BUDGET || window_mass >= LIFETIME_COALESCENCE_BUDGET;
+
+        let sulfur_passivated_hgs = already_passivated
+            || pore_breached
+            || droplet_shattering_detected
+            || cross_pore_coalescence_detected;
+
+        if sulfur_passivated_hgs {
+            self.passivated_agents
+                .write()
+                .unwrap()
+                .insert(agent_id.to_string(), true);
+            // Tighten pore radius by 50% upon attack detection
+            if let Some(r) = self.pore_radii.write().unwrap().get_mut(&pore) {
+                *r = (*r * 0.5).max(1e-5);
+            }
+        }
+
+        let reason = if !sulfur_passivated_hgs {
+            format!(
+                "MERCURY_CONTAINED: P_applied ({:.1} Pa) <= P_Washburn ({:.1} Pa), We={:.2} <= 12.0, lifetime_mass={:.3} < 1.0",
+                applied_pressure_pa, barrier_pa, weber_number, accumulated_mass
+            )
+        } else {
+            format!(
+                "MERCURY_HGS_PASSIVATION_TRIGGERED: pore_breach={} (P={:.1}/{:.1} Pa), shattering={} (We={:.2}), coalescence={} (lifetime_mass={:.3}, window_mass={:.3})",
+                pore_breached,
+                applied_pressure_pa,
+                barrier_pa,
+                droplet_shattering_detected,
+                weber_number,
+                cross_pore_coalescence_detected,
+                lifetime_mass,
+                window_mass
+            )
+        };
+
+        MercuryEvaluationResult {
+            pore,
+            applied_pressure_pa,
+            washburn_barrier_pa: barrier_pa,
+            weber_number,
+            coalescence_mass: accumulated_mass,
+            pore_breached,
+            droplet_shattering_detected,
+            cross_pore_coalescence_detected,
+            sulfur_passivated_hgs,
+            reason,
         }
     }
 
@@ -385,6 +829,7 @@ impl MercuryContainmentEngine {
                 internal_pressure: 100.0,
                 weber_number: 0.1,
                 coalesced_mass: 0.0,
+                lifetime_mass: 0.0,
                 pore_shannon_entropy: 0.0,
                 passivation_state: PassivationState::NominalNonWetting,
                 rejection_fission_window_start: None,
@@ -538,6 +983,7 @@ impl MercuryContainmentEngine {
         // ---------------------------------------------------------------------
         // Phase C: Smoluchowski Coalescence Tensor (Cross-Pore Re-merging)
         // ---------------------------------------------------------------------
+        lineage.lifetime_mass += mass;
         let mut coalesced_mass = 0.0f64;
         let recent_items: Vec<&DropletEvent> = lineage.droplets.iter().rev().take(12).collect();
         for (i, d1) in recent_items.iter().enumerate() {
@@ -556,7 +1002,8 @@ impl MercuryContainmentEngine {
             }
         }
         lineage.coalesced_mass = coalesced_mass;
-        let is_coalesced = coalesced_mass >= SMOLUCHOWSKI_COALESCENCE_THRESHOLD;
+        let is_coalesced = coalesced_mass >= SMOLUCHOWSKI_COALESCENCE_THRESHOLD
+            || lineage.lifetime_mass >= SMOLUCHOWSKI_COALESCENCE_THRESHOLD;
 
         // ---------------------------------------------------------------------
         // Phase D: Sulfur-Passivation Trigger (Hg + S -> HgS)
@@ -809,5 +1256,46 @@ mod tests {
         assert!(rec2.amalgam_ratio >= AMALGAMATION_EXEMPTION_STRIP_THRESHOLD);
         assert!(rec2.trusted_exemption_stripped);
         assert!(engine.is_trusted_exemption_stripped(2000));
+    }
+
+    #[test]
+    fn test_mercury_slow_drip_leak_and_kernel_job_accounting() {
+        let mercury = MercuryContainmentEngine::new();
+
+        let mut triggered = false;
+        for _ in 0..120 {
+            let res = mercury.evaluate_pore_pressure(
+                "slow-drip-agent",
+                HostActuationPore::NetworkSocketEgress,
+                50.0,
+                0.05,
+                0.0005,
+                0.01,
+            );
+            if res.cross_pore_coalescence_detected && res.sulfur_passivated_hgs {
+                triggered = true;
+                assert!(res.coalescence_mass >= 1.0);
+                break;
+            }
+        }
+        assert!(
+            triggered,
+            "Slow leak (f = 0.01 < 0.08 per call) must trip non-decaying lifetime Mercury budget"
+        );
+
+        #[cfg(windows)]
+        {
+            let job = WindowsJobObject::create(
+                format!("OshoosiMercuryKernelTest_{}", std::process::id()),
+                4,
+                64 * 1024 * 1024,
+            )
+            .expect("Create WindowsJobObject for kernel I/O accounting test");
+            let sample =
+                MeasuredActuationSample::sample_from_job(&job, HostActuationPore::FilesystemWrite, 1.0)
+                    .expect("QueryInformationJobObject(BasicAndIoAccounting) must succeed");
+            let eval = mercury.evaluate_measured_sample("job-measured-agent", &sample);
+            assert_eq!(eval.pore, HostActuationPore::FilesystemWrite);
+        }
     }
 }

@@ -68,60 +68,61 @@ pub struct AgentEgressPolicy {
 pub fn is_restricted_rebinding_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ipv4) => {
-            let oct = ipv4.octets();
-            // Loopback (127.0.0.0/8)
-            if ipv4.is_loopback() {
-                return true;
-            }
-            // Unspecified (0.0.0.0)
-            if ipv4.is_unspecified() {
-                return true;
-            }
-            // Link-local / Cloud Metadata (169.254.0.0/16)
-            if ipv4.is_link_local() {
-                return true;
-            }
-            // RFC1918: 10.0.0.0/8
-            if oct[0] == 10 {
-                return true;
-            }
-            // RFC1918: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
-            if oct[0] == 172 && (16..=31).contains(&oct[1]) {
-                return true;
-            }
-            // RFC1918: 192.168.0.0/16
-            if oct[0] == 192 && oct[1] == 168 {
-                return true;
-            }
-            // CGNAT: 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
-            if oct[0] == 100 && (64..=127).contains(&oct[1]) {
-                return true;
-            }
-            false
+            let o = ipv4.octets();
+            let is_this_net = o[0] == 0; // 0.0.0.0/8
+            let is_cgnat = o[0] == 100 && (o[1] & 0b1100_0000) == 64; // 100.64.0.0/10
+            let is_metadata = o[0] == 169 && o[1] == 254; // 169.254.0.0/16
+            let is_benchmarking = o[0] == 198 && (o[1] & 0xfe) == 18; // 198.18.0.0/15
+            let is_reserved_class_e = (o[0] & 0xf0) == 240; // 240.0.0.0/4
+            let is_ietf_protocol = o[0] == 192 && o[1] == 0 && o[2] == 0; // 192.0.0.0/24
+            ipv4.is_loopback()
+                || ipv4.is_private()
+                || ipv4.is_link_local()
+                || ipv4.is_unspecified()
+                || ipv4.is_broadcast()
+                || ipv4.is_multicast()
+                || ipv4.is_documentation()
+                || is_this_net
+                || is_cgnat
+                || is_metadata
+                || is_benchmarking
+                || is_reserved_class_e
+                || is_ietf_protocol
         }
         IpAddr::V6(ipv6) => {
-            let oct = ipv6.octets();
-            // Loopback (::1)
-            if ipv6.is_loopback() {
-                return true;
+            let o = ipv6.octets();
+            let seg = ipv6.segments();
+            let is_unique_local = (o[0] & 0xfe) == 0xfc; // fc00::/7
+            let is_link_local_v6 = o[0] == 0xfe && (o[1] & 0xc0) == 0x80; // fe80::/10
+            let is_nat64 = (seg[0] == 0x0064
+                && seg[1] == 0xff9b
+                && seg[2] == 0
+                && seg[3] == 0
+                && seg[4] == 0
+                && seg[5] == 0)
+                || (seg[0] == 0x0064 && seg[1] == 0xff9b && seg[2] == 1);
+            let is_6to4 = seg[0] == 0x2002;
+            let is_teredo_or_doc_or_discard = (seg[0] == 0x2001
+                && (seg[1] == 0x0000 || seg[1] == 0x0db8))
+                || (seg[0] == 0x0100 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0);
+            if let Some(mapped_v4) = ipv6.to_ipv4_mapped() {
+                if is_restricted_rebinding_ip(IpAddr::V4(mapped_v4)) {
+                    return true;
+                }
             }
-            // Unspecified (::)
-            if ipv6.is_unspecified() {
-                return true;
+            if let Some(compat_v4) = ipv6.to_ipv4() {
+                if !ipv6.is_loopback() && is_restricted_rebinding_ip(IpAddr::V4(compat_v4)) {
+                    return true;
+                }
             }
-            // IPv4-mapped IPv6 (::ffff:x.x.x.x)
-            if let Some(v4) = ipv6.to_ipv4_mapped() {
-                return is_restricted_rebinding_ip(IpAddr::V4(v4));
-            }
-            // Unique local (fc00::/7) -> first byte is 0xfc or 0xfd
-            if (oct[0] & 0xfe) == 0xfc {
-                return true;
-            }
-            // Link-local (fe80::/10) -> oct[0] == 0xfe && (oct[1] & 0xc0) == 0x80
-            if oct[0] == 0xfe && (oct[1] & 0xc0) == 0x80 {
-                return true;
-            }
-            false
+            ipv6.is_loopback()
+                || ipv6.is_unspecified()
+                || ipv6.is_multicast()
+                || is_unique_local
+                || is_link_local_v6
+                || is_nat64
+                || is_6to4
+                || is_teredo_or_doc_or_discard
         }
     }
 }

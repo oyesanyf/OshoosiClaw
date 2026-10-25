@@ -539,3 +539,50 @@ pub fn detect_binary_masquerade_spoof(
 
     None
 }
+
+
+// ============================================================================
+// Protection Layer 5: Tier 1 Wasmtime Sanitization & Handle-Confined REA Inspection
+// ============================================================================
+
+/// Opens a candidate file inside `workspace_root` using handle-verified
+/// [`osoosi_sandbox::open_confined`] (blocking NTFS junctions, symlinks, hardlinks
+/// `nNumberOfLinks > 1`, and path traversal at the Win32 handle level) and runs
+/// [`analyze_target_bytes`] on the handle's contents without ever re-opening by path.
+pub fn inspect_confined_workspace_file(
+    workspace_root: &Path,
+    relative_path: &str,
+) -> Result<ReaInvestigationReport> {
+    let mut file = osoosi_sandbox::open_confined(workspace_root, relative_path, false)
+        .map_err(|e| anyhow!("REA_CONFINED_OPEN_BLOCKED: {}", e))?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|e| anyhow!("REA_CONFINED_READ_FAILED: {}", e))?;
+    let joined = workspace_root.join(relative_path);
+    Ok(analyze_target_bytes(
+        relative_path,
+        Some(&joined),
+        &bytes,
+        ReaTargetKind::Auto,
+        Some("rea_inspect_confined_workspace_file".to_string()),
+    ))
+}
+
+/// Sanitizes an untrusted document or REA/DLP text payload inside the Tier 1 In-Process
+/// Wasmtime capability sandbox (`osoosi_sandbox::WasmTier1Executor`), enforcing deterministic
+/// instruction fuel, a 64 MiB `ResourceLimiter` linear memory ceiling, and zero ambient OS authority.
+pub fn sanitize_untrusted_payload_tier1_wasm(
+    payload: &[u8],
+    scratchpad_root: &Path,
+) -> Result<osoosi_sandbox::WasmExecutionReceipt> {
+    let executor = osoosi_sandbox::WasmTier1Executor::try_new()
+        .map_err(|e| anyhow!("REA_WASM_TIER1_INIT_FAILED: {}", e))?;
+    let limits = osoosi_sandbox::WasmSandboxLimits {
+        scratchpad_root: scratchpad_root.to_path_buf(),
+        allow_scratch_write: false,
+        ..osoosi_sandbox::WasmSandboxLimits::default()
+    };
+    executor
+        .execute_doc_extractor(payload, limits)
+        .map_err(|e| anyhow!("REA_WASM_TIER1_EXEC_FAILED: {}", e))
+}

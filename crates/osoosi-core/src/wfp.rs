@@ -1135,6 +1135,66 @@ pub fn unblock_destination_native(
     Ok(())
 }
 
+/// Removes all active `OshoosiDLP-*` native WFP and BFE destination block rules targeting any of `ips`.
+pub fn unblock_all_dlp_rules_for_ips(ips: &[std::net::IpAddr]) -> usize {
+    if ips.is_empty() {
+        return 0;
+    }
+    let ip_strings: Vec<String> = ips.iter().map(|i| i.to_string()).collect();
+    let matching_rules: Vec<String> = NATIVE_DESTINATION_BLOCKS
+        .iter()
+        .filter(|entry| {
+            entry.key().starts_with("OshoosiDLP-")
+                && entry
+                    .value()
+                    .ips
+                    .iter()
+                    .any(|blocked| ip_strings.iter().any(|target| target == blocked))
+        })
+        .map(|entry| entry.key().clone())
+        .collect();
+
+    let mut removed_count = 0usize;
+    for rule in matching_rules {
+        if unblock_destination_native(&rule, None, None, ips).is_ok() {
+            removed_count += 1;
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::types::FromRegValue;
+        use winreg::RegKey;
+
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let fw_path =
+            r"SYSTEM\CurrentControlSet\Services\SharedAccess\Parameters\FirewallPolicy\FirewallRules";
+        if let Ok(fw_key) = hklm.open_subkey_with_flags(fw_path, KEY_READ | KEY_WRITE) {
+            let matching_keys: Vec<String> = fw_key
+                .enum_values()
+                .flatten()
+                .filter_map(|(k, v)| {
+                    let s = String::from_reg_value(&v).ok()?;
+                    let is_dlp = k.starts_with("OshoosiDLP-") || s.contains("Name=OshoosiDLP-");
+                    let matches_ip = ip_strings.iter().any(|ip| {
+                        s.contains(&format!("RA4={}", ip)) || s.contains(&format!("RA6={}", ip))
+                    });
+                    (is_dlp && matches_ip).then_some(k)
+                })
+                .collect();
+            for k in matching_keys {
+                if fw_key.delete_value(&k).is_ok() {
+                    removed_count += 1;
+                }
+            }
+        }
+    }
+
+    removed_count
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
