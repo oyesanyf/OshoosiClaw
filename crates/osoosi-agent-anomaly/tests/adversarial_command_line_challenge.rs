@@ -238,9 +238,9 @@ fn test_adversarial_slash_switch_prefixes() {
     }
 
     // Slash command switch (/c, /command)
-    let slash_cmd = format!(
+    let slash_cmd =
         "powershell.exe /c \"$b=[Convert]::FromBase64String('AAAA'); iex ([Text.Encoding]::Unicode.GetString($b))\""
-    );
+            .to_string();
     let parsed_cmd = analyze_command_line(&slash_cmd);
     assert!(
         parsed_cmd.has_breakout_signals(),

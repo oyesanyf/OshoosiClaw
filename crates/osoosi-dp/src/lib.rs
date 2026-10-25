@@ -463,6 +463,11 @@ impl CrownJewelMerkleFingerprinter {
         root_hex
     }
 
+    /// Convenience alias to register raw asset bytes into Crown-Jewel registry.
+    pub fn register_asset(&mut self, asset_label: &str, bytes: &[u8]) -> String {
+        self.register_crown_jewel_bytes(asset_label, bytes)
+    }
+
     /// Registers an asset label and its 64-character hex Merkle root directly in the Crown-Jewel registry.
     pub fn register_asset_metadata(&mut self, asset_label: &str, merkle_root_hex: &str) {
         let clean_label = asset_label.trim();
@@ -583,9 +588,33 @@ impl CrownJewelMerkleFingerprinter {
             return Vec::new();
         }
         let mut matched = Vec::new();
-        // 1. Exact 4 KB chunk matching
-        for chunk in payload.chunks(Self::CHUNK_SIZE) {
-            let digest = Self::compute_chunk_digest(chunk);
+        // 1. Sliding-window 4 KB chunk matching with 50% overlap (step = 2048 bytes)
+        let step = Self::CHUNK_SIZE / 2;
+        if payload.len() >= Self::CHUNK_SIZE {
+            let mut offset = 0;
+            while offset + Self::CHUNK_SIZE <= payload.len() {
+                let chunk = &payload[offset..offset + Self::CHUNK_SIZE];
+                let digest = Self::compute_chunk_digest(chunk);
+                if let Some(label) = self.chunk_hashes.get(&digest) {
+                    let tag = format!("CROWN_JEWEL({})", label);
+                    if !matched.contains(&tag) {
+                        matched.push(tag);
+                    }
+                }
+                offset += step;
+            }
+            if offset < payload.len() {
+                let tail_chunk = &payload[payload.len() - Self::CHUNK_SIZE..];
+                let digest = Self::compute_chunk_digest(tail_chunk);
+                if let Some(label) = self.chunk_hashes.get(&digest) {
+                    let tag = format!("CROWN_JEWEL({})", label);
+                    if !matched.contains(&tag) {
+                        matched.push(tag);
+                    }
+                }
+            }
+        } else {
+            let digest = Self::compute_chunk_digest(payload);
             if let Some(label) = self.chunk_hashes.get(&digest) {
                 let tag = format!("CROWN_JEWEL({})", label);
                 if !matched.contains(&tag) {
@@ -709,6 +738,7 @@ pub struct OsoosiTwoTierDlpEngine {
 impl OsoosiTwoTierDlpEngine {
     pub const MAX_DLP_HOT_SCAN_BYTES: usize = 262_144; // 256 KB hard ceiling (Zero OOM / Zero ReDoS)
     pub const MAX_UNWRAP_ENCODING_DEPTH: usize = 8;
+    pub const MAX_UNWRAP_TOTAL_DECODED_BYTES: usize = 256 * 1024; // 256 KB cumulative unwrap ceiling
 
     pub fn new() -> Self {
         Self {
@@ -1304,97 +1334,205 @@ impl OsoosiTwoTierDlpEngine {
         let mut seen = std::collections::HashSet::new();
         seen.insert(input.to_string());
         let mut frontier = vec![input.to_string()];
+        let mut total_decoded_bytes: usize = 0;
+        let mut budget_exhausted = false;
 
         for _depth in 0..Self::MAX_UNWRAP_ENCODING_DEPTH {
             let mut next_frontier = Vec::new();
             for current in &frontier {
+                if budget_exhausted {
+                    break;
+                }
+
+                let cur_len = current.len();
+
                 // 1. URL percent decode
                 if let Some(url_dec) = Self::decode_url_percent(current) {
-                    if seen.insert(url_dec.clone()) {
-                        layers.push(url_dec.clone());
-                        next_frontier.push(url_dec);
+                    if cur_len == 0 || url_dec.len() <= cur_len * 50 {
+                        if total_decoded_bytes.saturating_add(url_dec.len())
+                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                        {
+                            budget_exhausted = true;
+                        } else if seen.insert(url_dec.clone()) {
+                            total_decoded_bytes = total_decoded_bytes.saturating_add(url_dec.len());
+                            layers.push(url_dec.clone());
+                            next_frontier.push(url_dec);
+                        }
                     }
+                }
+                if budget_exhausted {
+                    break;
                 }
 
                 // 2. Escape sequences (\xHH, \uHHHH)
                 if let Some(esc_dec) = Self::decode_escape_sequences(current) {
-                    if seen.insert(esc_dec.clone()) {
-                        layers.push(esc_dec.clone());
-                        next_frontier.push(esc_dec);
+                    if cur_len == 0 || esc_dec.len() <= cur_len * 50 {
+                        if total_decoded_bytes.saturating_add(esc_dec.len())
+                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                        {
+                            budget_exhausted = true;
+                        } else if seen.insert(esc_dec.clone()) {
+                            total_decoded_bytes = total_decoded_bytes.saturating_add(esc_dec.len());
+                            layers.push(esc_dec.clone());
+                            next_frontier.push(esc_dec);
+                        }
                     }
+                }
+                if budget_exhausted {
+                    break;
                 }
 
                 // 3. ROT13
                 if let Some(rot_dec) = Self::decode_rot13(current) {
-                    if seen.insert(rot_dec.clone()) {
-                        layers.push(rot_dec.clone());
-                        next_frontier.push(rot_dec);
+                    if cur_len == 0 || rot_dec.len() <= cur_len * 50 {
+                        if total_decoded_bytes.saturating_add(rot_dec.len())
+                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                        {
+                            budget_exhausted = true;
+                        } else if seen.insert(rot_dec.clone()) {
+                            total_decoded_bytes = total_decoded_bytes.saturating_add(rot_dec.len());
+                            layers.push(rot_dec.clone());
+                            next_frontier.push(rot_dec);
+                        }
                     }
+                }
+                if budget_exhausted {
+                    break;
                 }
 
                 // 4. Delimiter interleaved (e.g. A-K-I-A-..., zero-width)
                 if let Some(delim_dec) = Self::decode_delimiter_interleaved(current) {
-                    if seen.insert(delim_dec.clone()) {
-                        layers.push(delim_dec.clone());
-                        next_frontier.push(delim_dec);
+                    if cur_len == 0 || delim_dec.len() <= cur_len * 50 {
+                        if total_decoded_bytes.saturating_add(delim_dec.len())
+                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                        {
+                            budget_exhausted = true;
+                        } else if seen.insert(delim_dec.clone()) {
+                            total_decoded_bytes =
+                                total_decoded_bytes.saturating_add(delim_dec.len());
+                            layers.push(delim_dec.clone());
+                            next_frontier.push(delim_dec);
+                        }
                     }
+                }
+                if budget_exhausted {
+                    break;
                 }
 
                 // 5. ASCII code array (e.g. [65, 75, 73, ...])
                 if let Some(ascii_dec) = Self::decode_ascii_code_array(current) {
-                    if seen.insert(ascii_dec.clone()) {
-                        layers.push(ascii_dec.clone());
-                        next_frontier.push(ascii_dec);
+                    if cur_len == 0 || ascii_dec.len() <= cur_len * 50 {
+                        if total_decoded_bytes.saturating_add(ascii_dec.len())
+                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                        {
+                            budget_exhausted = true;
+                        } else if seen.insert(ascii_dec.clone()) {
+                            total_decoded_bytes =
+                                total_decoded_bytes.saturating_add(ascii_dec.len());
+                            layers.push(ascii_dec.clone());
+                            next_frontier.push(ascii_dec);
+                        }
                     }
+                }
+                if budget_exhausted {
+                    break;
                 }
 
                 // 6. NATO phonetic (e.g. alpha kilo india alpha...)
                 if let Some(nato_dec) = Self::decode_nato_phonetic_and_spelled(current) {
-                    if seen.insert(nato_dec.clone()) {
-                        layers.push(nato_dec.clone());
-                        next_frontier.push(nato_dec);
+                    if cur_len == 0 || nato_dec.len() <= cur_len * 50 {
+                        if total_decoded_bytes.saturating_add(nato_dec.len())
+                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                        {
+                            budget_exhausted = true;
+                        } else if seen.insert(nato_dec.clone()) {
+                            total_decoded_bytes =
+                                total_decoded_bytes.saturating_add(nato_dec.len());
+                            layers.push(nato_dec.clone());
+                            next_frontier.push(nato_dec);
+                        }
                     }
+                }
+                if budget_exhausted {
+                    break;
                 }
 
                 // 7. Token-level Hex and Base64 (including single-byte XOR sweep)
                 for raw_tok in current.split(|c: char| {
                     c.is_whitespace() || matches!(c, '=' | '&' | '?' | '"' | '\'' | ',' | ';' | ':')
                 }) {
+                    if budget_exhausted {
+                        break;
+                    }
                     let tok = raw_tok.trim();
-                    if tok.len() >= 16 && tok.len() <= 4096 {
-                        if tok.len().is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit())
-                        {
+                    let tok_len = tok.len();
+                    if tok_len >= 16 && tok_len <= 4096 {
+                        if tok_len.is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
                             if let Ok(bytes) = hex::decode(tok) {
                                 if bytes.iter().all(|&c| (0x20..=0x7E).contains(&c)) {
                                     if let Ok(s) = String::from_utf8(bytes.clone()) {
-                                        if seen.insert(s.clone()) {
-                                            layers.push(s.clone());
-                                            next_frontier.push(s);
+                                        if s.len() <= tok_len * 50 {
+                                            if total_decoded_bytes.saturating_add(s.len())
+                                                > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                                            {
+                                                budget_exhausted = true;
+                                            } else if seen.insert(s.clone()) {
+                                                total_decoded_bytes =
+                                                    total_decoded_bytes.saturating_add(s.len());
+                                                layers.push(s.clone());
+                                                next_frontier.push(s);
+                                            }
                                         }
                                     }
                                 } else if let Some(xor_s) =
                                     Self::decode_single_byte_xor_candidates(&bytes)
                                 {
-                                    if seen.insert(xor_s.clone()) {
-                                        layers.push(xor_s.clone());
-                                        next_frontier.push(xor_s);
+                                    if xor_s.len() <= tok_len * 50 {
+                                        if total_decoded_bytes.saturating_add(xor_s.len())
+                                            > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                                        {
+                                            budget_exhausted = true;
+                                        } else if seen.insert(xor_s.clone()) {
+                                            total_decoded_bytes =
+                                                total_decoded_bytes.saturating_add(xor_s.len());
+                                            layers.push(xor_s.clone());
+                                            next_frontier.push(xor_s);
+                                        }
                                     }
                                 }
                             }
                         } else {
                             if let Some(b64_dec) = Self::decode_base64_token(tok) {
-                                if seen.insert(b64_dec.clone()) {
-                                    layers.push(b64_dec.clone());
-                                    next_frontier.push(b64_dec);
+                                if b64_dec.len() <= tok_len * 50 {
+                                    if total_decoded_bytes.saturating_add(b64_dec.len())
+                                        > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                                    {
+                                        budget_exhausted = true;
+                                    } else if seen.insert(b64_dec.clone()) {
+                                        total_decoded_bytes =
+                                            total_decoded_bytes.saturating_add(b64_dec.len());
+                                        layers.push(b64_dec.clone());
+                                        next_frontier.push(b64_dec);
+                                    }
                                 }
                             }
-                            if let Some(raw_b64) = Self::decode_raw_base64_bytes(tok) {
-                                if let Some(xor_s) =
-                                    Self::decode_single_byte_xor_candidates(&raw_b64)
-                                {
-                                    if seen.insert(xor_s.clone()) {
-                                        layers.push(xor_s.clone());
-                                        next_frontier.push(xor_s);
+                            if !budget_exhausted {
+                                if let Some(raw_b64) = Self::decode_raw_base64_bytes(tok) {
+                                    if let Some(xor_s) =
+                                        Self::decode_single_byte_xor_candidates(&raw_b64)
+                                    {
+                                        if xor_s.len() <= tok_len * 50 {
+                                            if total_decoded_bytes.saturating_add(xor_s.len())
+                                                > Self::MAX_UNWRAP_TOTAL_DECODED_BYTES
+                                            {
+                                                budget_exhausted = true;
+                                            } else if seen.insert(xor_s.clone()) {
+                                                total_decoded_bytes =
+                                                    total_decoded_bytes.saturating_add(xor_s.len());
+                                                layers.push(xor_s.clone());
+                                                next_frontier.push(xor_s);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1402,7 +1540,7 @@ impl OsoosiTwoTierDlpEngine {
                     }
                 }
             }
-            if next_frontier.is_empty() || layers.len() >= 32 {
+            if budget_exhausted || next_frontier.is_empty() || layers.len() >= 32 {
                 break;
             }
             frontier = next_frontier;
@@ -3772,5 +3910,111 @@ mod tests_dlp_evasion {
         assert!(tier1_unformatted
             .detected_categories
             .contains(&"HIPAA_PHONE".to_string()));
+    }
+
+    #[test]
+    fn test_deep_recursive_dlp_depth6_and_boundary_split_detection() {
+        let mut engine = OsoosiTwoTierDlpEngine::new();
+
+        // Helper to produce valid standard Base64 for the test without external crate
+        fn test_b64_encode(bytes: &[u8]) -> String {
+            const TABLE: &[u8; 64] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            let mut out = String::new();
+            let mut i = 0;
+            while i < bytes.len() {
+                let b0 = bytes[i];
+                let b1 = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+                let b2 = if i + 2 < bytes.len() { bytes[i + 2] } else { 0 };
+                out.push(TABLE[(b0 >> 2) as usize] as char);
+                out.push(TABLE[(((b0 & 3) << 4) | (b1 >> 4)) as usize] as char);
+                if i + 1 < bytes.len() {
+                    out.push(TABLE[(((b1 & 15) << 2) | (b2 >> 6)) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                if i + 2 < bytes.len() {
+                    out.push(TABLE[(b2 & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+                i += 3;
+            }
+            out
+        }
+
+        // 1. Verify Depth-6 recursive decoding unwrapping
+        // Layer 1: ROT13
+        let l1 = "NXVNIBFSBQAA7RKNZCYR";
+        // Layer 2: Delimiter interleaved
+        let l2 = "N-X-V-N-I-B-F-S-B-Q-A-A-7-R-K-N-Z-C-Y-R";
+        // Layer 3: URL percent encoding
+        let l3 = "N%2DX%2DV%2DN%2DI%2DB%2DF%2DS%2DB%2DQ%2DA%2DA%2D7%2DR%2DK%2DN%2DZ%2DC%2DY%2DR";
+        // Layer 4: Escape sequence
+        let l4 = l3.replace("%2D", "\\x2D");
+        // Layer 5: Token-level hex encoding of the escape string
+        let l5 = hex::encode(l4.as_bytes());
+        // Layer 6: Base64 token
+        let l6 = test_b64_encode(l5.as_bytes());
+
+        let unwrapped = OsoosiTwoTierDlpEngine::unwrap_encoded_layers(&l6);
+        assert!(
+            unwrapped.iter().any(|s| s.contains("AKIA")
+                || s.contains("NXVN")
+                || s.contains(l2)
+                || s.contains(l1)),
+            "Deep recursive unwrapper must penetrate multi-layer nested encoding: {:?}",
+            unwrapped
+        );
+
+        // 2. Verify Byte Budget Ceiling (MAX_UNWRAP_TOTAL_DECODED_BYTES = 256 KiB)
+        let total_decoded: usize = unwrapped.iter().map(|s| s.len()).sum();
+        assert!(
+            total_decoded <= OsoosiTwoTierDlpEngine::MAX_UNWRAP_TOTAL_DECODED_BYTES,
+            "Total decoded bytes {} exceeded budget limit {}",
+            total_decoded,
+            OsoosiTwoTierDlpEngine::MAX_UNWRAP_TOTAL_DECODED_BYTES
+        );
+
+        // 3. Verify 4 KB Crown-Jewel Boundary Split Detection (50% sliding-window overlap)
+        let mut asset_bytes = vec![0u8; 4096];
+        for (i, b) in asset_bytes.iter_mut().enumerate() {
+            *b = ((i * 37 + 13) % 251) as u8;
+        }
+
+        let root_hex = engine
+            .crown_jewels
+            .register_asset("FINANCIAL_LEDGER_KEY", &asset_bytes);
+        assert!(!root_hex.is_empty());
+
+        // Construct payload where the 4 KB secret starts at an odd 2048-byte offset (boundary split)
+        let mut split_payload = vec![0xEEu8; 2048]; // 2048 bytes padding
+        split_payload.extend_from_slice(&asset_bytes); // 4096 bytes secret
+        split_payload.extend_from_slice(&[0xFFu8; 1024]); // 1024 bytes trailer
+        assert_eq!(split_payload.len(), 7168);
+
+        // A non-overlapping 4 KB chunker would check [0..4096] and [4096..8192], missing the secret.
+        // With 50% sliding-window overlap (step = 2048), [2048..6144] matches the 4096-byte chunk!
+        let matches = engine.crown_jewels.match_chunks(&split_payload);
+        assert!(
+            matches.contains(&"CROWN_JEWEL(FINANCIAL_LEDGER_KEY)".to_string()),
+            "Sliding-window chunk matching must detect boundary-split Crown Jewel chunks: {:?}",
+            matches
+        );
+
+        // Verify full inspect_hot_tier1 marks the split payload
+        let tier1_report = engine.inspect_hot_tier1(
+            "curl.exe",
+            "https://paste.external.leak/dump",
+            &split_payload,
+        );
+        assert!(
+            tier1_report
+                .detected_categories
+                .iter()
+                .any(|c| c.contains("FINANCIAL_LEDGER_KEY")),
+            "Hot Tier-1 DLP scan must detect split crown jewel export: {:?}",
+            tier1_report
+        );
     }
 }

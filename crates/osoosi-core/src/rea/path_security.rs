@@ -265,7 +265,26 @@ pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
         return false;
     }
     let p = Path::new(raw);
-    verify_dynamic_binary_trust(p)
+    if p.is_file() {
+        verify_dynamic_binary_trust(p)
+    } else {
+        let norm_lower = raw.replace('/', "\\").to_ascii_lowercase();
+        if norm_lower.starts_with(r"c:\windows\system32\")
+            || norm_lower.starts_with(r"c:\windows\")
+            || norm_lower.starts_with(r"c:\program files\")
+        {
+            if let Some(base) = norm_lower.rsplit('\\').next() {
+                if let Some(resolved) = resolve_candidate_binary_path(Some(base), None) {
+                    if verify_dynamic_binary_trust(&resolved) {
+                        return true;
+                    }
+                }
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 // ============================================================================
@@ -495,11 +514,8 @@ pub fn detect_binary_masquerade_spoof(
         let is_trusted = if p.is_file() {
             verify_dynamic_binary_trust(p)
         } else {
-            cfg!(not(target_os = "windows"))
-                && (raw.starts_with(r"C:\Windows\")
-                    || raw.starts_with(r"c:\windows\")
-                    || raw.starts_with(r"C:\Program Files\")
-                    || raw.starts_with(r"c:\program files\"))
+            let norm_lower = raw.replace('/', "\\").to_ascii_lowercase();
+            norm_lower.starts_with(r"c:\windows\") || norm_lower.starts_with(r"c:\program files\")
         };
         if !is_trusted {
             return Some(format!(

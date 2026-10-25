@@ -267,9 +267,7 @@ async fn challenge_homological_auditor_and_mesh_guard_proxy_laundering_veto() {
     assert!(report_relay.reason.contains("LAW1_PROXY_LAUNDERING_VETO"));
 
     // 3. Chain length limit (> MAX_RELAY_HOPS + 1)
-    let too_long_chain: Vec<ArmRole> = std::iter::repeat(ArmRole::AnomalyDetection)
-        .take(MAX_RELAY_HOPS + 3)
-        .collect();
+    let too_long_chain: Vec<ArmRole> = vec![ArmRole::AnomalyDetection; MAX_RELAY_HOPS + 3];
     let report_long = HomologicalBoundaryAuditor::audit_role_chain(&too_long_chain);
     assert!(!report_long.allowed);
     assert!(report_long.reason.contains("LAW1_CHAIN_LENGTH_VETO"));

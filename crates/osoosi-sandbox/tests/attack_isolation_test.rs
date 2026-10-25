@@ -319,3 +319,89 @@ async fn test_dns_pinning_ssrf() {
         other => panic!("Expected Error response for GSB threat, got: {:?}", other),
     }
 }
+
+#[test]
+fn test_anti_dns_rebinding_socket_connect_guard() {
+    use osoosi_sandbox::validate_resolved_socket_addr;
+    use osoosi_types::OctopusSecurityError;
+    use std::net::SocketAddr;
+
+    // 1. Loopback addresses must be rejected
+    let loopback_v4: SocketAddr = "127.0.0.1:80".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&loopback_v4),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    let loopback_v6: SocketAddr = "[::1]:443".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&loopback_v6),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    // 2. RFC 1918 private IPv4 addresses must be rejected
+    let priv_10: SocketAddr = "10.0.0.1:8080".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&priv_10),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    let priv_172: SocketAddr = "172.16.5.10:80".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&priv_172),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    let priv_192: SocketAddr = "192.168.1.1:443".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&priv_192),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    // 3. RFC 2765 SIIT IPv4-translated IPv6 (::ffff:0:0/96) must be rejected
+    let siit_v6: SocketAddr = "[::ffff:0:127.0.0.1]:80".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&siit_v6),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    let siit_priv: SocketAddr = "[::ffff:0:10.1.2.3]:8080".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&siit_priv),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    // 4. 6to4 prefix (2002::/16) must be rejected
+    let six_to_four: SocketAddr = "[2002:7f00:0001::]:80".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&six_to_four),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    // 5. IPv4-compatible IPv6 (::a.b.c.d) must be rejected
+    let compat_v6: SocketAddr = "[::127.0.0.1]:80".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&compat_v6),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    // 6. NAT64 prefix (64:ff9b::/96) must be rejected
+    let nat64_v6: SocketAddr = "[64:ff9b::7f00:1]:80".parse().unwrap();
+    assert!(matches!(
+        validate_resolved_socket_addr(&nat64_v6),
+        Err(OctopusSecurityError::SsrfBlocked(_))
+    ));
+
+    // 7. Legitimate public IP (e.g. 93.184.216.34 - example.com) must pass cleanly
+    let public_v4: SocketAddr = "93.184.216.34:80".parse().unwrap();
+    assert!(
+        validate_resolved_socket_addr(&public_v4).is_ok(),
+        "Legitimate public IP must be allowed by socket connect guard"
+    );
+
+    let public_v6: SocketAddr = "[2606:2800:220:1:248:1893:25c8:1946]:443".parse().unwrap();
+    assert!(
+        validate_resolved_socket_addr(&public_v6).is_ok(),
+        "Legitimate public IPv6 must be allowed by socket connect guard"
+    );
+}

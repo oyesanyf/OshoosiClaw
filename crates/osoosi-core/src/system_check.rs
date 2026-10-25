@@ -789,6 +789,89 @@ impl HostResourceProfile {
     }
 }
 
+/// Finding representing a detected vulnerable kernel driver loaded on the system.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VulnerableDriverFinding {
+    pub driver_name: String,
+    pub driver_hash: Option<String>,
+    pub threat_category: String,
+    pub cve_reference: Option<String>,
+}
+
+/// Audit report produced by scanning loaded kernel drivers against known BYOVD / LOLDrivers catalogs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreBootDriverAuditReport {
+    pub total_drivers_scanned: usize,
+    pub vulnerable_drivers_found: Vec<VulnerableDriverFinding>,
+    pub passed: bool,
+    pub defensive_containment_triggered: bool,
+}
+
+/// Audits a slice of currently loaded kernel drivers against the canonical BYOVD and LOLDrivers catalogs.
+///
+/// If any known vulnerable driver is detected (e.g. `rtcore64.sys`, `mhyprot2.sys`, `dbutil_2_3.sys`),
+/// `passed` is marked `false` and `defensive_containment_triggered` is marked `true`.
+pub fn audit_loaded_drivers_against_catalog(
+    drivers: &[osoosi_telemetry::native::LoadedDriverInfo],
+) -> PreBootDriverAuditReport {
+    let mut findings = Vec::new();
+
+    for d in drivers {
+        let name_lc = d.image_name.trim().to_ascii_lowercase();
+        let base_name = name_lc.rsplit(['\\', '/']).next().unwrap_or(&name_lc);
+
+        let is_byovd = osoosi_runtime::kernel_driver::KNOWN_BYOVD_DRIVERS
+            .iter()
+            .any(|&known| {
+                let k_lc = known.to_ascii_lowercase();
+                base_name == k_lc || base_name.starts_with(&k_lc.trim_end_matches(".sys"))
+            })
+            || matches!(
+                base_name,
+                "rtcore64.sys"
+                    | "mhyprot2.sys"
+                    | "gdrv.sys"
+                    | "dbutil_2_3.sys"
+                    | "procexp.sys"
+                    | "procexp152.sys"
+                    | "asiodrv.sys"
+                    | "asiodrv64.sys"
+                    | "cpuz141.sys"
+                    | "winring0.sys"
+                    | "winring0x64.sys"
+                    | "speedfan.sys"
+                    | "capcom.sys"
+                    | "iqvw64e.sys"
+                    | "kprocesshacker.sys"
+                    | "zemana.sys"
+                    | "zam64.sys"
+                    | "ene.sys"
+                    | "naldrv.sys"
+            );
+
+        if is_byovd {
+            findings.push(VulnerableDriverFinding {
+                driver_name: d.image_name.clone(),
+                driver_hash: None,
+                threat_category: "BYOVD_KERNEL_EXPLOIT".to_string(),
+                cve_reference: Some(
+                    "CWE-1037: Bring Your Own Vulnerable Driver (LOLDrivers)".to_string(),
+                ),
+            });
+        }
+    }
+
+    let passed = findings.is_empty();
+    let defensive_containment_triggered = !passed;
+
+    PreBootDriverAuditReport {
+        total_drivers_scanned: drivers.len(),
+        vulnerable_drivers_found: findings,
+        passed,
+        defensive_containment_triggered,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -994,5 +1077,53 @@ mod tests {
                 lolbin
             );
         }
+    }
+
+    #[test]
+    fn test_preboot_byovd_driver_enumeration_and_containment() {
+        use osoosi_telemetry::native::LoadedDriverInfo;
+
+        // 1. Live driver enumeration test (genuine OS call)
+        let live_drivers = osoosi_telemetry::native::enumerate_loaded_kernel_drivers();
+        let live_report = audit_loaded_drivers_against_catalog(&live_drivers);
+        assert_eq!(live_report.total_drivers_scanned, live_drivers.len());
+
+        // 2. Synthetic detection test for known vulnerable BYOVD drivers
+        let test_drivers = vec![
+            LoadedDriverInfo {
+                base_address: 0xfffff80000000000,
+                image_name: "ntoskrnl.exe".to_string(),
+                file_path: Some("C:\\Windows\\System32\\ntoskrnl.exe".to_string()),
+            },
+            LoadedDriverInfo {
+                base_address: 0xfffff80001000000,
+                image_name: "fltmgr.sys".to_string(),
+                file_path: Some("C:\\Windows\\System32\\drivers\\fltmgr.sys".to_string()),
+            },
+            LoadedDriverInfo {
+                base_address: 0xfffff80002000000,
+                image_name: "rtcore64.sys".to_string(), // Known Micro-Star RTCore64 BYOVD exploit
+                file_path: Some("C:\\Windows\\Temp\\rtcore64.sys".to_string()),
+            },
+            LoadedDriverInfo {
+                base_address: 0xfffff80003000000,
+                image_name: "dbutil_2_3.sys".to_string(), // Known Dell DBUtil BYOVD exploit
+                file_path: Some("C:\\Windows\\Temp\\dbutil_2_3.sys".to_string()),
+            },
+        ];
+
+        let audit_report = audit_loaded_drivers_against_catalog(&test_drivers);
+        assert_eq!(audit_report.total_drivers_scanned, 4);
+        assert_eq!(audit_report.vulnerable_drivers_found.len(), 2);
+        assert!(!audit_report.passed);
+        assert!(audit_report.defensive_containment_triggered);
+
+        let driver_names: Vec<&str> = audit_report
+            .vulnerable_drivers_found
+            .iter()
+            .map(|f| f.driver_name.as_str())
+            .collect();
+        assert!(driver_names.contains(&"rtcore64.sys"));
+        assert!(driver_names.contains(&"dbutil_2_3.sys"));
     }
 }

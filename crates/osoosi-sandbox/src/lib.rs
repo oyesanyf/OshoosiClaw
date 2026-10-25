@@ -52,7 +52,7 @@ pub use hidden_process_ledger::{
     list_hidden_spawns, output_hidden, record_hidden_spawn, spawn_hidden, spawn_hidden_tokio,
     status_hidden, HiddenSpawnRecord, LedgeredCommandExt,
 };
-pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url};
+pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url, validate_resolved_socket_addr};
 pub use open_confined::open_confined;
 pub use security::SandboxSecurityConfig;
 pub use tiered_executor::{

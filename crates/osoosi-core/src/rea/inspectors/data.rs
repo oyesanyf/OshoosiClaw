@@ -1413,7 +1413,8 @@ pub fn extract_ole2_text(bytes: &[u8], max_out_bytes: usize) -> Option<String> {
 
     // 2. UTF-16LE runs >= 4 chars (used in BIFF8 .xls SST and Word .doc Unicode streams)
     let mut cur16 = String::new();
-    for pair in slice.chunks_exact(2) {
+    let (chunks, _) = slice.as_chunks::<2>();
+    for pair in chunks {
         if pair[1] == 0 && (pair[0].is_ascii_graphic() || pair[0] == b' ') {
             cur16.push(pair[0] as char);
         } else {

@@ -22,5 +22,6 @@ pub use hash::*;
 pub use hollowing::*;
 pub use host_events::*;
 pub use injector::*;
+pub use native::{enumerate_loaded_kernel_drivers, LoadedDriverInfo};
 pub use provisioning::*;
 pub use timing_shear::*;
