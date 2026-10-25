@@ -824,7 +824,7 @@ pub fn audit_loaded_drivers_against_catalog(
             .iter()
             .any(|&known| {
                 let k_lc = known.to_ascii_lowercase();
-                base_name == k_lc || base_name.starts_with(&k_lc.trim_end_matches(".sys"))
+                base_name == k_lc || base_name.starts_with(k_lc.trim_end_matches(".sys"))
             })
             || matches!(
                 base_name,
