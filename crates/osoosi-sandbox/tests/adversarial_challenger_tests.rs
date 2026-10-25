@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use sha2::Digest;
 
 #[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentProcess;
@@ -59,6 +60,8 @@ fn test_challenger_handle_read_lock_blocks_concurrent_write_and_truncation_on_wr
 
     let mut verifier = ExecutableIdentityVerifier::new();
     verifier.allow_stem("git");
+    let pe_hash = hex::encode(sha2::Sha256::digest(&pe_bytes));
+    verifier.pin_executable_sha256("git", &pe_hash);
 
     let exe_str = test_exe.to_string_lossy().to_string();
     let handle = verifier
@@ -280,6 +283,8 @@ fn test_challenger_renamed_interpreter_on_disk_is_blocked_by_verifier() {
 
     let mut verifier = ExecutableIdentityVerifier::new();
     verifier.allow_stem("cargo");
+    let pe_hash = hex::encode(sha2::Sha256::digest(&malicious_pe));
+    verifier.pin_executable_sha256("cargo", &pe_hash);
 
     let exe_str = test_exe.to_string_lossy().to_string();
     let err = verifier

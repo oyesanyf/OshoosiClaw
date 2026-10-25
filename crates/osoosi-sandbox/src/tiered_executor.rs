@@ -29,6 +29,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+pub use crate::command_line::{build_windows_command_line, quote_windows_argv_arg};
+
 #[cfg(windows)]
 use std::ffi::c_void;
 
@@ -781,6 +783,18 @@ pub fn verify_process_appcontainer_token(
     })
 }
 
+/// Deletes a temporary AppContainer profile to prevent registry key accumulation in Mappings.
+#[cfg(windows)]
+pub fn rollback_appcontainer_profile(name: &str) {
+    let wide_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let _ = win32::DeleteAppContainerProfile(wide_name.as_ptr());
+    }
+}
+
+#[cfg(not(windows))]
+pub fn rollback_appcontainer_profile(_name: &str) {}
+
 #[cfg(windows)]
 pub fn spawn_tier2_appcontainer_command(
     verified_exe: &VerifiedExecutableHandle,
@@ -801,6 +815,14 @@ pub fn spawn_tier2_appcontainer_command(
         &format!("OsoosiClaw Tier 2 Sandbox ({})", sanitized_agent),
         "Zero-ambient-authority Tier 2 AppContainer for native CLI tools",
     )?;
+
+    struct AppContainerProfileGuard<'a>(&'a str);
+    impl<'a> Drop for AppContainerProfileGuard<'a> {
+        fn drop(&mut self) {
+            rollback_appcontainer_profile(self.0);
+        }
+    }
+    let _profile_guard = AppContainerProfileGuard(&container_name);
 
     let mut sec_cap = win32::SECURITY_CAPABILITIES {
         AppContainerSid: psid,
@@ -862,17 +884,7 @@ pub fn spawn_tier2_appcontainer_command(
         .chain(std::iter::once(0))
         .collect();
 
-    let mut cmdline = format!("\"{}\"", canonical_exe);
-    for arg in args {
-        cmdline.push(' ');
-        if arg.contains(' ') || arg.contains('\t') || arg.contains('"') {
-            cmdline.push('"');
-            cmdline.push_str(&arg.replace('"', "\\\""));
-            cmdline.push('"');
-        } else {
-            cmdline.push_str(arg);
-        }
-    }
+    let cmdline = crate::command_line::build_windows_command_line(canonical_exe, args);
     let mut wide_cmd: Vec<u16> = cmdline.encode_utf16().chain(std::iter::once(0)).collect();
 
     // Sanitized minimal Unicode environment block sorted case-insensitively.
