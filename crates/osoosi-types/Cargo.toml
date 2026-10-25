@@ -24,7 +24,7 @@ dirs = { workspace = true }
 zip = { workspace = true }
 goblin = { workspace = true }
 regex = { workspace = true }
-x509-parser = { version = "0.16", features = ["verify"] }
+x509-parser = { version = "0.18", features = ["verify"] }
 rustls-native-certs = "0.7"
 
 [target.'cfg(windows)'.dependencies]
