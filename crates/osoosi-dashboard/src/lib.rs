@@ -7437,9 +7437,9 @@ static HISTORY_ITEMS_CACHE: std::sync::OnceLock<
 pub fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     if state.backend.is_some() {
         let cache = HISTORY_ITEMS_CACHE.get_or_init(|| parking_lot::RwLock::new(None));
-        if let Some(guard) = cache.try_read_for(Duration::from_millis(5)) {
+        if let Some(guard) = cache.try_read_for(Duration::from_millis(50)) {
             if let Some((ts, cached)) = guard.as_ref() {
-                if ts.elapsed() < Duration::from_millis(2000) {
+                if ts.elapsed() < Duration::from_millis(15000) {
                     return cached.clone();
                 }
             }
@@ -7856,7 +7856,7 @@ pub fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
     if state.backend.is_some() {
         let cache = HISTORY_ITEMS_CACHE.get_or_init(|| parking_lot::RwLock::new(None));
-        if let Some(mut guard) = cache.try_write_for(Duration::from_millis(5)) {
+        if let Some(mut guard) = cache.try_write_for(Duration::from_millis(50)) {
             *guard = Some((std::time::Instant::now(), items.clone()));
         }
     }
