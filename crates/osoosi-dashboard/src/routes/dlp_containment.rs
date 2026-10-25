@@ -701,7 +701,13 @@ impl DlpContainmentEngine {
     /// Returns `true` if there is at least one active (unrestored) browser `DestinationBlocked`
     /// entry for `destination_host`.
     pub fn has_active_browser_block_for_host(&self, destination_host: &str) -> bool {
-        let host_low = destination_host.trim().to_ascii_lowercase();
+        let host_candidate = destination_host.trim();
+        let parsed = crate::routes::har_dlp::host_of(host_candidate);
+        let host_low = if !parsed.is_empty() {
+            parsed.to_ascii_lowercase()
+        } else {
+            host_candidate.to_ascii_lowercase()
+        };
         if host_low.is_empty() {
             return false;
         }
@@ -721,7 +727,13 @@ impl DlpContainmentEngine {
         destination_host: &str,
         operator: &str,
     ) -> Vec<ContainmentOutcome> {
-        let host_low = destination_host.trim().to_ascii_lowercase();
+        let host_candidate = destination_host.trim();
+        let parsed = crate::routes::har_dlp::host_of(host_candidate);
+        let host_low = if !parsed.is_empty() {
+            parsed.to_ascii_lowercase()
+        } else {
+            host_candidate.to_ascii_lowercase()
+        };
         if host_low.is_empty() {
             return Vec::new();
         }
@@ -1104,6 +1116,25 @@ impl ContainmentPlatform for SystemContainmentPlatform {
                     image_path: p.exe().map(|e| e.display().to_string()),
                     is_browser: true,
                 };
+            }
+
+            // If browser is not running, check standard installation paths for signature verification
+            for candidate in [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Mozilla Firefox\firefox.exe",
+                r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
+                r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+            ] {
+                if candidate.to_ascii_lowercase().ends_with(&lower) && Path::new(candidate).is_file() {
+                    return ResolvedActor {
+                        pid: None,
+                        image_path: Some(candidate.to_string()),
+                        is_browser: true,
+                    };
+                }
             }
         }
         ResolvedActor {
