@@ -277,30 +277,27 @@ fn verify_and_lock_unix(
         }
     }
 
-    let candidate =
-        if Path::new(requested_program).is_absolute() && Path::new(requested_program).exists() {
-            PathBuf::from(requested_program)
-        } else if Path::new(requested_program).exists() {
-            PathBuf::from(requested_program)
-        } else {
-            let candidates: Vec<&str> = match stem {
-                "cmd" => vec!["/bin/sh", "/usr/bin/sh", "/bin/bash"],
-                "where" => vec!["/usr/bin/which", "/bin/which"],
-                "git" => vec!["/usr/bin/git", "/bin/git", "/usr/local/bin/git"],
-                "curl" => vec!["/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl"],
-                "cargo" => vec![
-                    "/root/.cargo/bin/cargo",
-                    "/usr/bin/cargo",
-                    "/usr/local/bin/cargo",
-                ],
-                _ => vec![],
-            };
-            candidates
-                .into_iter()
-                .map(PathBuf::from)
-                .find(|p| p.exists())
-                .unwrap_or_else(|| PathBuf::from(format!("/usr/bin/{}", stem)))
+    let candidate = if Path::new(requested_program).exists() {
+        PathBuf::from(requested_program)
+    } else {
+        let candidates: Vec<&str> = match stem {
+            "cmd" => vec!["/bin/sh", "/usr/bin/sh", "/bin/bash"],
+            "where" => vec!["/usr/bin/which", "/bin/which"],
+            "git" => vec!["/usr/bin/git", "/bin/git", "/usr/local/bin/git"],
+            "curl" => vec!["/usr/bin/curl", "/bin/curl", "/usr/local/bin/curl"],
+            "cargo" => vec![
+                "/root/.cargo/bin/cargo",
+                "/usr/bin/cargo",
+                "/usr/local/bin/cargo",
+            ],
+            _ => vec![],
         };
+        candidates
+            .into_iter()
+            .map(PathBuf::from)
+            .find(|p| p.exists())
+            .unwrap_or_else(|| PathBuf::from(format!("/usr/bin/{}", stem)))
+    };
 
     let mut locked_file = std::fs::File::open(&candidate).map_err(|e| {
         OctopusSecurityError::IsolationViolation(format!(

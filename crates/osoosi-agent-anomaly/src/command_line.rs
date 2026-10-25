@@ -16,6 +16,8 @@
 //!    `powershell` / `pwsh` invocations up to depth 4, and inspects decoded script bodies for
 //!    secondary encoded payloads or reflective/download cradles.
 
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 use serde::{Deserialize, Serialize};
 
 /// Maximum recursion depth when unwrapping nested shell or encoded invocations (`cmd /c powershell -enc ...`).
@@ -325,7 +327,7 @@ pub fn parse_powershell_args(args: &[String]) -> Vec<PsParameter> {
                         }
                     });
                     out.push(PsParameter::Command(val));
-                    if i + 1 <= args.len() {
+                    if i < args.len() {
                         // `-Command` consumes the rest of the line when unquoted, or the next arg.
                         break;
                     }
