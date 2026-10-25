@@ -730,7 +730,9 @@ pub async fn post_har_inspect(
                 }
             }
 
-            let _ = refresh_live_har_cache_now();
+            std::thread::spawn(|| {
+                let _ = refresh_live_har_cache_now();
+            });
 
             (
                 StatusCode::OK,
@@ -764,7 +766,12 @@ pub async fn get_har_entries(
         read.clone()
     };
 
-    let base_payload = cached.unwrap_or_else(refresh_live_har_cache_now);
+    let base_payload = match cached {
+        Some(p) => p,
+        None => tokio::task::spawn_blocking(refresh_live_har_cache_now)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({ "entries": [], "stats": {} })),
+    };
 
     let raw_entries = base_payload
         .get("entries")
@@ -882,10 +889,16 @@ pub async fn post_har_refresh() -> Json<Value> {
 }
 
 pub async fn get_har_export() -> impl IntoResponse {
-    let payload = {
+    let cached = {
         let cache_lock = LIVE_HAR_CACHE.get_or_init(|| osoosi_core::parking_lot::RwLock::new(None));
         let read = cache_lock.read();
-        read.clone().unwrap_or_else(refresh_live_har_cache_now)
+        read.clone()
+    };
+    let payload = match cached {
+        Some(p) => p,
+        None => tokio::task::spawn_blocking(refresh_live_har_cache_now)
+            .await
+            .unwrap_or_else(|_| serde_json::json!({ "entries": [] })),
     };
 
     let entries = payload

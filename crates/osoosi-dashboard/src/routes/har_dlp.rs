@@ -1946,7 +1946,10 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
         req.source_kind.as_str(),
         options,
     );
+    let strict_lockdown_has_pii = crate::routes::dlp::is_strict_lockdown_active()
+        && (!event.detected_categories.is_empty() || event.redacted_entity_count > 0);
     if !event.allowed
+        && !strict_lockdown_has_pii
         && is_dlp_event_allowlisted(
             &event.destination_sink,
             &event.scrubbed_preview,
@@ -1994,6 +1997,7 @@ fn post_process(
         let mut outcome = engine.evaluate_and_respond(&event, &ctx, BACKEND.get().cloned());
         if outcome.decision == crate::routes::dlp_containment::ContainmentDecision::AlertOnly
             && req.has_body()
+            && !crate::routes::dlp::is_strict_lockdown_active()
             && !event.redactx_confirmed_containment
             && !event.cedar_forbid
             && !event.protected_export_denied

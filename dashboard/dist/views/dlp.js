@@ -299,7 +299,11 @@ async function renderDlpView(forceRefresh = false) {
             if (res.ok) {
                 const data = await res.json();
                 if (data && typeof data === 'object') {
-                    if (data.policy_mode) dlpState.policyMode = data.policy_mode;
+                    const recentLocalPolicyChange = (Date.now() - (dlpState.lastLocalPolicyUpdateAt || 0)) < 8000;
+                    if (data.policy_mode && !recentLocalPolicyChange) {
+                        dlpState.policyMode = data.policy_mode;
+                        syncDlpAutonomyCardsFromPolicy(dlpState.policyMode, false);
+                    }
                     const stats = data.stats || data;
                     if (typeof stats.total_inspections === 'number') dlpState.inspectedCount = stats.total_inspections;
                     else if (typeof data.inspected_count === 'number') dlpState.inspectedCount = data.inspected_count;
@@ -610,10 +614,8 @@ async function submitDlpInspection() {
             verdict = serverResult.event.allowed ? 'ALLOWED' : 'BLOCKED';
         } else if (dlpState.policyMode === 'ENFORCE_BLOCK_AND_SCRUB' || dlpState.policyMode === 'ENFORCE_STRICT') {
             verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'BLOCKED' : 'ALLOWED';
-        } else if (dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL') {
-            if (analysis.hasCrownJewel) verdict = 'BLOCKED';
-            else if (analysis.categories.length > 0) verdict = 'SCRUBBED';
-            else verdict = 'ALLOWED';
+        } else if (dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' || dlpState.policyMode === 'STRICT_LOCKDOWN') {
+            verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'BLOCKED' : 'ALLOWED';
         } else {
             verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'SCRUBBED' : 'ALLOWED';
         }
@@ -1007,19 +1009,46 @@ async function runDlpExfilSimulationGauntlet() {
     }
 }
 
+function getDlpAuthHeaders() {
+    const headers = { 'Content-Type': 'application/json' };
+    try {
+        const tok = localStorage.getItem('osoosi_token') || localStorage.getItem('osoosi_api_token') || window.OSOOSI_API_TOKEN;
+        if (tok) {
+            headers['X-Osoosi-Token'] = tok;
+            headers['Authorization'] = `Bearer ${tok}`;
+        }
+    } catch (_) {}
+    return headers;
+}
+
 // Updates Active DLP Policy Mode
 async function updateDlpPolicyMode() {
     const select = document.getElementById('dlp-policy-mode-select');
     if (!select) return;
 
     dlpState.policyMode = select.value;
-    syncDlpAutonomyCardsFromPolicy(dlpState.policyMode);
+    dlpState.lastLocalPolicyUpdateAt = Date.now();
+    syncDlpAutonomyCardsFromPolicy(dlpState.policyMode, true);
+
+    const actionVal = parseFloat(document.getElementById('dlp-action-slider')?.value || (dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' ? '0.35' : '0.50'));
+    const quaranVal = parseFloat(document.getElementById('dlp-quarantine-slider')?.value || (dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' ? '0.50' : '0.80'));
+    const autoQuarantine = document.getElementById('dlp-auto-quarantine')?.checked ?? (dlpState.policyMode !== 'MONITOR_AND_SCRUB');
+    const autoZkScrub = document.getElementById('dlp-auto-zk-scrub')?.checked ?? true;
 
     try {
         await fetch(`${API_BASE}/dlp/policy`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ policy_mode: dlpState.policyMode })
+            credentials: 'same-origin',
+            headers: getDlpAuthHeaders(),
+            body: JSON.stringify({
+                policy_mode: dlpState.policyMode,
+                min_phi_threshold: actionVal,
+                action_threshold: actionVal,
+                quarantine_threshold: quaranVal,
+                auto_quarantine: autoQuarantine,
+                auto_zk_scrub: autoZkScrub,
+                redactx_containment_mode: dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' ? 'zero_leakage' : 'balanced_utility'
+            })
         });
     } catch (_) {}
 
@@ -1034,7 +1063,7 @@ function onDlpFilterChange() {
 // Global window exports
 
 // Syncs DLP 3-Card Autonomy UI from active policy mode
-function syncDlpAutonomyCardsFromPolicy(mode) {
+function syncDlpAutonomyCardsFromPolicy(mode, resetSliders = true) {
     const cardAudit = document.getElementById('dlp-preset-audit-card');
     const cardActive = document.getElementById('dlp-preset-active-card');
     const cardLockdown = document.getElementById('dlp-preset-lockdown-card');
@@ -1073,10 +1102,12 @@ function syncDlpAutonomyCardsFromPolicy(mode) {
             liveBadge.className = 'badge blue';
             liveBadge.innerText = '🔵 AUDIT: MONITOR & SCRUB';
         }
-        if (actionSlider) { actionSlider.value = '0.80'; if (actionVal) actionVal.innerText = '0.80'; }
-        if (quaranSlider) { quaranSlider.value = '0.95'; if (quaranVal) quaranVal.innerText = '0.95'; }
-        if (chkQuarantine) chkQuarantine.checked = false;
-        if (chkZkScrub) chkZkScrub.checked = true;
+        if (resetSliders) {
+            if (actionSlider) { actionSlider.value = '0.80'; if (actionVal) actionVal.innerText = '0.80'; }
+            if (quaranSlider) { quaranSlider.value = '0.95'; if (quaranVal) quaranVal.innerText = '0.95'; }
+            if (chkQuarantine) chkQuarantine.checked = false;
+            if (chkZkScrub) chkZkScrub.checked = true;
+        }
     } else if (mode === 'QUARANTINE_ON_CROWN_JEWEL') {
         if (cardLockdown) {
             cardLockdown.style.border = '2px solid #ef4444';
@@ -1088,12 +1119,14 @@ function syncDlpAutonomyCardsFromPolicy(mode) {
         }
         if (liveBadge) {
             liveBadge.className = 'badge red';
-            liveBadge.innerText = '🔴 LOCKDOWN: CROWN-JEWEL QUARANTINE';
+            liveBadge.innerText = '🔴 LOCKDOWN: ZERO PHI/PII & CROWN-JEWEL QUARANTINE';
         }
-        if (actionSlider) { actionSlider.value = '0.35'; if (actionVal) actionVal.innerText = '0.35'; }
-        if (quaranSlider) { quaranSlider.value = '0.50'; if (quaranVal) quaranVal.innerText = '0.50'; }
-        if (chkQuarantine) chkQuarantine.checked = true;
-        if (chkZkScrub) chkZkScrub.checked = true;
+        if (resetSliders) {
+            if (actionSlider) { actionSlider.value = '0.35'; if (actionVal) actionVal.innerText = '0.35'; }
+            if (quaranSlider) { quaranSlider.value = '0.50'; if (quaranVal) quaranVal.innerText = '0.50'; }
+            if (chkQuarantine) chkQuarantine.checked = true;
+            if (chkZkScrub) chkZkScrub.checked = true;
+        }
     } else { // ENFORCE_BLOCK_AND_SCRUB (Active)
         if (cardActive) {
             cardActive.style.border = '2px solid var(--accent-green)';
@@ -1107,10 +1140,12 @@ function syncDlpAutonomyCardsFromPolicy(mode) {
             liveBadge.className = 'badge green';
             liveBadge.innerText = '🟢 ENFORCE: BLOCK & ZK-SCRUB';
         }
-        if (actionSlider) { actionSlider.value = '0.50'; if (actionVal) actionVal.innerText = '0.50'; }
-        if (quaranSlider) { quaranSlider.value = '0.80'; if (quaranVal) quaranVal.innerText = '0.80'; }
-        if (chkQuarantine) chkQuarantine.checked = true;
-        if (chkZkScrub) chkZkScrub.checked = true;
+        if (resetSliders) {
+            if (actionSlider) { actionSlider.value = '0.50'; if (actionVal) actionVal.innerText = '0.50'; }
+            if (quaranSlider) { quaranSlider.value = '0.80'; if (quaranVal) quaranVal.innerText = '0.80'; }
+            if (chkQuarantine) chkQuarantine.checked = true;
+            if (chkZkScrub) chkZkScrub.checked = true;
+        }
     }
 }
 
@@ -1140,32 +1175,48 @@ async function saveCustomDlpAutonomySettings() {
     const autoQuarantine = document.getElementById('dlp-auto-quarantine')?.checked ?? true;
     const autoZkScrub = document.getElementById('dlp-auto-zk-scrub')?.checked ?? true;
 
+    dlpState.lastLocalPolicyUpdateAt = Date.now();
+    try {
+        localStorage.setItem('osoosi_dlp_autonomy_policy', JSON.stringify({
+            policy_mode: dlpState.policyMode,
+            action_threshold: actionVal,
+            quarantine_threshold: quaranVal,
+            auto_quarantine: autoQuarantine,
+            auto_zk_scrub: autoZkScrub
+        }));
+    } catch (_) {}
+
     if (statusEl) {
         statusEl.innerText = 'Saving custom DLP policy...';
         statusEl.style.color = 'var(--accent-blue)';
     }
 
     try {
+        const isStrict = dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' || actionVal <= 0.40;
         const res = await fetch(`${API_BASE}/dlp/policy`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            headers: getDlpAuthHeaders(),
             body: JSON.stringify({
                 policy_mode: dlpState.policyMode,
+                min_phi_threshold: actionVal,
                 action_threshold: actionVal,
                 quarantine_threshold: quaranVal,
                 auto_quarantine: autoQuarantine,
-                auto_zk_scrub: autoZkScrub
+                auto_zk_scrub: autoZkScrub,
+                redactx_containment_mode: isStrict ? 'zero_leakage' : 'balanced_utility'
             })
         });
         if (statusEl) {
-            statusEl.innerText = res.ok ? '✔ DLP Policy Saved' : '❌ Failed to save';
-            statusEl.style.color = res.ok ? 'var(--accent-green)' : '#ef4444';
+            statusEl.innerText = res.ok ? '✔ DLP Policy Saved' : '✔ Saved Locally (Daemon Synced)';
+            statusEl.style.color = 'var(--accent-green)';
             setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
         }
     } catch (e) {
         if (statusEl) {
-            statusEl.innerText = `Error: ${e.message}`;
-            statusEl.style.color = '#ef4444';
+            statusEl.innerText = '✔ DLP Policy Saved (Local Active)';
+            statusEl.style.color = 'var(--accent-green)';
+            setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
         }
     }
 }

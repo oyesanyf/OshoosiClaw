@@ -157,9 +157,39 @@ def main():
             latex_errors.append(err_msg)
             print(f"  *** {err_msg}")
 
-    print(f"LaTeX compatibility errors found: {len(latex_errors)}")
+    # Check for self-assigned letter grades and unauthorized external framework/NIST tokens
+    grade_nist_errors = []
+    print("\nAuditing documentation for self-assigned letter grades and NIST tokens...")
+    grade_files = ['README.md']
+    if os.path.exists('ARCHITECTURE.md'):
+        grade_files.append('ARCHITECTURE.md')
+    if os.path.exists('CONTRIBUTING.md'):
+        grade_files.append('CONTRIBUTING.md')
 
-    if missing or table_errors or html_mismatches or mermaid_errors or latex_errors or (fence_count % 2 != 0):
+    grade_pattern = re.compile(r'\bGrade\s+[A-F][+-]?\b|\(Grade\s+[A-F][+-]?\)', re.I)
+    nist_pattern = re.compile(r'\bNIST\b')
+
+    for fpath in grade_files:
+        if not os.path.exists(fpath):
+            continue
+        try:
+            with open(fpath, 'r', encoding='utf-8', errors='ignore') as gf:
+                g_content = gf.read()
+        except Exception:
+            continue
+        for l_idx, line in enumerate(g_content.splitlines(), 1):
+            for match in grade_pattern.finditer(line):
+                err_msg = f"{fpath} (Line {l_idx}): Contains self-assigned letter grade '{match.group(0)}'"
+                grade_nist_errors.append(err_msg)
+                print(f"  *** {err_msg}")
+            for match in nist_pattern.finditer(line):
+                err_msg = f"{fpath} (Line {l_idx}): Contains unauthorized external framework token '{match.group(0)}'"
+                grade_nist_errors.append(err_msg)
+                print(f"  *** {err_msg}")
+
+    print(f"Letter grade and NIST token errors found: {len(grade_nist_errors)}")
+
+    if missing or table_errors or html_mismatches or mermaid_errors or latex_errors or grade_nist_errors or (fence_count % 2 != 0):
         print("\nVerification found issues!")
         return 1
     else:

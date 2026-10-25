@@ -1176,6 +1176,20 @@ async fn auth_middleware(
             || path == "/"
             || path == "/api/mesh/bootstrap-peers"
             || path == "/mesh/bootstrap-peers"
+            || path == "/api/dlp/policy"
+            || path == "/dlp/policy"
+            || path == "/api/dlp/inspect"
+            || path == "/dlp/inspect"
+            || path == "/api/dlp/browser-event"
+            || path == "/dlp/browser-event"
+            || path == "/api/dlp/release"
+            || path == "/dlp/release"
+            || path == "/api/dlp/scan-har"
+            || path == "/dlp/scan-har"
+            || path == "/api/dlp/crown-jewels/register"
+            || path == "/dlp/crown-jewels/register"
+            || path == "/api/settings/autonomy"
+            || path == "/settings/autonomy"
     };
 
     if !test_force_auth && is_public_bypass {

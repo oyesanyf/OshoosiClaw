@@ -9,9 +9,9 @@ use axum::Json;
 use osoosi_dashboard::routes::dlp::post_dlp_browser_event;
 use osoosi_dashboard::routes::dlp_containment::global_containment_engine;
 use serde_json::json;
-use std::sync::Mutex;
+use tokio::sync::Mutex;
 
-static DLP_STRESS_TEST_LOCK: Mutex<()> = Mutex::new(());
+static DLP_STRESS_TEST_LOCK: Mutex<()> = Mutex::const_new(());
 
 struct StressTestDiskGuard {
     backups: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
@@ -61,7 +61,7 @@ impl Drop for StressTestDiskGuard {
 
 #[tokio::test]
 async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle() {
-    let _guard = DLP_STRESS_TEST_LOCK.lock().unwrap();
+    let _guard = DLP_STRESS_TEST_LOCK.lock().await;
     let _disk_guard = StressTestDiskGuard::new();
     let engine = global_containment_engine();
     let unique_host = format!("dlptest-{}.internal.test", uuid::Uuid::new_v4().simple());
@@ -227,7 +227,7 @@ async fn test_alternating_benign_and_sensitive_uploads_with_auto_release_cycle()
 
 #[tokio::test]
 async fn test_rapid_repeated_uploads_debounce_and_reset_behavior() {
-    let _guard = DLP_STRESS_TEST_LOCK.lock().unwrap();
+    let _guard = DLP_STRESS_TEST_LOCK.lock().await;
     let _disk_guard = StressTestDiskGuard::new();
     let engine = global_containment_engine();
     let unique_host = format!("debounce-{}.internal.test", uuid::Uuid::new_v4().simple());
