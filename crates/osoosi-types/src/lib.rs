@@ -4,6 +4,7 @@
 //! Adapted for security telemetry (Native ETW/eBPF, TTP detection, mesh defense).
 
 pub mod agentjacking;
+pub mod arm_role;
 pub mod blocking;
 pub mod config;
 pub mod error;
@@ -20,6 +21,7 @@ pub mod trust;
 pub mod utils;
 
 pub use agentjacking::*;
+pub use arm_role::*;
 pub use blocking::*;
 pub use config::*;
 pub use error::*;

@@ -18,8 +18,10 @@ pub mod breakout_defense;
 pub mod breakout_prevention;
 pub mod cedar_engine;
 pub mod classifier;
+pub mod command_line;
 pub mod containment_ring;
 pub mod detector;
+pub mod egress_proxy;
 pub mod file_lineage;
 pub mod mercury_guard;
 pub mod mesh_guard;
@@ -40,8 +42,10 @@ pub use alignment_scanner::{
     RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
 pub use breakout_defense::{
-    validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,
-    UnifiedBreakoutEvaluation, ZeroMiProjectionResult, ZeroMutualInformationProjector,
+    validate_agent_egress_url, validate_agent_filesystem_access, BehavioralBreakoutGuard,
+    BehavioralBreakoutVerdict, BreakoutDefenseCoordinator, TechnicalBreakoutGuard,
+    TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation, ZeroMiProjectionResult,
+    ZeroMutualInformationProjector,
 };
 pub use breakout_prevention::*;
 pub use cedar_engine::{
@@ -52,23 +56,28 @@ pub use classifier::{
     AgentClassificationRecord, AgentEvidenceSignal, DynamicAgentClassifier, OsqueryAgentDetector,
     SiqueryAgentDetector,
 };
+pub use command_line::*;
 pub use containment_ring::{
-    compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry, DiracDeltaCapabilityTicket,
-    IndependentTrustBoundaryVerifier, MultiLayerGateVerdict, PinnedToolObjectBinding,
-    ZeroCopyImmutableToolBuffer,
+    compute_ring_hmac, constant_time_eq_hex, mesh_signing_content, validate_resource_boundary,
+    AgentContainmentRing, ArmContainmentRing, ArmRingConfig, ArmRingMeshMessage, ArmRingRegistry,
+    ContainmentAuditEntry, DiracDeltaCapabilityTicket, IndependentTrustBoundaryVerifier,
+    MessageKind, MeshWatchOutSignal, MultiLayerGateVerdict, PinnedToolObjectBinding, ProvenanceHop,
+    ZeroCopyImmutableToolBuffer, MAX_RELAY_HOPS,
 };
 pub use detector::AgentAnomalyDetector;
+pub use egress_proxy::*;
 pub use file_lineage::{
     FileLineageTracker, IngestedFileEntry, LineageEntry, LineageError, PoisonMetadata,
     DEFAULT_MAX_CAPACITY,
 };
 pub use mercury_guard::{
-    ActuationPoreClass, AmalgamRecord, DropletEvent, HostActuationPore, HostPoreInventory,
-    MercuryContainmentEngine, MercuryLineageState, MercuryPhysicsVerdict, PassivationState,
+    ActuationPoreClass, AmalgamRecord, CoalescenceAccumulator, DropletEvent, HostActuationPore,
+    HostPoreInventory, MeasuredActuationSample, MercuryContainmentEngine, MercuryEvaluationResult,
+    MercuryLineageState, MercuryPhysicsVerdict, PassivationState, WindowsJobObject,
 };
 pub use mesh_guard::{
-    HomologicalAgentNode, HomologicalBoundaryAuditor, HomologicalBoundaryVerdict,
-    HomologicalMessageEdge,
+    HomologicalAgentNode, HomologicalAuditReport, HomologicalBoundaryAuditor,
+    HomologicalBoundaryVerdict, HomologicalMessageEdge, MeshGuard, VerifiedMeshMessage,
 };
 pub use reasoner::SemanticReasoningEngine;
 pub use rl_controller::{

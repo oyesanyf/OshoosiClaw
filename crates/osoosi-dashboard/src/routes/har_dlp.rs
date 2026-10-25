@@ -309,6 +309,158 @@ pub fn read_and_classify_uploaded_file(
     Some(resolved)
 }
 
+/// Parses a Windows Shell Link (`.lnk`, `[MS-SHLLINK]`) binary file to extract its target file path.
+/// Uses both the structured `LinkInfo` (`LocalBasePath` + `CommonPathSuffix`) header and a fallback
+/// scan for null-terminated drive-letter paths (`[A-Za-z]:\...`), returning the target `PathBuf`
+/// only when it exists on disk as a regular file.
+pub fn resolve_windows_lnk_target(lnk_path: &Path) -> Option<PathBuf> {
+    use std::io::Read;
+    let md = std::fs::metadata(lnk_path).ok()?;
+    if !md.is_file() || md.len() < 76 || md.len() > 64 * 1024 {
+        return None;
+    }
+    let mut f = std::fs::File::open(lnk_path).ok()?;
+    let mut buf = Vec::with_capacity(md.len() as usize);
+    f.read_to_end(&mut buf).ok()?;
+
+    // Verify MS-SHLLINK 4-byte HeaderSize = 0x0000004C (76)
+    if buf.len() < 76 || buf[0..4] != [0x4C, 0x00, 0x00, 0x00] {
+        return None;
+    }
+
+    let read_cstr = |start: usize| -> Option<String> {
+        if start >= buf.len() {
+            return None;
+        }
+        let end = buf[start..]
+            .iter()
+            .position(|&b| b == 0)
+            .map(|p| start + p)?;
+        if end <= start {
+            return None;
+        }
+        std::str::from_utf8(&buf[start..end])
+            .ok()
+            .map(|s| s.trim().to_string())
+    };
+
+    let link_flags = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+    let mut offset = 76usize;
+    // HasLinkTargetIDList (bit 0)
+    if (link_flags & 0x01) != 0 {
+        if offset + 2 <= buf.len() {
+            let id_list_size = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+            offset = offset.saturating_add(2).saturating_add(id_list_size);
+        }
+    }
+    // HasLinkInfo (bit 1)
+    if (link_flags & 0x02) != 0 && offset + 28 <= buf.len() {
+        let link_info_flags =
+            u32::from_le_bytes([buf[offset + 8], buf[offset + 9], buf[offset + 10], buf[offset + 11]]);
+        // VolumeIDAndLocalBasePath (bit 0)
+        if (link_info_flags & 0x01) != 0 {
+            let local_base_offset = u32::from_le_bytes([
+                buf[offset + 16],
+                buf[offset + 17],
+                buf[offset + 18],
+                buf[offset + 19],
+            ]) as usize;
+            let common_suffix_offset = u32::from_le_bytes([
+                buf[offset + 24],
+                buf[offset + 25],
+                buf[offset + 26],
+                buf[offset + 27],
+            ]) as usize;
+            if let Some(base) = read_cstr(offset.saturating_add(local_base_offset)) {
+                let suffix = read_cstr(offset.saturating_add(common_suffix_offset)).unwrap_or_default();
+                let combined = if suffix.is_empty() {
+                    PathBuf::from(&base)
+                } else {
+                    PathBuf::from(&base).join(&suffix)
+                };
+                if combined.is_file() {
+                    return Some(combined);
+                }
+            }
+        }
+    }
+
+    // Fallback: scan for null-terminated ASCII paths starting with `[A-Za-z]:\`
+    let mut i = 0usize;
+    while i + 4 < buf.len() {
+        if buf[i].is_ascii_alphabetic()
+            && buf[i + 1] == b':'
+            && (buf[i + 2] == b'\\' || buf[i + 2] == b'/')
+        {
+            if let Some(cand_str) = read_cstr(i) {
+                if cand_str.len() >= 4
+                    && cand_str.bytes().all(|b| (0x20..=0x7E).contains(&b))
+                {
+                    let p = PathBuf::from(&cand_str);
+                    if p.is_file() {
+                        return Some(p);
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    None
+}
+
+fn is_excluded_non_document_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "exe"
+            | "dll"
+            | "sys"
+            | "msi"
+            | "msixbundle"
+            | "pdb"
+            | "obj"
+            | "lib"
+            | "rlib"
+            | "db"
+            | "db-wal"
+            | "db-shm"
+            | "lnk"
+            | "har"
+            | "zip"
+            | "tmp"
+            | "temp"
+            | "log"
+            | "ini"
+            | "crdownload"
+            | "part"
+            | "lock"
+            | "etl"
+            | "pf"
+    )
+}
+
+fn is_inspectable_document_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "xlsx"
+            | "xls"
+            | "docx"
+            | "doc"
+            | "pdf"
+            | "pptx"
+            | "ppt"
+            | "csv"
+            | "tsv"
+            | "txt"
+            | "json"
+            | "xml"
+            | "md"
+            | "yaml"
+            | "yml"
+            | "rtf"
+    )
+}
+
 /// Given a candidate filename or path, and a destination URL, resolves the uploaded or staged file
 /// using Google Magika content identification across PDF, Word, Excel, XML, CSV, and text files.
 pub fn resolve_local_uploaded_file(
@@ -332,25 +484,96 @@ pub fn resolve_local_uploaded_file(
         if !cleaned.is_empty() {
             let direct_path = PathBuf::from(cleaned);
             if direct_path.is_file() {
+                let actual_path = if direct_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.eq_ignore_ascii_case("lnk"))
+                    .unwrap_or(false)
+                {
+                    resolve_windows_lnk_target(&direct_path).unwrap_or_else(|| direct_path.clone())
+                } else {
+                    direct_path.clone()
+                };
                 if let Some(res) =
-                    read_and_classify_uploaded_file(&direct_path, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+                    read_and_classify_uploaded_file(&actual_path, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
                 {
                     return Some(res);
                 }
             }
 
-            // Search by filename or stem in candidate staging dirs
+            // Search by filename or stem in candidate staging dirs (including Windows Recent .lnk shortcuts)
             let target_filename = direct_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(cleaned);
-            for dir in get_candidate_staging_dirs() {
+            let target_stem = Path::new(target_filename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(target_filename);
+            let staging_dirs = get_candidate_staging_dirs();
+
+            // Fast O(1) direct join check across all candidate staging dirs (never truncated by large directory size in %TEMP%)
+            for dir in &staging_dirs {
+                let exact = dir.join(target_filename);
+                if exact.is_file() {
+                    if let Some(res) =
+                        read_and_classify_uploaded_file(&exact, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+                    {
+                        return Some(res);
+                    }
+                }
+                for lnk_name in [
+                    format!("{}.lnk", target_filename),
+                    format!("{}.lnk", target_stem),
+                ] {
+                    let lnk_candidate = dir.join(&lnk_name);
+                    if lnk_candidate.is_file() {
+                        if let Some(resolved_target) = resolve_windows_lnk_target(&lnk_candidate) {
+                            if let Some(res) = read_and_classify_uploaded_file(
+                                &resolved_target,
+                                MAX_STREAM_BYTES,
+                                MAX_TEXT_BYTES,
+                            ) {
+                                return Some(res);
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut matched_paths: Vec<(PathBuf, SystemTime)> = Vec::new();
+            for dir in staging_dirs {
                 let Ok(rd) = std::fs::read_dir(&dir) else {
                     continue;
                 };
-                for entry in rd.flatten().take(48) {
+                for entry in rd.flatten().take(16384) {
                     let p = entry.path();
-                    if !p.is_file() {
+                    let ext = p
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or_default()
+                        .to_ascii_lowercase();
+                    if ext == "lnk" {
+                        let lnk_stem = p
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or_default();
+                        if lnk_stem.eq_ignore_ascii_case(target_filename)
+                            || lnk_stem.eq_ignore_ascii_case(target_stem)
+                        {
+                            let entry_touch = entry
+                                .metadata()
+                                .ok()
+                                .map(|md| {
+                                    let m = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                                    let a = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
+                                    m.max(a)
+                                })
+                                .unwrap_or(SystemTime::UNIX_EPOCH);
+                            if let Some(resolved_target) = resolve_windows_lnk_target(&p) {
+                                matched_paths.push((resolved_target, entry_touch));
+                            }
+                        }
                         continue;
                     }
                     let name = p
@@ -362,90 +585,187 @@ pub fn resolve_local_uploaded_file(
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or_default();
-                    if name.eq_ignore_ascii_case(target_filename)
+                    if (name.eq_ignore_ascii_case(target_filename)
                         || stem.eq_ignore_ascii_case(target_filename)
+                        || stem.eq_ignore_ascii_case(target_stem))
+                        && p.is_file()
                     {
-                        if let Some(res) =
-                            read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
-                        {
-                            return Some(res);
-                        }
+                        let entry_touch = entry
+                            .metadata()
+                            .ok()
+                            .map(|md| {
+                                let m = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                                let a = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
+                                m.max(a)
+                            })
+                            .unwrap_or(SystemTime::UNIX_EPOCH);
+                        matched_paths.push((p, entry_touch));
                     }
+                }
+            }
+            matched_paths.sort_by(|a, b| b.1.cmp(&a.1));
+            for (p, _) in matched_paths {
+                if let Some(res) =
+                    read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+                {
+                    return Some(res);
                 }
             }
         }
     }
 
     // Case 2: No filename provided, but destination URL targets dlptest.com or an upload sink.
-    // Use Google Magika to classify candidate files in C:\exfil, Downloads, Desktop, Documents, Temp.
+    // Use Google Magika to classify candidate files in C:\exfil, Downloads, Desktop, Documents, Recent, Temp.
     let is_upload_sink = destination_url.contains("dlptest.com")
         || destination_url.contains("/upload")
         || destination_url.contains("/https-post")
         || destination_url.contains("/http-post");
 
     if is_upload_sink {
-        let mut candidates: Vec<(PathBuf, bool, SystemTime, u64)> = Vec::new();
+        let mut by_path: HashMap<String, (PathBuf, bool, SystemTime, u64)> = HashMap::new();
+        let now = SystemTime::now();
+        let sys_temp_low = std::env::temp_dir()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+
+        let mut upsert_candidate =
+            |path: PathBuf, is_exfil: bool, touch: SystemTime, len: u64| {
+                let key = path.to_string_lossy().to_ascii_lowercase();
+                match by_path.get_mut(&key) {
+                    Some(existing) => {
+                        if touch > existing.2 {
+                            existing.2 = touch;
+                        }
+                        existing.1 |= is_exfil;
+                    }
+                    None => {
+                        by_path.insert(key, (path, is_exfil, touch, len));
+                    }
+                }
+            };
 
         for dir in get_candidate_staging_dirs() {
-            let is_exfil_dir = dir
-                .to_string_lossy()
-                .to_ascii_lowercase()
-                .contains("exfil");
+            let dir_low = dir.to_string_lossy().to_ascii_lowercase();
+            let is_exfil_dir = dir_low.contains("exfil");
+            let is_temp_dir = dir_low == sys_temp_low || dir_low.ends_with("\\temp") || dir_low.ends_with("/temp");
             let Ok(rd) = std::fs::read_dir(&dir) else {
                 continue;
             };
-            for entry in rd.flatten().take(48) {
+            for entry in rd.flatten().take(16384) {
                 let p = entry.path();
-                if !p.is_file() {
-                    continue;
-                }
                 let ext = p
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or_default()
                     .to_ascii_lowercase();
-                if matches!(
-                    ext.as_str(),
-                    "exe" | "dll" | "sys" | "msi" | "msixbundle" | "pdb" | "obj" | "lib" | "rlib" | "db" | "db-wal" | "db-shm" | "lnk" | "har" | "zip"
-                ) {
+
+                // Resolve Windows Recent `.lnk` shortcut files created/updated when the user selects a file in OpenFileDialog
+                if ext == "lnk" {
+                    let Ok(lnk_md) = entry.metadata() else {
+                        continue;
+                    };
+                    if !lnk_md.is_file() {
+                        continue;
+                    }
+                    let lnk_mtime = lnk_md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    let lnk_atime = lnk_md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
+                    let lnk_touch = lnk_mtime.max(lnk_atime);
+                    let lnk_age = now
+                        .duration_since(lnk_touch)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(u64::MAX);
+                    if lnk_age <= 1800 {
+                        if let Some(target_path) = resolve_windows_lnk_target(&p) {
+                            let target_ext = target_path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or_default()
+                                .to_ascii_lowercase();
+                            if !is_excluded_non_document_ext(&target_ext) {
+                                if let Ok(t_md) = std::fs::metadata(&target_path) {
+                                    if t_md.is_file()
+                                        && t_md.len() > 0
+                                        && t_md.len() <= 500 * 1024 * 1024
+                                    {
+                                        let t_mtime =
+                                            t_md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                                        let t_atime =
+                                            t_md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
+                                        let effective_touch =
+                                            lnk_touch.max(t_mtime).max(t_atime);
+                                        let target_is_exfil = target_path
+                                            .to_string_lossy()
+                                            .to_ascii_lowercase()
+                                            .contains("exfil");
+                                        upsert_candidate(
+                                            target_path,
+                                            target_is_exfil,
+                                            effective_touch,
+                                            t_md.len(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+
+                if is_excluded_non_document_ext(&ext) {
+                    continue;
+                }
+                if is_temp_dir && !is_inspectable_document_ext(&ext) {
                     continue;
                 }
                 if let Ok(md) = entry.metadata() {
-                    if md.len() == 0 || md.len() > 500 * 1024 * 1024 {
+                    if !md.is_file() || md.len() == 0 || md.len() > 500 * 1024 * 1024 {
                         continue;
                     }
                     let mtime = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
                     let atime = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
                     let recent_touch = mtime.max(atime);
-                    let now = SystemTime::now();
                     let age_secs = now
                         .duration_since(recent_touch)
                         .map(|d| d.as_secs())
                         .unwrap_or(u64::MAX);
                     if is_exfil_dir || age_secs <= 600 {
-                        candidates.push((p, is_exfil_dir, recent_touch, md.len()));
+                        upsert_candidate(p, is_exfil_dir, recent_touch, md.len());
                     }
                 }
             }
         }
 
-        // Prioritize files in C:\exfil (preferring .xlsx/.docx/.pdf/.csv) and most recently accessed/modified files
+        let mut candidates: Vec<(PathBuf, bool, SystemTime, u64)> =
+            by_path.into_values().collect();
+
+        // Prioritize the most recently touched/selected file FIRST (`recent_touch`: `b.2.cmp(&a.2)`),
+        // breaking ties with `is_exfil_dir` (`b.1.cmp(&a.1)`) and Office/PDF/CSV document formats.
         candidates.sort_by(|a, b| {
             let a_office = a
                 .0
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc"))
+                .map(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv"
+                    )
+                })
                 .unwrap_or(false);
             let b_office = b
                 .0
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc"))
+                .map(|e| {
+                    matches!(
+                        e.to_ascii_lowercase().as_str(),
+                        "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv"
+                    )
+                })
                 .unwrap_or(false);
-            b.1.cmp(&a.1)
+            b.2.cmp(&a.2)
+                .then_with(|| b.1.cmp(&a.1))
                 .then_with(|| b_office.cmp(&a_office))
-                .then_with(|| b.2.cmp(&a.2))
         });
 
         if let Some((best_path, _, _, _)) = candidates.into_iter().next() {
@@ -720,7 +1040,7 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                             }
                             let is_recent = if current_chrom_micros > 0 && last_visit_chrom > 0 {
                                 let diff_micros = current_chrom_micros.saturating_sub(last_visit_chrom as u64);
-                                diff_micros <= 120 * 1_000_000
+                                diff_micros <= 600 * 1_000_000
                             } else {
                                 true
                             };
@@ -838,7 +1158,7 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
         }
     }
 
-    // 3. Check active TCP sockets or Windows DNS cache for dlptest.com visits
+    // 3. Check active TCP sockets, Windows DNS cache, or active browser destination block for dlptest.com visits
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -848,18 +1168,20 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
             std::net::IpAddr::V4(std::net::Ipv4Addr::new(172, 67, 75, 74)),
         ];
         let has_live_dlptest_socket = osoosi_core::wfp::has_active_tcp_socket_for_ips(&dlptest_ips);
+        let has_active_block = crate::routes::dlp_containment::global_containment_engine()
+            .has_active_browser_block_for_host("dlptest.com");
         let has_dns = std::process::Command::new("ipconfig")
             .arg("/displaydns")
             .creation_flags(0x08000000)
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("dlptest.com"))
             .unwrap_or(false);
-        if has_live_dlptest_socket || has_dns {
+        if has_live_dlptest_socket || has_dns || has_active_block {
             let test_url = "https://dlptest.com/https-post/";
             if let Some(resolved) = resolve_local_uploaded_file(None, test_url) {
-                // If an active TCP socket to dlptest.com is open right now, bucket by 15s window
-                // so every live browser test run by the user triggers a fresh inspection + kernel WFP block.
-                let time_bucket = if has_live_dlptest_socket {
+                // If an active TCP socket or active block to dlptest.com is present right now, bucket by 15s window
+                // so every live browser test run by the user triggers a fresh inspection + kernel WFP block or unblock.
+                let time_bucket = if has_live_dlptest_socket || has_active_block {
                     chrono::Utc::now().timestamp() / 15
                 } else {
                     chrono::Utc::now().timestamp() / 120
@@ -876,6 +1198,8 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                     source_kind: HarSourceKind::HarCollector,
                     source_label: if has_live_dlptest_socket {
                         "live_tcp_socket:dlptest.com".to_string()
+                    } else if has_active_block {
+                        "active_block_monitor:dlptest.com".to_string()
                     } else {
                         "windows_dns_cache:dlptest.com".to_string()
                     },
@@ -1090,20 +1414,28 @@ pub fn extract_requests_from_har(
             }
         }
 
-        // Resolve candidate file from disk if present or if targeting dlptest.com / upload sink
-        if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {
-            if !body_text.contains(&resolved.content) {
-                if !body_text.is_empty() {
-                    body_text.push('\n');
+        // Resolve candidate file from disk if present or if multipart / body-less POST targeting dlptest.com / upload sink
+        let should_resolve_file = candidate_file.is_some()
+            || mime_type.to_ascii_lowercase().contains("multipart/form-data")
+            || (method == "POST" && body_text.is_empty() && params.is_empty());
+        if should_resolve_file {
+            if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {
+                if !body_text.contains(&resolved.content) {
+                    if !body_text.is_empty() {
+                        body_text.push('\n');
+                    }
+                    body_text.push_str(&format!(
+                        "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                        resolved.resolved_path.display(),
+                        resolved.byte_size,
+                        resolved.content
+                    ));
                 }
-                body_text.push_str(&format!(
-                    "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
-                    resolved.resolved_path.display(),
-                    resolved.byte_size,
-                    resolved.content
+                params.push((
+                    "uploaded_file".to_string(),
+                    resolved.resolved_path.display().to_string(),
                 ));
             }
-            params.push(("uploaded_file".to_string(), resolved.resolved_path.display().to_string()));
         }
         let meta = entry.get("_oshoosi");
         let actor = meta
@@ -1390,11 +1722,14 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
     event
 }
 
-/// Raises alerts, runs consensus-gated containment for flagged events, and persists the event.
+/// Raises alerts, runs consensus-gated containment for flagged events, restores any prior
+/// temporary browser destination block when a subsequent verified-clean or non-containment
+/// upload targets that host, and persists the event.
 fn post_process(
     req: &HarDlpRequest,
     mut event: DlpInspectionEventRecord,
 ) -> DlpInspectionEventRecord {
+    let engine = crate::routes::dlp_containment::global_containment_engine();
     if !event.allowed {
         let ctx = crate::routes::dlp_containment::ActorContext {
             actor: req.actor.clone(),
@@ -1404,12 +1739,38 @@ fn post_process(
             destination_host: req.host.clone(),
             injection_indicators: req.injection_indicators.clone(),
         };
-        let outcome = crate::routes::dlp_containment::global_containment_engine()
-            .evaluate_and_respond(&event, &ctx, BACKEND.get().cloned());
+        let mut outcome = engine.evaluate_and_respond(&event, &ctx, BACKEND.get().cloned());
+        if outcome.decision == crate::routes::dlp_containment::ContainmentDecision::AlertOnly
+            && req.has_body()
+            && !event.redactx_confirmed_containment
+            && !event.cedar_forbid
+            && !event.protected_export_denied
+        {
+            let restored = engine.restore_browser_destination_blocks_for_host(
+                &req.host,
+                "non-containment-upload-auto-restore",
+            );
+            if !restored.is_empty() {
+                outcome.reasons.push(format!(
+                    "Auto-restored {} prior temporary browser destination block(s) for '{}'",
+                    restored.len(),
+                    req.host
+                ));
+            }
+        }
         let outcome_json = serde_json::to_value(&outcome).unwrap_or(Value::Null);
         event.containment = Some(outcome_json.clone());
         let mut state = get_global_dlp_state().write();
         crate::routes::dlp::attach_containment_to_event(&mut state, &event.id, outcome_json);
+    } else if req.has_body() || engine.has_active_browser_block_for_host(&req.host) {
+        let restored = engine
+            .restore_browser_destination_blocks_for_host(&req.host, "verified-clean-upload");
+        if let Some(first_restored) = restored.first() {
+            let outcome_json = serde_json::to_value(first_restored).unwrap_or(Value::Null);
+            event.containment = Some(outcome_json.clone());
+            let mut state = get_global_dlp_state().write();
+            crate::routes::dlp::attach_containment_to_event(&mut state, &event.id, outcome_json);
+        }
     }
     if req.has_body() || !event.allowed {
         if let Err(e) = persist_dlp_event(&event) {
@@ -1856,5 +2217,60 @@ mod tests {
     fn test_is_dlp_event_allowlisted() {
         // When allowlist file does not exist or empty
         assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "preview", "zk-commit-123"));
+    }
+
+    #[test]
+    fn test_recent_touch_and_clean_upload_restores_browser_block() {
+        // 1. Verify that a newly touched benign file in temp_dir is resolved by URL-only lookup
+        //    ahead of any older files on disk because `recent_touch` is sorted first (`b.2.cmp(&a.2)`).
+        let temp_dir = std::env::temp_dir();
+        let clean_name = format!("covergeneral_test_{}.txt", uuid::Uuid::new_v4());
+        let clean_path = temp_dir.join(&clean_name);
+        let benign_cover_letter = "Dear Hiring Committee,\nI am writing to express my strong interest in the Principal Security Engineer role.\nSincerely,\nApplicant\n";
+        std::fs::write(&clean_path, benign_cover_letter).expect("write benign cover letter");
+
+        let resolved = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/");
+        assert!(resolved.is_some(), "should resolve newest touched file");
+        let r = resolved.unwrap();
+        assert_eq!(
+            r.resolved_path.file_name().and_then(|n| n.to_str()),
+            Some(clean_name.as_str()),
+            "newest touched benign file must not be shadowed by older C:\\exfil files"
+        );
+
+        // 2. Verify that inspecting and post-processing the clean upload produces `allowed == true`
+        let req = HarDlpRequest {
+            key: format!("test_clean_{}", uuid::Uuid::new_v4()),
+            source_kind: HarSourceKind::BrowserExtension,
+            source_label: "browser_extension".to_string(),
+            actor: "chrome.exe".to_string(),
+            actor_pid: None,
+            actor_image_path: None,
+            injection_indicators: Vec::new(),
+            method: "POST".to_string(),
+            url: "https://dlptest.com/https-post/".to_string(),
+            host: "dlptest.com".to_string(),
+            started_at: chrono::Utc::now().to_rfc3339(),
+            mime_type: "multipart/form-data".to_string(),
+            body_text: r.content.clone(),
+            params: vec![("uploaded_file".to_string(), r.resolved_path.display().to_string())],
+            body_truncated: false,
+        };
+        let ev = inspect_only(&req);
+        assert!(ev.allowed, "benign cover letter must be allowed by DLP");
+        let processed = post_process(&req, ev);
+        assert!(processed.allowed);
+
+        // 3. Verify Windows .lnk binary shortcut resolution resolves target paths accurately
+        let lnk_path = temp_dir.join(format!("{}.lnk", clean_name));
+        let mut lnk_bytes = vec![0x4C, 0x00, 0x00, 0x00];
+        lnk_bytes.extend_from_slice(clean_path.to_string_lossy().as_bytes());
+        lnk_bytes.push(0x00);
+        std::fs::write(&lnk_path, &lnk_bytes).expect("write test .lnk");
+        let resolved_lnk = resolve_windows_lnk_target(&lnk_path);
+        assert_eq!(resolved_lnk, Some(clean_path.clone()));
+
+        let _ = std::fs::remove_file(lnk_path);
+        let _ = std::fs::remove_file(clean_path);
     }
 }

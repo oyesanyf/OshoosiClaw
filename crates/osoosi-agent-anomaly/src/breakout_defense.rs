@@ -9,18 +9,37 @@
 //! 5. Mathematical IPv4/IPv6 SSRF Guard (Cloud metadata, CGNAT, RFC1918)
 //! 6. Elastic Workspace Path::join Guard (NTFS ADS, traversal, host credential stores)
 
+use crate::command_line::{analyze_command_line, ParsedInvocation};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use url::Url;
+
+/// Compile-time embedded bytes of the primary adversarial evaluation harnesses.
+/// Embedding at compile time guarantees that:
+/// 1. Startup from a different working directory cannot silently produce an empty baseline map.
+/// 2. Pre-launch modifications to the on-disk script do not become the trusted baseline.
+const STRIX_HARNESS_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/strix_llm_adversarial_tester.py"
+));
+const VERIFY15_HARNESS_BYTES: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/verify_15_breakout_and_edr_compromise_vectors.py"
+));
 
 /// Technical Breakout Verdict
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TechnicalBreakoutVerdict {
     pub is_clean: bool,
     pub detected_vectors: Vec<String>,
+    pub sandbox_quarantine_required: bool,
     pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parsed_invocation: Option<ParsedInvocation>,
 }
 
 /// Technical Breakout Guard
@@ -88,7 +107,33 @@ impl TechnicalBreakoutGuard {
                 .push("Host namespace access or privileged container spawn attempt".to_string());
         }
 
+        // 4. Structural command-line parsing (Finding 1): Windows argv tokenization, recursive
+        // `cmd /c` unwrapping, PowerShell unambiguous-prefix switch matching (`-e`, `-ec`, `-en`,
+        // `-enc`, ..., `-EncodedCommand`, `/e`, Unicode dashes), and UTF-16LE Base64 decoding.
+        let combined = if raw_payload.trim().is_empty() {
+            command_or_path.to_string()
+        } else if command_or_path.trim().is_empty() {
+            raw_payload.to_string()
+        } else {
+            let cmd_parsed = analyze_command_line(command_or_path);
+            let pay_parsed = analyze_command_line(raw_payload);
+            if pay_parsed.is_powershell || pay_parsed.is_cmd_wrapper || pay_parsed.has_breakout_signals() {
+                raw_payload.to_string()
+            } else if cmd_parsed.is_cmd_wrapper {
+                format!("{} /c {}", command_or_path.trim(), raw_payload.trim())
+            } else if cmd_parsed.is_powershell {
+                format!("{} {}", command_or_path.trim(), raw_payload.trim())
+            } else {
+                raw_payload.to_string()
+            }
+        };
+        let parsed = analyze_command_line(&combined);
+        for finding in parsed.collect_findings() {
+            detected_vectors.push(format!("Command-line structural analysis: {}", finding));
+        }
+
         let is_clean = detected_vectors.is_empty();
+        let sandbox_quarantine_required = !is_clean;
         let description = if is_clean {
             "Technical boundary intact".to_string()
         } else {
@@ -101,7 +146,9 @@ impl TechnicalBreakoutGuard {
         TechnicalBreakoutVerdict {
             is_clean,
             detected_vectors,
+            sandbox_quarantine_required,
             description,
+            parsed_invocation: Some(parsed),
         }
     }
 }
@@ -190,18 +237,48 @@ impl OperationalContainmentGuard {
 pub struct BehavioralBreakoutVerdict {
     pub is_clean: bool,
     pub detected_deviations: Vec<String>,
+    pub circuit_breaker_triggered: bool,
     pub description: String,
 }
 
-/// Behavioral Breakout Guard
+/// Behavioral Breakout Guard:
+/// Mitigates goal divergence, reward hacking, evaluation harness tampering,
+/// network evasion (route table checks, DNS tunneling, hosts file tampering), and unauthorized third-party contact.
 pub struct BehavioralBreakoutGuard {
+    /// Baseline cryptographic SHA-256 hashes of critical test runner scripts and evaluation harnesses.
+    test_harness_baselines: RwLock<HashMap<String, String>>,
+    /// Repository root directory used to resolve relative harness paths deterministically regardless of CWD.
+    repo_root: PathBuf,
     network_evasion_commands: Vec<&'static str>,
     unauthorized_destinations: Vec<&'static str>,
 }
 
 impl Default for BehavioralBreakoutGuard {
     fn default() -> Self {
+        let repo_root = std::env::var("OSHOOSI_REPO_ROOT")
+            .or_else(|_| std::env::var("OCTOPUS_REPO_ROOT"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("."))
+            });
+
+        let mut baselines = HashMap::new();
+        baselines.insert(
+            "tests/strix_llm_adversarial_tester.py".to_string(),
+            hex::encode(Sha256::digest(STRIX_HARNESS_BYTES)),
+        );
+        baselines.insert(
+            "tests/verify_15_breakout_and_edr_compromise_vectors.py".to_string(),
+            hex::encode(Sha256::digest(VERIFY15_HARNESS_BYTES)),
+        );
+
         Self {
+            test_harness_baselines: RwLock::new(baselines),
+            repo_root,
             network_evasion_commands: vec![
                 "route print",
                 "ip route",
@@ -209,10 +286,15 @@ impl Default for BehavioralBreakoutGuard {
                 "cat /etc/hosts",
                 r"c:\windows\system32\drivers\etc\hosts",
                 "drivers/etc/hosts",
+                "nslookup",
+                "dig ",
                 "dns_tunnel",
                 "base64.tunnel",
             ],
             unauthorized_destinations: vec![
+                "mail.google.com",
+                "smtp.",
+                "api.sendgrid.com",
                 "discord.com/api/webhooks",
                 "hooks.slack.com",
                 "webhook.site",
@@ -228,6 +310,79 @@ impl BehavioralBreakoutGuard {
         Self::default()
     }
 
+    fn resolve_harness_path(&self, path_str: &str) -> PathBuf {
+        let p = Path::new(path_str);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            self.repo_root.join(p)
+        }
+    }
+
+    /// Records cryptographic SHA-256 fingerprint of an additional test harness file.
+    /// If the file does not exist or cannot be read, records an explicit `<MISSING_OR_UNREADABLE>`
+    /// sentinel so `verify_harness_integrity` fails closed rather than silently skipping it.
+    pub fn record_harness_baseline(&self, path_str: &str) {
+        let resolved = self.resolve_harness_path(path_str);
+        let hash = match std::fs::read(&resolved) {
+            Ok(bytes) => hex::encode(Sha256::digest(&bytes)),
+            Err(_) => "<MISSING_OR_UNREADABLE>".to_string(),
+        };
+        let mut map = self.test_harness_baselines.write().unwrap();
+        map.insert(path_str.to_string(), hash);
+    }
+
+    /// Clears all baselines (available for negative testing of the fail-closed empty-baseline check).
+    pub fn clear_baselines_for_test(&self) {
+        self.test_harness_baselines.write().unwrap().clear();
+    }
+
+    /// Verifies that test harness files have not been modified or deleted by an agent attempting to game the evaluation.
+    /// FAIL-CLOSED INVARIANT:
+    /// - If the baseline map is empty, returns `(false, ...)`.
+    /// - If any tracked harness file is missing or unreadable on disk, returns `(false, ...)`.
+    /// - If any tracked harness file's current SHA-256 differs from the pinned baseline, returns `(false, ...)`.
+    pub fn verify_harness_integrity(&self) -> (bool, Vec<String>) {
+        let map = self.test_harness_baselines.read().unwrap();
+        if map.is_empty() {
+            return (
+                false,
+                vec![
+                    "FAIL-CLOSED HARNESS INTEGRITY VIOLATION: baseline hash map is empty"
+                        .to_string(),
+                ],
+            );
+        }
+
+        let mut tampered = Vec::new();
+
+        for (path_str, expected_hash) in map.iter() {
+            let resolved = self.resolve_harness_path(path_str);
+            match std::fs::read(&resolved) {
+                Ok(bytes) => {
+                    let current_hash = hex::encode(Sha256::digest(&bytes));
+                    if &current_hash != expected_hash {
+                        tampered.push(format!(
+                            "EVALUATION HARNESS TAMPERING DETECTED: '{}' was modified (expected {}, found {})",
+                            path_str, expected_hash, current_hash
+                        ));
+                    }
+                }
+                Err(e) => {
+                    tampered.push(format!(
+                        "FAIL-CLOSED HARNESS INTEGRITY VIOLATION: '{}' missing or unreadable at '{}': {}",
+                        path_str,
+                        resolved.display(),
+                        e
+                    ));
+                }
+            }
+        }
+
+        let is_clean = tampered.is_empty();
+        (is_clean, tampered)
+    }
+
     pub fn evaluate_action(
         &self,
         action_name: &str,
@@ -238,6 +393,29 @@ impl BehavioralBreakoutGuard {
         let lower_res = target_resource.to_ascii_lowercase();
         let lower_pay = payload.to_ascii_lowercase();
         let lower_act = action_name.to_ascii_lowercase();
+
+        // 1. Check for test harness tampering attempts
+        if lower_res.contains("strix")
+            || lower_res.contains("verify_15")
+            || lower_res.contains("test_report")
+            || lower_res.contains("exhaustive")
+        {
+            if lower_act.contains("write")
+                || lower_act.contains("delete")
+                || lower_act.contains("modify")
+            {
+                detected_deviations.push(format!(
+                    "Specification gaming / self-grading bypass intercepted: attempted write to '{}'",
+                    target_resource
+                ));
+            }
+        }
+
+        // Check file integrity (fail-closed)
+        let (harness_clean, tampered_files) = self.verify_harness_integrity();
+        if !harness_clean {
+            detected_deviations.extend(tampered_files);
+        }
 
         if (lower_res.contains("drivers/etc/hosts") || lower_res.contains("drivers\\etc\\hosts"))
             && (lower_act.contains("write")
@@ -266,8 +444,9 @@ impl BehavioralBreakoutGuard {
         }
 
         let is_clean = detected_deviations.is_empty();
+        let circuit_breaker_triggered = !is_clean;
         let description = if is_clean {
-            "Behavioral alignment confirmed".to_string()
+            "Behavioral alignment confirmed: no reward hacking or harness tampering".to_string()
         } else {
             format!(
                 "Behavioral breakout intercepted: {} deviation(s) identified",
@@ -278,6 +457,7 @@ impl BehavioralBreakoutGuard {
         BehavioralBreakoutVerdict {
             is_clean,
             detected_deviations,
+            circuit_breaker_triggered,
             description,
         }
     }
@@ -426,7 +606,7 @@ pub fn validate_agent_egress_url(url_str: &str, allow_local_inference: bool) -> 
         url::Host::Ipv4(ip) => validate_ipv4(ip, port, allow_local_inference)?,
         url::Host::Ipv6(ip) => validate_ipv6(ip, port, allow_local_inference)?,
         url::Host::Domain(domain) => {
-            let lower = domain.to_ascii_lowercase();
+            let lower = domain.trim_end_matches('.').to_ascii_lowercase();
             if is_non_standard_ip_host_encoding(&lower) {
                 return Err(format!(
                     "SSRF Blocked (CIS 3.3): Non-standard IP host format '{}' is prohibited",

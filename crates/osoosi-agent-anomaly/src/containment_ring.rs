@@ -11,16 +11,844 @@
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
+use osoosi_types::{role_trust_tier, ArmRole, OctopusSecurityError, TrustTier};
+use crate::mesh_guard::{HomologicalBoundaryAuditor, VerifiedMeshMessage};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 
 type HmacSha256 = Hmac<Sha256>;
+
+pub const MAX_RELAY_HOPS: usize = 16;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MessageKind {
+    Finding,
+    ThreatMapping,
+    ChainCandidate,
+    Alert,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProvenanceHop {
+    pub arm_id: usize,
+    pub role: ArmRole,
+    pub generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArmRingMeshMessage {
+    pub sender_arm_id: usize,
+    pub sender_role: ArmRole,
+    pub sender_generation: u64,
+    pub target_arm_id: usize,
+    pub target_generation: u64,
+    pub kind: MessageKind,
+    pub correlation_id: String,
+    pub payload: String,
+    pub provenance: Vec<ProvenanceHop>,
+    pub taint_floor: TrustTier,
+    pub signature_hex: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArmRingConfig {
+    pub max_memory_bytes: usize,
+    pub step_limit: usize,
+    pub max_execution_time: Duration,
+}
+
+impl Default for ArmRingConfig {
+    fn default() -> Self {
+        Self {
+            max_memory_bytes: 64 * 1024 * 1024,
+            step_limit: 10,
+            max_execution_time: Duration::from_secs(5),
+        }
+    }
+}
+
+pub fn constant_time_eq_hex(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
+pub fn mesh_signing_content(
+    sender_arm_id: usize,
+    sender_generation: u64,
+    target_arm_id: usize,
+    target_generation: u64,
+    kind: &MessageKind,
+    correlation_id: &str,
+    payload: &str,
+    provenance: &[ProvenanceHop],
+    taint_floor: TrustTier,
+) -> String {
+    let prov = provenance
+        .iter()
+        .map(|h| format!("{}/{:?}/{}", h.arm_id, h.role, h.generation))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "{}:{}:{}:{}:{:?}:{}:{}|prov=[{}]|floor={:?}",
+        sender_arm_id, sender_generation, target_arm_id, target_generation, kind, correlation_id, payload, prov, taint_floor
+    )
+}
+
+/// Canonicalizes and enforces exact, resource-type-aware boundaries for arm resources.
+pub fn validate_resource_boundary(
+    resource: &str,
+    allowed_prefixes: &[String],
+) -> Result<(), OctopusSecurityError> {
+    let trimmed = resource.trim();
+    if trimmed.is_empty() {
+        return Err(OctopusSecurityError::EnclaveViolation(
+            "Empty or whitespace-only resource identifier rejected".to_string(),
+        ));
+    }
+
+    if trimmed.chars().any(|c| (c as u32) < 0x20 || (c as u32) == 0x7f) {
+        return Err(OctopusSecurityError::EnclaveViolation(
+            "Resource contains illegal ASCII control characters or null bytes".to_string(),
+        ));
+    }
+
+    let lower = trimmed.to_lowercase();
+    if lower.contains("%00") || lower.contains("%2e%2e") || lower.contains("%2f") || lower.contains("%5c") || lower.contains("%25") {
+        return Err(OctopusSecurityError::EnclaveViolation(
+            "Ambiguous or malicious percent-encoding detected in resource identifier".to_string(),
+        ));
+    }
+
+    if lower.contains("..") {
+        return Err(OctopusSecurityError::EnclaveViolation(
+            "Path traversal sequence '..' detected in resource identifier".to_string(),
+        ));
+    }
+
+    if trimmed.contains("://") && trimmed.contains('\\') {
+        return Err(OctopusSecurityError::EnclaveViolation(
+            "Ambiguous separator '\\' detected in URI resource identifier".to_string(),
+        ));
+    }
+
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        let parsed = url::Url::parse(trimmed).map_err(|e| {
+            OctopusSecurityError::EnclaveViolation(format!(
+                "Malformed HTTP/HTTPS URL resource '{}': {}",
+                trimmed, e
+            ))
+        })?;
+
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(OctopusSecurityError::EnclaveViolation(
+                "Resource URL contains embedded credentials (user:pass@host)".to_string(),
+            ));
+        }
+
+        let host_str = match parsed.host() {
+            Some(url::Host::Domain(d)) => d.to_lowercase(),
+            Some(url::Host::Ipv4(ip)) => ip.to_string(),
+            Some(url::Host::Ipv6(ip)) => format!("[{}]", ip),
+            None => {
+                return Err(OctopusSecurityError::EnclaveViolation(
+                    "Resource URL is missing valid host".to_string(),
+                ));
+            }
+        };
+
+        if host_str.chars().all(|c| c.is_ascii_digit()) && !host_str.contains('.') {
+            return Err(OctopusSecurityError::EnclaveViolation(
+                "Dword/integer-encoded IP address format rejected in resource".to_string(),
+            ));
+        }
+    }
+
+    let mut matched = false;
+    for prefix in allowed_prefixes {
+        let p = prefix.trim();
+        if p.is_empty() {
+            continue;
+        }
+
+        if trimmed == p {
+            matched = true;
+            break;
+        }
+
+        if p.ends_with("://") {
+            if trimmed.starts_with(p) {
+                matched = true;
+                break;
+            }
+            continue;
+        }
+
+        if p.ends_with('/') {
+            if trimmed.starts_with(p) {
+                matched = true;
+                break;
+            }
+            continue;
+        }
+
+        if p.starts_with("http://") || p.starts_with("https://") {
+            if trimmed.starts_with(p) {
+                let remainder = &trimmed[p.len()..];
+                if remainder.is_empty() || remainder.starts_with('/') || remainder.starts_with(':') || remainder.starts_with('?') || remainder.starts_with('#') {
+                    if let Some(port_rest) = remainder.strip_prefix(':') {
+                        let port_digits: String = port_rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        if !port_digits.is_empty() {
+                            let after_port = &port_rest[port_digits.len()..];
+                            if after_port.is_empty() || after_port.starts_with('/') || after_port.starts_with('?') || after_port.starts_with('#') {
+                                matched = true;
+                                break;
+                            }
+                        }
+                    } else {
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+
+        if trimmed.starts_with(p) {
+            let remainder = &trimmed[p.len()..];
+            if remainder.is_empty() || remainder.starts_with('/') || remainder.starts_with(':') {
+                matched = true;
+                break;
+            }
+        }
+    }
+
+    if !matched {
+        return Err(OctopusSecurityError::EnclaveViolation(format!(
+            "Resource '{}' violates containment boundaries (not within permitted namespaces)",
+            resource
+        )));
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeshWatchOutSignal {
+    pub severed_arm_id: usize,
+    pub revoked_generation: u64,
+    pub new_generation: u64,
+    pub reason: String,
+    pub timestamp_us: u64,
+}
+
+/// Level 1: An individual Arm Containment Ring.
+#[derive(Clone)]
+pub struct ArmContainmentRing {
+    pub arm_id: usize,
+    pub agent_name: String,
+    pub role: ArmRole,
+    pub generation: Arc<AtomicU64>,
+    master_seed: [u8; 32],
+    allowed_tools: Arc<RwLock<HashSet<String>>>,
+    allowed_resource_prefixes: Arc<RwLock<Vec<String>>>,
+    is_severed: Arc<AtomicBool>,
+    revoked_epochs: Arc<RwLock<HashSet<u64>>>,
+    step_counter: Arc<AtomicU64>,
+    pub config: ArmRingConfig,
+    epoch_enforcement_enabled: Arc<AtomicBool>,
+    tool_enforcement_enabled: Arc<AtomicBool>,
+    budget_enforcement_enabled: Arc<AtomicBool>,
+    taint_state: Arc<RwLock<(TrustTier, Vec<ProvenanceHop>)>>,
+}
+
+impl ArmContainmentRing {
+    pub fn new(
+        arm_id: usize,
+        role: ArmRole,
+        initial_generation: u64,
+        master_seed: &[u8],
+    ) -> Self {
+        let mut seed = [0u8; 32];
+        if master_seed.len() >= 32 {
+            seed.copy_from_slice(&master_seed[..32]);
+        } else {
+            let hash = Sha256::digest(master_seed);
+            seed.copy_from_slice(&hash);
+        }
+
+        let agent_name = format!("arm-{:?}-{}", role, arm_id);
+
+        let mut tools = HashSet::new();
+        let mut prefixes = Vec::new();
+
+        match role {
+            ArmRole::UntrustedDocIngest => {
+                tools.insert("doc_extractor".to_string());
+                tools.insert("peripheral_digest".to_string());
+                prefixes.push("s3://invoices/".to_string());
+                prefixes.push("s3://raw-docs/".to_string());
+                prefixes.push("local_scratchpad".to_string());
+            }
+            ArmRole::AccountingLedgerWrite => {
+                tools.insert("ledger_writer".to_string());
+                prefixes.push("s3://accounting/".to_string());
+                prefixes.push("local_scratchpad".to_string());
+            }
+            ArmRole::NetworkEgress => {
+                tools.insert("http_egress".to_string());
+                prefixes.push("https://".to_string());
+                prefixes.push("http://".to_string());
+            }
+            ArmRole::OutboundNotification => {
+                tools.insert("notifier".to_string());
+                prefixes.push("notification://".to_string());
+            }
+            ArmRole::TarpitDecoyDefense => {
+                tools.insert("quarantine".to_string());
+                prefixes.push("tarpit://".to_string());
+            }
+            ArmRole::KernelLevelSentinel => {
+                tools.insert("kernel_sentinel".to_string());
+                prefixes.push("kernel://".to_string());
+            }
+            ArmRole::CedarPolicyEvaluation => {
+                tools.insert("cedar_evaluator".to_string());
+                prefixes.push("cedar://".to_string());
+            }
+            ArmRole::AtlasThreatIntelligence => {
+                tools.insert("atlas_sync".to_string());
+                prefixes.push("https://raw.githubusercontent.com/mitre-atlas/".to_string());
+            }
+            ArmRole::AnomalyDetection => {
+                tools.insert("anomaly_evaluator".to_string());
+                prefixes.push("metrics://".to_string());
+            }
+            ArmRole::VulnerabilityResearch => {
+                tools.insert("vuln_research".to_string());
+                prefixes.push("cve://".to_string());
+            }
+            ArmRole::ContinuousOssFuzz => {
+                tools.insert("fuzz_runner".to_string());
+                prefixes.push("fuzz://".to_string());
+            }
+            ArmRole::ContinuousOsvScanner => {
+                tools.insert("osv_scanner".to_string());
+                prefixes.push("osv://".to_string());
+            }
+            ArmRole::DifferentialProtocolAnalyzer => {
+                tools.insert("protocol_analyzer".to_string());
+                prefixes.push("protocol://".to_string());
+            }
+            ArmRole::AutonomousProtocolResearch => {
+                tools.insert("protocol_research".to_string());
+                prefixes.push("protocol://".to_string());
+            }
+            ArmRole::PostQuantumAttestation => {
+                tools.insert("pqc_attestation".to_string());
+                prefixes.push("pqc://".to_string());
+            }
+            ArmRole::EvolutionaryOptimizer => {
+                tools.insert("evolutionary_optimizer".to_string());
+                prefixes.push("evolution://".to_string());
+            }
+            ArmRole::DreamRsiOptimizer => {
+                tools.insert("dream_rsi_optimizer".to_string());
+                prefixes.push("dream_rsi://".to_string());
+            }
+            ArmRole::RecursiveHarnessOptimizer => {
+                tools.insert("harness2_optimizer".to_string());
+                prefixes.push("harness2://".to_string());
+            }
+        }
+
+        let initial_tier = role_trust_tier(&role);
+        Self {
+            arm_id,
+            agent_name,
+            role,
+            generation: Arc::new(AtomicU64::new(initial_generation)),
+            master_seed: seed,
+            allowed_tools: Arc::new(RwLock::new(tools)),
+            allowed_resource_prefixes: Arc::new(RwLock::new(prefixes)),
+            is_severed: Arc::new(AtomicBool::new(false)),
+            revoked_epochs: Arc::new(RwLock::new(HashSet::new())),
+            step_counter: Arc::new(AtomicU64::new(0)),
+            config: ArmRingConfig::default(),
+            epoch_enforcement_enabled: Arc::new(AtomicBool::new(true)),
+            tool_enforcement_enabled: Arc::new(AtomicBool::new(true)),
+            budget_enforcement_enabled: Arc::new(AtomicBool::new(true)),
+            taint_state: Arc::new(RwLock::new((initial_tier, Vec::new()))),
+        }
+    }
+
+    pub fn master_seed(&self) -> &[u8; 32] {
+        &self.master_seed
+    }
+
+    pub fn derive_arm_epoch_key(&self, arm_id: usize, epoch: u64, role: &ArmRole) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.master_seed);
+        hasher.update(arm_id.to_le_bytes());
+        hasher.update(epoch.to_le_bytes());
+        hasher.update(format!("{:?}", role).as_bytes());
+        let hash = hasher.finalize();
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&hash);
+        key
+    }
+
+    pub fn epoch_key(&self, epoch: u64) -> [u8; 32] {
+        self.derive_arm_epoch_key(self.arm_id, epoch, &self.role)
+    }
+
+    pub fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    pub fn is_severed(&self) -> bool {
+        self.is_severed.load(Ordering::SeqCst)
+    }
+
+    pub async fn sever(&self, _reason: &str) {
+        let current_gen = self.current_generation();
+        self.is_severed.store(true, Ordering::SeqCst);
+        let mut revoked = self.revoked_epochs.write().await;
+        revoked.insert(current_gen);
+    }
+
+    pub async fn sever_and_regenerate(&self) -> u64 {
+        let old_gen = self.current_generation();
+        {
+            let mut revoked = self.revoked_epochs.write().await;
+            revoked.insert(old_gen);
+        }
+        let next_gen = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.step_counter.store(0, Ordering::SeqCst);
+        self.is_severed.store(false, Ordering::SeqCst);
+
+        {
+            let mut taint = self.taint_state.write().await;
+            *taint = (role_trust_tier(&self.role), Vec::new());
+        }
+
+        next_gen
+    }
+
+    pub async fn validate_epoch(&self, epoch: u64) -> Result<(), OctopusSecurityError> {
+        if !self.epoch_enforcement_enabled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        if self.is_severed.load(Ordering::SeqCst) {
+            return Err(OctopusSecurityError::LimbKilled);
+        }
+
+        let revoked = self.revoked_epochs.read().await;
+        if revoked.contains(&epoch) {
+            return Err(OctopusSecurityError::CapabilityDenied(format!(
+                "Arm {} generation epoch {} has been permanently revoked by supervisor autotomy",
+                self.arm_id, epoch
+            )));
+        }
+
+        let active_gen = self.current_generation();
+        if epoch != active_gen {
+            return Err(OctopusSecurityError::CapabilityDenied(format!(
+                "Arm {} epoch mismatch: presented generation {} != active generation {}",
+                self.arm_id, epoch, active_gen
+            )));
+        }
+
+        Ok(())
+    }
+
+    pub async fn validate_tool_invocation(
+        &self,
+        tool: &str,
+        resource: &str,
+        epoch: u64,
+    ) -> Result<(), OctopusSecurityError> {
+        self.validate_epoch(epoch).await?;
+
+        if !self.tool_enforcement_enabled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        let tools = self.allowed_tools.read().await;
+        if !tools.contains(tool) {
+            return Err(OctopusSecurityError::CapabilityDenied(format!(
+                "Arm {} (role {:?}) attempted unauthorized tool '{}'",
+                self.arm_id, self.role, tool
+            )));
+        }
+
+        let prefixes = self.allowed_resource_prefixes.read().await;
+        validate_resource_boundary(resource, &prefixes).map_err(|e| {
+            OctopusSecurityError::EnclaveViolation(format!(
+                "Arm {} (role {:?}) attempted out-of-scope resource access: '{}' ({})",
+                self.arm_id, self.role, resource, e
+            ))
+        })?;
+
+        Ok(())
+    }
+
+    pub fn check_step_budget(&self, step: usize) -> Result<(), OctopusSecurityError> {
+        if !self.budget_enforcement_enabled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        if step > self.config.step_limit {
+            return Err(OctopusSecurityError::ResourceQuotaExceeded(format!(
+                "Arm {} exceeded maximum step budget (step {} > limit {})",
+                self.arm_id, step, self.config.step_limit
+            )));
+        }
+        self.step_counter.store(step as u64, Ordering::SeqCst);
+        Ok(())
+    }
+
+    pub fn check_memory_budget(&self, memory_bytes: usize) -> Result<(), OctopusSecurityError> {
+        if !self.budget_enforcement_enabled.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        if memory_bytes > self.config.max_memory_bytes {
+            return Err(OctopusSecurityError::ResourceQuotaExceeded(format!(
+                "Arm {} exceeded strict 64MB memory clamp ({} bytes > clamp {} bytes)",
+                self.arm_id, memory_bytes, self.config.max_memory_bytes
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn sign_mesh_message(
+        &self,
+        target_arm_id: usize,
+        target_generation: u64,
+        kind: MessageKind,
+        correlation_id: &str,
+        payload: &str,
+    ) -> Result<ArmRingMeshMessage, OctopusSecurityError> {
+        let current_gen = self.current_generation();
+        self.validate_epoch(current_gen).await?;
+
+        let (taint_floor, provenance) = {
+            let taint = self.taint_state.read().await;
+            let own = role_trust_tier(&self.role);
+            (taint.0.min(own), taint.1.clone())
+        };
+
+        let epoch_key = self.epoch_key(current_gen);
+        let data = mesh_signing_content(
+            self.arm_id,
+            current_gen,
+            target_arm_id,
+            target_generation,
+            &kind,
+            correlation_id,
+            payload,
+            &provenance,
+            taint_floor,
+        );
+        let sig = compute_ring_hmac(&epoch_key, data.as_bytes());
+        let sig_hex = hex::encode(sig);
+
+        Ok(ArmRingMeshMessage {
+            sender_arm_id: self.arm_id,
+            sender_role: self.role.clone(),
+            sender_generation: current_gen,
+            target_arm_id,
+            target_generation,
+            kind,
+            correlation_id: correlation_id.to_string(),
+            payload: payload.to_string(),
+            provenance,
+            taint_floor,
+            signature_hex: sig_hex,
+        })
+    }
+
+    pub async fn taint_state(&self) -> (TrustTier, Vec<ProvenanceHop>) {
+        self.taint_state.read().await.clone()
+    }
+
+    pub async fn verify_incoming_message(
+        &self,
+        msg: &ArmRingMeshMessage,
+    ) -> Result<VerifiedMeshMessage, OctopusSecurityError> {
+        if msg.target_arm_id != self.arm_id {
+            return Err(OctopusSecurityError::IdentitySpoofingDetected(format!(
+                "Message misrouted: target_arm_id {} != receiver arm_id {}",
+                msg.target_arm_id, self.arm_id
+            )));
+        }
+
+        if msg.sender_generation == 0 {
+            return Err(OctopusSecurityError::IdentitySpoofingDetected(
+                "Invalid sender generation epoch 0 in incoming mesh message".to_string(),
+            ));
+        }
+
+        if msg.provenance.len() > MAX_RELAY_HOPS - 1 {
+            return Err(OctopusSecurityError::DelegationScopeViolation(format!(
+                "Mesh provenance chain of {} hops exceeds the {}-hop limit",
+                msg.provenance.len(),
+                MAX_RELAY_HOPS - 1
+            )));
+        }
+
+        self.validate_epoch(msg.target_generation).await?;
+
+        let sender_epoch_key = self.derive_arm_epoch_key(
+            msg.sender_arm_id,
+            msg.sender_generation,
+            &msg.sender_role,
+        );
+        let expected_data = mesh_signing_content(
+            msg.sender_arm_id,
+            msg.sender_generation,
+            msg.target_arm_id,
+            msg.target_generation,
+            &msg.kind,
+            &msg.correlation_id,
+            &msg.payload,
+            &msg.provenance,
+            msg.taint_floor,
+        );
+        let expected_sig = hex::encode(compute_ring_hmac(&sender_epoch_key, expected_data.as_bytes()));
+        if !constant_time_eq_hex(&msg.signature_hex, &expected_sig) {
+            return Err(OctopusSecurityError::IdentitySpoofingDetected(format!(
+                "Cryptographic mesh signature mismatch from sender arm {} ({:?}, gen {}): payload tampering or role spoofing detected",
+                msg.sender_arm_id, msg.sender_role, msg.sender_generation
+            )));
+        }
+
+        let sender_tier = role_trust_tier(&msg.sender_role);
+        if msg.taint_floor > sender_tier {
+            return Err(OctopusSecurityError::IdentitySpoofingDetected(format!(
+                "Mesh taint floor {:?} exceeds sender role tier {:?}",
+                msg.taint_floor, sender_tier
+            )));
+        }
+
+        let mut role_chain: Vec<ArmRole> = msg.provenance.iter().map(|h| h.role.clone()).collect();
+        role_chain.push(msg.sender_role.clone());
+        role_chain.push(self.role.clone());
+        let effective_floor = msg
+            .provenance
+            .iter()
+            .map(|h| role_trust_tier(&h.role))
+            .fold(msg.taint_floor.min(sender_tier), |a, b| a.min(b));
+
+        let mut audit = HomologicalBoundaryAuditor::audit_role_chain(&role_chain);
+        let recipient_tier = role_trust_tier(&self.role);
+        if audit.allowed && effective_floor == TrustTier::Untrusted && recipient_tier == TrustTier::PrivilegedSink {
+            audit.allowed = false;
+            audit.proxy_laundering_detected = true;
+            audit.reason = format!(
+                "LAW1_STICKY_TAINT_VETO: sender carries untrusted taint floor into privileged sink {:?}",
+                self.role
+            );
+        }
+        if !audit.allowed {
+            return Err(OctopusSecurityError::DelegationScopeViolation(format!(
+                "Ring Boundary Violation: Arm {} ({:?}) -> Sensitive Sink Arm {} ({:?}) rejected: {}",
+                msg.sender_arm_id, msg.sender_role, self.arm_id, self.role, audit.reason
+            )));
+        }
+
+        {
+            let mut taint = self.taint_state.write().await;
+            taint.0 = taint.0.min(effective_floor);
+            let mut chain = msg.provenance.clone();
+            chain.push(ProvenanceHop {
+                arm_id: msg.sender_arm_id,
+                role: msg.sender_role.clone(),
+                generation: msg.sender_generation,
+            });
+            for hop in chain {
+                if !taint.1.contains(&hop) {
+                    taint.1.push(hop);
+                }
+            }
+            let excess = taint.1.len().saturating_sub(MAX_RELAY_HOPS - 1);
+            if excess > 0 {
+                taint.1.drain(0..excess);
+            }
+        }
+
+        Ok(VerifiedMeshMessage::new(
+            msg.clone(),
+            self.arm_id,
+            self.role.clone(),
+            role_chain,
+            effective_floor,
+        ))
+    }
+
+    pub fn verify_terminable_child_pid(pid: u32) -> Result<(), OctopusSecurityError> {
+        let self_pid = std::process::id();
+        if pid <= 4 || pid == self_pid {
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "SEC-RING-01_PID_PROTECTION: Refusing to terminate protected system/supervisor PID {} (self_pid={})",
+                pid, self_pid
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// A supervisor-managed registry containing Level 1 containment rings.
+#[derive(Clone)]
+pub struct ArmRingRegistry {
+    pub rings: Arc<RwLock<HashMap<usize, Arc<ArmContainmentRing>>>>,
+    master_seed: [u8; 32],
+    watchout_signals: Arc<RwLock<Vec<MeshWatchOutSignal>>>,
+}
+
+impl ArmRingRegistry {
+    pub fn new(size: usize, master_seed: &[u8]) -> Self {
+        let mut seed = [0u8; 32];
+        if master_seed.len() >= 32 {
+            seed.copy_from_slice(&master_seed[..32]);
+        } else {
+            let hash = Sha256::digest(master_seed);
+            seed.copy_from_slice(&hash);
+        }
+
+        let mut map = HashMap::new();
+        for arm_id in 0..size {
+            let role = match arm_id % 3 {
+                0 => ArmRole::UntrustedDocIngest,
+                1 => ArmRole::AccountingLedgerWrite,
+                _ => ArmRole::NetworkEgress,
+            };
+            let ring = Arc::new(ArmContainmentRing::new(arm_id, role, 1, &seed));
+            map.insert(arm_id, ring);
+        }
+
+        let security_arm_roles = [
+            (100, ArmRole::CedarPolicyEvaluation),
+            (101, ArmRole::AtlasThreatIntelligence),
+            (102, ArmRole::AnomalyDetection),
+            (103, ArmRole::VulnerabilityResearch),
+            (104, ArmRole::ContinuousOssFuzz),
+            (105, ArmRole::ContinuousOsvScanner),
+            (106, ArmRole::DifferentialProtocolAnalyzer),
+            (107, ArmRole::AutonomousProtocolResearch),
+            (108, ArmRole::PostQuantumAttestation),
+            (109, ArmRole::EvolutionaryOptimizer),
+            (110, ArmRole::DreamRsiOptimizer),
+            (111, ArmRole::RecursiveHarnessOptimizer),
+        ];
+        for (sec_id, sec_role) in security_arm_roles {
+            let sec_ring = Arc::new(ArmContainmentRing::new(sec_id, sec_role, 1, &seed));
+            map.insert(sec_id, sec_ring);
+        }
+
+        Self {
+            rings: Arc::new(RwLock::new(map)),
+            master_seed: seed,
+            watchout_signals: Arc::new(RwLock::new(Vec::new())),
+        }
+    }
+
+    pub fn generate_master_seed() -> [u8; 32] {
+        let mut seed = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut seed);
+        seed
+    }
+
+    pub async fn len(&self) -> usize {
+        self.rings.read().await.len()
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.rings.read().await.is_empty()
+    }
+
+    pub fn get_ring_sync(&self, arm_id: usize) -> Option<Arc<ArmContainmentRing>> {
+        self.rings.try_read().ok()?.get(&arm_id).cloned()
+    }
+
+    pub async fn get_ring(&self, arm_id: usize) -> Option<Arc<ArmContainmentRing>> {
+        self.rings.read().await.get(&arm_id).cloned()
+    }
+
+    pub async fn get_ring_or_fail(&self, arm_id: usize) -> Result<Arc<ArmContainmentRing>, OctopusSecurityError> {
+        self.rings.read().await.get(&arm_id).cloned().ok_or_else(|| {
+            OctopusSecurityError::IsolationViolation(format!(
+                "Execution halted: Missing mandatory Level 1 ArmContainmentRing for Arm {}",
+                arm_id
+            ))
+        })
+    }
+
+    pub async fn get_security_ring(&self, role: ArmRole) -> Option<Arc<ArmContainmentRing>> {
+        let rings = self.rings.read().await;
+        rings.values().find(|r| r.role == role).cloned()
+    }
+
+    pub async fn get_ring_by_name(&self, agent_name: &str) -> Option<Arc<ArmContainmentRing>> {
+        let rings = self.rings.read().await;
+        rings.values().find(|r| r.agent_name == agent_name).cloned()
+    }
+
+    pub fn master_seed(&self) -> &[u8; 32] {
+        &self.master_seed
+    }
+
+    pub async fn sever_arm(&self, arm_id: usize, reason: &str) -> Result<(), OctopusSecurityError> {
+        let ring = self.get_ring_or_fail(arm_id).await?;
+        let old_gen = ring.current_generation();
+        ring.sever(reason).await;
+        self.record_mesh_watchout(arm_id, old_gen, old_gen + 1, reason).await;
+        Ok(())
+    }
+
+    pub async fn sever_and_regenerate(&self, arm_id: usize) -> Result<u64, OctopusSecurityError> {
+        let ring = self.get_ring_or_fail(arm_id).await?;
+        let old_gen = ring.current_generation();
+        let new_gen = ring.sever_and_regenerate().await;
+        self.record_mesh_watchout(arm_id, old_gen, new_gen, "Autotomy Regeneration").await;
+        Ok(new_gen)
+    }
+
+    pub async fn record_mesh_watchout(
+        &self,
+        severed_arm_id: usize,
+        revoked_generation: u64,
+        new_generation: u64,
+        reason: &str,
+    ) {
+        let now_us = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_micros() as u64;
+        let mut signals = self.watchout_signals.write().await;
+        signals.push(MeshWatchOutSignal {
+            severed_arm_id,
+            revoked_generation,
+            new_generation,
+            reason: reason.to_string(),
+            timestamp_us: now_us,
+        });
+    }
+
+    pub async fn list_watchout_signals(&self) -> Vec<MeshWatchOutSignal> {
+        self.watchout_signals.read().await.clone()
+    }
+}
 
 /// Audit log record for containment and autotomy events.
 #[derive(Debug, Clone, Serialize, Deserialize)]
