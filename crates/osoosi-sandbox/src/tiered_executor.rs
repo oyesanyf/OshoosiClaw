@@ -102,8 +102,9 @@ impl MeasuredActuationSample {
     ) -> Result<Self, OctopusSecurityError> {
         let acct = job.query_accounting()?;
         let dt = elapsed_s.max(0.001);
-        let egress_bytes =
-            acct.write_transfer_bytes.saturating_add(acct.other_transfer_bytes) as f64;
+        let egress_bytes = acct
+            .write_transfer_bytes
+            .saturating_add(acct.other_transfer_bytes) as f64;
         let bytes_per_sec = egress_bytes / dt;
         let derived_pressure_pa = (bytes_per_sec / 64.0)
             + (acct.total_processes as f64 * 180.0)
@@ -206,7 +207,8 @@ impl WindowsJobObject {
                 )));
             }
 
-            let mut info: win32::JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            let mut info: win32::JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
+                unsafe { std::mem::zeroed() };
             info.BasicLimitInformation.LimitFlags = win32::JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
                 | win32::JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION
                 | win32::JOB_OBJECT_LIMIT_ACTIVE_PROCESS
@@ -322,7 +324,8 @@ impl WindowsJobObject {
                     self.handle,
                     win32::JOB_OBJECT_BASIC_AND_IO_ACCOUNTING_INFO_CLASS,
                     &mut info as *mut _ as *mut c_void,
-                    std::mem::size_of::<win32::JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION>() as u32,
+                    std::mem::size_of::<win32::JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION>()
+                        as u32,
                     &mut ret_len,
                 )
             };
@@ -538,7 +541,9 @@ impl TieredExecutionDispatcher {
 
         if program.trim().is_empty()
             || program.chars().any(|c| c < ' ' || c == '\x7f')
-            || args.iter().any(|a| a.chars().any(|c| c < ' ' || c == '\x7f'))
+            || args
+                .iter()
+                .any(|a| a.chars().any(|c| c < ' ' || c == '\x7f'))
         {
             return Err(OctopusSecurityError::IsolationViolation(
                 "Tier 2 command rejected: program or arguments contain NUL or control characters"
@@ -637,8 +642,14 @@ pub fn create_or_open_appcontainer_profile(
     description: &str,
 ) -> Result<(String, *mut c_void), OctopusSecurityError> {
     let wide_name: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-    let wide_disp: Vec<u16> = display_name.encode_utf16().chain(std::iter::once(0)).collect();
-    let wide_desc: Vec<u16> = description.encode_utf16().chain(std::iter::once(0)).collect();
+    let wide_disp: Vec<u16> = display_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let wide_desc: Vec<u16> = description
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
 
     let mut psid: *mut c_void = std::ptr::null_mut();
     let hr = unsafe {
@@ -899,7 +910,10 @@ pub fn spawn_tier2_appcontainer_command(
     let mut env_pairs: Vec<(String, String)> = vec![
         ("ALLUSERSPROFILE".to_string(), program_data.clone()),
         ("APPDATA".to_string(), app_data),
-        ("ComSpec".to_string(), format!("{}\\System32\\cmd.exe", sys_root)),
+        (
+            "ComSpec".to_string(),
+            format!("{}\\System32\\cmd.exe", sys_root),
+        ),
         ("LOCALAPPDATA".to_string(), local_app_data),
         ("OSOOSI_TIER2_CONFINED".to_string(), "1".to_string()),
         ("PATH".to_string(), format!("{}\\System32", sys_root)),
@@ -971,7 +985,8 @@ pub fn spawn_tier2_appcontainer_command(
     }
 
     // 2. Verify actual child token AppContainer identity & Job Object membership BEFORE ResumeThread
-    let ac_verification = match verify_process_appcontainer_token(pi.hProcess, psid, &sid_str, job) {
+    let ac_verification = match verify_process_appcontainer_token(pi.hProcess, psid, &sid_str, job)
+    {
         Ok(v) => v,
         Err(e) => {
             unsafe {

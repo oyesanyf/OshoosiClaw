@@ -83,13 +83,16 @@ mod tests {
         assert_eq!(limiter.current_bytes, 32 * 1024 * 1024);
 
         // Exactly 64 MiB permitted
-        assert!(limiter.memory_growing(32 * 1024 * 1024, 64 * 1024 * 1024, None).unwrap());
+        assert!(limiter
+            .memory_growing(32 * 1024 * 1024, 64 * 1024 * 1024, None)
+            .unwrap());
         assert_eq!(limiter.current_bytes, 64 * 1024 * 1024);
 
         // 65 MiB (> 64 MiB cap) DENIED
-        assert!(!limiter.memory_growing(64 * 1024 * 1024, 65 * 1024 * 1024, None).unwrap());
+        assert!(!limiter
+            .memory_growing(64 * 1024 * 1024, 65 * 1024 * 1024, None)
+            .unwrap());
         // current_bytes remains at 64 MiB
         assert_eq!(limiter.current_bytes, 64 * 1024 * 1024);
     }
 }
-

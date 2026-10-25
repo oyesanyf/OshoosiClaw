@@ -2070,7 +2070,7 @@ const DEFAULT_POLICY_VOTER_STATS = {
     'SemanticIntent': { active: true, weight: 1.00, description: 'Tier-1 MRL EmbeddingGemma 2 & intra-session semantic drift scanner' },
     'Trusted-Vendor': { active: true, weight: 0.95, description: 'Authenticode SHA-256 & Windows Security Catalog (CryptCATAdmin) verification' },
     'Git-Noise-Filter': { active: true, weight: 0.90, description: 'Canonical developer Git/Cargo toolchain lineage & build noise filter' },
-    'NSRL-Veto': { active: true, weight: 1.00, description: 'NIST NSRL RDSv3 known-good cryptographic hash veto engine' },
+    'NSRL-Veto': { active: true, weight: 1.00, description: 'NSRL RDSv3 known-good cryptographic hash veto engine' },
     'OTX-C2': { active: true, weight: 0.95, description: 'AlienVault OTX & TAXII 2.1 real-time C2 infrastructure feed matcher' },
     'LLM-Reasoning': { active: true, weight: 1.00, description: 'Deep cognitive threat reasoning & multi-turn intent alignment judge' },
     'Foundation-Sec-Reasoning': { active: true, weight: 1.00, description: 'Foundation-Sec-8B security domain specialist reasoning voter' },
@@ -5852,7 +5852,6 @@ window.navigateToThreats = function() {
 };
 
 const PANEL_BUTTON_MAP = {
-    'nist-checklist-grid-main': 'toggle-nist-checklist-btn',
     'detection-engines-body': 'toggle-engines-btn',
     'mesh-effectiveness-body': 'toggle-mesh-eff-btn',
     'telemetry-chart-body': 'toggle-telemetry-btn',
@@ -5906,7 +5905,7 @@ function syncCollapsedPanelsDOM() {
         const btn = document.getElementById(btnId);
         const isCollapsed = state.collapsedPanels.has(panelId);
         if (el) {
-            const openDisplay = panelId === 'nist-checklist-grid-main' ? 'grid' : 'block';
+            const openDisplay = 'block';
             const targetDisplay = isCollapsed ? 'none' : openDisplay;
             if (el.style.display !== targetDisplay) {
                 el.style.display = targetDisplay;
@@ -5960,7 +5959,7 @@ function togglePanel(panelId, btnId, defaultOpenText = 'Collapse', defaultClosed
     if (!el) return;
 
     const isCollapsed = state.collapsedPanels.has(panelId);
-    const openDisplay = panelId === 'nist-checklist-grid-main' ? 'grid' : 'block';
+    const openDisplay = 'block';
     const resolvedOpenText = (panelId === 'mitre-overview-body' && defaultOpenText === 'Collapse')
         ? 'Collapse Overview'
         : (panelId === 'mitre-filters-body' && defaultOpenText === 'Collapse')
@@ -6008,7 +6007,7 @@ function togglePanel(panelId, btnId, defaultOpenText = 'Collapse', defaultClosed
 window.togglePanel = togglePanel;
 window.toggleDashboardPanel = togglePanel;
 
-function toggleNistChecklistPanel() { togglePanel('nist-checklist-grid-main', 'toggle-nist-checklist-btn'); }
+function toggleNistChecklistPanel() {}
 function toggleEnginesPanel() { togglePanel('detection-engines-body', 'toggle-engines-btn', 'Collapse', 'Expand (39 Engines)'); }
 function togglePolicyEnginesCard() { return toggleEnginesPanel(); }
 function toggleMeshEffectivenessPanel() { togglePanel('mesh-effectiveness-body', 'toggle-mesh-eff-btn'); }
@@ -6075,7 +6074,6 @@ window.toggleMitreTechniquesMatrixPanel = toggleMitreTechniquesMatrixPanel;
 function toggleAllDashboardPanels(collapseAll) {
     if (!state.collapsedPanels) state.collapsedPanels = new Set();
     const dashboardPanels = [
-        'nist-checklist-grid-main',
         'detection-engines-body',
         'mesh-effectiveness-body',
         'telemetry-chart-body',
@@ -12501,7 +12499,7 @@ function getFallbackHybridCveData() {
             {
                 id: 'nvd-cve-lookup',
                 name: '1. NVD CVE-Lookup (Validated PE/ELF Version Gate)',
-                source: 'NIST NVD 2.0 API + SQLite cve_cache',
+                source: 'NVD 2.0 API + SQLite cve_cache',
                 status: 'ACTIVE (ZERO-GHOST GATE)',
                 veto_rule: 'Abstains on product="unknown" or version="0.0.0"; purges stale CVE-2009-2940 ghost cache entries.'
             },

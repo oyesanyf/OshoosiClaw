@@ -106,9 +106,7 @@ pub fn canonicalize_gsb_url(raw_url: &str) -> String {
     };
 
     let unescaped_host = repeated_percent_unescape(raw_host);
-    let mut norm_host = unescaped_host
-        .trim_matches('.')
-        .to_ascii_lowercase();
+    let mut norm_host = unescaped_host.trim_matches('.').to_ascii_lowercase();
     while norm_host.contains("..") {
         norm_host = norm_host.replace("..", ".");
     }
@@ -310,12 +308,27 @@ impl GoogleSafeBrowsingEngine {
         let mut table = HashMapPrefixTable::default();
         // Official Google Safe Browsing v4 canonical test & verification vectors + known malicious phishing/malware sinks
         let built_in_vectors: &[(&str, &str)] = &[
-            ("testsafebrowsing.appspot.com/s/phishing.html", "SOCIAL_ENGINEERING"),
+            (
+                "testsafebrowsing.appspot.com/s/phishing.html",
+                "SOCIAL_ENGINEERING",
+            ),
             ("testsafebrowsing.appspot.com/s/malware.html", "MALWARE"),
-            ("testsafebrowsing.appspot.com/s/unwanted.html", "UNWANTED_SOFTWARE"),
-            ("testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/SOCIAL_ENGINEERING/URL/", "SOCIAL_ENGINEERING"),
-            ("testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/MALWARE/URL/", "MALWARE"),
-            ("testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/UNWANTED_SOFTWARE/URL/", "UNWANTED_SOFTWARE"),
+            (
+                "testsafebrowsing.appspot.com/s/unwanted.html",
+                "UNWANTED_SOFTWARE",
+            ),
+            (
+                "testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/SOCIAL_ENGINEERING/URL/",
+                "SOCIAL_ENGINEERING",
+            ),
+            (
+                "testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/MALWARE/URL/",
+                "MALWARE",
+            ),
+            (
+                "testsafebrowsing.appspot.com/apiv4/ANY_PLATFORM/UNWANTED_SOFTWARE/URL/",
+                "UNWANTED_SOFTWARE",
+            ),
             ("malware.testing.google.test/testing/malware/", "MALWARE"),
             ("ianfette.org/", "MALWARE"),
             ("paste.external.org/upload", "SOCIAL_ENGINEERING"),
@@ -328,7 +341,9 @@ impl GoogleSafeBrowsingEngine {
             table
                 .exact_expressions
                 .insert((*expr).to_string(), (*ttype).to_string());
-            table.prefix_4b_to_type.insert(prefix_4b, (*ttype).to_string());
+            table
+                .prefix_4b_to_type
+                .insert(prefix_4b, (*ttype).to_string());
         }
 
         let engine = Self {
@@ -455,7 +470,9 @@ impl GoogleSafeBrowsingEngine {
     /// and (when configured) Google Safe Browsing Lookup API v4.
     pub fn check_url(&self, raw_url: &str) -> GsbUrlVerdict {
         let mut batch = self.check_urls_batch(&[raw_url.to_string()]);
-        batch.remove(raw_url).unwrap_or_else(|| self.evaluate_local_only(raw_url))
+        batch
+            .remove(raw_url)
+            .unwrap_or_else(|| self.evaluate_local_only(raw_url))
     }
 
     fn evaluate_local_only(&self, raw_url: &str) -> GsbUrlVerdict {
@@ -608,10 +625,7 @@ impl GoogleSafeBrowsingEngine {
         canonical_urls: &[String],
     ) -> Option<Vec<(String, String)>> {
         self.api_batch_calls.fetch_add(1, Ordering::Relaxed);
-        let entries: Vec<Value> = canonical_urls
-            .iter()
-            .map(|u| json!({ "url": u }))
-            .collect();
+        let entries: Vec<Value> = canonical_urls.iter().map(|u| json!({ "url": u })).collect();
         let body = json!({
             "client": {
                 "clientId": "oshoosiclaw-edr",
@@ -704,11 +718,10 @@ mod tests {
 
     #[test]
     fn test_gsb_url_canonicalization_and_expressions() {
-        let canon = canonicalize_gsb_url("HTTP://TestSafeBrowsing.appspot.com:80/s/../s/phishing.html#frag");
-        assert_eq!(
-            canon,
-            "http://testsafebrowsing.appspot.com/s/phishing.html"
+        let canon = canonicalize_gsb_url(
+            "HTTP://TestSafeBrowsing.appspot.com:80/s/../s/phishing.html#frag",
         );
+        assert_eq!(canon, "http://testsafebrowsing.appspot.com/s/phishing.html");
         let exprs = generate_gsb_expressions(&canon);
         assert!(!exprs.is_empty());
         assert_eq!(

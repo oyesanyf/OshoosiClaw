@@ -540,7 +540,6 @@ pub fn detect_binary_masquerade_spoof(
     None
 }
 
-
 // ============================================================================
 // Protection Layer 5: Tier 1 Wasmtime Sanitization & Handle-Confined REA Inspection
 // ============================================================================

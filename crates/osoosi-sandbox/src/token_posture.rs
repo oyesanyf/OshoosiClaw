@@ -71,7 +71,11 @@ impl TokenPosture {
     pub fn dangerous_privileges_present(&self) -> Vec<String> {
         self.present_privileges
             .iter()
-            .filter(|p| DANGEROUS_PRIVILEGES.iter().any(|d| d.eq_ignore_ascii_case(p)))
+            .filter(|p| {
+                DANGEROUS_PRIVILEGES
+                    .iter()
+                    .any(|d| d.eq_ignore_ascii_case(p))
+            })
             .cloned()
             .collect()
     }
@@ -106,7 +110,10 @@ impl TokenPosture {
         }
         let dangerous = self.dangerous_privileges_present();
         if !dangerous.is_empty() {
-            reasons.push(format!("dangerous privileges present: {}", dangerous.join(", ")));
+            reasons.push(format!(
+                "dangerous privileges present: {}",
+                dangerous.join(", ")
+            ));
         }
         if reasons.is_empty() {
             Ok(())
@@ -455,7 +462,8 @@ impl SandboxJobObject {
                     self.handle,
                     sys::JOB_OBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION_CLASS,
                     &mut info as *mut _ as *mut std::ffi::c_void,
-                    std::mem::size_of::<sys::JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION>() as u32,
+                    std::mem::size_of::<sys::JOBOBJECT_BASIC_AND_IO_ACCOUNTING_INFORMATION>()
+                        as u32,
                     &mut ret_len,
                 )
             };
@@ -879,7 +887,9 @@ pub fn spawn_deelevated_in_job(
         )
     };
     if ok == 0 {
-        return Err(last_err("CreateProcessAsUserW(de-elevated, CREATE_SUSPENDED)"));
+        return Err(last_err(
+            "CreateProcessAsUserW(de-elevated, CREATE_SUSPENDED)",
+        ));
     }
 
     let terminate = |reason: String| -> OctopusSecurityError {
@@ -918,8 +928,7 @@ pub fn spawn_deelevated_in_job(
             )));
         }
         let mut in_job_flag: sys::BOOL = 0;
-        let queried =
-            unsafe { sys::IsProcessInJob(pi.hProcess, job_obj.handle, &mut in_job_flag) };
+        let queried = unsafe { sys::IsProcessInJob(pi.hProcess, job_obj.handle, &mut in_job_flag) };
         if queried == 0 || in_job_flag == 0 {
             return Err(terminate(
                 "FAIL-CLOSED: IsProcessInJob != TRUE before ResumeThread".to_string(),

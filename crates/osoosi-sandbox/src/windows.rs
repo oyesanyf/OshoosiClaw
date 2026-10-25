@@ -273,7 +273,8 @@ impl Win32AppContainerProfile {
                 )
             };
             if !derive_addr.is_null() {
-                let derive_fn: FnDeriveAppContainerSid = unsafe { std::mem::transmute(derive_addr) };
+                let derive_fn: FnDeriveAppContainerSid =
+                    unsafe { std::mem::transmute(derive_addr) };
                 let _ = unsafe { derive_fn(wide_name.as_ptr(), &mut raw_sid) };
             }
         }
@@ -385,12 +386,10 @@ pub fn create_deelevated_token(
 ) -> Result<windows::Win32::Foundation::HANDLE, String> {
     use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::Security::{
-        AllocateAndInitializeSid, CreateRestrictedToken,
-        SetTokenInformation, TokenIntegrityLevel, FreeSid,
-        SECURITY_MANDATORY_LABEL_AUTHORITY, PSID,
-        SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
-        TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
-        CREATE_RESTRICTED_TOKEN_FLAGS,
+        AllocateAndInitializeSid, CreateRestrictedToken, FreeSid, SetTokenInformation,
+        TokenIntegrityLevel, CREATE_RESTRICTED_TOKEN_FLAGS, PSID,
+        SECURITY_MANDATORY_LABEL_AUTHORITY, SID_AND_ATTRIBUTES, TOKEN_ADJUST_DEFAULT,
+        TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -404,7 +403,8 @@ pub fn create_deelevated_token(
             owned_base = false;
         } else {
             let cur_proc = GetCurrentProcess();
-            let desired = TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT;
+            let desired =
+                TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT;
             if let Err(e) = OpenProcessToken(cur_proc, desired, &mut base_token) {
                 return Err(format!("OpenProcessToken failed: {:?}", e));
             }
@@ -433,18 +433,13 @@ pub fn create_deelevated_token(
 
         let rid = match target_integrity {
             IntegrityLevel::Untrusted => 0x0000,
-            IntegrityLevel::Low => 0x1000,    // SECURITY_MANDATORY_LOW_RID
+            IntegrityLevel::Low => 0x1000, // SECURITY_MANDATORY_LOW_RID
             IntegrityLevel::Medium => 0x2000, // SECURITY_MANDATORY_MEDIUM_RID
         };
 
         let auth = SECURITY_MANDATORY_LABEL_AUTHORITY;
         let mut p_sid = PSID::default();
-        if let Err(e) = AllocateAndInitializeSid(
-            &auth,
-            1,
-            rid, 0, 0, 0, 0, 0, 0, 0,
-            &mut p_sid,
-        ) {
+        if let Err(e) = AllocateAndInitializeSid(&auth, 1, rid, 0, 0, 0, 0, 0, 0, 0, &mut p_sid) {
             let _ = CloseHandle(restricted_token);
             return Err(format!("AllocateAndInitializeSid failed: {:?}", e));
         }
@@ -467,7 +462,10 @@ pub fn create_deelevated_token(
 
         if let Err(e) = set_res {
             let _ = CloseHandle(restricted_token);
-            return Err(format!("SetTokenInformation(TokenIntegrityLevel) failed: {:?}", e));
+            return Err(format!(
+                "SetTokenInformation(TokenIntegrityLevel) failed: {:?}",
+                e
+            ));
         }
 
         Ok(restricted_token)
@@ -527,14 +525,14 @@ pub fn create_confined_job_object(
 ) -> Result<windows::Win32::Foundation::HANDLE, String> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::JobObjects::{
-        CreateJobObjectW, SetInformationJobObject,
-        JobObjectBasicUIRestrictions, JobObjectExtendedLimitInformation,
-        JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT, JOB_OBJECT_UILIMIT,
+        CreateJobObjectW, JobObjectBasicUIRestrictions, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_BASIC_UI_RESTRICTIONS,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT, JOB_OBJECT_UILIMIT,
     };
 
     unsafe {
-        let job = CreateJobObjectW(None, None).map_err(|e| format!("CreateJobObjectW failed: {:?}", e))?;
+        let job = CreateJobObjectW(None, None)
+            .map_err(|e| format!("CreateJobObjectW failed: {:?}", e))?;
 
         let mut limit_info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
         limit_info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT(policy.job_limit_flags);
@@ -547,7 +545,10 @@ pub fn create_confined_job_object(
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         ) {
             let _ = CloseHandle(job);
-            return Err(format!("SetInformationJobObject(ExtendedLimit) failed: {:?}", e));
+            return Err(format!(
+                "SetInformationJobObject(ExtendedLimit) failed: {:?}",
+                e
+            ));
         }
 
         let mut ui_restrictions: JOBOBJECT_BASIC_UI_RESTRICTIONS = std::mem::zeroed();
@@ -582,19 +583,20 @@ pub fn execute_confined_windows_process(
     policy: &WindowsConfinementPolicy,
 ) -> Result<ConfinementTransitionOutcome, String> {
     use windows::core::PWSTR;
-    use windows::Win32::Foundation::{BOOL, CloseHandle, HANDLE, HANDLE_FLAGS, SetHandleInformation};
+    use windows::Win32::Foundation::{
+        CloseHandle, SetHandleInformation, BOOL, HANDLE, HANDLE_FLAGS,
+    };
     use windows::Win32::Security::{SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES};
+    use windows::Win32::Storage::FileSystem::ReadFile;
     use windows::Win32::System::JobObjects::{AssignProcessToJobObject, IsProcessInJob};
     use windows::Win32::System::Pipes::CreatePipe;
     use windows::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
         InitializeProcThreadAttributeList, ResumeThread, TerminateProcess,
-        UpdateProcThreadAttribute, WaitForSingleObject,
-        LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION,
-        STARTUPINFOEXW, STARTUPINFOW, STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES,
-        PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+        UpdateProcThreadAttribute, WaitForSingleObject, LPPROC_THREAD_ATTRIBUTE_LIST,
+        PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+        STARTF_USESHOWWINDOW, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
     };
-    use windows::Win32::Storage::FileSystem::ReadFile;
 
     // 1. Verify invariants
     verify_windows_confinement_invariants(policy)?;
@@ -664,7 +666,12 @@ pub fn execute_confined_windows_process(
 
         // 5. Initialize PROC_THREAD_ATTRIBUTE_LIST with Security Capabilities (AppContainer SID)
         let mut attr_size = 0usize;
-        let _ = InitializeProcThreadAttributeList(LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()), 1, 0, &mut attr_size);
+        let _ = InitializeProcThreadAttributeList(
+            LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
+            1,
+            0,
+            &mut attr_size,
+        );
         let mut attr_buf = vec![0u8; attr_size];
         let p_attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_buf.as_mut_ptr() as *mut _);
         if let Err(e) = InitializeProcThreadAttributeList(p_attr_list, 1, 0, &mut attr_size) {
@@ -700,7 +707,10 @@ pub fn execute_confined_windows_process(
             let _ = CloseHandle(h_err_write);
             let _ = CloseHandle(job);
             profile.rollback();
-            return Err(format!("UpdateProcThreadAttribute(SECURITY_CAPABILITIES) failed: {:?}", e));
+            return Err(format!(
+                "UpdateProcThreadAttribute(SECURITY_CAPABILITIES) failed: {:?}",
+                e
+            ));
         }
 
         let mut si_ex: STARTUPINFOEXW = std::mem::zeroed();
@@ -802,7 +812,8 @@ pub fn execute_confined_windows_process(
 
         // 10. Wait for process completion (10 seconds timeout) & Read Output
         let wait_res = WaitForSingleObject(pi.hProcess, 10_000);
-        if wait_res.0 == 0x00000102 { // WAIT_TIMEOUT
+        if wait_res.0 == 0x00000102 {
+            // WAIT_TIMEOUT
             let _ = TerminateProcess(pi.hProcess, 137);
         }
 
@@ -813,12 +824,16 @@ pub fn execute_confined_windows_process(
         let mut stdout_buf = Vec::new();
         let mut chunk = [0u8; 4096];
         let mut bytes_read = 0u32;
-        while ReadFile(h_out_read, Some(&mut chunk), Some(&mut bytes_read), None).is_ok() && bytes_read > 0 {
+        while ReadFile(h_out_read, Some(&mut chunk), Some(&mut bytes_read), None).is_ok()
+            && bytes_read > 0
+        {
             stdout_buf.extend_from_slice(&chunk[..bytes_read as usize]);
         }
 
         let mut stderr_buf = Vec::new();
-        while ReadFile(h_err_read, Some(&mut chunk), Some(&mut bytes_read), None).is_ok() && bytes_read > 0 {
+        while ReadFile(h_err_read, Some(&mut chunk), Some(&mut bytes_read), None).is_ok()
+            && bytes_read > 0
+        {
             stderr_buf.extend_from_slice(&chunk[..bytes_read as usize]);
         }
 
@@ -872,4 +887,3 @@ pub fn execute_confined_windows_process(
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
     })
 }
-

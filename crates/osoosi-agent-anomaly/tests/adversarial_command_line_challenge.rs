@@ -26,12 +26,10 @@ const STAGE2_REFLECTIVE_B64: &str =
     "$b=[Convert]::FromBase64String('SUVYIChHZXQtRGF0ZSk='); iex ([Text.Encoding]::Unicode.GetString($b))";
 
 /// Stage 2 SAM extraction payload
-const STAGE2_SAM_EXTRACTION: &str =
-    "reg save HKLM\\SAM C:\\Windows\\Temp\\sam.hive /y";
+const STAGE2_SAM_EXTRACTION: &str = "reg save HKLM\\SAM C:\\Windows\\Temp\\sam.hive /y";
 
 /// Stage 2 Shadow copy deletion
-const STAGE2_VSS_PURGE: &str =
-    "vssadmin delete shadows /all /quiet";
+const STAGE2_VSS_PURGE: &str = "vssadmin delete shadows /all /quiet";
 
 // ============================================================================
 // 1. Caret Insertion & Deobfuscation Evasion
@@ -280,11 +278,20 @@ fn test_adversarial_malformed_base64_fails_closed() {
         ("AA==AAAA", "invalid Base64 padding placement"),
         // Odd UTF-16LE byte counts (Base64 is valid RFC 4648, but decodes to odd byte counts)
         // "AA==" decodes to 1 byte: 0x00
-        ("AA==", "UTF-16LE payload byte length 1 must be non-empty and even"),
+        (
+            "AA==",
+            "UTF-16LE payload byte length 1 must be non-empty and even",
+        ),
         // "AQID" decodes to 3 bytes: [1, 2, 3]
-        ("AQID", "UTF-16LE payload byte length 3 must be non-empty and even"),
+        (
+            "AQID",
+            "UTF-16LE payload byte length 3 must be non-empty and even",
+        ),
         // "AQIDBAU=" decodes to 5 bytes: [1, 2, 3, 4, 5]
-        ("AQIDBAU=", "UTF-16LE payload byte length 5 must be non-empty and even"),
+        (
+            "AQIDBAU=",
+            "UTF-16LE payload byte length 5 must be non-empty and even",
+        ),
         // Empty string
         ("", "empty Base64 payload"),
     ];
@@ -549,7 +556,8 @@ fn test_benign_invocations_remain_clean() {
 #[test]
 fn test_low_level_parser_oracles() {
     // 1. CommandLineToArgvW tokenizer oracle
-    let tokens = tokenize_windows_argv(r#"cmd.exe /c "powershell.exe -enc AAAA" "arg with spaces""#);
+    let tokens =
+        tokenize_windows_argv(r#"cmd.exe /c "powershell.exe -enc AAAA" "arg with spaces""#);
     assert_eq!(
         tokens,
         vec![

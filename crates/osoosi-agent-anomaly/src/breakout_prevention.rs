@@ -464,6 +464,7 @@ pub fn run_concurrent_crown_jewel_read_write_race_proof(
             process_instance_key: proc_id.instance_key(),
             authority_level: AuthorityLevel::L2AuthorizedUserObjective,
             approved_capabilities: vec!["ExternalWrite".to_string()],
+            authenticated_role: None,
         });
 
         let crown_jewel_read_started = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -709,6 +710,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         process_instance_key: s3_proc.instance_key(),
         authority_level: AuthorityLevel::L2AuthorizedUserObjective,
         approved_capabilities: vec!["ExternalWrite".to_string()],
+        authenticated_role: None,
     };
 
     // Exhaust the 2-request budget with tiny permitted status pings, then attempt 3rd covert-choice packet
@@ -779,6 +781,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         process_instance_key: s4_proc.instance_key(),
         authority_level: AuthorityLevel::L2AuthorizedUserObjective,
         approved_capabilities: vec!["ExternalWrite".to_string()],
+        authenticated_role: None,
     };
 
     // Step 1: Agent reads Crown-Jewel source code (`crates/edr-phaselock/src/lib.rs`)
@@ -908,6 +911,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         process_instance_key: recycled_pid_proc.instance_key(),
         authority_level: AuthorityLevel::L2AuthorizedUserObjective,
         approved_capabilities: vec!["ExternalWrite".to_string()],
+        authenticated_role: None,
     };
     let s5_outcome = auth.execute_guarded_external_write(
         &s5_principal_b,
@@ -969,6 +973,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
             process_instance_key: "proc:4600:100060:agent:sess-scenario-6".to_string(),
             authority_level: AuthorityLevel::L2AuthorizedUserObjective,
             approved_capabilities: Vec::new(),
+            authenticated_role: None,
         };
         let res = CedarResource {
             resource_id: target.to_string(),
@@ -1662,6 +1667,7 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
         process_instance_key: clean_git_proc.instance_key(),
         authority_level: AuthorityLevel::L2AuthorizedUserObjective,
         approved_capabilities: vec!["ExternalWrite".to_string()],
+        authenticated_role: None,
     };
     let git_outcome = auth.execute_guarded_external_write(
         &clean_git_princ,

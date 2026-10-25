@@ -268,52 +268,7 @@
                 </div>
             </header>
 
-                <!-- NIST Article & Standards Compliance Documentation Banner -->
-                <div class="card glass shadow-glow mb-4" id="nist-compliance-top-card" style="padding: 16px 20px; border-left: 4px solid #10b981; margin-bottom: 18px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
-                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                            <span style="font-size: 16px; font-weight: 800; color: #f8fafc;">🏛️ NIST Article &amp; Standards Alignment Checklist</span>
-                            <span class="badge blue" style="font-size: 10.5px; padding: 3px 8px;">NIST AI 100-2e2023/2025 &bull; AI RMF 1.0 &bull; SP 800-207 &bull; SP 800-53 &bull; FIPS 203/204</span>
-                        </div>
-                        <button type="button" id="toggle-nist-checklist-btn" class="btn-secondary" onclick="toggleNistChecklistPanel()" style="font-size: 11.5px; padding: 4px 10px; cursor: pointer;">Collapse</button>
-                    </div>
-                    <div id="nist-checklist-grid-main" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 10px; font-size: 12.5px; color: #e2e8f0;">
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST AI 100-2e2023 / 2025 (Adversarial ML Taxonomy):</strong> Autonomous 34-suite red-teaming harness (2,250+ probes across MITRE ATLAS, PyRIT, Garak, Inspect AI, DeepEval, Promptfoo).</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">Generator-Discriminator Co-Evolution:</strong> SkyRL training loop automatically persists newly evolved ATLAS/PyRIT/Garak prompt mutations into versioned <code>tests/corpus/adversarial_regression_corpus.json</code> after every cycle.</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST AI RMF 1.0 &amp; AI 600-1 (GOVERN / MAP / MEASURE / MANAGE):</strong> OWASP Agentic Top 10 (ASI01&ndash;ASI10), EmbeddingGemma 2 MRL drift, and CanaryCage honey-pipe / Job Object sandboxing.</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST SP 800-207 (Zero Trust Architecture):</strong> Continuous per-invocation Cedar PARC &amp; Dogwood temporal authorization (MFOTL) with fail-closed multi-ring containment.</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST SP 800-53 Rev. 5 &amp; SP 800-88 (Two-Tier DLP &amp; Volatile Scrubbing):</strong> Dedicated <code>#dlp</code> engine (&lt;50&micro;s O(N) scan + 4 KB Crown-Jewel Merkle chunks + Presidio/GLiNER <code>&lt;ZK_PII&gt;</code> proofs, 0B exfil).</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST FIPS 203 (ML-KEM-768) &amp; FIPS 204 (ML-DSA-65):</strong> Hybrid post-quantum key encapsulation and lattice signatures across P2P mesh, Merkle manifests, and ZK-BFT proofs.</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST SP 800-193 &amp; NSRL RDS (TPM 2.0 Silicon Root &amp; REA Vetting):</strong> TPM 2.0 handle <code>0x81010002</code> BLAKE3 Merkle signing + NV counter <code>0x01800001</code> &amp; autonomous REA catalog vetting.</span>
-                        </label>
-                        <label style="display: flex; align-items: flex-start; gap: 8px; background: rgba(16, 185, 129, 0.07); border: 1px solid rgba(16, 185, 129, 0.25); padding: 9px 12px; border-radius: 8px; cursor: pointer;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 15px; height: 15px; margin-top: 2px; flex-shrink: 0;">
-                            <span><strong style="color: #10b981;">NIST SP 800-218 (SSDF) &amp; SLSA v1.0 Provenance:</strong> Authenticode SHA-256 + RFC 3161 signing, DSSE in-toto attestations, and rootless read-only container confinement.</span>
-                        </label>
-                    </div>
-                </div>
-
-            <div id="dashboard-view" class="view-content active">
+                <div id="dashboard-view" class="view-content active">
                 <!-- Global Dashboard Collapse/Expand Toolbar -->
                 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
                     <div style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
@@ -450,7 +405,7 @@
                                 <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px; cursor: pointer;" onclick="toggleMeshEffectivenessPanel()">
                                     <span>📐 Falsifiable Non-Stationary Mesh Defense Effectiveness (<span style="font-family: monospace; color: #38bdf8;">E(N, t)</span>)</span>
                                 </h3>
-                                <span class="badge blue" style="font-size: 11px;">NIST AI 100-2e2025</span>
+                                <span class="badge blue" style="font-size: 11px;">Adversarial ML Taxonomy</span>
                                 <span class="badge green" style="font-size: 11px;">Vassilev Equilibrium Verified</span>
                             </div>
                             <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
@@ -650,10 +605,10 @@
                         </table>
                     </div>
 
-                    <!-- NIST / Vassilev Alignment Proof Table -->
+                    <!-- Adversarial Robustness / Vassilev Alignment Proof Table -->
                     <div style="border-top: 1px solid var(--glass-border); padding-top: 14px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 12.5px; font-weight: 700; color: #f8fafc;">🏛️ Falsifiable Research Alignment: NIST AI 100-2e2025 &amp; Vassilev Equilibrium</span>
+                            <span style="font-size: 12.5px; font-weight: 700; color: #f8fafc;">🏛️ Falsifiable Research Alignment: Adversarial Robustness &amp; Vassilev Equilibrium</span>
                             <span class="badge blue" style="font-size: 10px;">Deterministic OS Floor + Polynomial Failure Decay</span>
                         </div>
                         <div style="overflow-x: auto;">
@@ -677,7 +632,7 @@
                                         <td style="padding: 6px 8px; color: #10b981;"><strong>Logarithmic Survival Limit:</strong> τ<sub>prop</sub> = τ<sub>base</sub> + τ<sub>hop</sub>log<sub>k</sub>N. By L'Hôpital (ln N / N → 0), lim S<sub>fleet</sub> = 100% (99.9998% at 10⁶).</td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">NIST AI 100-2e2025: Non-Stationary Evasion</td>
+                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Adversarial Taxonomy: Non-Stationary Evasion</td>
                                         <td style="padding: 6px 8px; color: var(--text-muted);">Isolated endpoints learn at O(1/√t), taking months or years to bound attacker action space d.</td>
                                         <td style="padding: 6px 8px; color: #f59e0b;"><strong>√N Collective Acceleration with Drift Ceiling (δ<sub>poly</sub> = 0.02):</strong> BFT sharing compresses learning from 9.40% (N=1) to 97.79% (N=10⁶) in 1 day.</td>
                                     </tr>
@@ -886,7 +841,7 @@
                                 <h3 style="margin: 0; font-size: 17px; font-weight: 700; color: #f8fafc; display: flex; align-items: center; gap: 8px;">
                                     <span>📐 Falsifiable Non-Stationary Mesh Defense Effectiveness (<span style="font-family: monospace; color: #38bdf8;">E(N, t)</span>)</span>
                                 </h3>
-                                <span class="badge blue" style="font-size: 11px;">NIST AI 100-2e2025</span>
+                                <span class="badge blue" style="font-size: 11px;">Adversarial ML Taxonomy</span>
                                 <span class="badge green" style="font-size: 11px;">Vassilev Equilibrium Verified</span>
                             </div>
                             <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
@@ -1084,10 +1039,10 @@
                         </table>
                     </div>
 
-                    <!-- NIST / Vassilev Alignment Proof Table -->
+                    <!-- Adversarial Robustness / Vassilev Alignment Proof Table -->
                     <div style="border-top: 1px solid var(--glass-border); padding-top: 14px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <span style="font-size: 12.5px; font-weight: 700; color: #f8fafc;">🏛️ Falsifiable Research Alignment: NIST AI 100-2e2025 &amp; Vassilev Equilibrium</span>
+                            <span style="font-size: 12.5px; font-weight: 700; color: #f8fafc;">🏛️ Falsifiable Research Alignment: Adversarial Robustness &amp; Vassilev Equilibrium</span>
                             <span class="badge blue" style="font-size: 10px;">Deterministic OS Floor + Polynomial Failure Decay</span>
                         </div>
                         <div style="overflow-x: auto;">
@@ -1111,7 +1066,7 @@
                                         <td style="padding: 6px 8px; color: #10b981;"><strong>Logarithmic Survival Limit:</strong> τ<sub>prop</sub> = τ<sub>base</sub> + τ<sub>hop</sub>log<sub>k</sub>N. By L'Hôpital (ln N / N → 0), lim S<sub>fleet</sub> = 100% (99.9998% at 10⁶).</td>
                                     </tr>
                                     <tr style="border-bottom: 1px solid var(--glass-border);">
-                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">NIST AI 100-2e2025: Non-Stationary Evasion</td>
+                                        <td style="padding: 6px 8px; font-weight: 600; color: #cbd5e1;">Adversarial Taxonomy: Non-Stationary Evasion</td>
                                         <td style="padding: 6px 8px; color: var(--text-muted);">Isolated endpoints learn at O(1/√t), taking months or years to bound attacker action space d.</td>
                                         <td style="padding: 6px 8px; color: #f59e0b;"><strong>√N Collective Acceleration with Drift Ceiling (δ<sub>poly</sub> = 0.02):</strong> BFT sharing compresses learning from 9.40% (N=1) to 97.79% (N=10⁶) in 1 day.</td>
                                     </tr>
@@ -3870,30 +3825,6 @@
             </div>
                     <!-- Adversarial & Defense Test Execution Suite View -->
             <div id="adversarial-tests-view" class="view-content">
-                <!-- NIST Article & Generator-Discriminator Co-Evolution Documentation Banner -->
-                <div class="card glass shadow-glow mb-4" id="nist-compliance-adv-card" style="padding: 16px 20px; border-left: 4px solid #38bdf8; margin-bottom: 18px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 10px;">
-                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                            <span style="font-size: 15.5px; font-weight: 800; color: #f8fafc;">🏛️ NIST Article Alignment &amp; Closed-Loop Generator-Discriminator Co-Evolution</span>
-                            <span class="badge green" style="font-size: 11px; padding: 3px 9px;">SELF-EXPANDING CORPUS ACTIVE</span>
-                        </div>
-                        <span id="adv-corpus-epoch-badge" class="badge blue" style="font-size: 11px; padding: 3px 9px; font-family: monospace;">Corpus: tests/corpus/adversarial_regression_corpus.json</span>
-                    </div>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 8px; font-size: 12px; color: #e2e8f0;">
-                        <label style="display: flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 8px;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 14px; height: 14px;">
-                            <span><strong>NIST AI 100-2e2023/2025:</strong> 34-Suite Autonomous Red-Teaming (MITRE ATLAS, PyRIT, Garak, Inspect AI)</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 8px;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 14px; height: 14px;">
-                            <span><strong>Generator-Discriminator Evolution:</strong> SkyRL persists new prompt mutations to disk after every cycle</span>
-                        </label>
-                        <label style="display: flex; align-items: center; gap: 8px; background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.25); padding: 8px 12px; border-radius: 8px;">
-                            <input type="checkbox" checked onclick="return false;" style="accent-color: #10b981; width: 14px; height: 14px;">
-                            <span><strong>NIST SP 800-207 &amp; SP 800-53:</strong> Cedar PARC Zero-Trust + Two-Tier DLP Zero-PII ZK-BFT Verification</span>
-                        </label>
-                    </div>
-                </div>
                 <!-- Top 7-Card KPI Row -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 14px; margin-bottom: 20px;">
                     <div class="card glass shadow-glow" style="padding: 16px; text-align: center;">
@@ -4011,7 +3942,7 @@
                             <button type="button" id="adv-btn-run-all" onclick="runAdversarialSuite('all')" style="background: #10b981; color: #ffffff; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);">⚡ Run ALL (2,250+ Tests Combined)</button>
                             <a href="/api/download-run-log" download="adversarial_execution.log" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none; display: inline-flex; align-items: center;">📥 Download Run Log</a>
                             <a href="/api/download-test-json" download="adversarial_audit.json" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none; display: inline-flex; align-items: center;">📥 Export JSON</a>
-                            <a href="/api/tarpit-stats?format=csv" download="attacker_burn_vs_defender_cost.csv" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none;" title="Export NIST Economic Asymmetry & Metric Convergence CSV">📊 Export Cost Ratio (CSV)</a>
+                            <a href="/api/tarpit-stats?format=csv" download="attacker_burn_vs_defender_cost.csv" class="btn-secondary" style="padding: 8px 14px; font-size: 12.5px; text-decoration: none;" title="Export Economic Asymmetry & Metric Convergence CSV">📊 Export Cost Ratio (CSV)</a>
                             <button type="button" class="btn-secondary" onclick="exportAdversarialTerminalOutput()" style="padding: 8px 14px; font-size: 12.5px;">📋 Export Terminal</button>
                         </div>
                     </div>
@@ -4340,6 +4271,132 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- DLP Autonomous Enforcement & Operating Mode Selector (3 Preset Cards + Fine-Tune Gates) -->
+                <div class="card glass shadow-glow mb-4" id="dlp-autonomy-settings-card" style="margin-bottom: 20px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <h3>🛡️ DLP Autonomous Enforcement &amp; Operating Mode</h3>
+                            <span class="badge green" id="dlp-autonomy-current-badge">MODE: ACTIVE ENFORCEMENT</span>
+                        </div>
+                    </div>
+                    <div class="card-body" id="dlp-autonomy-settings-body">
+                        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;">
+                            Select an operational posture or fine-tune confidence gates for automated DLP response actions (Tier-1/Tier-2 payload blocking, ZK-BFT PII scrubbing, Crown-Jewel quarantine, and WFP domain containment).
+                        </p>
+
+                        <!-- Preset Modes Selector Grid (3 columns) -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                            <!-- Audit / Monitor Mode Card -->
+                            <div class="card glass" id="dlp-preset-audit-card" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h4 style="margin: 0; font-size: 15px; font-weight: 600;">🛡️ Audit / Monitor Mode</h4>
+                                        <span class="badge blue" style="font-size: 11px;">SAFE / NON-INTRUSIVE</span>
+                                    </div>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+                                        Outbound HTTP/TLS payloads, browser uploads, and Crown-Jewel chunks are inspected, logged, and alerted. Zero automated payload blocking or WFP host quarantine. Actions require analyst sign-off.
+                                    </p>
+                                    <div style="font-size: 12px; font-weight: 500; color: var(--accent-blue); margin-bottom: 14px;">
+                                        Action Threshold: 0.80 · Quarantine: OFF
+                                    </div>
+                                </div>
+                                <button class="btn-text" id="btn-dlp-select-audit" onclick="applyDlpAutonomyPreset('audit')" style="width: 100%; padding: 8px; border: 1px solid var(--accent-blue); border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">Activate Audit Mode</button>
+                            </div>
+
+                            <!-- Active Enforcement Card -->
+                            <div class="card glass" id="dlp-preset-active-card" style="padding: 16px; border-radius: 12px; border: 2px solid var(--accent-green); box-shadow: 0 0 12px rgba(16, 185, 129, 0.25); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h4 style="margin: 0; font-size: 15px; font-weight: 600;">⚡ Active Enforcement</h4>
+                                        <span class="badge green" style="font-size: 11px;">ARMED / AUTONOMOUS</span>
+                                    </div>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+                                        High-speed autonomous DLP containment. Confirmed PII/PHI, credentials, and 4 KB Crown-Jewel Merkle matches are automatically scrubbed (&lt;ZK_PII:TYPE:HASH8&gt;), blocked, and isolated via WFP.
+                                    </p>
+                                    <div style="font-size: 12px; font-weight: 500; color: var(--accent-green); margin-bottom: 14px;">
+                                        Action Threshold: 0.50 · Quarantine: ON
+                                    </div>
+                                </div>
+                                <button class="btn-text" id="btn-dlp-select-active" onclick="applyDlpAutonomyPreset('active')" style="width: 100%; padding: 8px; border: 1px solid var(--accent-green); border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; background: rgba(16, 185, 129, 0.15);">Activate Active Mode</button>
+                            </div>
+
+                            <!-- Strict Lockdown Card -->
+                            <div class="card glass" id="dlp-preset-lockdown-card" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h4 style="margin: 0; font-size: 15px; font-weight: 600;">🚨 Strict Lockdown</h4>
+                                        <span class="badge red" style="font-size: 11px;">INCIDENT RESPONSE</span>
+                                    </div>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+                                        Aggressive zero-trust exfiltration lockdown for active data breach response. Low-threshold sensitivity potential (Φ), high-entropy streams, or Crown-Jewel proximity trigger immediate block and quarantine.
+                                    </p>
+                                    <div style="font-size: 12px; font-weight: 500; color: #ef4444; margin-bottom: 14px;">
+                                        Action Threshold: 0.35 · Quarantine: ON
+                                    </div>
+                                </div>
+                                <button class="btn-text" id="btn-dlp-select-lockdown" onclick="applyDlpAutonomyPreset('lockdown')" style="width: 100%; padding: 8px; border: 1px solid #ef4444; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">Activate Lockdown</button>
+                            </div>
+                        </div>
+
+                        <!-- Fine-Tune DLP Thresholds & Gates Panel -->
+                        <div class="glass" style="padding: 18px; border-radius: 12px; border: 1px solid var(--glass-border); background: rgba(13, 17, 23, 0.4);">
+                            <h4 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="sliders" style="width: 16px; height: 16px; color: var(--accent-blue);"></i> Fine-Tune DLP Defense Thresholds &amp; Gates
+                            </h4>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 16px;">
+                                <!-- Toggle 1: Auto-Quarantine -->
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input type="checkbox" id="dlp-auto-quarantine" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-blue);">
+                                    <label for="dlp-auto-quarantine" style="font-size: 13px; font-weight: 500; cursor: pointer;">Auto-Quarantine Exfiltrated Crown-Jewel &amp; Sensitive Files</label>
+                                </div>
+
+                                <!-- Toggle 2: Auto-ZK-Scrub -->
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input type="checkbox" id="dlp-auto-zk-scrub" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-blue);">
+                                    <label for="dlp-auto-zk-scrub" style="font-size: 13px; font-weight: 500; cursor: pointer;">Auto-Redact PII/PHI Spans with ZK-BFT Proofs (&lt;ZK_PII:TYPE:HASH8&gt;)</label>
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                                <!-- Slider 1: DLP Action Threshold -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                        <label for="dlp-action-slider" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">DLP Active Action Threshold (Block / WFP Isolation):</label>
+                                        <span id="dlp-action-val" style="font-size: 13px; font-weight: 700; color: var(--accent-green);">0.50</span>
+                                    </div>
+                                    <input type="range" id="dlp-action-slider" min="0.10" max="1.00" step="0.05" value="0.50" style="width: 100%; cursor: pointer;" oninput="document.getElementById('dlp-action-val').innerText = parseFloat(this.value).toFixed(2)">
+                                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px;">
+                                        <span>0.10 (Aggressive)</span>
+                                        <span>0.50 (Balanced)</span>
+                                        <span>1.00 (Strict Audit)</span>
+                                    </div>
+                                </div>
+
+                                <!-- Slider 2: Crown-Jewel Quarantine Threshold -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                        <label for="dlp-quarantine-slider" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">Crown-Jewel / Merkle Quarantine Confidence Threshold:</label>
+                                        <span id="dlp-quarantine-val" style="font-size: 13px; font-weight: 700; color: var(--accent-blue);">0.80</span>
+                                    </div>
+                                    <input type="range" id="dlp-quarantine-slider" min="0.10" max="1.00" step="0.05" value="0.80" style="width: 100%; cursor: pointer;" oninput="document.getElementById('dlp-quarantine-val').innerText = parseFloat(this.value).toFixed(2)">
+                                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px;">
+                                        <span>0.10 (Immediate)</span>
+                                        <span>0.80 (Standard)</span>
+                                        <span>0.95 (High Certainty)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                                <button class="btn-text" id="btn-save-dlp-autonomy" onclick="saveCustomDlpAutonomySettings()" style="background:var(--accent-green); color:var(--bg-dark); font-weight:600; padding:8px 20px; border-radius:8px; cursor: pointer;">Save DLP Policy Changes</button>
+                                <span id="dlp-autonomy-save-status" style="font-size: 12px; font-weight: 500;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
 
                 <!-- 6 KPI Summary Cards Row -->
                 <div style="display: grid; grid-template-columns: repeat(6, minmax(145px, 1fr)); gap: 14px; margin-bottom: 20px;">

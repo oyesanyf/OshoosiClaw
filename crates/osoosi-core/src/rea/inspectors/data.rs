@@ -1028,7 +1028,6 @@ pub async fn run_external_rea_cli(
     }
 }
 
-
 /// Extracts plaintext from Office Open XML (`.xlsx`, `.docx`, `.pptx`) or `.zip` containers
 /// by scanning `PK\x03\x04` local file headers and decompressing `xl/sharedStrings.xml`,
 /// `word/document.xml`, `xl/worksheets/*.xml`, or embedded `.csv`/`.txt`/`.json` streams.
@@ -1109,11 +1108,7 @@ pub fn extract_office_openxml_text(bytes: &[u8], max_out_bytes: usize) -> Option
                         } else if b == b'>' {
                             in_tag = false;
                         } else if !in_tag {
-                            let ch = if b.is_ascii_graphic() {
-                                b as char
-                            } else {
-                                ' '
-                            };
+                            let ch = if b.is_ascii_graphic() { b as char } else { ' ' };
                             if ch == ' ' {
                                 if !last_was_space {
                                     extracted.push(' ');
@@ -1152,7 +1147,6 @@ pub fn extract_office_openxml_text(bytes: &[u8], max_out_bytes: usize) -> Option
     }
 }
 
-
 /// Uses Google Magika ONNX content-type identification (`magika::Session`) combined with structural
 /// header verification to classify ANY file (PDF, Word `.docx`/`.doc`, Excel `.xlsx`/`.xls`, PowerPoint `.pptx`,
 /// XML, HTML, CSV, JSON, Markdown, RTF, or extensionless files) and extract its inspectable plaintext.
@@ -1176,7 +1170,8 @@ pub fn identify_and_extract_document_text(
 
     // Refine Magika label with structural magic headers when needed
     if bytes.starts_with(b"PK\x03\x04") {
-        let header_preview = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_ascii_lowercase();
+        let header_preview =
+            String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).to_ascii_lowercase();
         if header_preview.contains("xl/") {
             magika_label = "xlsx".to_string();
         } else if header_preview.contains("word/") {
@@ -1217,7 +1212,10 @@ pub fn identify_and_extract_document_text(
 
     // 1. Office Open XML (.xlsx, .docx, .pptx) or ZIP container
     if bytes.starts_with(b"PK\x03\x04")
-        || matches!(magika_label.as_str(), "xlsx" | "docx" | "pptx" | "odt" | "ods" | "zip")
+        || matches!(
+            magika_label.as_str(),
+            "xlsx" | "docx" | "pptx" | "odt" | "ods" | "zip"
+        )
     {
         if let Some(text) = extract_office_openxml_text(bytes, max_out_bytes) {
             return Some((magika_label, text));

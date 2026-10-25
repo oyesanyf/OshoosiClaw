@@ -427,7 +427,8 @@ impl DlpContainmentEngine {
                 let has_active_block = st.registry.values().any(|o| {
                     !o.restored
                         && o.decision == ContainmentDecision::DestinationBlocked
-                        && o.destination_host.eq_ignore_ascii_case(&ctx.destination_host)
+                        && o.destination_host
+                            .eq_ignore_ascii_case(&ctx.destination_host)
                 });
                 st.debounce.contains_key(&debounce_key) && has_active_block
             } else {
@@ -707,7 +708,9 @@ impl DlpContainmentEngine {
                 if !raw_host.is_empty() && (k_low.ends_with(&raw_suffix) || k_low == raw_host) {
                     return false;
                 }
-                if !parsed_host.is_empty() && (k_low.ends_with(&parsed_suffix) || k_low == parsed_host) {
+                if !parsed_host.is_empty()
+                    && (k_low.ends_with(&parsed_suffix) || k_low == parsed_host)
+                {
                     return false;
                 }
                 if let Some(p) = outcome.pid {
@@ -1158,7 +1161,9 @@ impl ContainmentPlatform for SystemContainmentPlatform {
                 r"C:\Program Files (x86)\Mozilla Firefox\firefox.exe",
                 r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
             ] {
-                if candidate.to_ascii_lowercase().ends_with(&lower) && Path::new(candidate).is_file() {
+                if candidate.to_ascii_lowercase().ends_with(&lower)
+                    && Path::new(candidate).is_file()
+                {
                     return ResolvedActor {
                         pid: None,
                         image_path: Some(candidate.to_string()),
@@ -1392,7 +1397,8 @@ pub fn production_voter_ballots(
     );
     let confirmed_dlp_exfil = event.redactx_confirmed_containment
         && event.openjev_enforcement_agreed
-        && (!event.redactx_validated_categories.is_empty() || !event.detected_categories.is_empty());
+        && (!event.redactx_validated_categories.is_empty()
+            || !event.detected_categories.is_empty());
     ballots.push(if confirmed_dlp_exfil {
         VoterBallot {
             voter: "REA-Voter".to_string(),
@@ -2077,10 +2083,8 @@ mod tests {
         assert!(engine.has_active_browser_block_for_host("dlptest.com"));
 
         // 2. Subsequent verified-clean upload (e.g. covergeneral.docx) restores the destination block
-        let restored = engine.restore_browser_destination_blocks_for_host(
-            "dlptest.com",
-            "verified-clean-upload",
-        );
+        let restored = engine
+            .restore_browser_destination_blocks_for_host("dlptest.com", "verified-clean-upload");
         assert_eq!(restored.len(), 1);
         assert!(restored[0].restored);
         assert!(!engine.has_active_browser_block_for_host("dlptest.com"));
@@ -2127,7 +2131,9 @@ mod tests {
         assert_eq!(second.decision, ContainmentDecision::Debounced);
 
         // 3. Direct restore by operator clears debounce for host and pid
-        let restored = engine.restore(&first.containment_id, "secops_admin").expect("restore");
+        let restored = engine
+            .restore(&first.containment_id, "secops_admin")
+            .expect("restore");
         assert!(restored.restored);
 
         // 4. Third submission immediately triggers DestinationBlocked again
@@ -2161,8 +2167,7 @@ mod tests {
         // Inject a stale debounce entry directly into st.debounce without any active block in st.registry
         let debounce_key = format!(
             "dest:{}|{}",
-            r"c:\program files\google\chrome\application\chrome.exe",
-            "dlptest.com"
+            r"c:\program files\google\chrome\application\chrome.exe", "dlptest.com"
         );
         {
             let mut st = engine.state.lock();
@@ -2176,4 +2181,3 @@ mod tests {
         assert!(engine.has_active_browser_block_for_host("dlptest.com"));
     }
 }
-

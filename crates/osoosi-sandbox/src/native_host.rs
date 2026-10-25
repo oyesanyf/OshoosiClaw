@@ -78,7 +78,6 @@ impl NativeHost {
         self.url_reputation_checker = Some(checker);
     }
 
-
     /// Process a host call from the WASM brain.
     pub async fn dispatch(&self, envelope: HostCallEnvelope) -> HostResponseEnvelope {
         let start = std::time::Instant::now();
@@ -257,7 +256,8 @@ impl NativeHost {
             {
                 warn!("Host: GSB canonical test threat URL detected: '{}'", url);
                 return HostResponse::Error {
-                    message: "Google Safe Browsing blocked threat URL: GSB:MALWARE_OR_PHISHING".to_string(),
+                    message: "Google Safe Browsing blocked threat URL: GSB:MALWARE_OR_PHISHING"
+                        .to_string(),
                 };
             }
         }
@@ -401,7 +401,7 @@ impl NativeHost {
         let client = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .redirect(reqwest::redirect::Policy::none()) // Prevent open redirect SSRF bypass
-            .resolve(&host, pinned_socket_addr)           // Hard DNS Pinning
+            .resolve(&host, pinned_socket_addr) // Hard DNS Pinning
             .build()
         {
             Ok(c) => c,
@@ -470,7 +470,12 @@ impl NativeHost {
             let profile_name = format!("osoosi_cmd_{}", envelope.call_id.replace('-', ""));
             let policy = crate::windows::WindowsConfinementPolicy::default();
 
-            match crate::windows::execute_confined_windows_process(program, &args_refs, &profile_name, &policy) {
+            match crate::windows::execute_confined_windows_process(
+                program,
+                &args_refs,
+                &profile_name,
+                &policy,
+            ) {
                 Ok(outcome) => {
                     if outcome.resume_thread_allowed && !outcome.terminated_suspended_process {
                         HostResponse::CommandOutput {

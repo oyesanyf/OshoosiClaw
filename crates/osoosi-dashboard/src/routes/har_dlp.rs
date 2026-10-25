@@ -199,7 +199,12 @@ pub fn get_user_upload_staging_dirs() -> Vec<PathBuf> {
                             continue;
                         }
                         let candidate_subdirs = [
-                            u_path.join("AppData").join("Roaming").join("Microsoft").join("Windows").join("Recent"),
+                            u_path
+                                .join("AppData")
+                                .join("Roaming")
+                                .join("Microsoft")
+                                .join("Windows")
+                                .join("Recent"),
                             u_path.join("AppData").join("Local").join("Temp"),
                             u_path.join("exfil"),
                             u_path.join("Downloads"),
@@ -217,8 +222,7 @@ pub fn get_user_upload_staging_dirs() -> Vec<PathBuf> {
                     }
                 }
             }
-            if let Some(home) =
-                std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+            if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
             {
                 let home_exfil = PathBuf::from(&home).join("exfil");
                 if home_exfil.is_dir() && !dirs.contains(&home_exfil) {
@@ -272,7 +276,11 @@ pub fn get_candidate_staging_dirs() -> Vec<PathBuf> {
             dirs.push(PathBuf::from("."));
             dirs.push(PathBuf::from("tests"));
             dirs.push(PathBuf::from("tests").join("corpus"));
-            dirs.push(PathBuf::from("crates").join("osoosi-dashboard").join("tests"));
+            dirs.push(
+                PathBuf::from("crates")
+                    .join("osoosi-dashboard")
+                    .join("tests"),
+            );
             dirs.dedup();
             dirs
         })
@@ -322,8 +330,11 @@ pub fn read_and_classify_uploaded_file(
         .read_to_end(&mut buf)
         .ok()?;
 
-    let (magika_label, content) =
-        osoosi_core::rea::identify_and_extract_document_text(&buf, Some(&filename), max_text_bytes)?;
+    let (magika_label, content) = osoosi_core::rea::identify_and_extract_document_text(
+        &buf,
+        Some(&filename),
+        max_text_bytes,
+    )?;
 
     let resolved = ResolvedUploadedFile {
         resolved_path: path.to_path_buf(),
@@ -460,9 +471,7 @@ pub fn resolve_windows_lnk_target(lnk_path: &Path) -> Option<PathBuf> {
                 && (buf[i + 2] == b'\\' || buf[i + 2] == b'/')
             {
                 if let Some(cand_str) = read_cstr(i) {
-                    if cand_str.len() >= 4
-                        && cand_str.bytes().all(|b| (0x20..=0x7E).contains(&b))
-                    {
+                    if cand_str.len() >= 4 && cand_str.bytes().all(|b| (0x20..=0x7E).contains(&b)) {
                         let p = PathBuf::from(&cand_str);
                         if p.is_file() {
                             resolved_out = Some(p);
@@ -652,10 +661,7 @@ pub fn resolve_local_uploaded_file(
                         .unwrap_or_default()
                         .to_ascii_lowercase();
                     if ext == "lnk" {
-                        let lnk_stem = p
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or_default();
+                        let lnk_stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
                         if lnk_stem.eq_ignore_ascii_case(target_filename)
                             || lnk_stem.eq_ignore_ascii_case(target_stem)
                         {
@@ -675,10 +681,7 @@ pub fn resolve_local_uploaded_file(
                         .and_then(|n| n.to_str())
                         .unwrap_or_default()
                         .to_string();
-                    let stem = p
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or_default();
+                    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
                     if (name.eq_ignore_ascii_case(target_filename)
                         || stem.eq_ignore_ascii_case(target_filename)
                         || stem.eq_ignore_ascii_case(target_stem))
@@ -724,31 +727,29 @@ pub fn resolve_local_uploaded_file(
     if is_upload_sink {
         let mut by_path: HashMap<String, (PathBuf, bool, SystemTime, u64)> = HashMap::new();
         let now = SystemTime::now();
-        let sys_temp_low = std::env::temp_dir()
-            .to_string_lossy()
-            .to_ascii_lowercase();
+        let sys_temp_low = std::env::temp_dir().to_string_lossy().to_ascii_lowercase();
 
-        let mut upsert_candidate =
-            |path: PathBuf, is_exfil: bool, touch: SystemTime, len: u64| {
-                let key = path.to_string_lossy().to_ascii_lowercase();
-                match by_path.get_mut(&key) {
-                    Some(existing) => {
-                        if touch > existing.2 {
-                            existing.2 = touch;
-                        }
-                        existing.1 |= is_exfil;
+        let mut upsert_candidate = |path: PathBuf, is_exfil: bool, touch: SystemTime, len: u64| {
+            let key = path.to_string_lossy().to_ascii_lowercase();
+            match by_path.get_mut(&key) {
+                Some(existing) => {
+                    if touch > existing.2 {
+                        existing.2 = touch;
                     }
-                    None => {
-                        by_path.insert(key, (path, is_exfil, touch, len));
-                    }
+                    existing.1 |= is_exfil;
                 }
-            };
+                None => {
+                    by_path.insert(key, (path, is_exfil, touch, len));
+                }
+            }
+        };
 
         for dir in get_user_upload_staging_dirs() {
             let dir_low = dir.to_string_lossy().to_ascii_lowercase();
             let is_exfil_dir = dir_low.contains("exfil");
-            let is_temp_dir =
-                dir_low == sys_temp_low || dir_low.ends_with("\\temp") || dir_low.ends_with("/temp");
+            let is_temp_dir = dir_low == sys_temp_low
+                || dir_low.ends_with("\\temp")
+                || dir_low.ends_with("/temp");
             let Ok(rd) = std::fs::read_dir(&dir) else {
                 continue;
             };
@@ -835,34 +836,31 @@ pub fn resolve_local_uploaded_file(
             }
         }
 
-        let mut candidates: Vec<(PathBuf, bool, SystemTime, u64)> =
-            by_path.into_values().collect();
+        let mut candidates: Vec<(PathBuf, bool, SystemTime, u64)> = by_path.into_values().collect();
 
         // Prioritize the most recently touched/selected file FIRST (`recent_touch`: `b.2.cmp(&a.2)`),
         // breaking ties with `is_exfil_dir` (`b.1.cmp(&a.1)`) and Office/PDF/CSV document formats.
         candidates.sort_by(|a, b| {
-            let a_office = a
-                .0
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| {
-                    matches!(
-                        e.to_ascii_lowercase().as_str(),
-                        "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv"
-                    )
-                })
-                .unwrap_or(false);
-            let b_office = b
-                .0
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| {
-                    matches!(
-                        e.to_ascii_lowercase().as_str(),
-                        "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv"
-                    )
-                })
-                .unwrap_or(false);
+            let a_office =
+                a.0.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| {
+                        matches!(
+                            e.to_ascii_lowercase().as_str(),
+                            "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv"
+                        )
+                    })
+                    .unwrap_or(false);
+            let b_office =
+                b.0.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| {
+                        matches!(
+                            e.to_ascii_lowercase().as_str(),
+                            "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv"
+                        )
+                    })
+                    .unwrap_or(false);
             b.2.cmp(&a.2)
                 .then_with(|| b.1.cmp(&a.1))
                 .then_with(|| b_office.cmp(&a_office))
@@ -965,7 +963,9 @@ pub fn get_browser_profiles() -> Vec<(String, String, PathBuf)> {
                 let p = entry.path();
                 if p.is_dir() {
                     let name = entry.file_name().to_string_lossy().to_string();
-                    if (name.starts_with("Profile ") || name.starts_with("profile ") || name == "Guest Profile")
+                    if (name.starts_with("Profile ")
+                        || name.starts_with("profile ")
+                        || name == "Guest Profile")
                         && p.join("History").is_file()
                     {
                         let key = p.to_string_lossy().to_ascii_lowercase();
@@ -979,9 +979,21 @@ pub fn get_browser_profiles() -> Vec<(String, String, PathBuf)> {
     };
 
     for local in user_local_appdata {
-        check_browser_dir("Google Chrome", local.join("Google").join("Chrome").join("User Data"));
-        check_browser_dir("Microsoft Edge", local.join("Microsoft").join("Edge").join("User Data"));
-        check_browser_dir("Brave", local.join("BraveSoftware").join("Brave-Browser").join("User Data"));
+        check_browser_dir(
+            "Google Chrome",
+            local.join("Google").join("Chrome").join("User Data"),
+        );
+        check_browser_dir(
+            "Microsoft Edge",
+            local.join("Microsoft").join("Edge").join("User Data"),
+        );
+        check_browser_dir(
+            "Brave",
+            local
+                .join("BraveSoftware")
+                .join("Brave-Browser")
+                .join("User Data"),
+        );
     }
 
     profiles
@@ -1007,7 +1019,10 @@ pub fn is_har_entry_allowlisted(url: &str, host: &str, hash_blake3: &str) -> boo
     };
     let url_low = url.trim().to_ascii_lowercase();
     let host_low = host.trim().to_ascii_lowercase();
-    let hash_low = hash_blake3.trim().trim_start_matches('#').to_ascii_lowercase();
+    let hash_low = hash_blake3
+        .trim()
+        .trim_start_matches('#')
+        .to_ascii_lowercase();
 
     for item in arr {
         if let Some(s) = item.as_str() {
@@ -1021,9 +1036,17 @@ pub fn is_har_entry_allowlisted(url: &str, host: &str, hash_blake3: &str) -> boo
                 return true;
             }
         } else if let Some(obj) = item.as_object() {
-            if let Some(sink) = obj.get("destination_sink").or_else(|| obj.get("url")).and_then(|v| v.as_str()) {
+            if let Some(sink) = obj
+                .get("destination_sink")
+                .or_else(|| obj.get("url"))
+                .and_then(|v| v.as_str())
+            {
                 let s_low = sink.trim().to_ascii_lowercase();
-                if !s_low.is_empty() && (s_low == url_low || s_low == host_low || (s_low.len() >= 4 && url_low.contains(&s_low))) {
+                if !s_low.is_empty()
+                    && (s_low == url_low
+                        || s_low == host_low
+                        || (s_low.len() >= 4 && url_low.contains(&s_low)))
+                {
                     return true;
                 }
             }
@@ -1033,9 +1056,16 @@ pub fn is_har_entry_allowlisted(url: &str, host: &str, hash_blake3: &str) -> boo
                     return true;
                 }
             }
-            if let Some(bh) = obj.get("hash_blake3").or_else(|| obj.get("zk_commitment_hex")).and_then(|v| v.as_str()) {
+            if let Some(bh) = obj
+                .get("hash_blake3")
+                .or_else(|| obj.get("zk_commitment_hex"))
+                .and_then(|v| v.as_str())
+            {
                 let bh_low = bh.trim().trim_start_matches('#').to_ascii_lowercase();
-                if !bh_low.is_empty() && !hash_low.is_empty() && (hash_low == bh_low || hash_low.starts_with(&bh_low)) {
+                if !bh_low.is_empty()
+                    && !hash_low.is_empty()
+                    && (hash_low == bh_low || hash_low.starts_with(&bh_low))
+                {
                     return true;
                 }
             }
@@ -1085,9 +1115,19 @@ pub fn is_dlp_event_allowlisted(
                 }
             }
         } else if let Some(obj) = item.as_object() {
-            let entry_sink = obj.get("destination_sink").and_then(|v| v.as_str()).unwrap_or("");
-            let entry_zk = obj.get("zk_commitment_hex").or_else(|| obj.get("zk_proof_commitment")).and_then(|v| v.as_str()).unwrap_or("");
-            let entry_prev = obj.get("scrubbed_preview").and_then(|v| v.as_str()).unwrap_or("");
+            let entry_sink = obj
+                .get("destination_sink")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let entry_zk = obj
+                .get("zk_commitment_hex")
+                .or_else(|| obj.get("zk_proof_commitment"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let entry_prev = obj
+                .get("scrubbed_preview")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
 
             // Path 1: Cryptographic Zero-Knowledge Commitment Match
             if !entry_zk.is_empty() && !zk_commitment.is_empty() && entry_zk == zk_commitment {
@@ -1095,15 +1135,25 @@ pub fn is_dlp_event_allowlisted(
             }
 
             // Path 2: Exact Destination Sink + Non-Empty Content Preview Match
-            if !entry_sink.is_empty() && (entry_sink == destination_sink || host_of(entry_sink) == host_of(destination_sink)) {
-                if !entry_prev.is_empty() && !scrubbed_preview.is_empty() && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev)) {
+            if !entry_sink.is_empty()
+                && (entry_sink == destination_sink
+                    || host_of(entry_sink) == host_of(destination_sink))
+            {
+                if !entry_prev.is_empty()
+                    && !scrubbed_preview.is_empty()
+                    && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev))
+                {
                     return true;
                 }
                 // Never blanket-allow a destination sink when zk_commitment and preview are empty
             }
 
             // Path 3: Empty Sink but Non-Empty Exact Content Preview Match
-            if entry_sink.is_empty() && !entry_prev.is_empty() && !scrubbed_preview.is_empty() && entry_prev == scrubbed_preview {
+            if entry_sink.is_empty()
+                && !entry_prev.is_empty()
+                && !scrubbed_preview.is_empty()
+                && entry_prev == scrubbed_preview
+            {
                 return true;
             }
         }
@@ -1115,19 +1165,13 @@ pub fn is_dlp_event_allowlisted(
 /// counter (`LIVE_SINK_TRANSITION_SEQ`) whenever the winning resolved file path or its touch timestamp
 /// (`last_touch_epoch_ms`) changes. This guarantees that rapid alternating uploads (`A -> B -> A`)
 /// within the same 15-second `time_bucket` never collide in `SEEN` and are immediately re-inspected.
-pub fn compute_live_sink_dedupe_key(
-    resolved: &ResolvedUploadedFile,
-    time_bucket: i64,
-) -> String {
+pub fn compute_live_sink_dedupe_key(resolved: &ResolvedUploadedFile, time_bucket: i64) -> String {
     static LAST_LIVE_SINK_SELECTION: OnceLock<Mutex<(PathBuf, u64)>> = OnceLock::new();
     static LIVE_SINK_TRANSITION_SEQ: AtomicU64 = AtomicU64::new(1);
 
     let lock = LAST_LIVE_SINK_SELECTION.get_or_init(|| Mutex::new((PathBuf::new(), 0)));
     let mut guard = lock.lock();
-    let current = (
-        resolved.resolved_path.clone(),
-        resolved.last_touch_epoch_ms,
-    );
+    let current = (resolved.resolved_path.clone(), resolved.last_touch_epoch_ms);
     let seq = if *guard != current {
         *guard = current;
         LIVE_SINK_TRANSITION_SEQ.fetch_add(1, Ordering::SeqCst) + 1
@@ -1176,8 +1220,12 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                              ORDER BY last_visit_time DESC LIMIT 20;";
                 if let Ok(mut stmt) = conn.prepare(query) {
                     let now_system = SystemTime::now();
-                    let current_chrom_micros = match now_system.duration_since(SystemTime::UNIX_EPOCH) {
-                        Ok(dur) => (dur.as_secs() + 11644473600) * 1_000_000 + dur.subsec_micros() as u64,
+                    let current_chrom_micros = match now_system
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                    {
+                        Ok(dur) => {
+                            (dur.as_secs() + 11644473600) * 1_000_000 + dur.subsec_micros() as u64
+                        }
                         Err(_) => 0,
                     };
                     if let Ok(rows) = stmt.query_map([], |row| {
@@ -1194,7 +1242,8 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                                 continue;
                             }
                             let is_recent = if current_chrom_micros > 0 && last_visit_chrom > 0 {
-                                let diff_micros = current_chrom_micros.saturating_sub(last_visit_chrom as u64);
+                                let diff_micros =
+                                    current_chrom_micros.saturating_sub(last_visit_chrom as u64);
                                 diff_micros <= 600 * 1_000_000
                             } else {
                                 true
@@ -1229,16 +1278,21 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                             } else {
                                 started_at
                             };
-                            let mut key = har_entry_key(&method, &url, &start_ts, &body_text, &params);
+                            let mut key =
+                                har_entry_key(&method, &url, &start_ts, &body_text, &params);
                             if let Some(ref resolved) = resolved_opt {
                                 let time_bucket = chrono::Utc::now().timestamp() / 15;
-                                let sink_dedupe_key = compute_live_sink_dedupe_key(resolved, time_bucket);
+                                let sink_dedupe_key =
+                                    compute_live_sink_dedupe_key(resolved, time_bucket);
                                 key = format!("{}_{}", key, sink_dedupe_key);
                             }
                             out.push(HarDlpRequest {
                                 key,
                                 source_kind: HarSourceKind::HarCollector,
-                                source_label: format!("browser_history:{}", browser.to_ascii_lowercase()),
+                                source_label: format!(
+                                    "browser_history:{}",
+                                    browser.to_ascii_lowercase()
+                                ),
                                 actor,
                                 actor_pid: None,
                                 actor_image_path: None,
@@ -1272,12 +1326,31 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                     continue;
                 }
                 if let Ok(entry) = serde_json::from_str::<Value>(trimmed) {
-                    let url = entry.get("url").and_then(|v| v.as_str()).unwrap_or_default();
-                    if url.contains("dlptest.com") || url.contains("/upload") || url.contains("/post") {
-                        let method = entry.get("method").and_then(|v| v.as_str()).unwrap_or("POST");
-                        let started_at = entry.get("started_at").and_then(|v| v.as_str()).unwrap_or_default();
-                        let mut body_text = entry.get("body_text").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                        let candidate_file = entry.get("file_name").or_else(|| entry.get("file_path")).and_then(|v| v.as_str());
+                    let url = entry
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if url.contains("dlptest.com")
+                        || url.contains("/upload")
+                        || url.contains("/post")
+                    {
+                        let method = entry
+                            .get("method")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("POST");
+                        let started_at = entry
+                            .get("started_at")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        let mut body_text = entry
+                            .get("body_text")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+                        let candidate_file = entry
+                            .get("file_name")
+                            .or_else(|| entry.get("file_path"))
+                            .and_then(|v| v.as_str());
                         let mut params = Vec::new();
                         let resolved_opt = if candidate_file.is_some() {
                             resolve_local_uploaded_file(candidate_file, url)
@@ -1298,7 +1371,10 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                                     resolved.content
                                 ));
                             }
-                            params.push(("uploaded_file".to_string(), resolved.resolved_path.display().to_string()));
+                            params.push((
+                                "uploaded_file".to_string(),
+                                resolved.resolved_path.display().to_string(),
+                            ));
                         }
                         let start_ts = if started_at.is_empty() {
                             chrono::Utc::now().to_rfc3339()
@@ -1517,7 +1593,11 @@ pub fn extract_requests_from_har(
                 let name = p.get("name").and_then(|v| v.as_str()).unwrap_or_default();
                 let value = p.get("value").and_then(|v| v.as_str()).unwrap_or_default();
                 if candidate_file.is_none() {
-                    if let Some(fn_str) = p.get("fileName").or_else(|| p.get("filename")).and_then(|v| v.as_str()) {
+                    if let Some(fn_str) = p
+                        .get("fileName")
+                        .or_else(|| p.get("filename"))
+                        .and_then(|v| v.as_str())
+                    {
                         if !fn_str.trim().is_empty() {
                             candidate_file = Some(fn_str.trim().to_string());
                         }
@@ -1534,7 +1614,11 @@ pub fn extract_requests_from_har(
 
         // Also check entry._oshoosi.uploaded_files
         if candidate_file.is_none() {
-            if let Some(arr) = entry.get("_oshoosi").and_then(|m| m.get("uploaded_files")).and_then(|v| v.as_array()) {
+            if let Some(arr) = entry
+                .get("_oshoosi")
+                .and_then(|m| m.get("uploaded_files"))
+                .and_then(|v| v.as_array())
+            {
                 for f in arr {
                     if let Some(s) = f.as_str() {
                         if !s.trim().is_empty() {
@@ -1548,7 +1632,11 @@ pub fn extract_requests_from_har(
 
         // Also check requestBody.raw[i].file
         if candidate_file.is_none() {
-            if let Some(raw_arr) = req.get("requestBody").and_then(|b| b.get("raw")).and_then(|v| v.as_array()) {
+            if let Some(raw_arr) = req
+                .get("requestBody")
+                .and_then(|b| b.get("raw"))
+                .and_then(|v| v.as_array())
+            {
                 for part in raw_arr {
                     if let Some(f) = part.get("file").and_then(|v| v.as_str()) {
                         if !f.trim().is_empty() {
@@ -1575,7 +1663,9 @@ pub fn extract_requests_from_har(
             if let Some(start) = body_text.find("filename=") {
                 let rest = &body_text[start + 9..];
                 let trimmed_rest = rest.trim_start_matches('"').trim_start_matches('\'');
-                let end = trimmed_rest.find(['"', '\'', ';', '\r', '\n']).unwrap_or(trimmed_rest.len());
+                let end = trimmed_rest
+                    .find(['"', '\'', ';', '\r', '\n'])
+                    .unwrap_or(trimmed_rest.len());
                 let cand = trimmed_rest[..end].trim();
                 if !cand.is_empty() {
                     candidate_file = Some(cand.to_string());
@@ -1585,7 +1675,9 @@ pub fn extract_requests_from_har(
 
         // Resolve candidate file from disk if present or if multipart / body-less POST targeting dlptest.com / upload sink
         let should_resolve_file = candidate_file.is_some()
-            || mime_type.to_ascii_lowercase().contains("multipart/form-data")
+            || mime_type
+                .to_ascii_lowercase()
+                .contains("multipart/form-data")
             || (method == "POST" && body_text.is_empty() && params.is_empty());
         if should_resolve_file {
             if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {
@@ -1928,8 +2020,8 @@ fn post_process(
         let mut state = get_global_dlp_state().write();
         crate::routes::dlp::attach_containment_to_event(&mut state, &event.id, outcome_json);
     } else if req.has_body() || engine.has_active_browser_block_for_host(&req.host) {
-        let restored = engine
-            .restore_browser_destination_blocks_for_host(&req.host, "verified-clean-upload");
+        let restored =
+            engine.restore_browser_destination_blocks_for_host(&req.host, "verified-clean-upload");
         if let Some(first_restored) = restored.first() {
             let outcome_json = serde_json::to_value(first_restored).unwrap_or(Value::Null);
             event.containment = Some(outcome_json.clone());
@@ -2310,11 +2402,15 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let fname = format!("test_patient_phi_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
-        let sample_phi = "patient_id,name,dob,ssn,icd10\nPT-1092,Alice Johnson,1980-05-14,999-88-7777,E11.9\n";
+        let sample_phi =
+            "patient_id,name,dob,ssn,icd10\nPT-1092,Alice Johnson,1980-05-14,999-88-7777,E11.9\n";
         std::fs::write(&file_path, sample_phi).expect("write temp phi file");
 
         // 1. Direct absolute path resolution
-        let res1 = resolve_local_uploaded_file(Some(file_path.to_str().unwrap()), "https://dlptest.com/https-post/");
+        let res1 = resolve_local_uploaded_file(
+            Some(file_path.to_str().unwrap()),
+            "https://dlptest.com/https-post/",
+        );
         assert!(res1.is_some(), "direct path should resolve");
         let r1 = res1.unwrap();
         assert!(r1.content.contains("999-88-7777"));
@@ -2333,7 +2429,10 @@ mod tests {
 
         // 4. URL-only resolution for dlptest.com (picks newest file in staging dir)
         let res4 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/");
-        assert!(res4.is_some(), "dlptest.com without filename should pick newest data file");
+        assert!(
+            res4.is_some(),
+            "dlptest.com without filename should pick newest data file"
+        );
 
         let _ = std::fs::remove_file(file_path);
     }
@@ -2371,13 +2470,17 @@ mod tests {
             }
         });
 
-        let reqs = extract_requests_from_har(&doc, "browser_extension", HarSourceKind::BrowserExtension);
+        let reqs =
+            extract_requests_from_har(&doc, "browser_extension", HarSourceKind::BrowserExtension);
         assert_eq!(reqs.len(), 1);
         let r = &reqs[0];
         assert_eq!(r.actor, "chrome.exe");
         assert_eq!(r.channel(), "BROWSER_HTTP_POST");
         let payload = r.to_inspection_payload();
-        assert!(payload.contains("MRN-882194"), "payload must contain resolved file content");
+        assert!(
+            payload.contains("MRN-882194"),
+            "payload must contain resolved file content"
+        );
 
         let _ = std::fs::remove_file(file_path);
     }
@@ -2389,7 +2492,11 @@ mod tests {
         let orig_content = std::fs::read(&allowlist_file).ok();
 
         // 1. Non-existent or empty allowlist check
-        assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "preview", "zk-commit-123"));
+        assert!(!is_dlp_event_allowlisted(
+            "https://dlptest.com/https-post/",
+            "preview",
+            "zk-commit-123"
+        ));
 
         // 2. Allowlist with empty zk and empty preview for dlptest.com must NEVER return true
         if let Some(parent) = allowlist_file.parent() {
@@ -2410,14 +2517,30 @@ mod tests {
                 "released_at": "2026-10-25T00:00:00Z"
             }
         ]);
-        std::fs::write(&allowlist_file, serde_json::to_string(&dummy_entries).unwrap()).unwrap();
+        std::fs::write(
+            &allowlist_file,
+            serde_json::to_string(&dummy_entries).unwrap(),
+        )
+        .unwrap();
 
         // Must NOT match on destination sink alone with empty zk/preview
-        assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "different-unreleased-content", "different-zk"));
+        assert!(!is_dlp_event_allowlisted(
+            "https://dlptest.com/https-post/",
+            "different-unreleased-content",
+            "different-zk"
+        ));
         // Must match on valid zk commitment
-        assert!(is_dlp_event_allowlisted("https://dlptest.com/https-post/", "any-preview", "valid-zk-commitment-hex"));
+        assert!(is_dlp_event_allowlisted(
+            "https://dlptest.com/https-post/",
+            "any-preview",
+            "valid-zk-commitment-hex"
+        ));
         // Must match on destination sink + matching scrubbed preview
-        assert!(is_dlp_event_allowlisted("https://dlptest.com/https-post/", "specific-scrubbed-preview-content", ""));
+        assert!(is_dlp_event_allowlisted(
+            "https://dlptest.com/https-post/",
+            "specific-scrubbed-preview-content",
+            ""
+        ));
 
         // Cleanup: restore exact original bytes so git status -s remains 100% clean
         if let Some(ref bytes) = orig_content {
@@ -2432,12 +2555,18 @@ mod tests {
         let _guard = TEST_HAR_STAGE_LOCK.lock();
         let reg_paths = vec![
             std::path::PathBuf::from("database").join("dlp_containment_registry.json"),
-            std::path::PathBuf::from("crates").join("osoosi-dashboard").join("database").join("dlp_containment_registry.json"),
+            std::path::PathBuf::from("crates")
+                .join("osoosi-dashboard")
+                .join("database")
+                .join("dlp_containment_registry.json"),
         ];
         let mut backups = Vec::new();
         let mut seen = std::collections::HashSet::new();
         for p in reg_paths {
-            let key = p.canonicalize().map(|c| c.to_string_lossy().to_string()).unwrap_or_else(|_| p.to_string_lossy().to_string());
+            let key = p
+                .canonicalize()
+                .map(|c| c.to_string_lossy().to_string())
+                .unwrap_or_else(|_| p.to_string_lossy().to_string());
             if seen.insert(key) {
                 let bytes = std::fs::read(&p).ok();
                 backups.push((p, bytes));
@@ -2476,7 +2605,10 @@ mod tests {
             started_at: chrono::Utc::now().to_rfc3339(),
             mime_type: "multipart/form-data".to_string(),
             body_text: r.content.clone(),
-            params: vec![("uploaded_file".to_string(), r.resolved_path.display().to_string())],
+            params: vec![(
+                "uploaded_file".to_string(),
+                r.resolved_path.display().to_string(),
+            )],
             body_truncated: false,
         };
         let ev = inspect_only(&req);
@@ -2612,13 +2744,19 @@ mod tests {
     #[test]
     fn test_user_upload_staging_dirs_discovers_recent_and_temp() {
         let dirs = get_user_upload_staging_dirs();
-        assert!(!dirs.is_empty(), "get_user_upload_staging_dirs must return non-empty staging directories");
+        assert!(
+            !dirs.is_empty(),
+            "get_user_upload_staging_dirs must return non-empty staging directories"
+        );
         if cfg!(windows) {
             let has_recent_or_temp = dirs.iter().any(|d| {
                 let s = d.to_string_lossy().to_ascii_lowercase();
                 s.contains("recent") || s.contains("temp") || s.contains("downloads")
             });
-            assert!(has_recent_or_temp, "on Windows, staging dirs must include Recent, Temp, or Downloads");
+            assert!(
+                has_recent_or_temp,
+                "on Windows, staging dirs must include Recent, Temp, or Downloads"
+            );
         }
     }
 }

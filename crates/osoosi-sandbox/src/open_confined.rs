@@ -109,7 +109,10 @@ mod win_confined {
     }
 
     fn to_wide(p: &Path) -> Vec<u16> {
-        p.as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+        p.as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
     }
 
     fn final_path_of_handle(h: HANDLE) -> Result<String, OctopusSecurityError> {
@@ -344,10 +347,7 @@ mod unix_confined {
         write: bool,
     ) -> Result<std::fs::File, OctopusSecurityError> {
         let root_meta = std::fs::symlink_metadata(sandbox_root).map_err(|e| {
-            OctopusSecurityError::IsolationViolation(format!(
-                "CONFINED_OPEN_ROOT_FAILED: {}",
-                e
-            ))
+            OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_ROOT_FAILED: {}", e))
         })?;
         if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
             return Err(OctopusSecurityError::IsolationViolation(
@@ -355,10 +355,7 @@ mod unix_confined {
             ));
         }
         let canonical_root = std::fs::canonicalize(sandbox_root).map_err(|e| {
-            OctopusSecurityError::IsolationViolation(format!(
-                "CONFINED_OPEN_CANON_FAILED: {}",
-                e
-            ))
+            OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_CANON_FAILED: {}", e))
         })?;
 
         let mut cursor = canonical_root.clone();
@@ -378,10 +375,7 @@ mod unix_confined {
         for dir_comp in &comps[..comps.len() - 1] {
             cursor.push(dir_comp);
             let m = std::fs::symlink_metadata(&cursor).map_err(|e| {
-                OctopusSecurityError::IsolationViolation(format!(
-                    "CONFINED_OPEN_DIR_FAILED: {}",
-                    e
-                ))
+                OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_DIR_FAILED: {}", e))
             })?;
             if m.file_type().is_symlink() || !m.is_dir() {
                 return Err(OctopusSecurityError::IsolationViolation(
@@ -409,10 +403,7 @@ mod unix_confined {
             .create(write)
             .open(&cursor)
             .map_err(|e| {
-                OctopusSecurityError::IsolationViolation(format!(
-                    "CONFINED_OPEN_FAILED: {}",
-                    e
-                ))
+                OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_FAILED: {}", e))
             })?;
         let fmeta = file.metadata().map_err(|e| {
             OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_META_FAILED: {}", e))

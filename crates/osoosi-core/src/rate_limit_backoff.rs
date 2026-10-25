@@ -4,12 +4,12 @@
 //! Google API exponential backoff & jitter verification with 15% clock skew tolerance,
 //! 3-Voter Ensemble consensus quorum, user UI override allowlisting, and native WFP containment.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{LazyLock, RwLock};
-use serde::{Deserialize, Serialize};
 use tracing::info;
 
 // ============================================================================
@@ -510,7 +510,9 @@ impl GoogleApiBackoffAnalyzer {
             }
             _ => {
                 let attempt = throttle_count as u32;
-                let base = if let Some(last_req_wait) = samples.iter().filter_map(|s| s.retry_after_ms).last() {
+                let base = if let Some(last_req_wait) =
+                    samples.iter().filter_map(|s| s.retry_after_ms).last()
+                {
                     last_req_wait
                 } else {
                     throttled_intervals.first().copied().unwrap_or(base_rto)
@@ -637,9 +639,24 @@ impl ReteEngine {
 
     /// Evaluates the Beta Join across Alpha memories on `pid`.
     pub fn evaluate_beta_join(&self, pid: u32) -> Option<CorrelatedEvidenceBundle> {
-        let flow_opt = self.har_alpha.read().unwrap().get(&pid).map(|(_, f)| f.clone());
-        let proc_opt = self.osquery_alpha.read().unwrap().get(&pid).map(|(_, p)| p.clone());
-        let rea_opt = self.rea_alpha.read().unwrap().get(&pid).map(|(_, r)| r.clone());
+        let flow_opt = self
+            .har_alpha
+            .read()
+            .unwrap()
+            .get(&pid)
+            .map(|(_, f)| f.clone());
+        let proc_opt = self
+            .osquery_alpha
+            .read()
+            .unwrap()
+            .get(&pid)
+            .map(|(_, p)| p.clone());
+        let rea_opt = self
+            .rea_alpha
+            .read()
+            .unwrap()
+            .get(&pid)
+            .map(|(_, r)| r.clone());
 
         if flow_opt.is_none() && proc_opt.is_none() && rea_opt.is_none() {
             return None;
@@ -750,13 +767,19 @@ impl DeterministicPhysicsVoter {
                 };
             }
             if flow.backoff_compliant && flow.honors_retry_after {
-                let jitter_adj = if flow.observed_jitter_present { 0.03 } else { 0.08 };
+                let jitter_adj = if flow.observed_jitter_present {
+                    0.03
+                } else {
+                    0.08
+                };
                 return VoterVerdict {
                     voter_name: "DeterministicPhysicsVoter".to_string(),
                     weight: Self::WEIGHT,
                     malicious_prob: jitter_adj,
                     confidence: 0.98,
-                    reason: "Compliant physical truncated exponential backoff and Retry-After satisfied".to_string(),
+                    reason:
+                        "Compliant physical truncated exponential backoff and Retry-After satisfied"
+                            .to_string(),
                 };
             }
             if flow.backoff_compliant {
@@ -765,7 +788,8 @@ impl DeterministicPhysicsVoter {
                     weight: Self::WEIGHT,
                     malicious_prob: 0.15,
                     confidence: 0.90,
-                    reason: "Exponential backoff compliant without explicit Retry-After".to_string(),
+                    reason: "Exponential backoff compliant without explicit Retry-After"
+                        .to_string(),
                 };
             }
             return VoterVerdict {
@@ -860,11 +884,25 @@ impl GenerativeLlmVoter {
             .unwrap_or_default();
 
         let known_dev_tools = [
-            "python", "python.exe", "python3", "python3.exe",
-            "node", "node.exe", "npm", "npm.cmd",
-            "curl", "curl.exe", "cargo", "cargo.exe",
-            "git", "git.exe", "pytest", "powershell.exe",
-            "cmd.exe", "rustc.exe", "osoosi.exe"
+            "python",
+            "python.exe",
+            "python3",
+            "python3.exe",
+            "node",
+            "node.exe",
+            "npm",
+            "npm.cmd",
+            "curl",
+            "curl.exe",
+            "cargo",
+            "cargo.exe",
+            "git",
+            "git.exe",
+            "pytest",
+            "powershell.exe",
+            "cmd.exe",
+            "rustc.exe",
+            "osoosi.exe",
         ];
 
         let has_yara = bundle
@@ -873,9 +911,9 @@ impl GenerativeLlmVoter {
             .map(|r| !r.yara_detections.is_empty())
             .unwrap_or(false);
 
-        let is_dev_tool = known_dev_tools.iter().any(|&tool| {
-            proc_name == tool || proc_name.ends_with(&format!("\\{}", tool))
-        });
+        let is_dev_tool = known_dev_tools
+            .iter()
+            .any(|&tool| proc_name == tool || proc_name.ends_with(&format!("\\{}", tool)));
 
         if is_dev_tool && !has_yara {
             return VoterVerdict {
@@ -887,14 +925,24 @@ impl GenerativeLlmVoter {
             };
         }
 
-        let attack_keywords = ["stuff", "hydra", "spray", "brute", "beacon", "infiltrate", "exfil", "reverse_shell"];
+        let attack_keywords = [
+            "stuff",
+            "hydra",
+            "spray",
+            "brute",
+            "beacon",
+            "infiltrate",
+            "exfil",
+            "reverse_shell",
+        ];
         if attack_keywords.iter().any(|&k| cmdline.contains(k)) || has_yara {
             return VoterVerdict {
                 voter_name: "GenerativeLlmVoter".to_string(),
                 weight: Self::WEIGHT,
                 malicious_prob: 0.88,
                 confidence: 0.92,
-                reason: "Suspicious commandline semantics / credential-stuffing patterns detected".to_string(),
+                reason: "Suspicious commandline semantics / credential-stuffing patterns detected"
+                    .to_string(),
             };
         }
 
@@ -927,7 +975,10 @@ impl RateLimitVoterEnsemble {
                 confidence_score: 1.0,
                 voters: Vec::new(),
                 override_applied: true,
-                explanation: format!("Allowlisted by user manual override for {}", bundle.dst_host),
+                explanation: format!(
+                    "Allowlisted by user manual override for {}",
+                    bundle.dst_host
+                ),
             };
         }
 
@@ -960,12 +1011,32 @@ impl RateLimitVoterEnsemble {
         };
 
         // Extract key context properties
-        let backoff_compliant = bundle.flow.as_ref().map(|f| f.backoff_compliant).unwrap_or(false);
-        let honors_retry_after = bundle.flow.as_ref().map(|f| f.honors_retry_after).unwrap_or(false);
-        let entropy = bundle.binary.as_ref().map(|b| b.obfuscation_entropy).unwrap_or(0.0);
-        let is_interactive = bundle.process.as_ref().map(|p| p.is_interactive).unwrap_or(false);
+        let backoff_compliant = bundle
+            .flow
+            .as_ref()
+            .map(|f| f.backoff_compliant)
+            .unwrap_or(false);
+        let honors_retry_after = bundle
+            .flow
+            .as_ref()
+            .map(|f| f.honors_retry_after)
+            .unwrap_or(false);
+        let entropy = bundle
+            .binary
+            .as_ref()
+            .map(|b| b.obfuscation_entropy)
+            .unwrap_or(0.0);
+        let is_interactive = bundle
+            .process
+            .as_ref()
+            .map(|p| p.is_interactive)
+            .unwrap_or(false);
         let is_packed = bundle.binary.as_ref().map(|b| b.is_packed).unwrap_or(false);
-        let direct_syscalls = bundle.binary.as_ref().map(|b| b.direct_syscall_count).unwrap_or(0);
+        let direct_syscalls = bundle
+            .binary
+            .as_ref()
+            .map(|b| b.direct_syscall_count)
+            .unwrap_or(0);
 
         let is_interactive_unpacked = is_interactive && !is_packed && direct_syscalls == 0;
 
@@ -989,7 +1060,9 @@ impl RateLimitVoterEnsemble {
         // --- Hard Invariant 2: Benign Developer Script Protection ---
         if is_interactive_unpacked {
             let action = EdrAction::LogBenignThrottlingWarning {
-                reason: "Interactive developer process unthrottled: warning logged without containment".to_string(),
+                reason:
+                    "Interactive developer process unthrottled: warning logged without containment"
+                        .to_string(),
                 final_malicious_prob,
             };
             return VoterConsensus {
@@ -998,21 +1071,30 @@ impl RateLimitVoterEnsemble {
                 confidence_score,
                 voters,
                 override_applied: false,
-                explanation: "Hard Invariant 2: Interactive user session protected against containment".to_string(),
+                explanation:
+                    "Hard Invariant 2: Interactive user session protected against containment"
+                        .to_string(),
             };
         }
 
         // --- Hard Invariant 3: Hostile Containment via Native WFP ---
         if final_malicious_prob >= 0.82 && !is_interactive_unpacked {
-            let rule_name = format!("OSHOOSI_RL_{}_{}", bundle.pid, bundle.dst_host.replace(':', "_"));
-            
+            let rule_name = format!(
+                "OSHOOSI_RL_{}_{}",
+                bundle.pid,
+                bundle.dst_host.replace(':', "_")
+            );
+
             // Actuate native WFP block
             Self::actuate_wfp_containment(&bundle.dst_host, bundle.pid, &rule_name);
 
             let action = EdrAction::ContainProcessWfpBlock {
                 pid: bundle.pid,
                 dst_host: bundle.dst_host.clone(),
-                reason: format!("Hostile flood or credential stuffing detected (prob={:.2})", final_malicious_prob),
+                reason: format!(
+                    "Hostile flood or credential stuffing detected (prob={:.2})",
+                    final_malicious_prob
+                ),
                 final_malicious_prob,
                 wfp_rule_name: rule_name,
             };
@@ -1029,7 +1111,10 @@ impl RateLimitVoterEnsemble {
         // Default tiering based on final probability
         let action = if final_malicious_prob >= 0.60 {
             EdrAction::LogBenignThrottlingWarning {
-                reason: format!("Elevated throttling risk detected (prob={:.2})", final_malicious_prob),
+                reason: format!(
+                    "Elevated throttling risk detected (prob={:.2})",
+                    final_malicious_prob
+                ),
                 final_malicious_prob,
             }
         } else {
@@ -1113,8 +1198,11 @@ impl RateLimitAllowlist {
             let manifest_path = PathBuf::from(manifest_dir);
             if let Some(crates_dir) = manifest_path.parent() {
                 if let Some(root_dir) = crates_dir.parent() {
-                    let candidate = root_dir.join("database").join("rate_limit_released_allowlist.json");
-                    if candidate.exists() || candidate.parent().map(|p| p.exists()).unwrap_or(false) {
+                    let candidate = root_dir
+                        .join("database")
+                        .join("rate_limit_released_allowlist.json");
+                    if candidate.exists() || candidate.parent().map(|p| p.exists()).unwrap_or(false)
+                    {
                         return candidate;
                     }
                 }
@@ -1192,7 +1280,8 @@ impl RateLimitAllowlist {
         }
 
         lock.retain(|e| {
-            !(e.destination_host.eq_ignore_ascii_case(&entry.destination_host)
+            !(e.destination_host
+                .eq_ignore_ascii_case(&entry.destination_host)
                 && e.protocol.eq_ignore_ascii_case(&entry.protocol)
                 && e.pid == entry.pid)
         });
@@ -1326,7 +1415,9 @@ mod tests {
         assert_eq!(rete.alpha_memory_sizes(), (1, 1, 1));
 
         // Evaluate Beta Join on PID 101
-        let bundle = rete.evaluate_beta_join(101).expect("Beta join must succeed for populated Alpha memories");
+        let bundle = rete
+            .evaluate_beta_join(101)
+            .expect("Beta join must succeed for populated Alpha memories");
         assert_eq!(bundle.pid, 101);
         assert!(bundle.flow.is_some());
         assert!(bundle.process.is_some());
@@ -1413,10 +1504,15 @@ mod tests {
         rete.insert_osquery_fact(proc);
         rete.insert_rea_fact(binary);
 
-        let bundle = rete.evaluate_beta_join(202).expect("Beta join must succeed for PID 202");
+        let bundle = rete
+            .evaluate_beta_join(202)
+            .expect("Beta join must succeed for PID 202");
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(
-            matches!(consensus.action, EdrAction::LogBenignThrottlingWarning { .. }),
+            matches!(
+                consensus.action,
+                EdrAction::LogBenignThrottlingWarning { .. }
+            ),
             "Expected LogBenignThrottlingWarning for interactive dev script, got {:?}",
             consensus.action
         );
@@ -1496,7 +1592,9 @@ mod tests {
         rete.insert_osquery_fact(proc);
         rete.insert_rea_fact(binary);
 
-        let bundle = rete.evaluate_beta_join(666).expect("Beta join must succeed for PID 666");
+        let bundle = rete
+            .evaluate_beta_join(666)
+            .expect("Beta join must succeed for PID 666");
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(
             consensus.final_malicious_prob >= 0.82,
@@ -1554,8 +1652,14 @@ mod tests {
             },
         ];
 
-        let rep_a = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(NetworkProtocol::Tcp, &compliant_tcp_samples);
-        assert!(rep_a.backoff_compliant, "TCP RFC 6298 exponential curve must be compliant");
+        let rep_a = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(
+            NetworkProtocol::Tcp,
+            &compliant_tcp_samples,
+        );
+        assert!(
+            rep_a.backoff_compliant,
+            "TCP RFC 6298 exponential curve must be compliant"
+        );
         assert!(!rep_a.flood_detected, "Must not be flood");
 
         let flow_a = HarFlowFact {
@@ -1605,7 +1709,10 @@ mod tests {
             },
         ];
 
-        let rep_b = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(NetworkProtocol::Tcp, &flood_tcp_samples);
+        let rep_b = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(
+            NetworkProtocol::Tcp,
+            &flood_tcp_samples,
+        );
         assert!(rep_b.flood_detected, "TCP SYN flood must be detected");
     }
 
@@ -1635,7 +1742,7 @@ mod tests {
             },
             HarEntrySample {
                 timestamp_ms: 2600, // 1100ms wait
-                status: 0, // NOERROR
+                status: 0,          // NOERROR
                 retry_after_ms: None,
                 url: "dns://8.8.8.8:53/example.com".into(),
                 method: "QUERY".into(),
@@ -1644,7 +1751,10 @@ mod tests {
             },
         ];
 
-        let rep_dns = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(NetworkProtocol::Dns, &dns_backoff_samples);
+        let rep_dns = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(
+            NetworkProtocol::Dns,
+            &dns_backoff_samples,
+        );
         assert!(rep_dns.backoff_compliant, "DNS backoff must be compliant");
 
         let flow_dns = HarFlowFact {
@@ -1694,7 +1804,10 @@ mod tests {
             },
         ];
 
-        let rep_udp = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(NetworkProtocol::Udp, &udp_flood_samples);
+        let rep_udp = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(
+            NetworkProtocol::Udp,
+            &udp_flood_samples,
+        );
         assert!(rep_udp.flood_detected, "UDP packet flood must be detected");
     }
 
@@ -1716,7 +1829,11 @@ mod tests {
         };
         RateLimitAllowlist::add_entry(entry).unwrap();
 
-        assert!(RateLimitAllowlist::is_released(target_host, NetworkProtocol::HttpHttps, Some(target_pid)));
+        assert!(RateLimitAllowlist::is_released(
+            target_host,
+            NetworkProtocol::HttpHttps,
+            Some(target_pid)
+        ));
 
         let flow = HarFlowFact {
             flow_id: "flow_s6".into(),
@@ -1732,7 +1849,9 @@ mod tests {
         };
 
         rete.insert_har_fact(flow);
-        let bundle = rete.evaluate_beta_join(target_pid).expect("Beta join on target_pid");
+        let bundle = rete
+            .evaluate_beta_join(target_pid)
+            .expect("Beta join on target_pid");
 
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(consensus.override_applied, "Override flag must be true");
@@ -1810,7 +1929,10 @@ mod tests {
         ];
 
         let report = GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
-        assert!(!report.backoff_compliant, "Flat constant intervals MUST NOT be certified as exponential backoff!");
+        assert!(
+            !report.backoff_compliant,
+            "Flat constant intervals MUST NOT be certified as exponential backoff!"
+        );
     }
 
     #[test]
@@ -1865,7 +1987,10 @@ mod tests {
         ];
 
         let report = GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
-        assert!(!report.backoff_compliant, "Linear arithmetic retry intervals MUST NOT be certified as exponential backoff!");
+        assert!(
+            !report.backoff_compliant,
+            "Linear arithmetic retry intervals MUST NOT be certified as exponential backoff!"
+        );
     }
 
     #[test]
@@ -1912,7 +2037,9 @@ mod tests {
         rete.insert_rea_fact(binary);
         assert_eq!(rete.alpha_memory_sizes(), (1, 1, 1));
 
-        let joined = rete.evaluate_beta_join(999).expect("Beta join should return joined bundle");
+        let joined = rete
+            .evaluate_beta_join(999)
+            .expect("Beta join should return joined bundle");
         assert_eq!(joined.pid, 999);
         assert_eq!(joined.dst_host, "10.0.0.1");
         assert_eq!(joined.protocol, NetworkProtocol::Tcp);

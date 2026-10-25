@@ -383,7 +383,10 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                     'runDlpLiveHarSweep',
                     'runDlpExfilSimulationGauntlet',
                     'updateDlpPolicyMode',
-                    'onDlpFilterChange'
+                    'onDlpFilterChange',
+                    'applyDlpAutonomyPreset',
+                    'saveCustomDlpAutonomySettings',
+                    'syncDlpAutonomyCardsFromPolicy'
                 ];
                 for (const method of expectedDlpMethods) {
                     assert.strictEqual(

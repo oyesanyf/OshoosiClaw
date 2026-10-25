@@ -61,7 +61,7 @@ pub use containment_ring::{
     compute_ring_hmac, constant_time_eq_hex, mesh_signing_content, validate_resource_boundary,
     AgentContainmentRing, ArmContainmentRing, ArmRingConfig, ArmRingMeshMessage, ArmRingRegistry,
     ContainmentAuditEntry, DiracDeltaCapabilityTicket, IndependentTrustBoundaryVerifier,
-    MessageKind, MeshWatchOutSignal, MultiLayerGateVerdict, PinnedToolObjectBinding, ProvenanceHop,
+    MeshWatchOutSignal, MessageKind, MultiLayerGateVerdict, PinnedToolObjectBinding, ProvenanceHop,
     ZeroCopyImmutableToolBuffer, MAX_RELAY_HOPS,
 };
 pub use detector::AgentAnomalyDetector;

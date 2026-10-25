@@ -53,14 +53,14 @@ impl HostActuationPore {
     /// Effective pore radius $r_i$ in meters (smaller radius = higher capillary entry barrier).
     pub fn default_pore_radius_m(self) -> f64 {
         match self {
-            Self::KernelDriverIoctl => 0.0005,      // Highest barrier (~1490 Pa)
-            Self::CredentialStoreRead => 0.0006,    // ~1242 Pa
-            Self::SubprocessSpawn => 0.0008,        // ~931 Pa
-            Self::SharedMemoryMapping => 0.0010,    // ~745 Pa
-            Self::NetworkSocketEgress => 0.0012,    // ~621 Pa
+            Self::KernelDriverIoctl => 0.0005,   // Highest barrier (~1490 Pa)
+            Self::CredentialStoreRead => 0.0006, // ~1242 Pa
+            Self::SubprocessSpawn => 0.0008,     // ~931 Pa
+            Self::SharedMemoryMapping => 0.0010, // ~745 Pa
+            Self::NetworkSocketEgress => 0.0012, // ~621 Pa
             Self::ClipboardWindowMessage => 0.0014, // ~532 Pa
-            Self::FilesystemWrite => 0.0015,        // ~497 Pa
-            Self::InterAgentMeshIpc => 0.0020,      // ~372 Pa
+            Self::FilesystemWrite => 0.0015,     // ~497 Pa
+            Self::InterAgentMeshIpc => 0.0020,   // ~372 Pa
         }
     }
 }
@@ -223,15 +223,13 @@ impl WindowsJobObject {
         #[cfg(windows)]
         {
             let wide_name: Vec<u16> = name_str.encode_utf16().chain(std::iter::once(0)).collect();
-            let handle = unsafe {
-                win32_job_io::CreateJobObjectW(std::ptr::null(), wide_name.as_ptr())
-            };
+            let handle =
+                unsafe { win32_job_io::CreateJobObjectW(std::ptr::null(), wide_name.as_ptr()) };
             if handle.is_null() {
                 let err = unsafe { win32_job_io::GetLastError() };
-                return Err(osoosi_types::OctopusSecurityError::IsolationViolation(format!(
-                    "CreateJobObjectW failed with OS error {}",
-                    err
-                )));
+                return Err(osoosi_types::OctopusSecurityError::IsolationViolation(
+                    format!("CreateJobObjectW failed with OS error {}", err),
+                ));
             }
             Ok(Self {
                 handle,
@@ -323,8 +321,9 @@ impl MeasuredActuationSample {
             let egress_bytes = write_bytes.saturating_add(other_bytes) as f64;
             let bytes_per_sec = egress_bytes / dt;
 
-            let derived_pressure_pa =
-                (bytes_per_sec / 64.0) + (total_procs as f64 * 180.0) + (active_procs as f64 * 120.0);
+            let derived_pressure_pa = (bytes_per_sec / 64.0)
+                + (total_procs as f64 * 180.0)
+                + (active_procs as f64 * 120.0);
             let derived_velocity_m_s = (bytes_per_sec / 65_536.0) + (total_procs as f64 * 0.15);
             let derived_characteristic_length_m = pore.default_pore_radius_m();
             let derived_fragment_mass =
@@ -753,8 +752,8 @@ impl MercuryContainmentEngine {
 
         let pore_breached = applied_pressure_pa > barrier_pa;
         let droplet_shattering_detected = weber_number > CRITICAL_WEBER_NUMBER;
-        let cross_pore_coalescence_detected =
-            lifetime_mass >= LIFETIME_COALESCENCE_BUDGET || window_mass >= LIFETIME_COALESCENCE_BUDGET;
+        let cross_pore_coalescence_detected = lifetime_mass >= LIFETIME_COALESCENCE_BUDGET
+            || window_mass >= LIFETIME_COALESCENCE_BUDGET;
 
         let sulfur_passivated_hgs = already_passivated
             || pore_breached
@@ -1291,9 +1290,12 @@ mod tests {
                 64 * 1024 * 1024,
             )
             .expect("Create WindowsJobObject for kernel I/O accounting test");
-            let sample =
-                MeasuredActuationSample::sample_from_job(&job, HostActuationPore::FilesystemWrite, 1.0)
-                    .expect("QueryInformationJobObject(BasicAndIoAccounting) must succeed");
+            let sample = MeasuredActuationSample::sample_from_job(
+                &job,
+                HostActuationPore::FilesystemWrite,
+                1.0,
+            )
+            .expect("QueryInformationJobObject(BasicAndIoAccounting) must succeed");
             let eval = mercury.evaluate_measured_sample("job-measured-agent", &sample);
             assert_eq!(eval.pore, HostActuationPore::FilesystemWrite);
         }

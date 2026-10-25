@@ -28,9 +28,9 @@
 //!    - Kernel-verified token and job membership.
 
 use osoosi_sandbox::{
-    DANGEROUS_PRIVILEGES, INTEGRITY_HIGH, INTEGRITY_LOW, INTEGRITY_MEDIUM, INTEGRITY_SYSTEM,
-    INTEGRITY_UNTRUSTED, MeasuredActuationSample, MercuryContainmentEngine, TieredExecutionDispatcher,
-    TieredToolRequest, TokenPosture, WindowsJobObject,
+    MeasuredActuationSample, MercuryContainmentEngine, TieredExecutionDispatcher,
+    TieredToolRequest, TokenPosture, WindowsJobObject, DANGEROUS_PRIVILEGES, INTEGRITY_HIGH,
+    INTEGRITY_LOW, INTEGRITY_MEDIUM, INTEGRITY_SYSTEM, INTEGRITY_UNTRUSTED,
 };
 use osoosi_types::{ArmRole, OctopusSecurityError};
 use std::sync::Arc;
@@ -112,7 +112,8 @@ fn test_challenger2_token_posture_every_dangerous_privilege_blocked() {
             upper
         ));
         assert!(
-            err2.iter().any(|r| r.to_ascii_lowercase().contains(&dang.to_ascii_lowercase())),
+            err2.iter()
+                .any(|r| r.to_ascii_lowercase().contains(&dang.to_ascii_lowercase())),
             "Error for uppercase '{}' must match case-insensitively: {:?}",
             upper,
             err2
@@ -127,7 +128,8 @@ fn test_challenger2_token_posture_every_dangerous_privilege_blocked() {
             lower
         ));
         assert!(
-            err3.iter().any(|r| r.to_ascii_lowercase().contains(&dang.to_ascii_lowercase())),
+            err3.iter()
+                .any(|r| r.to_ascii_lowercase().contains(&dang.to_ascii_lowercase())),
             "Error for lowercase '{}' must match case-insensitively: {:?}",
             lower,
             err3
@@ -208,7 +210,9 @@ fn test_challenger2_token_posture_elevation_and_integrity_violations() {
     multi.elevated = true;
     multi.integrity_rid = INTEGRITY_HIGH;
     multi.admins_enabled = true;
-    multi.present_privileges.push("SeDebugPrivilege".to_string());
+    multi
+        .present_privileges
+        .push("SeDebugPrivilege".to_string());
     let err_multi = multi
         .verify_agent_safe()
         .expect_err("Multi-violation must return all 4 errors");
@@ -228,8 +232,7 @@ fn test_challenger2_token_posture_elevation_and_integrity_violations() {
 #[test]
 fn test_challenger2_dispatch_tier2_environment_sanitization_and_isolation() {
     let dispatcher = TieredExecutionDispatcher::try_new().expect("dispatcher init");
-    let scratch_dir =
-        std::env::temp_dir().join(format!("c2_scratch_env_{}", std::process::id()));
+    let scratch_dir = std::env::temp_dir().join(format!("c2_scratch_env_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&scratch_dir);
 
     // Set a dummy sensitive host environment variable
@@ -282,9 +285,7 @@ fn test_challenger2_dispatch_tier2_environment_sanitization_and_isolation() {
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
     };
-    let receipt_conf = dispatcher
-        .dispatch(&req_confined)
-        .expect("Tier 2 dispatch");
+    let receipt_conf = dispatcher.dispatch(&req_confined).expect("Tier 2 dispatch");
     assert_eq!(
         receipt_conf.exit_code, 0,
         "OSOOSI_TIER2_CONFINED must be set to 1 in Tier 2 child environment"
@@ -308,8 +309,7 @@ fn test_challenger2_mercury_mass_accumulation_and_sulfur_passivation() {
         .with_mercury(Arc::clone(&mercury));
 
     let agent_target = format!("c2-mercury-target-{}", uuid::Uuid::new_v4().simple());
-    let scratch_dir =
-        std::env::temp_dir().join(format!("c2_scratch_merc_{}", std::process::id()));
+    let scratch_dir = std::env::temp_dir().join(format!("c2_scratch_merc_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&scratch_dir);
 
     // Initial clean dispatch
@@ -319,11 +319,16 @@ fn test_challenger2_mercury_mass_accumulation_and_sulfur_passivation() {
         tool_name: "probe1".to_string(),
         payload: Vec::new(),
         custom_wat: None,
-        native_command: Some(("cmd.exe".to_string(), vec!["/c".to_string(), "exit 0".to_string()])),
+        native_command: Some((
+            "cmd.exe".to_string(),
+            vec!["/c".to_string(), "exit 0".to_string()],
+        )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
     };
-    let rec1 = dispatcher.dispatch(&req1).expect("First dispatch must succeed");
+    let rec1 = dispatcher
+        .dispatch(&req1)
+        .expect("First dispatch must succeed");
     let eval1 = rec1
         .mercury_evaluation
         .expect("Must have Mercury evaluation");
@@ -381,7 +386,10 @@ fn test_challenger2_mercury_mass_accumulation_and_sulfur_passivation() {
         tool_name: "probe_clean".to_string(),
         payload: Vec::new(),
         custom_wat: None,
-        native_command: Some(("cmd.exe".to_string(), vec!["/c".to_string(), "exit 0".to_string()])),
+        native_command: Some((
+            "cmd.exe".to_string(),
+            vec!["/c".to_string(), "exit 0".to_string()],
+        )),
         scratchpad_root: scratch_dir.clone(),
         allow_scratch_write: false,
     };
@@ -405,14 +413,16 @@ fn test_challenger2_windows_job_object_limits_and_accounting() {
         std::process::id(),
         uuid::Uuid::new_v4().simple()
     );
-    let job = WindowsJobObject::create(&job_name, 2, 32 * 1024 * 1024)
-        .expect("WindowsJobObject::create");
+    let job =
+        WindowsJobObject::create(&job_name, 2, 32 * 1024 * 1024).expect("WindowsJobObject::create");
 
     assert_eq!(job.name, job_name);
     assert_eq!(job.max_processes, 2);
     assert_eq!(job.max_memory_bytes, 32 * 1024 * 1024);
 
-    let acct = job.query_accounting().expect("query_accounting on fresh job");
+    let acct = job
+        .query_accounting()
+        .expect("query_accounting on fresh job");
     assert_eq!(acct.total_processes, 0);
     assert_eq!(acct.active_processes, 0);
 
@@ -436,8 +446,7 @@ fn test_challenger2_windows_job_object_limits_and_accounting() {
 #[test]
 fn test_challenger2_concurrent_tier2_dispatches_resilience() {
     let dispatcher = TieredExecutionDispatcher::try_new().expect("dispatcher init");
-    let base_scratch =
-        std::env::temp_dir().join(format!("c2_conc_scratch_{}", std::process::id()));
+    let base_scratch = std::env::temp_dir().join(format!("c2_conc_scratch_{}", std::process::id()));
     let _ = std::fs::create_dir_all(&base_scratch);
 
     let mut handles = Vec::new();

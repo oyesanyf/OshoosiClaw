@@ -103,6 +103,24 @@ pub fn is_restricted_rebinding_ip(ip: &IpAddr) -> bool {
             let is_teredo_or_doc_or_discard = (seg[0] == 0x2001
                 && (seg[1] == 0x0000 || seg[1] == 0x0db8))
                 || (seg[0] == 0x0100 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0);
+            // RFC 2765 SIIT IPv4-translated prefix ::ffff:0:0/96
+            if seg[0] == 0
+                && seg[1] == 0
+                && seg[2] == 0
+                && seg[3] == 0
+                && seg[4] == 0xffff
+                && seg[5] == 0
+            {
+                let embedded_v4 = std::net::Ipv4Addr::new(
+                    (seg[6] >> 8) as u8,
+                    (seg[6] & 0xff) as u8,
+                    (seg[7] >> 8) as u8,
+                    (seg[7] & 0xff) as u8,
+                );
+                if is_restricted_rebinding_ip(&IpAddr::V4(embedded_v4)) {
+                    return true;
+                }
+            }
             if let Some(mapped_v4) = v6.to_ipv4_mapped() {
                 if is_restricted_rebinding_ip(&IpAddr::V4(mapped_v4)) {
                     return true;
@@ -127,10 +145,7 @@ pub fn is_restricted_rebinding_ip(ip: &IpAddr) -> bool {
 
 /// Validates an outbound agent URL against HTTPS-only transport, credential stripping,
 /// bracketed IPv6 & mathematical IPv4/IPv6 SSRF ranges, and explicit domain allowlists.
-pub fn validate_agent_egress_url(
-    raw_url: &str,
-    allowed_domains: &[String],
-) -> Result<Url, String> {
+pub fn validate_agent_egress_url(raw_url: &str, allowed_domains: &[String]) -> Result<Url, String> {
     let trimmed = raw_url.trim();
     if trimmed.is_empty() {
         return Err("SSRF_EMPTY_URL: Outbound URL cannot be empty".to_string());
@@ -157,9 +172,8 @@ pub fn validate_agent_egress_url(
         }
     }
 
-    let parsed = Url::parse(trimmed).map_err(|e| {
-        format!("SSRF_MALFORMED_URL '{}': {}", trimmed, e)
-    })?;
+    let parsed =
+        Url::parse(trimmed).map_err(|e| format!("SSRF_MALFORMED_URL '{}': {}", trimmed, e))?;
 
     if parsed.scheme() != "https" {
         return Err(format!(
@@ -169,7 +183,9 @@ pub fn validate_agent_egress_url(
     }
 
     if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("SSRF_EMBEDDED_CREDENTIALS: Userinfo credentials in URL are prohibited".to_string());
+        return Err(
+            "SSRF_EMBEDDED_CREDENTIALS: Userinfo credentials in URL are prohibited".to_string(),
+        );
     }
 
     if let Some(port) = parsed.port() {
@@ -277,10 +293,7 @@ impl PinnedEgress {
 /// OS resolver, rejects the target if **any** returned A/AAAA record falls in a restricted range
 /// ([`is_restricted_rebinding_ip`]), and returns a [`PinnedEgress`] whose IP addresses can be
 /// pinned onto the HTTP client (`curl --resolve`).
-pub fn resolve_and_pin(
-    raw_url: &str,
-    allowed_domains: &[String],
-) -> Result<PinnedEgress, String> {
+pub fn resolve_and_pin(raw_url: &str, allowed_domains: &[String]) -> Result<PinnedEgress, String> {
     let parsed = validate_agent_egress_url(raw_url, allowed_domains)?;
     let port = parsed.port_or_known_default().unwrap_or(443);
 
@@ -306,7 +319,10 @@ pub fn resolve_and_pin(
                 }
             }
             if addrs.is_empty() {
-                return Err(format!("SSRF_DNS_EMPTY: Host '{}' returned zero addresses", clean));
+                return Err(format!(
+                    "SSRF_DNS_EMPTY: Host '{}' returned zero addresses",
+                    clean
+                ));
             }
             (clean, addrs)
         }
@@ -343,7 +359,9 @@ mod tests {
         assert!(is_restricted_rebinding_ip(&"10.0.0.1".parse().unwrap()));
         assert!(is_restricted_rebinding_ip(&"172.16.0.1".parse().unwrap()));
         assert!(is_restricted_rebinding_ip(&"192.168.1.1".parse().unwrap()));
-        assert!(is_restricted_rebinding_ip(&"169.254.169.254".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip(
+            &"169.254.169.254".parse().unwrap()
+        ));
         assert!(is_restricted_rebinding_ip(&"100.64.0.1".parse().unwrap()));
         assert!(is_restricted_rebinding_ip(&"0.0.0.0".parse().unwrap()));
         assert!(is_restricted_rebinding_ip(&"198.18.0.1".parse().unwrap()));
@@ -352,8 +370,22 @@ mod tests {
         assert!(is_restricted_rebinding_ip(&"::".parse().unwrap()));
         assert!(is_restricted_rebinding_ip(&"fc00::1".parse().unwrap()));
         assert!(is_restricted_rebinding_ip(&"fe80::1".parse().unwrap()));
-        assert!(is_restricted_rebinding_ip(&"64:ff9b::127.0.0.1".parse().unwrap()));
-        assert!(is_restricted_rebinding_ip(&"2002:7f00::1".parse().unwrap()));
+        assert!(is_restricted_rebinding_ip(
+            &"64:ff9b::127.0.0.1".parse().unwrap()
+        ));
+        // RFC 2765 SIIT IPv4-translated prefix ::ffff:0:0/96
+        assert!(is_restricted_rebinding_ip(
+            &"::ffff:0:127.0.0.1".parse().unwrap()
+        ));
+        assert!(is_restricted_rebinding_ip(
+            &"::ffff:0:10.0.0.1".parse().unwrap()
+        ));
+        assert!(is_restricted_rebinding_ip(
+            &"::ffff:0:169.254.169.254".parse().unwrap()
+        ));
+        assert!(!is_restricted_rebinding_ip(
+            &"::ffff:0:8.8.8.8".parse().unwrap()
+        ));
 
         // Public IP should pass
         assert!(!is_restricted_rebinding_ip(&"8.8.8.8".parse().unwrap()));

@@ -274,14 +274,29 @@ fn test_tiered_dispatcher_routes_tier1_wasm_and_tier2_win32() {
     {
         assert!(receipt_t2.win32_appcontainer_verification.is_some());
         let ac_ver = receipt_t2.win32_appcontainer_verification.as_ref().unwrap();
-        assert!(ac_ver.is_appcontainer, "Must be verified inside AppContainer");
-        assert!(ac_ver.job_membership_verified, "Job membership must be verified");
+        assert!(
+            ac_ver.is_appcontainer,
+            "Must be verified inside AppContainer"
+        );
+        assert!(
+            ac_ver.job_membership_verified,
+            "Job membership must be verified"
+        );
         assert!(receipt_t2.verified_executable_metadata.is_some());
         let meta = receipt_t2.verified_executable_metadata.as_ref().unwrap();
-        assert!(meta.is_system32_binary, "cmd.exe must be identified as System32 binary");
+        assert!(
+            meta.is_system32_binary,
+            "cmd.exe must be identified as System32 binary"
+        );
         assert_eq!(meta.sha256_hex.len(), 64);
-        assert!(receipt_t2.job_io_sample.is_some(), "Must include MeasuredActuationSample");
-        assert!(receipt_t2.mercury_evaluation.is_some(), "Must include Mercury evaluation");
+        assert!(
+            receipt_t2.job_io_sample.is_some(),
+            "Must include MeasuredActuationSample"
+        );
+        assert!(
+            receipt_t2.mercury_evaluation.is_some(),
+            "Must include Mercury evaluation"
+        );
     }
 
     let _ = std::fs::remove_dir_all(&scratch_dir);
@@ -429,7 +444,10 @@ fn test_executable_identity_verifier_rejects_forbidden_interpreters() {
                     msg
                 );
             }
-            other => panic!("Target '{}' expected IsolationViolation, got: {:?}", target, other),
+            other => panic!(
+                "Target '{}' expected IsolationViolation, got: {:?}",
+                target, other
+            ),
         }
     }
 
@@ -467,7 +485,8 @@ fn test_executable_identity_verifier_renamed_interpreter_pe_markers() {
     assert_eq!(marker3, Some("python_dll".to_string()));
 
     // 4. Benign bytes -> None
-    let benign = b"MZ\x90\x00\x03\x00\x00\x00Benign executable content without interpreter signatures";
+    let benign =
+        b"MZ\x90\x00\x03\x00\x00\x00Benign executable content without interpreter signatures";
     assert_eq!(detect_renamed_interpreter_marker(benign, "my_tool"), None);
 }
 
@@ -491,7 +510,8 @@ fn test_executable_identity_verifier_handle_read_lock_blocks_concurrent_write() 
         .write(true)
         .open(&handle.metadata.canonical_path);
 
-    let err = write_attempt.expect_err("Concurrent write access must be blocked by handle read-lock");
+    let err =
+        write_attempt.expect_err("Concurrent write access must be blocked by handle read-lock");
     let raw_err = err.raw_os_error().unwrap_or(0);
     assert!(
         raw_err == 32 || raw_err == 5,
@@ -509,8 +529,8 @@ fn test_measured_actuation_sample_mercury_evaluation() {
     let job = WindowsJobObject::create("OsoosiMercuryTestJob", 4, 32 * 1024 * 1024)
         .expect("WindowsJobObject::create");
 
-    let sample = MeasuredActuationSample::sample_from_job(&job, 0.5)
-        .expect("sample_from_job must succeed");
+    let sample =
+        MeasuredActuationSample::sample_from_job(&job, 0.5).expect("sample_from_job must succeed");
     assert_eq!(sample.total_processes_spawned, 0);
 
     let engine = MercuryContainmentEngine::new();
@@ -541,8 +561,10 @@ fn test_open_confined_post_verification_truncation() {
 
     // 1. Write an initial 16-byte file
     {
-        let mut f1 = open_confined(&scratch_dir, "truncate_test.txt", true).expect("open_confined 1");
-        f1.write_all(b"0123456789ABCDEF").expect("write initial 16 bytes");
+        let mut f1 =
+            open_confined(&scratch_dir, "truncate_test.txt", true).expect("open_confined 1");
+        f1.write_all(b"0123456789ABCDEF")
+            .expect("write initial 16 bytes");
     }
 
     // Verify initial file has length 16
@@ -551,12 +573,14 @@ fn test_open_confined_post_verification_truncation() {
 
     // 2. Open with write=true and write a shorter 5-byte payload
     {
-        let mut f2 = open_confined(&scratch_dir, "truncate_test.txt", true).expect("open_confined 2");
+        let mut f2 =
+            open_confined(&scratch_dir, "truncate_test.txt", true).expect("open_confined 2");
         f2.write_all(b"short").expect("write short 5 bytes");
     }
 
     // 3. Verify file length is strictly 5 and no stale trailing bytes remain
-    let final_bytes = std::fs::read(scratch_dir.join("truncate_test.txt")).expect("read overwritten");
+    let final_bytes =
+        std::fs::read(scratch_dir.join("truncate_test.txt")).expect("read overwritten");
     assert_eq!(
         final_bytes, b"short",
         "open_confined(write=true) must truncate existing file post-verification so no stale trailing bytes remain"
@@ -632,7 +656,10 @@ fn test_executable_identity_non_system32_spoof_rejection() {
 
         let err = verifier
             .verify_and_lock(&fake_path.to_string_lossy(), None)
-            .expect_err(&format!("Fake '{}' outside System32 must be rejected", stem));
+            .expect_err(&format!(
+                "Fake '{}' outside System32 must be rejected",
+                stem
+            ));
 
         match err {
             OctopusSecurityError::IsolationViolation(msg) => {
@@ -742,5 +769,3 @@ fn test_appcontainer_profile_rollback_cleans_profile() {
     // Safe to invoke even if profile does not exist yet (DeleteAppContainerProfile returns HRESULT)
     rollback_appcontainer_profile(&name);
 }
-
-

@@ -72,10 +72,7 @@ mod tests {
 
     #[test]
     fn test_quote_windows_argv_arg_spaces() {
-        assert_eq!(
-            quote_windows_argv_arg("hello world"),
-            "\"hello world\""
-        );
+        assert_eq!(quote_windows_argv_arg("hello world"), "\"hello world\"");
     }
 
     #[test]

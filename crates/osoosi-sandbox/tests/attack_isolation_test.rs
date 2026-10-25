@@ -212,9 +212,7 @@ async fn test_capability_single_use_prevents_reuse() {
         memory_limit_bytes: 50 * 1024 * 1024,
         wall_clock_timeout: Duration::from_secs(5),
         workspace_dir: PathBuf::from("."),
-        allowed_capabilities: vec![
-            Capability::FileRead("scan".to_string()),
-        ],
+        allowed_capabilities: vec![Capability::FileRead("scan".to_string())],
         security_config: SandboxSecurityConfig::default(),
     };
 
@@ -259,9 +257,16 @@ async fn test_dns_pinning_ssrf() {
     let resp = host.dispatch(envelope_imds).await;
     match resp.response {
         osoosi_sandbox::host_interface::HostResponse::Error { message } => {
-            assert!(message.contains("SSRF Violation") || message.contains("blocked"), "Unexpected message: {}", message);
+            assert!(
+                message.contains("SSRF Violation") || message.contains("blocked"),
+                "Unexpected message: {}",
+                message
+            );
         }
-        other => panic!("Expected Error response for SSRF metadata, got: {:?}", other),
+        other => panic!(
+            "Expected Error response for SSRF metadata, got: {:?}",
+            other
+        ),
     }
 
     // 2. Loopback should be blocked
@@ -280,7 +285,11 @@ async fn test_dns_pinning_ssrf() {
     let resp_loop = host.dispatch(envelope_loopback).await;
     match resp_loop.response {
         osoosi_sandbox::host_interface::HostResponse::Error { message } => {
-            assert!(message.contains("SSRF Violation") || message.contains("blocked"), "Unexpected message: {}", message);
+            assert!(
+                message.contains("SSRF Violation") || message.contains("blocked"),
+                "Unexpected message: {}",
+                message
+            );
         }
         other => panic!("Expected Error response for loopback, got: {:?}", other),
     }
@@ -301,7 +310,11 @@ async fn test_dns_pinning_ssrf() {
     let resp_gsb = host.dispatch(envelope_gsb).await;
     match resp_gsb.response {
         osoosi_sandbox::host_interface::HostResponse::Error { message } => {
-            assert!(message.contains("Google Safe Browsing blocked") || message.contains("threat"), "Unexpected message: {}", message);
+            assert!(
+                message.contains("Google Safe Browsing blocked") || message.contains("threat"),
+                "Unexpected message: {}",
+                message
+            );
         }
         other => panic!("Expected Error response for GSB threat, got: {:?}", other),
     }

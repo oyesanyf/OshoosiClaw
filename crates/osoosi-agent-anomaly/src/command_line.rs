@@ -93,7 +93,9 @@ impl ParsedInvocation {
 
     fn collect_into(&self, out: &mut Vec<String>, depth: usize) {
         match &self.encoded_command {
-            EncodedCommandState::Decoded { decoded_utf16le, .. } => {
+            EncodedCommandState::Decoded {
+                decoded_utf16le, ..
+            } => {
                 out.push(format!(
                     "depth={}: {} invoked with -EncodedCommand (decoded {} chars: {:?})",
                     depth,
@@ -270,8 +272,7 @@ pub fn classify_ps_switch_name(switch_lower: &str) -> &'static str {
     if switch_lower == "f" || ("file".starts_with(switch_lower) && !switch_lower.is_empty()) {
         return "file";
     }
-    if switch_lower == "w"
-        || ("windowstyle".starts_with(switch_lower) && !switch_lower.is_empty())
+    if switch_lower == "w" || ("windowstyle".starts_with(switch_lower) && !switch_lower.is_empty())
     {
         return "windowstyle";
     }
@@ -502,7 +503,8 @@ fn analyze_script_body(script: &str) -> Vec<String> {
 
     let has_b64_decode = lower.contains("frombase64string");
     let has_eval = lower.contains("invoke-expression")
-        || lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        || lower
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
             .any(|tok| tok == "iex" || tok == "icm" || tok == "invoke-command");
     if has_b64_decode && has_eval {
         signals.push(
@@ -516,12 +518,13 @@ fn analyze_script_body(script: &str) -> Vec<String> {
         || lower.contains("invoke-webrequest")
         || lower.contains("invoke-restmethod");
     if has_net_client && has_eval {
-        signals.push(
-            "PowerShell network download cradle coupled with dynamic evaluation".to_string(),
-        );
+        signals
+            .push("PowerShell network download cradle coupled with dynamic evaluation".to_string());
     }
 
-    if (lower.contains("hklm\\sam") || lower.contains("hklm:\\sam") || lower.contains("system32\\config\\sam"))
+    if (lower.contains("hklm\\sam")
+        || lower.contains("hklm:\\sam")
+        || lower.contains("system32\\config\\sam"))
         && (lower.contains("reg ") || lower.contains("save") || lower.contains("copy"))
     {
         signals.push("SAM registry hive extraction command in script body".to_string());
@@ -562,13 +565,18 @@ fn analyze_at_depth(raw: &str, depth: usize) -> ParsedInvocation {
         let mut idx = 1usize;
         while idx < argv.len() {
             let tok = argv[idx].to_ascii_lowercase();
-            if executable_stem == "cmd" && matches!(tok.as_str(), "/c" | "/k" | "/r" | "-c" | "-k" | "-r") {
+            if executable_stem == "cmd"
+                && matches!(tok.as_str(), "/c" | "/k" | "/r" | "-c" | "-k" | "-r")
+            {
                 let rest = argv[idx + 1..].join(" ");
                 if !rest.trim().is_empty() {
                     nested.push(analyze_at_depth(&rest, depth + 1));
                 }
                 break;
-            } else if executable_stem == "cmd" && (tok.starts_with("/c") || tok.starts_with("/k") || tok.starts_with("/r")) && tok.len() > 2 {
+            } else if executable_stem == "cmd"
+                && (tok.starts_with("/c") || tok.starts_with("/k") || tok.starts_with("/r"))
+                && tok.len() > 2
+            {
                 let mut rest = argv[idx][2..].to_string();
                 if idx + 1 < argv.len() {
                     rest.push(' ');
@@ -599,7 +607,10 @@ fn analyze_at_depth(raw: &str, depth: usize) -> ParsedInvocation {
                         script_structural_signals.extend(analyze_script_body(decoded_utf16le));
                         if depth < MAX_UNWRAP_DEPTH {
                             let child = analyze_at_depth(decoded_utf16le, depth + 1);
-                            if child.is_powershell || child.is_cmd_wrapper || child.has_breakout_signals() {
+                            if child.is_powershell
+                                || child.is_cmd_wrapper
+                                || child.has_breakout_signals()
+                            {
                                 nested.push(child);
                             }
                         }
@@ -610,7 +621,9 @@ fn analyze_at_depth(raw: &str, depth: usize) -> ParsedInvocation {
                     script_structural_signals.extend(analyze_script_body(script));
                     if depth < MAX_UNWRAP_DEPTH {
                         let child = analyze_at_depth(script, depth + 1);
-                        if child.is_powershell && !matches!(child.encoded_command, EncodedCommandState::NotPresent) {
+                        if child.is_powershell
+                            && !matches!(child.encoded_command, EncodedCommandState::NotPresent)
+                        {
                             nested.push(child);
                         }
                     }
@@ -636,7 +649,9 @@ fn analyze_at_depth(raw: &str, depth: usize) -> ParsedInvocation {
             let seg_argv = tokenize_windows_argv(seg);
             if let Some(first) = seg_argv.first() {
                 let stem = normalize_executable_stem(first);
-                if matches!(stem.as_str(), "powershell" | "pwsh" | "cmd") && depth < MAX_UNWRAP_DEPTH {
+                if matches!(stem.as_str(), "powershell" | "pwsh" | "cmd")
+                    && depth < MAX_UNWRAP_DEPTH
+                {
                     nested.push(analyze_at_depth(seg, depth + 1));
                 }
             }
@@ -665,13 +680,22 @@ mod tests {
     #[test]
     fn test_windows_argv_tokenization_msvcrt_rules() {
         let cmd = r#"myprog.exe "a b c" d e"#;
-        assert_eq!(tokenize_windows_argv(cmd), vec!["myprog.exe", "a b c", "d", "e"]);
+        assert_eq!(
+            tokenize_windows_argv(cmd),
+            vec!["myprog.exe", "a b c", "d", "e"]
+        );
 
         let cmd_quotes = r#"myprog.exe "a\"b" c"#;
-        assert_eq!(tokenize_windows_argv(cmd_quotes), vec!["myprog.exe", "a\"b", "c"]);
+        assert_eq!(
+            tokenize_windows_argv(cmd_quotes),
+            vec!["myprog.exe", "a\"b", "c"]
+        );
 
         let cmd_double_quotes = r#"myprog.exe "a""b" c"#;
-        assert_eq!(tokenize_windows_argv(cmd_double_quotes), vec!["myprog.exe", "a\"b", "c"]);
+        assert_eq!(
+            tokenize_windows_argv(cmd_double_quotes),
+            vec!["myprog.exe", "a\"b", "c"]
+        );
     }
 
     #[test]
@@ -692,7 +716,9 @@ mod tests {
         let script = "Write-Host 'Hello World'";
         let b64 = encode_utf16le_base64(script);
         match decode_encoded_command(&b64) {
-            EncodedCommandState::Decoded { decoded_utf16le, .. } => {
+            EncodedCommandState::Decoded {
+                decoded_utf16le, ..
+            } => {
                 assert_eq!(decoded_utf16le, script);
             }
             other => panic!("Expected Decoded, got {:?}", other),

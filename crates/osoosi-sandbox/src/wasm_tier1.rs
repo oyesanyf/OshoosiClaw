@@ -637,7 +637,11 @@ impl WasmTier1Executor {
                         .min(caller.data().limits.max_linear_memory_bytes as u64)
                         .min(16 * 1024 * 1024);
                     let mut buf = Vec::with_capacity(max_read_bytes.min(65_536) as usize);
-                    if (&mut file).take(max_read_bytes).read_to_end(&mut buf).is_err() {
+                    if (&mut file)
+                        .take(max_read_bytes)
+                        .read_to_end(&mut buf)
+                        .is_err()
+                    {
                         return WASI_ERR_IO;
                     }
                     let copy_len = buf.len().min(dst_cap as usize);
