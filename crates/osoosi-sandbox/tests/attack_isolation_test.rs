@@ -1,7 +1,7 @@
 use osoosi_audit::AuditTrail;
 use osoosi_memory::MemoryStore;
 use osoosi_model::MalwareScanner;
-use osoosi_sandbox::{SandboxConfig, SandboxExecutor, SandboxSecurityConfig};
+use osoosi_sandbox::{Capability, SandboxConfig, SandboxExecutor, SandboxSecurityConfig};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -58,7 +58,11 @@ async fn test_wasm_traps_attack() {
         memory_limit_bytes: 50 * 1024 * 1024,
         wall_clock_timeout: Duration::from_secs(5),
         workspace_dir: PathBuf::from("."),
-        allowed_capabilities: vec![],
+        allowed_capabilities: vec![
+            Capability::FileRead("*".to_string()),
+            Capability::NetworkOut("*".to_string()),
+            Capability::ExecuteTool("*".to_string()),
+        ],
         security_config: SandboxSecurityConfig::default(),
     };
 
@@ -122,4 +126,183 @@ async fn test_clean_script() {
     assert_eq!(result.triage_level, "INFO");
     assert!(!result.suspicious_sequence);
     assert_eq!(result.syscall_count, 0);
+}
+
+#[tokio::test]
+async fn test_capability_denial_fails_closed() {
+    std::env::set_var("OSOOSI_NO_ORT", "1");
+    let audit = Arc::new(AuditTrail::new());
+    let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
+    let scanner = Arc::new(MalwareScanner::new(std::path::Path::new("dummy.json")));
+
+    let executor = SandboxExecutor::new(audit, memory, scanner).unwrap();
+
+    let wat = r#"
+        (module
+            (import "oso_brain" "host_exec_command" (func $host_exec_command (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 0) "whoami")
+            (func (export "_start")
+                (call $host_exec_command (i32.const 0) (i32.const 6))
+                drop
+            )
+        )
+    "#;
+
+    let wasm_bytes = wat::parse_str(wat).unwrap();
+
+    // No capabilities granted -> execution must fail closed with an error (trap)
+    let config = SandboxConfig {
+        max_fuel: 1_000_000,
+        memory_limit_bytes: 50 * 1024 * 1024,
+        wall_clock_timeout: Duration::from_secs(5),
+        workspace_dir: PathBuf::from("."),
+        allowed_capabilities: vec![],
+        security_config: SandboxSecurityConfig::default(),
+    };
+
+    let result = executor
+        .run_script(&wasm_bytes, config, HashSet::new())
+        .await;
+
+    assert!(
+        result.is_err(),
+        "WASM module calling unpermitted host function must be trapped and rejected"
+    );
+    let err_msg = format!("{:#}", result.err().unwrap());
+    assert!(
+        err_msg.contains("Access denied") || err_msg.contains("capability"),
+        "Error message should indicate missing capability: {}",
+        err_msg
+    );
+}
+
+#[tokio::test]
+async fn test_capability_single_use_prevents_reuse() {
+    std::env::set_var("OSOOSI_NO_ORT", "1");
+    let audit = Arc::new(AuditTrail::new());
+    let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
+    let scanner = Arc::new(MalwareScanner::new(std::path::Path::new("dummy.json")));
+
+    let executor = SandboxExecutor::new(audit, memory, scanner).unwrap();
+
+    // Calls host_scan_file twice in succession
+    let wat = r#"
+        (module
+            (import "oso_brain" "host_scan_file" (func $host_scan_file (param i32 i32) (result i32)))
+            (memory (export "memory") 1)
+            (data (i32.const 0) "payload")
+            (func (export "_start")
+                ;; First call consumes capability
+                (call $host_scan_file (i32.const 0) (i32.const 7))
+                drop
+
+                ;; Second call must fail because capability was consumed
+                (call $host_scan_file (i32.const 0) (i32.const 7))
+                drop
+            )
+        )
+    "#;
+
+    let wasm_bytes = wat::parse_str(wat).unwrap();
+
+    // Only grant ONE FileRead capability token
+    let config = SandboxConfig {
+        max_fuel: 1_000_000,
+        memory_limit_bytes: 50 * 1024 * 1024,
+        wall_clock_timeout: Duration::from_secs(5),
+        workspace_dir: PathBuf::from("."),
+        allowed_capabilities: vec![
+            Capability::FileRead("scan".to_string()),
+        ],
+        security_config: SandboxSecurityConfig::default(),
+    };
+
+    let result = executor
+        .run_script(&wasm_bytes, config, HashSet::new())
+        .await;
+
+    assert!(
+        result.is_err(),
+        "Second call must trap because single-use capability was already consumed"
+    );
+    let err_msg = format!("{:#}", result.err().unwrap());
+    assert!(
+        err_msg.contains("Access denied") || err_msg.contains("capability"),
+        "Error must report access denied on reuse: {}",
+        err_msg
+    );
+}
+
+#[tokio::test]
+async fn test_dns_pinning_ssrf() {
+    std::env::set_var("OSOOSI_NO_ORT", "1");
+    let audit = Arc::new(AuditTrail::new());
+    let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
+    let scanner = Arc::new(MalwareScanner::new(std::path::Path::new("dummy.json")));
+
+    let host = osoosi_sandbox::native_host::NativeHost::new(audit, memory, scanner);
+
+    // 1. SSRF Cloud Metadata should be blocked
+    let envelope_imds = osoosi_sandbox::host_interface::HostCallEnvelope {
+        call_id: "test-ssrf-1".to_string(),
+        caller_module: "test".to_string(),
+        call: osoosi_sandbox::host_interface::HostCall::FetchUrl {
+            url: "http://169.254.169.254/latest/meta-data/".to_string(),
+            method: "GET".to_string(),
+            headers: vec![],
+        },
+        fuel_remaining: 1000,
+        taint_labels: vec![],
+        timestamp: chrono::Utc::now(),
+    };
+    let resp = host.dispatch(envelope_imds).await;
+    match resp.response {
+        osoosi_sandbox::host_interface::HostResponse::Error { message } => {
+            assert!(message.contains("SSRF Violation") || message.contains("blocked"), "Unexpected message: {}", message);
+        }
+        other => panic!("Expected Error response for SSRF metadata, got: {:?}", other),
+    }
+
+    // 2. Loopback should be blocked
+    let envelope_loopback = osoosi_sandbox::host_interface::HostCallEnvelope {
+        call_id: "test-ssrf-2".to_string(),
+        caller_module: "test".to_string(),
+        call: osoosi_sandbox::host_interface::HostCall::FetchUrl {
+            url: "http://127.0.0.1:11434/api/tags".to_string(),
+            method: "GET".to_string(),
+            headers: vec![],
+        },
+        fuel_remaining: 1000,
+        taint_labels: vec![],
+        timestamp: chrono::Utc::now(),
+    };
+    let resp_loop = host.dispatch(envelope_loopback).await;
+    match resp_loop.response {
+        osoosi_sandbox::host_interface::HostResponse::Error { message } => {
+            assert!(message.contains("SSRF Violation") || message.contains("blocked"), "Unexpected message: {}", message);
+        }
+        other => panic!("Expected Error response for loopback, got: {:?}", other),
+    }
+
+    // 3. GSB Phishing test vector should be blocked
+    let envelope_gsb = osoosi_sandbox::host_interface::HostCallEnvelope {
+        call_id: "test-gsb-1".to_string(),
+        caller_module: "test".to_string(),
+        call: osoosi_sandbox::host_interface::HostCall::FetchUrl {
+            url: "http://testsafebrowsing.appspot.com/s/phishing.html".to_string(),
+            method: "GET".to_string(),
+            headers: vec![],
+        },
+        fuel_remaining: 1000,
+        taint_labels: vec![],
+        timestamp: chrono::Utc::now(),
+    };
+    let resp_gsb = host.dispatch(envelope_gsb).await;
+    match resp_gsb.response {
+        osoosi_sandbox::host_interface::HostResponse::Error { message } => {
+            assert!(message.contains("Google Safe Browsing blocked") || message.contains("threat"), "Unexpected message: {}", message);
+        }
+        other => panic!("Expected Error response for GSB threat, got: {:?}", other),
+    }
 }

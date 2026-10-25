@@ -45,7 +45,7 @@ impl Default for SandboxConfig {
     fn default() -> Self {
         Self {
             max_fuel: 500_000,
-            memory_limit_bytes: 8 * 1024 * 1024,
+            memory_limit_bytes: 64 * 1024 * 1024, // 64 MiB linear memory cap
             wall_clock_timeout: Duration::from_secs(30),
             workspace_dir: PathBuf::from("."),
             allowed_capabilities: Vec::new(),
@@ -55,7 +55,7 @@ impl Default for SandboxConfig {
 }
 
 /// Capability tokens that grant specific permissions to WASM modules.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub enum Capability {
     FileRead(String),
     FileWrite(String),
@@ -71,6 +71,8 @@ pub enum Capability {
 pub struct SandboxStore {
     /// The WASIp1 context
     pub wasi: wasmtime_wasi::p1::WasiP1Ctx,
+    /// Resource limiter enforcing memory and table bounds
+    pub limiter: memory_limiter::MemoryLimiter,
     pub fuel_consumed: u64,
     pub capabilities: Vec<Capability>,
     pub pending_approvals: Vec<ApprovalRequest>,
@@ -81,6 +83,76 @@ pub struct SandboxStore {
     pub native_host: Arc<native_host::NativeHost>,
     pub security_config: SandboxSecurityConfig,
 }
+
+impl SandboxStore {
+    /// Validate and consume a required capability, enforcing single-use to eliminate capability reuse.
+    pub fn validate_and_consume_capability(
+        &mut self,
+        required: &Capability,
+    ) -> Result<(), wasmtime::Error> {
+        let pos = self.capabilities.iter().position(|cap| match (cap, required) {
+            (Capability::FileRead(granted), Capability::FileRead(requested)) => {
+                granted == "*" || granted == requested || requested.starts_with(granted)
+            }
+            (Capability::FileWrite(granted), Capability::FileWrite(requested)) => {
+                granted == "*" || granted == requested || requested.starts_with(granted)
+            }
+            (Capability::NetworkOut(granted), Capability::NetworkOut(requested)) => {
+                granted == "*" || granted == requested || requested.starts_with(granted)
+            }
+            (Capability::ExecuteTool(granted), Capability::ExecuteTool(requested)) => {
+                granted == "*" || granted == requested
+            }
+            _ => false,
+        });
+
+        match pos {
+            Some(idx) => {
+                let consumed = self.capabilities.remove(idx);
+                tracing::info!(
+                    "Capability consumed: {:?} (remaining: {})",
+                    consumed,
+                    self.capabilities.len()
+                );
+                Ok(())
+            }
+            None => {
+                tracing::warn!(
+                    "Capability DENIED: required {:?} not found in granted capabilities {:?}",
+                    required,
+                    self.capabilities
+                );
+                Err(wasmtime::Error::msg(format!(
+                    "Access denied: missing required capability {:?}",
+                    required
+                )))
+            }
+        }
+    }
+}
+
+/// Helper extension trait to deduct fuel during host function operations.
+pub trait CallerFuelExt {
+    fn consume_fuel(&mut self, amount: u64) -> Result<(), wasmtime::Error>;
+}
+
+impl<T: Send + 'static> CallerFuelExt for Caller<'_, T> {
+    fn consume_fuel(&mut self, amount: u64) -> Result<(), wasmtime::Error> {
+        let current = self
+            .get_fuel()
+            .map_err(|e| wasmtime::Error::msg(format!("Failed to query fuel: {}", e)))?;
+        if current < amount {
+            return Err(wasmtime::Error::msg(format!(
+                "Out of fuel: host operation required {} fuel, but only {} remaining",
+                amount, current
+            )));
+        }
+        self.set_fuel(current - amount)
+            .map_err(|e| wasmtime::Error::msg(format!("Failed to set fuel: {}", e)))?;
+        Ok(())
+    }
+}
+
 
 /// A pending human-in-the-loop approval request.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -186,9 +258,12 @@ impl SandboxExecutor {
                             )
                         })?
                         .to_vec();
+                    let fuel_cost = 500u64.saturating_add(len as u64);
+                    caller.consume_fuel(fuel_cost)?;
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
+                    store.validate_and_consume_capability(&Capability::FileRead("scan".to_string()))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -239,9 +314,13 @@ impl SandboxExecutor {
                     let url = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in URL"))?
                         .to_string();
+
+                    let fuel_cost = 1_000u64.saturating_add(len as u64);
+                    caller.consume_fuel(fuel_cost)?;
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
+                    store.validate_and_consume_capability(&Capability::NetworkOut(url.clone()))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -301,12 +380,16 @@ impl SandboxExecutor {
                     let cmd = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in command"))?
                         .to_string();
-                    let fuel = caller.get_fuel().unwrap_or(0);
 
                     let program = cmd.split_whitespace().next().unwrap_or(&cmd).to_string();
                     let args = cmd.split_whitespace().skip(1).map(String::from).collect();
 
+                    let fuel_cost = 2_000u64.saturating_add(len as u64);
+                    caller.consume_fuel(fuel_cost)?;
+                    let fuel = caller.get_fuel().unwrap_or(0);
+
                     let store = caller.data_mut();
+                    store.validate_and_consume_capability(&Capability::ExecuteTool(program.clone()))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -366,17 +449,17 @@ impl SandboxExecutor {
                     let query = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in query"))?
                         .to_string();
+                    let fuel_cost = 500u64.saturating_add(len as u64);
+                    caller.consume_fuel(fuel_cost)?;
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
+                    store.validate_and_consume_capability(&Capability::FileRead(format!("db:{}", query)))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
                     {
                         return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                    }
-                    if !store.security_config.is_query_allowed(&query) {
-                        return Err(wasmtime::Error::msg("Query references disallowed table"));
                     }
                     store
                         .syscall_sequence
@@ -428,9 +511,13 @@ impl SandboxExecutor {
                     let bytes = read_wasm_slice(data, d_ptr, d_len)
                         .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access for data in host_send_mesh"))?
                         .to_vec();
+
+                    let fuel_cost = 1_000u64.saturating_add((t_len + d_len) as u64);
+                    caller.consume_fuel(fuel_cost)?;
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
+                    store.validate_and_consume_capability(&Capability::NetworkOut(format!("mesh:{}", topic)))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -485,9 +572,13 @@ impl SandboxExecutor {
                         .to_string();
                     let entry: serde_json::Value = serde_json::from_str(&entry_str)
                         .map_err(|_| wasmtime::Error::msg("Invalid JSON in audit entry"))?;
+
+                    let fuel_cost = 300u64.saturating_add(len as u64);
+                    caller.consume_fuel(fuel_cost)?;
                     let fuel = caller.get_fuel().unwrap_or(0);
 
                     let store = caller.data_mut();
+                    store.validate_and_consume_capability(&Capability::FileWrite("audit".to_string()))?;
                     if store
                         .security_config
                         .is_rate_limited(store.syscall_sequence.len())
@@ -521,16 +612,28 @@ impl SandboxExecutor {
             },
         )?;
 
-        // --- Build the Tightened WASIp1 Context ---
-
-        // Security Benefit: No host filesystem access, no inherited env, no stdout/stderr.
-        // The WASM brain can ONLY talk to the host via the 'oso_brain' syscalls.
-        let wasi_p1 = wasmtime_wasi::WasiCtxBuilder::new().build_p1();
+        // --- Build the Tightened WASIp1 Context with Preopened Scratch Directory ---
+        let mut wasi_builder = wasmtime_wasi::WasiCtxBuilder::new();
+        if !config.workspace_dir.as_os_str().is_empty() {
+            if !config.workspace_dir.exists() {
+                let _ = std::fs::create_dir_all(&config.workspace_dir);
+            }
+            if config.workspace_dir.exists() {
+                wasi_builder.preopened_dir(
+                    &config.workspace_dir,
+                    ".",
+                    wasmtime_wasi::DirPerms::all(),
+                    wasmtime_wasi::FilePerms::all(),
+                )?;
+            }
+        }
+        let wasi_p1 = wasi_builder.build_p1();
 
         let mut store = Store::new(
             &self.engine,
             SandboxStore {
                 wasi: wasi_p1,
+                limiter: memory_limiter::MemoryLimiter::new(config.memory_limit_bytes),
                 fuel_consumed: 0,
                 capabilities: config.allowed_capabilities.clone(),
                 pending_approvals: Vec::new(),
@@ -543,7 +646,8 @@ impl SandboxExecutor {
             },
         );
 
-        // --- Set Resource Limits ---
+        // --- Wire Resource Limiter (enforces 64 MiB linear memory cap) ---
+        store.limiter(|s| &mut s.limiter);
         store.set_fuel(config.max_fuel)?;
         store.epoch_deadline_async_yield_and_update(1);
 

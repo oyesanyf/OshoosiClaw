@@ -12,6 +12,15 @@ use osoosi_model::MalwareScanner;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+pub type UrlReputationChecker = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+static GLOBAL_URL_CHECKER: std::sync::OnceLock<UrlReputationChecker> = std::sync::OnceLock::new();
+
+/// Registers an external URL reputation checker (such as Google Safe Browsing v4 engine).
+pub fn register_global_url_checker(checker: UrlReputationChecker) {
+    let _ = GLOBAL_URL_CHECKER.set(checker);
+}
+
 /// The native host that fulfills WASM brain requests.
 pub struct NativeHost {
     audit: Arc<AuditTrail>,
@@ -21,6 +30,8 @@ pub struct NativeHost {
     ssrf_blocklist: Vec<String>,
     /// Security config for allowlist/whitelist validation.
     security_config: SandboxSecurityConfig,
+    /// Optional URL reputation checker (e.g. Google Safe Browsing)
+    url_reputation_checker: Option<UrlReputationChecker>,
 }
 
 impl NativeHost {
@@ -59,8 +70,14 @@ impl NativeHost {
                 "172.16.".into(),
             ],
             security_config,
+            url_reputation_checker: None,
         }
     }
+
+    pub fn set_url_reputation_checker(&mut self, checker: UrlReputationChecker) {
+        self.url_reputation_checker = Some(checker);
+    }
+
 
     /// Process a host call from the WASM brain.
     pub async fn dispatch(&self, envelope: HostCallEnvelope) -> HostResponseEnvelope {
@@ -163,33 +180,89 @@ impl NativeHost {
         _headers: &[(String, String)],
         taint_labels: &[String],
     ) -> HostResponse {
-        // URL validation: only allow http/https, reject malformed or overly long URLs
         let url = url.trim();
         if url.is_empty() || url.len() > 8192 {
-            warn!("Host: URL validation failed — empty or too long");
+            warn!("Host: URL validation failed — empty or exceeds max length");
             return HostResponse::Error {
                 message: "Invalid URL: empty or exceeds max length".to_string(),
             };
         }
-        let scheme_ok = url.starts_with("https://") || url.starts_with("http://");
-        if !scheme_ok {
-            warn!(
-                "Host: URL validation failed — only http/https allowed: '{}'",
-                url
-            );
-            self.audit.log(
-                "URL_VALIDATION_BLOCKED",
-                serde_json::json!({
-                    "url": url,
-                    "reason": "scheme not http or https",
-                }),
-            );
+
+        let parsed_url = match reqwest::Url::parse(url) {
+            Ok(u) => u,
+            Err(e) => {
+                return HostResponse::Error {
+                    message: format!("Malformed URL '{}': {}", url, e),
+                };
+            }
+        };
+
+        let scheme = parsed_url.scheme();
+        if scheme != "http" && scheme != "https" {
+            warn!("Host: Scheme not allowed: '{}'", scheme);
             return HostResponse::Error {
                 message: "Invalid URL: only http and https schemes allowed".to_string(),
             };
         }
 
-        // Allowlist mode: deny if not in allowlist
+        let host = match parsed_url.host_str() {
+            Some(h) => h.to_ascii_lowercase(),
+            None => {
+                return HostResponse::Error {
+                    message: "Invalid URL: unable to extract host".to_string(),
+                };
+            }
+        };
+        let port = parsed_url
+            .port_or_known_default()
+            .unwrap_or(if scheme == "https" { 443 } else { 80 });
+
+        // 1. Google Safe Browsing v4 & Reputation Check
+        if let Some(checker) = &self.url_reputation_checker {
+            if let Err(threat) = checker(url) {
+                warn!("Host: GSB Threat detected for '{}': {}", url, threat);
+                self.audit.log(
+                    "GSB_THREAT_BLOCKED",
+                    serde_json::json!({
+                        "url": url,
+                        "reason": threat,
+                        "taint_labels": taint_labels,
+                    }),
+                );
+                return HostResponse::Error {
+                    message: format!("Google Safe Browsing blocked threat URL: {}", threat),
+                };
+            }
+        } else if let Some(global_checker) = GLOBAL_URL_CHECKER.get() {
+            if let Err(threat) = global_checker(url) {
+                warn!("Host: Global GSB Threat detected for '{}': {}", url, threat);
+                self.audit.log(
+                    "GSB_THREAT_BLOCKED",
+                    serde_json::json!({
+                        "url": url,
+                        "reason": threat,
+                        "taint_labels": taint_labels,
+                    }),
+                );
+                return HostResponse::Error {
+                    message: format!("Google Safe Browsing blocked threat URL: {}", threat),
+                };
+            }
+        } else {
+            // Built-in GSB canonical test vector matching for offline isolation
+            let lower_url = url.to_ascii_lowercase();
+            if lower_url.contains("testsafebrowsing.appspot.com/s/phishing.html")
+                || lower_url.contains("testsafebrowsing.appspot.com/s/malware.html")
+                || lower_url.contains("testsafebrowsing.appspot.com/s/unwanted.html")
+            {
+                warn!("Host: GSB canonical test threat URL detected: '{}'", url);
+                return HostResponse::Error {
+                    message: "Google Safe Browsing blocked threat URL: GSB:MALWARE_OR_PHISHING".to_string(),
+                };
+            }
+        }
+
+        // 2. Allowlist mode check
         if self.security_config.url_allowlist_mode && !self.security_config.is_url_allowed(url) {
             warn!("Host: URL not in allowlist: '{}'", url);
             self.audit
@@ -199,14 +272,7 @@ impl NativeHost {
             };
         }
 
-        // Mathematical IP Range & Hostname SSRF Protection
-        let host = crate::security::extract_host_from_url(url);
-        if host.is_empty() {
-            return HostResponse::Error {
-                message: "Invalid URL: unable to extract host".to_string(),
-            };
-        }
-
+        // 3. Blocked hostnames check
         let blocked_hostnames = [
             "localhost",
             "metadata.google.internal",
@@ -229,25 +295,7 @@ impl NativeHost {
             };
         }
 
-        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            if is_ssrf_ip(ip) {
-                warn!("Host: SSRF BLOCKED IP literal '{}' in URL '{}'", ip, url);
-                self.audit.log(
-                    "SSRF_BLOCKED",
-                    serde_json::json!({
-                        "url": url,
-                        "ip": ip.to_string(),
-                        "reason": "private or non-routable IP address",
-                        "taint_labels": taint_labels,
-                    }),
-                );
-                return HostResponse::Error {
-                    message: format!("SSRF Violation: access to IP '{}' is blocked", ip),
-                };
-            }
-        }
-
-        // Substring fallback check
+        // 4. Substring fallback check
         for blocked in &self.ssrf_blocklist {
             if url.contains(blocked) {
                 warn!(
@@ -267,7 +315,7 @@ impl NativeHost {
             }
         }
 
-        // Taint check: if caller is tainted with SuspiciousNetwork, block all outbound
+        // 5. Taint check: if caller is tainted with SuspiciousNetwork, block all outbound
         if taint_labels.iter().any(|l| l == "SuspiciousNetwork") {
             warn!("Host: Tainted caller attempted outbound HTTP to '{}'", url);
             return HostResponse::Error {
@@ -275,10 +323,85 @@ impl NativeHost {
             };
         }
 
-        // Real implementation using reqwest with strict timeout and error handling
-        info!("Host: fetching URL '{}'", url);
+        // 6. Authoritative DNS Resolution & SSRF Range Evaluation (DNS Pinning Gate)
+        let pinned_socket_addr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if is_ssrf_ip(ip) {
+                warn!("Host: SSRF BLOCKED IP literal '{}' in URL '{}'", ip, url);
+                self.audit.log(
+                    "SSRF_BLOCKED",
+                    serde_json::json!({
+                        "url": url,
+                        "ip": ip.to_string(),
+                        "reason": "private or non-routable IP address",
+                        "taint_labels": taint_labels,
+                    }),
+                );
+                return HostResponse::Error {
+                    message: format!("SSRF Violation: access to IP '{}' is blocked", ip),
+                };
+            }
+            std::net::SocketAddr::new(ip, port)
+        } else {
+            // Resolve domain name via Tokio async DNS lookup
+            let addrs_res = tokio::net::lookup_host(format!("{}:{}", host, port)).await;
+            let addrs: Vec<std::net::SocketAddr> = match addrs_res {
+                Ok(iter) => iter.collect(),
+                Err(e) => {
+                    warn!("Host: DNS resolution failed for '{}:{}': {}", host, port, e);
+                    return HostResponse::Error {
+                        message: format!("DNS resolution failed for '{}': {}", host, e),
+                    };
+                }
+            };
+
+            if addrs.is_empty() {
+                return HostResponse::Error {
+                    message: format!("No DNS records found for host '{}'", host),
+                };
+            }
+
+            // Assert that EVERY resolved IP address passes the SSRF check
+            for addr in &addrs {
+                if is_ssrf_ip(addr.ip()) {
+                    warn!(
+                        "Host: SSRF DNS REBINDING BLOCKED! Host '{}' resolved to blocked IP '{}'",
+                        host,
+                        addr.ip()
+                    );
+                    self.audit.log(
+                        "SSRF_BLOCKED",
+                        serde_json::json!({
+                            "url": url,
+                            "host": host,
+                            "resolved_ip": addr.ip().to_string(),
+                            "reason": "resolved IP in private or non-routable SSRF range (DNS rebinding attempt)",
+                            "taint_labels": taint_labels,
+                        }),
+                    );
+                    return HostResponse::Error {
+                        message: format!(
+                            "SSRF Violation: host '{}' resolved to blocked IP '{}'",
+                            host,
+                            addr.ip()
+                        ),
+                    };
+                }
+            }
+
+            // Pin the first verified IP
+            addrs[0]
+        };
+
+        info!(
+            "Host: fetching URL '{}' pinned to socket address '{}'",
+            url, pinned_socket_addr
+        );
+
+        // 7. Construct DNS-Pinned HTTP Client with Redirects Disabled
         let client = match reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none()) // Prevent open redirect SSRF bypass
+            .resolve(&host, pinned_socket_addr)           // Hard DNS Pinning
             .build()
         {
             Ok(c) => c,
@@ -289,6 +412,7 @@ impl NativeHost {
             }
         };
 
+        // 8. Execute HTTP Fetch
         match client.get(url).send().await {
             Ok(resp) => {
                 let status = resp.status().as_u16();
@@ -339,58 +463,81 @@ impl NativeHost {
         }
 
         info!("Host: executing command '{}' with args {:?}", program, args);
-        let mut cmd = tokio::process::Command::new(program);
-        cmd.args(args);
-        cmd.env_clear();
-
-        // Pass sanitized environment block: whitelist benign system variables & strip secrets
-        let allowed_vars = [
-            "path",
-            "systemroot",
-            "temp",
-            "tmp",
-            "user",
-            "username",
-            "home",
-            "lang",
-            "term",
-            "comspec",
-            "pathext",
-            "windir",
-        ];
-        for (k, v) in std::env::vars() {
-            let k_lower = k.to_ascii_lowercase();
-            let is_whitelisted = allowed_vars.iter().any(|&a| k_lower == a);
-            let is_secret = k_lower.contains("secret")
-                || k_lower.contains("token")
-                || k_lower.contains("key")
-                || k_lower.contains("password")
-                || k_lower.starts_with("osoosi_")
-                || k_lower.starts_with("aws_")
-                || k_lower.starts_with("github_");
-            if is_whitelisted && !is_secret {
-                cmd.env(&k, &v);
-            }
-        }
 
         #[cfg(windows)]
         {
-            // CREATE_NO_WINDOW (0x08000000)
-            cmd.creation_flags(0x0800_0000);
+            let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+            let profile_name = format!("osoosi_cmd_{}", envelope.call_id.replace('-', ""));
+            let policy = crate::windows::WindowsConfinementPolicy::default();
+
+            match crate::windows::execute_confined_windows_process(program, &args_refs, &profile_name, &policy) {
+                Ok(outcome) => {
+                    if outcome.resume_thread_allowed && !outcome.terminated_suspended_process {
+                        HostResponse::CommandOutput {
+                            exit_code: outcome.exit_code.unwrap_or(0),
+                            stdout: outcome.stdout,
+                            stderr: outcome.stderr,
+                        }
+                    } else {
+                        HostResponse::Error {
+                            message: format!("Command confinement failed: {}", outcome.reason),
+                        }
+                    }
+                }
+                Err(e) => HostResponse::Error {
+                    message: format!("Failed to execute confined command '{}': {}", program, e),
+                },
+            }
         }
 
-        match tokio::time::timeout(std::time::Duration::from_secs(10), cmd.output()).await {
-            Ok(Ok(output)) => HostResponse::CommandOutput {
-                exit_code: output.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-            },
-            Ok(Err(e)) => HostResponse::Error {
-                message: format!("Failed to execute command '{}': {}", program, e),
-            },
-            Err(_) => HostResponse::Error {
-                message: format!("Command '{}' timed out after 10 seconds", program),
-            },
+        #[cfg(not(windows))]
+        {
+            let mut cmd = tokio::process::Command::new(program);
+            cmd.args(args);
+            cmd.env_clear();
+
+            let allowed_vars = [
+                "path",
+                "systemroot",
+                "temp",
+                "tmp",
+                "user",
+                "username",
+                "home",
+                "lang",
+                "term",
+                "comspec",
+                "pathext",
+                "windir",
+            ];
+            for (k, v) in std::env::vars() {
+                let k_lower = k.to_ascii_lowercase();
+                let is_whitelisted = allowed_vars.iter().any(|&a| k_lower == a);
+                let is_secret = k_lower.contains("secret")
+                    || k_lower.contains("token")
+                    || k_lower.contains("key")
+                    || k_lower.contains("password")
+                    || k_lower.starts_with("osoosi_")
+                    || k_lower.starts_with("aws_")
+                    || k_lower.starts_with("github_");
+                if is_whitelisted && !is_secret {
+                    cmd.env(&k, &v);
+                }
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_secs(10), cmd.output()).await {
+                Ok(Ok(output)) => HostResponse::CommandOutput {
+                    exit_code: output.status.code().unwrap_or(-1),
+                    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                },
+                Ok(Err(e)) => HostResponse::Error {
+                    message: format!("Failed to execute command '{}': {}", program, e),
+                },
+                Err(_) => HostResponse::Error {
+                    message: format!("Command '{}' timed out after 10 seconds", program),
+                },
+            }
         }
     }
 

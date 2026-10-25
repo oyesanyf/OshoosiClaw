@@ -6262,6 +6262,7 @@ dependencies = [
  "wasmtime 44.0.3",
  "wasmtime-wasi",
  "wat",
+ "windows 0.58.0",
 ]
 
 [[package]]
