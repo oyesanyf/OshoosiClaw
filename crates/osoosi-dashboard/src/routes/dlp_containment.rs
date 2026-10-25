@@ -423,7 +423,18 @@ impl DlpContainmentEngine {
         if !debounce_key.is_empty() {
             let mut st = self.state.lock();
             st.debounce.retain(|_, t| t.elapsed() < DEBOUNCE_WINDOW);
-            if st.debounce.contains_key(&debounce_key) {
+            let is_debounced = if decision == ContainmentDecision::DestinationBlocked {
+                let has_active_block = st.registry.values().any(|o| {
+                    !o.restored
+                        && o.decision == ContainmentDecision::DestinationBlocked
+                        && o.destination_host.eq_ignore_ascii_case(&ctx.destination_host)
+                });
+                st.debounce.contains_key(&debounce_key) && has_active_block
+            } else {
+                st.debounce.contains_key(&debounce_key)
+            };
+
+            if is_debounced {
                 decision = ContainmentDecision::Debounced;
                 reasons
                     .push("Debounced: containment already applied inside the window".to_string());
@@ -687,6 +698,25 @@ impl DlpContainmentEngine {
             .push(format!("Restored by {} at {}", operator, now_rfc3339()));
         let snapshot = {
             let mut st = self.state.lock();
+            let raw_host = outcome.destination_host.trim().to_ascii_lowercase();
+            let parsed_host = crate::routes::har_dlp::host_of(&raw_host).to_ascii_lowercase();
+            let raw_suffix = format!("|{}", raw_host);
+            let parsed_suffix = format!("|{}", parsed_host);
+            st.debounce.retain(|k, _| {
+                let k_low = k.to_ascii_lowercase();
+                if !raw_host.is_empty() && (k_low.ends_with(&raw_suffix) || k_low == raw_host) {
+                    return false;
+                }
+                if !parsed_host.is_empty() && (k_low.ends_with(&parsed_suffix) || k_low == parsed_host) {
+                    return false;
+                }
+                if let Some(p) = outcome.pid {
+                    if k_low == format!("pid:{}", p) {
+                        return false;
+                    }
+                }
+                true
+            });
             st.registry
                 .insert(containment_id.to_string(), outcome.clone());
             st.registry.clone()
@@ -2062,6 +2092,87 @@ mod tests {
         // 3. Re-submitting sensitive data immediately re-blocks (debounce cleared on restore)
         let second = engine.evaluate_and_respond(&ev_sensitive, &c, None);
         assert_eq!(second.decision, ContainmentDecision::DestinationBlocked);
+        assert!(engine.has_active_browser_block_for_host("dlptest.com"));
+    }
+
+    #[test]
+    fn direct_restore_clears_debounce_and_allows_reblock() {
+        let platform = Arc::new(FixturePlatform {
+            signed: true,
+            browser: true,
+            rea_malicious: false,
+            voters_escalate: true,
+            pid: Some(1234),
+            image: Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string()),
+            ..Default::default()
+        });
+        let (engine, _d) = engine_with(platform.clone(), "direct_restore");
+        let ev = real_event(
+            "chrome.exe",
+            "https://dlptest.com/https-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
+        let c = ctx(
+            Some(1234),
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string()),
+        );
+
+        // 1. Initial sensitive upload triggers DestinationBlocked
+        let first = engine.evaluate_and_respond(&ev, &c, None);
+        assert_eq!(first.decision, ContainmentDecision::DestinationBlocked);
+
+        // 2. Immediate second submission is debounced while block is active
+        let second = engine.evaluate_and_respond(&ev, &c, None);
+        assert_eq!(second.decision, ContainmentDecision::Debounced);
+
+        // 3. Direct restore by operator clears debounce for host and pid
+        let restored = engine.restore(&first.containment_id, "secops_admin").expect("restore");
+        assert!(restored.restored);
+
+        // 4. Third submission immediately triggers DestinationBlocked again
+        let third = engine.evaluate_and_respond(&ev, &c, None);
+        assert_eq!(third.decision, ContainmentDecision::DestinationBlocked);
+    }
+
+    #[test]
+    fn stale_debounce_without_active_block_does_not_suppress_destination_block() {
+        let platform = Arc::new(FixturePlatform {
+            signed: true,
+            browser: true,
+            rea_malicious: false,
+            voters_escalate: true,
+            pid: None,
+            image: Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string()),
+            ..Default::default()
+        });
+        let (engine, _d) = engine_with(platform.clone(), "stale_debounce");
+        let ev = real_event(
+            "chrome.exe",
+            "https://dlptest.com/https-post/",
+            SENSITIVE,
+            "balanced_utility",
+        );
+        let c = ctx(
+            None,
+            Some(r"C:\Program Files\Google\Chrome\Application\chrome.exe".to_string()),
+        );
+
+        // Inject a stale debounce entry directly into st.debounce without any active block in st.registry
+        let debounce_key = format!(
+            "dest:{}|{}",
+            r"c:\program files\google\chrome\application\chrome.exe",
+            "dlptest.com"
+        );
+        {
+            let mut st = engine.state.lock();
+            st.debounce.insert(debounce_key.clone(), Instant::now());
+        }
+
+        // Even though st.debounce contains the key, because st.registry has NO active block,
+        // evaluate_and_respond MUST NOT debounce DestinationBlocked!
+        let out = engine.evaluate_and_respond(&ev, &c, None);
+        assert_eq!(out.decision, ContainmentDecision::DestinationBlocked);
         assert!(engine.has_active_browser_block_for_host("dlptest.com"));
     }
 }
