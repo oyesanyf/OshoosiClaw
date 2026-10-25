@@ -546,6 +546,318 @@ pub fn inspect_and_record_with_options(
     (tier1, proof, event)
 }
 
+/// Concurrent lock-split version of [`inspect_and_record_with_options`] against `GLOBAL_DLP_STATE`:
+/// 1. Acquires a brief `read()` lock for pure in-memory `state.engine` evaluation and drops it immediately.
+/// 2. Runs REA binary adjudication, 8-layer decoding, Presidio/GLiNER ZK proof, and ML-DSA-65 signing completely lock-free.
+/// 3. Acquires a `< 5 µs` `write()` lock only to increment telemetry counters and record the event.
+pub fn inspect_and_record_shared(
+    actor_process: &str,
+    destination_sink: &str,
+    channel: &str,
+    payload_str: &str,
+    source: &str,
+    options: DlpInspectOptions,
+) -> (
+    osoosi_dp::DlpTier1FastScanVerdict,
+    osoosi_dp::ZkBftQuarantineProof,
+    DlpInspectionEventRecord,
+) {
+    let (
+        mut tier1,
+        cj_categories,
+        cj_export_denied,
+        dest_forbid,
+        dest_reason,
+        detection_mode,
+        containment_mode,
+        openjev,
+    ) = {
+        let state = get_global_dlp_state().read();
+        let tier1 =
+            state
+                .engine
+                .inspect_hot_tier1(actor_process, destination_sink, payload_str.as_bytes());
+        let (cj_categories, cj_export_denied) = state
+            .engine
+            .crown_jewels
+            .evaluate_crown_jewel_export_attempt(payload_str, actor_process, destination_sink);
+        let (dest_forbid, dest_reason) = state
+            .engine
+            .evaluate_egress_destination_policy(actor_process, destination_sink, channel);
+        let detection_mode =
+            osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode);
+        let containment_mode =
+            osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_containment_mode);
+        let openjev = state.engine.evaluate_openjev_hybrid(
+            actor_process,
+            destination_sink,
+            payload_str,
+            Some(&detection_mode.mode_name),
+        );
+        (
+            tier1,
+            cj_categories,
+            cj_export_denied,
+            dest_forbid,
+            dest_reason,
+            detection_mode,
+            containment_mode,
+            openjev,
+        )
+    };
+
+    let cj_reason = if cj_export_denied {
+        Some(format!(
+            "Crown-Jewel export denied ({})",
+            cj_categories.join(", ")
+        ))
+    } else {
+        None
+    };
+    let dest_categories: Vec<String> = dest_reason.iter().cloned().collect();
+
+    // REA binary provenance & artifact format vetting (lock-free).
+    let rea_actor_trusted = osoosi_core::rea::is_rea_benign_system_or_dev_process(
+        actor_process,
+        Some(destination_sink),
+    );
+    let (rea_adjudicated_benign, _rea_score, rea_reason) = osoosi_core::rea::global_rea_engine()
+        .adjudicate_process_or_binary_alert(Some(actor_process), None, Some(destination_sink));
+    let rea_untrusted_actor = !rea_actor_trusted && !rea_adjudicated_benign && dest_forbid;
+    let rea_actor_verdict = if rea_untrusted_actor {
+        "REA_UNTRUSTED_EXFIL_ACTOR".to_string()
+    } else if rea_actor_trusted || rea_adjudicated_benign {
+        "REA_VERIFIED_BENIGN_ACTOR".to_string()
+    } else {
+        format!(
+            "REA_INSPECTED ({})",
+            rea_reason.as_deref().unwrap_or("inspected")
+        )
+    };
+    let rea_asset_kind = if payload_str.contains(".pfx") || payload_str.contains(".p12") {
+        "PKCS12_PFX_KEYSTORE".to_string()
+    } else if payload_str.contains(".key") || payload_str.contains("PRIVATE KEY") {
+        "CRYPTO_PRIVATE_KEY".to_string()
+    } else if cj_export_denied {
+        "CROWN_JEWEL_ASSET".to_string()
+    } else {
+        "TEXT_STREAM".to_string()
+    };
+
+    for cat in cj_categories.iter().chain(dest_categories.iter()) {
+        if !tier1.detected_categories.contains(cat) {
+            tier1.detected_categories.push(cat.clone());
+        }
+    }
+    if rea_untrusted_actor
+        && !tier1
+            .detected_categories
+            .iter()
+            .any(|c| c == "REA_UNTRUSTED_EXFIL_BINARY")
+    {
+        tier1
+            .detected_categories
+            .push("REA_UNTRUSTED_EXFIL_BINARY".to_string());
+    }
+
+    let decoded_layers = osoosi_dp::OsoosiTwoTierDlpEngine::unwrap_encoded_layers(payload_str);
+    let mut combined_for_scrub = payload_str.to_string();
+    for layer in &decoded_layers {
+        combined_for_scrub.push(' ');
+        combined_for_scrub.push_str(layer);
+    }
+
+    let proof =
+        osoosi_dp::PresidioGlinerPiiZeroGuard::scrub_and_prove(&combined_for_scrub, 5501, 6.42, 4);
+    let zk_ok = osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&proof);
+    osoosi_dp::volatile_scrub_bytes(unsafe { combined_for_scrub.as_bytes_mut() });
+
+    let openjev_enforcement_agreed = openjev.openjev_enforcement_agreed();
+    let redactx_confirmed_detection = openjev.redactx_confirmed_at(&detection_mode);
+    let redactx_confirmed_containment = openjev.redactx_confirmed_at(&containment_mode);
+    for cat in &openjev.validator_confirmed_categories {
+        if !tier1.detected_categories.contains(cat) {
+            tier1.detected_categories.push(cat.clone());
+        }
+    }
+    if proof.redacted_entity_count > 0 {
+        for cat in &proof.redacted_categories {
+            if !tier1.detected_categories.contains(cat) {
+                tier1.detected_categories.push(cat.clone());
+            }
+        }
+    }
+
+    let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
+    let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
+    let mut final_verdict = osoosi_dp::aggregate_dlp_decision(
+        dest_forbid,
+        cj_export_denied,
+        voter_quarantine,
+        dlp_detected,
+    );
+
+    if tier1.detected_categories.is_empty() && !dest_forbid && !cj_export_denied && !voter_quarantine {
+        final_verdict = osoosi_dp::DlpVerdict::Allow;
+        tier1.allowed = true;
+        tier1.escalate_to_tier2 = false;
+        tier1.sensitivity_potential_phi = 0.0;
+        tier1.rationale = format!(
+            "[DLP-Tier1-Clean]: Clean payload verified ({:.1} KB)",
+            payload_str.len() as f64 / 1024.0
+        );
+    } else {
+        tier1.allowed = final_verdict == osoosi_dp::DlpVerdict::Allow;
+    }
+
+    if !tier1.allowed {
+        tier1.escalate_to_tier2 = true;
+        if cj_export_denied || dest_forbid {
+            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
+        } else if voter_quarantine {
+            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
+        }
+        if let Some(r) = cj_reason.or(dest_reason) {
+            tier1.rationale = r;
+        } else if tier1.rationale.starts_with("[DLP-Tier1-Clean]") {
+            tier1.rationale = format!(
+                "[DLP-Hybrid-Intercept]: '{}' -> '{}': categories={:?}, OpenJEV={} (Noul p={:.3})",
+                actor_process,
+                destination_sink,
+                tier1.detected_categories,
+                openjev.choice_routing_action.selection,
+                openjev.noul_contains_phi_pii.p_true_phi_pii
+            );
+        }
+    }
+
+    let pqc_prefix = if proof.pqc_mldsa65_signature_hex.len() >= 16 {
+        proof.pqc_mldsa65_signature_hex[..16].to_string()
+    } else {
+        proof.pqc_mldsa65_signature_hex.clone()
+    };
+    let scrubbed_preview = truncate_chars(&proof.scrubbed_payload, 180);
+
+    let (authorization_decision, dlp_response) = if tier1.allowed {
+        ("ALLOW".to_string(), "ALLOW".to_string())
+    } else {
+        (
+            final_verdict.as_authorization_str().to_string(),
+            match final_verdict {
+                osoosi_dp::DlpVerdict::Allow => "ALLOW".to_string(),
+                osoosi_dp::DlpVerdict::Quarantine | osoosi_dp::DlpVerdict::Deny => "QUARANTINE".to_string(),
+            },
+        )
+    };
+    let execution_mode = if options.simulated {
+        "SIMULATED_TEST".to_string()
+    } else {
+        "LIVE_ENFORCEMENT".to_string()
+    };
+    let external_transmission = if options.simulated {
+        "None in simulated mode".to_string()
+    } else if tier1.allowed {
+        "Permitted after Two-Tier DLP & REA check".to_string()
+    } else {
+        "Flagged by Two-Tier DLP; containment requires REA + voter consensus".to_string()
+    };
+
+    let mut event = DlpInspectionEventRecord {
+        id: format!("dlp-{}", uuid::Uuid::new_v4().simple()),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        actor_process: actor_process.to_string(),
+        destination_sink: destination_sink.to_string(),
+        channel: channel.to_string(),
+        inspected_bytes: tier1.inspected_bytes,
+        allowed: tier1.allowed,
+        escalate_to_tier2: tier1.escalate_to_tier2,
+        sensitivity_potential_phi: tier1.sensitivity_potential_phi,
+        detected_categories: tier1.detected_categories.clone(),
+        rationale: tier1.rationale.clone(),
+        scrubbed_preview,
+        redacted_entity_count: proof.redacted_entity_count,
+        zk_proof_commitment: proof.schnorr_fiat_shamir_commitment.clone(),
+        pqc_signature_prefix: pqc_prefix,
+        pii_leakage_bits: proof.pii_leakage_bits,
+        zk_verified: zk_ok,
+        repeat_count: 1,
+        redactx_detection_mode: detection_mode.mode_name,
+        redactx_containment_mode: containment_mode.mode_name,
+        redactx_validated_categories: openjev.validator_confirmed_categories.clone(),
+        redactx_doc_score: openjev.redactx_doc_score,
+        redactx_max_span_score: openjev.redactx_max_span_score,
+        redactx_confirmed_detection,
+        redactx_confirmed_containment,
+        openjev_enforcement_agreed,
+        openjev_decision: Some(openjev),
+        authorization_decision,
+        dlp_response,
+        execution_mode,
+        external_transmission,
+        cedar_forbid: dest_forbid,
+        protected_export_denied: cj_export_denied,
+        rea_actor_trusted: rea_actor_trusted || rea_adjudicated_benign,
+        rea_actor_verdict,
+        rea_asset_kind,
+        source: source.to_string(),
+        containment: None,
+    };
+
+    if !event.allowed
+        && is_in_released_allowlist(
+            &event.destination_sink,
+            &event.zk_proof_commitment,
+            &event.scrubbed_preview,
+        )
+    {
+        event.allowed = true;
+        event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
+        event.dlp_response = "RELEASED_BY_USER".to_string();
+    }
+
+    {
+        let mut state = get_global_dlp_state().write();
+        state.total_inspections += 1;
+        if !tier1.allowed {
+            state.blocked_exfiltrations += 1;
+        }
+        state.scrubbed_pii_entities += (proof.redacted_entity_count as u64).max(if !tier1.allowed {
+            tier1.detected_categories.len() as u64
+        } else {
+            0
+        });
+        if zk_ok {
+            state.zk_bft_proofs_verified += 1;
+        }
+
+        if !(options.skip_recording_allowed && event.allowed) {
+            if let Some(pos) = state.recent_events.iter().position(|e| {
+                e.actor_process == event.actor_process
+                    && e.destination_sink == event.destination_sink
+                    && e.channel == event.channel
+                    && e.scrubbed_preview == event.scrubbed_preview
+            }) {
+                let mut existing = state.recent_events.remove(pos);
+                existing.repeat_count = existing.repeat_count.saturating_add(1);
+                existing.timestamp = chrono::Utc::now().to_rfc3339();
+                existing.zk_proof_commitment = event.zk_proof_commitment.clone();
+                existing.pqc_signature_prefix = event.pqc_signature_prefix.clone();
+                existing.zk_verified = event.zk_verified;
+                if event.containment.is_some() {
+                    existing.containment = event.containment.clone();
+                }
+                event.repeat_count = existing.repeat_count;
+                state.recent_events.insert(0, existing);
+            } else {
+                state.recent_events.insert(0, event.clone());
+                state.recent_events.truncate(250);
+            }
+        }
+    }
+
+    (tier1, proof, event)
+}
+
 /// Truncates on a char boundary and appends an ellipsis.
 fn truncate_chars(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
@@ -655,7 +967,40 @@ pub fn load_persisted_dlp_events(limit: usize) -> Vec<DlpInspectionEventRecord> 
 }
 
 pub async fn get_dlp_status() -> Json<Value> {
-    let state = get_global_dlp_state().read();
+    let (
+        policy_mode,
+        min_phi_threshold,
+        redactx_detection_mode,
+        redactx_containment_mode,
+        total_inspections,
+        blocked_exfiltrations,
+        scrubbed_pii_entities,
+        zk_bft_proofs_verified,
+        crown_jewel_chunks_indexed,
+        crown_jewels,
+        recent_events,
+    ) = {
+        let state = get_global_dlp_state().read();
+        (
+            state.policy_mode.clone(),
+            state.min_phi_threshold,
+            state.redactx_detection_mode.clone(),
+            state.redactx_containment_mode.clone(),
+            state.total_inspections,
+            state.blocked_exfiltrations,
+            state.scrubbed_pii_entities,
+            state.zk_bft_proofs_verified,
+            state.engine.crown_jewels.chunk_hashes.len(),
+            state.crown_jewels.clone(),
+            state
+                .recent_events
+                .iter()
+                .take(64)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+
     let tracker_len = crate::get_global_file_lineage_tracker().len();
     let canary_traps_triggered =
         crate::CANARY_CAGE_TRIGGERED_COUNT.load(std::sync::atomic::Ordering::SeqCst);
@@ -706,27 +1051,27 @@ pub async fn get_dlp_status() -> Json<Value> {
         },
         "ner_model_id": osoosi_dp::PresidioGlinerPiiZeroGuard::GLINER_MULTI_PII_MODEL_ID,
         "pqc_signature_scheme": "NIST FIPS 204 ML-DSA-65 + Ed25519",
-        "policy_mode": state.policy_mode,
-        "min_phi_threshold": state.min_phi_threshold,
-        "redactx_detection_mode": state.redactx_detection_mode,
-        "redactx_containment_mode": state.redactx_containment_mode,
+        "policy_mode": policy_mode,
+        "min_phi_threshold": min_phi_threshold,
+        "redactx_detection_mode": redactx_detection_mode,
+        "redactx_containment_mode": redactx_containment_mode,
         "autonomous_har_pipeline": crate::routes::har_dlp::pipeline_status(),
         "browser_sensor": crate::routes::browser_sensor::sensor_status(),
         "containment": crate::routes::dlp_containment::containment_status(),
         "stats": {
-            "total_inspections": state.total_inspections,
-            "blocked_exfiltrations": state.blocked_exfiltrations,
-            "scrubbed_pii_entities": state.scrubbed_pii_entities,
-            "zk_bft_proofs_verified": state.zk_bft_proofs_verified,
-            "crown_jewels_registered": state.crown_jewels.len(),
-            "crown_jewel_chunks_indexed": state.engine.crown_jewels.chunk_hashes.len(),
+            "total_inspections": total_inspections,
+            "blocked_exfiltrations": blocked_exfiltrations,
+            "scrubbed_pii_entities": scrubbed_pii_entities,
+            "zk_bft_proofs_verified": zk_bft_proofs_verified,
+            "crown_jewels_registered": crown_jewels.len(),
+            "crown_jewel_chunks_indexed": crown_jewel_chunks_indexed,
             "tracked_file_lineage": tracker_len,
             "canary_traps_triggered": canary_traps_triggered,
             "canary_active_cages": canary_active,
             "bytes_exfiltrated_to_attacker": 0
         },
-        "crown_jewels": state.crown_jewels,
-        "recent_events": state.recent_events,
+        "crown_jewels": crown_jewels,
+        "recent_events": recent_events,
         "supported_detectors": supported_detectors,
     }))
 }
@@ -752,9 +1097,7 @@ pub async fn post_dlp_inspect(Json(body): Json<Value>) -> Json<Value> {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    let mut state = get_global_dlp_state().write();
-    let (tier1, proof, event) = inspect_and_record_with_options(
-        &mut state,
+    let (tier1, proof, event) = inspect_and_record_shared(
         actor_process,
         destination_sink,
         channel,
@@ -843,9 +1186,8 @@ pub async fn post_dlp_scan_har() -> Json<Value> {
         let mut scanned = 0usize;
         let mut blocked = 0usize;
         let mut with_body = 0usize;
-        let mut state = get_global_dlp_state().write();
 
-        // Purge stale false positives from SQLite dlp_events table and state.recent_events
+        // Purge stale false positives from SQLite dlp_events table off-lock first
         let db_path = std::path::PathBuf::from("database").join("osoosi.db");
         if db_path.is_file() {
             if let Ok(conn) = rusqlite::Connection::open(&db_path) {
@@ -855,18 +1197,21 @@ pub async fn post_dlp_scan_har() -> Json<Value> {
                 );
             }
         }
-        state.recent_events.retain(|ev| {
-            let is_stale_fp = !ev.allowed && (ev.detected_categories.is_empty() || ev.sensitivity_potential_phi == 0.0);
-            !is_stale_fp
-        });
+        {
+            let mut state = get_global_dlp_state().write();
+            state.recent_events.retain(|ev| {
+                let is_stale_fp = !ev.allowed
+                    && (ev.detected_categories.is_empty() || ev.sensitivity_potential_phi == 0.0);
+                !is_stale_fp
+            });
+        }
 
         for req in &requests {
             if !req.body_text.is_empty() {
                 with_body += 1;
             }
             let payload = req.to_inspection_payload();
-            let (verdict, _, _) = inspect_and_record_with_options(
-                &mut state,
+            let (verdict, _, _) = inspect_and_record_shared(
                 &req.actor,
                 &req.url,
                 req.channel(),
@@ -879,12 +1224,13 @@ pub async fn post_dlp_scan_har() -> Json<Value> {
                 blocked += 1;
             }
         }
+        let total_inspections = get_global_dlp_state().read().total_inspections;
         json!({
             "ok": true,
             "scanned_count": scanned,
             "scanned_with_body": with_body,
             "blocked_count": blocked,
-            "total_inspections": state.total_inspections
+            "total_inspections": total_inspections
         })
     })
     .await

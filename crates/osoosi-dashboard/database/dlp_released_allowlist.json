@@ -1,0 +1,8 @@
+[
+  {
+    "destination_sink": "https://hospital.internal.net/sync",
+    "zk_commitment_hex": "8dbce07891bfb630d76bd3fcdd95bf100aeedfc0bd12da83403c211ff46a565d",
+    "scrubbed_preview": "clinical note patient ssn <ZK_PII:US_SSN:a2189bf4>",
+    "released_at": "2026-10-25T01:16:36.995042300+00:00"
+  }
+]

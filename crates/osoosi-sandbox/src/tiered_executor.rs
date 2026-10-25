@@ -156,6 +156,35 @@ impl TieredExecutionDispatcher {
             )
         })?;
 
+        let tool_lower = req.tool_name.trim().to_ascii_lowercase();
+        if matches!(
+            tool_lower.as_str(),
+            "doc_extractor"
+                | "wasm_doc_extractor"
+                | "extract"
+                | "ledger_writer"
+                | "wasm_ledger_validator"
+                | "write"
+        ) || matches!(
+            req.role,
+            ArmRole::UntrustedDocIngest | ArmRole::AccountingLedgerWrite
+        ) {
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "TIER2_ROLE_OR_TOOL_MISMATCH [{} / {:?}]: Untrusted document or ledger tools are restricted to Tier 1 Wasmtime and may not spawn native Tier 2 processes",
+                req.tool_name, req.role
+            )));
+        }
+
+        if program.trim().is_empty()
+            || program.chars().any(|c| c < ' ' || c == '\x7f')
+            || args.iter().any(|a| a.chars().any(|c| c < ' ' || c == '\x7f'))
+        {
+            return Err(OctopusSecurityError::IsolationViolation(
+                "Tier 2 command rejected: program or arguments contain NUL or control characters"
+                    .to_string(),
+            ));
+        }
+
         let full_cmd = if args.is_empty() {
             program.clone()
         } else {

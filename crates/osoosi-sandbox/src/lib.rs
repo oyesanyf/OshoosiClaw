@@ -934,4 +934,86 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn test_wasm_tier1_scratch_write_quota_and_tier2_control_char_rejection() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "osoosi_wasm_quota_test_{}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let wat = r#"
+        (module
+          (import "octopus_wasi" "scratch_write" (func $scratch_write (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "quota.bin")
+          (data (i32.const 32) "0123456789ABCDEF0123456789ABCDEF")
+          (func (export "octopus_run") (result i32)
+            ;; Write 32 bytes when max_output_bytes = 16 -> must return -13 (WASI_ERR_ACCESS_DENIED)
+            (call $scratch_write (i32.const 0) (i32.const 9) (i32.const 32) (i32.const 32))
+          )
+        )
+        "#;
+
+        let exec = WasmTier1Executor::try_new().expect("WasmTier1Executor init");
+        let limits = WasmSandboxLimits {
+            fuel_budget: 100_000,
+            max_linear_memory_bytes: 1024 * 1024,
+            max_table_elements: 64,
+            max_output_bytes: 16,
+            scratchpad_root: temp_dir.clone(),
+            allow_scratch_write: true,
+        };
+        let receipt = exec
+            .execute_wat("quota_test", wat, &[], limits)
+            .expect("Wasm execution should complete");
+        assert!(receipt.exit_code < 0, "Quota violation must return negative error code");
+        assert_eq!(receipt.scratch_bytes_written, 0);
+        assert!(
+            receipt
+                .blocked_escape_attempts
+                .iter()
+                .any(|m| m.contains("write quota exceeded")),
+            "Must record write quota exceeded in blocked_escape_attempts: {:?}",
+            receipt.blocked_escape_attempts
+        );
+
+        let dispatcher = TieredExecutionDispatcher::try_new().expect("dispatcher init");
+        let bad_req = TieredToolRequest {
+            agent_id: "sec-test".to_string(),
+            role: osoosi_types::ArmRole::AnomalyDetection,
+            tool_name: "win32_job_probe".to_string(),
+            payload: vec![],
+            custom_wat: None,
+            native_command: Some((
+                "cmd.exe".to_string(),
+                vec!["/c".to_string(), "echo\0injected".to_string()],
+            )),
+            scratchpad_root: temp_dir.clone(),
+            allow_scratch_write: false,
+        };
+        assert!(
+            dispatcher.dispatch(&bad_req).is_err(),
+            "Tier-2 command with NUL or control character must be rejected"
+        );
+
+        let mismatch_req = TieredToolRequest {
+            agent_id: "sec-test".to_string(),
+            role: osoosi_types::ArmRole::UntrustedDocIngest,
+            tool_name: "doc_extractor".to_string(),
+            payload: vec![],
+            custom_wat: None,
+            native_command: Some(("cmd.exe".to_string(), vec!["/c".to_string(), "whoami".to_string()])),
+            scratchpad_root: temp_dir.clone(),
+            allow_scratch_write: false,
+        };
+        assert!(
+            dispatcher.dispatch(&mismatch_req).is_err(),
+            "UntrustedDocIngest role attempting Tier-2 native command must be rejected"
+        );
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
+
