@@ -2,15 +2,15 @@
 //!
 //! Validates:
 //! - Finding 1: Structural command-line inspection, recursive cmd /c unwrapping,
-//!              PowerShell switch prefix classification, and RFC 4648 Base64 + UTF-16LE decoding.
+//!   PowerShell switch prefix classification, and RFC 4648 Base64 + UTF-16LE decoding.
 //! - Finding 2: Authenticated ArmRole trust tiers (Untrusted=10, Worker=50, PrivilegedSink=100),
-//!              HMAC epoch key derivation, signed ProvenanceHop chain, and LAW1_STICKY_TAINT_VETO.
+//!   HMAC epoch key derivation, signed ProvenanceHop chain, and LAW1_STICKY_TAINT_VETO.
 //! - Finding 3: Non-decaying Mercury CoalescenceAccumulator (lifetime mass + 1-hr window)
-//!              and Win32 QueryInformationJobObject kernel telemetry (MeasuredActuationSample::sample_from_job).
+//!   and Win32 QueryInformationJobObject kernel telemetry (MeasuredActuationSample::sample_from_job).
 //! - Finding 4: Compile-time embedded test harness baselines (include_bytes!) and fail-closed
-//!              verify_harness_integrity check against test tampering and evasion.
+//!   verify_harness_integrity check against test tampering and evasion.
 //! - Finding 6: CIS 3.3 extended IPv4/IPv6 SSRF normalization (decimal/hex/octal, NAT64, 6to4, trailing dot)
-//!              and resolve_and_pin DNS pinning.
+//!   and resolve_and_pin DNS pinning.
 
 use osoosi_agent_anomaly::breakout_defense::{
     validate_agent_egress_url as validate_egress_url_breakout, BehavioralBreakoutGuard,

@@ -567,7 +567,7 @@ impl AutonomousAiFeedCollector {
     /// Return the canonical path to the runtime feeds directory.
     pub fn runtime_feeds_dir(&self) -> PathBuf {
         let rd = self.rules_dir.read().clone();
-        if rd == PathBuf::from("rules/ai_threat_feeds") {
+        if rd == std::path::Path::new("rules/ai_threat_feeds") {
             osoosi_types::config::resolve_log_directory()
                 .join("runtime_feeds")
                 .join("ai_threat_feeds")

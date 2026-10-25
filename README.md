@@ -209,7 +209,19 @@ sequenceDiagram
 
 ---
 
+### 🛡️ Traceable Security Remediation Matrix (Directives G1–G6)
+
+| Directive | Security Objective | Target File(s) & Implementation | Verification Test & Method | PR / Tracking | Posture |
+| :--- | :--- | :--- | :--- | :---: | :---: |
+| **G1** | Linux Pre-Confinement Spawn Parity | `crates/osoosi-sandbox/src/tiered_executor.rs`<br/>`crates/osoosi-sandbox/src/native_host.rs` (`cmd.pre_exec`, `libc::PR_SET_NO_NEW_PRIVS`, Cgroup v2 `cgroup.procs`, child PID reporting, 10s timeout) | Integration test verification & Unix fork/exec confinement audits | `#G1-G6` | **VERIFIED** |
+| **G2** | Anti-DNS-Rebinding Socket Enforcement & SIIT SSRF Parity | `crates/osoosi-sandbox/src/native_host.rs`<br/>`crates/osoosi-sandbox/src/lib.rs` (`validate_resolved_socket_addr`, SIIT `::ffff:0:0/96`, IPv4-compatible, 6to4, NAT64, Teredo/Doc) | `cargo test -p osoosi-sandbox --test attack_isolation_test test_anti_dns_rebinding_socket_connect_guard` | `#G1-G6` | **VERIFIED** |
+| **G3** | Deep Recursive DLP & High-Entropy Exfiltration Hardening | `crates/osoosi-dp/src/lib.rs` (`MAX_UNWRAP_TOTAL_DECODED_BYTES = 256 KiB`, 50x expansion bomb cap, `register_asset`, 50% sliding-window overlap `step = 2048` in `match_chunks`) | `cargo test -p osoosi-dp test_deep_recursive_dlp_depth6_and_boundary_split_detection` | `#G1-G6` | **VERIFIED** |
+| **G4** | Pre-Boot BYOVD & Driver Integrity Auditing | `crates/osoosi-telemetry/src/native.rs`<br/>`crates/osoosi-core/src/system_check.rs` (`LoadedDriverInfo`, `enumerate_loaded_kernel_drivers`, `PreBootDriverAuditReport`, LOLDrivers catalog) | `cargo test -p osoosi-core test_preboot_byovd_driver_enumeration_and_containment` | `#G1-G6` | **VERIFIED** |
+| **G5** | CI/CD deny.toml & Clippy Parity Gates | Root `deny.toml`<br/>`.github/workflows/ci.yml`<br/>Fixed 8 Clippy lints across core and tests | `cargo deny check advisories`<br/>`cargo clippy --workspace --all-targets` | `#G1-G6` | **VERIFIED** |
+| **G6** | Traceable Documentation & WebUI Traceability | `README.md`<br/>`ARCHITECTURE.md`<br/>`dashboard/src/index.html`<br/>`dashboard/dist/index.html` (Strict 0 NIST refs, 0 letter grades, `#dlp-view` parity) | `python scripts/validate_readme.py`<br/>`git diff --no-index dashboard/src dashboard/dist` | `#G1-G6` | **VERIFIED** |
+
 ---
+
 
 
 ### 🛡️ Autonomous Browser DLP (`dlptest.com` PHI), Google Safe Browsing v4, 4-Voter Consensus Containment & Kernel WFP (`FwpmFilterAdd0`)

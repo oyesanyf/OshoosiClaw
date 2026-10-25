@@ -1072,17 +1072,71 @@ pub fn spawn_tier2_appcontainer_command(
     scratchpad_root: &std::path::Path,
     job: &WindowsJobObject,
 ) -> Result<Tier2ConfinedChildResult, OctopusSecurityError> {
+    use std::os::unix::process::CommandExt;
     let _ = (agent_id, scratchpad_root, job);
     let mut cmd = std::process::Command::new(&verified_exe.metadata.canonical_path);
     cmd.args(args);
-    let status = crate::hidden_process_ledger::status_hidden(
-        &mut cmd,
-        "TieredExecutionDispatcher::dispatch_tier2_unix",
-    )
-    .map_err(|e| OctopusSecurityError::IsolationViolation(e.to_string()))?;
+
+    // Pre-exec isolation: PR_SET_NO_NEW_PRIVS and optional cgroup.procs binding
+    unsafe {
+        cmd.pre_exec(|| {
+            #[cfg(target_os = "linux")]
+            {
+                let ret = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+                if ret != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+
+                // If cgroup v2 cgroup.procs exists for containment, attach the child PID (0 = self)
+                let cgroup_procs_path = "/sys/fs/cgroup/oshoosi/cgroup.procs";
+                if std::path::Path::new(cgroup_procs_path).exists() {
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(cgroup_procs_path)
+                    {
+                        use std::io::Write;
+                        let _ = writeln!(f, "0");
+                    }
+                }
+            }
+            Ok(())
+        });
+    }
+
+    let mut child = cmd.spawn().map_err(|e| {
+        OctopusSecurityError::IsolationViolation(format!(
+            "Failed to spawn confined unix child: {}",
+            e
+        ))
+    })?;
+    let child_pid = child.id();
+
+    // Wait with 10s timeout and harvest status
+    let start = std::time::Instant::now();
+    let timeout = std::time::Duration::from_secs(10);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    return Err(OctopusSecurityError::ExecutionTimeout);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(OctopusSecurityError::IsolationViolation(format!(
+                    "Failed to wait on confined child: {}",
+                    e
+                )));
+            }
+        }
+    };
+
     let posture = crate::token_posture::current_token_posture()?;
     Ok(Tier2ConfinedChildResult {
-        pid: std::process::id(),
+        pid: child_pid,
         exit_code: status.code().unwrap_or(1),
         token_posture: posture,
         appcontainer_verification: AppContainerTokenVerification {

@@ -412,7 +412,7 @@ impl GoogleApiBackoffAnalyzer {
         };
 
         // Allow slope between 0.38 and 1.35 (ln(2) = 0.693 is dead center).
-        let backoff_compliant = fit_slope >= 0.38 && fit_slope <= 1.35;
+        let backoff_compliant = (0.38..=1.35).contains(&fit_slope);
 
         CurveFitResult {
             backoff_compliant,
@@ -511,7 +511,7 @@ impl GoogleApiBackoffAnalyzer {
             _ => {
                 let attempt = throttle_count as u32;
                 let base = if let Some(last_req_wait) =
-                    samples.iter().filter_map(|s| s.retry_after_ms).last()
+                    samples.iter().rev().find_map(|s| s.retry_after_ms)
                 {
                     last_req_wait
                 } else {

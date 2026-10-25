@@ -501,6 +501,18 @@ impl NativeHost {
             cmd.args(args);
             cmd.env_clear();
 
+            #[cfg(target_os = "linux")]
+            unsafe {
+                use std::os::unix::process::CommandExt;
+                cmd.as_std_mut().pre_exec(|| {
+                    let ret = libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+                    if ret != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+
             let allowed_vars = [
                 "path",
                 "systemroot",
@@ -631,8 +643,29 @@ pub fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => is_ssrf_ipv4(v4),
         std::net::IpAddr::V6(v6) => {
-            // Check for IPv4-mapped IPv6 (::ffff:0:0/96)
             let segs = v6.segments();
+            let oct = v6.octets();
+
+            // 1. RFC 2765 SIIT IPv4-translated prefix ::ffff:0:0/96
+            if segs[0] == 0
+                && segs[1] == 0
+                && segs[2] == 0
+                && segs[3] == 0
+                && segs[4] == 0xffff
+                && segs[5] == 0
+            {
+                let embedded_v4 = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    (segs[6] & 0xff) as u8,
+                    (segs[7] >> 8) as u8,
+                    (segs[7] & 0xff) as u8,
+                );
+                if is_ssrf_ipv4(embedded_v4) {
+                    return true;
+                }
+            }
+
+            // 2. IPv4-mapped IPv6 (::ffff:0:0/96)
             if segs[0] == 0
                 && segs[1] == 0
                 && segs[2] == 0
@@ -648,53 +681,122 @@ pub fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
                 );
                 return is_ssrf_ipv4(v4);
             }
+
+            // 3. IPv4-compatible IPv6 (::a.b.c.d where segs[0..6] == 0)
+            if segs[0] == 0
+                && segs[1] == 0
+                && segs[2] == 0
+                && segs[3] == 0
+                && segs[4] == 0
+                && segs[5] == 0
+            {
+                let compat_v4 = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    (segs[6] & 0xff) as u8,
+                    (segs[7] >> 8) as u8,
+                    (segs[7] & 0xff) as u8,
+                );
+                if !v6.is_loopback() && is_ssrf_ipv4(compat_v4) {
+                    return true;
+                }
+            }
+
+            // 4. NAT64 prefix: 64:ff9b::/96 and 64:ff9b:1::/48
+            let is_nat64 = (segs[0] == 0x0064
+                && segs[1] == 0xff9b
+                && segs[2] == 0
+                && segs[3] == 0
+                && segs[4] == 0
+                && segs[5] == 0)
+                || (segs[0] == 0x0064 && segs[1] == 0xff9b && segs[2] == 1);
+            if is_nat64 {
+                return true;
+            }
+
+            // 5. 6to4 prefix: 2002::/16
+            let is_6to4 = segs[0] == 0x2002;
+            if is_6to4 {
+                let embedded_v4 = std::net::Ipv4Addr::new(
+                    (segs[1] >> 8) as u8,
+                    (segs[1] & 0xff) as u8,
+                    (segs[2] >> 8) as u8,
+                    (segs[2] & 0xff) as u8,
+                );
+                if is_ssrf_ipv4(embedded_v4) {
+                    return true;
+                }
+                return true;
+            }
+
+            // 6. Teredo (2001::/32), Doc (2001:db8::/32), Discard (0100::/64)
+            let is_teredo_or_doc_or_discard = (segs[0] == 0x2001
+                && (segs[1] == 0x0000 || segs[1] == 0x0db8))
+                || (segs[0] == 0x0100 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0);
+            if is_teredo_or_doc_or_discard {
+                return true;
+            }
+
+            // 7. Loopback, unspecified, multicast
             if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
                 return true;
             }
-            // Unique local fc00::/7 (fc00:: - fdff:ffff:...)
-            if (segs[0] & 0xfe00) == 0xfc00 {
+
+            // 8. Unique local fc00::/7 (fc00:: - fdff:ffff:...)
+            if (oct[0] & 0xfe) == 0xfc {
                 return true;
             }
-            // Link-local fe80::/10 (fe80:: - febf:ffff:...)
-            if (segs[0] & 0xffc0) == 0xfe80 {
+
+            // 9. Link-local fe80::/10 (fe80:: - febf:ffff:...)
+            if oct[0] == 0xfe && (oct[1] & 0xc0) == 0x80 {
                 return true;
             }
+
             false
         }
     }
 }
 
-/// Evaluates an IPv4 address mathematically against RFC1918, loopback, CGNAT, link-local, broadcast, and multicast.
+/// Evaluates an IPv4 address mathematically against RFC1918, loopback, CGNAT, link-local, broadcast, multicast, benchmarking, class E, and IETF.
 pub fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
     let octets = v4.octets();
-    if v4.is_loopback()       // 127.0.0.0/8
-        || v4.is_unspecified() // 0.0.0.0
-        || v4.is_broadcast()   // 255.255.255.255
-        || v4.is_multicast()   // 224.0.0.0/4
-        || octets[0] == 0
-    // 0.0.0.0/8
-    {
-        return true;
+    let is_this_net = octets[0] == 0; // 0.0.0.0/8
+    let is_cgnat = octets[0] == 100 && (octets[1] & 0b1100_0000) == 64; // 100.64.0.0/10
+    let is_metadata = octets[0] == 169 && octets[1] == 254; // 169.254.0.0/16
+    let is_benchmarking = octets[0] == 198 && (octets[1] & 0xfe) == 18; // 198.18.0.0/15
+    let is_reserved_class_e = (octets[0] & 0xf0) == 240; // 240.0.0.0/4
+    let is_ietf_protocol = octets[0] == 192 && octets[1] == 0 && octets[2] == 0; // 192.0.0.0/24
+
+    v4.is_loopback()
+        || v4.is_unspecified()
+        || v4.is_broadcast()
+        || v4.is_multicast()
+        || is_this_net
+        // RFC1918: 10.0.0.0/8
+        || octets[0] == 10
+        // RFC1918: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+        // RFC1918: 192.168.0.0/16
+        || (octets[0] == 192 && octets[1] == 168)
+        || is_cgnat
+        || is_metadata
+        || is_benchmarking
+        || is_reserved_class_e
+        || is_ietf_protocol
+}
+
+/// Validates a resolved socket address against SSRF and DNS rebinding attacks.
+///
+/// Returns `Err(OctopusSecurityError::SsrfBlocked)` if the IP address belongs to any restricted,
+/// private, link-local, loopback, SIIT, 6to4, or NAT64 range.
+pub fn validate_resolved_socket_addr(
+    addr: &std::net::SocketAddr,
+) -> Result<(), osoosi_types::OctopusSecurityError> {
+    if is_ssrf_ip(addr.ip()) {
+        Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+            "Restricted IP address blocked: {}",
+            addr.ip()
+        )))
+    } else {
+        Ok(())
     }
-    // RFC1918: 10.0.0.0/8
-    if octets[0] == 10 {
-        return true;
-    }
-    // RFC1918: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
-    if octets[0] == 172 && (16..=31).contains(&octets[1]) {
-        return true;
-    }
-    // RFC1918: 192.168.0.0/16
-    if octets[0] == 192 && octets[1] == 168 {
-        return true;
-    }
-    // Link-local / Cloud metadata: 169.254.0.0/16
-    if octets[0] == 169 && octets[1] == 254 {
-        return true;
-    }
-    // Carrier-Grade NAT (CGNAT): 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
-    if octets[0] == 100 && (64..=127).contains(&octets[1]) {
-        return true;
-    }
-    false
 }

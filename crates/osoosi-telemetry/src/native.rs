@@ -962,3 +962,216 @@ async fn run_hook_telemetry_listener(
     .await?;
     Ok(())
 }
+
+/// Telemetry record for a kernel driver loaded in the operating system.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct LoadedDriverInfo {
+    pub base_address: usize,
+    pub image_name: String,
+    pub file_path: Option<String>,
+}
+
+/// Enumerates all currently loaded kernel-mode drivers across Windows and Linux.
+///
+/// On Windows, queries K32EnumDeviceDrivers (or EnumDeviceDrivers) and normalizes paths.
+/// On Linux, parses `/proc/modules`.
+/// On unsupported platforms, returns an empty vector.
+pub fn enumerate_loaded_kernel_drivers() -> Vec<LoadedDriverInfo> {
+    #[cfg(target_os = "windows")]
+    {
+        enumerate_loaded_kernel_drivers_windows()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        enumerate_loaded_kernel_drivers_linux()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        Vec::new()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn enumerate_loaded_kernel_drivers_windows() -> Vec<LoadedDriverInfo> {
+    use std::ffi::c_void;
+    use windows_sys::Win32::System::LibraryLoader::{
+        GetModuleHandleA, GetProcAddress, LoadLibraryA,
+    };
+
+    let mut results = Vec::new();
+    unsafe {
+        let kernel32 = GetModuleHandleA(c"kernel32.dll".as_ptr() as *const u8);
+        if kernel32.is_null() {
+            return results;
+        }
+
+        type EnumDriversFn = unsafe extern "system" fn(*mut *mut c_void, u32, *mut u32) -> i32;
+        type GetBaseNameFn = unsafe extern "system" fn(*mut c_void, *mut u16, u32) -> u32;
+        type GetFileNameFn = unsafe extern "system" fn(*mut c_void, *mut u16, u32) -> u32;
+
+        let enum_drivers: Option<EnumDriversFn> = {
+            if let Some(p) = GetProcAddress(kernel32, c"K32EnumDeviceDrivers".as_ptr() as *const u8)
+            {
+                Some(std::mem::transmute::<
+                    unsafe extern "system" fn() -> isize,
+                    EnumDriversFn,
+                >(p))
+            } else {
+                let psapi = LoadLibraryA(c"psapi.dll".as_ptr() as *const u8);
+                if !psapi.is_null() {
+                    GetProcAddress(psapi, c"EnumDeviceDrivers".as_ptr() as *const u8).map(|p2| {
+                        std::mem::transmute::<unsafe extern "system" fn() -> isize, EnumDriversFn>(
+                            p2,
+                        )
+                    })
+                } else {
+                    None
+                }
+            }
+        };
+
+        let get_base_name: Option<GetBaseNameFn> = {
+            if let Some(p) = GetProcAddress(
+                kernel32,
+                c"K32GetDeviceDriverBaseNameW".as_ptr() as *const u8,
+            ) {
+                Some(std::mem::transmute::<
+                    unsafe extern "system" fn() -> isize,
+                    GetBaseNameFn,
+                >(p))
+            } else {
+                let psapi = GetModuleHandleA(c"psapi.dll".as_ptr() as *const u8);
+                if !psapi.is_null() {
+                    GetProcAddress(psapi, c"GetDeviceDriverBaseNameW".as_ptr() as *const u8)
+                            .map(|p2| {
+                                std::mem::transmute::<
+                                    unsafe extern "system" fn() -> isize,
+                                    GetBaseNameFn,
+                                >(p2)
+                            })
+                } else {
+                    None
+                }
+            }
+        };
+
+        let get_file_name: Option<GetFileNameFn> = {
+            if let Some(p) = GetProcAddress(
+                kernel32,
+                c"K32GetDeviceDriverFileNameW".as_ptr() as *const u8,
+            ) {
+                Some(std::mem::transmute::<
+                    unsafe extern "system" fn() -> isize,
+                    GetFileNameFn,
+                >(p))
+            } else {
+                let psapi = GetModuleHandleA(c"psapi.dll".as_ptr() as *const u8);
+                if !psapi.is_null() {
+                    GetProcAddress(psapi, c"GetDeviceDriverFileNameW".as_ptr() as *const u8)
+                            .map(|p2| {
+                                std::mem::transmute::<
+                                    unsafe extern "system" fn() -> isize,
+                                    GetFileNameFn,
+                                >(p2)
+                            })
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(enum_fn) = enum_drivers {
+            let mut drivers: Vec<*mut c_void> = vec![std::ptr::null_mut(); 2048];
+            let mut cb_needed: u32 = 0;
+            let cb = (drivers.len() * std::mem::size_of::<*mut c_void>()) as u32;
+
+            if enum_fn(drivers.as_mut_ptr(), cb, &mut cb_needed) != 0 {
+                let count = (cb_needed as usize) / std::mem::size_of::<*mut c_void>();
+                let actual_count = count.min(drivers.len());
+
+                let system_root =
+                    std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+
+                for &base in &drivers[..actual_count] {
+                    if base.is_null() {
+                        continue;
+                    }
+                    let mut base_name_buf = [0u16; 260];
+                    let mut file_path_buf = [0u16; 520];
+
+                    let mut image_name = String::new();
+                    if let Some(base_fn) = get_base_name {
+                        let len =
+                            base_fn(base, base_name_buf.as_mut_ptr(), base_name_buf.len() as u32);
+                        if len > 0 {
+                            image_name = String::from_utf16_lossy(&base_name_buf[..len as usize]);
+                        }
+                    }
+
+                    let mut file_path = None;
+                    if let Some(file_fn) = get_file_name {
+                        let len =
+                            file_fn(base, file_path_buf.as_mut_ptr(), file_path_buf.len() as u32);
+                        if len > 0 {
+                            let mut raw_path =
+                                String::from_utf16_lossy(&file_path_buf[..len as usize]);
+                            if raw_path.to_ascii_lowercase().starts_with("\\systemroot\\") {
+                                raw_path = format!("{}\\{}", system_root, &raw_path[12..]);
+                            } else if raw_path.to_ascii_lowercase().starts_with("\\??\\") {
+                                raw_path = raw_path[4..].to_string();
+                            }
+                            file_path = Some(raw_path);
+                        }
+                    }
+
+                    if image_name.is_empty() {
+                        if let Some(ref fp) = file_path {
+                            if let Some(name) = std::path::Path::new(fp)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                            {
+                                image_name = name.to_string();
+                            }
+                        }
+                    }
+
+                    if !image_name.is_empty() {
+                        results.push(LoadedDriverInfo {
+                            base_address: base as usize,
+                            image_name,
+                            file_path,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    results
+}
+
+#[cfg(target_os = "linux")]
+fn enumerate_loaded_kernel_drivers_linux() -> Vec<LoadedDriverInfo> {
+    let mut results = Vec::new();
+    if let Ok(content) = std::fs::read_to_string("/proc/modules") {
+        for line in content.lines() {
+            let mut parts = line.split_whitespace();
+            if let Some(mod_name) = parts.next() {
+                let _size = parts.next();
+                let _ref_count = parts.next();
+                let _sub = parts.next();
+                let _state = parts.next();
+                let addr_str = parts.next();
+                let base_address = addr_str
+                    .and_then(|s| s.strip_prefix("0x"))
+                    .and_then(|hex_str| usize::from_str_radix(hex_str, 16).ok())
+                    .unwrap_or(0);
+                results.push(LoadedDriverInfo {
+                    base_address,
+                    image_name: format!("{}.ko", mod_name),
+                    file_path: Some(format!("/sys/module/{}/", mod_name)),
+                });
+            }
+        }
+    }
+    results
+}

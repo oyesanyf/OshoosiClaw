@@ -303,6 +303,12 @@ struct HashMapPrefixTable {
     prefix_4b_to_type: std::collections::HashMap<String, String>,
 }
 
+impl Default for GoogleSafeBrowsingEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleSafeBrowsingEngine {
     pub fn new() -> Self {
         let mut table = HashMapPrefixTable::default();
