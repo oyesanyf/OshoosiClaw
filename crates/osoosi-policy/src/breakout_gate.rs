@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use hmac::{Hmac, Mac};
 use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
-use osoosi_types::HostSecurityEvent;
+use osoosi_types::{ArmRole, HostSecurityEvent, OctopusSecurityError};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
@@ -586,6 +586,97 @@ pub struct CedarPrincipal {
     pub process_instance_key: String,
     pub authority_level: AuthorityLevel,
     pub approved_capabilities: Vec<String>,
+    #[serde(default)]
+    pub authenticated_role: Option<ArmRole>,
+}
+
+impl CedarPrincipal {
+    pub fn new(
+        principal_id: impl Into<String>,
+        session_id: impl Into<String>,
+        process_instance_key: impl Into<String>,
+        authority_level: AuthorityLevel,
+        approved_capabilities: Vec<String>,
+    ) -> Self {
+        Self {
+            principal_id: principal_id.into(),
+            session_id: session_id.into(),
+            process_instance_key: process_instance_key.into(),
+            authority_level,
+            approved_capabilities,
+            authenticated_role: None,
+        }
+    }
+
+    pub fn with_role(mut self, role: ArmRole) -> Self {
+        self.authenticated_role = Some(role);
+        self
+    }
+}
+
+/// Maps an authenticated ArmRole to its canonical reserved Cedar principal name.
+pub fn canonical_reserved_principal_for_role(role: &ArmRole) -> &'static str {
+    match role {
+        ArmRole::UntrustedDocIngest => "document_arm",
+        ArmRole::AccountingLedgerWrite => "ledger_arm",
+        ArmRole::NetworkEgress => "network_arm",
+        ArmRole::TarpitDecoyDefense => "tarpit_arm",
+        ArmRole::KernelLevelSentinel => "kernel_sentinel_arm",
+        ArmRole::OutboundNotification => "notifier_arm",
+        ArmRole::CedarPolicyEvaluation => "cedar_arm",
+        ArmRole::AtlasThreatIntelligence => "atlas_arm",
+        ArmRole::AnomalyDetection => "anomaly_arm",
+        ArmRole::VulnerabilityResearch => "vulnerability_arm",
+        ArmRole::ContinuousOssFuzz => "oss_fuzz_arm",
+        ArmRole::ContinuousOsvScanner => "osv_scanner_arm",
+        ArmRole::DifferentialProtocolAnalyzer => "protocol_analyzer_arm",
+        ArmRole::AutonomousProtocolResearch => "protocol_research_arm",
+        ArmRole::PostQuantumAttestation => "pqc_arm",
+        ArmRole::EvolutionaryOptimizer => "evolution_arm",
+        ArmRole::DreamRsiOptimizer => "dream_rsi_arm",
+        ArmRole::RecursiveHarnessOptimizer => "harness2_arm",
+    }
+}
+
+/// Checks if an identifier matches one of the reserved Cedar principal identities.
+pub fn is_reserved_principal(agent_id: &str) -> bool {
+    matches!(
+        agent_id,
+        "document_arm"
+            | "ledger_arm"
+            | "network_arm"
+            | "tarpit_arm"
+            | "kernel_sentinel_arm"
+            | "notifier_arm"
+            | "cedar_arm"
+            | "atlas_arm"
+            | "anomaly_arm"
+            | "vulnerability_arm"
+            | "oss_fuzz_arm"
+            | "osv_scanner_arm"
+            | "protocol_analyzer_arm"
+            | "protocol_research_arm"
+            | "pqc_arm"
+            | "evolution_arm"
+            | "dream_rsi_arm"
+            | "harness2_arm"
+    )
+}
+
+/// Validates that an agent claiming a reserved Cedar principal identity has an authenticated role matching that principal.
+/// Rejects unauthorized or mismatched principal claims with `CEDAR_PRINCIPAL_SPOOF_BLOCKED`.
+pub fn validate_cedar_principal_role(
+    agent_id: &str,
+    role: &ArmRole,
+) -> Result<&'static str, OctopusSecurityError> {
+    let role_principal = canonical_reserved_principal_for_role(role);
+    if is_reserved_principal(agent_id) && agent_id != role_principal {
+        return Err(OctopusSecurityError::CapabilityDenied(format!(
+            "CEDAR_PRINCIPAL_SPOOF_BLOCKED: agent_id '{}' conflicts with authenticated role {:?} (expected '{}')",
+            agent_id, role, role_principal
+        )));
+    }
+    Ok(role_principal)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2596,6 +2687,19 @@ impl Ring7CapabilityEffectAuthorizer {
 
         let mut matched_forbid = Vec::new();
         let mut matched_permit = Vec::new();
+
+        if is_reserved_principal(&principal.principal_id) {
+            let role_match = principal
+                .authenticated_role
+                .as_ref()
+                .and_then(|r| validate_cedar_principal_role(&principal.principal_id, r).ok());
+            if role_match.is_none() {
+                matched_forbid.push(format!(
+                    "CEDAR_PRINCIPAL_SPOOF_BLOCKED: principal '{}' is reserved and conflicts with authenticated role {:?}",
+                    principal.principal_id, principal.authenticated_role
+                ));
+            }
+        }
 
         if graph_state.session_terminated {
             matched_forbid.push("CEDAR-FORBID-SESSION-TERMINATED".to_string());
