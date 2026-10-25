@@ -262,6 +262,22 @@ impl Win32AppContainerProfile {
             )
         };
 
+        // If profile already exists (0x800700B7), derive the SID via DeriveAppContainerSidFromAppContainerProfileName
+        if (hr as u32) == 0x8007_00B7 && raw_sid.is_null() {
+            type FnDeriveAppContainerSid =
+                unsafe extern "system" fn(*const u16, *mut *mut std::ffi::c_void) -> i32;
+            let derive_addr = unsafe {
+                GetProcAddress(
+                    userenv_mod,
+                    b"DeriveAppContainerSidFromAppContainerProfileName\0".as_ptr(),
+                )
+            };
+            if !derive_addr.is_null() {
+                let derive_fn: FnDeriveAppContainerSid = unsafe { std::mem::transmute(derive_addr) };
+                let _ = unsafe { derive_fn(wide_name.as_ptr(), &mut raw_sid) };
+            }
+        }
+
         // S_OK (0) or HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS) (0x800700B7)
         if hr == 0 || (hr as u32) == 0x8007_00B7 {
             Ok(Self {

@@ -18,15 +18,42 @@ use std::sync::Arc;
 use tokio::time::{Duration, Instant};
 use wasmtime::*;
 
+pub mod hidden_process_ledger;
 pub mod host_interface;
 pub mod kill_switch;
 pub mod memory_limiter;
 pub mod native_host;
+pub mod open_confined;
 pub mod security;
+pub mod tiered_executor;
+pub mod token_posture;
+pub mod wasm_tier1;
 pub mod windows;
 
+pub use hidden_process_ledger::{
+    list_hidden_spawns, output_hidden, record_hidden_spawn, spawn_hidden, spawn_hidden_tokio,
+    status_hidden, HiddenSpawnRecord, LedgeredCommandExt,
+};
 pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url};
+pub use open_confined::open_confined;
 pub use security::SandboxSecurityConfig;
+pub use tiered_executor::{
+    ExecutionTier, TieredExecutionDispatcher, TieredExecutionReceipt, TieredToolRequest,
+};
+pub use token_posture::{
+    current_token_posture, JobAccountingSnapshot, SandboxJobObject, TokenPosture,
+    DANGEROUS_PRIVILEGES, INTEGRITY_HIGH, INTEGRITY_LOW, INTEGRITY_MEDIUM, INTEGRITY_SYSTEM,
+    INTEGRITY_UNTRUSTED,
+};
+#[cfg(windows)]
+pub use token_posture::{
+    create_deelevated_token, spawn_deelevated, spawn_deelevated_in_job, DeelevatedChild,
+};
+pub use wasm_tier1::{
+    WasmExecutionReceipt, WasmHostState, WasmSandboxLimits, WasmTier1Executor,
+    ZeroMiProjectionResult, ZeroMutualInformationProjector, WASM_DOC_EXTRACTOR_WAT,
+    WASM_LEDGER_VALIDATOR_WAT,
+};
 
 /// Configuration for a sandbox execution.
 #[derive(Debug, Clone)]
@@ -235,7 +262,6 @@ impl SandboxExecutor {
         let mut linker: Linker<SandboxStore> = Linker::new(&self.engine);
 
         // Add all WASI Preview 1 imports.
-        // The closure projects from our SandboxStore to the WasiP1Ctx field.
         wasmtime_wasi::p1::add_to_linker_async(&mut linker, |s: &mut SandboxStore| &mut s.wasi)?;
 
         // --- The Syscall Boundary (oso_brain module) ---
@@ -406,7 +432,7 @@ impl SandboxExecutor {
                     let call = host_interface::HostCall::ExecCommand {
                         program,
                         args,
-                        requires_approval: true, // Default to requiring approval for WASM brain commands
+                        requires_approval: true,
                     };
                     let envelope = host_interface::HostCallEnvelope {
                         call_id: uuid::Uuid::new_v4().to_string(),
@@ -717,7 +743,7 @@ impl SandboxExecutor {
     }
 }
 
-/// Detect suspicious syscall sequences (e.g., db enumeration → network exfil).
+/// Detect suspicious syscall sequences (e.g., db enumeration -> network exfil).
 fn analyze_syscall_sequence(sequence: &[String]) -> bool {
     let mut has_db_read = false;
 
@@ -726,10 +752,10 @@ fn analyze_syscall_sequence(sequence: &[String]) -> bool {
             has_db_read = true;
         }
         if call.contains("host_fetch_url") && has_db_read {
-            return true; // Suspicious: potentially stealing data via DB read → network exfil
+            return true;
         }
         if call.contains("host_exec_command") && has_db_read {
-            return true; // Suspicious: DB read → command execution (potential lateral movement)
+            return true;
         }
     }
     false
@@ -807,20 +833,14 @@ mod tests {
     #[test]
     fn test_vector3_sandbox_path_join_replacement_and_traversal_blocked() {
         let root = Path::new("/tmp/sandbox_workspace");
-        // Absolute path / drive letter (Path::join replacement attack)
         assert!(validate_sandbox_relative_path(root, r"C:\Windows\System32\config\SAM").is_err());
         assert!(validate_sandbox_relative_path(root, "/etc/shadow").is_err());
-        // UNC path
         assert!(validate_sandbox_relative_path(root, r"\\10.0.0.5\c$\secrets.txt").is_err());
-        // Percent-encoded traversal & null byte
         assert!(validate_sandbox_relative_path(root, "..%2f..%2fetc/passwd").is_err());
         assert!(validate_sandbox_relative_path(root, "%2e%2e%5cWindows%5cwin.ini").is_err());
         assert!(validate_sandbox_relative_path(root, "report.txt%00.png").is_err());
-        // NTFS Alternate Data Stream
         assert!(validate_sandbox_relative_path(root, "report.txt:hidden_ads").is_err());
-        // ParentDir traversal
         assert!(validate_sandbox_relative_path(root, "../../etc/passwd").is_err());
-        // Valid relative path allowed
         let ok_path = validate_sandbox_relative_path(root, "reports/summary.json")
             .expect("normal relative path must succeed");
         assert!(ok_path.ends_with("summary.json"));
@@ -828,29 +848,22 @@ mod tests {
 
     #[test]
     fn test_vector4_mathematical_ipv4_ipv6_ssrf_blocked() {
-        // Cloud metadata IMDSv1/v2
         assert!(is_ssrf_url("http://169.254.169.254/latest/meta-data/").is_err());
         assert!(is_ssrf_url("http://[::ffff:169.254.169.254]/latest/meta-data/").is_err());
         assert!(is_ssrf_url("http://metadata.google.internal/computeMetadata/v1/").is_err());
-        // Loopback & Ollama/Dashboard local ports
         assert!(is_ssrf_url("http://127.0.0.1:11434/api/tags").is_err());
         assert!(is_ssrf_url("http://localhost:3030/api/status").is_err());
         assert!(is_ssrf_url("http://[::1]:3030/api/status").is_err());
-        // RFC1918 private networks
         assert!(is_ssrf_url("http://10.0.0.1/admin").is_err());
         assert!(is_ssrf_url("http://172.16.5.4/internal").is_err());
         assert!(is_ssrf_url("http://192.168.1.1/router").is_err());
-        // Carrier-Grade NAT (CGNAT 100.64.0.0/10)
         assert!(is_ssrf_url("http://100.64.0.1/mesh").is_err());
         assert!(is_ssrf_url("http://100.127.255.254/mesh").is_err());
-        // IPv6 Unique Local (fc00::/7) and Link-Local (fe80::/10)
         assert!(is_ssrf_ip("fc00::1".parse::<IpAddr>().unwrap()));
         assert!(is_ssrf_ip("fd12:3456:789a::1".parse::<IpAddr>().unwrap()));
         assert!(is_ssrf_ip("fe80::1".parse::<IpAddr>().unwrap()));
-        // Unspecified
         assert!(is_ssrf_ip("0.0.0.0".parse::<IpAddr>().unwrap()));
         assert!(is_ssrf_ip("::".parse::<IpAddr>().unwrap()));
-        // Valid public endpoint allowed
         assert!(is_ssrf_url("https://workbench.cisecurity.org/").is_ok());
     }
 
@@ -859,7 +872,6 @@ mod tests {
         let default_policy = windows::WindowsConfinementPolicy::default();
         assert!(windows::verify_windows_confinement_invariants(&default_policy).is_ok());
 
-        // 1. All confinement checks pass -> ResumeThread allowed
         let ok_outcome =
             windows::evaluate_pre_resume_confinement_gate(&default_policy, true, true, true, true);
         assert!(ok_outcome.resume_thread_allowed);
@@ -867,7 +879,6 @@ mod tests {
         assert!(ok_outcome.sid_freed_via_free_sid);
         assert!(!ok_outcome.uncontained_fallback_used);
 
-        // 2. Job Object assignment fails -> TerminateProcess before ResumeThread, FreeSid, DeleteAppContainerProfile
         let failed_job = windows::evaluate_pre_resume_confinement_gate(
             &default_policy,
             true,
@@ -881,7 +892,6 @@ mod tests {
         assert!(failed_job.profile_rolled_back_via_delete_appcontainer_profile);
         assert!(!failed_job.uncontained_fallback_used);
 
-        // 3. Policy missing CREATE_SUSPENDED -> rejected fail-closed
         let mut bad_policy = default_policy.clone();
         bad_policy.creation_flags = 0;
         assert!(windows::verify_windows_confinement_invariants(&bad_policy).is_err());
@@ -891,7 +901,6 @@ mod tests {
     fn test_win32_appcontainer_profile_lifecycle_and_confined_execution() {
         let default_policy = windows::WindowsConfinementPolicy::default();
 
-        // 1. Profile creation and rollback lifecycle
         let mut profile =
             windows::Win32AppContainerProfile::create("test_agent_profile", "Test Agent Profile")
                 .expect("Valid profile creation should succeed");
@@ -903,7 +912,6 @@ mod tests {
         assert!(!profile.profile_allocated);
         assert!(!profile.sid_allocated);
 
-        // 2. Confined process execution under compliant policy
         let outcome = windows::execute_confined_windows_process(
             "cmd.exe",
             &["/c", "whoami"],
@@ -916,7 +924,6 @@ mod tests {
         assert!(outcome.sid_freed_via_free_sid);
         assert!(!outcome.uncontained_fallback_used);
 
-        // 3. Policy permitting uncontained fallback must fail closed
         let mut permissive_policy = default_policy.clone();
         permissive_policy.allow_uncontained_fallback = true;
         assert!(windows::execute_confined_windows_process(
