@@ -211,6 +211,53 @@ pub struct BackoffEvaluationReport {
     pub summary: String,
 }
 
+// ============================================================================
+// 2.5. Mathematical Backoff & RFC 6298 / RFC 9002 Formulations
+// ============================================================================
+
+/// Truncated exponential backoff with stochastic jitter formula:
+/// T_wait(attempt, T_base, T_max, jitter) = min(T_base * 2^attempt + jitter, T_max)
+pub fn calculate_exponential_backoff_ms(
+    attempt: u32,
+    base_ms: u64,
+    max_ms: u64,
+    jitter_ms: u64,
+) -> u64 {
+    let factor = 1u64.checked_shl(attempt).unwrap_or(u64::MAX);
+    let exp_val = base_ms.saturating_mul(factor);
+    let with_jitter = exp_val.saturating_add(jitter_ms);
+    with_jitter.min(max_ms)
+}
+
+/// RFC 6298 Section 5.5: TCP Retransmission Timeout doubling formula:
+/// RTO_next(RTO, RTO_max) = min(2 * RTO, RTO_max)
+pub fn rfc6298_next_rto_ms(current_rto_ms: u64, max_rto_ms: u64) -> u64 {
+    current_rto_ms.saturating_mul(2).min(max_rto_ms)
+}
+
+/// RFC 6298 Cumulative TCP RTO after N consecutive timeout expirations:
+/// RTO_n = min(RTO_base * 2^attempts, RTO_max)
+pub fn rfc6298_rto_after_attempts_ms(base_rto_ms: u64, attempts: u32, max_rto_ms: u64) -> u64 {
+    let factor = 1u64.checked_shl(attempts).unwrap_or(u64::MAX);
+    base_rto_ms.saturating_mul(factor).min(max_rto_ms)
+}
+
+/// RFC 9002 Section 6.2.1: QUIC Probe Timeout (PTO) exponential backoff formula:
+/// PTO_next(PTO, pto_count) = PTO * 2^pto_count
+pub fn rfc9002_next_pto_ms(base_pto_ms: u64, pto_count: u32, max_pto_ms: u64) -> u64 {
+    let factor = 1u64.checked_shl(pto_count).unwrap_or(u64::MAX);
+    base_pto_ms.saturating_mul(factor).min(max_pto_ms)
+}
+
+/// Result of mathematical exponential curve fitting.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CurveFitResult {
+    pub backoff_compliant: bool,
+    pub observed_jitter_present: bool,
+    pub fit_slope: f64,
+    pub avg_growth_ratio: f64,
+}
+
 /// Exponential backoff and jitter analyzer adhering to RFC 6298, RFC 9002, and Google API guidelines.
 pub struct GoogleApiBackoffAnalyzer;
 
@@ -234,6 +281,145 @@ impl GoogleApiBackoffAnalyzer {
 
         let proto = entries[0].protocol;
         Self::evaluate_protocol_stream(proto, entries)
+    }
+
+    /// Mathematically verifies that a sequence of retry intervals follows an exponential curve
+    /// T_base * 2^k within allowable stochastic jitter and 15% clock skew tolerance.
+    /// Strictly rejects flat (constant) intervals, linear progression, and collapsing intervals.
+    pub fn verify_exponential_curve(
+        intervals: &[u64],
+        base_rto_ms: u64,
+        max_backoff_ms: u64,
+    ) -> CurveFitResult {
+        if intervals.is_empty() {
+            return CurveFitResult {
+                backoff_compliant: true,
+                observed_jitter_present: false,
+                fit_slope: 0.0,
+                avg_growth_ratio: 1.0,
+            };
+        }
+
+        if intervals.len() == 1 {
+            // A single retry interval must be at least 85% of base RTO floor (15% skew tolerance)
+            let compliant = intervals[0] >= ((base_rto_ms as f64) * 0.85) as u64;
+            return CurveFitResult {
+                backoff_compliant: compliant,
+                observed_jitter_present: false,
+                fit_slope: std::f64::consts::LN_2,
+                avg_growth_ratio: 2.0,
+            };
+        }
+
+        // Observed jitter check: positive variance across intervals
+        let first = intervals[0];
+        let observed_jitter_present = intervals.iter().any(|&d| d != first);
+
+        // Filter intervals before saturation ceiling (85% of max_backoff_ms)
+        let saturation_threshold = ((max_backoff_ms as f64) * 0.85) as u64;
+        let mut pre_saturation: Vec<u64> = intervals
+            .iter()
+            .copied()
+            .take_while(|&d| d < saturation_threshold)
+            .collect();
+
+        if pre_saturation.is_empty() {
+            pre_saturation.push(intervals[0]);
+        } else if pre_saturation.len() < intervals.len() {
+            pre_saturation.push(intervals[pre_saturation.len()]);
+        }
+
+        // --- Invariant 1: Reject Flat / Constant Intervals ---
+        // If max - min is within 15% of min and not at saturation, it's flat polling, NOT backoff!
+        let min_val = *intervals.iter().min().unwrap_or(&0);
+        let max_val = *intervals.iter().max().unwrap_or(&0);
+        if max_val < saturation_threshold {
+            let spread = max_val.saturating_sub(min_val) as f64;
+            let rel_spread = spread / (min_val.max(1) as f64);
+            if rel_spread < 0.15 && !observed_jitter_present {
+                return CurveFitResult {
+                    backoff_compliant: false,
+                    observed_jitter_present: false,
+                    fit_slope: 0.0,
+                    avg_growth_ratio: 1.0,
+                };
+            }
+        }
+
+        // --- Invariant 2: Reject Collapsing Intervals ---
+        for w in pre_saturation.windows(2) {
+            let prev = w[0] as f64;
+            let next = w[1] as f64;
+            if next < prev * 0.70 {
+                return CurveFitResult {
+                    backoff_compliant: false,
+                    observed_jitter_present,
+                    fit_slope: 0.0,
+                    avg_growth_ratio: next / prev.max(1.0),
+                };
+            }
+        }
+
+        // --- Invariant 3: Growth Ratio & Arithmetic/Linear Progression Rejection ---
+        let mut growth_ratios = Vec::new();
+        for w in pre_saturation.windows(2) {
+            let prev = w[0].max(1) as f64;
+            let next = w[1] as f64;
+            growth_ratios.push(next / prev);
+        }
+
+        let avg_growth_ratio: f64 = if !growth_ratios.is_empty() {
+            growth_ratios.iter().sum::<f64>() / (growth_ratios.len() as f64)
+        } else {
+            1.0
+        };
+
+        // For exponential doubling (2^k), ideal ratio is 2.0.
+        // With 15% clock skew and stochastic jitter, avg_growth_ratio must be at least 1.40.
+        // Flat (ratio ~1.0) and linear intervals (ratio ~1.1-1.25) are strictly rejected!
+        if avg_growth_ratio < 1.40 {
+            return CurveFitResult {
+                backoff_compliant: false,
+                observed_jitter_present,
+                fit_slope: 0.0,
+                avg_growth_ratio,
+            };
+        }
+
+        // --- Invariant 4: Log-Linear Regression Slope: ln(I_k) vs k ---
+        // In exponential backoff: ln(I_k) = ln(T_0) + k * ln(2)
+        // Expected slope: ln(2) = 0.69315
+        let n = pre_saturation.len() as f64;
+        let mut sum_k = 0.0;
+        let mut sum_lnk = 0.0;
+        let mut sum_k_sq = 0.0;
+        let mut sum_k_lnk = 0.0;
+
+        for (k_idx, &interval) in pre_saturation.iter().enumerate() {
+            let k = k_idx as f64;
+            let ln_val = (interval.max(1) as f64).ln();
+            sum_k += k;
+            sum_lnk += ln_val;
+            sum_k_sq += k * k;
+            sum_k_lnk += k * ln_val;
+        }
+
+        let denom = n * sum_k_sq - sum_k * sum_k;
+        let fit_slope = if denom.abs() > 1e-9 {
+            (n * sum_k_lnk - sum_k * sum_lnk) / denom
+        } else {
+            std::f64::consts::LN_2
+        };
+
+        // Allow slope between 0.38 and 1.35 (ln(2) = 0.693 is dead center).
+        let backoff_compliant = fit_slope >= 0.38 && fit_slope <= 1.35;
+
+        CurveFitResult {
+            backoff_compliant,
+            observed_jitter_present,
+            fit_slope,
+            avg_growth_ratio,
+        }
     }
 
     /// Evaluates a multi-protocol stream for a designated `NetworkProtocol`.
@@ -296,30 +482,11 @@ impl GoogleApiBackoffAnalyzer {
             || (throttled_intervals.len() >= 3
                 && throttled_intervals.iter().all(|&d| d < base_rto / 2));
 
-        // Exponential curve verification: delta[k] should generally not shrink drastically
-        let mut backoff_compliant = !flood_detected;
-        if throttled_intervals.len() >= 2 {
-            let mut decreasing_steps = 0;
-            for w in throttled_intervals.windows(2) {
-                let prev_wait = w[0];
-                let next_wait = w[1];
-                // Allow small 15% jitter dip
-                if (next_wait as f64) < (prev_wait as f64) * 0.70 {
-                    decreasing_steps += 1;
-                }
-            }
-            if decreasing_steps > throttled_intervals.len() / 2 {
-                backoff_compliant = false;
-            }
-        }
+        // Exponential curve verification: mathematically fit exponential curve (T_base * 2^k)
+        let curve_res = Self::verify_exponential_curve(&throttled_intervals, base_rto, 60_000);
+        let mut backoff_compliant = !flood_detected && curve_res.backoff_compliant;
 
-        // Jitter check: intervals have positive variance
-        let observed_jitter_present = if throttled_intervals.len() >= 2 {
-            let first = throttled_intervals[0];
-            throttled_intervals.iter().any(|&d| d != first)
-        } else {
-            false
-        };
+        let observed_jitter_present = curve_res.observed_jitter_present;
 
         let honors_retry_after = if retry_after_compliances.is_empty() {
             true
@@ -331,10 +498,26 @@ impl GoogleApiBackoffAnalyzer {
             backoff_compliant = false;
         }
 
-        let calculated_rto_ms = throttled_intervals
-            .last()
-            .copied()
-            .unwrap_or(base_rto);
+        // Genuine RFC 6298 / RFC 9002 / Exponential formula calculation for calculated_rto_ms
+        let calculated_rto_ms = match proto {
+            NetworkProtocol::Tcp => {
+                let last_interval = throttled_intervals.last().copied().unwrap_or(base_rto);
+                rfc6298_next_rto_ms(last_interval.max(base_rto), 60_000)
+            }
+            NetworkProtocol::Quic => {
+                let pto_count = throttle_count as u32;
+                rfc9002_next_pto_ms(base_rto, pto_count, 60_000)
+            }
+            _ => {
+                let attempt = throttle_count as u32;
+                let base = if let Some(last_req_wait) = samples.iter().filter_map(|s| s.retry_after_ms).last() {
+                    last_req_wait
+                } else {
+                    throttled_intervals.first().copied().unwrap_or(base_rto)
+                };
+                calculate_exponential_backoff_ms(attempt, base, 60_000, 0)
+            }
+        };
 
         let summary = format!(
             "[{}] evaluated {} samples ({} throttled). Compliant: {}, Retry-After: {}, Jitter: {}, Flood: {}",
@@ -1075,8 +1258,8 @@ mod tests {
     #[test]
     fn test_scenario_1_http_google_api_backoff_allow() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        // Scenario 1: Client receives 429 with Retry-After: 2000, waits 2150ms
-        // (compliant with jitter and 15% skew: 2150 >= 2000 * 0.85 = 1700), normal binary -> AllowAndWhitelistWindow.
+        let rete = ReteEngine::new();
+
         let samples = vec![
             HarEntrySample {
                 timestamp_ms: 1000,
@@ -1135,14 +1318,19 @@ mod tests {
             yara_detections: vec![],
         };
 
-        let bundle = CorrelatedEvidenceBundle {
-            pid: 101,
-            flow: Some(flow),
-            process: Some(proc),
-            binary: Some(binary),
-            protocol: NetworkProtocol::HttpHttps,
-            dst_host: "api.google.com".into(),
-        };
+        // Wire facts into ReteEngine Alpha memories
+        rete.insert_har_fact(flow);
+        rete.insert_osquery_fact(proc);
+        rete.insert_rea_fact(binary);
+
+        assert_eq!(rete.alpha_memory_sizes(), (1, 1, 1));
+
+        // Evaluate Beta Join on PID 101
+        let bundle = rete.evaluate_beta_join(101).expect("Beta join must succeed for populated Alpha memories");
+        assert_eq!(bundle.pid, 101);
+        assert!(bundle.flow.is_some());
+        assert!(bundle.process.is_some());
+        assert!(bundle.binary.is_some());
 
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(
@@ -1155,8 +1343,8 @@ mod tests {
     #[test]
     fn test_scenario_2_naive_dev_script_log_warning() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        // Scenario 2: Interactive python script in terminal sending rapid requests without backoff,
-        // unpacked, no direct syscalls -> LogBenignThrottlingWarning (never contained).
+        let rete = ReteEngine::new();
+
         let samples = vec![
             HarEntrySample {
                 timestamp_ms: 1000,
@@ -1206,7 +1394,7 @@ mod tests {
             pid: 202,
             process_name: "python.exe".into(),
             cmdline: "python test_loop.py".into(),
-            is_interactive: true, // Interactive terminal session!
+            is_interactive: true,
             parent_pid: 1200,
             username: "developer".into(),
         };
@@ -1221,15 +1409,11 @@ mod tests {
             yara_detections: vec![],
         };
 
-        let bundle = CorrelatedEvidenceBundle {
-            pid: 202,
-            flow: Some(flow),
-            process: Some(proc),
-            binary: Some(binary),
-            protocol: NetworkProtocol::HttpHttps,
-            dst_host: "dev.api.internal".into(),
-        };
+        rete.insert_har_fact(flow);
+        rete.insert_osquery_fact(proc);
+        rete.insert_rea_fact(binary);
 
+        let bundle = rete.evaluate_beta_join(202).expect("Beta join must succeed for PID 202");
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(
             matches!(consensus.action, EdrAction::LogBenignThrottlingWarning { .. }),
@@ -1241,8 +1425,8 @@ mod tests {
     #[test]
     fn test_scenario_3_malicious_c2_stuffer_contain_wfp() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        // Scenario 3: Non-interactive background process with direct syscalls, entropy 7.2,
-        // flooding 429 at 5ms intervals -> ContainProcessWfpBlock.
+        let rete = ReteEngine::new();
+
         let samples = vec![
             HarEntrySample {
                 timestamp_ms: 1000,
@@ -1308,15 +1492,11 @@ mod tests {
             yara_detections: vec!["CredentialStuffer_Generic".into()],
         };
 
-        let bundle = CorrelatedEvidenceBundle {
-            pid: 666,
-            flow: Some(flow),
-            process: Some(proc),
-            binary: Some(binary),
-            protocol: NetworkProtocol::HttpHttps,
-            dst_host: "auth.target.corp".into(),
-        };
+        rete.insert_har_fact(flow);
+        rete.insert_osquery_fact(proc);
+        rete.insert_rea_fact(binary);
 
+        let bundle = rete.evaluate_beta_join(666).expect("Beta join must succeed for PID 666");
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(
             consensus.final_malicious_prob >= 0.82,
@@ -1332,7 +1512,8 @@ mod tests {
 
     #[test]
     fn test_scenario_4_tcp_rfc6298_backoff_vs_flood() {
-        // Scenario 4: TCP RFC 6298 Backoff (1s, 2s, 4s) vs SYN Flood (1ms)
+        let rete = ReteEngine::new();
+
         // Part A: Compliant RFC 6298 TCP exponential retries
         let compliant_tcp_samples = vec![
             HarEntrySample {
@@ -1377,6 +1558,22 @@ mod tests {
         assert!(rep_a.backoff_compliant, "TCP RFC 6298 exponential curve must be compliant");
         assert!(!rep_a.flood_detected, "Must not be flood");
 
+        let flow_a = HarFlowFact {
+            flow_id: "tcp_flow_a".into(),
+            pid: 401,
+            protocol: NetworkProtocol::Tcp,
+            dst_host: "192.168.1.50".into(),
+            dst_port: 445,
+            samples: compliant_tcp_samples,
+            backoff_compliant: rep_a.backoff_compliant,
+            observed_jitter_present: rep_a.observed_jitter_present,
+            honors_retry_after: rep_a.honors_retry_after,
+            flood_detected: rep_a.flood_detected,
+        };
+        rete.insert_har_fact(flow_a);
+        let bundle_a = rete.evaluate_beta_join(401).expect("Beta join on PID 401");
+        assert_eq!(bundle_a.protocol, NetworkProtocol::Tcp);
+
         // Part B: Aggressive TCP SYN flood at 1ms intervals
         let flood_tcp_samples = vec![
             HarEntrySample {
@@ -1414,7 +1611,8 @@ mod tests {
 
     #[test]
     fn test_scenario_5_udp_quic_dns_backoff_vs_flood() {
-        // Scenario 5: DNS SERVFAIL & QUIC PTO Exponential Backoff vs Flood
+        let rete = ReteEngine::new();
+
         // Part A: DNS SERVFAIL resolver backoff
         let dns_backoff_samples = vec![
             HarEntrySample {
@@ -1448,6 +1646,22 @@ mod tests {
 
         let rep_dns = GoogleApiBackoffAnalyzer::evaluate_protocol_stream(NetworkProtocol::Dns, &dns_backoff_samples);
         assert!(rep_dns.backoff_compliant, "DNS backoff must be compliant");
+
+        let flow_dns = HarFlowFact {
+            flow_id: "dns_flow".into(),
+            pid: 501,
+            protocol: NetworkProtocol::Dns,
+            dst_host: "8.8.8.8".into(),
+            dst_port: 53,
+            samples: dns_backoff_samples,
+            backoff_compliant: rep_dns.backoff_compliant,
+            observed_jitter_present: rep_dns.observed_jitter_present,
+            honors_retry_after: rep_dns.honors_retry_after,
+            flood_detected: rep_dns.flood_detected,
+        };
+        rete.insert_har_fact(flow_dns);
+        let bundle_dns = rete.evaluate_beta_join(501).expect("Beta join on PID 501");
+        assert_eq!(bundle_dns.protocol, NetworkProtocol::Dns);
 
         // Part B: UDP tunneling packet flood
         let udp_flood_samples = vec![
@@ -1487,13 +1701,11 @@ mod tests {
     #[test]
     fn test_scenario_6_one_click_ui_rate_limit_rejection() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        // Scenario 6: A flow that would otherwise be blocked or warned is checked
-        // against rate_limit_released_allowlist.json; when user rejected the rate-limit
-        // in the UI, immediately returns AllowAndWhitelistWindow.
+        let rete = ReteEngine::new();
+
         let target_host = "test-override.cloud.corp";
         let target_pid = 777;
 
-        // Register override
         let entry = RateLimitReleaseEntry {
             destination_host: target_host.to_string(),
             protocol: "*".to_string(),
@@ -1506,7 +1718,6 @@ mod tests {
 
         assert!(RateLimitAllowlist::is_released(target_host, NetworkProtocol::HttpHttps, Some(target_pid)));
 
-        // Bundle that would otherwise be contained
         let flow = HarFlowFact {
             flow_id: "flow_s6".into(),
             pid: target_pid,
@@ -1520,14 +1731,8 @@ mod tests {
             flood_detected: true,
         };
 
-        let bundle = CorrelatedEvidenceBundle {
-            pid: target_pid,
-            flow: Some(flow),
-            process: None,
-            binary: None,
-            protocol: NetworkProtocol::HttpHttps,
-            dst_host: target_host.into(),
-        };
+        rete.insert_har_fact(flow);
+        let bundle = rete.evaluate_beta_join(target_pid).expect("Beta join on target_pid");
 
         let consensus = RateLimitVoterEnsemble.evaluate_and_vote(&bundle);
         assert!(consensus.override_applied, "Override flag must be true");
@@ -1537,7 +1742,186 @@ mod tests {
             consensus.action
         );
 
-        // Cleanup
         let _ = RateLimitAllowlist::clear();
+    }
+
+    #[test]
+    fn test_mathematical_formulas_precision() {
+        // T_wait = min(T_base * 2^attempt + jitter, T_max)
+        assert_eq!(calculate_exponential_backoff_ms(0, 500, 60_000, 50), 550);
+        assert_eq!(calculate_exponential_backoff_ms(1, 500, 60_000, 50), 1050);
+        assert_eq!(calculate_exponential_backoff_ms(2, 500, 60_000, 50), 2050);
+        assert_eq!(calculate_exponential_backoff_ms(3, 500, 60_000, 50), 4050);
+        assert_eq!(calculate_exponential_backoff_ms(10, 500, 60_000, 0), 60_000); // capped at max
+
+        // RFC 6298: RTO_next = min(2 * RTO, RTO_max)
+        assert_eq!(rfc6298_next_rto_ms(1000, 60_000), 2000);
+        assert_eq!(rfc6298_next_rto_ms(2000, 60_000), 4000);
+        assert_eq!(rfc6298_next_rto_ms(35_000, 60_000), 60_000);
+        assert_eq!(rfc6298_rto_after_attempts_ms(1000, 3, 60_000), 8000);
+
+        // RFC 9002: PTO_next = PTO * 2^pto_count
+        assert_eq!(rfc9002_next_pto_ms(200, 0, 60_000), 200);
+        assert_eq!(rfc9002_next_pto_ms(200, 1, 60_000), 400);
+        assert_eq!(rfc9002_next_pto_ms(200, 2, 60_000), 800);
+        assert_eq!(rfc9002_next_pto_ms(200, 3, 60_000), 1600);
+    }
+
+    #[test]
+    fn test_flat_intervals_rejected_as_non_compliant() {
+        // Flat constant polling sequence: [500ms, 500ms, 500ms, 500ms]
+        let samples = vec![
+            HarEntrySample {
+                timestamp_ms: 1000,
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.flat.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 1500, // 500ms
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.flat.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 2000, // 500ms
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.flat.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 2500, // 500ms
+                status: 200,
+                retry_after_ms: None,
+                url: "https://api.flat.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+        ];
+
+        let report = GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
+        assert!(!report.backoff_compliant, "Flat constant intervals MUST NOT be certified as exponential backoff!");
+    }
+
+    #[test]
+    fn test_linear_intervals_rejected_as_non_compliant() {
+        // Linear arithmetic retry progression: [500ms, 600ms, 700ms, 800ms]
+        let samples = vec![
+            HarEntrySample {
+                timestamp_ms: 1000,
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.linear.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 1500, // 500ms
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.linear.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 2100, // 600ms
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.linear.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 2800, // 700ms
+                status: 429,
+                retry_after_ms: None,
+                url: "https://api.linear.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+            HarEntrySample {
+                timestamp_ms: 3600, // 800ms
+                status: 200,
+                retry_after_ms: None,
+                url: "https://api.linear.com/data".into(),
+                method: "GET".into(),
+                protocol: NetworkProtocol::HttpHttps,
+                duration_ms: 10,
+            },
+        ];
+
+        let report = GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
+        assert!(!report.backoff_compliant, "Linear arithmetic retry intervals MUST NOT be certified as exponential backoff!");
+    }
+
+    #[test]
+    fn test_rete_pattern_matching_alpha_beta_join() {
+        let rete = ReteEngine::new();
+        assert_eq!(rete.alpha_memory_sizes(), (0, 0, 0));
+
+        let flow = HarFlowFact {
+            flow_id: "test_flow".into(),
+            pid: 999,
+            protocol: NetworkProtocol::Tcp,
+            dst_host: "10.0.0.1".into(),
+            dst_port: 80,
+            samples: vec![],
+            backoff_compliant: true,
+            observed_jitter_present: false,
+            honors_retry_after: true,
+            flood_detected: false,
+        };
+        let proc = OsqueryProcessFact {
+            pid: 999,
+            process_name: "test.exe".into(),
+            cmdline: "test.exe".into(),
+            is_interactive: true,
+            parent_pid: 1,
+            username: "tester".into(),
+        };
+        let binary = ReaBinaryFact {
+            pid: 999,
+            binary_path: "C:\\test.exe".into(),
+            is_packed: false,
+            direct_syscall_count: 0,
+            obfuscation_entropy: 4.5,
+            is_authenticode_signed: true,
+            yara_detections: vec![],
+        };
+
+        rete.insert_har_fact(flow);
+        assert_eq!(rete.alpha_memory_sizes(), (1, 0, 0));
+
+        rete.insert_osquery_fact(proc);
+        assert_eq!(rete.alpha_memory_sizes(), (1, 1, 0));
+
+        rete.insert_rea_fact(binary);
+        assert_eq!(rete.alpha_memory_sizes(), (1, 1, 1));
+
+        let joined = rete.evaluate_beta_join(999).expect("Beta join should return joined bundle");
+        assert_eq!(joined.pid, 999);
+        assert_eq!(joined.dst_host, "10.0.0.1");
+        assert_eq!(joined.protocol, NetworkProtocol::Tcp);
+        assert!(joined.flow.is_some());
+        assert!(joined.process.is_some());
+        assert!(joined.binary.is_some());
+
+        rete.clear();
+        assert_eq!(rete.alpha_memory_sizes(), (0, 0, 0));
+        assert!(rete.evaluate_beta_join(999).is_none());
     }
 }

@@ -332,6 +332,57 @@ pub fn refresh_live_har_cache_now() -> Value {
 
     let sweep_sequence = HAR_SWEEP_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
 
+    // Ingest aggregated flow facts into global RETE engine Alpha memories
+    {
+        let mut host_samples_map: std::collections::HashMap<String, Vec<osoosi_core::HarEntrySample>> = std::collections::HashMap::new();
+        for e in &entries {
+            let host = e.get("host").and_then(|v| v.as_str()).unwrap_or_default().trim();
+            if host.is_empty() {
+                continue;
+            }
+            let started_str = e.get("started_at").and_then(|v| v.as_str()).unwrap_or_default();
+            let ts_ms = chrono::DateTime::parse_from_rfc3339(started_str)
+                .map(|dt| dt.timestamp_millis() as u64)
+                .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis() as u64);
+            let status = e.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u32;
+            let url = e.get("url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+            let method = e.get("method").and_then(|v| v.as_str()).unwrap_or("GET").to_string();
+            let duration_ms = e.get("duration_ms").and_then(|v| v.as_f64()).unwrap_or(0.0) as u64;
+
+            let sample = osoosi_core::HarEntrySample {
+                timestamp_ms: ts_ms,
+                status,
+                retry_after_ms: None,
+                url,
+                method,
+                protocol: osoosi_core::NetworkProtocol::HttpHttps,
+                duration_ms,
+            };
+            host_samples_map.entry(host.to_string()).or_default().push(sample);
+        }
+
+        let rete = osoosi_core::global_rete_engine();
+        for (host, samples) in host_samples_map {
+            // Derive a stable synthetic flow PID from host hash
+            let hash_bytes = blake3::hash(host.as_bytes());
+            let flow_pid = 1000 + (hash_bytes.as_bytes()[0] as u32 * 100) + (hash_bytes.as_bytes()[1] as u32);
+            let report = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
+            let fact = osoosi_core::HarFlowFact {
+                flow_id: format!("flow_{}", host),
+                pid: flow_pid,
+                protocol: osoosi_core::NetworkProtocol::HttpHttps,
+                dst_host: host.clone(),
+                dst_port: 443,
+                samples,
+                backoff_compliant: report.backoff_compliant,
+                observed_jitter_present: report.observed_jitter_present,
+                honors_retry_after: report.honors_retry_after,
+                flood_detected: report.flood_detected,
+            };
+            rete.insert_har_fact(fact);
+        }
+    }
+
     // Persist new entries into database/osoosi.db (keeping latest 1000 rows)
     let db_candidates = [
         std::path::Path::new("database/osoosi.db"),
@@ -909,247 +960,120 @@ pub async fn get_rate_limit_status() -> Json<Value> {
 }
 
 pub async fn post_rate_limit_evaluate(Json(req): Json<RateLimitEvaluateRequest>) -> Json<Value> {
-    if let Some(sc) = req.scenario.as_deref() {
-        let sc_lower = sc.to_ascii_lowercase();
-        let (bundle, name) = match sc_lower.as_str() {
-            "scenario_1" | "http_backoff_allow" | "scenario1" => {
-                let samples = vec![
-                    osoosi_core::HarEntrySample {
-                        timestamp_ms: 1000,
-                        status: 429,
-                        retry_after_ms: Some(2000),
-                        url: "https://api.google.com/v1/resource".into(),
-                        method: "GET".into(),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        duration_ms: 15,
-                    },
-                    osoosi_core::HarEntrySample {
-                        timestamp_ms: 3150,
-                        status: 200,
-                        retry_after_ms: None,
-                        url: "https://api.google.com/v1/resource".into(),
-                        method: "GET".into(),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        duration_ms: 22,
-                    },
-                ];
-                let rep = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
-                (
-                    osoosi_core::CorrelatedEvidenceBundle {
-                        pid: 101,
-                        flow: Some(osoosi_core::HarFlowFact {
-                            flow_id: "sc1_flow".into(),
-                            pid: 101,
-                            protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                            dst_host: "api.google.com".into(),
-                            dst_port: 443,
-                            samples,
-                            backoff_compliant: rep.backoff_compliant,
-                            observed_jitter_present: rep.observed_jitter_present,
-                            honors_retry_after: rep.honors_retry_after,
-                            flood_detected: rep.flood_detected,
-                        }),
-                        process: Some(osoosi_core::OsqueryProcessFact {
-                            pid: 101,
-                            process_name: "curl.exe".into(),
-                            cmdline: "curl https://api.google.com/v1/resource".into(),
-                            is_interactive: false,
-                            parent_pid: 1,
-                            username: "svc_acct".into(),
-                        }),
-                        binary: Some(osoosi_core::ReaBinaryFact {
-                            pid: 101,
-                            binary_path: "C:\\Program Files\\Git\\usr\\bin\\curl.exe".into(),
-                            is_packed: false,
-                            direct_syscall_count: 0,
-                            obfuscation_entropy: 5.1,
-                            is_authenticode_signed: true,
-                            yara_detections: vec![],
-                        }),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        dst_host: "api.google.com".into(),
-                    },
-                    "Scenario 1: HTTP Google API Backoff (Compliant)"
-                )
-            },
-            "scenario_2" | "dev_script_warn" | "scenario2" => {
-                let samples = vec![
-                    osoosi_core::HarEntrySample {
-                        timestamp_ms: 1000,
-                        status: 429,
-                        retry_after_ms: None,
-                        url: "https://dev.api.internal/items".into(),
-                        method: "POST".into(),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        duration_ms: 5,
-                    },
-                    osoosi_core::HarEntrySample {
-                        timestamp_ms: 1030,
-                        status: 429,
-                        retry_after_ms: None,
-                        url: "https://dev.api.internal/items".into(),
-                        method: "POST".into(),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        duration_ms: 5,
-                    },
-                ];
-                let rep = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
-                (
-                    osoosi_core::CorrelatedEvidenceBundle {
-                        pid: 202,
-                        flow: Some(osoosi_core::HarFlowFact {
-                            flow_id: "sc2_flow".into(),
-                            pid: 202,
-                            protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                            dst_host: "dev.api.internal".into(),
-                            dst_port: 8080,
-                            samples,
-                            backoff_compliant: rep.backoff_compliant,
-                            observed_jitter_present: rep.observed_jitter_present,
-                            honors_retry_after: rep.honors_retry_after,
-                            flood_detected: rep.flood_detected,
-                        }),
-                        process: Some(osoosi_core::OsqueryProcessFact {
-                            pid: 202,
-                            process_name: "python.exe".into(),
-                            cmdline: "python test_loop.py".into(),
-                            is_interactive: true,
-                            parent_pid: 1200,
-                            username: "developer".into(),
-                        }),
-                        binary: Some(osoosi_core::ReaBinaryFact {
-                            pid: 202,
-                            binary_path: "C:\\Python311\\python.exe".into(),
-                            is_packed: false,
-                            direct_syscall_count: 0,
-                            obfuscation_entropy: 5.4,
-                            is_authenticode_signed: true,
-                            yara_detections: vec![],
-                        }),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        dst_host: "dev.api.internal".into(),
-                    },
-                    "Scenario 2: Naive Dev Script (Interactive Warning)"
-                )
-            },
-            _ => {
-                let samples = vec![
-                    osoosi_core::HarEntrySample {
-                        timestamp_ms: 1000,
-                        status: 429,
-                        retry_after_ms: None,
-                        url: "https://auth.target.corp/login".into(),
-                        method: "POST".into(),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        duration_ms: 2,
-                    },
-                    osoosi_core::HarEntrySample {
-                        timestamp_ms: 1005,
-                        status: 429,
-                        retry_after_ms: None,
-                        url: "https://auth.target.corp/login".into(),
-                        method: "POST".into(),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        duration_ms: 2,
-                    },
-                ];
-                let rep = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_har_stream(&samples);
-                (
-                    osoosi_core::CorrelatedEvidenceBundle {
-                        pid: 666,
-                        flow: Some(osoosi_core::HarFlowFact {
-                            flow_id: "sc3_flow".into(),
-                            pid: 666,
-                            protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                            dst_host: "auth.target.corp".into(),
-                            dst_port: 443,
-                            samples,
-                            backoff_compliant: rep.backoff_compliant,
-                            observed_jitter_present: rep.observed_jitter_present,
-                            honors_retry_after: rep.honors_retry_after,
-                            flood_detected: rep.flood_detected,
-                        }),
-                        process: Some(osoosi_core::OsqueryProcessFact {
-                            pid: 666,
-                            process_name: "payload.exe".into(),
-                            cmdline: "payload.exe --stuff-credentials".into(),
-                            is_interactive: false,
-                            parent_pid: 1,
-                            username: "SYSTEM".into(),
-                        }),
-                        binary: Some(osoosi_core::ReaBinaryFact {
-                            pid: 666,
-                            binary_path: "C:\\Windows\\Temp\\payload.exe".into(),
-                            is_packed: true,
-                            direct_syscall_count: 8,
-                            obfuscation_entropy: 7.2,
-                            is_authenticode_signed: false,
-                            yara_detections: vec!["CredentialStuffer_Generic".into()],
-                        }),
-                        protocol: osoosi_core::NetworkProtocol::HttpHttps,
-                        dst_host: "auth.target.corp".into(),
-                    },
-                    "Scenario 3: Hostile Credential Stuffer (Contained)"
-                )
-            }
-        };
+    let rete = osoosi_core::global_rete_engine();
+    let ensemble = osoosi_core::global_rate_limit_ensemble();
 
-        let consensus = osoosi_core::global_rate_limit_ensemble().evaluate_and_vote(&bundle);
-        return Json(serde_json::json!({
-            "status": "ok",
-            "scenario": name,
-            "bundle": bundle,
-            "consensus": consensus
-        }));
-    }
+    // 1. Dynamic Evaluation with provided request samples
+    let (bundle, eval_name) = if let Some(samples) = req.samples.filter(|s| !s.is_empty()) {
+        let pid = req.pid.unwrap_or(1001);
+        let proto = req.protocol.as_deref().map(|p| {
+            osoosi_core::NetworkProtocol::from_str_or_port(p, req.dst_port)
+        }).unwrap_or_else(|| {
+            samples.first().map(|s| s.protocol).unwrap_or(osoosi_core::NetworkProtocol::HttpHttps)
+        });
+        let dst_host = req.dst_host.unwrap_or_else(|| {
+            samples.first()
+                .and_then(|s| s.url.split("://").nth(1))
+                .and_then(|after| after.split('/').next())
+                .unwrap_or("api.target.com")
+                .to_string()
+        });
+        let dst_port = req.dst_port.unwrap_or(443);
 
-    let pid = req.pid.unwrap_or(1000);
-    let proto = osoosi_core::NetworkProtocol::from_str_or_port(
-        req.protocol.as_deref().unwrap_or("HTTP/HTTPS"),
-        req.dst_port,
-    );
-    let dst_host = req.dst_host.unwrap_or_else(|| "api.target.com".to_string());
-    let samples = req.samples.unwrap_or_default();
-    let rep = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &samples);
-
-    let bundle = osoosi_core::CorrelatedEvidenceBundle {
-        pid,
-        flow: Some(osoosi_core::HarFlowFact {
+        let report = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &samples);
+        let flow_fact = osoosi_core::HarFlowFact {
             flow_id: format!("flow_{}", pid),
             pid,
             protocol: proto,
             dst_host: dst_host.clone(),
-            dst_port: req.dst_port.unwrap_or(443),
+            dst_port,
             samples,
-            backoff_compliant: rep.backoff_compliant,
-            observed_jitter_present: rep.observed_jitter_present,
-            honors_retry_after: rep.honors_retry_after,
-            flood_detected: rep.flood_detected,
-        }),
-        process: Some(osoosi_core::OsqueryProcessFact {
+            backoff_compliant: report.backoff_compliant,
+            observed_jitter_present: report.observed_jitter_present,
+            honors_retry_after: report.honors_retry_after,
+            flood_detected: report.flood_detected,
+        };
+        rete.insert_har_fact(flow_fact);
+
+        let proc_fact = osoosi_core::OsqueryProcessFact {
             pid,
-            process_name: "app.exe".into(),
-            cmdline: "app.exe".into(),
+            process_name: format!("proc_{}.exe", pid),
+            cmdline: format!("proc_{}.exe --dst {}", pid, dst_host),
             is_interactive: req.is_interactive.unwrap_or(false),
             parent_pid: 1,
-            username: "user".into(),
-        }),
-        binary: Some(osoosi_core::ReaBinaryFact {
+            username: "authenticated_user".into(),
+        };
+        rete.insert_osquery_fact(proc_fact);
+
+        let binary_fact = osoosi_core::ReaBinaryFact {
             pid,
-            binary_path: "C:\\app.exe".into(),
+            binary_path: format!("C:\\bin\\proc_{}.exe", pid),
             is_packed: req.is_packed.unwrap_or(false),
             direct_syscall_count: req.direct_syscall_count.unwrap_or(0),
-            obfuscation_entropy: req.obfuscation_entropy.unwrap_or(5.0),
+            obfuscation_entropy: req.obfuscation_entropy.unwrap_or(5.2),
             is_authenticode_signed: true,
             yara_detections: vec![],
-        }),
-        protocol: proto,
-        dst_host,
+        };
+        rete.insert_rea_fact(binary_fact);
+
+        let joined = rete.evaluate_beta_join(pid).expect("Beta join must succeed after inserting facts");
+        (joined, req.scenario.unwrap_or_else(|| format!("Dynamic Evaluation (PID {})", pid)))
+    } else if let Some(pid) = req.pid {
+        // 2. Query ReteEngine Beta Join for existing telemetry on this PID
+        if let Some(joined) = rete.evaluate_beta_join(pid) {
+            (joined, req.scenario.unwrap_or_else(|| format!("Rete Beta Join (PID {})", pid)))
+        } else {
+            let proto = osoosi_core::NetworkProtocol::from_str_or_port(
+                req.protocol.as_deref().unwrap_or("HTTP/HTTPS"),
+                req.dst_port,
+            );
+            let dst_host = req.dst_host.unwrap_or_else(|| "api.target.com".to_string());
+            let report = osoosi_core::GoogleApiBackoffAnalyzer::evaluate_protocol_stream(proto, &[]);
+            let flow_fact = osoosi_core::HarFlowFact {
+                flow_id: format!("flow_{}", pid),
+                pid,
+                protocol: proto,
+                dst_host: dst_host.clone(),
+                dst_port: req.dst_port.unwrap_or(443),
+                samples: vec![],
+                backoff_compliant: report.backoff_compliant,
+                observed_jitter_present: report.observed_jitter_present,
+                honors_retry_after: report.honors_retry_after,
+                flood_detected: report.flood_detected,
+            };
+            rete.insert_har_fact(flow_fact);
+            let joined = rete.evaluate_beta_join(pid).expect("Beta join on empty flow fact");
+            (joined, req.scenario.unwrap_or_else(|| format!("Default Baseline (PID {})", pid)))
+        }
+    } else {
+        // 3. Fallback: dynamic default baseline
+        let proto = osoosi_core::NetworkProtocol::from_str_or_port(
+            req.protocol.as_deref().unwrap_or("HTTP/HTTPS"),
+            req.dst_port,
+        );
+        let dst_host = req.dst_host.unwrap_or_else(|| "api.target.com".to_string());
+        let pid = 1000;
+        let flow_fact = osoosi_core::HarFlowFact {
+            flow_id: "flow_default".into(),
+            pid,
+            protocol: proto,
+            dst_host: dst_host.clone(),
+            dst_port: req.dst_port.unwrap_or(443),
+            samples: vec![],
+            backoff_compliant: true,
+            observed_jitter_present: false,
+            honors_retry_after: true,
+            flood_detected: false,
+        };
+        rete.insert_har_fact(flow_fact);
+        let joined = rete.evaluate_beta_join(pid).expect("Beta join on default");
+        (joined, req.scenario.unwrap_or_else(|| "Default Evaluation".to_string()))
     };
 
-    let consensus = osoosi_core::global_rate_limit_ensemble().evaluate_and_vote(&bundle);
+    let consensus = ensemble.evaluate_and_vote(&bundle);
     Json(serde_json::json!({
         "status": "ok",
+        "scenario": eval_name,
         "bundle": bundle,
         "consensus": consensus
     }))
