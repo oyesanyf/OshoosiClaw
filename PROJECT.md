@@ -1,93 +1,133 @@
-# Project: OshoosiClaw Production Hardening (B to A-)
+# Project: OshoosiClaw High-Performance Zero-Trust Agent Defense & EDR (R1-R5)
 
 ## Architecture
-OshoosiClaw is upgraded from heuristic, path-based trust to a hardened cryptographic-only security architecture with discrete-argv process execution, fast hermetic testing, modular crate structure (<= 2,500 lines per file), live multi-trial CI verification on port 3030, and non-blocking async request pipelines.
+OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) is engineered into a high-performance, continuously adaptive, zero-trust Agent Defense and EDR platform that delivers near-zero measurable overhead under representative production workloads while maximizing prevention, detection, and containment of agent breakout, sandbox escape, privilege escalation, tool-chain abuse, policy bypass, telemetry evasion, and coordinated multi-agent compromise.
 
 ```
-+---------------------------------------------------------------------------------------------------------+
-|                                    Cryptographic Binary Trust Layer (R1)                                |
-|  - Real WinVerifyTrust (Authenticode) + CatRoot Catalog Hash Lookup + Protected BLAKE3 Hash Inventory    |
-|  - Zero path-prefix, PATH-derived, or substring-based trust (Fail-Closed on user-writable paths)        |
-+---------------------------------------------------------------------------------------------------------+
-                                                     |
-                                                     v
-+---------------------------------------------------------------------------------------------------------+
-|                                   Core EDR & Modular Orchestrator (R4)                                  |
-|  - crates/osoosi-core/src/rea/ (8 submodules, all <= 1,500 lines)                                       |
-|  - crates/osoosi-core/src/orchestrator/ (8 submodules, all <= 2,300 lines) + slim lib.rs (~1,400 lines)  |
-|  - Argument-Safe Process Execution (R2): Discrete argv only (no cmd /C, sh -c, powershell -Command)     |
-|  - Host-Independent Masquerade & Zero Test-Only Stems (R6): CANONICAL_PROTECTED_BINARY_NAMES            |
-+---------------------------------------------------------------------------------------------------------+
-          |                                          |                                          |
-          v                                          v                                          v
-+----------------------------+     +----------------------------+     +----------------------------+
-|  Async Request Paths (R7)  |     |  Deterministic Suite (R3)  |     |  Live Multi-Trial CI (R5)  |
-| - Fast response (< 500ms)  |     | - Opt-in FHE feature gate  |     | - Daemon on port 3030      |
-| - Async background purges  |     | - Core lib test < 35s      |     | - 6-Vector breakout suite  |
-| - Progress on /status      |     | - Hermetic test fixtures   |     | - 15-Vector gauntlet       |
-| - Non-blocking file I/O    |     | - CRT-mixing fix (LNK4098) |     | - T >= 3 trials per vector |
-+----------------------------+     +----------------------------+     +----------------------------+
++-----------------------------------------------------------------------------------------------------------------------+
+|                                  Pre-Execution Security & Unified Confinement (M1 / R1)                               |
+| - Offline Workspace Dependency Resolution (rhai workspace crate fix & CARGO_TARGET_DIR MASM line limit guard)         |
+| - Tier-1 In-Process Wasmtime: Wired MemoryLimiter (64 MiB cap), fuel metering, single confined scratch directory     |
+| - Tier-2 Win32 Confinement: CREATE_SUSPENDED, IsProcessInJob, AppContainer SID, create_deelevated_token               |
+| - Egress Security: DNS-pinned network egress & Google Safe Browsing v4 integration to eliminate TOCTOU rebinding      |
++-----------------------------------------------------------------------------------------------------------------------+
+                                                           |
+                                                           v
++-----------------------------------------------------------------------------------------------------------------------+
+|                             Continuous Breakout Defense & Per-File DLP Precision (M2 / R2)                            |
+| - 7-Ring Continuous Cedar Reference Monitor (L1-L5 authority lattice, causal event cevt-... / pdec-... correlation)   |
+| - Deny-overrides precedence & instant authorization cache invalidation on taint/revocation/policy transition         |
+| - Per-submission browser/HAR DLP resolution: allow benign (covergeneral.docx) & auto-release stale destination blocks |
+| - High-precision sensitive file containment (10-MB-Test.xlsx) via 4-voter quorum & native Rust WFP (FwpmFilterAdd0)   |
++-----------------------------------------------------------------------------------------------------------------------+
+                                                           |
+                                                           v
++-----------------------------------------------------------------------------------------------------------------------+
+|                                Peer-to-Peer Mesh, BFT Consensus & RL Separation (M3 / R3)                             |
+| - LibP2P GossipSub (15 topics), pure-Rust ML-DSA-65 / Ed25519 hybrid signatures & hardware TPM 2.0 PCR attestation   |
+| - BFT Consensus (2/3 quorum, PoS weighting, PoW difficulty) & Byzantine anti-kill-switch fraud proofs                |
+| - Strict RL separation: learned policies strictly advisory; cannot declassify taint or override Cedar denials        |
++-----------------------------------------------------------------------------------------------------------------------+
+                                                           |
+                                                           v
++-----------------------------------------------------------------------------------------------------------------------+
+|                               Profiling-Driven Performance & Async Lock Safety (M4 / R4)                              |
+| - Tier-1 Wasmtime warm invocation optimization (< 1 ms): precompiled Module cache & shared Linker                    |
+| - Async Tokio lock hygiene: eliminate blocking_write()/blocking_read() calls on Tokio RwLock in async/Rayon contexts  |
+| - DashMap nested lock contention elimination; WebUI 0-diff parity verification                                        |
++-----------------------------------------------------------------------------------------------------------------------+
+                                                           |
+                                                           v
++-----------------------------------------------------------------------------------------------------------------------+
+|                               Adversarial Proof, Benchmarking & Packaging Delivery (M5 / R5)                          |
+| - Multi-tier E2E testing (Tiers 1-4) & adversarial hardening (Tier 5); 43/43 A+ vectors verified across 129 trials   |
+| - Empirical Benchmark Report: docs/PERFORMANCE_AND_SECURITY_BENCHMARK.md (latencies, CPU%, RSS, 0 dropped events)    |
+| - Unified Packaging: Windows MSI (SDK signtool.exe + WDSI submission), Linux deb/rpm/tar.gz, hardened Docker         |
+| - Solo PR shipping via scripts/solo_pr_ship.ps1 & cross-repo sync to D:\harfile\AgentOctopus                          |
++-----------------------------------------------------------------------------------------------------------------------+
 ```
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Starting State Verification & PR #1 | Commit verified uncommitted changes: `causal_graph.rs` `DeclassifiedInto` edge filter, `lib.rs` cleanup `spawn_blocking`, WebUI watchdog mojibake fix & timeout 60s, maintain 0-diff WebUI parity. | M0 | Survey |
-| 2 | Decommission 14 Path/Prefix/Name Trust Sites | Eliminate `get_dynamic_trusted_dir_prefixes`, `is_canonical_trusted_binary_dir`, `is_consensus_finding_vetoed_or_benign`, `scanner_skip_path`, etc. | M1 | R1, Survey |
-| 3 | Unified Cryptographic Binary Trust Pipeline | Enforce Authenticode (`WinVerifyTrust`), Windows Catalog (`CatRoot`), and protected BLAKE3 hash inventory. Fail closed on user-writable paths. | M1 | R1 |
-| 4 | Host-Independent Masquerade Detection | Replace dynamic host PATH/folder scanning with deterministic `CANONICAL_PROTECTED_BINARY_NAMES` catalog. | M1 | R6 |
-| 5 | Remove Test-Only Stems from Production Code | Replace broken `"libfoo"` check in `disk_cleanup.rs` with dynamic Cargo workspace package stem discovery. | M1 | R6 |
-| 6 | Argument-Safe Process Execution | Replace all `cmd /C`, `sh -c`, `powershell -Command` string invocations in `disk_cleanup.rs`, `openshell.rs`, `cli/main.rs` with native `std::fs` and discrete argv. | M2 | R2 |
-| 7 | Process Execution CI Check Script | Add repository scanner script to CI preventing any future single-string shell executions. | M2 | R2 |
-| 8 | Non-Blocking `/api/system/cleanup` & Background Purge | Fast in-memory trim returns < 500ms (SLA < 5s); background task runs filesystem/SQLite purge with progress on `GET /api/disk-cleanup/status`. | M2 | R7 |
-| 9 | Async Handler Audit & File I/O Non-Blocking | Audit all Axum handlers; replace blocking `std::fs::read` on large files with `tokio::fs` or chunked reading. | M2 | R7 |
-| 10 | Gated Slow FHE Tests Behind Opt-In Feature | Add `fhe` feature in `crates/osoosi-core/Cargo.toml`; gate 3 slow tests in `fhe_coordinator.rs` behind `#[cfg(feature = "fhe")]`, reducing test time from 132s to < 35s. | M3 | R3 |
-| 11 | CRT-Mixing Source Fix for LNK4098 | Patch `esaxx-rs` to eliminate `.static_crt(true)`; resolve `LIBCMT` vs `MSVCRT` conflict without `/IGNORE:4098`; remove `#![allow(linker_messages)]`. | M3 | R6 |
-| 12 | Hermetic Test Fixtures Across Workspaces | Ensure all unit tests run independent of host file layout, user, PATH, or network on both Windows and Linux (WSL). | M3 | R3 |
-| 13 | Modular Decomposition of `crates/osoosi-core/src/rea.rs` | Split monolithic 8,557-line `rea.rs` into 8 cohesive submodules in `crates/osoosi-core/src/rea/` (max 1,500 lines per file). | M4 | R4 |
-| 14 | Modular Decomposition of `crates/osoosi-core/src/lib.rs` | Split monolithic 15,146-line `lib.rs` into 8 `orchestrator/` submodules (max 2,300 lines per file) + slim `lib.rs` (~1,400 lines). | M4 | R4 |
-| 15 | Public API Backward Compatibility | Re-export all public symbols via `pub use` so dependent crates compile with zero breaking changes. | M4 | R4 |
-| 16 | Multi-Trial Live CI Verification Runner | Implement `scripts/run_live_multi_trial_suite.py` running $T \ge 3$ trials per vector, reporting `NonReproducibleTransient` on inconsistency, and failing closed. | M5 | R5 |
-| 17 | CI Live Verification Workflow on Port 3030 | Add `live-verification` job in `.github/workflows/ci.yml` compiling daemon, starting on port 3030, and running 6-vector breakout suite + 15-vector gauntlet. | M5 | R5 |
-| 18 | Final Verification, Full Packaging & Solo PR | Rebuild Windows MSI, Linux deb/rpm/tar.gz, Docker image; submit to Microsoft WDSI; update README & mermaid diagrams; solo PR ship. | M6 | Governance, R1-R7 |
-| 19 | Interactive Console Window & QuickEdit DoS Immunity | Windows `CREATE_NO_WINDOW (0x08000000)` on all spawned processes; disable QuickEdit (`ENABLE_QUICK_EDIT_MODE`) and Insert mode on Windows startup via `SetConsoleMode` to prevent console freeze DoS; `FreeConsole()` detach support; unit test hardening mask. | M2 | User Directive (2026-10-24) |
+| 1 | Cargo Offline Dependency Resolution | Add `rhai` dependency in root `Cargo.toml` `[workspace.dependencies]` to unblock offline cargo index resolution. | M1 | Survey 1, Survey 2 |
+| 2 | Tier-1 Wasmtime Memory Limiter | Wire `MemoryLimiter` into `Store` via `store.limiter(...)` and configure 64 MiB linear memory limit. | M1 | R1, Survey 1 |
+| 3 | Tier-1 Wasmtime Confined Scratch Dir | Preopen single confined scratch directory (`workspace_dir`) in `WasiCtxBuilder`. | M1 | R1, Survey 1 |
+| 4 | Host Operation Fuel Metering | Deduct execution fuel via `caller.consume_fuel(...)` during host function calls (`host_scan_file`, `host_fetch_url`, etc.). | M1 | R1, Survey 1 |
+| 5 | Capability Checking & Revocation | Check and consume `store.capabilities` in host function dispatch to eliminate capability reuse. | M1 | R1, Survey 1 |
+| 6 | Tier-2 Win32 Process Confinement | Implement `create_deelevated_token` and route process spawning through AppContainer + Job Object with `IsProcessInJob`. | M1 | R1, Survey 1 |
+| 7 | DNS-Pinned Network Egress | Implement DNS pinning in `handle_fetch_url` to eliminate DNS rebinding TOCTOU vulnerabilities. | M1 | R1, Survey 1 |
+| 8 | Auto-Release Stale Destination Blocks | When a submission is allowed (`event.allowed == true`, e.g. `covergeneral.docx`), release active WFP host blocks. | M2 | R2, Survey 2 |
+| 9 | Large File DLP Streaming (16 MB) | Expand `MAX_STREAM_BYTES` in `har_dlp.rs` to 16 MB so 10-MB test files (`10-MB-Test.xlsx`) are completely inspected. | M2 | R2, Survey 2 |
+| 10 | Per-Submission File Selection Precision | Tighten candidate sorting in `har_dlp.rs` using exact timestamp and form-data metadata binding. | M2 | R2, Survey 2 |
+| 11 | 4-Voter Quorum & Native WFP Containment | Verify `OpenJEV-Voter`, `REA-Voter`, `RedactX`, `GoogleSafeBrowsing` 4-voter quorum and native `FwpmFilterAdd0` WFP containment. | M2 | R2, Survey 2 |
+| 12 | P2P Mesh GossipSub & Hybrid PQC | Verify 15-topic GossipSub and NIST FIPS 204 `ML-DSA-65` + `Ed25519` dual signatures with secure secret zeroization. | M3 | R3, Survey 3 |
+| 13 | Hardware TPM 2.0 PCR Attestation | Verify composite PCR quote validation [0, 7, 16], OEM EK silicon certificate validation, and anti-replay nonces (300s TTL). | M3 | R3, Survey 3 |
+| 14 | BFT Consensus & Anti-Kill-Switch Veto | Enforce 2/3 quorum, PoS stake exponentiation, PoW vote difficulty, `ByzantineKillSwitchFraudProof`, and stake slashing. | M3 | R3, Survey 3 |
+| 15 | Strict RL Separation from Deterministic Deny | Enforce Cedar invariants: `DENY_RL_TAINT_OR_PROVENANCE_MUTATION`, `DENY_RL_PERMIT_RULE_PROPOSAL`, `DENY_MODEL_MANIPULATION_OVERRIDE`. | M3 | R3, Survey 3 |
+| 16 | Tier-1 Wasmtime Warm Invocation (< 1 ms) | Implement precompiled `Module` cache (`DashMap<[u8; 32], Module>`) and shared `Linker` in `osoosi-sandbox`. | M4 | R4, Survey 1 |
+| 17 | Epoch Timer Task Contention Fix | Eliminate per-execution `tokio::spawn` timer tasks that trigger engine-wide epoch cancellation. | M4 | R4, Survey 1 |
+| 18 | Tokio Async Lock Safety Refactoring | Refactor `blocking_write()` and `blocking_read()` call sites on `tokio::sync::RwLock` across `maintenance.rs`, `malware.rs`, `analyzer.rs`, `adaptive.rs`. | M4 | R4, Survey 1 |
+| 19 | DashMap Nested Lock Hygiene | Eliminate nested lock acquisitions on `DashMap` in `containment_ring.rs` and `agent_egress.rs`. | M4 | R4, Survey 1 |
+| 20 | WebUI 0-Diff Parity Maintenance | Maintain 100% byte-for-byte SHA256 equality between `dashboard/src` and `dashboard/dist` (15/15 tests passing). | M4 | R4, Survey 3 |
+| 21 | Comprehensive Benchmark Report Authoring | Compile and publish `docs/PERFORMANCE_AND_SECURITY_BENCHMARK.md` recording latencies, CPU%, RSS, and 0 dropped events. | M5 | R5, Survey 3 |
+| 22 | 43 A+ Adversarial Vectors Multi-Trial Proof | Execute and verify 43 vectors across Domain 1 & Domain 2 with 100% agreement over 129 trials. | M5 | R5, Survey 3 |
+| 23 | E2E Testing Suite (Tiers 1-4) & Hardening (Tier 5) | Design and execute comprehensive 4-tier opaque-box E2E test suite followed by Tier 5 adversarial coverage hardening. | M5 | R5, Survey 3 |
+| 24 | Full-Lifecycle Packaging & Submission | Rebuild Windows MSI (SDK `signtool.exe` + WDSI submission), Linux packages (`.deb`, `.rpm`, `.tar.gz`), and hardened Docker image. | M5 | R5, Governance |
+| 25 | Solo PR Shipping & Cross-Repo Sync | Execute `scripts/solo_pr_ship.ps1` for clean branch merge and synchronize updates to `D:\harfile\AgentOctopus`. | M5 | Governance |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M0 | Ship Verified Starting State & PR #1 | Commit 6 verified starting files; ship PR via `scripts/solo_pr_ship.ps1`. | none | DONE (PR #187, commit 46020066) |
-| M1 | Cryptographic Binary Trust (R1) & Host-Independent Masquerade & Remove Test Stems (R6) | Eliminate 14 path-based trust sites; implement unified cryptographic trust pipeline; deterministic protected names; dynamic Cargo stem discovery; tests. | M0 | DONE (PR #191, commit 845890ce) |
-| M2 | Argument-Safe Execution (R2), Async Hygiene (R7) & Console DoS Immunity | Discrete argv execution (eliminate `cmd /C`, `sh -c`); `CREATE_NO_WINDOW (0x08000000)`; disable QuickEdit mode via `SetConsoleMode` + `FreeConsole`; non-blocking `/api/system/cleanup` (< 500ms); audit Axum handlers; CI shell check. | M1 | DONE (PR #195, commit 4e0df1b4) |
-| M3 | Fast Hermetic Test Suite (R3) & CRT Mixing LNK4098 Fix (R6) | Opt-in `fhe` cargo feature (< 120s suite); patch `esaxx-rs` to remove `.static_crt(true)`; remove `#![allow(linker_messages)]`; hermetic fixtures. | M1, M2 | DONE (PR #198, #199; commits 95c21992, 7e5347db) |
-| M4 | Modular Decomposition of rea.rs and lib.rs (R4) | Split `rea.rs` into `rea/` (8 submodules, all <= 1,500 lines); split `lib.rs` into `orchestrator/` (8 submodules, all <= 2,300 lines) + slim `lib.rs`; re-exports. | M1, M2, M3 | DONE (PR #202, commit ac9e422e) |
-| M5 | Live Multi-Trial CI Verification on Port 3030 (R5) | Multi-trial test runner ($T \ge 3$ trials, `NonReproducibleTransient` fail-closed); GitHub Actions `live-verification` job. | M2, M3, M4 | DONE (PR #204, commit c489f2d3) |
-| M6 | Final Verification, Documentation & Diagrams, Release Packaging & Microsoft Submission | Full verification, update README.md and mermaid diagrams, build MSI/Linux/Docker, WDSI submission, ship final PR. | M1-M5 | DONE |
+| M1 | Pre-Execution Security & Unified Confinement | Features 1–7: Rhai dependency fix, wired MemoryLimiter (64 MiB), scratch dir, fuel metering, capability enforcement, Win32 AppContainer + Job Object + de-elevated token, DNS pinning. | none | PLANNED |
+| M2 | Continuous Breakout Defense & DLP Precision | Features 8–11: Stale block auto-release on benign upload, 16MB stream buffer in `har_dlp.rs`, per-submission candidate binding, 4-voter quorum + WFP verification. | M1 | PLANNED |
+| M3 | P2P Mesh, BFT Containment & RL Separation | Features 12–15: P2P GossipSub, ML-DSA-65/Ed25519, TPM 2.0 quote validation, BFT consensus, Byzantine kill-switch fraud proofs, strict Cedar RL separation. | M1 | PLANNED |
+| M4 | Profiling-Driven Performance & Lock Safety | Features 16–20: Wasmtime module cache (<1ms warm invocation), epoch timer fix, Tokio async lock safety refactoring, DashMap lock hygiene, WebUI 0-diff parity. | M1, M2 | PLANNED |
+| M5 | Adversarial Proof, Benchmarking & Packaging Delivery | Features 21–25: Benchmark report `PERFORMANCE_AND_SECURITY_BENCHMARK.md`, 43 A+ vector validation, 100% E2E test pass + Tier 5 hardening, Windows/Linux/Docker packaging, WDSI submission, AgentOctopus sync, Solo PR ship. | M1, M2, M3, M4 | PLANNED |
 
 ## Interface Contracts
 
-### M1: Cryptographic Binary Trust
-- `verify_binary_cryptographic_trust(path: &Path) -> BinaryTrustVerdict`:
-  - Returns `BinaryTrustVerdict::Trusted(TrustSource::ProtectedHashInventory | TrustSource::Authenticode | TrustSource::WindowsCatalog)`
-  - Returns `BinaryTrustVerdict::Untrusted(TrustRejectionReason)`
-- `CANONICAL_PROTECTED_BINARY_NAMES: &[&'static str]`: Static, versioned slice of protected OS and developer binary stems.
+### M1: Wasmtime & Win32 Sandbox Interface
+- `SandboxConfig`:
+  - `memory_limit_bytes`: `u64` (default `64 * 1024 * 1024` = 64 MiB)
+  - `workspace_dir`: `Option<PathBuf>` (preopened as single confined scratch directory in WASI P1)
+- `create_deelevated_token(source_token: HANDLE) -> Result<HANDLE, Win32Error>`:
+  - Creates restricted token with `DisableSids`, restricted SIDs, and `TokenIntegrityLevel = Medium/Low`.
+- `execute_confined_windows_process(program: &str, args: &[&str], profile_name: &str, policy: &WindowsConfinementPolicy) -> Result<ConfinementTransitionOutcome, String>`:
+  - Creates process with `CREATE_SUSPENDED (0x00000004)`, assigns to Job Object, sets AppContainer token, asserts `IsProcessInJob == TRUE`, resumes thread.
 
-### M2: Async Cleanup & Disk Management
-- `POST /api/system/cleanup` -> `Json(DiskCleanupJobResponse { job_id, status: "scheduled", immediate_freed_bytes })` (Returns in < 500ms).
-- `GET /api/disk-cleanup/status` -> `Json(DiskCleanupJobProgress { job_id, is_active, phase, files_pruned, bytes_freed, error: Option<String> })`.
+### M2: DLP Event & Auto-Release Interface
+- `post_dlp_browser_event(event: DlpBrowserEvent) -> Response`:
+  - If `event.allowed == true`: queries active destination block for `event.destination_host`. If blocked, calls `osoosi_core::wfp::unblock_destination_native(ip)` to release stale block.
+- `resolve_local_uploaded_file(candidate: Option<&str>, destination_sink: &str) -> Option<ResolvedDlpFile>`:
+  - Streams up to `16 * 1024 * 1024` bytes (16 MiB), parses Office OpenXML Deflate streams, and matches submission metadata.
 
-### M3: FHE Feature Flag
-- In `crates/osoosi-core/Cargo.toml`: `fhe = ["dep:tfhe"]` (optional, default disabled).
-- Tests requiring homomorphic operations annotated with `#[cfg(feature = "fhe")]`.
+### M3: BFT Consensus & RL Policy Separation
+- `breakout_gate::CedarAuthorizer`:
+  - `DENY_RL_TAINT_OR_PROVENANCE_MUTATION`: rejects any request to alter taint state via RL policy.
+  - `DENY_MODEL_MANIPULATION_OVERRIDE`: if Cedar evaluation denies, model recommendation cannot override.
 
-### M4: Modular Core Architecture
-- `crates/osoosi-core/src/rea/`: `types.rs`, `path_security.rs`, `prompt_injection.rs`, `inspectors/`, `engine.rs`, `inventory.rs`, `voters.rs`, `tests.rs`.
-- `crates/osoosi-core/src/orchestrator/`: `init.rs`, `event_pipeline.rs`, `mesh.rs`, `maintenance.rs`, `remediation.rs`, `query.rs`, `types.rs`, `tests.rs`.
-- `crates/osoosi-core/src/lib.rs`: Public re-exports `pub use orchestrator::EdrOrchestrator;`, `pub use rea::*;`.
+### M4: Precompiled WASM Module Cache
+- `ModuleCache`:
+  - `get_or_compile(engine: &Engine, wasm_bytes: &[u8]) -> Result<Module, wasmtime::Error>`
+  - Key: `blake3::hash(wasm_bytes)`
+  - Target: warm invocation < 1 ms.
 
 ## Code Layout
-- `crates/osoosi-core/src/rea/`: Decomposed submodules of `rea.rs` (max <= 1,500 lines).
-- `crates/osoosi-core/src/orchestrator/`: Decomposed submodules of `lib.rs` (max <= 2,300 lines).
-- `crates/osoosi-core/src/lib.rs`: High-level crate root & public re-exports (~1,400 lines).
-- `scripts/run_live_multi_trial_suite.py`: Multi-trial test runner for port 3030 daemon.
-- `scripts/check_no_shell_exec.py`: CI linter script ensuring 0 shell-string executions.
-- `.github/workflows/ci.yml`: Updated CI pipeline with `live-verification` job.
+- `crates/osoosi-sandbox/src/`:
+  - `lib.rs`: Wasmtime engine, module cache, `Store` initialization with `store.limiter`.
+  - `memory_limiter.rs`: `MemoryLimiter` enforcing 64 MiB cap.
+  - `native_host.rs`: Hostcall dispatch with capability consumption, fuel deduction, DNS pinning.
+  - `windows.rs`: `create_deelevated_token`, Win32 AppContainer and Job Object process spawning.
+- `crates/osoosi-dashboard/src/routes/`:
+  - `dlp.rs`: `post_dlp_browser_event` with stale block auto-release.
+  - `har_dlp.rs`: `MAX_STREAM_BYTES` 16 MiB streaming and metadata binding.
+  - `dlp_containment.rs`: 4-voter quorum and WFP containment.
+- `crates/osoosi-core/src/`:
+  - `wfp.rs`: Native `FwpmFilterAdd0` and `FwpmFilterDeleteById0`.
+  - `orchestrator/maintenance.rs`: Async lock refactoring (eliminate `blocking_write` in Rayon).
+- `docs/`:
+  - `PERFORMANCE_AND_SECURITY_BENCHMARK.md`: Full empirical benchmark report.
+- `scripts/`:
+  - `build_and_submit.ps1`: Primary release build, signing, WDSI submission, and packaging script.
+  - `solo_pr_ship.ps1`: Automated Git branch and PR merge script.
