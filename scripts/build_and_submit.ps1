@@ -408,7 +408,13 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
         Start-Sleep -Milliseconds 100
     }
     Test-And-Handle-LockedFile -FilePath $TargetExe
-    Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    if (-not (Test-Path $TargetExe) -or ((Get-FileHash $DeployExe).Hash -ne (Get-FileHash $TargetExe).Hash)) {
+        try {
+            Copy-Item -Path $DeployExe -Destination $TargetExe -Force -ErrorAction Stop
+        } catch {
+            Write-Warning "Could not overwrite TargetExe ($TargetExe): $_"
+        }
+    }
     try {
         if (Test-Path $ProgFilesDir) {
             Copy-Item -Path $DeployExe -Destination $ProgFilesExe -Force -ErrorAction Stop
@@ -419,7 +425,13 @@ if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
 } elseif ($scQueryPre -match "SERVICE_NAME\s*:\s*OsoosiEDR") {
     Write-Host "       Starting OsoosiEDR service with freshly built binary..." -ForegroundColor Cyan
     Test-And-Handle-LockedFile -FilePath $TargetExe
-    Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    if (-not (Test-Path $TargetExe) -or ((Get-FileHash $DeployExe).Hash -ne (Get-FileHash $TargetExe).Hash)) {
+        try {
+            Copy-Item -Path $DeployExe -Destination $TargetExe -Force -ErrorAction Stop
+        } catch {
+            Write-Warning "Could not overwrite TargetExe ($TargetExe): $_"
+        }
+    }
     try {
         if (Test-Path $ProgFilesDir) {
             Copy-Item -Path $DeployExe -Destination $ProgFilesExe -Force -ErrorAction Stop
