@@ -331,6 +331,28 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                     );
                 }
 
+                assert.ok(env.mockWindow.osoosiRateLimit, `Expected window.osoosiRateLimit to exist in dashboard/${targetDirName}`);
+                assert.strictEqual(
+                    typeof env.mockWindow.osoosiRateLimit.rejectRateLimit,
+                    'function',
+                    `Expected window.osoosiRateLimit.rejectRateLimit to be a function in dashboard/${targetDirName}`
+                );
+                assert.strictEqual(
+                    typeof env.mockWindow.osoosiRateLimit.rejectAllRateLimits,
+                    'function',
+                    `Expected window.osoosiRateLimit.rejectAllRateLimits to be a function in dashboard/${targetDirName}`
+                );
+                assert.strictEqual(
+                    typeof env.mockWindow.osoosiRateLimit.evaluateScenario,
+                    'function',
+                    `Expected window.osoosiRateLimit.evaluateScenario to be a function in dashboard/${targetDirName}`
+                );
+                assert.strictEqual(
+                    typeof env.mockWindow.rejectHarRateLimit,
+                    'function',
+                    `Expected window.rejectHarRateLimit to be a function in dashboard/${targetDirName}`
+                );
+
                 // 4. Adversarial view exports
                 const expectedAdversarialMethods = [
                     'renderAdversarialTestsView',

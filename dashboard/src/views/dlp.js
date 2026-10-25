@@ -510,6 +510,11 @@ function renderDlpEventsTable() {
         if (ev.source) {
             verdictBadge += `<div style="margin-top: 3px;"><span class="badge blue" style="font-size: 9px; padding: 1px 4px;">${escapeHtml(ev.source)}</span></div>`;
         }
+        if (ev.user_rejected_rl || ev.rate_limit_released) {
+            verdictBadge += '<div style="margin-top: 3px;"><span class="badge green" style="font-size: 9px; padding: 1px 4px;">USER_REJECTED_RL</span></div>';
+        } else if (ev.backoff_compliant) {
+            verdictBadge += '<div style="margin-top: 3px;"><span class="badge blue" style="font-size: 9px; padding: 1px 4px;">BACKOFF:OK</span></div>';
+        }
         if (ev.containment && ev.containment.decision && ev.containment.decision !== 'AlertOnly') {
             const c = ev.containment;
             const label = c.decision === 'ProcessContained' ? 'PROCESS CONTAINED' : (c.decision === 'DestinationBlocked' ? 'DESTINATION BLOCKED' : String(c.decision));
@@ -1300,9 +1305,18 @@ const osoosiDlp = {
     refreshStatus: async function() {
         return await renderDlpView(true);
     },
+    rejectRateLimit: async function(idxOrHost) {
+        if (window.osoosiRateLimit && typeof window.osoosiRateLimit.rejectRateLimit === 'function') {
+            return await window.osoosiRateLimit.rejectRateLimit(idxOrHost);
+        }
+    },
     startPolling: startDlpAutoPolling,
     stopPolling: stopDlpAutoPolling
 };
 
 window.osoosiDlp = osoosiDlp;
+if (typeof window.osoosiRateLimit === 'undefined' && typeof osoosiRateLimit !== 'undefined') {
+    window.osoosiRateLimit = osoosiRateLimit;
+}
+
 
