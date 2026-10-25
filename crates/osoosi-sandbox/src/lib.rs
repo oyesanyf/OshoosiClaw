@@ -1,3 +1,13 @@
+#![allow(
+    clippy::upper_case_acronyms,
+    clippy::not_unsafe_ptr_arg_deref,
+    clippy::manual_c_str_literals,
+    clippy::let_unit_value,
+    clippy::unnecessary_cast,
+    clippy::unnecessary_sort_by,
+    clippy::manual_div_ceil
+)]
+
 //! WASM Sandboxing with Dual-Metering (Fuel + Epoch).
 //!
 //! Provides isolated execution of untrusted code with:
