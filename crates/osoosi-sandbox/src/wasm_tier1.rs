@@ -633,8 +633,11 @@ impl WasmTier1Executor {
                         }
                     };
 
-                    let mut buf = Vec::new();
-                    if file.read_to_end(&mut buf).is_err() {
+                    let max_read_bytes = (dst_cap as u64)
+                        .min(caller.data().limits.max_linear_memory_bytes as u64)
+                        .min(16 * 1024 * 1024);
+                    let mut buf = Vec::with_capacity(max_read_bytes.min(65_536) as usize);
+                    if (&mut file).take(max_read_bytes).read_to_end(&mut buf).is_err() {
                         return WASI_ERR_IO;
                     }
                     let copy_len = buf.len().min(dst_cap as usize);
@@ -672,6 +675,15 @@ impl WasmTier1Executor {
                     }
                     if path_ptr < 0 || path_len <= 0 || src_ptr < 0 || src_len < 0 {
                         return WASI_ERR_FAULT;
+                    }
+                    let max_write_quota = caller.data().limits.max_output_bytes as u64;
+                    let cur_written = caller.data().scratch_bytes_written;
+                    if cur_written.saturating_add(src_len as u64) > max_write_quota {
+                        caller.data_mut().blocked_escape_attempts.push(format!(
+                            "scratch_write denied: write quota exceeded ({} + {} > {})",
+                            cur_written, src_len, max_write_quota
+                        ));
+                        return WASI_ERR_ACCESS_DENIED;
                     }
                     let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
                         return WASI_ERR_FAULT;

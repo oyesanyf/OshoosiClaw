@@ -22,8 +22,7 @@ use osoosi_core::parking_lot::{Condvar, Mutex};
 use serde_json::{json, Value};
 
 use crate::routes::dlp::{
-    get_global_dlp_state, inspect_and_record_with_options, persist_dlp_event, DlpInspectOptions,
-    DlpInspectionEventRecord,
+    get_global_dlp_state, persist_dlp_event, DlpInspectOptions, DlpInspectionEventRecord,
 };
 
 /// Maximum request-body bytes inspected per HAR entry.
@@ -174,6 +173,78 @@ pub struct ResolvedUploadedFile {
     pub magika_label: String,
     pub content: String,
     pub byte_size: usize,
+    pub last_touch_epoch_ms: u64,
+}
+
+/// Returns the user-facing upload staging directories (excluding workspace `.` / `tests` dirs)
+/// used when inferring browser file uploads without an explicit filename.
+pub fn get_user_upload_staging_dirs() -> Vec<PathBuf> {
+    static USER_UPLOAD_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    USER_UPLOAD_DIRS
+        .get_or_init(|| {
+            let mut dirs = Vec::new();
+            for exfil_root in [r"C:\exfil", r"D:\exfil", "/tmp/exfil"] {
+                let p = PathBuf::from(exfil_root);
+                if p.is_dir() {
+                    dirs.push(p);
+                }
+            }
+            if cfg!(windows) {
+                let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
+                let users_root = PathBuf::from(format!("{}\\Users", drive));
+                if let Ok(rd) = std::fs::read_dir(&users_root) {
+                    for e in rd.flatten() {
+                        let u_path = e.path();
+                        if !u_path.is_dir() {
+                            continue;
+                        }
+                        for sub in ["exfil", "Downloads", "Desktop", "Documents"] {
+                            let sub_dir = u_path.join(sub);
+                            if sub_dir.is_dir() && !dirs.contains(&sub_dir) {
+                                dirs.push(sub_dir);
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some(home) =
+                std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
+            {
+                let home_exfil = PathBuf::from(&home).join("exfil");
+                if home_exfil.is_dir() && !dirs.contains(&home_exfil) {
+                    dirs.push(home_exfil);
+                }
+                let home_path = PathBuf::from(home);
+                for sub in ["Downloads", "Desktop", "Documents"] {
+                    let d = home_path.join(sub);
+                    if d.is_dir() && !dirs.contains(&d) {
+                        dirs.push(d);
+                    }
+                }
+            }
+            let sys_temp = std::env::temp_dir();
+            if sys_temp.is_dir() && !dirs.contains(&sys_temp) {
+                dirs.push(sys_temp);
+            }
+            if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
+                let local_temp = PathBuf::from(local_appdata).join("Temp");
+                if local_temp.is_dir() && !dirs.contains(&local_temp) {
+                    dirs.push(local_temp);
+                }
+            }
+            if let Ok(appdata) = std::env::var("APPDATA") {
+                let recent = PathBuf::from(appdata)
+                    .join("Microsoft")
+                    .join("Windows")
+                    .join("Recent");
+                if recent.is_dir() && !dirs.contains(&recent) {
+                    dirs.push(recent);
+                }
+            }
+            dirs.dedup();
+            dirs
+        })
+        .clone()
 }
 
 /// Returns the standard candidate staging directories to search for browser upload files:
@@ -184,67 +255,18 @@ pub struct ResolvedUploadedFile {
 /// 5. Windows Recent: %APPDATA%\Microsoft\Windows\Recent
 /// 6. Workspace root and test directories: ., tests, tests/corpus
 pub fn get_candidate_staging_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    for exfil_root in [r"C:\exfil", r"D:\exfil", "/tmp/exfil"] {
-        let p = PathBuf::from(exfil_root);
-        if p.is_dir() {
-            dirs.push(p);
-        }
-    }
-    if cfg!(windows) {
-        let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string());
-        let users_root = PathBuf::from(format!("{}\\Users", drive));
-        if let Ok(rd) = std::fs::read_dir(&users_root) {
-            for e in rd.flatten() {
-                let u_path = e.path();
-                if !u_path.is_dir() {
-                    continue;
-                }
-                for sub in ["exfil", "Downloads", "Desktop", "Documents"] {
-                    let sub_dir = u_path.join(sub);
-                    if sub_dir.is_dir() && !dirs.contains(&sub_dir) {
-                        dirs.push(sub_dir);
-                    }
-                }
-            }
-        }
-    }
-    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
-        let home_exfil = PathBuf::from(&home).join("exfil");
-        if home_exfil.is_dir() {
-            dirs.push(home_exfil);
-        }
-        let home_path = PathBuf::from(home);
-        let dl = home_path.join("Downloads");
-        if dl.is_dir() { dirs.push(dl); }
-        let desk = home_path.join("Desktop");
-        if desk.is_dir() { dirs.push(desk); }
-        let docs = home_path.join("Documents");
-        if docs.is_dir() { dirs.push(docs); }
-    }
-    let sys_temp = std::env::temp_dir();
-    if sys_temp.is_dir() && !dirs.contains(&sys_temp) {
-        dirs.push(sys_temp);
-    }
-    if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
-        let local_temp = PathBuf::from(local_appdata).join("Temp");
-        if local_temp.is_dir() && !dirs.contains(&local_temp) {
-            dirs.push(local_temp);
-        }
-    }
-    if let Ok(appdata) = std::env::var("APPDATA") {
-        let recent = PathBuf::from(appdata).join("Microsoft").join("Windows").join("Recent");
-        if recent.is_dir() && !dirs.contains(&recent) {
-            dirs.push(recent);
-        }
-    }
-    dirs.push(PathBuf::from("."));
-    dirs.push(PathBuf::from("tests"));
-    dirs.push(PathBuf::from("tests").join("corpus"));
-    dirs.push(PathBuf::from("crates").join("osoosi-dashboard").join("tests"));
-
-    dirs.dedup();
-    dirs
+    static ALL_STAGING_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+    ALL_STAGING_DIRS
+        .get_or_init(|| {
+            let mut dirs = get_user_upload_staging_dirs();
+            dirs.push(PathBuf::from("."));
+            dirs.push(PathBuf::from("tests"));
+            dirs.push(PathBuf::from("tests").join("corpus"));
+            dirs.push(PathBuf::from("crates").join("osoosi-dashboard").join("tests"));
+            dirs.dedup();
+            dirs
+        })
+        .clone()
 }
 
 /// Reads up to `max_stream_bytes` from `path`, identifies its true content type via Google Magika
@@ -265,13 +287,13 @@ pub fn read_and_classify_uploaded_file(
         return None;
     }
     let total_size = md.len() as usize;
-    let mtime_secs = md
+    let mtime_dur = md
         .modified()
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let cache_key = (path.to_path_buf(), mtime_secs ^ (total_size as u64));
+        .unwrap_or_default();
+    let mtime_ms = mtime_dur.as_millis() as u64;
+    let cache_key = (path.to_path_buf(), mtime_ms ^ (total_size as u64));
     if let Ok(guard) = UPLOADED_FILE_CACHE.lock() {
         if let Some(cached) = guard.get(&cache_key) {
             return Some(cached.clone());
@@ -299,9 +321,10 @@ pub fn read_and_classify_uploaded_file(
         magika_label,
         content,
         byte_size: total_size,
+        last_touch_epoch_ms: mtime_ms,
     };
     if let Ok(mut guard) = UPLOADED_FILE_CACHE.lock() {
-        if guard.len() > 64 {
+        if guard.len() > 128 {
             guard.clear();
         }
         guard.insert(cache_key, resolved.clone());
@@ -312,19 +335,43 @@ pub fn read_and_classify_uploaded_file(
 /// Parses a Windows Shell Link (`.lnk`, `[MS-SHLLINK]`) binary file to extract its target file path.
 /// Uses both the structured `LinkInfo` (`LocalBasePath` + `CommonPathSuffix`) header and a fallback
 /// scan for null-terminated drive-letter paths (`[A-Za-z]:\...`), returning the target `PathBuf`
-/// only when it exists on disk as a regular file.
+/// only when it exists on disk as a regular file. Results are cached by `(lnk_path, mtime_ms ^ size)`
+/// so polling never repeatedly opens `.lnk` files on disk.
 pub fn resolve_windows_lnk_target(lnk_path: &Path) -> Option<PathBuf> {
     use std::io::Read;
+    static LNK_CACHE: std::sync::LazyLock<
+        std::sync::Mutex<std::collections::HashMap<(PathBuf, u64), Option<PathBuf>>>,
+    > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
     let md = std::fs::metadata(lnk_path).ok()?;
-    if !md.is_file() || md.len() < 76 || md.len() > 64 * 1024 {
+    if !md.is_file() || md.len() < 4 || md.len() > 64 * 1024 {
         return None;
     }
+    let mtime_ms = md
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let cache_key = (lnk_path.to_path_buf(), mtime_ms ^ md.len());
+    if let Ok(guard) = LNK_CACHE.lock() {
+        if let Some(cached) = guard.get(&cache_key) {
+            if let Some(ref target) = cached {
+                if target.is_file() {
+                    return Some(target.clone());
+                }
+            } else {
+                return None;
+            }
+        }
+    }
+
     let mut f = std::fs::File::open(lnk_path).ok()?;
     let mut buf = Vec::with_capacity(md.len() as usize);
     f.read_to_end(&mut buf).ok()?;
 
     // Verify MS-SHLLINK 4-byte HeaderSize = 0x0000004C (76)
-    if buf.len() < 76 || buf[0..4] != [0x4C, 0x00, 0x00, 0x00] {
+    if buf.len() < 8 || buf[0..4] != [0x4C, 0x00, 0x00, 0x00] {
         return None;
     }
 
@@ -344,69 +391,88 @@ pub fn resolve_windows_lnk_target(lnk_path: &Path) -> Option<PathBuf> {
             .map(|s| s.trim().to_string())
     };
 
-    let link_flags = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
-    let mut offset = 76usize;
-    // HasLinkTargetIDList (bit 0)
-    if (link_flags & 0x01) != 0 {
-        if offset + 2 <= buf.len() {
-            let id_list_size = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
-            offset = offset.saturating_add(2).saturating_add(id_list_size);
+    let mut resolved_out: Option<PathBuf> = None;
+
+    if buf.len() >= 76 {
+        let link_flags = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
+        let mut offset = 76usize;
+        // HasLinkTargetIDList (bit 0)
+        if (link_flags & 0x01) != 0 {
+            if offset + 2 <= buf.len() {
+                let id_list_size = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+                offset = offset.saturating_add(2).saturating_add(id_list_size);
+            }
         }
-    }
-    // HasLinkInfo (bit 1)
-    if (link_flags & 0x02) != 0 && offset + 28 <= buf.len() {
-        let link_info_flags =
-            u32::from_le_bytes([buf[offset + 8], buf[offset + 9], buf[offset + 10], buf[offset + 11]]);
-        // VolumeIDAndLocalBasePath (bit 0)
-        if (link_info_flags & 0x01) != 0 {
-            let local_base_offset = u32::from_le_bytes([
-                buf[offset + 16],
-                buf[offset + 17],
-                buf[offset + 18],
-                buf[offset + 19],
-            ]) as usize;
-            let common_suffix_offset = u32::from_le_bytes([
-                buf[offset + 24],
-                buf[offset + 25],
-                buf[offset + 26],
-                buf[offset + 27],
-            ]) as usize;
-            if let Some(base) = read_cstr(offset.saturating_add(local_base_offset)) {
-                let suffix = read_cstr(offset.saturating_add(common_suffix_offset)).unwrap_or_default();
-                let combined = if suffix.is_empty() {
-                    PathBuf::from(&base)
-                } else {
-                    PathBuf::from(&base).join(&suffix)
-                };
-                if combined.is_file() {
-                    return Some(combined);
+        // HasLinkInfo (bit 1)
+        if (link_flags & 0x02) != 0 && offset + 28 <= buf.len() {
+            let link_info_flags = u32::from_le_bytes([
+                buf[offset + 8],
+                buf[offset + 9],
+                buf[offset + 10],
+                buf[offset + 11],
+            ]);
+            // VolumeIDAndLocalBasePath (bit 0)
+            if (link_info_flags & 0x01) != 0 {
+                let local_base_offset = u32::from_le_bytes([
+                    buf[offset + 16],
+                    buf[offset + 17],
+                    buf[offset + 18],
+                    buf[offset + 19],
+                ]) as usize;
+                let common_suffix_offset = u32::from_le_bytes([
+                    buf[offset + 24],
+                    buf[offset + 25],
+                    buf[offset + 26],
+                    buf[offset + 27],
+                ]) as usize;
+                if let Some(base) = read_cstr(offset.saturating_add(local_base_offset)) {
+                    let suffix =
+                        read_cstr(offset.saturating_add(common_suffix_offset)).unwrap_or_default();
+                    let combined = if suffix.is_empty() {
+                        PathBuf::from(&base)
+                    } else {
+                        PathBuf::from(&base).join(&suffix)
+                    };
+                    if combined.is_file() {
+                        resolved_out = Some(combined);
+                    }
                 }
             }
         }
     }
 
     // Fallback: scan for null-terminated ASCII paths starting with `[A-Za-z]:\`
-    let mut i = 0usize;
-    while i + 4 < buf.len() {
-        if buf[i].is_ascii_alphabetic()
-            && buf[i + 1] == b':'
-            && (buf[i + 2] == b'\\' || buf[i + 2] == b'/')
-        {
-            if let Some(cand_str) = read_cstr(i) {
-                if cand_str.len() >= 4
-                    && cand_str.bytes().all(|b| (0x20..=0x7E).contains(&b))
-                {
-                    let p = PathBuf::from(&cand_str);
-                    if p.is_file() {
-                        return Some(p);
+    if resolved_out.is_none() {
+        let mut i = 0usize;
+        while i + 4 < buf.len() {
+            if buf[i].is_ascii_alphabetic()
+                && buf[i + 1] == b':'
+                && (buf[i + 2] == b'\\' || buf[i + 2] == b'/')
+            {
+                if let Some(cand_str) = read_cstr(i) {
+                    if cand_str.len() >= 4
+                        && cand_str.bytes().all(|b| (0x20..=0x7E).contains(&b))
+                    {
+                        let p = PathBuf::from(&cand_str);
+                        if p.is_file() {
+                            resolved_out = Some(p);
+                            break;
+                        }
                     }
                 }
             }
+            i += 1;
         }
-        i += 1;
     }
 
-    None
+    if let Ok(mut guard) = LNK_CACHE.lock() {
+        if guard.len() > 256 {
+            guard.clear();
+        }
+        guard.insert(cache_key, resolved_out.clone());
+    }
+
+    resolved_out
 }
 
 fn is_excluded_non_document_ext(ext: &str) -> bool {
@@ -484,19 +550,32 @@ pub fn resolve_local_uploaded_file(
         if !cleaned.is_empty() {
             let direct_path = PathBuf::from(cleaned);
             if direct_path.is_file() {
-                let actual_path = if direct_path
+                let (actual_path, lnk_touch_ms) = if direct_path
                     .extension()
                     .and_then(|e| e.to_str())
                     .map(|e| e.eq_ignore_ascii_case("lnk"))
                     .unwrap_or(false)
                 {
-                    resolve_windows_lnk_target(&direct_path).unwrap_or_else(|| direct_path.clone())
+                    let touch_ms = std::fs::metadata(&direct_path)
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    (
+                        resolve_windows_lnk_target(&direct_path)
+                            .unwrap_or_else(|| direct_path.clone()),
+                        touch_ms,
+                    )
                 } else {
-                    direct_path.clone()
+                    (direct_path.clone(), 0)
                 };
-                if let Some(res) =
+                if let Some(mut res) =
                     read_and_classify_uploaded_file(&actual_path, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
                 {
+                    if lnk_touch_ms > res.last_touch_epoch_ms {
+                        res.last_touch_epoch_ms = lnk_touch_ms;
+                    }
                     return Some(res);
                 }
             }
@@ -528,12 +607,21 @@ pub fn resolve_local_uploaded_file(
                 ] {
                     let lnk_candidate = dir.join(&lnk_name);
                     if lnk_candidate.is_file() {
+                        let touch_ms = std::fs::metadata(&lnk_candidate)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
                         if let Some(resolved_target) = resolve_windows_lnk_target(&lnk_candidate) {
-                            if let Some(res) = read_and_classify_uploaded_file(
+                            if let Some(mut res) = read_and_classify_uploaded_file(
                                 &resolved_target,
                                 MAX_STREAM_BYTES,
                                 MAX_TEXT_BYTES,
                             ) {
+                                if touch_ms > res.last_touch_epoch_ms {
+                                    res.last_touch_epoch_ms = touch_ms;
+                                }
                                 return Some(res);
                             }
                         }
@@ -564,11 +652,7 @@ pub fn resolve_local_uploaded_file(
                             let entry_touch = entry
                                 .metadata()
                                 .ok()
-                                .map(|md| {
-                                    let m = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                                    let a = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
-                                    m.max(a)
-                                })
+                                .and_then(|md| md.modified().ok())
                                 .unwrap_or(SystemTime::UNIX_EPOCH);
                             if let Some(resolved_target) = resolve_windows_lnk_target(&p) {
                                 matched_paths.push((resolved_target, entry_touch));
@@ -593,21 +677,24 @@ pub fn resolve_local_uploaded_file(
                         let entry_touch = entry
                             .metadata()
                             .ok()
-                            .map(|md| {
-                                let m = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                                let a = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
-                                m.max(a)
-                            })
+                            .and_then(|md| md.modified().ok())
                             .unwrap_or(SystemTime::UNIX_EPOCH);
                         matched_paths.push((p, entry_touch));
                     }
                 }
             }
             matched_paths.sort_by(|a, b| b.1.cmp(&a.1));
-            for (p, _) in matched_paths {
-                if let Some(res) =
+            for (p, touch) in matched_paths {
+                if let Some(mut res) =
                     read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
                 {
+                    let touch_ms = touch
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    if touch_ms > res.last_touch_epoch_ms {
+                        res.last_touch_epoch_ms = touch_ms;
+                    }
                     return Some(res);
                 }
             }
@@ -644,10 +731,11 @@ pub fn resolve_local_uploaded_file(
                 }
             };
 
-        for dir in get_candidate_staging_dirs() {
+        for dir in get_user_upload_staging_dirs() {
             let dir_low = dir.to_string_lossy().to_ascii_lowercase();
             let is_exfil_dir = dir_low.contains("exfil");
-            let is_temp_dir = dir_low == sys_temp_low || dir_low.ends_with("\\temp") || dir_low.ends_with("/temp");
+            let is_temp_dir =
+                dir_low == sys_temp_low || dir_low.ends_with("\\temp") || dir_low.ends_with("/temp");
             let Ok(rd) = std::fs::read_dir(&dir) else {
                 continue;
             };
@@ -659,7 +747,9 @@ pub fn resolve_local_uploaded_file(
                     .unwrap_or_default()
                     .to_ascii_lowercase();
 
-                // Resolve Windows Recent `.lnk` shortcut files created/updated when the user selects a file in OpenFileDialog
+                // Resolve Windows Recent `.lnk` shortcut files created/updated when the user selects a file in OpenFileDialog.
+                // Critically, use `lnk_md.modified()` (`lnk_mtime`) and `t_md.modified()` (`t_mtime`), NEVER `accessed()` (`atime`),
+                // because opening a file during DLP scanning updates `atime` and would otherwise corrupt recency ordering!
                 if ext == "lnk" {
                     let Ok(lnk_md) = entry.metadata() else {
                         continue;
@@ -668,13 +758,13 @@ pub fn resolve_local_uploaded_file(
                         continue;
                     }
                     let lnk_mtime = lnk_md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                    let lnk_atime = lnk_md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
-                    let lnk_touch = lnk_mtime.max(lnk_atime);
                     let lnk_age = now
-                        .duration_since(lnk_touch)
+                        .duration_since(lnk_mtime)
                         .map(|d| d.as_secs())
                         .unwrap_or(u64::MAX);
-                    if lnk_age <= 1800 {
+                    // Allow Recent `.lnk` files up to 7 days old so user file-dialog selections never
+                    // expire before older files in `C:\exfil`.
+                    if lnk_age <= 7 * 86_400 {
                         if let Some(target_path) = resolve_windows_lnk_target(&p) {
                             let target_ext = target_path
                                 .extension()
@@ -689,10 +779,7 @@ pub fn resolve_local_uploaded_file(
                                     {
                                         let t_mtime =
                                             t_md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                                        let t_atime =
-                                            t_md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
-                                        let effective_touch =
-                                            lnk_touch.max(t_mtime).max(t_atime);
+                                        let effective_touch = lnk_mtime.max(t_mtime);
                                         let target_is_exfil = target_path
                                             .to_string_lossy()
                                             .to_ascii_lowercase()
@@ -721,15 +808,15 @@ pub fn resolve_local_uploaded_file(
                     if !md.is_file() || md.len() == 0 || md.len() > 500 * 1024 * 1024 {
                         continue;
                     }
+                    // Use `modified()` (`mtime`) strictly — never `accessed()` (`atime`), which gets updated
+                    // by the scanner itself whenever `read_and_classify_uploaded_file` opens a file!
                     let mtime = md.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                    let atime = md.accessed().unwrap_or(SystemTime::UNIX_EPOCH);
-                    let recent_touch = mtime.max(atime);
                     let age_secs = now
-                        .duration_since(recent_touch)
+                        .duration_since(mtime)
                         .map(|d| d.as_secs())
                         .unwrap_or(u64::MAX);
                     if is_exfil_dir || age_secs <= 600 {
-                        upsert_candidate(p, is_exfil_dir, recent_touch, md.len());
+                        upsert_candidate(p, is_exfil_dir, mtime, md.len());
                     }
                 }
             }
@@ -768,10 +855,17 @@ pub fn resolve_local_uploaded_file(
                 .then_with(|| b_office.cmp(&a_office))
         });
 
-        if let Some((best_path, _, _, _)) = candidates.into_iter().next() {
-            if let Some(resolved) =
+        if let Some((best_path, _, best_touch, _)) = candidates.into_iter().next() {
+            if let Some(mut resolved) =
                 read_and_classify_uploaded_file(&best_path, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
             {
+                let touch_ms = best_touch
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                if touch_ms > resolved.last_touch_epoch_ms {
+                    resolved.last_touch_epoch_ms = touch_ms;
+                }
                 return Some(resolved);
             }
         }
@@ -992,10 +1086,46 @@ pub fn is_dlp_event_allowlisted(
     false
 }
 
+/// Computes a deduplication key for live upload-sink polling that advances a monotonic transition
+/// counter (`LIVE_SINK_TRANSITION_SEQ`) whenever the winning resolved file path or its touch timestamp
+/// (`last_touch_epoch_ms`) changes. This guarantees that rapid alternating uploads (`A -> B -> A`)
+/// within the same 15-second `time_bucket` never collide in `SEEN` and are immediately re-inspected.
+pub fn compute_live_sink_dedupe_key(
+    resolved: &ResolvedUploadedFile,
+    time_bucket: i64,
+) -> String {
+    static LAST_LIVE_SINK_SELECTION: OnceLock<Mutex<(PathBuf, u64)>> = OnceLock::new();
+    static LIVE_SINK_TRANSITION_SEQ: AtomicU64 = AtomicU64::new(1);
+
+    let lock = LAST_LIVE_SINK_SELECTION.get_or_init(|| Mutex::new((PathBuf::new(), 0)));
+    let mut guard = lock.lock();
+    let current = (
+        resolved.resolved_path.clone(),
+        resolved.last_touch_epoch_ms,
+    );
+    let seq = if *guard != current {
+        *guard = current;
+        LIVE_SINK_TRANSITION_SEQ.fetch_add(1, Ordering::SeqCst) + 1
+    } else {
+        LIVE_SINK_TRANSITION_SEQ.load(Ordering::SeqCst)
+    };
+    drop(guard);
+
+    format!(
+        "dns_dlptest_magika_{}_{}_{}_{}_{}",
+        resolved.magika_label,
+        resolved.resolved_path.display(),
+        resolved.last_touch_epoch_ms,
+        time_bucket,
+        seq
+    )
+}
+
 /// Autonomous real-time polling of live browser activity, uploads, and sinks (Chrome & Edge history snapshots,
 /// logs/har_stream.jsonl, and Windows DNS cache) visited within the last 120 seconds.
 pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
     let mut out = Vec::new();
+    let mut cached_sink_resolved: Option<Option<ResolvedUploadedFile>> = None;
 
     // 1. Chrome, Edge, and Chromium browser profile snapshots
     for (browser, _profile_name, profile_dir) in get_browser_profiles() {
@@ -1048,7 +1178,11 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                                 continue;
                             }
 
-                            let (body_text, params) = if let Some(resolved) = resolve_local_uploaded_file(None, &url) {
+                            let resolved_opt = cached_sink_resolved
+                                .get_or_insert_with(|| resolve_local_uploaded_file(None, &url))
+                                .clone();
+
+                            let (body_text, params) = if let Some(resolved) = resolved_opt {
                                 (
                                     format!(
                                         "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n{}",
@@ -1115,7 +1249,14 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                         let mut body_text = entry.get("body_text").and_then(|v| v.as_str()).unwrap_or_default().to_string();
                         let candidate_file = entry.get("file_name").or_else(|| entry.get("file_path")).and_then(|v| v.as_str());
                         let mut params = Vec::new();
-                        if let Some(resolved) = resolve_local_uploaded_file(candidate_file, url) {
+                        let resolved_opt = if candidate_file.is_some() {
+                            resolve_local_uploaded_file(candidate_file, url)
+                        } else {
+                            cached_sink_resolved
+                                .get_or_insert_with(|| resolve_local_uploaded_file(None, url))
+                                .clone()
+                        };
+                        if let Some(resolved) = resolved_opt {
                             if !body_text.contains(&resolved.content) {
                                 if !body_text.is_empty() {
                                     body_text.push('\n');
@@ -1178,7 +1319,10 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
             .unwrap_or(false);
         if has_live_dlptest_socket || has_dns || has_active_block {
             let test_url = "https://dlptest.com/https-post/";
-            if let Some(resolved) = resolve_local_uploaded_file(None, test_url) {
+            let resolved_opt = cached_sink_resolved
+                .get_or_insert_with(|| resolve_local_uploaded_file(None, test_url))
+                .clone();
+            if let Some(resolved) = resolved_opt {
                 // If an active TCP socket or active block to dlptest.com is present right now, bucket by 15s window
                 // so every live browser test run by the user triggers a fresh inspection + kernel WFP block or unblock.
                 let time_bucket = if has_live_dlptest_socket || has_active_block {
@@ -1186,12 +1330,7 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
                 } else {
                     chrono::Utc::now().timestamp() / 120
                 };
-                let key = format!(
-                    "dns_dlptest_magika_{}_{}_{}",
-                    resolved.magika_label,
-                    resolved.resolved_path.display(),
-                    time_bucket
-                );
+                let key = compute_live_sink_dedupe_key(&resolved, time_bucket);
                 let started_at = chrono::Utc::now().to_rfc3339();
                 out.push(HarDlpRequest {
                     key,
@@ -1682,18 +1821,14 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
         // URL-only collector rows are recorded only when they carry sensitive data.
         skip_recording_allowed: !has_body,
     };
-    let (_tier1, _proof, mut event) = {
-        let mut state = get_global_dlp_state().write();
-        inspect_and_record_with_options(
-            &mut state,
-            &req.actor,
-            &req.url,
-            req.channel(),
-            &payload,
-            req.source_kind.as_str(),
-            options,
-        )
-    };
+    let (_tier1, _proof, mut event) = crate::routes::dlp::inspect_and_record_shared(
+        &req.actor,
+        &req.url,
+        req.channel(),
+        &payload,
+        req.source_kind.as_str(),
+        options,
+    );
     if !event.allowed
         && is_dlp_event_allowlisted(
             &event.destination_sink,
@@ -2271,6 +2406,108 @@ mod tests {
         assert_eq!(resolved_lnk, Some(clean_path.clone()));
 
         let _ = std::fs::remove_file(lnk_path);
+        let _ = std::fs::remove_file(clean_path);
+    }
+
+    #[test]
+    fn test_rapid_alternating_uploads_within_single_bucket_and_atime_immunity() {
+        // Verify that rapid alternating uploads (Sensitive A -> Benign B -> Sensitive A) within the
+        // EXACT SAME 15-second `time_bucket` produce distinct deduplication keys (`compute_live_sink_dedupe_key`)
+        // so `dedupe_new` never drops the re-selected file as a duplicate.
+        let temp_dir = std::env::temp_dir();
+        let sens_name = format!("alt_sensitive_{}.csv", uuid::Uuid::new_v4());
+        let clean_name = format!("alt_covergeneral_{}.txt", uuid::Uuid::new_v4());
+        let sens_path = temp_dir.join(&sens_name);
+        let clean_path = temp_dir.join(&clean_name);
+
+        let sensitive_csv = "name,ssn,ccn\nJohn Doe,123-45-6789,4532015112830366\n";
+        let benign_txt = "Dear Hiring Manager,\nAttached is my resume and cover letter.\n";
+
+        // Step 1: User selects/creates Sensitive A (`10-MB-Test` equivalent)
+        std::fs::write(&sens_path, sensitive_csv).expect("write sensitive csv");
+        let r_a1 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/")
+            .expect("resolve sensitive A1");
+        assert_eq!(r_a1.resolved_path, sens_path);
+
+        let fixed_bucket = 119_500_000i64;
+        let key_a1 = compute_live_sink_dedupe_key(&r_a1, fixed_bucket);
+        let key_a1_repeat = compute_live_sink_dedupe_key(&r_a1, fixed_bucket);
+        assert_eq!(
+            key_a1, key_a1_repeat,
+            "unchanged selection inside the same bucket must keep the same key"
+        );
+
+        // Step 2: 15ms later (still in `fixed_bucket`), user selects Benign B (`covergeneral` equivalent)
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::fs::write(&clean_path, benign_txt).expect("write benign txt");
+
+        // Simulate scanner/background reading `sens_path` (which updates `atime` on `sens_path` but NOT `mtime`)
+        let _ = std::fs::read(&sens_path);
+
+        let r_b1 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/")
+            .expect("resolve benign B1");
+        assert_eq!(
+            r_b1.resolved_path, clean_path,
+            "reading an older file must never let its atime shadow a newer mtime selection"
+        );
+        let key_b1 = compute_live_sink_dedupe_key(&r_b1, fixed_bucket);
+        assert_ne!(key_a1, key_b1);
+
+        // Step 3: 15ms later (STILL in `fixed_bucket`), user touches/re-selects Sensitive A via `.lnk` shortcut
+        std::thread::sleep(std::time::Duration::from_millis(15));
+        let lnk_a_path = temp_dir.join(format!("{}.lnk", sens_name));
+        let mut lnk_bytes = vec![0x4C, 0x00, 0x00, 0x00];
+        lnk_bytes.extend_from_slice(sens_path.to_string_lossy().as_bytes());
+        lnk_bytes.push(0x00);
+        std::fs::write(&lnk_a_path, &lnk_bytes).expect("write .lnk for sensitive A2");
+
+        let r_a2 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/")
+            .expect("resolve sensitive A2 via .lnk");
+        assert_eq!(
+            r_a2.resolved_path, sens_path,
+            "touching .lnk for Sensitive A must immediately make Sensitive A the winner again"
+        );
+        let key_a2 = compute_live_sink_dedupe_key(&r_a2, fixed_bucket);
+        assert_ne!(
+            key_a1, key_a2,
+            "alternating A -> B -> A within the same 15s bucket must produce a fresh dedupe key"
+        );
+
+        // Verify `dedupe_new` accepts all three transitions (A1 -> B1 -> A2) without dropping A2
+        let make_req = |k: String, r: &ResolvedUploadedFile| HarDlpRequest {
+            key: k,
+            source_kind: HarSourceKind::HarCollector,
+            source_label: "live_tcp_socket:dlptest.com".to_string(),
+            actor: "chrome.exe".to_string(),
+            actor_pid: None,
+            actor_image_path: None,
+            injection_indicators: Vec::new(),
+            host: "dlptest.com".to_string(),
+            method: "POST".to_string(),
+            url: "https://dlptest.com/https-post/".to_string(),
+            started_at: chrono::Utc::now().to_rfc3339(),
+            mime_type: "multipart/form-data".to_string(),
+            body_text: r.content.clone(),
+            params: vec![(
+                "uploaded_file".to_string(),
+                r.resolved_path.display().to_string(),
+            )],
+            body_truncated: false,
+        };
+        let batch = vec![
+            make_req(key_a1, &r_a1),
+            make_req(key_b1, &r_b1),
+            make_req(key_a2, &r_a2),
+        ];
+        let (fresh, _) = dedupe_new(&batch);
+        assert_eq!(
+            fresh.len(),
+            3,
+            "all 3 alternating uploads (A -> B -> A) within the same 15s bucket must pass deduplication"
+        );
+
+        let _ = std::fs::remove_file(lnk_a_path);
+        let _ = std::fs::remove_file(sens_path);
         let _ = std::fs::remove_file(clean_path);
     }
 }
