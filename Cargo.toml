@@ -69,7 +69,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 rusqlite = { version = "0.31", features = ["bundled", "serde_json"] }
 clap = { version = "4", features = ["derive", "env"] }
 sha2 = "0.10"
-hmac = "0.12"
+hmac = "0.13"
 hex = "0.4"
 subtle = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
