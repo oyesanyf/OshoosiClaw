@@ -18,9 +18,7 @@
 </p>
 
 <p align="center">
-  <a href="docs/FINAL_SCORECARD.md"><img src="https://img.shields.io/badge/Security%20Scorecard-A%2B%20Certified%20(43%2F43%20Vectors)-brightgreen?style=for-the-badge&logo=shield" alt="A+ Security Scorecard"/></a>
   <a href="logs/adversarial_proof_report.md"><img src="https://img.shields.io/badge/Multi--Trial%20Proof-100%25%20Agreement%20(129%2F129%20Trials)-blueviolet?style=for-the-badge&logo=checkmarx" alt="Multi-Trial Adversarial Proof"/></a>
-  <a href="docs/BASELINE_SCORECARD.md"><img src="https://img.shields.io/badge/Baseline%20Audit-Remediated%20(+73.8%25)-blue?style=for-the-badge" alt="Baseline Audit Remediated"/></a>
 </p>
 
 <p align="center">
@@ -29,56 +27,36 @@
 </p>
 
 <p align="center">
-  <a href="#about">About</a> •
+  <a href="#about">Overview</a> •
   <a href="#key-features">Key Features</a> •
   <a href="#quick-start">Quick Start</a> •
   <a href="#architecture">Architecture</a> •
-  <a href="#documentation">Documentation</a> •
-  <a href="#contributing">Contributing</a> •
-  <a href="#security">Security</a> •
-  <a href="#license">License</a>
-</p>
-
-<p align="center">
-  <a href="#-a-production-hardening--modular-architecture-upgrades-r1r7-feature-19">🛡️ A- Hardening (R1–R7)</a> •
-  <a href="#-nist-article--standards-alignment">🏛️ NIST Alignment</a> •
-  <a href="#-what-is-oshoosiclaw-plain-english-overview">🎯 Overview</a> •
-  <a href="#-60-second-quick-start">⚡ Quick Start</a> •
-  <a href="#-continuous-self-updating-har-web-traffic-sensor-har-traffic">🌐 HAR Web Traffic</a> •
-  <a href="#-twelve-part-architecture-of-zero--7-crate-physics-defense-engine">⚛️ Physics of Zero (7 Crates)</a> •
-  <a href="#-autonomous-rea-reverse-engineer-anything-forensic-engine">🔬 Autonomous REA</a> •
-  <a href="#-emergency-kill-chain--reversible-host-containment-engine">🚨 Kill Chain & Host Isolation</a> •
-  <a href="#-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture">🔒 4-Pillar FHE & Merkle</a> •
-  <a href="#-http-framing-defense--request-queue-poisoning-cl0-remediation">🛡️ HTTP Framing Defense (CL.0)</a> •
-  <a href="#-siquery-rs-101-table-engine">Siquery-RS 101-Table Engine</a> •
-  <a href="#-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection">Hierarchical & NSRL/ASLR Merkle</a> •
-  <a href="#-spider-web-continuum-mechanics--exposure-bounded-containment">Spider-Web Continuum Mechanics</a> •
-  <a href="#-agentoctopus-multi-ring-containment">AgentOctopus Multi-Ring Containment</a> •
-  <a href="#-hardened-canarycage-filelineage-and-swarm-pre-immunization">🕊️ Ephemeral CanaryCage & Swarm Lineage (R1–R15)</a> •
-  <a href="#-native-windows-service-lifecycle-osoosiedr">Windows & Linux Service (`OsoosiEDR`)</a> •
-  <a href="#-ring-0-windows-driver--linux-ebpf-parity">Ring-0 Driver & eBPF</a> •
-  <a href="#-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl">Agent Anomaly & EmbeddingGemma 2</a> •
-  <a href="#-verizon-vcdb-integration--empirical-breach-intelligence-4-a-schema--containment-benchmark">📊 Verizon VCDB &amp; VERIS Replay</a>  
-  <a href="#-owasp-hunting-integration--41-category-verification-pipeline">🛡️ OWASP Hunting (41 Categories)</a> •
-  <a href="#-redactx-v3-openjev-hybrid-dlp-engine">🔒 RedactX-v3 Hybrid DLP</a> •
-  <a href="#-autonomous-defense-swarm--langgraph">LangGraph Swarm</a> •
-  <a href="#-hybrid-decision-engine--strands-decider-2b--clef-flash">Hybrid Decision & OpenJev</a> •
-  <a href="#-embedded-velociraptor-forensic-extraction-service">Velociraptor & Linux VAD Forensics</a> •
-  <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
-  <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
-  <a href="#-rl-adaptive-controller">6-Pillar RL Controller</a> •
-  <a href="#-active-process--memory-tarpit-hollowing-containment">Active Tarpit & Hollowing</a> •
-  <a href="#-adversarial-verification">Adversarial Testing</a> •
-  <a href="#-synthetic-telemetry-canaries--anti-blinding-engine">Canary Anti-Blinding</a> •
-  <a href="#-mitre-attck--atlas-enterprise-framework">MITRE ATT&CK & ATLAS</a> •
-  <a href="#-autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds">🧬 5 Public AI Threat Feeds</a> •
-  <a href="#-p2p-wire-mesh-stix-synchronization">Wire STIX Sync</a> •
-  <a href="#-high-throughput-p2p-mesh--consensus-stability">Mesh Stability</a> •
-  <a href="#-interactive-webui-visual-gallery">Visual Tour</a> •
-  <a href="#-autonomous-agent-skill-evolution--wikiskill">WikiSkill Evolution</a> •
-  <a href="#-open-source-security-governance--community-roadmap">Open-Source Governance & Roadmap</a> •
+  <a href="ARCHITECTURE.md">Codebase Map</a> •
+  <a href="docs/GOOD_FIRST_ISSUES.md">Good First Issues</a> •
+  <a href="CONTRIBUTING.md">Contributing</a> •
+  <a href="SECURITY.md">Security</a> •
   <a href="#-cli-reference">CLI Reference</a>
 </p>
+
+<details>
+<summary><b>📑 Jump to Technical Deep-Dive Sections</b></summary>
+
+| | | |
+| :--- | :--- | :--- |
+| [🛡️ Production Hardening (R1–R7)](#-a-production-hardening--modular-architecture-upgrades-r1r7-feature-19) | [🎯 Plain-English Overview](#-what-is-oshoosiclaw-plain-english-overview) | [⚡ 60-Second Quick Start](#-60-second-quick-start) |
+| [🌐 HAR Web Traffic](#-continuous-self-updating-har-web-traffic-sensor-har-traffic) | [⚛️ Physics of Zero (7 Crates)](#-twelve-part-architecture-of-zero--7-crate-physics-defense-engine) | [🔬 Autonomous REA](#-autonomous-rea-reverse-engineer-anything-forensic-engine) |
+| [🚨 Kill Chain & Host Isolation](#-emergency-kill-chain--reversible-host-containment-engine) | [🔒 4-Pillar FHE & Merkle](#-4-pillar-fully-homomorphic-encryption-tfhe--cryptographic-merkle-architecture) | [🛡️ HTTP Framing Defense (CL.0)](#-http-framing-defense--request-queue-poisoning-cl0-remediation) |
+| [🔍 Siquery-RS 101-Table Engine](#-siquery-rs-101-table-engine) | [🌳 Hierarchical & NSRL/ASLR Merkle](#-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection) | [🕸️ Spider-Web Continuum Mechanics](#-spider-web-continuum-mechanics--exposure-bounded-containment) |
+| [🐙 AgentOctopus Multi-Ring Containment](#-agentoctopus-multi-ring-containment) | [🕊️ Ephemeral CanaryCage & Lineage](#-hardened-canarycage-filelineage-and-swarm-pre-immunization) | [⚙️ Windows & Linux Service (`OsoosiEDR`)](#-native-windows-service-lifecycle-osoosiedr) |
+| [🛡️ Ring-0 Driver & eBPF](#-ring-0-windows-driver--linux-ebpf-parity) | [🤖 Agent Anomaly & EmbeddingGemma 2](#-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl) | [📊 Verizon VCDB & VERIS Replay](#-verizon-vcdb-integration--empirical-breach-intelligence-4-a-schema--containment-benchmark) |
+| [🛡️ OWASP Hunting (41 Categories)](#-owasp-hunting-integration--41-category-verification-pipeline) | [🔒 RedactX-v3 Hybrid DLP](#-redactx-v3-openjev-hybrid-dlp-engine) | [🐝 LangGraph Defense Swarm](#-autonomous-defense-swarm--langgraph) |
+| [⚡ Hybrid Decision & OpenJev](#-hybrid-decision-engine--strands-decider-2b--clef-flash) | [🔍 Velociraptor & VAD Forensics](#-embedded-velociraptor-forensic-extraction-service) | [🔍 DNS & Sysmon Setup](#-dns-telemetry-setup) |
+| [🌐 Two-Host BFT Mesh](#-two-host-mesh-consensus) | [🧠 6-Pillar RL Controller](#-rl-adaptive-controller) | [🪤 Active Tarpit & Hollowing](#-active-process--memory-tarpit-hollowing-containment) |
+| [⚡ Adversarial Verification](#-adversarial-verification) | [🕊️ Canary Anti-Blinding](#-synthetic-telemetry-canaries--anti-blinding-engine) | [🛡️ MITRE ATT&CK & ATLAS](#-mitre-attck--atlas-enterprise-framework) |
+| [🧬 5 Public AI Threat Feeds](#-autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds) | [🌐 Wire STIX Sync](#-p2p-wire-mesh-stix-synchronization) | [🌐 High-Throughput Mesh Stability](#-high-throughput-p2p-mesh--consensus-stability) |
+| [📸 Visual Tour](#-interactive-webui-visual-gallery) | [🧠 WikiSkill Evolution](#-autonomous-agent-skill-evolution--wikiskill) | [🌐 Open-Source Governance & Roadmap](#-open-source-security-governance--community-roadmap) |
+
+</details>
 
 ---
 
@@ -94,23 +72,6 @@
 **OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw)** is an open-source, enterprise-grade **Endpoint Detection & Response (EDR)**, **Continuous HAR Web Traffic Inspector**, **101-Table SQL Host Telemetry Engine (`Siquery`)**, **Autonomous Binary & Bytecode Reverse Engineering Platform (`REA`)**, and **Multi-Agent AI Defense Swarm** engineered in **Rust** and **Python**. It operates as a decentralized, autonomous immune system for modern Windows and Linux environments, fusing low-level kernel sensors (Windows ETW / Ring-0 minifilters and Linux eBPF), solid-state cryptographic proofs (TPM 2.0, BLAKE3 Merkle chains, ML-KEM-768 post-quantum key exchange), and an adaptive LangGraph multi-agent defense swarm.
 
 Unlike traditional antivirus platforms that rely on brittle cloud round-trips or static signature feeds, OshoosiClaw conducts all threat reasoning, fully homomorphic evaluations (TFHE), and autonomous binary analysis locally on the endpoint. It equips security analysts and incident responders with instant, rich visibility through a zero-dependency embedded WebUI running on `http://127.0.0.1:3030`, high-speed interactive SQL host telemetry queries across 101 live system tables, continuous HTTP Archive (HAR) browser/API surveillance, and autonomous containment mechanisms that sever adversary kill-chains in microseconds.
-
----
-
-### 🏆 Authoritative A+ Security Certification (43 / 43 Vectors Passing)
-
-Following comprehensive adversarial auditing and verification by an independent reviewer (`reviewer_final_scorecard`), OshoosiClaw achieved a certified **A+ Security Rating** across both critical defense domains, backed by **100% unanimous multi-trial agreement across 129 independent trials** (minimum 3 repeated trials per attack vector):
-
-| Security Domain | Vectors Audited | Code Controls (Check 1) | Fail-Closed Real Path (Check 2) | Proving Test Agreement (Check 3) | Final Grade | Baseline Grade | Posture Delta | Authoritative Report |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Domain 1: EDR Compromise Resistance** | 21 | 21 / 21 (100%) | 21 / 21 (100%) | 21 / 21 (100%) | **A+** | D (15.0%) | **+85.0%** | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md#3-domain-1-edr-compromise-resistance-final-scorecard-21-vectors) |
-| **Domain 2: Agent Breakout Resistance** | 22 | 22 / 22 (100%) | 22 / 22 (100%) | 22 / 22 (100%) | **A+** | C- (36.4%) | **+63.6%** | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md#4-domain-2-agent-breakout-resistance-final-scorecard-22-vectors) |
-| **Unified Repository Posture** | **43** | **43 / 43 (100%)** | **43 / 43 (100%)** | **43 / 43 (100%)** | **A+** | **D+ / C- (26.2%)** | **+73.8%** | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md) |
-
-- **Official Final Scorecard**: [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md) — Comprehensive evidence citations (`file:line`) and fail-closed path proofs for all 43 defense vectors.
-- **Performance & Security Benchmark (Hybrid Sandboxing, Adaptive Concurrency & Lock Hygiene)**: [`docs/PERFORMANCE_AND_SECURITY_BENCHMARK.md`](docs/PERFORMANCE_AND_SECURITY_BENCHMARK.md) — Comprehensive before-and-after latency (`p50`/`p95`/`p99`), CPU/RSS overhead, throughput, and adversarial proof matrix covering Hybrid Tier-1 Wasmtime / Tier-2 Win32 sandboxing (`crates/osoosi-sandbox`), Adaptive bounded queue (4096 capacity) with low-priority load shedding and zero dropped high-priority tasks (`crates/osoosi-core/src/adaptive.rs`), decoupled Rayon threat model training with sub-100ns weight swapping (`maintenance.rs`), zero-alloc thread-local scratch buffer YARA-X scanning (`voters.rs`), and single-pass DashMap retain eviction.
-- **Independent Baseline Audit**: [`docs/BASELINE_SCORECARD.md`](docs/BASELINE_SCORECARD.md) — Historical baseline findings and vulnerability breakdown prior to remediation passes.
-- **Machine-Readable Multi-Trial Report**: [`logs/adversarial_proof_report.md`](logs/adversarial_proof_report.md) & [`logs/adversarial_proof_report.json`](logs/adversarial_proof_report.json) — 129 independent test executions with 0 transient failures.
 
 ---
 
@@ -279,34 +240,6 @@ flowchart LR
 
 ---
 
-<a id="-nist-article--standards-alignment"></a>
-## 🏛️ NIST Article & Standards Alignment
-- [x] **NIST AI 100-2e2023 / 2025** — Adversarial Machine Learning Taxonomy, Red-Teaming & Mitigations (`#adversarial-tests`) with exportable **"Attacker Compute Burn vs. Defender Mitigation Cost"** economic asymmetry ($R_T/T \to 0$ sublinear regret convergence) and **Real-Time Econometric Equilibrium Gauge** (`Estimated Attacker Token/Compute Burn ($)` vs. `Local Defender Overhead (CPU ms / RAM MB)`) via `GET /api/tarpit-stats` (`json`, `csv`, `prometheus`)
-- [x] **NIST Closed-Loop Co-Evolution** — Automated Generator-Discriminator Prompt Evolution & Self-Expanding Regression Corpus (`#skyrl`, `tests/corpus/`)
-- [x] **NIST AI RMF 1.0 & AI 600-1** — Generative AI Risk Governance (`GOVERN`, `MAP`, `MEASURE`, `MANAGE`) & `CanaryCage` Containment (`#agent-anomalies`)
-- [x] **NIST SP 800-207** — Zero Trust Architecture via Continuous Cedar PARC & Dogwood Temporal Policy Authorization (`#approvals`)
-- [x] **NIST SP 800-53 Rev. 5 (`SC-7`, `SC-28`, `SI-4`) & SP 800-88** — Two-Tier Zero-Exploit Data Loss Prevention (`#dlp`) & Volatile RAM Scrubbing, with **Deep-Depth ($\le 8$) Recursive Multi-Layer Unwrapping + Non-Linear Semantic Shingle & Custom Cipher DLP** (`OsoosiTwoTierDlpEngine` + `ZeroMutualInformationProjector`) and **Universal Multi-Browser HAR Web Traffic Sensor** (`#har-traffic`) capturing all Chromium, Gecko/Firefox, WebKit/Safari, and custom browsers + live sockets
-- [x] **NIST SP 800-61 Rev. 2 & SP 800-160** — Emergency Host Containment & **Tightened Automated Rollback Windows** in `crates/osoosi-core/src/killchain.rs` combining 60-second intermediate process-tree telemetry integrity health probes (early automatic rollback after 3 consecutive clean probes) with the 30-minute hard dead-man failsafe ceiling (`#killchain`)
-- [x] **NIST FIPS 203 (`ML-KEM-768`) & FIPS 204 (`ML-DSA-65`)** — Post-Quantum Cryptography & Cryptographic Bill of Materials (`#mesh`)
-- [x] **NIST SP 800-193 / SP 800-155 & NIST NSRL RDS** — TPM 2.0 Hardware-Signed BLAKE3 Merkle Roots & Autonomous REA Vetting (`#rea`)
-- [x] **NIST SP 800-218 (SSDF) & SLSA v1.0** — Authenticode SHA-256 Signing, DSSE Provenance Attestations & Microsoft WDSI Submission
-
-| Status | NIST Standard / Article Pillar | How OshoosiClaw Matches the Specification | Module / Verification Path |
-| :---: | :--- | :--- | :--- |
-| ☑️ | **NIST AI 100-2e2023 / 2025**<br>*(Adversarial ML Taxonomy & Mitigations)* | Autonomous 34-suite red-teaming harness executing 2,250+ probes across **MITRE ATLAS**, **Microsoft PyRIT**, **NVIDIA Garak**, **UK AISI Inspect AI**, **DeepEval**, **Promptfoo**, **PentestGPT**, **RedAmon**, **Caido**, **Astra**, and **RESTler** with `Stop` and `Autonomous` controls. Tracks exportable **"Attacker Compute Burn vs. Defender Mitigation Cost"** economic asymmetry, sublinear regret ($R_T/T \to 0$) convergence, and live **Real-Time Econometric Equilibrium Gauge** (`Estimated Attacker Token/Compute Burn ($)` vs. `Local Defender Overhead (CPU ms / RAM MB)`). | WebUI: [`#adversarial-tests`](#adversarial-tests)<br>Script: `tests/strix_llm_adversarial_tester.py`<br>API: `GET /api/tarpit-stats?format=json\|csv\|prometheus` |
-| ☑️ | **NIST Closed-Loop Co-Evolution**<br>*(Generator-Discriminator Prompt Evolution)* | `GeneratorDiscriminatorPromptEvolutionEngine` replays historical mutations (`Perimeter 0`), synthesizes genetic adversarial prompt mutations, trains the **SkyRL DeepQ Discriminator** (`POST /api/skyrl/v1/train`), and persists newly discovered mutations into a versioned Merkle-anchored regression corpus on disk. | WebUI: [`#skyrl`](#skyrl), [`#adversarial-tests`](#adversarial-tests)<br>Corpus: `tests/corpus/adversarial_regression_corpus.json` |
-| ☑️ | **NIST AI RMF 1.0 & AI 600-1**<br>*(Generative AI Profile: GOVERN, MAP, MEASURE, MANAGE)* | Enforces OWASP Top 10 for Agentic AI (2026) (`ASI01`–`ASI10`), `EmbeddingGemma 2` MRL trajectory drift detection, and `CanaryCage` honey-pipe / Win32 Job Object sandboxing with pre-execution `FileLineageTracker` BLAKE3 verification. | WebUI: [`#agent-anomalies`](#agent-anomalies), [`#approvals`](#approvals)<br>Crate: `crates/osoosi-agent-anomaly` |
-| ☑️ | **NIST SP 800-207**<br>*(Zero Trust Architecture)* | Continuous per-invocation **Cedar PARC** and **Dogwood Metric First-Order Temporal Logic (MFOTL)** authorization gating every agent tool call, network connection, and kernel enforcement action with fail-closed role isolation. | WebUI: [`#approvals`](#approvals)<br>Crate: `crates/osoosi-policy` |
-| ☑️ | **NIST SP 800-53 Rev. 5 (`SC-7`, `SC-28`, `SI-4`) & SP 800-88**<br>*(Data Loss Prevention & Media Sanitization)* | Dedicated **Data Loss Prevention (DLP)** menu (`#dlp`) combining `<50µs` Tier-1 $O(N)$ secret/PAN/SSN scanning with **Deep-Depth ($\le 8$) Recursive Multi-Layer Unwrapping** (`MAX_UNWRAP_ENCODING_DEPTH = 8`), non-linear semantic shingle indexing, NATO phonetic credential reconstruction, Shannon entropy custom cipher bounding ($H(X) \ge 5.65$), and 4 KB Crown-Jewel Merkle chunks with Tier-2 **Presidio + GLiNER (`urchade/gliner_multi_pii-v1`)** `<ZK_PII>` scrubbing, `write_volatile` RAM wiping, and ZK-BFT proofs. Paired with the **Universal Multi-Browser HAR Web Traffic Sensor** (`#har-traffic`) discovering and capturing all Chromium, Gecko/Firefox, WebKit/Safari, and custom browsers + live sockets. | WebUI: [`#dlp`](#dlp), [`#har-traffic`](#har-traffic)<br>API: `GET /api/dlp/status`, `POST /api/dlp/inspect`, `POST /api/dlp/release` |
-| ☑️ | **NIST SP 800-61 Rev. 2 & SP 800-160**<br>*(Incident Containment & System Resilience)* | Reversible emergency host containment ("Defend-in-Place Killswitch") with **Tightened Automated Rollback Windows** in `crates/osoosi-core/src/killchain.rs`, executing 60-second intermediate process-tree telemetry integrity health probes (early automatic rollback after 3 consecutive clean probes) paired with the 30-minute hard dead-man failsafe ceiling. | WebUI: [`#killchain`](#killchain)<br>Crate: `crates/osoosi-core/src/killchain.rs`<br>API: `POST /api/killchain/health-probe` |
-| ☑️ | **NIST FIPS 203 (`ML-KEM-768`) & FIPS 204 (`ML-DSA-65`)**<br>*(Post-Quantum Cryptography)* | Hybrid `X25519 + ML-KEM-768` lattice key encapsulation and hybrid `Ed25519 + ML-DSA-65` digital signatures securing P2P mesh gossip, hardware Merkle manifests, and Zero-Knowledge quarantine proofs. | WebUI: [`#mesh`](#mesh)<br>Crate: `crates/osoosi-audit/src/pqc_primitives.rs` |
-| ☑️ | **NIST SP 800-193 / SP 800-155 & NIST NSRL RDS**<br>*(Hardware Root of Trust & Provenance Vetting)* | Hardware-anchored 4 KB page-tree BLAKE3 Merkle roots signed by TPM 2.0 key `0x81010002` with NV monotonic anti-rollback counter `0x01800001`, paired with **NIST NSRL** known-good suppression and autonomous **REA** Authenticode / Windows Security Catalog vetting. | WebUI: [`#rea`](#rea), [`#gossip`](#gossip)<br>Crate: `crates/osoosi-core/src/rea.rs` |
-| ☑️ | **NIST SP 800-218 (SSDF) & SLSA v1.0**<br>*(Secure Software Development Framework)* | Native Windows SDK `signtool.exe` (SHA-256 + DigiCert RFC 3161 timestamp) across all PE binaries and `OshoosiClaw.msi`, DSSE `.intoto.jsonl` SLSA provenance attestations, rootless read-only Docker (`UID 65532:65532`), and automated Microsoft WDSI submission. | Script: `scripts/build_and_submit.ps1` |
-
----
-
----
-
 <a id="-technology--language-stack-rust--python"></a>
 ## 🦀🐍 Technology & Language Stack (Rust + Python)
 OshoosiClaw is architected around a dual-language synergy optimized for extreme speed, memory safety, and cognitive adaptability: **~77% Rust** for the mission-critical core engine and **~19% Python** for the AI agent defense swarm and adversarial research tooling.
@@ -318,7 +251,7 @@ OshoosiClaw is architected around a dual-language synergy optimized for extreme 
 | • Axum Async HTTP, SSE & WebSocket Server (`127.0.0.1:3030`) | • Autonomous Protocol Fuzzing & RFC 7230/9112 Smuggling Oracles |
 | • 101-Table SQLite Virtual Telemetry Engine (`Siquery-RS`) | • 34-Suite Adversarial Red-Team Gauntlets (ATLAS, PyRIT, Garak) |
 | • Autonomous REA Binary/Bytecode Decompiler & YARA-X Engine | • Automated Microsoft WDSI Submission & Release Attestation |
-| • BLAKE3 Merkle Trees, NIST FIPS 203/204 PQC & TFHE Engine | • Corpus Benchmarking, CyberBattleSim & Verification Harnesses |
+| • BLAKE3 Merkle Trees, FIPS 203/204 PQC & TFHE Engine | • Corpus Benchmarking, CyberBattleSim & Verification Harnesses |
 
 1. **Rust (`crates/*`)**: Delivers zero-cost abstractions, deterministic memory safety without garbage collection pauses, and microsecond-level detection latency. The 31 workspace crates cleanly isolate duties: `osoosi` (orchestration daemon), `osoosi-behavioral` (Ring-0 / ETW / eBPF kernel hooks), `siquery-rs` (101-table SQL engine), `rea` (binary and bytecode forensics), `osoosi-webui` (embedded Axum dashboard), and `osoosi-audit` (cryptographic Merkle trees).
 2. **Python (`scripts/*`, `tools/*`, `tests/*`)**: Powers the flexible cognitive and research infrastructure. Python coordinates the multi-agent decision swarm (`swarm_agent.py`), trains active defense agents via reinforcement learning (`rl_active_defense.py`), validates wire protocol integrity against RFC 7230/9112 standards (`rfc_hunt_swarm.py`), and drives automated security submissions.
@@ -432,11 +365,11 @@ flowchart TD
     L2 -->|Pass| L3
     L2 -->|Ticket Invalid| VETO2["Veto: ContainmentRing-Capability-Veto"]
     L3 -->|Pass| L4
-    L3 -->|Traversal / ADS| VETO3["Veto: ContainmentRing-Filesystem-Veto"]
+    L3 -->|"Traversal / ADS"| VETO3["Veto: ContainmentRing-Filesystem-Veto"]
     L4 -->|Pass| L5
-    L4 -->|SSRF / Loopback| VETO4["Veto: ContainmentRing-Egress-Veto"]
+    L4 -->|"SSRF / Loopback"| VETO4["Veto: ContainmentRing-Egress-Veto"]
     L5 -->|Pass| L6
-    L5 -->|Anomaly / Drift| VETO5["Veto: ContainmentRing-Breakout-Veto"]
+    L5 -->|"Anomaly / Drift"| VETO5["Veto: ContainmentRing-Breakout-Veto"]
     L6 -->|Pass| WIN & LNX
     L6 -->|Alignment Drift| VETO6["Veto: ContainmentRing-Alignment-Veto"]
     WIN & LNX --> DISPATCH
@@ -536,7 +469,7 @@ flowchart TD
 ---
 
 <a id="-a-production-hardening--modular-architecture-upgrades-r1r7-feature-19"></a>
-## 🛡️ A- Production Hardening & Modular Architecture Upgrades (R1–R7, Feature 19)
+## 🛡️ Production Hardening & Modular Architecture Upgrades (R1–R7, Feature 19)
 
 As part of the comprehensive production hardening milestone series (Milestones M1–M6), OshoosiClaw transitioned from heuristic and path-dependent assumptions to a mathematically and cryptographically verified, fail-closed security posture across all runtime layers:
 
@@ -594,16 +527,16 @@ flowchart TD
     NORM --> NOPATH
     NOPATH --> WRITABLE
     WRITABLE -->|Protected Hash Override| T1
-    WRITABLE -->|Writable / Unsigned| V_UNTRUST
+    WRITABLE -->|"Writable / Unsigned"| V_UNTRUST
     NOPATH --> T1
     T1 -->|Hit| V_HASH
     T1 -->|Miss| T2
     T2 -->|Trusted| V_AUTH
     T2 -->|No Embedded Sig| T3
     T3 -->|Found in CatRoot| V_CAT
-    T3 -->|Not Found (Linux)| T4
+    T3 -->|"Not Found (Linux)"| T4
     T4 -->|Package Verified| V_AUTH
-    T4 -->|Unsigned / Unverified| V_UNTRUST
+    T4 -->|"Unsigned / Unverified"| V_UNTRUST
 ```
 
 ---
@@ -732,7 +665,7 @@ flowchart TD
         TRIALS["Execute Trial 1, Trial 2, Trial 3<br/>Record per-trial latency & cryptographic evidence"]
         AGREE{"100% Unanimous Agreement?<br/>(All trials identical pass verdict)"}
         NRT["NonReproducibleTransient Classification<br/>Fail-Closed: Exit Code 1"]
-        PASS["Certified PASS (Grade A+)<br/>Zero timing variance tolerance"]
+        PASS["Certified PASS<br/>Zero timing variance tolerance"]
     end
 
     subgraph ARTIFACTS["5. Output Attestations"]
@@ -747,8 +680,8 @@ flowchart TD
     SPAWN --> VECTORS
     VECTORS --> TRIALS
     TRIALS --> AGREE
-    AGREE -->|Discrepancy / Inconsistent| NRT
-    AGREE -->|Unanimous (3/3)| PASS
+    AGREE -->|"Discrepancy / Inconsistent"| NRT
+    AGREE -->|"Unanimous (3/3)"| PASS
     PASS --> ARTIFACTS
     NRT --> ARTIFACTS
     RUNNER --> TEARDOWN
@@ -1234,7 +1167,7 @@ Use the included [`config/sysmon-dns.xml`](config/sysmon-dns.xml) configuration:
 | `OSOOSI_DATABASE_DIR` | `database/` | Centralized database directory (Memory, Learning, Audit) |
 | `OSOOSI_OFFLINE_MODE` | `false` | Disable external API calls |
 | `OTX_API_KEY` | — | AlienVault OTX API key |
-| `NVD_API_KEY` | — | NIST NVD API key (optional; higher rate limits) |
+| `NVD_API_KEY` | — | NVD API key (optional; higher rate limits) |
 | `OPENAI_API_KEY` | — | OpenAI API key (behavioral fallback) |
 | `OSOOSI_NO_AI` / `OSOOSI_NO_ORT` | `false` | Disable AI / ONNX Runtime |
 | `OPENSHELL_CLI_PATH` | — | Full path to `openshell` / `openshell.exe` |
@@ -1414,7 +1347,7 @@ $$\text{Exposed}(N) = 1 + \lambda_{\text{attack}} \cdot \frac{\tau_{\text{prop}}
 
 The uninfected, immunized fleet survival ratio $S_{\text{fleet}}(N)$ is:
 
-$$S_{\text{fleet}}(N) = \max\left(0, 1 - \frac{1 + \lambda_{\text{attack}} \cdot \tau_{\text{prop\_sec}}(N)}{N}\right) \quad (\text{for } N > 1)$$
+$$S_{\text{fleet}}(N) = \max\left(0, 1 - \frac{1 + \lambda_{\text{attack}} \cdot \tau_{\text{prop-sec}}(N)}{N}\right) \quad (\text{for } N > 1)$$
 
 Under high-velocity machine worm propagation ($\lambda_{\text{attack}} = 2.0\text{ hosts/sec}$):
 - **$N = 10$**: $\text{Exposed} = 1 + 2(0.28876) = 1.5775 \implies S_{\text{fleet}}(10) = 84.22\%$
@@ -1499,13 +1432,13 @@ $$\mathcal{O}\!\left(\frac{\ln N}{N^{3/2}} \cdot \frac{1}{\sqrt{t}}\right) \long
 
 ---
 
-### Falsifiable Research Alignment: NIST AI 100-2e2025 & Vassilev Equilibrium
+### Falsifiable Research Alignment: Deterministic Boundaries & Game-Theoretic Equilibrium
 
 | Theoretical Requirement | Why Traditional Security Fails | How $E(N, t)$ Mathematically Proves OshoosiClaw Succeeds |
 | :--- | :--- | :--- |
 | **Pillars I & III: Deterministic Boundaries**<br>*(Never rely on probabilistic AI alone)* | Probabilistic AI guardrails exhibit non-zero bypass probability ($1 - P_{\text{LLM}} > 0$) under adaptive prompt injection or multi-layer encoding. | **Lower-Bound Theorem ($N = 1, t = 0$):** Even when completely offline ($N=1$) at zero-day arrival ($t=0$), $E(1, 0) = (1 - p_{\text{corr}}) \cdot P_{\text{kernel}} = 91.9540\%$. Ring-0 ETW/eBPF, `CanaryCage`, and `OsoosiTwoTierDlpEngine` enforce a hard deterministic floor. |
 | **Pillar II: Defeating Machine-Speed Propagation**<br>*(Defense must outpace exploitation)* | Linear/centralized cloud polling scales as $O(N)$, allowing fast worms ($\lambda_{\text{attack}}$) to compromise fleet before signatures arrive. | **Logarithmic Survival Limit ($N \to \infty$):** Because GossipSub + Zone Rollup scales logarithmically ($\tau_{\text{prop}}(N) = \tau_{\text{base}} + \tau_{\text{hop}}\log_k N$), by L'Hôpital's rule ($\frac{\ln N}{N} \to 0$), fleet survival asymptotically approaches $100\%$ ($99.9998\%$ at $N=10^6$). |
-| **NIST AI 100-2e2025: Non-Stationary Evasion**<br>*(Adaptive adversarial evasion)* | Isolated endpoints learn at $O(1/\sqrt{t})$, taking months or years to bound an adaptive attacker's action space $d$. | **$\sqrt{N}$ Collective Acceleration with Drift Ceiling ($\delta_{\text{poly}} = 0.02$):** BFT sharing ($\eta_{\text{BFT}} = 0.80$) compresses learning from $9.40\%$ ($N=1$) to $97.79\%$ ($N=10^6$) in 1 day, bounded honestly below $98.00\%$. |
+| **Non-Stationary Adversarial Evasion**<br>*(Adaptive adversarial evasion)* | Isolated endpoints learn at $O(1/\sqrt{t})$, taking months or years to bound an adaptive attacker's action space $d$. | **$\sqrt{N}$ Collective Acceleration with Drift Ceiling ($\delta_{\text{poly}} = 0.02$):** BFT sharing ($\eta_{\text{BFT}} = 0.80$) compresses learning from $9.40\%$ ($N=1$) to $97.79\%$ ($N=10^6$) in 1 day, bounded honestly below $98.00\%$. |
 | **Vassilev's Economic Equilibrium Law**<br>*(Invert attacker-to-defender cost)* | Attackers generate polymorphic payloads cheaply with LLMs while defenders pay high compute/analyst costs per alert. | **Cost Asymmetry Inversion:** Bounded compromise probability ($0.0500\%$ at $10^6$) forces attacker compute cost per successful breach up $>2,450\times$ via `CanaryCage` tarpits (verified live by `/api/tarpit-stats`). |
 | **Byzantine Resilience & Zero-Day Bound**<br>*(No self-inflicted denial-of-service)* | Naive P2P sharing allows 1 compromised peer to broadcast fake killswitches, or assumes 100% security ignoring synchronized zero-days. | **Explicit Correlated Floor $p_{\text{corr}} = 0.05\% + \tau_{\text{quorum}}$:** Local Protected Hash Inventory ($<1\text{ ms}$ veto) blocks rogue killswitches while $p_{\text{corr}}$ models synchronized zero-days and net partitions. |
 
@@ -1763,7 +1696,7 @@ flowchart TD
 ### Cryptographic Merkle Audit Proofs & Verification
 
 Every FHE threat match, blind score, and differential privacy event is hashed into a sequential leaf node:
-$$\text{Leaf}_i = \text{BLAKE3}(\text{timestamp} \parallel \text{pillar} \parallel \text{operation} \parallel \text{data\_hash})$$
+$$\text{Leaf}_i = \text{BLAKE3}(\text{timestamp} \parallel \text{pillar} \parallel \text{operation} \parallel \text{data-hash})$$
 
 Nodes can produce independent logarithmic Merkle inclusion proofs ($O(\log N)$) verifying that a specific privacy-preserving evaluation was executed without tampering:
 
@@ -2081,20 +2014,20 @@ OpenỌ̀ṣọ́ọ̀sì implements a lock-free **Two-Tier Hierarchical BLAKE3 
 Rather than contending on a single global mutex for every microsecond telemetry event, each subsystem maintains its own domain-separated rolling BLAKE3 hash chain in memory and periodically anchors an Ed25519-signed interior rollup node into the global root `MerkleAuditTree` and hardware TPM PCRs:
 
 1. **Per-Arm Merkle Chain (`OSOOSI_ARM_MERKLE_V1` — Limb State & Epoch Integrity)**:
-   $$H_{\text{arm}}^{(n)} = \text{BLAKE3}\left(\text{Domain}_{\text{arm}} \parallel H_{\text{arm}}^{(n-1)} \parallel \text{arm\_id} \parallel \text{epoch} \parallel \text{role} \parallel \text{tool\_call\_hash} \parallel \text{hmac\_sig}\right)$$
+   $$H_{\text{arm}}^{(n)} = \text{BLAKE3}\left(\text{Domain}_{\text{arm}} \parallel H_{\text{arm}}^{(n-1)} \parallel \text{arm-id} \parallel \text{epoch} \parallel \text{role} \parallel \text{tool-call-hash} \parallel \text{hmac-sig}\right)$$
    Binds every inter-agent message and tool invocation in `containment_ring.rs` to the arm's monotonic generation epoch. When `sever_rogue_agent_branch` executes surgical autotomy (`epoch N -> N + 1`), an immutable `ArmFractureProof` is sealed and anchored into the global root tree.
 2. **Per-Tarpit Merkle Chain (`OSOOSI_TARPIT_MERKLE_V1` — Deception & Forensic Non-Repudiation)**:
-   $$H_{\text{tarpit}}^{(n)} = \text{BLAKE3}\left(\text{Domain}_{\text{tarpit}} \parallel H_{\text{tarpit}}^{(n-1)} \parallel \text{pid} \parallel \text{trap\_id} \parallel \text{payload\_hash} \parallel \text{timestamp\_ns}\right)$$
+   $$H_{\text{tarpit}}^{(n)} = \text{BLAKE3}\left(\text{Domain}_{\text{tarpit}} \parallel H_{\text{tarpit}}^{(n-1)} \parallel \text{pid} \parallel \text{trap-id} \parallel \text{payload-hash} \parallel \text{timestamp-ns}\right)$$
    Appends at wire speed with zero global lock contention across `tarpit.rs` and `ghost_node.rs`, producing a tamper-evident forensic transcript of every synthetic delay, honeyport touch, and canary interaction.
 3. **Per-Ring Merkle Chain (`OSOOSI_RING_MERKLE_V1` — Cross-Ring Blinding Detection across Rings 0..3)**:
    Records boundary transitions across **Ring 0 (Kernel/eBPF/WFP)**, **Ring 1 (Out-of-Process Sentinel)**, **Ring 2 (Neural Mesh/Dogwood Policy Gate)**, and **Ring 3 (Sandboxed Worker)**. `verify_cross_ring_continuity()` mathematically compares Ring 0 event counts ($N_0$) against Ring 2 policy evaluations ($N_2$) to detect asymmetric pipeline blinding in real time.
 4. **Tier-2 Ed25519-Signed Interior Rollup Node**:
-   $$H_{\text{interior}}^{(k)} = \text{BLAKE3}\left(\text{Domain}_{\text{rollup}} \parallel k \parallel H_{\text{arms\_fold}} \parallel H_{\text{tarpits\_fold}} \parallel H_{\text{rings\_fold}} \parallel \text{trigger}\right)$$
+   $$H_{\text{interior}}^{(k)} = \text{BLAKE3}\left(\text{Domain}_{\text{rollup}} \parallel k \parallel H_{\text{arms-fold}} \parallel H_{\text{tarpits-fold}} \parallel H_{\text{rings-fold}} \parallel \text{trigger}\right)$$
    Exposed via Siquery table `hierarchical_merkle_anchors` and `GET /api/audit/merkle-hierarchy`.
 
 ### 2. NSRL Demand-Paged 4 KB Allowlist Tree & ASLR-Invariant Process Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs`)
 1. **NSRL Global Allowlist & 4 KB Demand-Paged Page-Cache Merkle Tree**:
-   - **Global Allowlist Proof ($O(\log N)$)**: Verifies that an approved binary profile (`file_blake3`, `page_merkle_root`, canonical path, and Windows Security Catalog / Authenticode or Linux `fs-verity` status) belongs to the trusted NIST NSRL root (`verify_nsrl_executable_proof`).
+   - **Global Allowlist Proof ($O(\log N)$)**: Verifies that an approved binary profile (`file_blake3`, `page_merkle_root`, canonical path, and Windows Security Catalog / Authenticode or Linux `fs-verity` status) belongs to the trusted NSRL Known-Good Hash Database root (`verify_nsrl_executable_proof`).
    - **4 KB Demand-Paged Verification ($O(\log m)$)**: Divides each approved executable into 4,096-byte pages (`OSOOSI_NSRL_PAGE_4K_V1`) matching Linux `fs-verity` (`FS_IOC_GETFLAGS` `0x80086601` / `FS_IOC_MEASURE_VERITY` `0xC0046686`) so individual code pages are verified on page-in (`verify_demand_paged_block`), preventing dormant disk modification.
 2. **ASLR-Invariant Process Code-Segment Merkle Verifier**:
    - **Relocation Normalization ($\Delta_k = \text{VA} - \text{RandomizedBase}$)**: Normalizes absolute relocated addresses across both Windows PE `.text` (`IMAGE_REL_BASED_DIR64`) and Linux ELF64 PIE/PIC `PT_LOAD` (`PF_X`) code segments so the 4 KB page Merkle root (`OSOOSI_ASLR_CODE_PAGE_V1`) remains **100% identical across any randomized ASLR base address** while immediately catching single-byte inline hooks (`0xCC` INT3, `0xE9` JMP) and process hollowing (`verify_aslr_code_segment_pages`).
@@ -2558,14 +2491,14 @@ OpenỌ̀ṣọ́ọ̀sì unifies ten mathematical zero-invariant detectors ($\m
 |:---|:---|:---|:---|
 | **Law 1: Homological Boundary Zero** | $\partial_{k-1} \circ \partial_k = 0,\quad \delta^2 \phi = 0$ | `crates/osoosi-agent-anomaly/src/mesh_guard.rs` (`HomologicalBoundaryAuditor`) | Detects cyclic confused-deputy privilege escalation loops where closed 1-cochains fail exactness ($\oint_\gamma \omega \neq 0$). |
 | **Law 2: Vanishing Polynomial Trace** | $C(t(x), t(g\cdot x)) \equiv 0 \pmod{Z_H(x)}$ over $\mathbb{F}_{2^{127}-1}$ | `crates/osoosi-agent-anomaly/src/cedar_engine.rs` (`VanishingPolynomialTraceVerifier`) | Algebraic execution trace proof that every Dogwood/Cedar authorization step satisfied all transition constraints. |
-| **Law 3: Dirac-Delta Ephemeral Capability** | $\operatorname{Cap}(t) = 0 \quad \forall t \notin [t_0, t_0 + \Delta t_{\text{syscall}}]$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`DiracDeltaCapabilityTicket`) | Zero standing privilege: single-invocation atomic `AtomicBool` consumption + nanosecond TTL + generation epoch pinning. |
+| **Law 3: Dirac-Delta Ephemeral Capability** | $\mathrm{Cap}(t) = 0 \quad \forall t \notin [t_0, t_0 + \Delta t_{\text{syscall}}]$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`DiracDeltaCapabilityTicket`) | Zero standing privilege: single-invocation atomic `AtomicBool` consumption + nanosecond TTL + generation epoch pinning. |
 | **Law 4: Doob Martingale Zero-Drift** | $\mathbb{E}[M_{t+1} - M_t \mid \mathcal{F}_t] = 0,\quad \mathbb{P}(\sup_t E_t \ge \alpha^{-1}) \le \alpha$ | `crates/osoosi-policy/src/voters.rs` (`MartingaleZeroDriftDetector`), `crates/osoosi-dns/src/analysis.rs` (`DnsMartingaleDriftDetector`) | Catches low-and-slow APT C2 beaconing and gradual exfiltration via Ville's Inequality ($E_t \ge 10^6 \implies \text{FPR} \le 10^{-6}$). |
 | **Law 5: Zero-Copy Immutable Page Projection** | $\Delta t_{\text{TOCTOU}} = t_{\text{execute}} - t_{\text{verify}} = 0$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`ZeroCopyImmutableToolBuffer`, `PinnedToolObjectBinding`) | 4096-byte page-aligned buffer locked `PAGE_READONLY` / `PROT_READ` before policy check + `FileId`/`dev:ino`/BLAKE3 descriptor pinning. |
 | **Law 6: Ihara Zeta Non-Backtracking Cycle Zero** | $\zeta_G^{-1}(u) = \det(I - u B_G) = 0$ | `crates/osoosi-agent-anomaly/src/siquery.rs` (`IharaZetaCycleDetector`) | Hashimoto non-backtracking edge operator $B_G$ detects covert process-pipe-socket feedback loops in $O(E)$. |
 | **Law 7: CFG Hadamard Zero-Product** | $\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 = 0$ | `crates/osoosi-audit/src/nsrl_aslr_merkle.rs` (`CfgHadamardZeroVerifier`), `crates/osoosi-core/src/rea.rs` | Bitpacked 64-bit bitwise AND verification of indirect branch edges against the binary's static Control-Flow Graph. |
 | **Law 8: Zero Mutual Information Projection** | $I(S; Y) = H(S) - H(S \mid Y) = 0$ | `crates/osoosi-agent-anomaly/src/breakout_defense.rs` (`ZeroMutualInformationProjector`) | Orthogonal linear projection $v_{\text{safe}} = v - \sum_i \langle v, u_i \rangle u_i$ ($\max_i \lvert \langle v_{\text{safe}}, u_i \rangle \rvert < 10^{-6}$) + secret scrubbing and NATO phonetic credential reconstruction. |
 | **Law 9: Pontryagin Zero-Sum Minimax Equilibrium** | $\min_{u \in \mathcal{U}} \max_{v \in \mathcal{V}} H(x, u, v, \lambda) = 0$ | `crates/osoosi-telemetry/src/canary.rs` (`compute_pontryagin_minimax_equilibrium`) | Computes game-theoretic saddle-point allocation across high-entropy canary honeyfiles and ghost-node tarpits. |
-| **Law 10: Zero-Knowledge BFT Proof & Two-Tier DLP** | $\operatorname{Verify}_{\text{ZK}}(\pi, x_{\text{pub}}) = 0$ + Two-Tier DLP | `crates/osoosi-dp/src/lib.rs` (`OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard`, `ZkBftQuarantineProof`) | Unwraps up to 8 nested encoding layers (`MAX_UNWRAP_ENCODING_DEPTH = 8`: Base64, Base64URL, Hex, URL, \x/\u escapes, ROT13, delimiter-interleaved, ASCII decimal arrays, XOR key recovery), indexes 32-byte semantic shingles + 4 KB Crown-Jewel Merkle chunks, bounds custom cipher exfiltration ($H(X) \ge 5.65$), scrubs PII via Presidio + GLiNER (`urchade/gliner_multi_pii-v1`), and generates Schnorr-BLAKE3 ZK-BFT proofs. |
+| **Law 10: Zero-Knowledge BFT Proof & Two-Tier DLP** | $\mathrm{Verify}_{\text{ZK}}(\pi, x_{\text{pub}}) = 0$ + Two-Tier DLP | `crates/osoosi-dp/src/lib.rs` (`OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard`, `ZkBftQuarantineProof`) | Unwraps up to 8 nested encoding layers (`MAX_UNWRAP_ENCODING_DEPTH = 8`: Base64, Base64URL, Hex, URL, \x/\u escapes, ROT13, delimiter-interleaved, ASCII decimal arrays, XOR key recovery), indexes 32-byte semantic shingles + 4 KB Crown-Jewel Merkle chunks, bounds custom cipher exfiltration ($H(X) \ge 5.65$), scrubs PII via Presidio + GLiNER (`urchade/gliner_multi_pii-v1`), and generates Schnorr-BLAKE3 ZK-BFT proofs. |
 
 ### 2. Formal Threat Model Separation: (A) Exact Algebraic Identities vs. (B) Operational Trust Assumptions
 
@@ -2600,20 +2533,20 @@ python scripts/adversarial_stix_owasp_redteam.py --all
 | **4. `Random` (Uniform Action Selection)** | `local_synthetic_cyberbattlesim_topology_v1` | `-16.90 ± 18.88` | `66.67% ± 3.74%` | `1.5500 ± 0.5356` |
 | **5. `Disabled` (Passive Unmitigated Baseline)** | `local_synthetic_cyberbattlesim_topology_v1` | `-499.43 ± 10.67` | `16.67% ± 0.00%` | `5.8000 ± 0.1920` |
 
-### 4. Quantum-Ready Post-Quantum Cryptography (`NIST FIPS 203 ML-KEM-768` & `FIPS 204 ML-DSA-65`) & CBOM (`crates/osoosi-audit/src/pqc_primitives.rs`, `crates/osoosi-wire/src/pqc.rs`)
+### 4. Quantum-Ready Post-Quantum Cryptography (`FIPS 203 ML-KEM-768` & `FIPS 204 ML-DSA-65`) & CBOM (`crates/osoosi-audit/src/pqc_primitives.rs`, `crates/osoosi-wire/src/pqc.rs`)
 
 To protect against both **"Harvest Now, Decrypt Later"** store-and-decrypt adversaries and **Quantum Shor's Algorithm** signature forgery, OpenỌ̀ṣọ́ọ̀sì implements pure-Rust hybrid Post-Quantum Cryptography across the mesh, TPM 2.0 Merkle root manifests, and Law 10 ZK-BFT proofs:
 
-| Subsystem | Classical Layer | Post-Quantum Layer | NIST Standard & Quantum Security |
+| Subsystem | Classical Layer | Post-Quantum Layer | Post-Quantum Standard & Security |
 |:---|:---|:---|:---|
-| **P2P Mesh Key Exchange (`osoosi-wire::pqc`)** | `X25519` (RFC 7748 Montgomery Ladder over $\mathbb{F}_{2^{255}-19}$) | **`ML-KEM-768` (Kyber-768)** Module-LWE over $\mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k=3, d_u=10, d_v=4$, 1184B `pk`, 1088B `ct`) + Fujisaki-Okamoto (`FO^{\not\perp}`) | **NIST FIPS 203** (Category 3) + `impl Drop` `write_volatile` key zeroization |
-| **Mesh & Node Identity Signatures (`osoosi-trust`, `osoosi-wire`)** | `Ed25519` (`ed25519_dalek` RFC 8032, 64B) | **`ML-DSA-65` (Dilithium)** Module-SIS/LWE Fiat-Shamir with Aborts over $\mathbb{Z}_{8380417}[X]/(X^{256}+1)$ ($\gamma_1=2^{17}, \gamma_2=95232, \tau=39, \eta=4$) | **NIST FIPS 204** (Category 3); **both** classical and lattice equations must pass (`BYPASS-PQC-SHOR-DOWNGRADE-05`) |
-| **Hardware-Anchored Binary Merkle Manifest (`Tpm2MerkleRootSigner`)** | TPM 2.0 Handle `0x81010002` + `Ed25519` over `SHA256(BLAKE3_Root)` | **`ML-DSA-65` (`pqc_mldsa65_signature_hex`)** dual-anchored in `<binary>.merkle.sig.json` | **NIST FIPS 204** + TPM 2.0 NV Counter `0x01800001` anti-rollback |
-| **Law 10 Zero-Knowledge BFT Quarantine Proof (`osoosi-dp`)** | Schnorr-BLAKE3 Fiat-Shamir Commitment | **`ML-DSA-65` + `BLAKE3-256`** (128-bit Grover preimage resistance) | **NIST FIPS 204** + 128-bit Quantum Hash Security |
+| **P2P Mesh Key Exchange (`osoosi-wire::pqc`)** | `X25519` (RFC 7748 Montgomery Ladder over $\mathbb{F}_{2^{255}-19}$) | **`ML-KEM-768` (Kyber-768)** Module-LWE over $\mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k=3, d_u=10, d_v=4$, 1184B `pk`, 1088B `ct`) + Fujisaki-Okamoto (`FO^{\not\perp}`) | **FIPS 203** (Category 3) + `impl Drop` `write_volatile` key zeroization |
+| **Mesh & Node Identity Signatures (`osoosi-trust`, `osoosi-wire`)** | `Ed25519` (`ed25519_dalek` RFC 8032, 64B) | **`ML-DSA-65` (Dilithium)** Module-SIS/LWE Fiat-Shamir with Aborts over $\mathbb{Z}_{8380417}[X]/(X^{256}+1)$ ($\gamma_1=2^{17}, \gamma_2=95232, \tau=39, \eta=4$) | **FIPS 204** (Category 3); **both** classical and lattice equations must pass (`BYPASS-PQC-SHOR-DOWNGRADE-05`) |
+| **Hardware-Anchored Binary Merkle Manifest (`Tpm2MerkleRootSigner`)** | TPM 2.0 Handle `0x81010002` + `Ed25519` over `SHA256(BLAKE3_Root)` | **`ML-DSA-65` (`pqc_mldsa65_signature_hex`)** dual-anchored in `<binary>.merkle.sig.json` | **FIPS 204** + TPM 2.0 NV Counter `0x01800001` anti-rollback |
+| **Law 10 Zero-Knowledge BFT Quarantine Proof (`osoosi-dp`)** | Schnorr-BLAKE3 Fiat-Shamir Commitment | **`ML-DSA-65` + `BLAKE3-256`** (128-bit Grover preimage resistance) | **FIPS 204** + 128-bit Quantum Hash Security |
 
 ```mermaid
 flowchart TD
-    subgraph KEM["Hybrid Key Encapsulation (NIST FIPS 203 + RFC 7748)"]
+    subgraph KEM["Hybrid Key Encapsulation (FIPS 203 + RFC 7748)"]
         X25519["X25519 ECDH<br/>(32B Ephemeral Shared Secret)"]
         MLKEM["ML-KEM-768 (Kyber-768)<br/>Module-LWE R_q (q=3329, k=3)<br/>FIPS 203 §7.2 Modulus Check + FO-CCA2"]
         KDF["BLAKE3 Domain-Separated KDF<br/>OSHOOSI_HYBRID_KEM_V1_X25519_MLKEM768"]
@@ -2621,7 +2554,7 @@ flowchart TD
         MLKEM --> KDF
     end
 
-    subgraph SIG["Hybrid Digital Signatures & Pinned Identity (NIST FIPS 204 + RFC 8032)"]
+    subgraph SIG["Hybrid Digital Signatures & Pinned Identity (FIPS 204 + RFC 8032)"]
         ED["Ed25519 Signature<br/>(64B RFC 8032)"]
         MLDSA["ML-DSA-65 (Dilithium)<br/>Module-SIS/LWE R_q (q=8380417)<br/>Infinity-Norm & Challenge Check"]
         PIN["Pinned VK Commitment<br/>BLAKE3(OSHOOSI_HYBRID_VK_COMMITMENT_V1 + ed_pk + pq_pk)"]
@@ -3520,7 +3453,7 @@ flowchart TD
     end
 
     subgraph Mesh["4. Post-Quantum STIX 2.1 Mesh Broadcast (osoosi-stix-sync-v1)"]
-        STIX["Custom STIX 2.1 AI Threat Bundle<br/>x-oshoosi-ai-threat-extension-v1<br/>Signed with NIST FIPS 204 ML-DSA-65 + Ed25519"]
+        STIX["Custom STIX 2.1 AI Threat Bundle<br/>x-oshoosi-ai-threat-extension-v1<br/>Signed with FIPS 204 ML-DSA-65 + Ed25519"]
     end
 
     F1 & F2 & F3 & F4 & F5 --> CACHE --> SAN
@@ -3541,7 +3474,7 @@ flowchart TD
 ### Architectural Guardrails: Zero Hot-Path Blocking & Feed Poisoning Immunity
 1. **Out-of-Band Polling & Local Snapshot Caching (`rules/ai_threat_feeds/`)**: External APIs are polled asynchronously in background tasks every 60 minutes (`spawn_autonomous_ai_feed_compiler`) and persisted locally in `rules/ai_threat_feeds/`. The `<50µs` kernel/EDR hot path and air-gapped endpoints read strictly from memory-mapped local snapshots and never block on network I/O.
 2. **Feed Poisoning Defense (`FeedPoisoningSanitizer`)**: Because public repositories can contain noisy rows, `FeedPoisoningSanitizer::sanitize_candidate_pattern` enforces multi-token specificity ($\ge 2$ distinct adversarial tokens, minimum length $\ge 12$ chars), rejects lone developer binary names (`python.exe`, `cargo.exe`, `node.exe`, `rustc.exe`, `git.exe`, `code.exe`, `ollama.exe`), and applies bounded Bayesian weight updates ($w \in [0.05, 0.92]$, $ert\Delta wert \le 0.15$) rather than single-word kill switches.
-3. **Decentralized Post-Quantum STIX 2.1 Broadcast (`osoosi-stix-sync-v1`)**: Newly compiled 128-dim `EmbeddingGemma 2` centroids and `BLAKE3` lineage hashes are packaged into a custom STIX 2.1 indicator extension (`x-oshoosi-ai-threat-extension-v1`), signed with hybrid **NIST FIPS 204 `ML-DSA-65 + Ed25519`**, saved to `rules/ai_threat_feeds/oshoosi_pqc_ai_stix21_bundle.json`, and broadcast across the libp2p GossipSub mesh (`GET /api/ai-feeds/status`, `POST /api/ai-feeds/sync`, `GET /api/ai-feeds/stix-bundle`).
+3. **Decentralized Post-Quantum STIX 2.1 Broadcast (`osoosi-stix-sync-v1`)**: Newly compiled 128-dim `EmbeddingGemma 2` centroids and `BLAKE3` lineage hashes are packaged into a custom STIX 2.1 indicator extension (`x-oshoosi-ai-threat-extension-v1`), signed with hybrid **FIPS 204 `ML-DSA-65 + Ed25519`**, saved to `rules/ai_threat_feeds/oshoosi_pqc_ai_stix21_bundle.json`, and broadcast across the libp2p GossipSub mesh (`GET /api/ai-feeds/status`, `POST /api/ai-feeds/sync`, `GET /api/ai-feeds/stix-bundle`).
 
 <a id="-p2p-wire-mesh-stix-synchronization"></a>
 ### 2. P2P Wire Mesh STIX Synchronization (`osoosi-wire`)
@@ -3750,6 +3683,7 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 | `clean` | Dynamic host disk, log, database, & memory cleanup | `--models`, `--aggressive`, `--days <N>` |
 | `update-stix` | Synchronize MITRE ATT&CK & ATLAS STIX 2.1 catalog | `--force`, `--broadcast` |
 
+<a id="utilities"></a>
 ### `clean` — Dynamic Host Disk, Log, Database & Memory Cleanup
 
 ```powershell
@@ -4443,15 +4377,15 @@ flowchart TD
 - **WikiSkill Autonomous Agent Evolution (`tools/wikiskill`)**: Self-evolving agent skills with ground-truth test catalogs, strict improvement gating, and automated P2P GossipSub replication over `osoosi-skills-v1`.
 - **Zero-Mock Real-Time Telemetry & libp2p WAN Mesh**: Complete elimination of mock topology cards, dynamic local node hostname resolution, zero-remote-peer graceful UI states, and DuckDNS auto-bootstrap.
 - **Quantum-Ready Post-Quantum Cryptography (`ML-KEM-768 + X25519` & `ML-DSA-65 + Ed25519`) & Formal Threat Model Separation (`crates/osoosi-audit/src/pqc_primitives.rs`, `crates/osoosi-wire/src/pqc.rs`)**:
-  - **Hybrid Key Encapsulation (`NIST FIPS 203 ML-KEM-768` + `RFC 7748 X25519`)**: Polynomial arithmetic over $R_q = \mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k=3$), NIST FIPS 203 §7.2 encapsulation key modulus verification ($c_i < 3329$), Fujisaki-Okamoto CCA2 transform, and domain-separated BLAKE3 KDF combining classical ECDH with Module-LWE shared secrets.
-  - **Hybrid Digital Signatures (`NIST FIPS 204 ML-DSA-65` + `RFC 8032 Ed25519`)**: Module-SIS/LWE Fiat-Shamir with Aborts over $R_q = \mathbb{Z}_{8380417}[X]/(X^{256}+1)$ paired with classical `Ed25519` and a 256-bit Grover-resistant `BLAKE3` public-key commitment (`compute_hybrid_vk_commitment`), defeating both Shor's algorithm key-substitution forgeries and signature-stripping downgrade attacks across `Tpm2MerkleRootSigner`, `PresidioGlinerPiiZeroGuard` (Law 10 ZK-BFT proofs), and `osoosi-trust`.
+  - **Hybrid Key Encapsulation (`FIPS 203 ML-KEM-768` + `RFC 7748 X25519`)**: Polynomial arithmetic over $R_q = \mathbb{Z}_{3329}[X]/(X^{256}+1)$ ($k=3$), FIPS 203 §7.2 encapsulation key modulus verification ($c_i < 3329$), Fujisaki-Okamoto CCA2 transform, and domain-separated BLAKE3 KDF combining classical ECDH with Module-LWE shared secrets.
+  - **Hybrid Digital Signatures (`FIPS 204 ML-DSA-65` + `RFC 8032 Ed25519`)**: Module-SIS/LWE Fiat-Shamir with Aborts over $R_q = \mathbb{Z}_{8380417}[X]/(X^{256}+1)$ paired with classical `Ed25519` and a 256-bit Grover-resistant `BLAKE3` public-key commitment (`compute_hybrid_vk_commitment`), defeating both Shor's algorithm key-substitution forgeries and signature-stripping downgrade attacks across `Tpm2MerkleRootSigner`, `PresidioGlinerPiiZeroGuard` (Law 10 ZK-BFT proofs), and `osoosi-trust`.
   - **Formal Threat Model Table (Algebraic Identities vs. Operational Trust Assumptions)**:
 
 | Law | Mathematical Identity (Exact Model Property) | Enforcing Engine | Operational Trust Boundary & Explicit Failure Modes |
 | :--- | :--- | :--- | :--- |
 | **Laws 1–4** | Zero-Exposure Window ($\Delta t_{\text{exposure}} \le 0$), Zero False-Block ($P(\text{Block}\mid H_0)=0$), Zero Unverified Privilege, Zero-Breakout Containment | `osoosi_bprm_check`, `OsoosiCreateProcessNotifyRoutine`, `ArmContainmentRing`, `IndependentTrustBoundaryVerifier` | Assumes Ring-0 / LSM hooks are loaded before untrusted execution and catalog roots are intact; vulnerable to physical DMA or pre-boot hypervisor compromise if Secure Boot / ELAM is disabled. |
 | **Laws 5–7** | Zero-Leak Canary ($\epsilon_{\text{canary}}=0$), Zero-Tamper Page Merkle ($\Delta H_{\text{page}}=0$), Zero-Gadget CFG Hadamard ($\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 = 0$) | `AxionCanaryTrapRegistry`, `Tpm2MerkleRootSigner`, `CfgHadamardZeroVerifier` | Assumes OS page-table integrity (`mprotect`/`VirtualProtect`), TPM 2.0 NV index `0x01800001` availability, and static CFG completeness (JIT/self-modifying code requires dynamic CFG registration). |
-| **Laws 8–10** | Zero-Drift 5-Sigma ($Z = \sqrt{D_M^2 + \chi_{\text{KL}}^2 + \Lambda_{\text{cusum}}^2} \ge 5.0$), Zero-Rebound Freezer ($\Delta\text{RIP}=0$), Zero-PII ZK-BFT ($\operatorname{PII\_Leakage}=0$) | `HaloscopeFiveSigmaScorer`, `QuarantineResponder`, `OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard` | `Z >= 5.0` corresponds to tail probability $2.87 \times 10^{-7}$ ONLY under ideal i.i.d. Gaussian noise; real workload bursts are heavy-tailed. Stage 1 `bpf_send_signal(SIGSTOP)` is asynchronous until kernel-to-user return; Stage 2 `cgroup.freeze = 1` confirms quiescence via `cgroup.events` (`frozen 1`). Tier-1 DLP unwraps up to 8 recursive encoding layers (`MAX_UNWRAP_ENCODING_DEPTH = 8`: Base64/URL/Hex/ROT13/delimiters/XOR) over 64 KB windows, reconstructs NATO phonetic credentials, matches 32-byte semantic shingles, and bounds custom multi-round ciphertext via Shannon byte entropy ($H(X) \ge 5.65$ bits/byte). |
+| **Laws 8–10** | Zero-Drift 5-Sigma ($Z = \sqrt{D_M^2 + \chi_{\text{KL}}^2 + \Lambda_{\text{cusum}}^2} \ge 5.0$), Zero-Rebound Freezer ($\Delta\text{RIP}=0$), Zero-PII ZK-BFT ($\mathrm{PII\text{-}Leakage}=0$) | `HaloscopeFiveSigmaScorer`, `QuarantineResponder`, `OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard` | `Z >= 5.0` corresponds to tail probability $2.87 \times 10^{-7}$ ONLY under ideal i.i.d. Gaussian noise; real workload bursts are heavy-tailed. Stage 1 `bpf_send_signal(SIGSTOP)` is asynchronous until kernel-to-user return; Stage 2 `cgroup.freeze = 1` confirms quiescence via `cgroup.events` (`frozen 1`). Tier-1 DLP unwraps up to 8 recursive encoding layers (`MAX_UNWRAP_ENCODING_DEPTH = 8`: Base64/URL/Hex/ROT13/delimiters/XOR) over 64 KB windows, reconstructs NATO phonetic credentials, matches 32-byte semantic shingles, and bounds custom multi-round ciphertext via Shannon byte entropy ($H(X) \ge 5.65$ bits/byte). |
 
 - **6-Pillar Reinforcement Learning Adaptive Controller**: Complete autonomous EDR RL engine (`osoosi-behavioral::rl_engine`) implementing exploration annealing ($\alpha(t) = \max(\alpha_{\min}, \frac{\alpha_0}{1 + \alpha_{\text{decay}} t})$), Tikhonov-regularized Cholesky inversion, Sherman-Morrison rank-1 streaming updates, counterfactual security gain, strict $\gamma=0$ contextual boundaries, shared bilinear Bayesian reward model ($s \otimes e_a$), unified 32-D state representation, multi-signal reward engineering with zero OS destabilization invariants (-500.0 penalty and safe degradation for protected PIDs 0, 1, 4), 3 execution regimes (`ColdRl`, `WarmPriorRl`, `FrozenTest`), advantage counting, and temporal regret decay dynamics.
 - **Authoritative MITRE ATT&CK + ATLAS STIX 2.1 Integration**: Complete 26,381-object STIX bundle uniting Enterprise ATT&CK (v19.2) and MITRE ATLAS (v2026.09) with 854 unified techniques and 4,334 correlated Sigma rules.
@@ -4535,8 +4469,6 @@ OshoosiClaw maintains an exhaustive documentation library spanning high-level ar
 
 | Documentation Manual | Target Scope & Subject Matter | Direct Access |
 |:---------------------|:------------------------------|:--------------|
-| **Authoritative Final Security Scorecard (A+)** | Authoritative A+ certification across all 43 defense vectors, fail-closed path proofs, exact file:line evidence | [`docs/FINAL_SCORECARD.md`](docs/FINAL_SCORECARD.md) |
-| **Baseline Security Scorecard** | Independent baseline audit and vulnerability findings prior to Milestone 2 & 3 remediation | [`docs/BASELINE_SCORECARD.md`](docs/BASELINE_SCORECARD.md) |
 | **Adversarial Multi-Trial Proof Report** | 43-vector verification execution logs with 100% agreement across 129 trials (0 transient failures) | [`logs/adversarial_proof_report.md`](logs/adversarial_proof_report.md) |
 | **System Architecture Manual** | Complete multi-tier EDR pipeline, kernel sensors, decision voters, storage engines | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | **Sovereign Mesh & Innovation** | Decentralized P2P mesh, $E(N,t)$ effectiveness model, holographic deception | [`docs/architecture_and_innovation.md`](docs/architecture_and_innovation.md) |
@@ -4554,13 +4486,13 @@ OshoosiClaw maintains an exhaustive documentation library spanning high-level ar
 
 <a id="-43-vector-agent-breakout--edr-compromise-verification-suite"></a>
 <a id="43-vector-agent-breakout--edr-compromise-verification-suite"></a>
-## 🛡️ Authoritative 43-Vector Unified EDR Compromise (21) & Agent Breakout (22) Verification Suite (A+ Certified)
+## 🛡️ Authoritative 43-Vector Unified EDR Compromise (21) & Agent Breakout (22) Verification Suite
 
 OshoosiClaw continuously verifies **43 canonical defense vectors** across two critical security domains:
 1. **Domain 1: EDR Compromise Resistance (21 Vectors: `EDR-VEC-01`..`EDR-VEC-20`, `EDR-VEC-23`)** — Protection against binary masquerading, prompt injection, mesh poisoning, ETW unhooking, BYOVD drivers, hollowing, parser exploits, audit tampering, credential leaks, config downgrades, and interactive console freezes.
 2. **Domain 2: Agent Breakout Resistance (22 Vectors: `AB-VEC-01`..`AB-VEC-22`)** — Fail-closed confinement against goal hijacking, capability epoch forgery, path traversal, SSRF pivots, unconfined child processes, DLP exfiltration, workflow tampering, authority promotion, loopback IPC pivots, salami drift, DLL injection, capability races, confused-deputy brokers, WASM exhaustion, rogue voter manipulation, GhostJacking, and environment secret leaks.
 
-Every single vector is certified with **100% unanimous multi-trial agreement across 129 independent trials** (minimum 3 repeated trials per attack vector), verified by an independent adversarial reviewer (`reviewer_final_scorecard`):
+Every single vector is certified with **100% unanimous multi-trial agreement across 129 independent trials** (minimum 3 repeated trials per attack vector), verified by an independent adversarial review suite:
 
 ```mermaid
 flowchart TD
@@ -4568,7 +4500,7 @@ flowchart TD
         HARNESS["Unified Adversarial Test Runner<br/>• 3 Repeated Trials per Vector (129 Total Trials)<br/>• 100% Unanimous Agreement Required<br/>• Live Port 3030 Daemon Verification"]
     end
 
-    subgraph D1["Domain 1: 21 EDR Compromise Resistance Defenses (Grade: A+)"]
+    subgraph D1["Domain 1: 21 EDR Compromise Resistance Defenses"]
         D1_A["EDR-VEC-01: Masquerade & Static Path Abuse (Authenticode + Catalog)"]
         D1_B["EDR-VEC-02: Counter-AI Prompt Injection Redaction ([REDACTED])"]
         D1_C["EDR-VEC-03: P2P Mesh Kill-Switch Veto & Stake Slashing"]
@@ -4592,7 +4524,7 @@ flowchart TD
         D1_U["EDR-VEC-23: Conhost QuickEdit Freeze & Console Injection Defense"]
     end
 
-    subgraph D2["Domain 2: 22 Agent Breakout Resistance Defenses (Grade: A+)"]
+    subgraph D2["Domain 2: 22 Agent Breakout Resistance Defenses"]
         D2_A["AB-VEC-01: Multi-Turn Goal Hijacking (BLAKE3 Intent Pinning + MRL)"]
         D2_B["AB-VEC-02: Inter-Agent Lateral Movement (HMAC Epoch Key + Monotonic N→N+1)"]
         D2_C["AB-VEC-03: Tool Path Traversal & Safe Path::join Replacement"]
@@ -4618,15 +4550,14 @@ flowchart TD
     end
 
     subgraph REPORTS["Certification Artifacts"]
-        SCORECARD["Authoritative Scorecard<br/>docs/FINAL_SCORECARD.md (Grade: A+)"]
         PROOF_REP["Adversarial Proof Report<br/>logs/adversarial_proof_report.md (129 Trials / 100% Agreement)"]
     end
 
     HARNESS --> D1 & D2
-    D1 & D2 --> SCORECARD & PROOF_REP
+    D1 & D2 --> PROOF_REP
 ```
 
-### Part 1: Domain 1 — EDR Compromise Resistance (21 Vectors — Grade: A+)
+### Part 1: Domain 1 — EDR Compromise Resistance (21 Vectors)
 
 | Vector ID | Attack Vector & MITRE Technique | Production Rust / C Defense Implementation | Fail-Closed Enforcement Path | Proving Test & Agreement |
 | :--- | :--- | :--- | :--- | :--- |
@@ -4637,7 +4568,7 @@ flowchart TD
 | **`EDR-VEC-05`** | **BYOVD Driver & Kernel DKOM** (`T1068`, `T1014`) | `crates/osoosi-runtime/src/kernel_driver.rs:106`, `driver/windows/osoosi_elam.c` | Ring-0 ELAM blocklist, strips handles, intercepts vulnerable drivers (`rtcore64.sys`) | `prove_edr_vec_05` (3/3 trials, 100% agreement) |
 | **`EDR-VEC-06`** | **Usermode Hook Evasion & Hollowing** (`T1562`, `T1055`) | `crates/osoosi-telemetry/src/hollowing.rs:25`, `crates/osoosi-core/src/lib.rs:7790` | Terminates source/target PIDs via `block_by_pid`, logs `PROCESS_HOLLOWING_TERMINATED` | `prove_edr_vec_06` (3/3 trials, 100% agreement) |
 | **`EDR-VEC-07`** | **Parser Memory Safety & Resource Bounds** (`CWE-125/787`) | `crates/osoosi-core/src/rea.rs:40, 4768` | Hard `MAX_REA_FILE_BYTES` ceiling + `catch_unwind` panic isolation protects PE/ELF parsers | `prove_edr_vec_07` (3/3 trials, 100% agreement) |
-| **`EDR-VEC-08`** | **Audit Log & Merkle Tampering** (`T1070`, `T1565`) | `crates/osoosi-audit/src/lib.rs:50`, `crates/osoosi-audit/src/pqc_primitives.rs:1` | Streaming right-spine Merkle tree + NIST FIPS 204 ML-DSA-65 hybrid signatures + TPM 2.0 PCR | `prove_edr_vec_08` (3/3 trials, 100% agreement) |
+| **`EDR-VEC-08`** | **Audit Log & Merkle Tampering** (`T1070`, `T1565`) | `crates/osoosi-audit/src/lib.rs:50`, `crates/osoosi-audit/src/pqc_primitives.rs:1` | Streaming right-spine Merkle tree + FIPS 204 ML-DSA-65 hybrid signatures + TPM 2.0 PCR | `prove_edr_vec_08` (3/3 trials, 100% agreement) |
 | **`EDR-VEC-09`** | **Admin Token Exfiltration via Status Endpoint** (`CWE-306`) | `crates/osoosi-dashboard/src/lib.rs:1158` | Removed automatic `Set-Cookie` tokens on `/api/status`, `/`, `/api/health`; delivered on login only | `prove_edr_vec_09` (3/3 trials, 100% agreement) |
 | **`EDR-VEC-10`** | **Arbitrary Host Siquery SQL Exfiltration** (`CWE-306`) | `crates/osoosi-dashboard/src/lib.rs:1168` | Removed public bypass on `/api/siquery/query`; unauthenticated queries return HTTP 401 | `prove_edr_vec_10` (3/3 trials, 100% agreement) |
 | **`EDR-VEC-11`** | **Config Tamper Auto-Resigning Bypass** (`T1562`, `CWE-353`) | `crates/osoosi-core/src/hardened.rs:736` | Removed auto-resigning `sign_all_critical_configs()`; tampered configs fail closed with CRITICAL ALERT | `prove_edr_vec_11` (3/3 trials, 100% agreement) |
@@ -4652,7 +4583,7 @@ flowchart TD
 | **`EDR-VEC-20`** | **SkyRL Model Retraining & Poisoning** (`T1565.001`) | `crates/osoosi-dashboard/src/lib.rs:1168` | Removed public bypass on `/api/skyrl/v1/train`; state-changing model mutations require admin credentials | `prove_edr_vec_20` (3/3 trials, 100% agreement) |
 | **`EDR-VEC-23`** | **Interactive Console QuickEdit Freeze & Injection** (`T1562.001`) | `crates/osoosi-core/src/console_defense.rs:69`, `osoosi-cli/src/main.rs:811` | `harden_windows_console()` strips QuickEdit (0x0040), `FreeConsole()` in headless mode, `CREATE_NO_WINDOW` | `prove_edr_vec_23` (3/3 trials, 100% agreement) |
 
-### Part 2: Domain 2 — Agent Breakout Resistance (22 Vectors — Grade: A+)
+### Part 2: Domain 2 — Agent Breakout Resistance (22 Vectors)
 
 | Vector ID | Attack Vector & Standard | Production Rust / C Defense Implementation | Fail-Closed Enforcement Path | Proving Test & Agreement |
 | :--- | :--- | :--- | :--- | :--- |
@@ -4905,8 +4836,8 @@ OshoosiClaw stands on the shoulders of the open-source security community, acade
 |:---------------|:--------------------|:--------|:--------------------|
 | [libp2p](https://github.com/libp2p/rust-libp2p) | Protocol Labs | MIT / Apache 2.0 | Modular P2P networking: GossipSub v1.2, Kademlia DHT, and Noise transport encryption |
 | [Nostr Protocol](https://github.com/nostr-protocol/nostr) | Nostr Community | Public Domain / MIT | Censorship-resistant relay protocol for decentralized multi-transport threat telemetry |
-| [NIST FIPS 203 (ML-KEM-768)](https://csrc.nist.gov/pubs/fips/203/final) | NIST | Public Domain | Post-quantum lattice-based key encapsulation securing inter-node wire mesh sessions |
-| [NIST FIPS 204 (ML-DSA-65)](https://csrc.nist.gov/pubs/fips/204/final) | NIST | Public Domain | Post-quantum lattice-based digital signatures authenticating threat indicators |
+| FIPS 203 (ML-KEM-768) | Post-Quantum Cryptography Standards | Public Domain | Post-quantum lattice-based key encapsulation securing inter-node wire mesh sessions |
+| FIPS 204 (ML-DSA-65) | Post-Quantum Cryptography Standards | Public Domain | Post-quantum lattice-based digital signatures authenticating threat indicators |
 | [BLAKE3](https://github.com/BLAKE3-team/BLAKE3) | BLAKE3 Team | Apache 2.0 / CC0 1.0 | High-speed cryptographic tree hashing for tamper-evident Merkle hash chains |
 | [Ed25519-dalek](https://github.com/dalek-cryptography/curve25519-dalek) | Dalek Cryptography | BSD 3-Clause / Apache 2.0 | Fast, constant-time Edwards-curve digital signatures for node identity |
 | [TFHE-rs](https://github.com/zama-ai/tfhe-rs) | Zama | BSD-3-Clause-Clear | Fully Homomorphic Encryption over the Torus for privacy-preserving voter consensus |

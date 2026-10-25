@@ -32,28 +32,60 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 
 ### Setting Up Your Environment
 
-```powershell
+You can build and test using standard `make` or native `cargo` / `powershell` commands:
+
+```bash
 # Clone the repository
 git clone https://github.com/oyesanyf/OshoosiClaw.git
 cd OshoosiClaw
 
-# Build the entire workspace
+# Single-command build and test via Makefile
+make check
+make test
+make verify-onboarding
+
+# Alternatively via cargo & Python directly:
 cargo build --all-features
-
-# Run the test suite
 cargo test --all-features
-
-# Run linter and formatting checks
 cargo clippy --all-features -- -D warnings
 cargo fmt --all -- --check
-
-# Verify repository language distribution and onboarding clarity
 python scripts/verify_repo_clarity_and_languages.py
+python scripts/validate_readme.py
 ```
 
 > [!TIP]
 > **Fast Pre-Flight Verification**  
-> Running `python scripts/verify_repo_clarity_and_languages.py` verifies both Linguist language composition (Rust + Python $\ge 90\%$) and onboarding clarity before opening a PR.
+> Running `make verify-onboarding` verifies both Linguist language composition (Rust + Python $\ge 90\%$) and onboarding documentation clarity before opening a PR.
+
+---
+
+## 🎯 Finding Your First Task (Good First Issues)
+
+New to OshoosiClaw? We maintain a curated catalog of bite-sized, self-contained starter tasks designed specifically for new contributors:
+
+👉 **[docs/GOOD_FIRST_ISSUES.md](docs/GOOD_FIRST_ISSUES.md)** — Contains 12 well-specified issues (`GFI-01` through `GFI-12`) across Rust, Python, and WebUI domains with exact `file:line` pointers, problem definitions, expected behavior, and verification commands.
+
+You can also browse open issues on GitHub tagged with the [`good first issue`](https://github.com/oyesanyf/OshoosiClaw/labels/good%20first%20issue) label.
+
+---
+
+## 🤝 Contributor Pathway & Recognition
+
+We deeply value our open-source contributors and are committed to creating a welcoming, transparent, and rewarding engineering community:
+
+1. **Priority First-PR Review Commitment**:
+   - First-time contributors receive expedited code review from maintainers within **24–48 hours**.
+   - If your PR needs adjustments, maintainers provide actionable, constructive guidance rather than blunt rejections.
+
+2. **Public Release-Notes Credit**:
+   - Every contributor whose pull request is merged is credited by GitHub handle and full name (if desired) in the official GitHub Release notes for that milestone.
+   - Significant contributions are featured in the repository's `#about` and `#acknowledgments` sections.
+
+3. **2–3 PR Pathway to Triage & Architecture**:
+   - After **2 to 3 successfully merged PRs** demonstrating adherence to safety invariants and testing rigor:
+     - You will be invited to participate directly in quarterly architectural planning sessions.
+     - You will be granted GitHub repository **Triage** permissions (labeling, prioritizing, and assigning issues).
+     - You will be eligible for repository co-maintainership and peer review delegation.
 
 ---
 
