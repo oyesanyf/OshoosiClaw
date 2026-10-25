@@ -127,7 +127,7 @@ yara-x = "1.19.0"
 smoltcp = { version = "0.11", features = ["std", "log", "medium-ethernet", "proto-ipv4", "socket-tcp", "socket-udp", "socket-icmp"] }
 wintun = "0.4"
 managed = "0.8"
-ndarray = "0.16"
+ndarray = "0.17"
 parking_lot = "0.12"
 wmi = "0.13"
 tokenizers = "0.19"
