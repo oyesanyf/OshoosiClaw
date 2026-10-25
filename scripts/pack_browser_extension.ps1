@@ -53,12 +53,27 @@ if (-not (Test-Path -LiteralPath $crx)) { throw "Packing failed (exit $($p.ExitC
 if ((Test-Path -LiteralPath $pem) -and -not (Test-Path -LiteralPath $KeyPath)) { Move-Item -LiteralPath $pem -Destination $KeyPath }
 
 # Extension ID = first 128 bits of SHA-256(SubjectPublicKeyInfo DER), alphabet a-p.
-$pemText = Get-Content -LiteralPath $KeyPath -Raw
-$rsa = [System.Security.Cryptography.RSA]::Create()
-$rsa.ImportFromPem($pemText)
-$spki = $rsa.ExportSubjectPublicKeyInfo()
-$hash = [System.Security.Cryptography.SHA256]::HashData($spki)
-$id = -join ($hash[0..15] | ForEach-Object { [char](97 + ($_ -shr 4)); [char](97 + ($_ -band 15)) })
+$pemLines = (Get-Content -LiteralPath $KeyPath) | Where-Object { $_ -and (-not $_.StartsWith('-----')) }
+$derBytes = [Convert]::FromBase64String(($pemLines -join ''))
+# PKCS#8 PrivateKeyInfo or PKCS#1 RSAPrivateKey -> extract public key SPKI via Python cryptography or fallback SHA-256 of DER
+$id = (& python -c "
+import hashlib, sys
+from cryptography.hazmat.primitives import serialization
+with open(sys.argv[1], 'rb') as f:
+    priv = serialization.load_pem_private_key(f.read(), password=None)
+spki = priv.public_key().public_bytes(
+    serialization.Encoding.DER,
+    serialization.PublicFormat.SubjectPublicKeyInfo
+)
+digest = hashlib.sha256(spki).digest()[:16]
+print(''.join(chr(97 + (b >> 4)) + chr(97 + (b & 15)) for b in digest))
+" $KeyPath 2>$null)
+if (-not $id) {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $hash = $sha256.ComputeHash($derBytes)
+    $id = -join ($hash[0..15] | ForEach-Object { [char](97 + ($_ -shr 4)); [char](97 + ($_ -band 15)) })
+}
+$id = $id.Trim()
 
 Copy-Item -Force -LiteralPath $crx -Destination (Join-Path $out 'oshoosi-browser-sensor.crx')
 Set-Content -LiteralPath (Join-Path $out 'extension_id.txt') -Value $id -Encoding ascii
