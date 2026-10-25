@@ -345,7 +345,7 @@ impl MeasuredActuationSample {
         }
         #[cfg(not(windows))]
         {
-            let _ = job;
+            let _ = (job, pore, dt);
             Err(osoosi_types::OctopusSecurityError::IsolationViolation(
                 "WindowsJobObject kernel I/O sampling requires Windows".to_string(),
             ))

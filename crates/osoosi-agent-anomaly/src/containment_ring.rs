@@ -81,6 +81,7 @@ pub fn constant_time_eq_hex(a: &str, b: &str) -> bool {
     a.as_bytes().ct_eq(b.as_bytes()).into()
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn mesh_signing_content(
     sender_arm_id: usize,
     sender_generation: u64,
@@ -217,8 +218,7 @@ pub fn validate_resource_boundary(
         }
 
         if p.starts_with("http://") || p.starts_with("https://") {
-            if trimmed.starts_with(p) {
-                let remainder = &trimmed[p.len()..];
+            if let Some(remainder) = trimmed.strip_prefix(p) {
                 if remainder.is_empty()
                     || remainder.starts_with('/')
                     || remainder.starts_with(':')
@@ -250,8 +250,7 @@ pub fn validate_resource_boundary(
             continue;
         }
 
-        if trimmed.starts_with(p) {
-            let remainder = &trimmed[p.len()..];
+        if let Some(remainder) = trimmed.strip_prefix(p) {
             if remainder.is_empty() || remainder.starts_with('/') || remainder.starts_with(':') {
                 matched = true;
                 break;

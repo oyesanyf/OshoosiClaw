@@ -398,20 +398,18 @@ impl BehavioralBreakoutGuard {
         let lower_act = action_name.to_ascii_lowercase();
 
         // 1. Check for test harness tampering attempts
-        if lower_res.contains("strix")
+        if (lower_res.contains("strix")
             || lower_res.contains("verify_15")
             || lower_res.contains("test_report")
-            || lower_res.contains("exhaustive")
-        {
-            if lower_act.contains("write")
+            || lower_res.contains("exhaustive"))
+            && (lower_act.contains("write")
                 || lower_act.contains("delete")
-                || lower_act.contains("modify")
-            {
-                detected_deviations.push(format!(
-                    "Specification gaming / self-grading bypass intercepted: attempted write to '{}'",
-                    target_resource
-                ));
-            }
+                || lower_act.contains("modify"))
+        {
+            detected_deviations.push(format!(
+                "Specification gaming / self-grading bypass intercepted: attempted write to '{}'",
+                target_resource
+            ));
         }
 
         // Check file integrity (fail-closed)

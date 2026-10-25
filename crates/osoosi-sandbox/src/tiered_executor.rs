@@ -364,12 +364,12 @@ impl WindowsJobObject {
         }
     }
 
-    pub fn terminate(&self, exit_code: u32) -> Result<(), OctopusSecurityError> {
+    pub fn terminate(&self, _exit_code: u32) -> Result<(), OctopusSecurityError> {
         self.is_terminated.store(true, Ordering::SeqCst);
         #[cfg(windows)]
         {
             if !self.handle.is_null() {
-                unsafe { win32::TerminateJobObject(self.handle, exit_code) };
+                unsafe { win32::TerminateJobObject(self.handle, _exit_code) };
             }
         }
         Ok(())

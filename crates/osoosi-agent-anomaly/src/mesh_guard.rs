@@ -484,12 +484,15 @@ impl HomologicalBoundaryAuditor {
     }
 }
 
+pub type AllowedRouteKey = (usize, usize, Option<MessageKind>);
+pub type AllowedRoutesSet = Arc<RwLock<HashSet<AllowedRouteKey>>>;
+
 /// Inner Ring Neural Mesh Guard:
 /// Mediates inter-arm communication, preventing privilege escalation,
 /// message forgery, and unauthorized lateral movement.
 #[derive(Clone)]
 pub struct MeshGuard {
-    allowed_routes: Arc<RwLock<HashSet<(usize, usize, Option<MessageKind>)>>>,
+    allowed_routes: AllowedRoutesSet,
 }
 
 impl Default for MeshGuard {
