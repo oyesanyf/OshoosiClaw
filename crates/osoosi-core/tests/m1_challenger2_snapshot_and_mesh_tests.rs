@@ -217,34 +217,36 @@ fn test_zero_network_offline_fallback_and_latency_sla() {
     let _ = collector.is_adversarial_prompt(benign_cmd);
 
     // Benchmark 1,000 iterations to test p99 latency SLA
-    let iterations = 1000;
-    let mut max_duration = Duration::ZERO;
+    let iterations = 1000usize;
+    let mut samples = Vec::with_capacity(iterations);
     let start_total = Instant::now();
 
     for _ in 0..iterations {
         let t0 = Instant::now();
         let matched = collector.is_adversarial_prompt(known_adversarial);
         let elapsed = t0.elapsed();
-        if elapsed > max_duration {
-            max_duration = elapsed;
-        }
+        samples.push(elapsed);
         assert!(matched);
     }
 
-    let avg_duration = start_total.elapsed() / iterations;
+    samples.sort_unstable();
+    let p99_duration = samples[(iterations * 99) / 100];
+    let max_duration = samples[iterations - 1];
+    let avg_duration = start_total.elapsed() / (iterations as u32);
     println!(
-        "[CHALLENGER-2] Hot path latency over {} iterations: avg = {:?}, max = {:?}",
-        iterations, avg_duration, max_duration
+        "[CHALLENGER-2] Hot path latency over {} iterations: avg = {:?}, p99 = {:?}, max = {:?}",
+        iterations, avg_duration, p99_duration, max_duration
     );
 
     assert!(
         avg_duration < Duration::from_micros(25),
-        "Average hot-path latency {:?} exceeds 25µs threshold",
+        "Average hot-path latency {:?} exceeds 25us threshold",
         avg_duration
     );
     assert!(
-        max_duration < Duration::from_micros(50),
-        "Max hot-path latency {:?} exceeds strict 50µs SLA",
+        p99_duration < Duration::from_micros(50),
+        "p99 hot-path latency {:?} exceeds strict 50us SLA (max = {:?})",
+        p99_duration,
         max_duration
     );
 }
