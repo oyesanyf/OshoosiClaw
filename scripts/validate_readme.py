@@ -104,7 +104,62 @@ def main():
         else:
             print(f"  Tag <{tag}>: balanced ({o})")
 
-    if missing or table_errors or html_mismatches or (fence_count % 2 != 0):
+    # Check Mermaid diagram edge labels and node labels across documentation
+    import glob
+    import os
+
+    md_files = ['README.md', 'CONTRIBUTING.md']
+    if os.path.exists('ARCHITECTURE.md'):
+        md_files.append('ARCHITECTURE.md')
+    md_files.extend(glob.glob('docs/**/*.md', recursive=True))
+
+    mermaid_errors = []
+    print("\nAuditing Mermaid code blocks across documentation...")
+    for fpath in md_files:
+        if not os.path.exists(fpath):
+            continue
+        try:
+            with open(fpath, 'r', encoding='utf-8', errors='ignore') as mf:
+                m_content = mf.read()
+        except Exception as e:
+            continue
+        blocks = re.findall(r'```mermaid(.*?)```', m_content, re.DOTALL)
+        for b_idx, block in enumerate(blocks, 1):
+            for l_idx, line in enumerate(block.splitlines(), 1):
+                # Check edge labels |...|
+                for m in re.finditer(r'\|([^|\n]+)\|', line):
+                    lbl = m.group(1).strip()
+                    if not (lbl.startswith('"') and lbl.endswith('"')):
+                        if any(c in lbl for c in '()[]{}:/'):
+                            err_msg = f"{fpath} (Block {b_idx}, Line {l_idx}): Unquoted Mermaid edge label containing special chars: |{lbl}|"
+                            mermaid_errors.append(err_msg)
+                            print(f"  *** {err_msg}")
+
+    print(f"Mermaid diagram errors found: {len(mermaid_errors)}")
+
+    # Check for unsupported GitHub LaTeX constructs (\operatorname and \text{...\_...})
+    latex_errors = []
+    print("\nAuditing GitHub LaTeX rendering compatibility...")
+    for fpath in md_files:
+        if not os.path.exists(fpath):
+            continue
+        try:
+            with open(fpath, 'r', encoding='utf-8', errors='ignore') as lf:
+                l_content = lf.read()
+        except Exception:
+            continue
+        if r'\operatorname' in l_content:
+            err_msg = f"{fpath}: Contains unsupported '\\operatorname' macro (use '\\mathrm{{...}}' instead)"
+            latex_errors.append(err_msg)
+            print(f"  *** {err_msg}")
+        for match in re.finditer(r'\\text\{[^}]*\\_[^}]*\}', l_content):
+            err_msg = f"{fpath}: Contains escaped underscore in \\text{{...}}: '{match.group(0)}' (use '-' instead)"
+            latex_errors.append(err_msg)
+            print(f"  *** {err_msg}")
+
+    print(f"LaTeX compatibility errors found: {len(latex_errors)}")
+
+    if missing or table_errors or html_mismatches or mermaid_errors or latex_errors or (fence_count % 2 != 0):
         print("\nVerification found issues!")
         return 1
     else:

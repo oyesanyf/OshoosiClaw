@@ -79,7 +79,7 @@ def main():
 </p>
 
 <p align="center">
-  <a href="#-nist-article--standards-alignment">"""
+"""
 
     new_header = header_part.replace(badge_close_tag, mission_and_quick_links, 1)
 
@@ -87,7 +87,6 @@ def main():
     # We know the headings from our earlier inspection:
     # 1: 🎯 What is OshoosiClaw? (Plain-English Overview)
     # 2: 🛠️ Core Capabilities at a Glance
-    # 3: 🏛️ NIST Article & Standards Alignment
     # 4: 🦀🐍 Technology & Language Stack (Rust + Python)
     # 5: ⚡ 60-Second Quick Start
     # 6: 🖥️ WebUI Navigation Guide (http://127.0.0.1:3030)
@@ -146,7 +145,6 @@ def main():
     markers = [
         "## 🎯 What is OshoosiClaw? (Plain-English Overview)",
         "## 🛠️ Core Capabilities at a Glance",
-        "## 🏛️ NIST Article & Standards Alignment",
         "## 🦀🐍 Technology & Language Stack (Rust + Python)",
         "## ⚡ 60-Second Quick Start",
         "## 🖥️ WebUI Navigation Guide (http://127.0.0.1:3030)",
@@ -222,8 +220,6 @@ def main():
     sec2 += markers[0] + "\n" + sec_content[markers[0]].strip() + "\n\n---\n\n"
     sec2 += "<a id=\"key-features\"></a>\n"
     sec2 += markers[1] + "\n" + sec_content[markers[1]].strip() + "\n\n---\n\n"
-    sec2 += "<a id=\"-nist-article--standards-alignment\"></a>\n"
-    sec2 += markers[2] + "\n" + sec_content[markers[2]].strip() + "\n\n---\n\n"
     sec2 += "<a id=\"-technology--language-stack-rust--python\"></a>\n"
     sec2 += markers[3] + "\n" + sec_content[markers[3]].strip() + "\n\n---\n\n"
 

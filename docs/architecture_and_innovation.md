@@ -114,7 +114,7 @@ $$\text{Exposed}(N) = 1 + \lambda_{\text{attack}} \cdot \frac{\tau_{\text{prop}}
 
 The uninfected, immunized fleet survival ratio $S_{\text{fleet}}(N)$ is:
 
-$$S_{\text{fleet}}(N) = \max\left(0, 1 - \frac{1 + \lambda_{\text{attack}} \cdot \tau_{\text{prop\_sec}}(N)}{N}\right) \quad (\text{for } N > 1)$$
+$$S_{\text{fleet}}(N) = \max\left(0, 1 - \frac{1 + \lambda_{\text{attack}} \cdot \tau_{\text{prop-sec}}(N)}{N}\right) \quad (\text{for } N > 1)$$
 
 Under high-velocity machine worm propagation ($\lambda_{\text{attack}} = 2.0\text{ hosts/sec}$):
 - **$N = 10$**: $\text{Exposed} = 1 + 2(0.28876) = 1.5775 \implies S_{\text{fleet}}(10) = 84.22\%$
@@ -429,14 +429,14 @@ flowchart TD
 |:---|:---|:---|:---|
 | **Law 1** | $\partial_{k-1} \circ \partial_k = 0,\quad \delta^2 \phi = 0$ | `crates/osoosi-agent-anomaly/src/mesh_guard.rs` (`HomologicalBoundaryAuditor`) | Detects cyclic confused-deputy privilege escalation loops where closed 1-cochains fail exactness ($\oint_\gamma \omega \neq 0$). |
 | **Law 2** | $C(t(x), t(g\cdot x)) \equiv 0 \pmod{Z_H(x)}$ over $\mathbb{F}_{2^{127}-1}$ | `crates/osoosi-agent-anomaly/src/cedar_engine.rs` (`VanishingPolynomialTraceVerifier`) | Algebraic execution trace proof that every Dogwood/Cedar authorization step satisfied all transition constraints. |
-| **Law 3** | $\operatorname{Cap}(t) = 0 \quad \forall t \notin [t_0, t_0 + \Delta t_{\text{syscall}}]$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`DiracDeltaCapabilityTicket`) | Zero standing privilege: single-invocation atomic `AtomicBool` consumption + nanosecond TTL + generation epoch pinning. |
+| **Law 3** | $\mathrm{Cap}(t) = 0 \quad \forall t \notin [t_0, t_0 + \Delta t_{\text{syscall}}]$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`DiracDeltaCapabilityTicket`) | Zero standing privilege: single-invocation atomic `AtomicBool` consumption + nanosecond TTL + generation epoch pinning. |
 | **Law 4** | $\mathbb{E}[M_{t+1} - M_t \mid \mathcal{F}_t] = 0,\quad \mathbb{P}(\sup_t E_t \ge \alpha^{-1}) \le \alpha$ | `crates/osoosi-policy/src/voters.rs` (`MartingaleZeroDriftDetector`), `crates/osoosi-dns/src/analysis.rs` (`DnsMartingaleDriftDetector`) | Catches ultra-slow APT C2 beaconing and gradual exfiltration via Ville's Inequality ($E_t \ge 10^6 \implies \text{FPR} \le 10^{-6}$). |
 | **Law 5** | $\Delta t_{\text{TOCTOU}} = t_{\text{execute}} - t_{\text{verify}} = 0$ | `crates/osoosi-agent-anomaly/src/containment_ring.rs` (`ZeroCopyImmutableToolBuffer`, `PinnedToolObjectBinding`) | 4096-byte page-aligned buffer locked `PAGE_READONLY` / `PROT_READ` before policy check + `FileId`/`dev:ino`/BLAKE3 descriptor pinning. |
 | **Law 6** | $\zeta_G^{-1}(u) = \det(I - u B_G) = 0$ | `crates/osoosi-agent-anomaly/src/siquery.rs` (`IharaZetaCycleDetector`) | Hashimoto non-backtracking edge operator $B_G$ detects covert process-pipe-socket feedback loops in $O(E)$. |
 | **Law 7** | $\Vert T_{\text{runtime}} \circ \bar{A}_{\text{CFG}} \Vert_1 = 0$ | `crates/osoosi-audit/src/nsrl_aslr_merkle.rs` (`CfgHadamardZeroVerifier`), `crates/osoosi-core/src/rea.rs` | Bitpacked 64-bit bitwise AND verification of indirect branch edges against the binary's static Control-Flow Graph. |
 | **Law 8** | $I(S; Y) = H(S) - H(S \mid Y) = 0$ | `crates/osoosi-agent-anomaly/src/breakout_defense.rs` (`ZeroMutualInformationProjector`) | Orthogonal linear projection $v_{\text{safe}} = v - \sum_i \langle v, u_i \rangle u_i$ ($\max_i \lvert \langle v_{\text{safe}}, u_i \rangle \rvert < 10^{-6}$) + secret scrubbing. |
 | **Law 9** | $\min_{u \in \mathcal{U}} \max_{v \in \mathcal{V}} H(x, u, v, \lambda) = 0$ | `crates/osoosi-telemetry/src/canary.rs` (`compute_pontryagin_minimax_equilibrium`) | Computes game-theoretic saddle-point allocation across high-entropy canary honeyfiles and ghost-node tarpits. |
-| **Law 10** | $\operatorname{Verify}_{\text{ZK}}(\pi, x_{\text{pub}}) = 0$ + Two-Tier DLP | `crates/osoosi-dp/src/lib.rs` (`OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard`, `ZkBftQuarantineProof`) | Unwraps nested Base64/Hex/URL encodings (depth $\le 2$), scans Crown-Jewel 1 KB BLAKE3 chunks, scrubs PII via Presidio + GLiNER (`urchade/gliner_multi_pii-v1`), and generates zero-knowledge Schnorr-BLAKE3 BFT proofs. |
+| **Law 10** | $\mathrm{Verify}_{\text{ZK}}(\pi, x_{\text{pub}}) = 0$ + Two-Tier DLP | `crates/osoosi-dp/src/lib.rs` (`OsoosiTwoTierDlpEngine`, `PresidioGlinerPiiZeroGuard`, `ZkBftQuarantineProof`) | Unwraps nested Base64/Hex/URL encodings (depth $\le 2$), scans Crown-Jewel 1 KB BLAKE3 chunks, scrubs PII via Presidio + GLiNER (`urchade/gliner_multi_pii-v1`), and generates zero-knowledge Schnorr-BLAKE3 BFT proofs. |
 
 ---
 

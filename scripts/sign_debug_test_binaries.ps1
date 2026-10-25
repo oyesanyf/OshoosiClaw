@@ -19,7 +19,7 @@ $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_core-*.exe" 
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_policy-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_agent_anomaly-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_dashboard-*.exe" -ErrorAction SilentlyContinue
-# $targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\build\*\*.exe" -ErrorAction SilentlyContinue
 
 $signedCount = 0
