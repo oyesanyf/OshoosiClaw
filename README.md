@@ -132,6 +132,60 @@ Following comprehensive adversarial auditing and verification by an independent 
 
 ---
 
+<a id="quick-start"></a>
+## ⚡ 60-Second Quick Start
+Get OshoosiClaw running on your endpoint in under one minute:
+
+### Windows (MSI Installer or Standalone Binary)
+```powershell
+# Option A: Install via the signed Windows MSI (registers the OsoosiEDR Service)
+msiexec /i OshoosiClaw.msi /qn
+
+# Option B: Run the standalone release binary from the repository
+.\target\release\osoosi.exe --config config\osoosi.toml
+
+# Launch the WebUI dashboard in your default browser
+Start-Process "http://127.0.0.1:3030"
+```
+
+### Linux (Debian, Ubuntu, RHEL, or Fedora)
+```bash
+# Option A: Install via native package
+sudo dpkg -i deploy/linux/oshoosiclaw_1.2.0_amd64.deb   # Debian / Ubuntu
+# sudo rpm -i deploy/linux/oshoosiclaw-1.2.0.x86_64.rpm  # RHEL / Fedora
+
+# Start the systemd service
+sudo systemctl enable --now osoosi-edr
+
+# Verify service health
+curl -s http://127.0.0.1:3030/api/status | jq .
+```
+
+### Hardened Container (Docker / Podman)
+```bash
+docker run -d \
+  --name oshoosiclaw \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt no-new-privileges:true \
+  -p 3030:3030 \
+  ghcr.io/oyesanyf/oshoosiclaw:1.2.0
+```
+
+### Fast CLI Inspection
+```bash
+# Query daemon status and connected telemetry sensors
+osoosi-cli status
+
+# Execute real-time SQL host inspection
+osoosi-cli query "SELECT pid, name, path, ppid FROM processes LIMIT 10;"
+
+# Run autonomous reverse engineering on an unknown binary
+osoosi-cli rea --target suspicious_payload.exe
+```
+
+---
+
 <details>
 <summary><b>⚡ High-Performance Adaptive Telemetry, Lock Hygiene & Zero-Allocation Engine (Milestone 3)</b> (Click to expand)</summary>
 
@@ -268,62 +322,6 @@ OshoosiClaw is architected around a dual-language synergy optimized for extreme 
 
 1. **Rust (`crates/*`)**: Delivers zero-cost abstractions, deterministic memory safety without garbage collection pauses, and microsecond-level detection latency. The 31 workspace crates cleanly isolate duties: `osoosi` (orchestration daemon), `osoosi-behavioral` (Ring-0 / ETW / eBPF kernel hooks), `siquery-rs` (101-table SQL engine), `rea` (binary and bytecode forensics), `osoosi-webui` (embedded Axum dashboard), and `osoosi-audit` (cryptographic Merkle trees).
 2. **Python (`scripts/*`, `tools/*`, `tests/*`)**: Powers the flexible cognitive and research infrastructure. Python coordinates the multi-agent decision swarm (`swarm_agent.py`), trains active defense agents via reinforcement learning (`rl_active_defense.py`), validates wire protocol integrity against RFC 7230/9112 standards (`rfc_hunt_swarm.py`), and drives automated security submissions.
-
----
-
----
-
-<a id="quick-start"></a>
-## ⚡ 60-Second Quick Start
-Get OshoosiClaw running on your endpoint in under one minute:
-
-### Windows (MSI Installer or Standalone Binary)
-```powershell
-# Option A: Install via the signed Windows MSI (registers the OsoosiEDR Service)
-msiexec /i OshoosiClaw.msi /qn
-
-# Option B: Run the standalone release binary from the repository
-.\target\release\osoosi.exe --config config\osoosi.toml
-
-# Launch the WebUI dashboard in your default browser
-Start-Process "http://127.0.0.1:3030"
-```
-
-### Linux (Debian, Ubuntu, RHEL, or Fedora)
-```bash
-# Option A: Install via native package
-sudo dpkg -i deploy/linux/oshoosiclaw_1.2.0_amd64.deb   # Debian / Ubuntu
-# sudo rpm -i deploy/linux/oshoosiclaw-1.2.0.x86_64.rpm  # RHEL / Fedora
-
-# Start the systemd service
-sudo systemctl enable --now osoosi-edr
-
-# Verify service health
-curl -s http://127.0.0.1:3030/api/status | jq .
-```
-
-### Hardened Container (Docker / Podman)
-```bash
-docker run -d \
-  --name oshoosiclaw \
-  --read-only \
-  --cap-drop=ALL \
-  --security-opt no-new-privileges:true \
-  -p 3030:3030 \
-  ghcr.io/oyesanyf/oshoosiclaw:1.2.0
-```
-
-### Fast CLI Inspection
-```bash
-# Query daemon status and connected telemetry sensors
-osoosi-cli status
-
-# Execute real-time SQL host inspection
-osoosi-cli query "SELECT pid, name, path, ppid FROM processes LIMIT 10;"
-
-# Run autonomous reverse engineering on an unknown binary
-osoosi-cli rea --target suspicious_payload.exe
-```
 
 ---
 

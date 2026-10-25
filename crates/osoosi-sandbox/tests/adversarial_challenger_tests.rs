@@ -350,13 +350,26 @@ fn test_challenger_appcontainer_verification_fails_closed_when_process_not_in_jo
 #[cfg(windows)]
 #[test]
 fn test_challenger_appcontainer_verification_fails_closed_when_token_is_not_appcontainer() {
+    use std::os::windows::io::AsRawHandle;
+
     let job = WindowsJobObject::create("ChallengerTestJobNonAc", 2, 16 * 1024 * 1024)
         .expect("create WindowsJobObject");
 
-    let cur_proc = unsafe { GetCurrentProcess() }.0;
+    // Spawn a dedicated child process instead of using GetCurrentProcess() so that when
+    // `job` is dropped and closed, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE only reaps the child
+    // rather than terminating the test runner process.
+    let mut child = std::process::Command::new("cmd.exe")
+        .arg("/c")
+        .arg("pause")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn child for non-appcontainer token test");
 
-    // Assign current process to job so job check passes
-    let _ = job.assign_process(cur_proc);
+    let child_handle = child.as_raw_handle() as *mut std::ffi::c_void;
+
+    // Assign child process to job so job check passes
+    let _ = job.assign_process(child_handle);
 
     let (sid_str, psid) = create_or_open_appcontainer_profile(
         "Challenger.Test.Profile2",
@@ -365,10 +378,10 @@ fn test_challenger_appcontainer_verification_fails_closed_when_token_is_not_appc
     )
     .expect("create AppContainer profile");
 
-    // Current process token is a normal user/admin token, NOT an AppContainer token.
+    // Child process token is a normal user/admin token, NOT an AppContainer token.
     // Therefore, TokenIsAppContainer check MUST fail closed.
-    let err = verify_process_appcontainer_token(cur_proc, psid, &sid_str, &job)
-        .expect_err("Must fail closed because current process token is NOT an AppContainer token");
+    let err = verify_process_appcontainer_token(child_handle, psid, &sid_str, &job)
+        .expect_err("Must fail closed because child process token is NOT an AppContainer token");
 
     match err {
         OctopusSecurityError::IsolationViolation(msg) => {
@@ -384,6 +397,10 @@ fn test_challenger_appcontainer_verification_fails_closed_when_token_is_not_appc
     unsafe {
         FreeSid(psid);
     }
+
+    // Cleanly kill and reap child process
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(windows)]
