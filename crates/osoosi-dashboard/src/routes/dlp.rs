@@ -943,17 +943,33 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
     let mut resolved_content = raw_content.to_string();
     let mut resolved_file_info: Option<crate::routes::har_dlp::ResolvedUploadedFile> = None;
 
+    let form_file_name = body
+        .get("form_fields")
+        .and_then(|v| v.as_object())
+        .and_then(|fields| {
+            fields
+                .get("filename")
+                .or_else(|| fields.get("file_name"))
+                .or_else(|| fields.get("file"))
+                .or_else(|| fields.get("uploaded_file"))
+                .or_else(|| fields.get("document"))
+        })
+        .and_then(|v| v.as_str());
+
     if resolved_content.trim().is_empty()
         || resolved_content.starts_with("[file upload:")
         || destination_sink.contains("dlptest.com")
     {
-        let candidate = file_path.or(file_name).or_else(|| {
-            if raw_content.starts_with("[file upload:") {
-                Some(raw_content)
-            } else {
-                None
-            }
-        });
+        let candidate = file_path
+            .or(file_name)
+            .or(form_file_name)
+            .or_else(|| {
+                if raw_content.starts_with("[file upload:") {
+                    Some(raw_content)
+                } else {
+                    None
+                }
+            });
         if let Some(resolved) =
             crate::routes::har_dlp::resolve_local_uploaded_file(candidate, destination_sink)
         {
@@ -1018,6 +1034,106 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
         event.containment = Some(outcome_json.clone());
         let mut state = get_global_dlp_state().write();
         attach_containment_to_event(&mut state, &event.id, outcome_json);
+    } else {
+        // Feature 8 (Milestone M2 / R2): When a submission is allowed (event.allowed == true,
+        // such as benign document covergeneral.docx), check if the destination host / IP was
+        // previously blocked by native WFP containment. If so, invoke osoosi_core::wfp::unblock_destination_native
+        // to auto-release the stale destination block.
+        let dest_host = {
+            let h = crate::routes::har_dlp::host_of(destination_sink);
+            if h.is_empty() {
+                destination_sink
+                    .split('/')
+                    .next()
+                    .unwrap_or(destination_sink)
+                    .split(':')
+                    .next()
+                    .unwrap_or(destination_sink)
+                    .trim()
+                    .to_string()
+            } else {
+                h
+            }
+        };
+
+        let mut target_ips: Vec<std::net::IpAddr> = Vec::new();
+        if let Ok(ip) = dest_host.parse::<std::net::IpAddr>() {
+            target_ips.push(ip);
+        } else if !dest_host.is_empty() {
+            use std::net::ToSocketAddrs;
+            if let Ok(addrs) = (dest_host.as_str(), 443).to_socket_addrs() {
+                for sa in addrs {
+                    if !target_ips.contains(&sa.ip()) {
+                        target_ips.push(sa.ip());
+                    }
+                }
+            }
+            if target_ips.is_empty() {
+                if let Ok(addrs) = (dest_host.as_str(), 80).to_socket_addrs() {
+                    for sa in addrs {
+                        if !target_ips.contains(&sa.ip()) {
+                            target_ips.push(sa.ip());
+                        }
+                    }
+                }
+            }
+        }
+
+        // 1. Release active blocks recorded in DlpContainmentEngine
+        for outcome in crate::routes::dlp_containment::global_containment_engine().list() {
+            if !outcome.restored {
+                let host_match = !dest_host.is_empty() && outcome.destination_host.eq_ignore_ascii_case(&dest_host);
+                let ip_match = outcome.destination_ips.iter().any(|s| {
+                    s.parse::<std::net::IpAddr>()
+                        .map(|ip| target_ips.contains(&ip))
+                        .unwrap_or(false)
+                });
+                if host_match || ip_match {
+                    let _ = crate::routes::dlp_containment::global_containment_engine()
+                        .restore(&outcome.containment_id, "auto-release-on-benign-upload");
+                }
+            }
+        }
+
+        // 2. Release any native WFP destination blocks directly in osoosi_core::wfp
+        for rule in osoosi_core::wfp::active_native_destination_blocks() {
+            let mut rule_ips: Vec<std::net::IpAddr> = Vec::new();
+            let mut matches = false;
+            for ip_str in &rule.ips {
+                if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
+                    if target_ips.contains(&ip) {
+                        matches = true;
+                    }
+                    rule_ips.push(ip);
+                }
+            }
+            if matches || (!dest_host.is_empty() && rule.rule_name.to_ascii_lowercase().contains(&dest_host.to_ascii_lowercase())) {
+                let _ = osoosi_core::wfp::unblock_destination_native(
+                    &rule.rule_name,
+                    rule.program.as_deref(),
+                    rule.pid,
+                    &rule_ips,
+                );
+            }
+        }
+
+        // 3. For any remaining blocked IPs in target_ips, check is_destination_blocked_native and unblock
+        for ip in &target_ips {
+            if osoosi_core::wfp::is_destination_blocked_native(ip) {
+                for rule in osoosi_core::wfp::active_native_destination_blocks() {
+                    if rule.ips.iter().any(|s| s == &ip.to_string()) {
+                        let parsed: Vec<std::net::IpAddr> =
+                            rule.ips.iter().filter_map(|s| s.parse().ok()).collect();
+                        let _ = osoosi_core::wfp::unblock_destination_native(
+                            &rule.rule_name,
+                            rule.program.as_deref(),
+                            rule.pid,
+                            &parsed,
+                        );
+                    }
+                }
+            }
+        }
     }
     if let Err(e) = persist_dlp_event(&event) {
         tracing::debug!("DLP browser event persistence failed: {}", e);
@@ -1291,6 +1407,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_post_dlp_release_flow() {
+        let allowlist_path = released_allowlist_path();
+        let _ = std::fs::remove_file(&allowlist_path);
+
         let engine = osoosi_dp::OsoosiTwoTierDlpEngine::new();
         let mut state = DlpDashboardState {
             engine,
@@ -1340,5 +1459,44 @@ mod tests {
         assert!(released.allowed, "event must now be allowed");
         assert_eq!(released.authorization_decision, "ALLOW (USER_RELEASED)");
         assert_eq!(released.dlp_response, "RELEASED_BY_USER");
+
+        let _ = std::fs::remove_file(&allowlist_path);
+    }
+
+    #[tokio::test]
+    async fn test_post_dlp_browser_event_benign_upload_auto_releases_stale_destination_block() {
+        let test_ip: std::net::IpAddr = "198.51.100.42".parse().unwrap();
+        let rule_name = "OshoosiDLP-AutoReleaseTest";
+
+        // Setup: destination was previously blocked by native WFP containment
+        let _ = osoosi_core::wfp::block_destination_native(rule_name, None, None, &[test_ip]);
+        assert!(
+            osoosi_core::wfp::is_destination_blocked_native(&test_ip),
+            "precondition: test destination IP must be blocked"
+        );
+
+        // Submit benign document (covergeneral.docx)
+        let payload = json!({
+            "actor_process": "chrome.exe",
+            "url": "https://198.51.100.42/upload",
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "covergeneral.docx",
+            "content": "Dear Hiring Team,\nI am pleased to submit my resume for your open engineering role.\nBest regards,\nDeveloper\n"
+        });
+
+        let Json(res) = post_dlp_browser_event(Json(payload)).await;
+        assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            res.get("allowed").and_then(|v| v.as_bool()),
+            Some(true),
+            "benign upload must be allowed"
+        );
+
+        // Invariant: stale destination block must be auto-released
+        assert!(
+            !osoosi_core::wfp::is_destination_blocked_native(&test_ip),
+            "stale native WFP destination block must be auto-released upon allowed benign document upload"
+        );
     }
 }
+

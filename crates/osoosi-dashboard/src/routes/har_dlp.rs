@@ -315,11 +315,32 @@ pub fn resolve_local_uploaded_file(
     candidate_path_or_name: Option<&str>,
     destination_url: &str,
 ) -> Option<ResolvedUploadedFile> {
-    const MAX_STREAM_BYTES: usize = 2 * 1024 * 1024; // Stream first 2 MB (covers xl/sharedStrings.xml in 10MB+ .xlsx)
+    const MAX_STREAM_BYTES: usize = 16 * 1024 * 1024; // Stream up to 16 MB so 10-MB test files (10-MB-Test.xlsx) are completely streamed and parsed
     const MAX_TEXT_BYTES: usize = 64 * 1024; // 64 KB extracted plaintext per file
 
+    // Extract potential filename hint from destination URL query parameters if not provided
+    let query_filename = if candidate_path_or_name.is_none() {
+        reqwest::Url::parse(destination_url).ok().and_then(|u| {
+            for (k, v) in u.query_pairs() {
+                if (k.eq_ignore_ascii_case("file")
+                    || k.eq_ignore_ascii_case("filename")
+                    || k.eq_ignore_ascii_case("file_name")
+                    || k.eq_ignore_ascii_case("name"))
+                    && !v.trim().is_empty()
+                {
+                    return Some(v.to_string());
+                }
+            }
+            None
+        })
+    } else {
+        None
+    };
+
+    let effective_candidate = candidate_path_or_name.or(query_filename.as_deref());
+
     // Case 1: Candidate path or filename provided
-    if let Some(cand) = candidate_path_or_name {
+    if let Some(cand) = effective_candidate {
         let trimmed = cand.trim();
         let cleaned = if let Some(inner) = trimmed
             .strip_prefix("[file upload:")
@@ -339,16 +360,45 @@ pub fn resolve_local_uploaded_file(
                 }
             }
 
-            // Search by filename or stem in candidate staging dirs
+            // Search by filename or stem in candidate staging dirs, prioritizing exact name & recency
             let target_filename = direct_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(cleaned);
+            let mut file_matches: Vec<(PathBuf, bool, SystemTime)> = Vec::new();
             for dir in get_candidate_staging_dirs() {
+                // 1. O(1) direct join check for target filename
+                let direct_in_dir = dir.join(target_filename);
+                if direct_in_dir.is_file() {
+                    let mtime = direct_in_dir
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
+                        .unwrap_or(SystemTime::UNIX_EPOCH);
+                    file_matches.push((direct_in_dir, true, mtime));
+                }
+
+                // 2. Common office/data extensions check if filename has no extension
+                let has_ext = Path::new(target_filename).extension().is_some();
+                if !has_ext {
+                    for ext in ["xlsx", "docx", "pdf", "csv", "xml", "txt", "xls", "doc"] {
+                        let ext_path = dir.join(format!("{}.{}", target_filename, ext));
+                        if ext_path.is_file() {
+                            let mtime = ext_path
+                                .metadata()
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .unwrap_or(SystemTime::UNIX_EPOCH);
+                            file_matches.push((ext_path, true, mtime));
+                        }
+                    }
+                }
+
+                // 3. Scan directory entries for stem or case-insensitive match
                 let Ok(rd) = std::fs::read_dir(&dir) else {
                     continue;
                 };
-                for entry in rd.flatten().take(48) {
+                for entry in rd.flatten().take(512) {
                     let p = entry.path();
                     if !p.is_file() {
                         continue;
@@ -362,18 +412,33 @@ pub fn resolve_local_uploaded_file(
                         .file_stem()
                         .and_then(|s| s.to_str())
                         .unwrap_or_default();
-                    if name.eq_ignore_ascii_case(target_filename)
-                        || stem.eq_ignore_ascii_case(target_filename)
-                    {
-                        if let Some(res) =
-                            read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
-                        {
-                            return Some(res);
+                    let exact_match = name.eq_ignore_ascii_case(target_filename);
+                    let stem_match = stem.eq_ignore_ascii_case(target_filename);
+                    if exact_match || stem_match {
+                        if !file_matches.iter().any(|(existing, _, _)| existing == &p) {
+                            let mtime = entry
+                                .metadata()
+                                .ok()
+                                .and_then(|m| m.modified().ok())
+                                .unwrap_or(SystemTime::UNIX_EPOCH);
+                            file_matches.push((p, exact_match, mtime));
                         }
                     }
                 }
             }
+            file_matches.sort_by(|a, b| {
+                b.1.cmp(&a.1).then_with(|| b.2.cmp(&a.2))
+            });
+            for (p, _, _) in file_matches {
+                if let Some(res) =
+                    read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
+                {
+                    return Some(res);
+                }
+            }
+            return None;
         }
+        return None;
     }
 
     // Case 2: No filename provided, but destination URL targets dlptest.com or an upload sink.
@@ -394,7 +459,7 @@ pub fn resolve_local_uploaded_file(
             let Ok(rd) = std::fs::read_dir(&dir) else {
                 continue;
             };
-            for entry in rd.flatten().take(48) {
+            for entry in rd.flatten().take(1024) {
                 let p = entry.path();
                 if !p.is_file() {
                     continue;
@@ -424,28 +489,34 @@ pub fn resolve_local_uploaded_file(
                         .unwrap_or(u64::MAX);
                     if is_exfil_dir || age_secs <= 600 {
                         candidates.push((p, is_exfil_dir, recent_touch, md.len()));
+                        if candidates.len() >= 64 {
+                            break;
+                        }
                     }
                 }
             }
         }
 
-        // Prioritize files in C:\exfil (preferring .xlsx/.docx/.pdf/.csv) and most recently accessed/modified files
+        // Prioritize most recently accessed/modified files (per-submission recency),
+        // preferring office documents (.xlsx/.docx/.pdf/.xls/.doc/.csv) and staging dirs.
         candidates.sort_by(|a, b| {
             let a_office = a
                 .0
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc"))
+                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv" | "xml"))
                 .unwrap_or(false);
             let b_office = b
                 .0
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc"))
+                .map(|e| matches!(e.to_ascii_lowercase().as_str(), "xlsx" | "docx" | "pdf" | "xls" | "doc" | "csv" | "xml"))
                 .unwrap_or(false);
-            b.1.cmp(&a.1)
+
+            b.2.cmp(&a.2)
                 .then_with(|| b_office.cmp(&a_office))
-                .then_with(|| b.2.cmp(&a.2))
+                .then_with(|| b.1.cmp(&a.1))
+                .then_with(|| b.3.cmp(&a.3))
         });
 
         if let Some((best_path, _, _, _)) = candidates.into_iter().next() {
@@ -1090,20 +1161,26 @@ pub fn extract_requests_from_har(
             }
         }
 
-        // Resolve candidate file from disk if present or if targeting dlptest.com / upload sink
-        if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {
-            if !body_text.contains(&resolved.content) {
-                if !body_text.is_empty() {
-                    body_text.push('\n');
+        // Resolve candidate file from disk if present or if targeting dlptest.com / upload sink without body
+        let is_upload = candidate_file.is_some()
+            || mime_type.contains("multipart")
+            || body_text.contains("[file upload:")
+            || (url.contains("dlptest.com") && body_text.trim().is_empty());
+        if is_upload {
+            if let Some(resolved) = resolve_local_uploaded_file(candidate_file.as_deref(), &url) {
+                if !body_text.contains(&resolved.content) {
+                    if !body_text.is_empty() {
+                        body_text.push('\n');
+                    }
+                    body_text.push_str(&format!(
+                        "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
+                        resolved.resolved_path.display(),
+                        resolved.byte_size,
+                        resolved.content
+                    ));
                 }
-                body_text.push_str(&format!(
-                    "--- UPLOADED FILE: {} (size: {} bytes) ---\n{}",
-                    resolved.resolved_path.display(),
-                    resolved.byte_size,
-                    resolved.content
-                ));
+                params.push(("uploaded_file".to_string(), resolved.resolved_path.display().to_string()));
             }
-            params.push(("uploaded_file".to_string(), resolved.resolved_path.display().to_string()));
         }
         let meta = entry.get("_oshoosi");
         let actor = meta
@@ -1857,4 +1934,73 @@ mod tests {
         // When allowlist file does not exist or empty
         assert!(!is_dlp_event_allowlisted("https://dlptest.com/https-post/", "preview", "zk-commit-123"));
     }
+
+    #[test]
+    fn test_large_file_streaming_16mb_capacity() {
+        let temp_dir = std::env::temp_dir();
+        let fname = format!("large_stream_test_{}.csv", uuid::Uuid::new_v4());
+        let file_path = temp_dir.join(&fname);
+
+        // Create a 3 MB file (larger than old 2 MB limit) with marker text at 2.5 MB
+        let chunk = vec![b'A'; 512 * 1024];
+        let mut f = std::fs::File::create(&file_path).expect("create large file");
+        use std::io::Write;
+        for _ in 0..5 {
+            f.write_all(&chunk).expect("write chunk");
+        }
+        writeln!(f, "TAIL_MARKER_BEYOND_2MB_SSN_123-45-6789").expect("write marker");
+        drop(f);
+
+        let res = resolve_local_uploaded_file(Some(file_path.to_str().unwrap()), "https://dlptest.com/https-post/");
+        assert!(res.is_some(), "large file must resolve");
+        let r = res.unwrap();
+        assert!(r.byte_size > 2 * 1024 * 1024, "file size must exceed 2 MB");
+
+        let _ = std::fs::remove_file(file_path);
+    }
+
+    #[test]
+    fn test_per_submission_recency_sorting_prefers_newest_file() {
+        let temp_dir = std::env::temp_dir();
+        let old_fname = format!("staged_old_{}.csv", uuid::Uuid::new_v4());
+        let new_fname = format!("staged_new_{}.csv", uuid::Uuid::new_v4());
+        let old_path = temp_dir.join(&old_fname);
+        let new_path = temp_dir.join(&new_fname);
+
+        std::fs::write(&old_path, "old_col1,old_col2\nold_val1,old_val2\n").expect("write old file");
+        // Ensure new file has newer timestamp
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::fs::write(&new_path, "new_col1,new_col2\nnew_val1,new_val2\n").expect("write new file");
+
+        let res = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/");
+        assert!(res.is_some(), "should resolve candidate");
+        let resolved = res.unwrap();
+        // The resolved file should be the newly touched file, not an older stale file
+        assert!(
+            resolved.filename == new_fname || resolved.resolved_path.file_name().and_then(|n| n.to_str()) == Some(&new_fname),
+            "expected newest file {} but got {}",
+            new_fname,
+            resolved.filename
+        );
+
+        let _ = std::fs::remove_file(old_path);
+        let _ = std::fs::remove_file(new_path);
+    }
+
+    #[test]
+    fn test_per_submission_url_query_metadata_binding() {
+        let temp_dir = std::env::temp_dir();
+        let target_fname = format!("query_bound_{}.csv", uuid::Uuid::new_v4());
+        let target_path = temp_dir.join(&target_fname);
+        std::fs::write(&target_path, "bound_col,val\nalpha,beta\n").expect("write query bound file");
+
+        let url_with_hint = format!("https://dlptest.com/https-post/?filename={}", target_fname);
+        let res = resolve_local_uploaded_file(None, &url_with_hint);
+        assert!(res.is_some(), "should resolve from url query metadata");
+        let resolved = res.unwrap();
+        assert_eq!(resolved.filename, target_fname);
+
+        let _ = std::fs::remove_file(target_path);
+    }
 }
+

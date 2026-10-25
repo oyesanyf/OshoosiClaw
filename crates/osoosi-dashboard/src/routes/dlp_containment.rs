@@ -1919,4 +1919,71 @@ mod tests {
             .reached
         );
     }
+
+    #[test]
+    fn test_sensitive_document_upload_triggers_4_voter_quorum_and_wfp_containment() {
+        // Construct real DLP inspection event for sensitive 10-MB-Test.xlsx upload
+        let mut ev = real_event(
+            "chrome.exe",
+            "https://dlptest.com/https-post/",
+            "PATIENT_NAME,SSN,MRN,DIAGNOSIS\nAlice Smith,123-45-6789,MRN-998877,ICD10-C34.9\nCREDIT_CARD=4532 0151 1283 0366",
+            "conservative_containment",
+        );
+        ev.redactx_confirmed_containment = true;
+        ev.openjev_enforcement_agreed = true;
+        ev.sensitivity_potential_phi = 0.98;
+
+        let ctx = ActorContext {
+            actor: "chrome.exe".to_string(),
+            pid: None,
+            image_path: Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string()),
+            destination_url: "https://dlptest.com/https-post/".to_string(),
+            destination_host: "dlptest.com".to_string(),
+            injection_indicators: Vec::new(),
+        };
+
+        // Evaluate 4-voter decision model
+        let ballots = production_voter_ballots(&ev, &ctx);
+        let voter_names: Vec<&str> = ballots.iter().map(|b| b.voter.as_str()).collect();
+        assert!(voter_names.contains(&"OpenJEV-Voter"), "Must include OpenJEV-Voter");
+        assert!(voter_names.contains(&"REA-Voter"), "Must include REA-Voter");
+        assert!(voter_names.contains(&"RedactX-Deterministic-Validators"), "Must include RedactX-Deterministic-Validators");
+        assert!(voter_names.contains(&"Google-SafeBrowsing-Voter"), "Must include Google-SafeBrowsing-Voter");
+
+        let openjev = ballots.iter().find(|b| b.voter == "OpenJEV-Voter").unwrap();
+        let rea = ballots.iter().find(|b| b.voter == "REA-Voter").unwrap();
+        let redactx = ballots.iter().find(|b| b.voter == "RedactX-Deterministic-Validators").unwrap();
+        let gsb = ballots.iter().find(|b| b.voter == "Google-SafeBrowsing-Voter").unwrap();
+
+        assert!(openjev.escalate, "OpenJEV-Voter must escalate on confirmed sensitive doc upload");
+        assert!(rea.escalate, "REA-Voter must escalate on confirmed sensitive doc upload");
+        assert!(redactx.escalate, "RedactX-Deterministic-Validators must escalate on confirmed sensitive doc upload");
+        assert!(gsb.escalate, "Google-SafeBrowsing-Voter must escalate on corroborated exfil");
+
+        let consensus = VoterConsensus::from_ballots(ballots);
+        assert!(consensus.reached, "4-voter quorum must be reached for sensitive document");
+        assert!(consensus.weighted_probability >= 0.85, "Confidence must be >= 0.85, got {}", consensus.weighted_probability);
+        assert!(consensus.escalations >= 4, "Must have all 4 voters escalating, got {}", consensus.escalations);
+
+        // Platform containment verification
+        let platform = Arc::new(FixturePlatform {
+            signed: true,
+            browser: true,
+            voters_escalate: true,
+            pid: None,
+            image: Some("C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe".to_string()),
+            ..Default::default()
+        });
+        let (engine, _d) = engine_with(platform.clone(), "browser_contain");
+        let outcome = engine.evaluate_and_respond(&ev, &ctx, None);
+
+        assert_eq!(outcome.decision, ContainmentDecision::DestinationBlocked);
+        let calls = platform.calls();
+        assert!(
+            calls.iter().any(|c| c.starts_with("block:OshoosiDLP-")),
+            "Must invoke native WFP block rule: {:?}",
+            calls
+        );
+    }
 }
+

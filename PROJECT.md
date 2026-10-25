@@ -79,8 +79,8 @@ OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) is engineered into a high-performance,
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Pre-Execution Security & Unified Confinement | Features 1–7: Rhai dependency fix, wired MemoryLimiter (64 MiB), scratch dir, fuel metering, capability enforcement, Win32 AppContainer + Job Object + de-elevated token, DNS pinning. | none | PLANNED |
-| M2 | Continuous Breakout Defense & DLP Precision | Features 8–11: Stale block auto-release on benign upload, 16MB stream buffer in `har_dlp.rs`, per-submission candidate binding, 4-voter quorum + WFP verification. | M1 | PLANNED |
+| M1 | Pre-Execution Security & Unified Confinement | Features 1–7: Rhai dependency fix, wired MemoryLimiter (64 MiB), scratch dir, fuel metering, capability enforcement, Win32 AppContainer + Job Object + de-elevated token, DNS pinning. | none | DONE (PR #216, commit 8e44e2f0; 28/28 sandbox & 132/132 agent-anomaly tests pass, 0 warnings) |
+| M2 | Continuous Breakout Defense & DLP Precision | Features 8–11: Stale block auto-release on benign upload, 16MB stream buffer in `har_dlp.rs`, per-submission candidate binding, 4-voter quorum + WFP verification. | M1 | DONE (26/26 DLP tests, 77/77 policy tests, 132/132 agent-anomaly tests, 15/15 WebUI parity tests pass) |
 | M3 | P2P Mesh, BFT Containment & RL Separation | Features 12–15: P2P GossipSub, ML-DSA-65/Ed25519, TPM 2.0 quote validation, BFT consensus, Byzantine kill-switch fraud proofs, strict Cedar RL separation. | M1 | PLANNED |
 | M4 | Profiling-Driven Performance & Lock Safety | Features 16–20: Wasmtime module cache (<1ms warm invocation), epoch timer fix, Tokio async lock safety refactoring, DashMap lock hygiene, WebUI 0-diff parity. | M1, M2 | PLANNED |
 | M5 | Adversarial Proof, Benchmarking & Packaging Delivery | Features 21–25: Benchmark report `PERFORMANCE_AND_SECURITY_BENCHMARK.md`, 43 A+ vector validation, 100% E2E test pass + Tier 5 hardening, Windows/Linux/Docker packaging, WDSI submission, AgentOctopus sync, Solo PR ship. | M1, M2, M3, M4 | PLANNED |
