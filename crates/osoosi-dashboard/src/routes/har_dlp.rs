@@ -418,11 +418,9 @@ pub fn resolve_windows_lnk_target(lnk_path: &Path) -> Option<PathBuf> {
         let link_flags = u32::from_le_bytes([buf[20], buf[21], buf[22], buf[23]]);
         let mut offset = 76usize;
         // HasLinkTargetIDList (bit 0)
-        if (link_flags & 0x01) != 0 {
-            if offset + 2 <= buf.len() {
-                let id_list_size = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
-                offset = offset.saturating_add(2).saturating_add(id_list_size);
-            }
+        if (link_flags & 0x01) != 0 && offset + 2 <= buf.len() {
+            let id_list_size = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
+            offset = offset.saturating_add(2).saturating_add(id_list_size);
         }
         // HasLinkInfo (bit 1)
         if (link_flags & 0x02) != 0 && offset + 28 <= buf.len() {
@@ -696,7 +694,7 @@ pub fn resolve_local_uploaded_file(
                     }
                 }
             }
-            matched_paths.sort_by(|a, b| b.1.cmp(&a.1));
+            matched_paths.sort_by_key(|a| std::cmp::Reverse(a.1));
             for (p, touch) in matched_paths {
                 if let Some(mut res) =
                     read_and_classify_uploaded_file(&p, MAX_STREAM_BYTES, MAX_TEXT_BYTES)
@@ -1107,12 +1105,11 @@ pub fn is_dlp_event_allowlisted(
         if let Some(s) = item.as_str() {
             // A raw string entry is ONLY valid if it cryptographically matches the zk_commitment
             // or the exact scrubbed_preview. A raw string matching destination_sink alone is FORBIDDEN.
-            if !s.is_empty() {
-                if (!zk_commitment.is_empty() && s == zk_commitment)
-                    || (!scrubbed_preview.is_empty() && s == scrubbed_preview)
-                {
-                    return true;
-                }
+            if !s.is_empty()
+                && ((!zk_commitment.is_empty() && s == zk_commitment)
+                    || (!scrubbed_preview.is_empty() && s == scrubbed_preview))
+            {
+                return true;
             }
         } else if let Some(obj) = item.as_object() {
             let entry_sink = obj
@@ -1135,17 +1132,15 @@ pub fn is_dlp_event_allowlisted(
             }
 
             // Path 2: Exact Destination Sink + Non-Empty Content Preview Match
+            // Never blanket-allow a destination sink when zk_commitment and preview are empty
             if !entry_sink.is_empty()
                 && (entry_sink == destination_sink
                     || host_of(entry_sink) == host_of(destination_sink))
+                && !entry_prev.is_empty()
+                && !scrubbed_preview.is_empty()
+                && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev))
             {
-                if !entry_prev.is_empty()
-                    && !scrubbed_preview.is_empty()
-                    && (entry_prev == scrubbed_preview || scrubbed_preview.contains(entry_prev))
-                {
-                    return true;
-                }
-                // Never blanket-allow a destination sink when zk_commitment and preview are empty
+                return true;
             }
 
             // Path 3: Empty Sink but Non-Empty Exact Content Preview Match
@@ -1320,7 +1315,7 @@ pub fn poll_live_browser_and_sink_activity() -> Vec<HarDlpRequest> {
         if let Ok(file) = std::fs::File::open(&stream_path) {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(file);
-            for line in reader.lines().flatten().take(50) {
+            for line in reader.lines().map_while(Result::ok).take(50) {
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
                     continue;

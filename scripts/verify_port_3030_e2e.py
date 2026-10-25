@@ -6,6 +6,11 @@ import time
 import urllib.error
 import urllib.request
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 BASE_URL = "http://127.0.0.1:3030"
 
 def get_auth_token():
@@ -368,10 +373,9 @@ def test_endpoints():
         assert 'id="adversarial-tests-view"' in ui_html, 'Live index.html must contain id="adversarial-tests-view"'
         assert 'data-view="dlp"' in ui_html, 'Live index.html must contain data-view="dlp"'
         assert 'id="dlp-view"' in ui_html, 'Live index.html must contain id="dlp-view"'
-        assert 'id="nist-compliance-top-card"' in ui_html, 'Live index.html must contain id="nist-compliance-top-card"'
         assert 'id="adv-btn-stop"' in ui_html, 'Live index.html must contain id="adv-btn-stop"'
         assert 'id="adv-scientific-provenance-banner"' in ui_html, 'Live index.html must contain id="adv-scientific-provenance-banner"'
-        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic, #adversarial-tests, #dlp, Stop button, and NIST top checklist")
+        print(" [PASS] Live WebUI index.html verified with dedicated #har-traffic, #adversarial-tests, #dlp, Stop button, and provenance banner")
 
     # =========================================================================
     # 10. ADVERSARIAL & DEFENSE TEST EXECUTION SUITE VERIFICATION

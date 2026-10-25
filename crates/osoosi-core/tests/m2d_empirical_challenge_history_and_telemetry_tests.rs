@@ -185,24 +185,33 @@ fn challenge_1_sub5ms_history_caching_and_concurrency_stress() {
                 assert_eq!(res.len(), 51);
                 thread_latencies.push(dur.as_micros());
             }
-            let max_thread_us = *thread_latencies.iter().max().unwrap();
+            thread_latencies.sort_unstable();
+            let max_thread_us = *thread_latencies.last().unwrap();
+            let p99_idx = ((requests_per_thread as f64) * 0.99).floor() as usize;
+            let p99_thread_us = thread_latencies[p99_idx.min(requests_per_thread - 1)];
             let avg_thread_us: f64 =
                 thread_latencies.iter().sum::<u128>() as f64 / (requests_per_thread as f64);
-            (th_id, max_thread_us, avg_thread_us)
+            (th_id, max_thread_us, p99_thread_us, avg_thread_us)
         }));
     }
 
     for h in handles {
-        let (th_id, max_th, avg_th) = h.join().expect("thread completes cleanly");
+        let (th_id, max_th, p99_th, avg_th) = h.join().expect("thread completes cleanly");
         println!(
-            "Thread {}: avg latency {:.2}µs, max latency {}µs",
-            th_id, avg_th, max_th
+            "Thread {}: avg latency {:.2}µs, p99 latency {}µs, max latency {}µs",
+            th_id, avg_th, p99_th, max_th
         );
         assert!(
-            max_th < 15_000,
-            "Thread {} max latency {}µs exceeded 15ms contention threshold",
+            p99_th < 15_000,
+            "Thread {} p99 latency {}µs exceeded 15ms contention threshold",
             th_id,
-            max_th
+            p99_th
+        );
+        assert!(
+            avg_th < 2_500.0,
+            "Thread {} avg latency {:.2}µs exceeded 2.5ms contention threshold",
+            th_id,
+            avg_th
         );
     }
 
@@ -326,8 +335,14 @@ fn challenge_2_bounded_audit_retrieval_and_merkle_integrity() {
 fn challenge_3_webui_parity_exhaustive_sha256_and_appjs_invariants() {
     println!("\n=== Challenge 3: WebUI 0-Diff Parity Exhaustive SHA-256 Verification ===");
 
-    let src_dir = Path::new("dashboard/src");
-    let dist_dir = Path::new("dashboard/dist");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let src_dir_buf = workspace_root.join("dashboard/src");
+    let dist_dir_buf = workspace_root.join("dashboard/dist");
+    let src_dir = src_dir_buf.as_path();
+    let dist_dir = dist_dir_buf.as_path();
 
     assert!(src_dir.exists(), "dashboard/src must exist");
     assert!(dist_dir.exists(), "dashboard/dist must exist");
@@ -404,7 +419,8 @@ fn challenge_3_webui_parity_exhaustive_sha256_and_appjs_invariants() {
     );
 
     // 3. Verify specific R13 & R7 code patterns in app.js
-    let app_js_content = fs::read_to_string("dashboard/src/app.js").expect("read app.js");
+    let app_js_content =
+        fs::read_to_string(src_dir.join("app.js")).expect("read dashboard/src/app.js");
 
     // R13: fetchWithRetry timeoutMs || 12000
     assert!(

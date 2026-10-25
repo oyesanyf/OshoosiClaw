@@ -84,30 +84,20 @@ Cleanup-OldLockedFiles
 # Helper: Cargo & WiX toolset auto-discovery in PATH and standard locations (Edge Case 2)
 # -----------------------------------------------------------------------------
 function Ensure-ToolchainInPath {
-    # 0. Rustup toolchain bin discovery (preserves Windows 11 Smart App Control origin claim via target\toolchain\bin)
+    # 0. Rustup toolchain bin discovery (executes directly from canonical .rustup\toolchains\stable-x86_64-pc-windows-msvc\bin)
     $rustupToolchain = "C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc"
-    $stagedToolchain = Join-Path $ProjectRoot "target\toolchain"
-    $toolchainBin = Join-Path $stagedToolchain "bin"
-    $stagedLib = Join-Path $stagedToolchain "lib"
-    if (Test-Path (Join-Path $rustupToolchain "bin\cargo.exe")) {
-        if (-not (Test-Path (Join-Path $toolchainBin "cargo.exe"))) {
-            New-Item -ItemType Directory -Path $toolchainBin -Force | Out-Null
-            Copy-Item -Path (Join-Path $rustupToolchain "bin\*.exe"), (Join-Path $rustupToolchain "bin\*.dll") -Destination "$toolchainBin\" -Force -ErrorAction SilentlyContinue
-        }
-        if (-not (Test-Path $stagedLib)) {
-            New-Item -ItemType Junction -Path "$stagedLib" -Target "$rustupToolchain\lib" -Force -ErrorAction SilentlyContinue | Out-Null
-        }
-        $env:PATH = "$toolchainBin;$env:PATH"
-        $env:RUSTC = Join-Path $toolchainBin "rustc.exe"
-        $script:CargoExePath = Join-Path $toolchainBin "cargo.exe"
+    $rustupBin = Join-Path $rustupToolchain "bin"
+    if (Test-Path (Join-Path $rustupBin "cargo.exe")) {
+        $env:PATH = "$rustupBin;$env:PATH"
+        $env:RUSTC = Join-Path $rustupBin "rustc.exe"
+        $script:CargoExePath = Join-Path $rustupBin "cargo.exe"
     }
 
     # 1. Cargo discovery
     $cargoCmd = Get-Command "cargo" -ErrorAction SilentlyContinue
     if (-not $cargoCmd) {
         $candidateCargoDirs = @(
-            $toolchainBin,
-            (Join-Path $rustupToolchain "bin"),
+            $rustupBin,
             (Join-Path $env:USERPROFILE ".cargo\bin"),
             "C:\Users\oyesanyf\.cargo\bin",
             (Join-Path $env:ProgramFiles "Rust\bin")

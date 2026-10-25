@@ -1,0 +1,409 @@
+{
+  "dlpc-e0e0e9ee50bf47a69208269ea8a17656": {
+    "containment_id": "dlpc-e0e0e9ee50bf47a69208269ea8a17656",
+    "event_id": "dlp-6b5386f5d6604df38309a275a3f597f0",
+    "decided_at": "2026-10-25T23:21:31.742545400+00:00",
+    "decision": "DestinationBlocked",
+    "reasons": [],
+    "actor": "chrome.exe",
+    "pid": null,
+    "image_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "destination_host": "dlptest.com",
+    "destination_ips": [
+      "104.26.0.68",
+      "104.26.1.68",
+      "172.67.75.74"
+    ],
+    "rule_name": "OshoosiDLP-e0e0e9ee50bf",
+    "signature_verified": true,
+    "is_browser": true,
+    "rea_malicious_reason": null,
+    "injection_indicators": [],
+    "redactx_containment_mode": "balanced_utility",
+    "redactx_validated_categories": [
+      "CREDIT_CARD_PAN",
+      "US_SSN",
+      "EMAIL_ADDRESS",
+      "HIPAA_NPI"
+    ],
+    "redactx_doc_score": 0.9999,
+    "redactx_max_span_score": 0.9685050330513804,
+    "redactx_confirmed_containment": true,
+    "openjev_choice": "BLOCK_AND_SCRUB",
+    "openjev_noul_p": 0.9999,
+    "openjev_score": 4.15,
+    "openjev_enforcement_agreed": true,
+    "voters": {
+      "ballots": [
+        {
+          "voter": "OpenJEV-Voter",
+          "escalate": true,
+          "confidence": 0.9999,
+          "weight": 1.25,
+          "reason": "Veto [OpenJEV-Voter]: Joint Evidence Voting (Noul p_clean=0.998, Choice=PASS_CLEAN, Score=1.06/5, T=1.08) attested zero credential/PII exfiltration risk"
+        },
+        {
+          "voter": "REA-Voter",
+          "escalate": true,
+          "confidence": 0.98,
+          "weight": 1.5,
+          "reason": "Escalate [REA-Voter]: Corroborated confirmed RedactX + OpenJEV DLP exfiltration by 'chrome.exe' -> 'dlptest.com' ([\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"])"
+        },
+        {
+          "voter": "RedactX-Deterministic-Validators",
+          "escalate": true,
+          "confidence": 0.9685050330513804,
+          "weight": 1.5,
+          "reason": "validated [\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"]"
+        },
+        {
+          "voter": "Google-SafeBrowsing-Voter",
+          "escalate": true,
+          "confidence": 0.94,
+          "weight": 1.25,
+          "reason": "Escalate [Google-SafeBrowsing-Voter]: External upload sink 'dlptest.com' corroborated for confirmed PII/Crown-Jewel exfiltration (prefix=67d50e6b)"
+        }
+      ],
+      "weighted_probability": 0.9722968271958308,
+      "escalations": 4,
+      "reached": true
+    },
+    "actions": [
+      {
+        "kind": "network_block",
+        "ok": true,
+        "detail": "outbound block 'OshoosiDLP-e0e0e9ee50bf' for C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe -> [\"104.26.0.68\", \"104.26.1.68\", \"172.67.75.74\"]",
+        "reverted": false
+      }
+    ],
+    "vault": null,
+    "expires_at": "2026-10-25T23:31:31.744075+00:00",
+    "restored": false
+  },
+  "dlpc-b792acb686df4e4f99bccfeb3129e7e4": {
+    "containment_id": "dlpc-b792acb686df4e4f99bccfeb3129e7e4",
+    "event_id": "dlp-cf66af54cfe6472b86186bf6c33fd623",
+    "decided_at": "2026-10-25T23:27:30.806991900+00:00",
+    "decision": "DestinationBlocked",
+    "reasons": [],
+    "actor": "chrome.exe",
+    "pid": null,
+    "image_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "destination_host": "dlptest.com",
+    "destination_ips": [
+      "104.26.0.68",
+      "104.26.1.68",
+      "172.67.75.74"
+    ],
+    "rule_name": "OshoosiDLP-b792acb686df",
+    "signature_verified": true,
+    "is_browser": true,
+    "rea_malicious_reason": null,
+    "injection_indicators": [],
+    "redactx_containment_mode": "balanced_utility",
+    "redactx_validated_categories": [
+      "CREDIT_CARD_PAN",
+      "US_SSN",
+      "EMAIL_ADDRESS",
+      "HIPAA_NPI"
+    ],
+    "redactx_doc_score": 0.9999,
+    "redactx_max_span_score": 0.9685050330513804,
+    "redactx_confirmed_containment": true,
+    "openjev_choice": "BLOCK_AND_SCRUB",
+    "openjev_noul_p": 0.9999,
+    "openjev_score": 4.15,
+    "openjev_enforcement_agreed": true,
+    "voters": {
+      "ballots": [
+        {
+          "voter": "OpenJEV-Voter",
+          "escalate": true,
+          "confidence": 0.9999,
+          "weight": 1.25,
+          "reason": "Veto [OpenJEV-Voter]: Joint Evidence Voting (Noul p_clean=0.998, Choice=PASS_CLEAN, Score=1.06/5, T=1.08) attested zero credential/PII exfiltration risk"
+        },
+        {
+          "voter": "REA-Voter",
+          "escalate": true,
+          "confidence": 0.98,
+          "weight": 1.5,
+          "reason": "Escalate [REA-Voter]: Corroborated confirmed RedactX + OpenJEV DLP exfiltration by 'chrome.exe' -> 'dlptest.com' ([\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"])"
+        },
+        {
+          "voter": "RedactX-Deterministic-Validators",
+          "escalate": true,
+          "confidence": 0.9685050330513804,
+          "weight": 1.5,
+          "reason": "validated [\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"]"
+        },
+        {
+          "voter": "Google-SafeBrowsing-Voter",
+          "escalate": true,
+          "confidence": 0.94,
+          "weight": 1.25,
+          "reason": "Escalate [Google-SafeBrowsing-Voter]: External upload sink 'dlptest.com' corroborated for confirmed PII/Crown-Jewel exfiltration (prefix=67d50e6b)"
+        }
+      ],
+      "weighted_probability": 0.9722968271958309,
+      "escalations": 4,
+      "reached": true
+    },
+    "actions": [
+      {
+        "kind": "network_block",
+        "ok": true,
+        "detail": "outbound block 'OshoosiDLP-b792acb686df' for C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe -> [\"104.26.0.68\", \"104.26.1.68\", \"172.67.75.74\"]",
+        "reverted": false
+      }
+    ],
+    "vault": null,
+    "expires_at": "2026-10-25T23:37:30.819733300+00:00",
+    "restored": false
+  },
+  "dlpc-9a22af880b7344aa83b7605741ba00b3": {
+    "containment_id": "dlpc-9a22af880b7344aa83b7605741ba00b3",
+    "event_id": "dlp-89590df192a047bc9f02ee4e93b0e6c0",
+    "decided_at": "2026-10-25T23:25:29.744029100+00:00",
+    "decision": "DestinationBlocked",
+    "reasons": [],
+    "actor": "chrome.exe",
+    "pid": null,
+    "image_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "destination_host": "dlptest.com",
+    "destination_ips": [
+      "104.26.0.68",
+      "104.26.1.68",
+      "172.67.75.74"
+    ],
+    "rule_name": "OshoosiDLP-9a22af880b73",
+    "signature_verified": true,
+    "is_browser": true,
+    "rea_malicious_reason": null,
+    "injection_indicators": [],
+    "redactx_containment_mode": "balanced_utility",
+    "redactx_validated_categories": [
+      "CREDIT_CARD_PAN",
+      "US_SSN",
+      "EMAIL_ADDRESS",
+      "HIPAA_NPI"
+    ],
+    "redactx_doc_score": 0.9999,
+    "redactx_max_span_score": 0.9685050330513804,
+    "redactx_confirmed_containment": true,
+    "openjev_choice": "BLOCK_AND_SCRUB",
+    "openjev_noul_p": 0.9999,
+    "openjev_score": 4.15,
+    "openjev_enforcement_agreed": true,
+    "voters": {
+      "ballots": [
+        {
+          "voter": "OpenJEV-Voter",
+          "escalate": true,
+          "confidence": 0.9999,
+          "weight": 1.25,
+          "reason": "Veto [OpenJEV-Voter]: Joint Evidence Voting (Noul p_clean=0.998, Choice=PASS_CLEAN, Score=1.06/5, T=1.08) attested zero credential/PII exfiltration risk"
+        },
+        {
+          "voter": "REA-Voter",
+          "escalate": true,
+          "confidence": 0.98,
+          "weight": 1.5,
+          "reason": "Escalate [REA-Voter]: Corroborated confirmed RedactX + OpenJEV DLP exfiltration by 'chrome.exe' -> 'dlptest.com' ([\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"])"
+        },
+        {
+          "voter": "RedactX-Deterministic-Validators",
+          "escalate": true,
+          "confidence": 0.9685050330513804,
+          "weight": 1.5,
+          "reason": "validated [\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"]"
+        },
+        {
+          "voter": "Google-SafeBrowsing-Voter",
+          "escalate": true,
+          "confidence": 0.94,
+          "weight": 1.25,
+          "reason": "Escalate [Google-SafeBrowsing-Voter]: External upload sink 'dlptest.com' corroborated for confirmed PII/Crown-Jewel exfiltration (prefix=67d50e6b)"
+        }
+      ],
+      "weighted_probability": 0.9722968271958309,
+      "escalations": 4,
+      "reached": true
+    },
+    "actions": [
+      {
+        "kind": "network_block",
+        "ok": true,
+        "detail": "outbound block 'OshoosiDLP-9a22af880b73' for C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe -> [\"104.26.0.68\", \"104.26.1.68\", \"172.67.75.74\"]",
+        "reverted": false
+      }
+    ],
+    "vault": null,
+    "expires_at": "2026-10-25T23:35:29.745517900+00:00",
+    "restored": false
+  },
+  "dlpc-3bfda5a2c9454ee08fec16f6e3b78bb6": {
+    "containment_id": "dlpc-3bfda5a2c9454ee08fec16f6e3b78bb6",
+    "event_id": "dlp-faebb59e0d364ef78ebab3ea6093cbaa",
+    "decided_at": "2026-10-25T23:23:32.917894800+00:00",
+    "decision": "DestinationBlocked",
+    "reasons": [],
+    "actor": "chrome.exe",
+    "pid": null,
+    "image_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "destination_host": "dlptest.com",
+    "destination_ips": [
+      "104.26.0.68",
+      "104.26.1.68",
+      "172.67.75.74"
+    ],
+    "rule_name": "OshoosiDLP-3bfda5a2c945",
+    "signature_verified": true,
+    "is_browser": true,
+    "rea_malicious_reason": null,
+    "injection_indicators": [],
+    "redactx_containment_mode": "balanced_utility",
+    "redactx_validated_categories": [
+      "CREDIT_CARD_PAN",
+      "US_SSN",
+      "EMAIL_ADDRESS",
+      "HIPAA_NPI"
+    ],
+    "redactx_doc_score": 0.9999,
+    "redactx_max_span_score": 0.9685050330513804,
+    "redactx_confirmed_containment": true,
+    "openjev_choice": "BLOCK_AND_SCRUB",
+    "openjev_noul_p": 0.9999,
+    "openjev_score": 4.15,
+    "openjev_enforcement_agreed": true,
+    "voters": {
+      "ballots": [
+        {
+          "voter": "OpenJEV-Voter",
+          "escalate": true,
+          "confidence": 0.9999,
+          "weight": 1.25,
+          "reason": "Veto [OpenJEV-Voter]: Joint Evidence Voting (Noul p_clean=0.998, Choice=PASS_CLEAN, Score=1.06/5, T=1.08) attested zero credential/PII exfiltration risk"
+        },
+        {
+          "voter": "REA-Voter",
+          "escalate": true,
+          "confidence": 0.98,
+          "weight": 1.5,
+          "reason": "Escalate [REA-Voter]: Corroborated confirmed RedactX + OpenJEV DLP exfiltration by 'chrome.exe' -> 'dlptest.com' ([\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"])"
+        },
+        {
+          "voter": "RedactX-Deterministic-Validators",
+          "escalate": true,
+          "confidence": 0.9685050330513804,
+          "weight": 1.5,
+          "reason": "validated [\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"]"
+        },
+        {
+          "voter": "Google-SafeBrowsing-Voter",
+          "escalate": true,
+          "confidence": 0.94,
+          "weight": 1.25,
+          "reason": "Escalate [Google-SafeBrowsing-Voter]: External upload sink 'dlptest.com' corroborated for confirmed PII/Crown-Jewel exfiltration (prefix=67d50e6b)"
+        }
+      ],
+      "weighted_probability": 0.9722968271958308,
+      "escalations": 4,
+      "reached": true
+    },
+    "actions": [
+      {
+        "kind": "network_block",
+        "ok": true,
+        "detail": "outbound block 'OshoosiDLP-3bfda5a2c945' for C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe -> [\"104.26.0.68\", \"104.26.1.68\", \"172.67.75.74\"]",
+        "reverted": false
+      }
+    ],
+    "vault": null,
+    "expires_at": "2026-10-25T23:33:32.919597300+00:00",
+    "restored": false
+  },
+  "dlpc-5136dd43396b4321aad0c3740d692c86": {
+    "containment_id": "dlpc-5136dd43396b4321aad0c3740d692c86",
+    "event_id": "dlp-aa3ad12db69240f296ea175a32c229ef",
+    "decided_at": "2026-10-25T23:21:05.103181200+00:00",
+    "decision": "DestinationBlocked",
+    "reasons": [
+      "Restored by verified-clean-upload at 2026-10-25T23:21:20.395355100+00:00"
+    ],
+    "actor": "chrome.exe",
+    "pid": null,
+    "image_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "destination_host": "dlptest.com",
+    "destination_ips": [
+      "104.26.0.68",
+      "104.26.1.68",
+      "172.67.75.74"
+    ],
+    "rule_name": "OshoosiDLP-5136dd43396b",
+    "signature_verified": true,
+    "is_browser": true,
+    "rea_malicious_reason": null,
+    "injection_indicators": [],
+    "redactx_containment_mode": "balanced_utility",
+    "redactx_validated_categories": [
+      "CREDIT_CARD_PAN",
+      "US_SSN",
+      "EMAIL_ADDRESS",
+      "HIPAA_NPI"
+    ],
+    "redactx_doc_score": 0.9999,
+    "redactx_max_span_score": 0.9685050330513804,
+    "redactx_confirmed_containment": true,
+    "openjev_choice": "BLOCK_AND_SCRUB",
+    "openjev_noul_p": 0.9999,
+    "openjev_score": 4.15,
+    "openjev_enforcement_agreed": true,
+    "voters": {
+      "ballots": [
+        {
+          "voter": "OpenJEV-Voter",
+          "escalate": true,
+          "confidence": 0.9999,
+          "weight": 1.25,
+          "reason": "Veto [OpenJEV-Voter]: Joint Evidence Voting (Noul p_clean=0.998, Choice=PASS_CLEAN, Score=1.06/5, T=1.08) attested zero credential/PII exfiltration risk"
+        },
+        {
+          "voter": "REA-Voter",
+          "escalate": true,
+          "confidence": 0.98,
+          "weight": 1.5,
+          "reason": "Escalate [REA-Voter]: Corroborated confirmed RedactX + OpenJEV DLP exfiltration by 'chrome.exe' -> 'dlptest.com' ([\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"])"
+        },
+        {
+          "voter": "RedactX-Deterministic-Validators",
+          "escalate": true,
+          "confidence": 0.9685050330513804,
+          "weight": 1.5,
+          "reason": "validated [\"CREDIT_CARD_PAN\", \"US_SSN\", \"EMAIL_ADDRESS\", \"HIPAA_NPI\"]"
+        },
+        {
+          "voter": "Google-SafeBrowsing-Voter",
+          "escalate": true,
+          "confidence": 0.94,
+          "weight": 1.25,
+          "reason": "Escalate [Google-SafeBrowsing-Voter]: External upload sink 'dlptest.com' corroborated for confirmed PII/Crown-Jewel exfiltration (prefix=67d50e6b)"
+        }
+      ],
+      "weighted_probability": 0.9722968271958308,
+      "escalations": 4,
+      "reached": true
+    },
+    "actions": [
+      {
+        "kind": "network_block",
+        "ok": true,
+        "detail": "outbound block 'OshoosiDLP-5136dd43396b' for C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe -> [\"104.26.0.68\", \"104.26.1.68\", \"172.67.75.74\"]",
+        "reverted": true
+      }
+    ],
+    "vault": null,
+    "expires_at": "2026-10-25T23:31:05.106254+00:00",
+    "restored": true
+  }
+}

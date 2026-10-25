@@ -1515,18 +1515,11 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
                     })
                     .unwrap_or(false);
 
-                if comm_match {
-                    true
-                } else if sink_match && preview_match {
-                    true
-                } else if preview_match
-                    && req.destination_sink.is_none()
-                    && req.zk_commitment_hex.is_none()
-                {
-                    true
-                } else {
-                    false
-                }
+                comm_match
+                    || (sink_match && preview_match)
+                    || (preview_match
+                        && req.destination_sink.is_none()
+                        && req.zk_commitment_hex.is_none())
             };
 
             if is_match {
@@ -1602,10 +1595,9 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
             if !outcome.restored
                 && outcome.decision
                     == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
+                && !outcome.destination_host.is_empty()
             {
-                if !outcome.destination_host.is_empty() {
-                    target_destinations.insert(outcome.destination_host.clone());
-                }
+                target_destinations.insert(outcome.destination_host.clone());
             }
         }
     }
