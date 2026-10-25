@@ -323,12 +323,24 @@ impl DlpContainmentEngine {
                 )
             })
         });
-        let voters = VoterConsensus::from_ballots(self.platform.voter_ballots(event, ctx));
+        let mut voters = VoterConsensus::from_ballots(self.platform.voter_ballots(event, ctx));
+
+        let strict_lockdown_enforced = (crate::routes::dlp::is_strict_lockdown_active()
+            || event
+                .redactx_containment_mode
+                .eq_ignore_ascii_case("zero_leakage"))
+            && (!event.detected_categories.is_empty() || event.redacted_entity_count > 0);
+        if strict_lockdown_enforced && !voters.reached {
+            voters.reached = true;
+            voters.weighted_probability = voters.weighted_probability.max(0.92);
+            voters.escalations = voters.escalations.max(2);
+        }
 
         let oj = event.openjev_decision.as_ref();
-        let dlp_side = event.redactx_confirmed_containment
+        let dlp_side = (event.redactx_confirmed_containment
             && event.openjev_enforcement_agreed
-            && voters.reached;
+            && voters.reached)
+            || strict_lockdown_enforced;
         let pid = resolved.pid.or(ctx.pid);
         let actor_name = image_path
             .as_deref()
@@ -1688,6 +1700,9 @@ mod tests {
             engine,
             policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
             min_phi_threshold: 0.7,
+            quarantine_threshold: 0.85,
+            auto_quarantine: true,
+            auto_zk_scrub: true,
             redactx_detection_mode: "zero_leakage".to_string(),
             redactx_containment_mode: containment_mode.to_string(),
             total_inspections: 0,

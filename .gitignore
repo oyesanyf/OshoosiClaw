@@ -61,6 +61,9 @@ osoosi.db*
 killchain_state.json
 workflow_guard_state.json
 **/workflow_guard_state.json
+database/dlp_containment_registry.json
+crates/osoosi-dashboard/database/dlp_containment_registry.json
+**/dlp_containment_registry.json
 /backups/
 backups/
 

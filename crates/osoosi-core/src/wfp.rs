@@ -803,7 +803,7 @@ pub fn has_active_tcp_socket_for_ips(ips: &[std::net::IpAddr]) -> bool {
         let Ok(h_mod) = (unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }) else {
             return false;
         };
-        let Some(p_get) = (unsafe { GetProcAddress(h_mod, PCSTR(b"GetTcpTable\0".as_ptr())) })
+        let Some(p_get) = (unsafe { GetProcAddress(h_mod, PCSTR(c"GetTcpTable".as_ptr() as *const u8)) })
         else {
             return false;
         };
@@ -890,11 +890,11 @@ pub fn terminate_active_tcp_sockets_for_ips(ips: &[std::net::IpAddr]) -> usize {
         let Ok(h_mod) = (unsafe { LoadLibraryW(PCWSTR(dll_name.as_ptr())) }) else {
             return 0;
         };
-        let Some(p_get) = (unsafe { GetProcAddress(h_mod, PCSTR(b"GetTcpTable\0".as_ptr())) })
+        let Some(p_get) = (unsafe { GetProcAddress(h_mod, PCSTR(c"GetTcpTable".as_ptr() as *const u8)) })
         else {
             return 0;
         };
-        let Some(p_set) = (unsafe { GetProcAddress(h_mod, PCSTR(b"SetTcpEntry\0".as_ptr())) })
+        let Some(p_set) = (unsafe { GetProcAddress(h_mod, PCSTR(c"SetTcpEntry".as_ptr() as *const u8)) })
         else {
             return 0;
         };

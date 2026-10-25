@@ -1466,7 +1466,7 @@ impl OsoosiTwoTierDlpEngine {
                     }
                     let tok = raw_tok.trim();
                     let tok_len = tok.len();
-                    if tok_len >= 16 && tok_len <= 4096 {
+                    if (16..=4096).contains(&tok_len) {
                         if tok_len.is_multiple_of(2) && tok.bytes().all(|b| b.is_ascii_hexdigit()) {
                             if let Ok(bytes) = hex::decode(tok) {
                                 if bytes.iter().all(|&c| (0x20..=0x7E).contains(&c)) {

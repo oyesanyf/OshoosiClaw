@@ -170,6 +170,9 @@ pub struct DlpDashboardState {
     pub engine: osoosi_dp::OsoosiTwoTierDlpEngine,
     pub policy_mode: String,
     pub min_phi_threshold: f64,
+    pub quarantine_threshold: f64,
+    pub auto_quarantine: bool,
+    pub auto_zk_scrub: bool,
     /// RedactX operating mode used for detection and alerting (high recall).
     pub redactx_detection_mode: String,
     /// RedactX operating mode whose thresholds autonomous containment must clear (high precision).
@@ -180,6 +183,28 @@ pub struct DlpDashboardState {
     pub zk_bft_proofs_verified: u64,
     pub crown_jewels: Vec<DlpCrownJewelRecord>,
     pub recent_events: Vec<DlpInspectionEventRecord>,
+}
+
+/// Returns `true` when the active DLP operating mode is Strict Lockdown
+/// (`QUARANTINE_ON_CROWN_JEWEL`, `STRICT_LOCKDOWN`, `ZERO_LEAKAGE`, or `min_phi_threshold <= 0.40`).
+/// In Strict Lockdown, zero PHI or PII of any kind (including contact PII such as email addresses,
+/// phone numbers, fax numbers, and previously user-released false positives that contain PII/PHI)
+/// is permitted to egress.
+pub fn is_strict_lockdown_mode(policy_mode: &str, min_phi_threshold: f64) -> bool {
+    let m = policy_mode.trim().to_ascii_uppercase();
+    m == "QUARANTINE_ON_CROWN_JEWEL"
+        || m == "STRICT_LOCKDOWN"
+        || m == "ZERO_LEAKAGE"
+        || m == "ENFORCE_STRICT"
+        || min_phi_threshold <= 0.40
+}
+
+pub fn is_strict_lockdown_active() -> bool {
+    let state = get_global_dlp_state().read();
+    is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold)
+        || state
+            .redactx_containment_mode
+            .eq_ignore_ascii_case("zero_leakage")
 }
 
 static GLOBAL_DLP_STATE: std::sync::OnceLock<osoosi_core::parking_lot::RwLock<DlpDashboardState>> =
@@ -235,7 +260,10 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
         let state = DlpDashboardState {
             engine,
             policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
-            min_phi_threshold: 0.70,
+            min_phi_threshold: 0.50,
+            quarantine_threshold: 0.80,
+            auto_quarantine: true,
+            auto_zk_scrub: true,
             redactx_detection_mode: "zero_leakage".to_string(),
             redactx_containment_mode: "balanced_utility".to_string(),
             total_inspections: 0,
@@ -374,18 +402,23 @@ pub fn inspect_and_record_with_options(
 
     // RedactX-v3 OpenJEV hybrid: detection runs at the (high-recall) detection mode; the
     // (high-precision) containment mode thresholds are evaluated on the same calibrated scores.
-    let detection_mode = osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode);
-    let containment_mode =
-        osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_containment_mode);
+    let strict_lockdown = is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
+    let detection_mode = if strict_lockdown {
+        osoosi_dp::RedactXOperatingMode::zero_leakage()
+    } else {
+        osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode)
+    };
+    let containment_mode = if strict_lockdown {
+        osoosi_dp::RedactXOperatingMode::zero_leakage()
+    } else {
+        osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_containment_mode)
+    };
     let openjev = state.engine.evaluate_openjev_hybrid(
         actor_process,
         destination_sink,
         payload_str,
         Some(&detection_mode.mode_name),
     );
-    let openjev_enforcement_agreed = openjev.openjev_enforcement_agreed();
-    let redactx_confirmed_detection = openjev.redactx_confirmed_at(&detection_mode);
-    let redactx_confirmed_containment = openjev.redactx_confirmed_at(&containment_mode);
     for cat in &openjev.validator_confirmed_categories {
         if !tier1.detected_categories.contains(cat) {
             tier1.detected_categories.push(cat.clone());
@@ -399,14 +432,27 @@ pub fn inspect_and_record_with_options(
         }
     }
 
-    let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
     let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
-    let mut final_verdict = osoosi_dp::aggregate_dlp_decision(
-        dest_forbid,
-        cj_export_denied,
-        voter_quarantine,
-        dlp_detected,
-    );
+    let strict_lockdown_phi_or_pii =
+        strict_lockdown && (dlp_detected || openjev.noul_contains_phi_pii.value);
+    let openjev_enforcement_agreed =
+        openjev.openjev_enforcement_agreed() || strict_lockdown_phi_or_pii;
+    let redactx_confirmed_detection =
+        openjev.redactx_confirmed_at(&detection_mode) || strict_lockdown_phi_or_pii;
+    let redactx_confirmed_containment =
+        openjev.redactx_confirmed_at(&containment_mode) || strict_lockdown_phi_or_pii;
+
+    let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
+    let mut final_verdict = if strict_lockdown_phi_or_pii {
+        osoosi_dp::DlpVerdict::Quarantine
+    } else {
+        osoosi_dp::aggregate_dlp_decision(
+            dest_forbid,
+            cj_export_denied,
+            voter_quarantine,
+            dlp_detected,
+        )
+    };
 
     // Enforce benign invariant: if tier1.detected_categories.is_empty() and !dest_forbid and !cj_export_denied and !voter_quarantine,
     // then final_verdict = DlpVerdict::Allow, tier1.allowed = true, authorization_decision = "ALLOW", dlp_response = "ALLOW", and tier1.sensitivity_potential_phi = 0.0.
@@ -431,6 +477,8 @@ pub fn inspect_and_record_with_options(
         tier1.escalate_to_tier2 = true;
         if cj_export_denied || dest_forbid {
             tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
+        } else if strict_lockdown_phi_or_pii {
+            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.92);
         } else if voter_quarantine {
             tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
         }
@@ -544,6 +592,7 @@ pub fn inspect_and_record_with_options(
     };
 
     if !event.allowed
+        && !strict_lockdown_phi_or_pii
         && is_in_released_allowlist(
             &event.destination_sink,
             &event.zk_proof_commitment,
@@ -604,11 +653,13 @@ pub fn inspect_and_record_shared(
         cj_export_denied,
         dest_forbid,
         dest_reason,
+        strict_lockdown,
         detection_mode,
         containment_mode,
         openjev,
     ) = {
         let state = get_global_dlp_state().read();
+        let strict_lockdown = is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
         let tier1 =
             state
                 .engine
@@ -622,10 +673,16 @@ pub fn inspect_and_record_shared(
             destination_sink,
             channel,
         );
-        let detection_mode =
-            osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode);
-        let containment_mode =
-            osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_containment_mode);
+        let detection_mode = if strict_lockdown {
+            osoosi_dp::RedactXOperatingMode::zero_leakage()
+        } else {
+            osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_detection_mode)
+        };
+        let containment_mode = if strict_lockdown {
+            osoosi_dp::RedactXOperatingMode::zero_leakage()
+        } else {
+            osoosi_dp::RedactXOperatingMode::from_name(&state.redactx_containment_mode)
+        };
         let openjev = state.engine.evaluate_openjev_hybrid(
             actor_process,
             destination_sink,
@@ -638,6 +695,7 @@ pub fn inspect_and_record_shared(
             cj_export_denied,
             dest_forbid,
             dest_reason,
+            strict_lockdown,
             detection_mode,
             containment_mode,
             openjev,
@@ -710,9 +768,6 @@ pub fn inspect_and_record_shared(
     let zk_ok = osoosi_dp::PresidioGlinerPiiZeroGuard::verify_zk_bft_proof(&proof);
     osoosi_dp::volatile_scrub_bytes(unsafe { combined_for_scrub.as_bytes_mut() });
 
-    let openjev_enforcement_agreed = openjev.openjev_enforcement_agreed();
-    let redactx_confirmed_detection = openjev.redactx_confirmed_at(&detection_mode);
-    let redactx_confirmed_containment = openjev.redactx_confirmed_at(&containment_mode);
     for cat in &openjev.validator_confirmed_categories {
         if !tier1.detected_categories.contains(cat) {
             tier1.detected_categories.push(cat.clone());
@@ -726,14 +781,27 @@ pub fn inspect_and_record_shared(
         }
     }
 
-    let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
     let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
-    let mut final_verdict = osoosi_dp::aggregate_dlp_decision(
-        dest_forbid,
-        cj_export_denied,
-        voter_quarantine,
-        dlp_detected,
-    );
+    let strict_lockdown_phi_or_pii =
+        strict_lockdown && (dlp_detected || openjev.noul_contains_phi_pii.value);
+    let openjev_enforcement_agreed =
+        openjev.openjev_enforcement_agreed() || strict_lockdown_phi_or_pii;
+    let redactx_confirmed_detection =
+        openjev.redactx_confirmed_at(&detection_mode) || strict_lockdown_phi_or_pii;
+    let redactx_confirmed_containment =
+        openjev.redactx_confirmed_at(&containment_mode) || strict_lockdown_phi_or_pii;
+
+    let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
+    let mut final_verdict = if strict_lockdown_phi_or_pii {
+        osoosi_dp::DlpVerdict::Quarantine
+    } else {
+        osoosi_dp::aggregate_dlp_decision(
+            dest_forbid,
+            cj_export_denied,
+            voter_quarantine,
+            dlp_detected,
+        )
+    };
 
     if tier1.detected_categories.is_empty()
         && !dest_forbid
@@ -756,6 +824,8 @@ pub fn inspect_and_record_shared(
         tier1.escalate_to_tier2 = true;
         if cj_export_denied || dest_forbid {
             tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(1.0);
+        } else if strict_lockdown_phi_or_pii {
+            tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.92);
         } else if voter_quarantine {
             tier1.sensitivity_potential_phi = tier1.sensitivity_potential_phi.max(0.85);
         }
@@ -856,6 +926,7 @@ pub fn inspect_and_record_shared(
     };
 
     if !event.allowed
+        && !strict_lockdown_phi_or_pii
         && is_in_released_allowlist(
             &event.destination_sink,
             &event.zk_proof_commitment,
@@ -1293,26 +1364,75 @@ pub async fn post_dlp_scan_har() -> Json<Value> {
 
 pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     let mut state = get_global_dlp_state().write();
+    let explicit_detection = body.get("redactx_detection_mode").and_then(|v| v.as_str());
+    let explicit_containment = body
+        .get("redactx_containment_mode")
+        .and_then(|v| v.as_str());
+    let explicit_threshold = body
+        .get("min_phi_threshold")
+        .or_else(|| body.get("action_threshold"))
+        .and_then(|v| v.as_f64());
+
     if let Some(mode) = body.get("policy_mode").and_then(|v| v.as_str()) {
         state.policy_mode = mode.to_string();
     }
-    if let Some(threshold) = body.get("min_phi_threshold").and_then(|v| v.as_f64()) {
+    if let Some(threshold) = explicit_threshold {
         state.min_phi_threshold = threshold.clamp(0.0, 1.0);
+    } else if body.get("policy_mode").is_some() {
+        if state
+            .policy_mode
+            .eq_ignore_ascii_case("QUARANTINE_ON_CROWN_JEWEL")
+            || state.policy_mode.eq_ignore_ascii_case("STRICT_LOCKDOWN")
+            || state.policy_mode.eq_ignore_ascii_case("ENFORCE_STRICT")
+        {
+            state.min_phi_threshold = 0.35;
+            state.quarantine_threshold = 0.50;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+        } else if state.policy_mode.eq_ignore_ascii_case("MONITOR_AND_SCRUB") {
+            state.min_phi_threshold = 0.80;
+            state.quarantine_threshold = 0.95;
+            state.auto_quarantine = false;
+            state.auto_zk_scrub = true;
+        } else {
+            state.min_phi_threshold = 0.50;
+            state.quarantine_threshold = 0.80;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+        }
     }
-    if let Some(mode) = body.get("redactx_detection_mode").and_then(|v| v.as_str()) {
+    if let Some(qt) = body.get("quarantine_threshold").and_then(|v| v.as_f64()) {
+        state.quarantine_threshold = qt.clamp(0.0, 1.0);
+    }
+    if let Some(aq) = body.get("auto_quarantine").and_then(|v| v.as_bool()) {
+        state.auto_quarantine = aq;
+    }
+    if let Some(azk) = body.get("auto_zk_scrub").and_then(|v| v.as_bool()) {
+        state.auto_zk_scrub = azk;
+    }
+
+    if let Some(mode) = explicit_detection {
         state.redactx_detection_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
     }
-    if let Some(mode) = body
-        .get("redactx_containment_mode")
-        .and_then(|v| v.as_str())
-    {
+    if let Some(mode) = explicit_containment {
         state.redactx_containment_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
+    } else if is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold) {
+        state.redactx_detection_mode = "zero_leakage".to_string();
+        state.redactx_containment_mode = "zero_leakage".to_string();
+    } else {
+        state.redactx_detection_mode = "zero_leakage".to_string();
+        state.redactx_containment_mode = "balanced_utility".to_string();
     }
 
     Json(json!({
         "ok": true,
         "policy_mode": state.policy_mode,
         "min_phi_threshold": state.min_phi_threshold,
+        "action_threshold": state.min_phi_threshold,
+        "quarantine_threshold": state.quarantine_threshold,
+        "auto_quarantine": state.auto_quarantine,
+        "auto_zk_scrub": state.auto_zk_scrub,
+        "strict_lockdown": is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold),
         "redactx_detection_mode": state.redactx_detection_mode,
         "redactx_containment_mode": state.redactx_containment_mode
     }))
@@ -1322,137 +1442,146 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
 /// POST requests or file uploads. When `content` is empty but `file_path`/`file_name` or
 /// `dlptest.com` is present, it autonomously resolves the local staging file from disk.
 pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
-    let actor_process = body
-        .get("actor_process")
-        .and_then(|v| v.as_str())
-        .unwrap_or("chrome.exe");
-    let image_path = body
-        .get("image_path")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let pid = body.get("pid").and_then(|v| v.as_u64()).map(|n| n as u32);
-    let destination_sink = body
-        .get("url")
-        .or_else(|| body.get("destination_sink"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("https://dlptest.com/https-post/");
-    let channel = body
-        .get("channel")
-        .and_then(|v| v.as_str())
-        .unwrap_or("BROWSER_FILE_UPLOAD");
-    let file_name = body.get("file_name").and_then(|v| v.as_str());
-    let file_path = body.get("file_path").and_then(|v| v.as_str());
-    let raw_content = body.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let result = tokio::task::spawn_blocking(move || {
+        let actor_process = body
+            .get("actor_process")
+            .and_then(|v| v.as_str())
+            .unwrap_or("chrome.exe");
+        let image_path = body
+            .get("image_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let pid = body.get("pid").and_then(|v| v.as_u64()).map(|n| n as u32);
+        let destination_sink = body
+            .get("url")
+            .or_else(|| body.get("destination_sink"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("https://dlptest.com/https-post/");
+        let channel = body
+            .get("channel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("BROWSER_FILE_UPLOAD");
+        let file_name = body.get("file_name").and_then(|v| v.as_str());
+        let file_path = body.get("file_path").and_then(|v| v.as_str());
+        let raw_content = body.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
-    let mut resolved_content = raw_content.to_string();
-    let mut resolved_file_info: Option<crate::routes::har_dlp::ResolvedUploadedFile> = None;
+        let mut resolved_content = raw_content.to_string();
+        let mut resolved_file_info: Option<crate::routes::har_dlp::ResolvedUploadedFile> = None;
 
-    if resolved_content.trim().is_empty() || resolved_content.starts_with("[file upload:") {
-        let candidate = file_path.or(file_name).or_else(|| {
-            if raw_content.starts_with("[file upload:") {
-                Some(raw_content)
-            } else {
-                None
+        if resolved_content.trim().is_empty() || resolved_content.starts_with("[file upload:") {
+            let candidate = file_path.or(file_name).or_else(|| {
+                if raw_content.starts_with("[file upload:") {
+                    Some(raw_content)
+                } else {
+                    None
+                }
+            });
+            if let Some(resolved) =
+                crate::routes::har_dlp::resolve_local_uploaded_file(candidate, destination_sink)
+            {
+                resolved_content = resolved.content.clone();
+                resolved_file_info = Some(resolved);
             }
-        });
-        if let Some(resolved) =
-            crate::routes::har_dlp::resolve_local_uploaded_file(candidate, destination_sink)
-        {
-            resolved_content = resolved.content.clone();
-            resolved_file_info = Some(resolved);
         }
-    }
 
-    let mut payload_builder = String::with_capacity(resolved_content.len() + 512);
-    if let Some(fields) = body.get("form_fields").and_then(|v| v.as_object()) {
-        for (k, v) in fields {
-            let val_str = v
-                .as_str()
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| v.to_string());
-            payload_builder.push_str(&format!("{}={}\n", k, val_str));
+        let mut payload_builder = String::with_capacity(resolved_content.len() + 512);
+        if let Some(fields) = body.get("form_fields").and_then(|v| v.as_object()) {
+            for (k, v) in fields {
+                let val_str = v
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| v.to_string());
+                payload_builder.push_str(&format!("{}={}\n", k, val_str));
+            }
         }
-    }
-    if let Some(ref finfo) = resolved_file_info {
-        payload_builder.push_str(&format!(
-            "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n",
-            finfo.resolved_path.display(),
-            finfo.magika_label,
-            finfo.byte_size
-        ));
-    }
-    payload_builder.push_str(&resolved_content);
+        if let Some(ref finfo) = resolved_file_info {
+            payload_builder.push_str(&format!(
+                "--- UPLOADED FILE: {} (magika: {}, size: {} bytes) ---\n",
+                finfo.resolved_path.display(),
+                finfo.magika_label,
+                finfo.byte_size
+            ));
+        }
+        payload_builder.push_str(&resolved_content);
 
-    let (_tier1, _proof, mut event) = {
-        let mut state = get_global_dlp_state().write();
-        inspect_and_record_with_options(
-            &mut state,
+        let (_tier1, _proof, mut event) = inspect_and_record_shared(
             actor_process,
             destination_sink,
             channel,
             &payload_builder,
             "BROWSER_EVENT",
             DlpInspectOptions::default(),
-        )
-    };
+        );
 
-    // Check database/dlp_released_allowlist.json to prevent re-isolating released false positives
-    if crate::routes::har_dlp::is_dlp_event_allowlisted(
-        &event.destination_sink,
-        &event.scrubbed_preview,
-        &event.zk_proof_commitment,
-    ) {
-        event.allowed = true;
-        event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
-        event.dlp_response = "RELEASED_BY_USER".to_string();
-    }
+        let strict_lockdown_has_pii = is_strict_lockdown_active()
+            && (!event.detected_categories.is_empty() || event.redacted_entity_count > 0);
 
-    let engine = crate::routes::dlp_containment::global_containment_engine();
-    let host = if !event.destination.is_empty() {
-        event.destination.clone()
-    } else {
-        crate::routes::har_dlp::host_of(destination_sink)
-    };
+        // Check database/dlp_released_allowlist.json only when not in Strict Lockdown with detected PHI/PII
+        if !strict_lockdown_has_pii
+            && crate::routes::har_dlp::is_dlp_event_allowlisted(
+                &event.destination_sink,
+                &event.scrubbed_preview,
+                &event.zk_proof_commitment,
+            )
+        {
+            event.allowed = true;
+            event.authorization_decision = "ALLOW (USER_RELEASED)".to_string();
+            event.dlp_response = "RELEASED_BY_USER".to_string();
+        }
 
-    if !event.allowed {
-        let ctx = crate::routes::dlp_containment::ActorContext {
-            actor: actor_process.to_string(),
-            pid,
-            image_path,
-            destination_url: destination_sink.to_string(),
-            destination_host: host.clone(),
-            injection_indicators: Vec::new(),
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+        let host = if !event.destination.is_empty() {
+            event.destination.clone()
+        } else {
+            crate::routes::har_dlp::host_of(destination_sink)
         };
-        let outcome =
-            engine.evaluate_and_respond(&event, &ctx, crate::routes::har_dlp::get_backend());
-        let outcome_json = serde_json::to_value(&outcome).unwrap_or(Value::Null);
-        event.containment = Some(outcome_json.clone());
-        let mut state = get_global_dlp_state().write();
-        attach_containment_to_event(&mut state, &event.id, outcome_json);
-    } else {
-        let restored = engine
-            .restore_browser_destination_blocks_for_host(&host, "verified-clean-browser-upload");
-        if let Some(first_restored) = restored.first() {
-            let outcome_json = serde_json::to_value(first_restored).unwrap_or(Value::Null);
+
+        if !event.allowed {
+            let ctx = crate::routes::dlp_containment::ActorContext {
+                actor: actor_process.to_string(),
+                pid,
+                image_path,
+                destination_url: destination_sink.to_string(),
+                destination_host: host.clone(),
+                injection_indicators: Vec::new(),
+            };
+            let outcome =
+                engine.evaluate_and_respond(&event, &ctx, crate::routes::har_dlp::get_backend());
+            let outcome_json = serde_json::to_value(&outcome).unwrap_or(Value::Null);
             event.containment = Some(outcome_json.clone());
             let mut state = get_global_dlp_state().write();
             attach_containment_to_event(&mut state, &event.id, outcome_json);
+        } else {
+            let restored = engine.restore_browser_destination_blocks_for_host(
+                &host,
+                "verified-clean-browser-upload",
+            );
+            if let Some(first_restored) = restored.first() {
+                let outcome_json = serde_json::to_value(first_restored).unwrap_or(Value::Null);
+                event.containment = Some(outcome_json.clone());
+                let mut state = get_global_dlp_state().write();
+                attach_containment_to_event(&mut state, &event.id, outcome_json);
+            }
         }
-    }
-    if let Err(e) = persist_dlp_event(&event) {
-        tracing::debug!("DLP browser event persistence failed: {}", e);
-    }
+        if let Err(e) = persist_dlp_event(&event) {
+            tracing::debug!("DLP browser event persistence failed: {}", e);
+        }
 
-    Json(json!({
-        "ok": true,
-        "allowed": event.allowed,
-        "authorization_decision": event.authorization_decision,
-        "dlp_response": event.dlp_response,
-        "sensitivity_potential_phi": event.sensitivity_potential_phi,
-        "detected_categories": event.detected_categories,
-        "scrubbed_preview": event.scrubbed_preview,
-        "event": event
-    }))
+        json!({
+            "ok": true,
+            "allowed": event.allowed,
+            "authorization_decision": event.authorization_decision,
+            "dlp_response": event.dlp_response,
+            "sensitivity_potential_phi": event.sensitivity_potential_phi,
+            "detected_categories": event.detected_categories,
+            "scrubbed_preview": event.scrubbed_preview,
+            "event": event
+        })
+    })
+    .await
+    .unwrap_or_else(|e| json!({ "ok": false, "error": format!("browser_event task failed: {}", e) }));
+
+    Json(result)
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1470,6 +1599,7 @@ pub struct DlpReleaseRequest {
 }
 
 pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value> {
+    let result = tokio::task::spawn_blocking(move || {
     let mut released_count = 0usize;
     let mut newly_released_entries = Vec::new();
     let mut released_event_ids = Vec::new();
@@ -1659,11 +1789,16 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
         }
     }
 
-    Json(json!({
+    json!({
         "ok": true,
         "released_count": released_count,
         "message": format!("Successfully released {} DLP false positive event(s)", released_count)
-    }))
+    })
+    })
+    .await
+    .unwrap_or_else(|e| json!({ "ok": false, "error": format!("release task failed: {}", e) }));
+
+    Json(result)
 }
 
 /// Mounts all Two-Tier DLP routes and legacy aliases.
@@ -1795,9 +1930,16 @@ mod tests {
                 }
             }
 
-            // 3. Clear in-memory state
+            // 3. Clear in-memory state and restore default policy mode
             let mut state = get_global_dlp_state().write();
             state.recent_events.clear();
+            state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+            state.min_phi_threshold = 0.50;
+            state.quarantine_threshold = 0.80;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+            state.redactx_detection_mode = "zero_leakage".to_string();
+            state.redactx_containment_mode = "balanced_utility".to_string();
         }
     }
 
@@ -1896,6 +2038,9 @@ mod tests {
             engine,
             policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
             min_phi_threshold: 0.7,
+            quarantine_threshold: 0.80,
+            auto_quarantine: true,
+            auto_zk_scrub: true,
             redactx_detection_mode: "zero_leakage".to_string(),
             redactx_containment_mode: "conservative_containment".to_string(),
             total_inspections: 0,
@@ -1939,6 +2084,9 @@ mod tests {
             engine,
             policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
             min_phi_threshold: 0.7,
+            quarantine_threshold: 0.80,
+            auto_quarantine: true,
+            auto_zk_scrub: true,
             redactx_detection_mode: "zero_leakage".to_string(),
             redactx_containment_mode: "conservative_containment".to_string(),
             total_inspections: 0,
@@ -2154,6 +2302,79 @@ mod tests {
         assert!(
             !engine.has_active_browser_block_for_host(&host),
             "destination block must be restored on user release"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_strict_lockdown_blocks_all_phi_and_pii_including_loosened_contact_info() {
+        let mut ctx = DlpTestContext::new().await;
+        let (host, dest_url) = ctx.new_host("strict-lockdown-zero-pii");
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+
+        // 1. Switch to Strict Lockdown via post_dlp_policy (simulating clicking Strict Lockdown / Save DLP Policy Changes)
+        let Json(pol_res) = post_dlp_policy(Json(json!({
+            "policy_mode": "QUARANTINE_ON_CROWN_JEWEL",
+            "action_threshold": 0.35,
+            "quarantine_threshold": 0.50,
+            "auto_quarantine": true,
+            "auto_zk_scrub": true
+        })))
+        .await;
+        assert_eq!(pol_res.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            pol_res.get("strict_lockdown").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            pol_res
+                .get("redactx_containment_mode")
+                .and_then(|v| v.as_str()),
+            Some("zero_leakage")
+        );
+
+        // 2. Verify that contact PII (email + phone) that was loosened for normal mode is STRICTLY BLOCKED in Strict Lockdown
+        let contact_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "contact_sheet.txt",
+            "content": "Applicant Contact: jane.doe@example.com, Callback Phone: (415) 555-2671"
+        });
+        let Json(res) = post_dlp_browser_event(Json(contact_payload)).await;
+        assert_eq!(res.get("ok").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(
+            res.get("allowed").and_then(|v| v.as_bool()),
+            Some(false),
+            "Strict Lockdown must not allow any PII (even email/phone loosened in normal mode)"
+        );
+        assert_eq!(
+            res.get("authorization_decision").and_then(|v| v.as_str()),
+            Some("DENY")
+        );
+        assert_eq!(
+            res.get("dlp_response").and_then(|v| v.as_str()),
+            Some("QUARANTINE")
+        );
+        assert!(
+            engine.has_active_browser_block_for_host(&host),
+            "Strict Lockdown must enforce destination block on any PII/PHI exfiltration"
+        );
+
+        // 3. Verify that PHI (SSN / MRN / ICD10) is also strictly blocked in Strict Lockdown
+        let phi_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "patient_phi.txt",
+            "content": "Patient MRN-442109 SSN 123-45-6789 Diagnosis ICD10-E11"
+        });
+        let Json(phi_res) = post_dlp_browser_event(Json(phi_payload)).await;
+        assert_eq!(phi_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            phi_res
+                .get("authorization_decision")
+                .and_then(|v| v.as_str()),
+            Some("DENY")
         );
     }
 }
