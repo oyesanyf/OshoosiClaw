@@ -3,11 +3,11 @@
 //! Dynamically scales telemetry fidelity based on system resources and detection activity.
 
 use osoosi_types::{Priority, ResourceCategory, TelemetryControllerInterface, TelemetryMode};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use sysinfo::System;
-use tokio::sync::{RwLock, Semaphore};
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 pub struct ResourceGuard {
@@ -66,12 +66,13 @@ pub struct TelemetryController {
     pub(crate) last_poll_time: Arc<std::sync::RwLock<Instant>>,
     pub(crate) last_cpu_usage: Arc<std::sync::atomic::AtomicU32>,
     pub(crate) last_mem_usage: Arc<std::sync::atomic::AtomicU32>,
-    sys: Arc<RwLock<System>>,
+    sys: Arc<parking_lot::Mutex<System>>,
     pub guard: Arc<ResourceGuard>,
-    pub(crate) task_sender: tokio::sync::mpsc::UnboundedSender<DeferredTask>,
+    pub(crate) task_sender: tokio::sync::mpsc::Sender<DeferredTask>,
     pub(crate) task_rx:
-        Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<DeferredTask>>>>,
+        Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Receiver<DeferredTask>>>>,
     pub(crate) socket_exhaustion: Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) dropped_tasks: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 pub struct DeferredTask {
@@ -88,18 +89,19 @@ impl Default for TelemetryController {
 
 impl TelemetryController {
     pub fn new() -> Self {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<DeferredTask>();
+        let (tx, rx) = tokio::sync::mpsc::channel::<DeferredTask>(4096);
         Self {
             current_mode: Arc::new(std::sync::RwLock::new(TelemetryMode::Normal)),
             event_rate: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             last_poll_time: Arc::new(std::sync::RwLock::new(Instant::now())),
             last_cpu_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             last_mem_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
-            sys: Arc::new(RwLock::new(System::new_all())),
+            sys: Arc::new(parking_lot::Mutex::new(System::new_all())),
             guard: Arc::new(ResourceGuard::new()),
             task_sender: tx,
             task_rx: Arc::new(std::sync::Mutex::new(Some(rx))),
             socket_exhaustion: Arc::new(AtomicBool::new(false)),
+            dropped_tasks: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -131,39 +133,35 @@ impl TelemetryController {
         // Task 2: Deferred Task Worker
         let worker_self = self.clone();
         tokio::spawn(async move {
-            let mut local_queue = std::collections::VecDeque::new();
             loop {
-                // 1. Collect new tasks
-                while let Ok(d) = task_rx.try_recv() {
-                    local_queue.push_back(d);
-                }
-
-                if local_queue.is_empty() {
-                    if let Some(d) = task_rx.recv().await {
-                        local_queue.push_back(d);
-                    } else {
-                        break; // Channel closed
-                    }
-                }
-
-                // 2. Process tasks based on mode
+                // 1. In Burst mode, hold low-priority tasks in bounded channel and pause
                 let mode = *worker_self
                     .current_mode
                     .read()
                     .unwrap_or_else(|e| e.into_inner());
                 if mode == TelemetryMode::Burst {
-                    // During burst, we only process High priority tasks if any (though usually only Low are deferred)
-                    // and we wait.
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     continue;
                 }
 
-                // Process a batch
+                // 2. Process a batch of up to 16 deferred tasks from bounded channel
                 let mut processed = 0;
-                while processed < 16 && !local_queue.is_empty() {
-                    if let Some(d) = local_queue.pop_front() {
-                        worker_self.execute_deferred(d);
-                        processed += 1;
+                while processed < 16 {
+                    match task_rx.try_recv() {
+                        Ok(d) => {
+                            worker_self.execute_deferred(d);
+                            processed += 1;
+                        }
+                        Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => return,
+                    }
+                }
+
+                // 3. If idle, await next task asynchronously
+                if processed == 0 {
+                    match task_rx.recv().await {
+                        Some(d) => worker_self.execute_deferred(d),
+                        None => break, // Channel closed
                     }
                 }
 
@@ -186,7 +184,7 @@ impl TelemetryController {
         let (cpu_usage, mem_usage) = {
             let sys_arc = self.sys.clone();
             tokio::task::spawn_blocking(move || {
-                let mut sys = sys_arc.blocking_write();
+                let mut sys = sys_arc.lock();
                 sys.refresh_cpu();
                 sys.refresh_memory();
                 (
@@ -412,13 +410,28 @@ impl TelemetryController {
         // are deferred to a priority queue to prevent interference with telemetry ingestion.
         if mode == TelemetryMode::Burst && priority == Priority::Low {
             tracing::debug!("ADAPTIVE CONCURRENCY: Queuing Low priority task during Burst mode.");
-            let _ = self.task_sender.send(DeferredTask {
+            let deferred = DeferredTask {
                 category,
                 priority,
                 task: Box::pin(async move {
                     let _ = task.await;
                 }),
-            });
+            };
+            match self.task_sender.try_send(deferred) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    let dropped = self.dropped_tasks.fetch_add(1, Ordering::Relaxed) + 1;
+                    if dropped == 1 || dropped % 100 == 0 {
+                        warn!(
+                            "ADAPTIVE TASK QUEUE FULL (4096): Dropped Low-priority deferred task under Burst load (total dropped: {})",
+                            dropped
+                        );
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    tracing::debug!("ADAPTIVE CONCURRENCY: Deferred task channel closed, dropping task.");
+                }
+            }
             return;
         }
 
@@ -468,6 +481,10 @@ impl TelemetryController {
         let throttled = self.guard.io_throttled.lock().await;
         (self.guard.io_base as isize - *throttled).max(0) as usize
     }
+
+    pub fn dropped_tasks_count(&self) -> usize {
+        self.dropped_tasks.load(Ordering::Relaxed)
+    }
 }
 
 impl TelemetryControllerInterface for TelemetryController {
@@ -506,3 +523,46 @@ impl TelemetryControllerInterface for TelemetryController {
         Box::pin(self.get_concurrency_limit())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    #[tokio::test]
+    async fn test_bounded_channel_capacity_and_drop_shedding() {
+        let controller = Arc::new(TelemetryController::new());
+        *controller.current_mode.write().unwrap() = TelemetryMode::Burst;
+
+        // Channel capacity is 4096. Send 4096 low-priority tasks:
+        for _ in 0..4096 {
+            controller.spawn_adaptive(ResourceCategory::IO, Priority::Low, async {});
+        }
+        assert_eq!(controller.dropped_tasks_count(), 0);
+
+        // Sending the 4097th low-priority task must shed it and increment dropped_tasks
+        controller.spawn_adaptive(ResourceCategory::IO, Priority::Low, async {});
+        assert_eq!(controller.dropped_tasks_count(), 1);
+
+        // High priority tasks must never be dropped, even when channel is full and in Burst mode
+        let executed = Arc::new(AtomicUsize::new(0));
+        let executed_clone = executed.clone();
+        controller.spawn_adaptive(ResourceCategory::IO, Priority::High, async move {
+            executed_clone.fetch_add(1, Ordering::SeqCst);
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(executed.load(Ordering::SeqCst), 1);
+        assert_eq!(controller.dropped_tasks_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_sys_parking_lot_mutex_adaptation_check() {
+        let controller = TelemetryController::new();
+        let res = controller.run_adaptation_check().await;
+        assert!(res.is_ok());
+        let cpu = f32::from_bits(controller.last_cpu_usage.load(Ordering::Relaxed));
+        assert!(cpu >= 0.0);
+    }
+}
+

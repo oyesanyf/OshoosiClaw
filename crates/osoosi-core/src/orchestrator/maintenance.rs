@@ -230,38 +230,35 @@ impl EdrOrchestrator {
     pub fn fast_in_memory_eviction(&self) -> (u64, serde_json::Value) {
         let cache_ttl = Duration::from_secs(60);
 
-        let expired_behavioral: Vec<String> = self
-            .behavioral_debouncer
-            .iter()
-            .filter(|entry| entry.value().elapsed() >= cache_ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-        let evicted_behavioral = expired_behavioral.len();
-        for key in expired_behavioral {
-            self.behavioral_debouncer.remove(&key);
-        }
+        let mut evicted_behavioral = 0;
+        self.behavioral_debouncer.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted_behavioral += 1;
+                false
+            } else {
+                true
+            }
+        });
 
-        let expired_alerts: Vec<String> = self
-            .alert_suppression_cache
-            .iter()
-            .filter(|entry| entry.value().elapsed() >= cache_ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-        let evicted_alerts = expired_alerts.len();
-        for key in expired_alerts {
-            self.alert_suppression_cache.remove(&key);
-        }
+        let mut evicted_alerts = 0;
+        self.alert_suppression_cache.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted_alerts += 1;
+                false
+            } else {
+                true
+            }
+        });
 
-        let expired_broadcast: Vec<String> = self
-            .mesh_broadcast_debouncer
-            .iter()
-            .filter(|entry| entry.value().elapsed() >= cache_ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-        let evicted_broadcast = expired_broadcast.len();
-        for key in expired_broadcast {
-            self.mesh_broadcast_debouncer.remove(&key);
-        }
+        let mut evicted_broadcast = 0;
+        self.mesh_broadcast_debouncer.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted_broadcast += 1;
+                false
+            } else {
+                true
+            }
+        });
 
         let mut cleared_nsrl = false;
         if self.nsrl_cache.len() > 50_000 {
@@ -391,38 +388,35 @@ impl EdrOrchestrator {
         let mut bytes_freed: u64 = 0;
 
         // 1. In-Memory Cache Eviction based on dynamic cache_ttl
-        let expired_behavioral: Vec<String> = self
-            .behavioral_debouncer
-            .iter()
-            .filter(|entry| entry.value().elapsed() >= cache_ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-        let evicted_behavioral = expired_behavioral.len();
-        for key in expired_behavioral {
-            self.behavioral_debouncer.remove(&key);
-        }
+        let mut evicted_behavioral = 0;
+        self.behavioral_debouncer.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted_behavioral += 1;
+                false
+            } else {
+                true
+            }
+        });
 
-        let expired_alerts: Vec<String> = self
-            .alert_suppression_cache
-            .iter()
-            .filter(|entry| entry.value().elapsed() >= cache_ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-        let evicted_alerts = expired_alerts.len();
-        for key in expired_alerts {
-            self.alert_suppression_cache.remove(&key);
-        }
+        let mut evicted_alerts = 0;
+        self.alert_suppression_cache.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted_alerts += 1;
+                false
+            } else {
+                true
+            }
+        });
 
-        let expired_broadcast: Vec<String> = self
-            .mesh_broadcast_debouncer
-            .iter()
-            .filter(|entry| entry.value().elapsed() >= cache_ttl)
-            .map(|entry| entry.key().clone())
-            .collect();
-        let evicted_broadcast = expired_broadcast.len();
-        for key in expired_broadcast {
-            self.mesh_broadcast_debouncer.remove(&key);
-        }
+        let mut evicted_broadcast = 0;
+        self.mesh_broadcast_debouncer.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted_broadcast += 1;
+                false
+            } else {
+                true
+            }
+        });
 
         let mut cleared_nsrl = false;
         let nsrl_cap = if effective_days == 0 || pressure_tier == "CRITICAL" {
@@ -1301,38 +1295,57 @@ impl EdrOrchestrator {
                                     memory_inner.set_model_training_status("status", "waiting_for_samples");
                                 let _ = memory_inner.set_model_training_status("last_error", "");
                             } else {
-                                // Offload training to Rayon to avoid blocking AI analysis
-                                let model_for_training = threat_model_inner.clone();
-                                let result = crate::hybrid_runtime::run_on_rayon(move || {
-                                    let mut model = model_for_training.blocking_write();
-                                    model.train(samples)
+                                // 1. Take a local snapshot of model under a brief async read lock (< 1 µs)
+                                let (model_config, current_weights) = {
+                                    let m = threat_model_inner.read().await;
+                                    (m.config().clone(), m.weights().clone())
+                                };
+                                let node_id = orch_inner.trust.did().to_string();
+
+                                // 2. Offload training to Rayon without holding ANY locks
+                                let result = crate::hybrid_runtime::run_on_rayon(move || -> anyhow::Result<(osoosi_model::ModelWeights, osoosi_types::FederatedModelDelta)> {
+                                    let mut local_model = osoosi_model::ThreatModel::from_parts(model_config, current_weights);
+                                    local_model.train(samples)?;
+                                    let delta = local_model.delta(&node_id);
+                                    Ok((local_model.weights().clone(), delta))
                                 }).await;
 
                                 match result {
-                                    Ok(Ok(())) => {
-                                        let model = threat_model_inner.read().await;
-                                        let w = model.weights();
+                                    Ok(Ok((new_weights, delta))) => {
+                                        let feature_count = new_weights.features.len();
+                                        let trained_at = new_weights.trained_at.clone();
+
+                                        // 3. Atomically swap weights under brief async write lock (duration < 100 ns)
+                                        {
+                                            let mut model = threat_model_inner.write().await;
+                                            model.set_weights(new_weights);
+                                        } // Lock dropped immediately!
+
                                         let _ = memory_inner.set_model_training_status("status", "running");
                                         let _ = memory_inner.set_model_training_status(
                                             "feature_count",
-                                            &w.features.len().to_string(),
+                                            &feature_count.to_string(),
                                         );
-                                        if let Some(ref trained_at) = w.trained_at {
+                                        if let Some(ref t) = trained_at {
                                             let _ = memory_inner
-                                                .set_model_training_status("last_success", trained_at);
+                                                .set_model_training_status("last_success", t);
                                         }
                                         let _ = memory_inner.set_model_training_status("last_error", "");
 
-                                        // COLLABORATIVE CONTINUOUS LEARNING: Broadcast learned delta to mesh
-                                        let node_id = orch_inner.trust.did().to_string();
-                                        let delta = model.delta(&node_id);
+                                        // 4. COLLABORATIVE CONTINUOUS LEARNING: Broadcast learned delta to mesh
                                         if let Some(ref tx) = *orch_inner.mesh_command_tx.lock().await {
                                             let _ = tx.send(osoosi_wire::MeshCommand::BroadcastModelDelta(delta)).await;
                                             debug!("Broadcasted federated model delta to mesh.");
                                         }
                                     }
-                                    Ok(Err(e)) | Err(e) => {
+                                    Ok(Err(e)) => {
                                         error!("Model training failed: {}", e);
+                                        let _ = memory_inner.set_model_training_status("status", "failed");
+                                        let _ =
+                                            memory_inner.set_model_training_status("last_error", &e.to_string());
+                                    }
+                                    Err(e) => {
+                                        error!("Model training task failed: {}", e);
                                         let _ = memory_inner.set_model_training_status("status", "failed");
                                         let _ =
                                             memory_inner.set_model_training_status("last_error", &e.to_string());
@@ -1407,3 +1420,93 @@ impl EdrOrchestrator {
         crate::backup::trigger_manual_restore_point(&config, mem);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dashmap::DashMap;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn test_dashmap_inplace_eviction_retain() {
+        let debouncer: DashMap<String, Instant> = DashMap::new();
+        let cache_ttl = Duration::from_millis(50);
+
+        debouncer.insert("fresh".to_string(), Instant::now());
+        debouncer.insert(
+            "expired".to_string(),
+            Instant::now().checked_sub(Duration::from_secs(10)).unwrap(),
+        );
+
+        let mut evicted = 0;
+        debouncer.retain(|_, last_seen| {
+            if last_seen.elapsed() >= cache_ttl {
+                evicted += 1;
+                false
+            } else {
+                true
+            }
+        });
+
+        assert_eq!(evicted, 1);
+        assert_eq!(debouncer.len(), 1);
+        assert!(debouncer.contains_key("fresh"));
+        assert!(!debouncer.contains_key("expired"));
+    }
+
+    #[tokio::test]
+    async fn test_threat_model_weight_swap_concurrency() {
+        use osoosi_model::{ModelConfig, ThreatModel};
+        use osoosi_types::ThreatSignature;
+
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_threat_model_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+
+        let config = ModelConfig {
+            models_dir: temp_dir.to_string_lossy().to_string(),
+            min_samples: 1,
+            model_file: "test_threat_model.json".to_string(),
+            dp_config: None,
+        };
+
+        let model = Arc::new(tokio::sync::RwLock::new(ThreatModel::new(config)));
+
+        let (model_config, current_weights) = {
+            let m = model.read().await;
+            (m.config().clone(), m.weights().clone())
+        };
+
+        let mut sig = ThreatSignature::new("node_1".to_string());
+        sig.process_name = Some("evil.exe".to_string());
+        sig.parent_process = Some("cmd.exe".to_string());
+        sig.confidence = 0.95;
+        let samples = vec![sig];
+
+        let (new_weights, delta) = crate::hybrid_runtime::run_on_rayon(
+            move || -> anyhow::Result<(osoosi_model::ModelWeights, osoosi_types::FederatedModelDelta)> {
+                let mut local_model = ThreatModel::from_parts(model_config, current_weights);
+                local_model.train(samples)?;
+                let delta = local_model.delta("test_node");
+                Ok((local_model.weights().clone(), delta))
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        {
+            let mut m = model.write().await;
+            m.set_weights(new_weights);
+        }
+
+        {
+            let m = model.read().await;
+            assert!(m.weights().features.contains_key("proc:evil.exe"));
+        }
+        assert!(delta.features.contains_key("proc:evil.exe"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+

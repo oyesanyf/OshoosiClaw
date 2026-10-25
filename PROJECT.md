@@ -26,8 +26,8 @@ OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) is a high-performance, continuously ad
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
 | 1 | M1: Tier-2 Executable Identity & Confinement Parity | `crates/osoosi-sandbox/src/executable_identity.rs`, `tiered_executor.rs`, `lib.rs` | none | DONE |
-| 2 | M2: Per-File DLP Precision & Auto-Release Parity | `crates/osoosi-dashboard/src/routes/dlp.rs`, `har_dlp.rs`, `dlp_containment.rs` | none | IN_PROGRESS |
-| 3 | M3: Performance Optimization & Lock Hygiene | `crates/osoosi-core/src/adaptive.rs`, `maintenance.rs`, `voters.rs` | none | PLANNED |
+| 2 | M2: Per-File DLP Precision & Auto-Release Parity | `crates/osoosi-dashboard/src/routes/dlp.rs`, `har_dlp.rs`, `dlp_containment.rs` | none | DONE |
+| 3 | M3: Performance Optimization & Lock Hygiene | `crates/osoosi-core/src/adaptive.rs`, `maintenance.rs`, `voters.rs` | none | DONE |
 | 4 | M4: Full Adversarial Proof, Benchmark & Microsoft Delivery | Adversarial suites, `PERFORMANCE_AND_SECURITY_BENCHMARK.md`, `AgentOctopus` sync, `build_and_submit.ps1` | M1, M2, M3 | PLANNED |
 
 ## Code Layout

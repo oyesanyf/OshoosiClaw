@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use osoosi_model::{MalwareScanResult, MalwareScanner};
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
 use osoosi_types::{HostSecurityEvent, Priority, ResourceCategory};
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -467,6 +468,10 @@ pub struct BehavioralYaraVoter {
     pub total_detections: Arc<std::sync::atomic::AtomicU64>,
 }
 
+thread_local! {
+    static JSON_SCRATCH_BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(4096));
+}
+
 #[async_trait]
 impl ThreatVoter for BehavioralYaraVoter {
     fn name(&self) -> String {
@@ -474,27 +479,31 @@ impl ThreatVoter for BehavioralYaraVoter {
     }
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let json_bytes = serde_json::to_vec(event).ok()?;
-        let rules = self.rules.clone();
-
-        // Fast in-memory YARA-X scanning runs in microsecond scale; execute via spawn_blocking
-        // to avoid queuing on the restricted AI semaphore permit pool.
-        let res = tokio::task::spawn_blocking(move || {
-            let mut scanner = yara_x::Scanner::new(&rules);
-            if let Ok(results) = scanner.scan(&json_bytes) {
-                if let Some(primary) = results.matching_rules().next() {
-                    return Some(VoteResult {
-                        confidence: 0.9,
-                        reason: format!("BehavioralYara: DETECTED - {}", primary.identifier()),
-                        weight: 0.8,
-                    });
-                }
+        let res = JSON_SCRATCH_BUF.with(|cell| {
+            let mut buf = cell.borrow_mut();
+            buf.clear();
+            if serde_json::to_writer(&mut *buf, event).is_err() {
+                return None;
             }
-            None
-        })
-        .await
-        .ok()
-        .flatten();
+
+            let mut scanner = yara_x::Scanner::new(&self.rules);
+            let match_result = if let Ok(results) = scanner.scan(&buf) {
+                results.matching_rules().next().map(|primary| VoteResult {
+                    confidence: 0.9,
+                    reason: format!("BehavioralYara: DETECTED - {}", primary.identifier()),
+                    weight: 0.8,
+                })
+            } else {
+                None
+            };
+
+            // Cap retention: if a pathological event expanded buffer > 64KB, shrink back
+            if buf.capacity() > 65536 {
+                buf.shrink_to(4096);
+            }
+
+            match_result
+        });
 
         if res.is_some() {
             self.total_detections

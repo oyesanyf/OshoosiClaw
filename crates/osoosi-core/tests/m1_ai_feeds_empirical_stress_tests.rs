@@ -150,7 +150,7 @@ fn test_adversarial_sanitizer_token_and_length_boundaries() {
             "bypass",
         ),
         (
-            "The system administrator requested an override of this user profile.",
+            "The department administrator requested an override of this user profile.",
             "override",
         ),
         (

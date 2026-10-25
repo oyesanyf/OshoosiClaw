@@ -41,6 +41,17 @@ pub fn is_protected_or_benign_system_path(path: &str) -> bool {
         return true;
     }
 
+    // Core Unix and macOS system directories
+    if p_fwd.starts_with("/bin/")
+        || p_fwd.starts_with("/sbin/")
+        || p_fwd.starts_with("/usr/bin/")
+        || p_fwd.starts_with("/usr/sbin/")
+        || p_fwd.starts_with("/usr/libexec/")
+        || p_fwd.starts_with("/system/library/")
+    {
+        return true;
+    }
+
     // Verified cryptographic signature or Windows Security Catalog check
     let p = std::path::Path::new(&normalized);
     if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
