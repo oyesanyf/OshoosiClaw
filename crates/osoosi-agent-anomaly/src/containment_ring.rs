@@ -683,7 +683,24 @@ impl ArmContainmentRing {
             }
             let excess = taint.1.len().saturating_sub(MAX_RELAY_HOPS - 1);
             if excess > 0 {
+                // Keep newest hops for audit while preserving any earliest Untrusted origin hop
+                // so role_chain never loses the taint-originating role across > 16 hops.
+                let preserved_untrusted = taint
+                    .1
+                    .iter()
+                    .take(excess)
+                    .find(|h| role_trust_tier(&h.role) == TrustTier::Untrusted)
+                    .cloned();
                 taint.1.drain(0..excess);
+                if let Some(untrusted_hop) = preserved_untrusted {
+                    if !taint.1.iter().any(|h| role_trust_tier(&h.role) == TrustTier::Untrusted) {
+                        if !taint.1.is_empty() {
+                            taint.1[0] = untrusted_hop;
+                        } else {
+                            taint.1.push(untrusted_hop);
+                        }
+                    }
+                }
             }
         }
 
