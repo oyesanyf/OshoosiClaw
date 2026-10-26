@@ -4440,6 +4440,73 @@
                     </div>
                 </div>
 
+                <!-- Collapsible End-to-End Data Lineage & Causal Taint Section (OTel + OpenLineage + osquery/HAR) -->
+                <details id="dlp-lineage-details" class="card glass shadow-glow mb-4" style="margin-bottom: 20px; border: 1px solid var(--glass-border); border-radius: 12px; overflow: hidden;">
+                    <summary style="cursor: pointer; padding: 14px 18px; user-select: none; display: flex; justify-content: space-between; align-items: center; background: rgba(13, 17, 23, 0.6); list-style: none;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 16px;">🧬</span>
+                            <span style="font-weight: 700; font-size: 14px; color: #f8fafc;">End-to-End Data Lineage &amp; Causal Taint Graph</span>
+                            <span class="badge purple" style="font-size: 10px; padding: 2px 7px;">OTel + OpenLineage + osquery</span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap;">
+                            <span>Active Tainted Traces: <span id="lineage-kpi-traces" class="badge red" style="font-size: 11px; padding: 2px 7px;">0</span></span>
+                            <span>osquery/HAR Hops: <span id="lineage-kpi-hops" class="badge blue" style="font-size: 11px; padding: 2px 7px;">0</span></span>
+                            <span>Blocked Derived Egresses: <span id="lineage-kpi-blocked" class="badge yellow" style="font-size: 11px; padding: 2px 7px;">0</span></span>
+                            <span>SpanLinks Merged: <span id="lineage-kpi-spanlinks" class="badge purple" style="font-size: 11px; padding: 2px 7px;">0</span></span>
+                            <span class="lineage-toggle-chevron" style="color: var(--text-muted); font-size: 13px; margin-left: 6px;">▼</span>
+                        </div>
+                    </summary>
+
+                    <div style="padding: 16px 18px; border-top: 1px solid var(--glass-border); background: rgba(15, 23, 42, 0.4);">
+                        <!-- Filter & Action Controls -->
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 14px;">
+                            <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 260px;">
+                                <input type="text" id="dlp-lineage-filter" placeholder="Filter lineage by PID, filename, TraceId, or hash..." oninput="onLineageFilterChange(this.value)" style="width: 100%; max-width: 440px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--glass-border); background: rgba(0,0,0,0.4); color: #fff; font-size: 12px; font-family: monospace;">
+                                <span id="dlp-lineage-record-count" style="font-size: 11px; color: var(--text-muted); white-space: nowrap;">0 traces</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                <button type="button" class="btn-text" id="btn-verify-multi-hop" onclick="verifyMultiHopTrace()" style="background: rgba(168, 85, 247, 0.2); border: 1px solid #a855f7; color: #d8b4fe; padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">⚡ Verify Multi-Hop Trace</button>
+                                <button type="button" class="btn-secondary" onclick="renderDlpLineage(true)" style="padding: 6px 12px; font-size: 12px;">🔄 Refresh</button>
+                                <button type="button" class="btn-secondary" onclick="exportDlpLineageJson()" style="padding: 6px 12px; font-size: 12px;">📜 Export JSON</button>
+                                <span id="lineage-action-status" style="font-size: 11.5px; font-weight: 500; margin-left: 6px;"></span>
+                            </div>
+                        </div>
+
+                        <!-- 3-Column Header Bar -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; padding: 10px 14px; background: rgba(30, 41, 59, 0.5); border-radius: 8px; font-size: 11.5px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; border: 1px solid rgba(255,255,255,0.05);">
+                            <div>📥 Column 1: InputDataset (Source Crown Jewel)</div>
+                            <div>⚙️ Column 2: Job (PID/Agent &amp; osquery Hops)</div>
+                            <div>📤 Column 3: OutputDataset / Sink (Egress &amp; Baggage)</div>
+                        </div>
+
+                        <!-- Dynamic Lineage Rows Container -->
+                        <div id="dlp-lineage-rows-container" style="display: flex; flex-direction: column; gap: 12px;">
+                            <!-- Dynamic 3-column lineage rows injected by renderDlpLineage() -->
+                        </div>
+
+                        <!-- Empty State Notice -->
+                        <div id="dlp-lineage-empty" style="padding: 28px 20px; text-align: center; color: var(--text-muted); font-size: 13px; background: rgba(0,0,0,0.2); border-radius: 8px; border: 1px dashed var(--glass-border);">
+                            <div style="font-size: 22px; margin-bottom: 6px;">🛡️</div>
+                            <div>No active tainted lineages detected — all host operations compliant</div>
+                        </div>
+
+                        <!-- Raw OpenLineage RunEvent Log Record Preview -->
+                        <details id="dlp-openlineage-json-details" style="margin-top: 16px; border: 1px solid var(--glass-border); border-radius: 8px; background: rgba(10, 15, 26, 0.7); overflow: hidden;">
+                            <summary style="cursor: pointer; padding: 10px 14px; font-size: 12px; font-weight: 600; color: #94a3b8; user-select: none; display: flex; justify-content: space-between; align-items: center; background: rgba(15, 23, 42, 0.6);">
+                                <span>📜 Raw OpenLineage RunEvent Log Record Body (OTel Correlated JSON)</span>
+                                <span style="font-size: 11px; color: #64748b;">Click to toggle preview</span>
+                            </summary>
+                            <div style="padding: 12px 14px; border-top: 1px solid rgba(255, 255, 255, 0.05);">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <span id="openlineage-json-event-id" style="font-size: 11px; font-family: monospace; color: #38bdf8;">runId: none selected</span>
+                                    <button type="button" class="btn-text" onclick="copyOpenLineageJson()" style="font-size: 11px; padding: 4px 10px; color: #94a3b8; border: 1px solid var(--glass-border); border-radius: 4px; cursor: pointer; background: rgba(255,255,255,0.05);">📋 Copy JSON</button>
+                                </div>
+                                <pre id="openlineage-json-preview" style="margin: 0; padding: 12px; background: #070b12; border-radius: 6px; font-size: 11px; font-family: 'Consolas', 'Fira Code', monospace; color: #e2e8f0; overflow-x: auto; max-height: 260px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;">No lineage event selected. Select a trace above or run "Verify Multi-Hop Trace".</pre>
+                            </div>
+                        </details>
+                    </div>
+                </details>
+
                 <!-- 2-Column Interactive DLP Inspector & Crown-Jewel Vault Grid -->
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr)); gap: 18px; margin-bottom: 20px;">
                     <!-- Left Card: Interactive Two-Tier DLP Inspector & Law 10 Zero-PII Scrubber -->
