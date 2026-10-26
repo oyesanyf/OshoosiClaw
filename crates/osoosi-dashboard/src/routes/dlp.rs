@@ -201,10 +201,25 @@ pub fn is_strict_lockdown_mode(policy_mode: &str, min_phi_threshold: f64) -> boo
 
 pub fn is_strict_lockdown_active() -> bool {
     let state = get_global_dlp_state().read();
-    is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold)
-        || state
-            .redactx_containment_mode
-            .eq_ignore_ascii_case("zero_leakage")
+    !is_monitor_only_mode(&state.policy_mode, state.auto_quarantine)
+        && (is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold)
+            || state
+                .redactx_containment_mode
+                .eq_ignore_ascii_case("zero_leakage"))
+}
+
+/// Returns `true` when the active DLP operating mode is Audit / Monitor Mode
+/// (`MONITOR_AND_SCRUB`, `AUDIT`, `MONITOR`, or `auto_quarantine == false`).
+/// In Monitor Mode, payloads are inspected, ZK-scrubbed in telemetry, logged, and alerted,
+/// with zero automated payload blocking and zero WFP host quarantine.
+pub fn is_monitor_only_mode(policy_mode: &str, auto_quarantine: bool) -> bool {
+    let m = policy_mode.trim().to_ascii_uppercase();
+    m == "MONITOR_AND_SCRUB" || m == "AUDIT" || m == "MONITOR" || !auto_quarantine
+}
+
+pub fn is_monitor_only_active() -> bool {
+    let state = get_global_dlp_state().read();
+    is_monitor_only_mode(&state.policy_mode, state.auto_quarantine)
 }
 
 static GLOBAL_DLP_STATE: std::sync::OnceLock<osoosi_core::parking_lot::RwLock<DlpDashboardState>> =
@@ -402,7 +417,9 @@ pub fn inspect_and_record_with_options(
 
     // RedactX-v3 OpenJEV hybrid: detection runs at the (high-recall) detection mode; the
     // (high-precision) containment mode thresholds are evaluated on the same calibrated scores.
-    let strict_lockdown = is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
+    let monitor_only = is_monitor_only_mode(&state.policy_mode, state.auto_quarantine);
+    let strict_lockdown =
+        !monitor_only && is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
     let detection_mode = if strict_lockdown {
         osoosi_dp::RedactXOperatingMode::zero_leakage()
     } else {
@@ -432,25 +449,52 @@ pub fn inspect_and_record_with_options(
         }
     }
 
+    let is_format_only_contact = !tier1.detected_categories.is_empty()
+        && tier1.detected_categories.iter().all(|c| {
+            matches!(
+                c.as_str(),
+                "EMAIL_ADDRESS" | "HIPAA_PHONE" | "HIPAA_FAX" | "EMAIL_ADDRESSES"
+            )
+        })
+        && !dest_forbid
+        && !cj_export_denied;
+
     let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
     let strict_lockdown_phi_or_pii =
         strict_lockdown && (dlp_detected || openjev.noul_contains_phi_pii.value);
-    let openjev_enforcement_agreed =
-        openjev.openjev_enforcement_agreed() || strict_lockdown_phi_or_pii;
+    let openjev_enforcement_agreed = if monitor_only || (!strict_lockdown && is_format_only_contact)
+    {
+        false
+    } else {
+        openjev.openjev_enforcement_agreed() || strict_lockdown_phi_or_pii
+    };
     let redactx_confirmed_detection =
         openjev.redactx_confirmed_at(&detection_mode) || strict_lockdown_phi_or_pii;
     let redactx_confirmed_containment =
-        openjev.redactx_confirmed_at(&containment_mode) || strict_lockdown_phi_or_pii;
+        if monitor_only || (!strict_lockdown && is_format_only_contact) {
+            false
+        } else {
+            openjev.redactx_confirmed_at(&containment_mode) || strict_lockdown_phi_or_pii
+        };
 
     let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
-    let mut final_verdict = if strict_lockdown_phi_or_pii {
+    let effective_dlp_block = if monitor_only {
+        false
+    } else if !strict_lockdown && is_format_only_contact {
+        false
+    } else {
+        dlp_detected
+    };
+    let mut final_verdict = if monitor_only {
+        osoosi_dp::DlpVerdict::Allow
+    } else if strict_lockdown_phi_or_pii {
         osoosi_dp::DlpVerdict::Quarantine
     } else {
         osoosi_dp::aggregate_dlp_decision(
             dest_forbid,
             cj_export_denied,
             voter_quarantine,
-            dlp_detected,
+            effective_dlp_block,
         )
     };
 
@@ -494,17 +538,26 @@ pub fn inspect_and_record_with_options(
                 openjev.noul_contains_phi_pii.p_true_phi_pii
             );
         }
+    } else if monitor_only && dlp_detected {
+        tier1.rationale = format!(
+            "[DLP-Monitor-And-Scrub]: '{}' -> '{}': Allowed on wire (Monitor Mode), telemetry ZK-scrubbed & alerted (categories={:?})",
+            actor_process,
+            destination_sink,
+            tier1.detected_categories
+        );
     }
 
     state.total_inspections += 1;
     if !tier1.allowed {
         state.blocked_exfiltrations += 1;
     }
-    state.scrubbed_pii_entities += (proof.redacted_entity_count as u64).max(if !tier1.allowed {
-        tier1.detected_categories.len() as u64
-    } else {
-        0
-    });
+    state.scrubbed_pii_entities += (proof.redacted_entity_count as u64).max(
+        if !tier1.allowed || (monitor_only && dlp_detected) {
+            tier1.detected_categories.len() as u64
+        } else {
+            0
+        },
+    );
     if zk_ok {
         state.zk_bft_proofs_verified += 1;
     }
@@ -517,7 +570,14 @@ pub fn inspect_and_record_with_options(
     let scrubbed_preview = truncate_chars(&proof.scrubbed_payload, 180);
 
     let (authorization_decision, dlp_response) = if tier1.allowed {
-        ("ALLOW".to_string(), "ALLOW".to_string())
+        if monitor_only && dlp_detected {
+            (
+                "ALLOW (MONITOR_ONLY)".to_string(),
+                "MONITOR_AND_SCRUB".to_string(),
+            )
+        } else {
+            ("ALLOW".to_string(), "ALLOW".to_string())
+        }
     } else {
         (
             final_verdict.as_authorization_str().to_string(),
@@ -531,11 +591,15 @@ pub fn inspect_and_record_with_options(
     };
     let execution_mode = if options.simulated {
         "SIMULATED_TEST".to_string()
+    } else if monitor_only {
+        "MONITOR_MODE".to_string()
     } else {
         "LIVE_ENFORCEMENT".to_string()
     };
     let external_transmission = if options.simulated {
         "None in simulated mode".to_string()
+    } else if monitor_only && dlp_detected {
+        "Permitted on wire (Monitor Mode); telemetry ZK-scrubbed & alerted".to_string()
     } else if tier1.allowed {
         "Permitted after Two-Tier DLP & REA check".to_string()
     } else {
@@ -604,7 +668,7 @@ pub fn inspect_and_record_with_options(
         event.dlp_response = "RELEASED_BY_USER".to_string();
     }
 
-    if !(options.skip_recording_allowed && event.allowed) {
+    if !(options.skip_recording_allowed && event.allowed && event.dlp_response == "ALLOW") {
         if let Some(pos) = state.recent_events.iter().position(|e| {
             e.actor_process == event.actor_process
                 && e.destination_sink == event.destination_sink
@@ -653,13 +717,16 @@ pub fn inspect_and_record_shared(
         cj_export_denied,
         dest_forbid,
         dest_reason,
+        monitor_only,
         strict_lockdown,
         detection_mode,
         containment_mode,
         openjev,
     ) = {
         let state = get_global_dlp_state().read();
-        let strict_lockdown = is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
+        let monitor_only = is_monitor_only_mode(&state.policy_mode, state.auto_quarantine);
+        let strict_lockdown =
+            !monitor_only && is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
         let tier1 =
             state
                 .engine
@@ -695,6 +762,7 @@ pub fn inspect_and_record_shared(
             cj_export_denied,
             dest_forbid,
             dest_reason,
+            monitor_only,
             strict_lockdown,
             detection_mode,
             containment_mode,
@@ -781,25 +849,52 @@ pub fn inspect_and_record_shared(
         }
     }
 
+    let is_format_only_contact = !tier1.detected_categories.is_empty()
+        && tier1.detected_categories.iter().all(|c| {
+            matches!(
+                c.as_str(),
+                "EMAIL_ADDRESS" | "HIPAA_PHONE" | "HIPAA_FAX" | "EMAIL_ADDRESSES"
+            )
+        })
+        && !dest_forbid
+        && !cj_export_denied;
+
     let dlp_detected = !tier1.detected_categories.is_empty() || proof.redacted_entity_count > 0;
     let strict_lockdown_phi_or_pii =
         strict_lockdown && (dlp_detected || openjev.noul_contains_phi_pii.value);
-    let openjev_enforcement_agreed =
-        openjev.openjev_enforcement_agreed() || strict_lockdown_phi_or_pii;
+    let openjev_enforcement_agreed = if monitor_only || (!strict_lockdown && is_format_only_contact)
+    {
+        false
+    } else {
+        openjev.openjev_enforcement_agreed() || strict_lockdown_phi_or_pii
+    };
     let redactx_confirmed_detection =
         openjev.redactx_confirmed_at(&detection_mode) || strict_lockdown_phi_or_pii;
     let redactx_confirmed_containment =
-        openjev.redactx_confirmed_at(&containment_mode) || strict_lockdown_phi_or_pii;
+        if monitor_only || (!strict_lockdown && is_format_only_contact) {
+            false
+        } else {
+            openjev.redactx_confirmed_at(&containment_mode) || strict_lockdown_phi_or_pii
+        };
 
     let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
-    let mut final_verdict = if strict_lockdown_phi_or_pii {
+    let effective_dlp_block = if monitor_only {
+        false
+    } else if !strict_lockdown && is_format_only_contact {
+        false
+    } else {
+        dlp_detected
+    };
+    let mut final_verdict = if monitor_only {
+        osoosi_dp::DlpVerdict::Allow
+    } else if strict_lockdown_phi_or_pii {
         osoosi_dp::DlpVerdict::Quarantine
     } else {
         osoosi_dp::aggregate_dlp_decision(
             dest_forbid,
             cj_export_denied,
             voter_quarantine,
-            dlp_detected,
+            effective_dlp_block,
         )
     };
 
@@ -841,6 +936,13 @@ pub fn inspect_and_record_shared(
                 openjev.noul_contains_phi_pii.p_true_phi_pii
             );
         }
+    } else if monitor_only && dlp_detected {
+        tier1.rationale = format!(
+            "[DLP-Monitor-And-Scrub]: '{}' -> '{}': Allowed on wire (Monitor Mode), telemetry ZK-scrubbed & alerted (categories={:?})",
+            actor_process,
+            destination_sink,
+            tier1.detected_categories
+        );
     }
 
     let pqc_prefix = if proof.pqc_mldsa65_signature_hex.len() >= 16 {
@@ -851,7 +953,14 @@ pub fn inspect_and_record_shared(
     let scrubbed_preview = truncate_chars(&proof.scrubbed_payload, 180);
 
     let (authorization_decision, dlp_response) = if tier1.allowed {
-        ("ALLOW".to_string(), "ALLOW".to_string())
+        if monitor_only && dlp_detected {
+            (
+                "ALLOW (MONITOR_ONLY)".to_string(),
+                "MONITOR_AND_SCRUB".to_string(),
+            )
+        } else {
+            ("ALLOW".to_string(), "ALLOW".to_string())
+        }
     } else {
         (
             final_verdict.as_authorization_str().to_string(),
@@ -865,11 +974,15 @@ pub fn inspect_and_record_shared(
     };
     let execution_mode = if options.simulated {
         "SIMULATED_TEST".to_string()
+    } else if monitor_only {
+        "MONITOR_MODE".to_string()
     } else {
         "LIVE_ENFORCEMENT".to_string()
     };
     let external_transmission = if options.simulated {
         "None in simulated mode".to_string()
+    } else if monitor_only && dlp_detected {
+        "Permitted on wire (Monitor Mode); telemetry ZK-scrubbed & alerted".to_string()
     } else if tier1.allowed {
         "Permitted after Two-Tier DLP & REA check".to_string()
     } else {
@@ -944,17 +1057,18 @@ pub fn inspect_and_record_shared(
         if !tier1.allowed {
             state.blocked_exfiltrations += 1;
         }
-        state.scrubbed_pii_entities +=
-            (proof.redacted_entity_count as u64).max(if !tier1.allowed {
+        state.scrubbed_pii_entities += (proof.redacted_entity_count as u64).max(
+            if !tier1.allowed || (monitor_only && dlp_detected) {
                 tier1.detected_categories.len() as u64
             } else {
                 0
-            });
+            },
+        );
         if zk_ok {
             state.zk_bft_proofs_verified += 1;
         }
 
-        if !(options.skip_recording_allowed && event.allowed) {
+        if !(options.skip_recording_allowed && event.allowed && event.dlp_response == "ALLOW") {
             if let Some(pos) = state.recent_events.iter().position(|e| {
                 e.actor_process == event.actor_process
                     && e.destination_sink == event.destination_sink
@@ -1414,9 +1528,13 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     if let Some(mode) = explicit_detection {
         state.redactx_detection_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
     }
+    let monitor_only_now = is_monitor_only_mode(&state.policy_mode, state.auto_quarantine);
+    let strict_lockdown_now =
+        !monitor_only_now && is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
+
     if let Some(mode) = explicit_containment {
         state.redactx_containment_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
-    } else if is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold) {
+    } else if strict_lockdown_now {
         state.redactx_detection_mode = "zero_leakage".to_string();
         state.redactx_containment_mode = "zero_leakage".to_string();
     } else {
@@ -1424,7 +1542,7 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
         state.redactx_containment_mode = "balanced_utility".to_string();
     }
 
-    Json(json!({
+    let resp = json!({
         "ok": true,
         "policy_mode": state.policy_mode,
         "min_phi_threshold": state.min_phi_threshold,
@@ -1432,10 +1550,37 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
         "quarantine_threshold": state.quarantine_threshold,
         "auto_quarantine": state.auto_quarantine,
         "auto_zk_scrub": state.auto_zk_scrub,
-        "strict_lockdown": is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold),
+        "monitor_only": monitor_only_now,
+        "strict_lockdown": strict_lockdown_now,
         "redactx_detection_mode": state.redactx_detection_mode,
         "redactx_containment_mode": state.redactx_containment_mode
-    }))
+    });
+    drop(state);
+
+    // Whenever the user updates the DLP operating mode (e.g. switching to Audit / Monitor Mode or
+    // Active Enforcement), immediately clear any prior WFP destination blocks on dlptest.com and
+    // active native destination blocks so the newly selected mode is tested without stale WFP filters.
+    {
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+        let _ = engine
+            .restore_browser_destination_blocks_for_host("dlptest.com", "policy-mode-updated");
+        if monitor_only_now {
+            for outcome in engine.list() {
+                if !outcome.restored
+                    && outcome.decision
+                        == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
+                {
+                    let _ = engine.restore(&outcome.containment_id, "switched-to-monitor-mode");
+                }
+            }
+            for rule in osoosi_core::wfp::active_native_destination_blocks() {
+                let _ =
+                    osoosi_core::wfp::unblock_destination_native(&rule.rule_name, None, None, &[]);
+            }
+        }
+    }
+
+    Json(resp)
 }
 
 /// Ingests browser DLP events (e.g. from the browser extension or DOM listeners) representing
@@ -1894,10 +2039,17 @@ mod tests {
                 }
             }
 
-            // Clear in-memory recent events for clean test state
+            // Clear in-memory recent events and reset default policy mode for clean test state
             {
                 let mut state = get_global_dlp_state().write();
                 state.recent_events.clear();
+                state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+                state.min_phi_threshold = 0.50;
+                state.quarantine_threshold = 0.80;
+                state.auto_quarantine = true;
+                state.auto_zk_scrub = true;
+                state.redactx_detection_mode = "zero_leakage".to_string();
+                state.redactx_containment_mode = "balanced_utility".to_string();
             }
 
             Self {
@@ -2380,6 +2532,148 @@ mod tests {
                 .get("authorization_decision")
                 .and_then(|v| v.as_str()),
             Some("DENY")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_three_dlp_operating_modes_have_distinct_enforcement_behaviors() {
+        let mut ctx = DlpTestContext::new().await;
+        let (host, dest_url) = ctx.new_host("three-modes-distinct");
+        let engine = crate::routes::dlp_containment::global_containment_engine();
+
+        let contact_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "contact_sheet.txt",
+            "content": "Applicant Contact: jane.doe@example.com, Callback Phone: (415) 555-2671"
+        });
+        let phi_payload = json!({
+            "actor_process": "chrome.exe",
+            "url": dest_url,
+            "channel": "BROWSER_FILE_UPLOAD",
+            "file_name": "10-MB-Test.xlsx",
+            "content": "Patient MRN-442109 SSN 123-45-6789 Diagnosis ICD10-E11"
+        });
+
+        // --- MODE 1: Audit / Monitor Mode (MONITOR_AND_SCRUB) ---
+        // Both Contact PII and Clinical PHI are ALLOWED on wire, ZK-scrubbed in telemetry, and NEVER WFP-blocked.
+        let Json(m1_pol) = post_dlp_policy(Json(json!({
+            "policy_mode": "MONITOR_AND_SCRUB"
+        })))
+        .await;
+        assert_eq!(
+            m1_pol.get("monitor_only").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            m1_pol.get("strict_lockdown").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let Json(m1_phi) = post_dlp_browser_event(Json(phi_payload.clone())).await;
+        assert_eq!(
+            m1_phi.get("allowed").and_then(|v| v.as_bool()),
+            Some(true),
+            "Monitor Mode must NEVER block 10-MB-Test.xlsx / PHI uploads"
+        );
+        assert_eq!(
+            m1_phi
+                .get("authorization_decision")
+                .and_then(|v| v.as_str()),
+            Some("ALLOW (MONITOR_ONLY)")
+        );
+        assert_eq!(
+            m1_phi.get("dlp_response").and_then(|v| v.as_str()),
+            Some("MONITOR_AND_SCRUB")
+        );
+        assert!(
+            !engine.has_active_browser_block_for_host(&host),
+            "Monitor Mode must NEVER install a WFP destination block"
+        );
+
+        // --- MODE 2: Active Enforcement (ENFORCE_BLOCK_AND_SCRUB) ---
+        // Loosened standalone Contact PII (email + phone) is ALLOWED, whereas Clinical PHI (10-MB-Test.xlsx) is BLOCKED & WFP-isolated.
+        let Json(m2_pol) = post_dlp_policy(Json(json!({
+            "policy_mode": "ENFORCE_BLOCK_AND_SCRUB"
+        })))
+        .await;
+        assert_eq!(
+            m2_pol.get("monitor_only").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            m2_pol.get("strict_lockdown").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+
+        let Json(m2_contact) = post_dlp_browser_event(Json(contact_payload.clone())).await;
+        assert_eq!(
+            m2_contact.get("allowed").and_then(|v| v.as_bool()),
+            Some(true),
+            "Active Enforcement must allow loosened standalone contact PII (email/phone) without clinical/financial corroboration"
+        );
+        assert!(
+            !engine.has_active_browser_block_for_host(&host),
+            "Active Enforcement must not block host on loosened contact info"
+        );
+
+        let Json(m2_phi) = post_dlp_browser_event(Json(phi_payload.clone())).await;
+        assert_eq!(
+            m2_phi.get("allowed").and_then(|v| v.as_bool()),
+            Some(false),
+            "Active Enforcement must block clinical PHI (10-MB-Test.xlsx)"
+        );
+        assert_eq!(
+            m2_phi.get("dlp_response").and_then(|v| v.as_str()),
+            Some("QUARANTINE")
+        );
+        assert!(
+            engine.has_active_browser_block_for_host(&host),
+            "Active Enforcement must WFP-block destination on clinical PHI"
+        );
+
+        // Clear host block before testing Mode 3
+        let _ = engine.restore_browser_destination_blocks_for_host(&host, "reset-before-mode3");
+
+        // --- MODE 3: Strict Lockdown (QUARANTINE_ON_CROWN_JEWEL) ---
+        // Zero-PHI / Zero-PII: BOTH loosened standalone Contact PII AND Clinical PHI are BLOCKED & WFP-isolated.
+        let Json(m3_pol) = post_dlp_policy(Json(json!({
+            "policy_mode": "QUARANTINE_ON_CROWN_JEWEL"
+        })))
+        .await;
+        assert_eq!(
+            m3_pol.get("monitor_only").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert_eq!(
+            m3_pol.get("strict_lockdown").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let Json(m3_contact) = post_dlp_browser_event(Json(contact_payload.clone())).await;
+        assert_eq!(
+            m3_contact.get("allowed").and_then(|v| v.as_bool()),
+            Some(false),
+            "Strict Lockdown must block ALL PII including standalone contact info"
+        );
+        assert_eq!(
+            m3_contact.get("dlp_response").and_then(|v| v.as_str()),
+            Some("QUARANTINE")
+        );
+        assert!(
+            engine.has_active_browser_block_for_host(&host),
+            "Strict Lockdown must WFP-block destination on any PII"
+        );
+
+        // Verify switching back to Monitor Mode immediately unblocks the host!
+        let _ = post_dlp_policy(Json(json!({
+            "policy_mode": "MONITOR_AND_SCRUB"
+        })))
+        .await;
+        assert!(
+            !engine.has_active_browser_block_for_host(&host),
+            "Switching to Monitor Mode must immediately clear active WFP destination blocks"
         );
     }
 }

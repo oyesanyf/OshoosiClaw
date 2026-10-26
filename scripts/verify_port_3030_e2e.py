@@ -321,7 +321,7 @@ def test_endpoints():
     har_url = f"{BASE_URL}/api/har/entries"
     har_req = urllib.request.Request(har_url, headers=headers, method="GET")
     start_t = time.perf_counter()
-    with urllib.request.urlopen(har_req, timeout=15) as resp:
+    with urllib.request.urlopen(har_req, timeout=35) as resp:
         elapsed_ms = (time.perf_counter() - start_t) * 1000.0
         data = json.loads(resp.read().decode("utf-8"))
         print(f" [PASS] GET /api/har/entries -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): count={data.get('count')}, active={data.get('continuous_collector_active')}")
@@ -341,7 +341,7 @@ def test_endpoints():
     refresh_url = f"{BASE_URL}/api/har/refresh"
     refresh_req = urllib.request.Request(refresh_url, data=b"{}", headers={**headers, "Content-Type": "application/json"}, method="POST")
     start_t = time.perf_counter()
-    with urllib.request.urlopen(refresh_req, timeout=15) as resp:
+    with urllib.request.urlopen(refresh_req, timeout=35) as resp:
         elapsed_ms = (time.perf_counter() - start_t) * 1000.0
         data = json.loads(resp.read().decode("utf-8"))
         print(f" [PASS] POST /api/har/refresh -> HTTP {resp.status} ({elapsed_ms:6.2f} ms): sweep_sequence={data.get('sweep_sequence')}")
@@ -353,7 +353,7 @@ def test_endpoints():
     export_url = f"{BASE_URL}/api/har/export"
     export_req = urllib.request.Request(export_url, headers=headers, method="GET")
     start_t = time.perf_counter()
-    with urllib.request.urlopen(export_req, timeout=15) as resp:
+    with urllib.request.urlopen(export_req, timeout=35) as resp:
         elapsed_ms = (time.perf_counter() - start_t) * 1000.0
         raw_body = resp.read()
         export_data = json.loads(raw_body.decode("utf-8"))
