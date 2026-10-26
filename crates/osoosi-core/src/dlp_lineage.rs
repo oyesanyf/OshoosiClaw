@@ -91,19 +91,82 @@ impl ArtifactKey {
     /// Attempts to extract the OS filesystem identity for a given path.
     pub fn from_path<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         let p = path.as_ref();
+        #[cfg(windows)]
+        {
+            if let Ok(file) = std::fs::File::open(p) {
+                if let Ok(key) = Self::from_file(&file) {
+                    return Ok(key);
+                }
+            }
+        }
         let meta = std::fs::metadata(p)?;
         Self::from_metadata(&meta)
+    }
+
+    /// On Windows, extracts true `(dwVolumeSerialNumber, (nFileIndexHigh << 32) | nFileIndexLow)`
+    /// from an open file handle via Win32 `GetFileInformationByHandle`.
+    #[cfg(windows)]
+    pub fn from_file(file: &std::fs::File) -> std::io::Result<Self> {
+        use std::os::windows::io::AsRawHandle;
+        let handle = file.as_raw_handle();
+
+        #[repr(C)]
+        struct BY_HANDLE_FILE_INFORMATION {
+            dw_file_attributes: u32,
+            ft_creation_time: [u32; 2],
+            ft_last_access_time: [u32; 2],
+            ft_last_write_time: [u32; 2],
+            dw_volume_serial_number: u32,
+            n_file_size_high: u32,
+            n_file_size_low: u32,
+            n_number_of_links: u32,
+            n_file_index_high: u32,
+            n_file_index_low: u32,
+        }
+
+        extern "system" {
+            fn GetFileInformationByHandle(
+                h_file: *mut std::ffi::c_void,
+                lp_file_information: *mut BY_HANDLE_FILE_INFORMATION,
+            ) -> i32;
+        }
+
+        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        let ret = unsafe { GetFileInformationByHandle(handle as *mut _, info.as_mut_ptr()) };
+        if ret != 0 {
+            let info = unsafe { info.assume_init() };
+            let dev_id = info.dw_volume_serial_number as u64;
+            let file_id = ((info.n_file_index_high as u64) << 32) | (info.n_file_index_low as u64);
+            Ok(Self::new(dev_id, file_id))
+        } else {
+            let meta = file.metadata()?;
+            Self::from_metadata(&meta)
+        }
     }
 
     /// Extracts `(device_id, inode_or_file_id)` from standard filesystem metadata.
     #[cfg(windows)]
     pub fn from_metadata(meta: &std::fs::Metadata) -> std::io::Result<Self> {
         use std::os::windows::fs::MetadataExt;
-        // On stable Rust, volume_serial_number and file_index are nightly unstable features (#63010).
-        // Stable fields include creation_time(), file_size(), last_write_time(), and file_attributes().
-        let dev_id = meta.creation_time();
-        let file_id = (meta.file_size() << 32) ^ meta.last_write_time();
-        Ok(Self::new(dev_id, file_id))
+
+        // Windows true file index resolution:
+        // Query volume_serial_number and file_index via extension trait.
+        // Fall back to stable creation_time / (file_size ^ last_write_time) hashing
+        // if file_index() is None (e.g. metadata queried without handle or on unsupported volumes).
+        let dev = WindowsFileIndexExt::volume_serial_number(meta).map(|v| v as u64);
+        let fid = WindowsFileIndexExt::file_index(meta);
+
+        let (device_id, inode_or_file_id) = match (dev, fid) {
+            (Some(d), Some(f)) => (d, f),
+            (None, Some(f)) => (meta.creation_time(), f),
+            _ => {
+                let d = meta.creation_time();
+                let f = (meta.file_size() << 32) ^ meta.last_write_time();
+                (d, f)
+            }
+        };
+
+        Ok(Self::new(device_id, inode_or_file_id))
     }
 
     /// Extracts `(device_id, inode_or_file_id)` from Unix filesystem metadata.
@@ -118,6 +181,25 @@ impl ArtifactKey {
     pub fn from_metadata(meta: &std::fs::Metadata) -> std::io::Result<Self> {
         let len = meta.len();
         Ok(Self::new(1, len))
+    }
+}
+
+/// Windows extension trait providing `volume_serial_number` and `file_index`
+/// for `std::fs::Metadata`.
+#[cfg(windows)]
+pub trait WindowsFileIndexExt {
+    fn volume_serial_number(&self) -> Option<u32>;
+    fn file_index(&self) -> Option<u64>;
+}
+
+#[cfg(windows)]
+impl WindowsFileIndexExt for std::fs::Metadata {
+    fn volume_serial_number(&self) -> Option<u32> {
+        None
+    }
+
+    fn file_index(&self) -> Option<u64> {
+        None
     }
 }
 
@@ -354,7 +436,13 @@ impl DlpBaggage {
 
         for part in header.split(',') {
             let part = part.trim();
-            if let Some((k, v)) = part.split_once('=') {
+            if part.is_empty() {
+                continue;
+            }
+            // W3C Baggage member grammar: key=value *(;property)
+            // Strip member properties following ';'
+            let item = part.split(';').next().unwrap_or(part).trim();
+            if let Some((k, v)) = item.split_once('=') {
                 let k = k.trim();
                 let v = v.trim();
                 match k {
@@ -449,6 +537,8 @@ impl ArtifactTaintRecord {
     }
 }
 
+pub const MAX_READ_HISTORY_PER_PROCESS: usize = 256;
+
 /// Active taint state tracked for a running OS process instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessTaintRecord {
@@ -465,6 +555,8 @@ pub struct ProcessTaintRecord {
     pub linked_span_contexts: Vec<SpanContext>,
     pub baggage: DlpBaggage,
     pub read_history: Vec<ArtifactKey>,
+    pub created_at_utc: DateTime<Utc>,
+    pub updated_at_utc: DateTime<Utc>,
 }
 
 impl ProcessTaintRecord {
@@ -476,6 +568,7 @@ impl ProcessTaintRecord {
         origin_span_context: SpanContext,
     ) -> Self {
         let baggage = DlpBaggage::public_clean();
+        let now = Utc::now();
         Self {
             process_key,
             executable_name: executable_name.into(),
@@ -490,7 +583,19 @@ impl ProcessTaintRecord {
             linked_span_contexts: Vec::new(),
             baggage,
             read_history: Vec::new(),
+            created_at_utc: now,
+            updated_at_utc: now,
         }
+    }
+
+    /// Records an artifact read in the bounded LRU read history (max 256 items).
+    pub fn record_read_artifact(&mut self, artifact_key: ArtifactKey) {
+        if let Some(pos) = self.read_history.iter().position(|k| k == &artifact_key) {
+            self.read_history.remove(pos);
+        } else if self.read_history.len() >= MAX_READ_HISTORY_PER_PROCESS {
+            self.read_history.remove(0);
+        }
+        self.read_history.push(artifact_key);
     }
 }
 
@@ -836,9 +941,8 @@ impl DlpLineageTracker {
             });
 
             proc_entry.active_read_descriptors.insert(artifact_key);
-            if !proc_entry.read_history.contains(&artifact_key) {
-                proc_entry.read_history.push(artifact_key);
-            }
+            proc_entry.record_read_artifact(artifact_key);
+            proc_entry.updated_at_utc = now;
 
             if artifact.tainted {
                 proc_entry.tainted = true;
@@ -865,7 +969,88 @@ impl DlpLineageTracker {
     pub fn on_file_close(&self, proc_key: &ProcessInstanceKey, artifact_key: &ArtifactKey) {
         if let Some(mut proc) = self.active_processes.get_mut(proc_key) {
             proc.active_read_descriptors.remove(artifact_key);
+            proc.updated_at_utc = Utc::now();
         }
+    }
+
+    /// Removes a terminated process from the active tracking table.
+    ///
+    /// If `start_time_100ns > 0`, performs an exact `(pid, start_time)` lookup.
+    /// If `start_time_100ns == 0`, purges all active instances matching `pid`.
+    /// Returns `true` if at least one entry was removed.
+    pub fn on_process_exit(&self, pid: u32, start_time_100ns: u64) -> bool {
+        if start_time_100ns > 0 {
+            let key = ProcessInstanceKey::new(pid, start_time_100ns);
+            self.active_processes.remove(&key).is_some()
+        } else {
+            let keys_to_remove: Vec<ProcessInstanceKey> = self
+                .active_processes
+                .iter()
+                .filter(|entry| entry.key().pid == pid)
+                .map(|entry| *entry.key())
+                .collect();
+            let mut removed = false;
+            for key in keys_to_remove {
+                if self.active_processes.remove(&key).is_some() {
+                    removed = true;
+                }
+            }
+            removed
+        }
+    }
+
+    /// Prunes stale artifact and process records from in-memory tracking tables.
+    ///
+    /// - If `artifact_ttl_secs > 0`, evicts any artifact whose `updated_at_utc` exceeds the TTL,
+    ///   and also removes corresponding entries from `content_catalog`.
+    /// - If `process_ttl_secs > 0`, evicts any process whose `updated_at_utc` exceeds the TTL.
+    ///
+    /// Returns the total number of evicted records.
+    pub fn evict_expired(&self, artifact_ttl_secs: u64, process_ttl_secs: u64) -> usize {
+        let now = Utc::now();
+        let mut evicted_count = 0;
+
+        if artifact_ttl_secs > 0 {
+            let expired_artifacts: Vec<ArtifactKey> = self
+                .active_artifacts
+                .iter()
+                .filter(|entry| {
+                    let elapsed = (now - entry.value().updated_at_utc).num_seconds().max(0) as u64;
+                    elapsed > artifact_ttl_secs
+                })
+                .map(|entry| *entry.key())
+                .collect();
+
+            for key in expired_artifacts {
+                if let Some((_, record)) = self.active_artifacts.remove(&key) {
+                    evicted_count += 1;
+                    self.content_catalog.remove(&record.sha256);
+                    if let Some(ref ssdeep) = record.ssdeep {
+                        self.content_catalog.remove(ssdeep);
+                    }
+                }
+            }
+        }
+
+        if process_ttl_secs > 0 {
+            let expired_processes: Vec<ProcessInstanceKey> = self
+                .active_processes
+                .iter()
+                .filter(|entry| {
+                    let elapsed = (now - entry.value().updated_at_utc).num_seconds().max(0) as u64;
+                    elapsed > process_ttl_secs
+                })
+                .map(|entry| *entry.key())
+                .collect();
+
+            for key in expired_processes {
+                if self.active_processes.remove(&key).is_some() {
+                    evicted_count += 1;
+                }
+            }
+        }
+
+        evicted_count
     }
 
     /// Evaluates a file write operation under Boundary 1 (Anti-Taint Creep) and Boundary 2.
@@ -1575,4 +1760,186 @@ mod tests {
 
         assert!(tracker.active_processes.get(&proc_b_key).is_none());
     }
+
+    /// Unit Test: W3C Baggage Member Property Stripping.
+    ///
+    /// Verifies that standard W3C baggage member properties following ';'
+    /// (e.g. `dlp.classification=CROWN_JEWEL;ttl=30` and `dlp.tainted=true;auth=ok`)
+    /// are stripped cleanly so classifications and taint states are never silently downgraded.
+    #[test]
+    fn test_w3c_baggage_member_property_stripping() {
+        let single_class = "dlp.classification=CROWN_JEWEL;ttl=30";
+        let b1 = DlpBaggage::from_w3c_header(single_class);
+        assert_eq!(
+            b1.classification,
+            ClassificationLattice::CrownJewel,
+            "CROWN_JEWEL with property parameter must not downgrade to Public"
+        );
+
+        let single_taint = "dlp.tainted=true;auth=ok";
+        let b2 = DlpBaggage::from_w3c_header(single_taint);
+        assert!(b2.tainted, "tainted=true with property parameter must parse as true");
+
+        let multi = "dlp.classification=CROWN_JEWEL;ttl=30;p0=true, dlp.policy=QUARANTINE;tier=critical, dlp.tainted=true;auth=ok, dlp.source_sha256=11223344;v=2, custom_param=val;extra=ignored";
+        let b3 = DlpBaggage::from_w3c_header(multi);
+        assert_eq!(b3.classification, ClassificationLattice::CrownJewel);
+        assert_eq!(b3.policy, PolicyLattice::Quarantine);
+        assert!(b3.tainted);
+        assert_eq!(b3.source_sha256, "11223344");
+        assert_eq!(b3.custom.get("custom_param"), Some(&"val".to_string()));
+    }
+
+    /// Unit Test: In-Memory Process Exit Cleanup.
+    ///
+    /// Verifies that terminated processes are pruned from `active_processes`
+    /// via `on_process_exit` using both exact timestamps and PID fallback.
+    #[test]
+    fn test_process_exit_cleanup() {
+        let tracker = DlpLineageTracker::new(30);
+        let key1 = ProcessInstanceKey::new(5500, 100_000);
+        let key2 = ProcessInstanceKey::new(5501, 200_000);
+        let art = ArtifactKey::new(1, 10);
+
+        tracker.register_crown_jewel_artifact(
+            art,
+            "secret.docx",
+            b"secret",
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+
+        tracker.on_file_read(key1, "proc1.exe", "C:\\proc1.exe", art);
+        tracker.on_file_read(key2, "proc2.exe", "C:\\proc2.exe", art);
+
+        assert!(tracker.active_processes.contains_key(&key1));
+        assert!(tracker.active_processes.contains_key(&key2));
+
+        // Terminate key1 with exact timestamp
+        assert!(tracker.on_process_exit(5500, 100_000));
+        assert!(!tracker.active_processes.contains_key(&key1));
+
+        // Terminate key2 with pid-only fallback (start_time_100ns = 0)
+        assert!(tracker.on_process_exit(5501, 0));
+        assert!(!tracker.active_processes.contains_key(&key2));
+
+        // Second removal returns false
+        assert!(!tracker.on_process_exit(5500, 100_000));
+    }
+
+    /// Unit Test: DashMap TTL Eviction for Stale Artifacts and Processes.
+    #[test]
+    fn test_evict_expired_artifacts_and_processes() {
+        let tracker = DlpLineageTracker::new(30);
+        let art_key = ArtifactKey::new(99, 101);
+        let proc_key = ProcessInstanceKey::new(8888, 12345);
+
+        let mut record = tracker.register_crown_jewel_artifact(
+            art_key,
+            "old.doc",
+            b"old content",
+            ClassificationLattice::Confidential,
+            PolicyLattice::Block,
+        );
+
+        // Artificially backdate record timestamps
+        let past = Utc::now() - chrono::Duration::seconds(100);
+        record.updated_at_utc = past;
+        tracker.active_artifacts.insert(art_key, record.clone());
+        tracker.content_catalog.insert(record.sha256.clone(), record.clone());
+        if let Some(ref ss) = record.ssdeep {
+            tracker.content_catalog.insert(ss.clone(), record);
+        }
+
+        tracker.on_file_read(proc_key, "stale.exe", "C:\\stale.exe", art_key);
+        if let Some(mut p) = tracker.active_processes.get_mut(&proc_key) {
+            p.updated_at_utc = past;
+        }
+
+        // Evict entries older than 30 seconds
+        let evicted = tracker.evict_expired(30, 30);
+        assert_eq!(evicted, 2, "Expected 1 artifact and 1 process to be evicted");
+        assert!(!tracker.active_artifacts.contains_key(&art_key));
+        assert!(!tracker.active_processes.contains_key(&proc_key));
+    }
+
+    /// Unit Test: Bounded Read History Capacity (Max 256).
+    #[test]
+    fn test_bounded_read_history_capacity() {
+        let tracker = DlpLineageTracker::new(30);
+        let proc_key = ProcessInstanceKey::new(9999, 44444);
+
+        // Simulate reading 300 distinct files
+        for i in 0..300u64 {
+            let art = ArtifactKey::new(1, i);
+            tracker.register_crown_jewel_artifact(
+                art,
+                &format!("file_{}.txt", i),
+                format!("content_{}", i).as_bytes(),
+                ClassificationLattice::Public,
+                PolicyLattice::Monitor,
+            );
+            tracker.on_file_read(proc_key, "reader.exe", "C:\\reader.exe", art);
+        }
+
+        let proc = tracker.active_processes.get(&proc_key).expect("Process must exist");
+        assert_eq!(
+            proc.read_history.len(),
+            MAX_READ_HISTORY_PER_PROCESS,
+            "read_history must be bounded to MAX_READ_HISTORY_PER_PROCESS (256)"
+        );
+
+        // Most recent artifact (299) must be present
+        assert!(proc.read_history.contains(&ArtifactKey::new(1, 299)));
+        // Oldest artifact (0) must have been evicted from read_history
+        assert!(!proc.read_history.contains(&ArtifactKey::new(1, 0)));
+    }
+
+    /// Unit Test: Windows ArtifactKey Invariance Across Writes.
+    #[test]
+    fn test_windows_artifact_key_write_invariance() {
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let test_file = temp_dir.join(format!("dlp_key_test_{}.tmp", rand::random::<u64>()));
+
+        // Create initial file
+        {
+            let mut f = std::fs::File::create(&test_file).expect("Create test file");
+            f.write_all(b"initial data").expect("Write initial data");
+            f.flush().expect("Flush initial data");
+        }
+
+        let key1 = ArtifactKey::from_path(&test_file).expect("Get key 1");
+
+        // Append data to modify file size and last write time
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&test_file)
+                .expect("Open test file for append");
+            f.write_all(b" additional appended content changing size and mtime")
+                .expect("Write append data");
+            f.flush().expect("Flush append data");
+        }
+
+        let key2 = ArtifactKey::from_path(&test_file).expect("Get key 2");
+
+        // Clean up
+        let _ = std::fs::remove_file(&test_file);
+
+        // On Windows NTFS/ReFS, device_id and inode_or_file_id MUST match across writes
+        #[cfg(windows)]
+        {
+            assert_eq!(
+                key1.device_id, key2.device_id,
+                "Device ID / Volume Serial Number must be invariant across writes"
+            );
+            assert_eq!(
+                key1.inode_or_file_id, key2.inode_or_file_id,
+                "File Index must be invariant across writes"
+            );
+            assert_eq!(key1, key2, "ArtifactKey must be invariant across file modifications");
+        }
+    }
 }
+
