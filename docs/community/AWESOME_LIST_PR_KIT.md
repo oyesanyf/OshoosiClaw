@@ -14,6 +14,9 @@ This kit provides ready-to-submit pull request manifests and instructions for in
 | **awesome-threat-intelligence** | `hslatman/awesome-threat-intelligence` | `Threat Sharing & Peer-to-Peer Feeds` | Ready |
 | **awesome-ai-security** | `corca-ai/awesome-ai-security` | `Agent Defense & LLM Containment` | Ready |
 | **awesome-incident-response** | `meirwah/awesome-incident-response` | `Host Acquisition and Memory Analysis` | Ready |
+| **awesome-edr** | `WithSecureLabs/awesome-edr` | `Open-Source EDR & Endpoint Agents` | Ready |
+| **awesome-yara** | `InQuest/awesome-yara` | `Tools & Automation` | Ready |
+| **awesome-llm-security** | `llm-sec/awesome-llm-security` | `Agentic Containment & Data Loss Prevention` | Ready |
 
 ---
 
