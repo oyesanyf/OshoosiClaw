@@ -222,8 +222,14 @@ async fn test_m2d_deception_and_agent_anomaly_telemetry_structures() {
 /// (d) Verify WebUI 0-diff byte-for-byte SHA-256 parity between dashboard/src and dashboard/dist (Feature 16).
 #[test]
 fn test_m2d_webui_parity_src_and_dist_byte_identical() {
-    let src_app = Path::new("dashboard/src/app.js");
-    let dist_app = Path::new("dashboard/dist/app.js");
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root");
+    let src_app_buf = workspace_root.join("dashboard/src/app.js");
+    let dist_app_buf = workspace_root.join("dashboard/dist/app.js");
+    let src_app = src_app_buf.as_path();
+    let dist_app = dist_app_buf.as_path();
 
     assert!(src_app.exists(), "dashboard/src/app.js must exist");
     assert!(dist_app.exists(), "dashboard/dist/app.js must exist");
@@ -239,8 +245,10 @@ fn test_m2d_webui_parity_src_and_dist_byte_identical() {
         "dashboard/src/app.js and dashboard/dist/app.js must maintain 0-diff byte-for-byte parity"
     );
 
-    let src_html = Path::new("dashboard/src/index.html");
-    let dist_html = Path::new("dashboard/dist/index.html");
+    let src_html_buf = workspace_root.join("dashboard/src/index.html");
+    let dist_html_buf = workspace_root.join("dashboard/dist/index.html");
+    let src_html = src_html_buf.as_path();
+    let dist_html = dist_html_buf.as_path();
     if src_html.exists() && dist_html.exists() {
         let src_h_bytes = std::fs::read(src_html).unwrap();
         let dist_h_bytes = std::fs::read(dist_html).unwrap();
