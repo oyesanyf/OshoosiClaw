@@ -723,6 +723,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/detection-stats", get(get_detection_stats))
         .route("/api/supervisor/status", get(get_supervisor_status))
         .route("/supervisor/status", get(get_supervisor_status))
+        .route("/api/supervisor/fprime", get(get_supervisor_fprime))
+        .route("/supervisor/fprime", get(get_supervisor_fprime))
+        .route("/api/supervisor/fprime/sequencer", post(post_supervisor_fprime_sequencer))
+        .route("/supervisor/fprime/sequencer", post(post_supervisor_fprime_sequencer))
         .route("/api/hardware/summary", get(get_hardware_summary))
         .route("/hardware/summary", get(get_hardware_summary))
         .route("/api/models/calibrated", get(get_calibrated_models))
@@ -1414,10 +1418,33 @@ async fn get_supervisor_status(State(state): State<DashboardState>) -> impl Into
                 last_evaluated_at: chrono::Utc::now(),
                 uptime_seconds: 0,
                 hardware_selection: hw_selection,
+                fprime_status: Some(osoosi_core::fprime_flight::FPrimeFlightRuntime::default().snapshot()),
             }
         }
     };
     Json(status)
+}
+
+async fn get_supervisor_fprime(axum::extract::State(state): axum::extract::State<DashboardState>) -> impl axum::response::IntoResponse {
+    let snapshot = match &state.backend {
+        Some(orch) => orch.supervisor.fprime_runtime.snapshot(),
+        None => osoosi_core::fprime_flight::FPrimeFlightRuntime::default().snapshot(),
+    };
+    axum::Json(snapshot)
+}
+
+async fn post_supervisor_fprime_sequencer(
+    axum::extract::State(state): axum::extract::State<DashboardState>,
+    axum::Json(playbook): axum::Json<osoosi_core::fprime_flight::SafeModePlaybook>,
+) -> impl axum::response::IntoResponse {
+    let sequencer = match &state.backend {
+        Some(orch) => orch.supervisor.fprime_runtime.sequencer.clone(),
+        None => std::sync::Arc::new(osoosi_core::fprime_flight::SvcCmdSequencer::default()),
+    };
+    match sequencer.trigger_safe_mode_demotion(&playbook, "Manual safe mode demotion trigger via dashboard API") {
+        Ok(report) => (axum::http::StatusCode::OK, axum::Json(serde_json::to_value(report).unwrap_or_default())),
+        Err(e) => (axum::http::StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({ "error": e.to_string() }))),
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10499,6 +10526,28 @@ mod tests {
             assert!(s.get("confidence").is_some());
             assert!(s.get("details").is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn test_api_supervisor_fprime() {
+        let state = DashboardState::new(None, None);
+        let resp = get_supervisor_fprime(axum::extract::State(state.clone())).await.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(json_val.get("operating_mode").is_some());
+        assert!(json_val.get("sealed").is_some());
+        assert!(json_val.get("total_arena_slots").is_some());
+        assert!(json_val.get("active_arena_leases").is_some());
+        assert!(json_val.get("health_warnings_total").is_some());
+
+        // Test sequencer POST rejection on invalid/unsigned playbook
+        let playbook = osoosi_core::fprime_flight::SafeModePlaybook::default();
+        let post_resp = post_supervisor_fprime_sequencer(axum::extract::State(state), axum::Json(playbook)).await.into_response();
+        assert_eq!(post_resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

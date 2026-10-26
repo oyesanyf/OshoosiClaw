@@ -66,6 +66,8 @@ pub struct SupervisorStatus {
     pub last_evaluated_at: DateTime<Utc>,
     pub uptime_seconds: u64,
     pub hardware_selection: Option<osoosi_behavioral::hardware_selection::OptimalModelSelection>,
+    #[serde(default)]
+    pub fprime_status: Option<crate::fprime_flight::FPrimeTelemetrySnapshot>,
 }
 
 /// Dempster-Shafer Basic Belief Assignment (BBA) over frame Θ = {Optimal, Degraded, Critical}.
@@ -1033,6 +1035,7 @@ pub struct CognitiveFusionSupervisor {
     fusion_engine: Arc<RwLock<MultiSensorFusionEngine>>,
     start_time: Instant,
     running: Arc<AtomicBool>,
+    pub fprime_runtime: Arc<crate::fprime_flight::FPrimeFlightRuntime>,
 }
 
 impl Default for CognitiveFusionSupervisor {
@@ -1067,6 +1070,7 @@ impl CognitiveFusionSupervisor {
             initial_hw.as_ref(),
         );
 
+        let fprime_runtime = Arc::new(crate::fprime_flight::FPrimeFlightRuntime::default());
         let initial_status = SupervisorStatus {
             regime,
             health_score,
@@ -1078,6 +1082,7 @@ impl CognitiveFusionSupervisor {
             last_evaluated_at: Utc::now(),
             uptime_seconds: 0,
             hardware_selection: initial_hw,
+            fprime_status: Some(fprime_runtime.snapshot()),
         };
 
         Self {
@@ -1086,6 +1091,7 @@ impl CognitiveFusionSupervisor {
             fusion_engine: Arc::new(RwLock::new(fusion)),
             start_time: Instant::now(),
             running: Arc::new(AtomicBool::new(true)),
+            fprime_runtime,
         }
     }
 
@@ -1193,6 +1199,7 @@ impl CognitiveFusionSupervisor {
                                 last_evaluated_at: Utc::now(),
                                 uptime_seconds,
                                 hardware_selection,
+                                fprime_status: Some(supervisor.fprime_runtime.snapshot()),
                             };
                         }
                     }
@@ -1212,6 +1219,7 @@ impl CognitiveFusionSupervisor {
             Err(poisoned) => poisoned.into_inner().clone(),
         };
         status.uptime_seconds = self.start_time.elapsed().as_secs();
+        status.fprime_status = Some(self.fprime_runtime.snapshot());
         status
     }
 }

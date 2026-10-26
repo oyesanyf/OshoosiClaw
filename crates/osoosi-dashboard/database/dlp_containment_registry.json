@@ -4,7 +4,9 @@
     "event_id": "dlp-9f9dea11a50f4211ad69470f15af0af9",
     "decided_at": "2026-10-25T01:16:36.606953800+00:00",
     "decision": "DestinationBlocked",
-    "reasons": [],
+    "reasons": [
+      "Restored by non-containment-upload-auto-restore at 2026-10-26T19:27:08.627384400+00:00"
+    ],
     "actor": "msedge.exe",
     "pid": null,
     "image_path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -24,11 +26,11 @@
       "HIPAA_MRN",
       "US_SSN"
     ],
-    "redactx_doc_score": 0.9988412560648503,
+    "redactx_doc_score": 0.9988412560648504,
     "redactx_max_span_score": 0.9685050330513804,
     "redactx_confirmed_containment": true,
     "openjev_choice": "BLOCK_AND_SCRUB",
-    "openjev_noul_p": 0.9988412560648503,
+    "openjev_noul_p": 0.9988412560648504,
     "openjev_score": 4.15,
     "openjev_enforcement_agreed": true,
     "voters": {
@@ -36,7 +38,7 @@
         {
           "voter": "OpenJEV-Voter",
           "escalate": true,
-          "confidence": 0.9988412560648503,
+          "confidence": 0.9988412560648504,
           "weight": 1.25,
           "reason": "Veto [OpenJEV-Voter]: Joint Evidence Voting (Noul p_clean=0.998, Choice=PASS_CLEAN, Score=1.06/5, T=1.08) attested zero credential/PII exfiltration risk"
         },
@@ -71,11 +73,11 @@
         "kind": "network_block",
         "ok": true,
         "detail": "outbound block 'OshoosiDLP-9a3ee2252181' for C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe -> [\"104.26.0.68\", \"104.26.1.68\", \"172.67.75.74\"]",
-        "reverted": false
+        "reverted": true
       }
     ],
     "vault": null,
     "expires_at": "2026-10-25T01:26:36.627504600+00:00",
-    "restored": false
+    "restored": true
   }
 }

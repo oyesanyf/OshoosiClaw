@@ -54,7 +54,8 @@
 | [🌐 Two-Host BFT Mesh](#-two-host-mesh-consensus) | [🧠 6-Pillar RL Controller](#-rl-adaptive-controller) | [🪤 Active Tarpit & Hollowing](#-active-process--memory-tarpit-hollowing-containment) |
 | [⚡ Adversarial Verification](#-adversarial-verification) | [🕊️ Canary Anti-Blinding](#-synthetic-telemetry-canaries--anti-blinding-engine) | [🛡️ MITRE ATT&CK & ATLAS](#-mitre-attck--atlas-enterprise-framework) |
 | [🧬 5 Public AI Threat Feeds](#-autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds) | [🌐 Wire STIX Sync](#-p2p-wire-mesh-stix-synchronization) | [🌐 High-Throughput Mesh Stability](#-high-throughput-p2p-mesh--consensus-stability) |
-| [📸 Visual Tour](#-interactive-webui-visual-gallery) | [🧠 WikiSkill Evolution](#-autonomous-agent-skill-evolution--wikiskill) | [🌐 Open-Source Governance & Roadmap](#-open-source-security-governance--community-roadmap) |
+| [🚀 NASA JPL F Prime Backbone](#-nasa-jpl-f-prime-flight-software-backbone) | [🧠 WikiSkill Evolution](#-autonomous-agent-skill-evolution--wikiskill) | [🌐 Open-Source Governance & Roadmap](#-open-source-security-governance--community-roadmap) |
+| [📸 Visual Tour](#-interactive-webui-visual-gallery) | [🔬 Autonomous REA](#-autonomous-rea-reverse-engineer-anything-forensic-engine) | [⚡ 60-Second Quick Start](#-60-second-quick-start) |
 
 </details>
 
@@ -88,6 +89,7 @@ Unlike traditional antivirus platforms that rely on brittle cloud round-trips or
 | **Autonomous Binary & Bytecode Reverse Engineering (`REA`)** | Automatically ingests untrusted executables, memory dumps, or quarantine targets; generates decompiled pseudo-code, extracts strings, identifies compiler toolchains, tags Magika MIME types, and outputs YARA rules. | WebUI: [`#rea`](#rea)<br>CLI: `osoosi-cli rea --target <path>` |
 | **AI Agent Containment, `CanaryCage` & Dual Drift Telemetry (`#agent-anomalies`)** | Isolates autonomous AI worker agents within Hybrid Tier-1 Wasmtime (`wasm_tier1.rs`, `tiered_executor.rs`) and Tier-2 AppContainer / Job Object (`open_confined.rs`, `token_posture.rs`, `hidden_process_ledger.rs`) / Linux namespace boundaries; evaluates tool invocations against OWASP Top 10 for Agentic AI and tracks both **Intra-Session Semantic Trajectory Drift** ($\Delta\text{alignment}/\Delta\text{step}$ anchored at Step 1) and **Longitudinal Statistical Distribution Drift** ($\text{PSI}$, Wasserstein-1 $W_1$, Page-Hinkley) with synchronized top KPI cards. | WebUI: [`#agent-anomalies`](#agent-anomalies)<br>Crate: `crates/osoosi-agent-anomaly`, `crates/osoosi-sandbox` |
 | **Autonomous AI Threat Compiler (`osoosi-ai-feed-collector`)** | Hourly out-of-band compiler ingesting **5 Public AI Threat Feeds** (**AVID**, **AIID & MIT**, **NVIDIA Garak & CyberArk FuzzyAI**, **Hugging Face Jailbreak Stream**, **Protect AI / Huntr OSV**) into `StixMdpStateVector` RL priors, 128-dim `EmbeddingGemma 2` MRL clusters, `ClefDecisionEngine` Bayesian token weights, `FileLineageTracker` BLAKE3 poison digests, and `ML-DSA-65` signed STIX 2.1 mesh broadcasts. | WebUI: [`#threats`](#threats), [`#skyrl`](#skyrl)<br>API: `GET /api/ai-feeds/status`, `POST /api/ai-feeds/sync` |
+| **NASA JPL F Prime (`F'`) Flight-Software Backbone (`#fprime`)** | Decouples EDR pipeline via 4 flight-software primitives and Dual-Priority QoS Channels (`CriticalSecurityLane` QoS 0 vs. `BulkTelemetryLane` QoS 1); enforces zero-heap-allocation static arena pools (CWE-770 immunity) with 25% critical reserve, 25ms/100ms TPM 2.0 PCR 16 watchdog monitoring, and Ed25519 authenticated sequencer demotion with BFT quorum promotion. | WebUI: [`#overview`](#overview), [`#threats`](#threats)<br>API: `GET /api/supervisor/fprime`, `POST /api/supervisor/fprime/sequencer`<br>Crate: `crates/osoosi-core` |
 | **Cryptographic Audit Ledger & P2P Threat Mesh** | Secures every detection, config change, and audit event in a tamper-evident BLAKE3 Merkle tree; securely syncs threat indicators across peer nodes using ML-KEM-768 and privacy-preserving TFHE voter consensus. | WebUI: [`#zone`](#zone), [`#otel-map`](#otel-map)<br>API: `GET /api/mesh/nodes` |
 | **Adaptive Concurrency & Zero-Lock Performance Engine (`#adaptive-performance`)** | Guarantees bounded heap memory under telemetry bursts via a 4096-slot queue with low-priority load shedding and zero high-priority drops; eliminates Tokio async lock starvation via `parking_lot::Mutex<System>`, decoupled Rayon snapshot training with sub-100ns atomic weight swapping, and zero-allocation thread-local scratch buffer YARA-X evaluation. | WebUI: [`#overview`](#overview), [`#threats`](#threats)<br>Crate: `crates/osoosi-core` |
 
@@ -2419,6 +2421,86 @@ flowchart TD
 | **`pyrit`** | Multi-Turn Adversarial Drift & Composed Workflow Chains | Exercises multi-turn `T1 -> T2 -> T3` goal-hijack chains, `WorkflowCompositionEvaluator`, and `AdvisoryModelJudgmentGuard` (model judgments are strictly advisory). |
 | **`host_enforcement_verification`** | Out-of-Band OS Observer & 6-Scenario Fault Injection (`FI-01`..`FI-06`) | Evaluates the 6-field evidence schema (`attack_attempted`, `cedar_decision`, `os_enforcement_result`, `prohibited_effect_occurred`, `observer_confidence`, `final_outcome`) and proves that `PARTIAL` observer confidence (`FI-05`) yields `INCONCLUSIVE` (never `PREVENTED`). |
 | **`benign_workflow_regression`** | Benign Developer & System Workflow Usability Regression | Verifies **100% Benign Task Success (0% False Positives)** across `cargo test`, `git status`, workspace source reads, local Ollama `/api/generate` & `/api/embeddings`, and ZK-redacted summaries, surfacing the 4 Central Measurements (`Attack Prevention`, `Benign Task Success`, `Enforcement Latency`, `Observer Coverage`) in `/api/tarpit-stats`, `/api/agent-anomalies/breakout-prevention-report`, and `#adversarial-tests-view`. |
+
+---
+
+<a id="-nasa-jpl-f-prime-flight-software-backbone"></a>
+<a id="nasa-jpl-f-prime-flight-software-backbone"></a>
+
+</details>
+
+<details>
+<summary><b>🚀 NASA JPL F Prime (F') Flight-Software Backbone & Dual-Priority QoS Channels</b> (Click to expand)</summary>
+
+<a id="-nasa-jpl-f-prime-flight-software-backbone"></a>
+## 🚀 NASA JPL F Prime (F') Flight-Software Backbone & Dual-Priority QoS Channels
+
+To eliminate single-queue backpressure priority inversion and achieve mission-critical, fail-closed determinism under adversarial telemetry bursts, OshoosiClaw incorporates the **NASA Jet Propulsion Laboratory (JPL) F Prime (`F'`)** component-oriented flight-software architecture into its core runtime and daemon supervisor (`crates/osoosi-core/src/fprime_flight.rs`).
+
+Under normal operation, high-volume benign noise (such as `cmd.exe /c dir /s` or heavy build workloads) can saturate bounded telemetry queues, resulting in load-shedding of critical security detections (`CreateRemoteThread`, LSASS credential dumping, kernel driver tamper). The F Prime architecture resolves this via **Dual-Priority QoS Channels** (`CriticalSecurityLane` QoS 0 vs. `BulkTelemetryLane` QoS 1), **Static Arena Memory Pools** with reserved critical quotas, **Sub-100ms TPM 2.0 PCR 16 Watchdogs**, and a **Cryptographically Signed Command Sequencer** gated by Byzantine Fault Tolerant (BFT) quorum promotion.
+
+```mermaid
+flowchart TD
+    subgraph IngestionPorts["1. Decoupled Fw Port Topology and Dual-Priority QoS Channels"]
+        PMU["EbpfPmuTelemetryComponent (Hardware Performance Counters)"]
+        REA["ReaMagikaInspectorComponent (Panic-Unwind Isolated MIME Analysis)"]
+        L0["Critical Security Lane (QoS 0) - Zero Drop Guaranteed Delivery"]
+        L1["Bulk Telemetry Lane (QoS 1) - Bounded FIFO Load Shedding"]
+        SC["RecoilLikelihoodScorerComponent (ML and Threat Voter Consensus)"]
+    end
+
+    subgraph MemoryMgmt["2. Fw BufferManager (Static Arena Pools - CWE-770 Immunity)"]
+        POOL["StaticArenaPool (3 Bins: 256 B, 4 KB, 64 KB) - Zero Runtime Heap Allocations"]
+    end
+
+    subgraph HealthWatchdog["3. Svc Health Monitor (TPM 2.0 PCR 16 Stroke)"]
+        WATCH["SvcHealthMonitor (25ms Warning / 100ms Fatal Deadlines)"]
+    end
+
+    subgraph Sequencer["4. Svc CmdSequencer and SafeMode Playbook"]
+        CMD["SvcCmdSequencer (CRC-32C + SHA-256 + Ed25519 Verification)"]
+        BFT["BftQuorumPromotionGate (Cryptographic Quorum Proof Verification)"]
+        WFP["WfpNetworkIsolatorComponent (Emergency Quarantine and Isolation)"]
+    end
+
+    PMU -->|"Critical PMU Anomalies"| L0
+    PMU -->|"Routine Syscall Telemetry"| L1
+    REA -->|"Suspicious Executable Target"| L0
+    REA -->|"Benign MIME Classification"| L1
+    L0 --> POOL
+    L1 --> POOL
+    POOL --> SC
+    WATCH --> PMU
+    WATCH --> REA
+    WATCH --> SC
+    WATCH --> WFP
+    CMD --> WFP
+    BFT --> CMD
+```
+
+### 1. The 4 NASA JPL F Prime (`F'`) Primitives
+
+| F Prime Primitive | Implementation in `osoosi-core` & `AgentOctopus` | Mathematical / Cryptographic Guarantees & Invariants |
+| :--- | :--- | :--- |
+| **`Fw::Comp` & `Fw::Port`** | `PortEnvelope<T>`, `OutputPort<T>`, `InputPort<T>`, `PortQosLane` | Decouples components through strongly typed input/output ports. Implements **Dual-Priority QoS Lanes**: `CriticalSecurityLane` (QoS 0) and `BulkTelemetryLane` (QoS 1). Biased `recv()` always drains QoS 0 before QoS 1, provably preventing backpressure priority inversion where routine telemetry drops critical attack alerts. |
+| **`Fw::BufferManager`** | `StaticArenaPool`, `BufferLease`, `BufferBinSize` | Pre-allocates static buffer bins (256 B, 4 KB, 64 KB) with fixed slot caps (128 slots) before entering service (`seal_post_init()`). Guarantees $O(1)$ zero-allocation runtime memory management (**CWE-770 immunity**), preserves a strict 25% reserved quota for critical security events, and enforces zero-scrubbing on release. |
+| **`Svc::Health`** | `SvcHealthMonitor`, `HealthPing`, `HealthPong` | Runs ping-pong heartbeat diagnostics with deterministic 25ms warning and 100ms fatal deadlines. Aborts hung components, reclaims leaked buffer leases, and extends cryptographic watchdog attestations into silicon via TPM 2.0 PCR 16 (`verify_fprime_watchdog_pcr16()`). |
+| **`Svc::CmdSequencer`** | `SvcCmdSequencer`, `SafeModePlaybook`, `BftQuorumPromotionGate` | Authenticated command execution engine. Verifies Castagnoli CRC-32C frame checksums, SHA-256 message digests, and Ed25519 signatures. Rejects tampered payloads with instant safe-mode demotion, which can only be promoted back to full operation via verified Byzantine Fault Tolerant (`BftQuorumPromotionProof`) quorum proofs. |
+
+### 2. Five Mission-Critical Flight Components
+
+1. **`EbpfPmuTelemetryComponent`**: Collects hardware performance monitoring unit (PMU) counters (branch misses, cache references, instruction retirement) and kernel syscall frequencies. High PMU branch anomalies (>500k misses) are automatically promoted to `CriticalSecurityLane`.
+2. **`ReaMagikaInspectorComponent`**: Performs autonomous reverse engineering and AI MIME type verification wrapped in `std::panic::catch_unwind` protection, guaranteeing that corrupted PE headers or malformed ELF targets never crash the supervisor runtime.
+3. **`RecoilLikelihoodScorerComponent`**: Fuses ML likelihood scores and Bayesian voter consensus, evaluating threats against calibrated thresholds ($S_{\text{threshold}} = 0.85$).
+4. **`BftMeshConsensusComponent`**: Evaluates distributed Byzantine Fault Tolerant votes across the peer-to-peer mesh, validating 3-node quorum proofs before state promotion.
+5. **`WfpNetworkIsolatorComponent`**: Applies Windows Filtering Platform (WFP) / Linux eBPF network quarantine, isolating compromised hosts onto recovery VLANs in sub-millisecond time.
+
+### 3. Supervisor & Dashboard API Telemetry
+
+The flight runtime is integrated directly into the `CognitiveFusionSupervisor` and exposed via zero-dependency HTTP endpoints:
+
+- `GET /api/supervisor/fprime`: Returns real-time health states, static arena pool bin utilization, operating modes, and per-component heartbeat metrics.
+- `POST /api/supervisor/fprime/sequencer`: Ingests and verifies cryptographically signed `SafeModePlaybook` execution sequences, enforcing tamper rejection and fail-closed state demotion.
 
 ---
 
