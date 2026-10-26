@@ -1946,6 +1946,56 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
         req.source_kind.as_str(),
         options,
     );
+
+    // Correlate candidate staging files, content digests, and URLs with DlpLineageTracker
+    let lineage_tracker = osoosi_core::dlp_lineage::global_lineage_tracker();
+    let body_bytes = if !req.body_text.is_empty() {
+        Some(req.body_text.as_bytes())
+    } else {
+        None
+    };
+    let body_sha256 = if !req.body_text.is_empty() {
+        Some(osoosi_core::dlp_lineage::compute_sha256_hex(req.body_text.as_bytes()))
+    } else {
+        None
+    };
+
+    let uploaded_path = req
+        .params
+        .iter()
+        .find(|(k, _)| k == "uploaded_file" || k == "file_path")
+        .map(|(_, v)| v.as_str());
+
+    let egress_check = lineage_tracker.check_egress_allowed_full(
+        uploaded_path,
+        body_sha256.as_deref(),
+        body_bytes,
+        Some(&req.url),
+        req.actor_pid,
+    );
+
+    if let Err(osoosi_core::dlp_lineage::EgressDecision::Blocked {
+        policy,
+        classification,
+        span_context,
+        reason,
+    }) = egress_check
+    {
+        tracing::warn!(
+            "[HAR DLP Lineage Gate]: Egress blocked for actor '{}' URL '{}' (trace_id={}): {}",
+            req.actor,
+            req.url,
+            span_context.trace_id(),
+            reason
+        );
+        event.allowed = false;
+        event.authorization_decision = format!("BLOCK (DLP_LINEAGE_{})", policy.as_str());
+        event.dlp_response = format!("QUARANTINED_BY_LINEAGE_{}", classification.as_str());
+        event.rationale = format!("[DLP-Lineage]: Egress blocked: {}", reason);
+        if !event.detected_categories.contains(&"CROWN_JEWEL_LINEAGE".to_string()) {
+            event.detected_categories.push("CROWN_JEWEL_LINEAGE".to_string());
+        }
+    }
     let strict_lockdown_has_pii = crate::routes::dlp::is_strict_lockdown_active()
         && (!event.detected_categories.is_empty() || event.redacted_entity_count > 0);
     if !event.allowed
