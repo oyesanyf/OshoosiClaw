@@ -2068,6 +2068,10 @@ impl DlpLineageTracker {
         attrs.insert("dlp.policy".to_string(), policy.to_string());
         attrs.insert("dlp.classification".to_string(), classification.to_string());
         attrs.insert("dlp.tainted".to_string(), "true".to_string());
+        attrs.insert("dlp.threat_type".to_string(), "DATA_EXFILTRATION".to_string());
+        attrs.insert("dlp.retained_taint".to_string(), "true".to_string());
+        attrs.insert("dlp.block_reason".to_string(), "tainted_lineage_policy".to_string());
+        attrs.insert("dlp.trace_id".to_string(), trace_id.clone());
         attrs.insert("otel.status_code".to_string(), "ERROR".to_string());
         attrs.insert("otel.status_description".to_string(), reason.to_string());
         attrs.insert("error.type".to_string(), "DLP_EGRESS_BLOCKED".to_string());
