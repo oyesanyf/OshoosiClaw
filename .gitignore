@@ -178,3 +178,5 @@ crates/osoosi-model/models/
 /patch_hayabusa.py
 /patch_hayabusa2.py
 /patch_hayabusa3.py
+/rules/ai_threat_feeds/runtime_feeds/
+rules/ai_threat_feeds/runtime_feeds/
