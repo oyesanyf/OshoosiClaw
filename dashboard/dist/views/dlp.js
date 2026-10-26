@@ -341,7 +341,7 @@ async function renderDlpView(forceRefresh = false) {
                             process: ev.actor_process || ev.process,
                             sink: ev.destination_sink || ev.sink,
                             channel: ev.channel,
-                            verdict: ev.verdict || (ev.allowed ? 'ALLOWED' : 'BLOCKED'),
+                            verdict: ev.verdict || (ev.dlp_response === 'MONITOR_AND_SCRUB' ? 'SCRUBBED' : (ev.allowed ? 'ALLOWED' : 'BLOCKED')),
                             authorizationDecision: ev.authorization_decision || (ev.allowed ? 'ALLOW' : 'DENY'),
                             dlpResponse: ev.dlp_response || (ev.allowed ? 'ALLOW' : 'QUARANTINE'),
                             executionMode: ev.execution_mode || 'LIVE_ENFORCEMENT',
@@ -611,7 +611,11 @@ async function submitDlpInspection() {
         const analysis = await dlpAnalyzeAndScrub(payload);
         let verdict = 'ALLOWED';
         if (serverResult && serverResult.event) {
-            verdict = serverResult.event.allowed ? 'ALLOWED' : 'BLOCKED';
+            if (serverResult.event.dlp_response === 'MONITOR_AND_SCRUB') {
+                verdict = 'SCRUBBED';
+            } else {
+                verdict = serverResult.event.allowed ? 'ALLOWED' : 'BLOCKED';
+            }
         } else if (dlpState.policyMode === 'ENFORCE_BLOCK_AND_SCRUB' || dlpState.policyMode === 'ENFORCE_STRICT') {
             verdict = (analysis.categories.length > 0 || analysis.hasCrownJewel) ? 'BLOCKED' : 'ALLOWED';
         } else if (dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' || dlpState.policyMode === 'STRICT_LOCKDOWN') {

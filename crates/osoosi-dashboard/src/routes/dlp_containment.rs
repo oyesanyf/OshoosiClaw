@@ -372,12 +372,13 @@ impl DlpContainmentEngine {
             ));
         }
 
-        let monitor_only = backend
-            .as_ref()
-            .map(|b| b.is_monitor_only())
-            .unwrap_or(false)
-            && event.execution_mode != "LIVE_ENFORCEMENT"
-            && event.dlp_response != "QUARANTINE";
+        let monitor_only = crate::routes::dlp::is_monitor_only_active()
+            || (backend
+                .as_ref()
+                .map(|b| b.is_monitor_only())
+                .unwrap_or(false)
+                && event.execution_mode != "LIVE_ENFORCEMENT"
+                && event.dlp_response != "QUARANTINE");
         let dry_run = std::env::var("OSOOSI_DRY_RUN")
             .map(|v| v == "1")
             .unwrap_or(false);
