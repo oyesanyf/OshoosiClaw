@@ -92,6 +92,36 @@ Adds [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) to Host Acquisition 
 
 OshoosiClaw features `Siquery-RS`, an embedded 101-table virtual SQLite engine for querying volatile host artifacts (processes, sockets, drivers, injected modules) paired with `REA` for autonomous decompiler triage.
 """
+    },
+    "awesome-edr": {
+        "repo": "WithSecureLabs/awesome-edr",
+        "file": "README.md",
+        "section": "Open-Source EDR & Endpoint Agents",
+        "entry": "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Cross-platform Rust/eBPF CO-RE and Windows WFP/ETW agentic EDR with NASA F' static arena fault-protection and local BFT mesh consensus.",
+        "pr_title": "Add OshoosiClaw to Open-Source EDR & Endpoint Agents",
+        "pr_body": """### Summary
+Adds [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) to Open-Source EDR & Endpoint Agents.
+"""
+    },
+    "awesome-yara": {
+        "repo": "InQuest/awesome-yara",
+        "file": "README.md",
+        "section": "Tools & Automation",
+        "entry": "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Includes EDR-Bench, a SWE-bench-style YARA-X compiler-in-the-loop verification harness enforcing FAIL_TO_PASS and PASS_TO_PASS zero-FP gates.",
+        "pr_title": "Add OshoosiClaw (EDR-Bench YARA-X Harness) to Tools & Automation",
+        "pr_body": """### Summary
+Adds [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) under Tools & Automation.
+"""
+    },
+    "awesome-llm-security": {
+        "repo": "llm-sec/awesome-llm-security",
+        "file": "README.md",
+        "section": "Agentic Containment & Data Loss Prevention",
+        "entry": "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - 7-Ring Cedar reference monitor, Wasmtime/AppContainer sandbox, and OpenTelemetry W3C baggage DLP taint lineage for autonomous AI agents.",
+        "pr_title": "Add OshoosiClaw to Agentic Containment & Data Loss Prevention",
+        "pr_body": """### Summary
+Adds [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) under Agentic Containment & Data Loss Prevention.
+"""
     }
 }
 
@@ -132,7 +162,7 @@ def run_self_test() -> int:
             print(f"    Title : {data['pr_title']}\n")
 
     if all_ok:
-        print("All 6 awesome list manifests validated cleanly (100% compliant).")
+        print("All 9 awesome list manifests validated cleanly (100% compliant).")
         return 0
     else:
         print("Validation errors encountered.")
