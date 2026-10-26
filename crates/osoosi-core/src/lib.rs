@@ -47,6 +47,7 @@ pub use console_defense::{
 };
 pub mod correlator;
 pub mod disk_cleanup;
+pub mod dlp_lineage;
 pub mod dotscope;
 pub mod fhe_coordinator;
 pub mod firewall;
@@ -119,3 +120,9 @@ pub use memory_watchdog::{
 pub use orchestrator::*;
 pub use rate_limit_backoff::*;
 pub use rea::*;
+pub use dlp_lineage::{
+    compute_sha256_hex, compute_ssdeep, compare_ssdeep,
+    ArtifactKey, ArtifactTaintRecord, ClassificationLattice, DlpBaggage,
+    DlpLineageTracker, EgressDecision, FileWriteTaintDecision, PolicyLattice,
+    ProcessInstanceKey, ProcessTaintRecord,
+};

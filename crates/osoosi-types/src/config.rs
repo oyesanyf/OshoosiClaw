@@ -356,7 +356,23 @@ impl AutonomyMode {
     }
 }
 
+static STRICT_LOCKDOWN_RUNTIME_OVERRIDE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_strict_lockdown_override(active: bool) {
+    STRICT_LOCKDOWN_RUNTIME_OVERRIDE.store(active, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub fn is_strict_lockdown_override() -> bool {
+    STRICT_LOCKDOWN_RUNTIME_OVERRIDE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl AutonomyConfig {
+    pub fn is_strict_lockdown(&self) -> bool {
+        is_strict_lockdown_override()
+            || (self.auto_quarantine_malware && self.action_confidence_threshold <= 0.40)
+    }
+
     pub fn current_mode(&self) -> AutonomyMode {
         if !self.auto_quarantine_malware && self.action_confidence_threshold >= 0.75 {
             AutonomyMode::Audit

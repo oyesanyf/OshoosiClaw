@@ -381,7 +381,7 @@ fn classify_vote(
             }
         }
         "OpenJEV-Voter" => (EvidenceClass::Behavior, 0.96, true),
-        "Sigma-Engine" => (EvidenceClass::Behavior, 0.90, true),
+        "Sigma-Engine" => (EvidenceClass::Behavior, 0.96, true),
         "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
         name if name.contains("MalConv") || name.contains("ML") => {
             let weak_pe_signature =
@@ -463,11 +463,22 @@ fn orchestrate_evidence(
                     || v.result.reason.contains("Escape-Detector"))
         });
 
-    let has_deterministic_guard =
-        has_deterministic_credential_or_memory_guard || has_deterministic_canary_guard;
+    let has_sigma_or_lolbin_guard = votes.iter().any(|v| {
+        v.strong_action
+            && v.result.confidence >= 0.85
+            && (v.result.reason.contains("Sigma Match:")
+                || v.result.reason.contains("[Sigma-Engine]")
+                || v.result.reason.contains("Suspicious Child Payload Spawn"))
+    });
+
+    let has_deterministic_guard = has_deterministic_credential_or_memory_guard
+        || has_deterministic_canary_guard
+        || has_sigma_or_lolbin_guard;
 
     let corroboration = if has_deterministic_canary_guard {
         1.0f32
+    } else if has_sigma_or_lolbin_guard {
+        corroboration.max(0.96f32)
     } else if has_deterministic_credential_or_memory_guard {
         corroboration.max(0.92f32)
     } else {
@@ -478,6 +489,9 @@ fn orchestrate_evidence(
     } else {
         (base * corroboration + max_single.min(1.0) * 0.12).min(1.0)
     };
+    if has_sigma_or_lolbin_guard {
+        confidence = confidence.max(0.88);
+    }
 
     let has_live_network = classes.contains(&EvidenceClass::LiveNetwork);
     let has_behavior = classes.contains(&EvidenceClass::Behavior);
@@ -523,6 +537,7 @@ fn orchestrate_evidence(
     let require_approval = confidence >= 0.70 && independent < 2 && !has_deterministic_guard;
     let action = if (confidence >= 0.94 && independent >= 3 && strong_action)
         || (confidence >= 0.90 && has_deterministic_guard)
+        || (confidence >= 0.85 && has_sigma_or_lolbin_guard)
     {
         ResponseAction::Isolate
     } else if confidence >= 0.82 && has_live_network && (has_behavior || has_static || has_memory) {
@@ -1194,6 +1209,12 @@ impl PolicyEngine {
                     || r.contains("prompt_injection")
                     || r.contains("masquerade")
             });
+
+        if has_deterministic_active_attack && (vetoed || nsrl_vetoed) {
+            if let Some(ref mut r) = signature.reason {
+                *r = r.replace("Veto [", "OverriddenVeto [");
+            }
+        }
 
         if (vetoed || nsrl_vetoed) && !has_deterministic_active_attack {
             debug!(target: CONSENSUS_LOG_TARGET, "[CONSENSUS] round aborted (veto)");
@@ -1995,6 +2016,119 @@ mod tests {
             sig.mitre_technique.as_deref(),
             Some("T1003.007"),
             "Expected MITRE technique T1003.007 to be extracted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sigma_lolbin_sc_exe_elevated_above_085_and_isolated() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        engine
+            .add_voter(Box::new(crate::voters::TrustedVendorVoter))
+            .await;
+
+        let yaml_rule = r#"
+title: Service Security Descriptor Modification Via Sc.EXE
+id: b925e012-70be-41ec-b12e-13c544e31121
+status: test
+description: Detects modification of service DACL via sc.exe sdset
+tags:
+    - attack.persistence
+    - attack.privilege_escalation
+    - attack.t1543.003
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        Image|endswith: '\sc.exe'
+        CommandLine|contains: 'sdset'
+    condition: selection
+level: high
+ruletype: Sigma
+"#;
+        let rule: crate::sigma::SigmaRule =
+            serde_yaml::from_str(yaml_rule).expect("Must deserialize SigmaRule");
+        let mut sigma_engine = crate::sigma::SigmaEngine::new();
+        sigma_engine.add_rule(rule).expect("Must add rule");
+
+        let sigma_voter = crate::voters::SigmaVoter {
+            engine: Arc::new(sigma_engine),
+        };
+        engine.add_voter(Box::new(sigma_voter)).await;
+
+        let event = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\Windows\System32\sc.exe",
+                "CommandLine": r"C:\Windows\System32\sc.exe sdset TrustedService D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)",
+            }),
+            timestamp: chrono::Utc::now(),
+            causal_parent: None,
+        };
+
+        let sig_opt = engine.scan_event(&event).await;
+        assert!(
+            sig_opt.is_some(),
+            "Expected threat signature for sc.exe sdset Sigma match"
+        );
+        let sig = sig_opt.unwrap();
+        assert!(
+            sig.confidence >= 0.85,
+            "Expected confidence >= 0.85, got: {}",
+            sig.confidence
+        );
+        assert_eq!(
+            sig.recommended_action,
+            osoosi_types::ResponseAction::Isolate,
+            "Expected Isolate action"
+        );
+        assert!(
+            !sig.require_approval,
+            "Expected require_approval to be false"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_atomic_calc_payload_spawn_detected_and_transient_pid_eligible() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        let sigma_engine = crate::sigma::SigmaEngine::new();
+        let sigma_voter = crate::voters::SigmaVoter {
+            engine: Arc::new(sigma_engine),
+        };
+        engine.add_voter(Box::new(sigma_voter)).await;
+
+        let event = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::json!({
+                "Image": r"C:\Windows\System32\calc.exe",
+                "CommandLine": r"calc.exe",
+                "ParentImage": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                "ParentCommandLine": r"powershell.exe -ExecutionPolicy Bypass -Command calc.exe",
+            }),
+            timestamp: chrono::Utc::now(),
+            causal_parent: None,
+        };
+
+        let sig_opt = engine.scan_event(&event).await;
+        assert!(
+            sig_opt.is_some(),
+            "Expected threat signature for calc.exe spawned by PowerShell"
+        );
+        let sig = sig_opt.unwrap();
+        assert!(
+            sig.confidence >= 0.85,
+            "Expected composite confidence >= 0.85, got: {}",
+            sig.confidence
         );
     }
 }

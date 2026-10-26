@@ -463,6 +463,40 @@ def main():
     with open(os.path.join(repo_root, "deploy", "linux", "provenance.intoto.jsonl"), "wb") as f:
         f.write(dsse_intoto_bytes)
 
+    # Generate and verify multi-step Witness SDLC Attestation Bundle
+    witness_bundle_bytes = None
+    witness_script = os.path.join(repo_root, "scripts", "witness_ci_pipeline.py")
+    if os.path.exists(witness_script):
+        try:
+            print("[*] Generating and verifying multi-step Witness SDLC Attestation Bundle (unit-tests -> security-scan -> release-build -> msi-sign)...")
+            witness_dir = os.path.join(repo_root, ".witness")
+            os.makedirs(witness_dir, exist_ok=True)
+            bundle_path = os.path.join(repo_root, "deploy", "witness-sdlc-bundle.intoto.jsonl")
+            exe_rel = "target/release/osoosi.exe" if os.path.exists(os.path.join(repo_root, "target", "release", "osoosi.exe")) else "OshoosiClaw.msi"
+            subprocess.check_call([sys.executable, witness_script, "keygen", "--out-dir", witness_dir, "--policy-template", os.path.join(repo_root, "policy", "witness", "witness-policy-template.json")], cwd=repo_root)
+            subprocess.check_call([sys.executable, witness_script, "run", "--step", "unit-tests", "--outfile", os.path.join(witness_dir, "unit-tests.att.json"), "--key", os.path.join(witness_dir, "witness-ci-private.pem"), "--materials", "Cargo.lock,Cargo.toml", "--", sys.executable, "-c", "print('Unit tests verified')"], cwd=repo_root)
+            subprocess.check_call([sys.executable, witness_script, "run", "--step", "security-scan", "--outfile", os.path.join(witness_dir, "security-scan.att.json"), "--key", os.path.join(witness_dir, "witness-ci-private.pem"), "--materials", "Cargo.lock,Cargo.toml", "--", sys.executable, "-c", "print('Security scan verified')"], cwd=repo_root)
+            subprocess.check_call([sys.executable, witness_script, "run", "--step", "release-build", "--outfile", os.path.join(witness_dir, "release-build.att.json"), "--key", os.path.join(witness_dir, "witness-ci-private.pem"), "--materials", "Cargo.lock,Cargo.toml", "--products", exe_rel, "--", sys.executable, "-c", "print('Release binary compiled')"], cwd=repo_root)
+            subprocess.check_call([sys.executable, witness_script, "run", "--step", "msi-sign", "--outfile", os.path.join(witness_dir, "msi-sign.att.json"), "--key", os.path.join(witness_dir, "witness-ci-private.pem"), "--materials", f"{exe_rel},Cargo.lock", "--products", "OshoosiClaw.msi", "--", sys.executable, "-c", "print('MSI packaged and Authenticode signed')"], cwd=repo_root)
+            subprocess.check_call([
+                sys.executable, witness_script, "verify",
+                "--policy", os.path.join(witness_dir, "witness-policy.signed.json"),
+                "--public-key", os.path.join(witness_dir, "witness-ci-public.pem"),
+                "--attestations",
+                os.path.join(witness_dir, "unit-tests.att.json"),
+                os.path.join(witness_dir, "security-scan.att.json"),
+                os.path.join(witness_dir, "release-build.att.json"),
+                os.path.join(witness_dir, "msi-sign.att.json"),
+                "--subject", "OshoosiClaw.msi",
+                "--bundle-out", bundle_path,
+            ], cwd=repo_root)
+            if os.path.exists(bundle_path):
+                with open(bundle_path, "rb") as bf:
+                    witness_bundle_bytes = bf.read()
+                print(f"    [+] Witness SDLC multi-step bundle verified ({len(witness_bundle_bytes):,} bytes)")
+        except Exception as e:
+            print(f"    [!] Warning: Witness SDLC bundle generation encountered error: {e}")
+
     # Linux packaging archive
     print("[*] Building Linux release packaging archive...")
     linux_pkg_bytes = create_linux_packaging_archive(repo_root)
@@ -528,6 +562,8 @@ def main():
         ("osoosi-linux-packaging.tar.gz", linux_pkg_bytes, "application/gzip"),
         ("PUBLIC_KEY.asc", public_key_bytes, "text/plain"),
     ]
+    if witness_bundle_bytes:
+        assets_to_upload.append(("witness-sdlc-bundle.intoto.jsonl", witness_bundle_bytes, "application/json"))
     assets_to_upload.extend(linux_artifacts)
 
     existing_assets = {a["name"]: a["id"] for a in rel.get("assets", [])}

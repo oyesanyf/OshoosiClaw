@@ -981,6 +981,24 @@ impl AutonomousReaEngine {
         // 1. Fast autonomous adjudication check for benign system/dev process or veto reason
         if is_rea_benign_system_or_dev_process(target, reason) {
             self.benign_vetoes.fetch_add(1, Ordering::Relaxed);
+            if let Some(existing_blake3) = self.investigations.read().iter().find_map(|r| {
+                let matches_target = r.target_path.eq_ignore_ascii_case(target)
+                    || r.metadata
+                        .get("target")
+                        .and_then(|v| v.as_str())
+                        .map(|t| t.eq_ignore_ascii_case(target))
+                        .unwrap_or(false);
+                matches_target.then(|| r.blake3.clone())
+            }) {
+                return (
+                    true,
+                    format!(
+                        "Autonomous REA verified benign system/dev process '{}'",
+                        target
+                    ),
+                    Some(existing_blake3),
+                );
+            }
             let resolved_opt = resolve_candidate_binary_path(process_name, file_path);
             let canonical_identity = format!("rea:adjudicated:benign:{}:{}", target, reason_str);
             let (resolved_label, real_size, real_sha256, real_blake3) =

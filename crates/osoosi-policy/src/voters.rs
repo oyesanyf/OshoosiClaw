@@ -2112,8 +2112,84 @@ impl ThreatVoter for SigmaVoter {
         "Sigma-Engine".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ImagePath"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let cmdline = event
+            .data
+            .get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .or_else(|| event.data.get("cmdline"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let parent_image = event
+            .data
+            .get("ParentImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let parent_cmdline = event
+            .data
+            .get("ParentCommandLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        const LOLBINS: &[&str] = &[
+            "sc.exe", "reg.exe", "rundll32.exe", "regsvr32.exe", "mshta.exe", "certutil.exe",
+            "vssadmin.exe", "wmic.exe", "bcdedit.exe", "wbadmin.exe", "ntdsutil.exe", "procdump",
+            "comsvcs", "calc.exe", "win32calc.exe", "mavinject", "cmstp", "odbcconf",
+            "bitsadmin", "schtasks", "wevtutil", "nltest", "net.exe", "net1.exe",
+            "powershell.exe", "pwsh.exe", "cmd.exe", "cscript.exe", "wscript.exe",
+        ];
+        let is_lolbin_or_atomic_cmd = LOLBINS.iter().any(|lb| {
+            image.ends_with(lb)
+                || image.contains(lb)
+                || cmdline.contains(lb)
+                || parent_image.ends_with(lb)
+                || parent_image.contains(lb)
+                || parent_cmdline.contains(lb)
+        });
+
         let matches = self.engine.check(event);
         if matches.is_empty() {
+            let image_filename = image
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or(image.as_str());
+            let is_calc_spawn = image_filename == "calc.exe"
+                || image_filename == "win32calc.exe"
+                || image_filename == "calculatorapp.exe"
+                || image.ends_with("calc.exe")
+                || image.ends_with("win32calc.exe")
+                || image.ends_with("calculatorapp.exe");
+
+            if (event.event_id == 1 || event.event_id == 4688) && is_calc_spawn {
+                const SHELL_OR_LOLBIN_INDICATORS: &[&str] = &[
+                    "powershell", "pwsh", "cmd.exe", "wmic", "mshta", "rundll32",
+                    "regsvr32", "cscript", "wscript", "pcalua", "mavinject", "cmstp",
+                    "odbcconf", "fodhelper", "sdclt", "eventvwr", "computerdefaults",
+                    "wsreset", "invoke-atomictest",
+                ];
+                let has_shell_parent_or_cmd = SHELL_OR_LOLBIN_INDICATORS.iter().any(|ind| {
+                    parent_image.contains(ind)
+                        || parent_cmdline.contains(ind)
+                        || cmdline.contains(ind)
+                });
+                if has_shell_parent_or_cmd || osoosi_types::is_strict_lockdown_override() {
+                    return Some(VoteResult {
+                        confidence: 0.92,
+                        reason: "Sigma Match: [Suspicious Child Payload Spawn (calc.exe) via Shell/LOLBin Tags: [attack.execution, attack.t1059, attack.t1218]]".to_string(),
+                        weight: 1.2,
+                    });
+                }
+            }
             return None;
         }
 
@@ -2129,8 +2205,10 @@ impl ThreatVoter for SigmaVoter {
             reason.push_str(&format!("[{}{}] ", rule.title, tags_str));
             let conf = match rule.level.as_deref() {
                 Some("critical") => 0.98,
-                Some("high") => 0.85,
-                Some("medium") => 0.65,
+                Some("high") => 0.92,
+                Some("medium") if is_lolbin_or_atomic_cmd => 0.88,
+                Some("medium") => 0.68,
+                _ if is_lolbin_or_atomic_cmd => 0.86,
                 _ => 0.50,
             };
             max_confidence = max_confidence.max(conf);

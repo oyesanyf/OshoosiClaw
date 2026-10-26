@@ -86,7 +86,11 @@ pub fn is_administrative_lolbin(path: &str) -> bool {
         .unwrap_or(path_lc.as_str());
     matches!(
         filename,
-        "net.exe"
+        "calc.exe"
+            | "win32calc.exe"
+            | "calculatorapp.exe"
+            | "notepad.exe"
+            | "net.exe"
             | "net1.exe"
             | "powershell.exe"
             | "pwsh.exe"

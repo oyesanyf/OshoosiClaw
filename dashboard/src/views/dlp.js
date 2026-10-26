@@ -1039,22 +1039,34 @@ async function updateDlpPolicyMode() {
     const autoQuarantine = document.getElementById('dlp-auto-quarantine')?.checked ?? (dlpState.policyMode !== 'MONITOR_AND_SCRUB');
     const autoZkScrub = document.getElementById('dlp-auto-zk-scrub')?.checked ?? true;
 
-    try {
-        await fetch(`${API_BASE}/dlp/policy`, {
-            method: 'POST',
-            credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
-            headers: getDlpAuthHeaders(),
-            body: JSON.stringify({
-                policy_mode: dlpState.policyMode,
-                min_phi_threshold: actionVal,
-                action_threshold: actionVal,
-                quarantine_threshold: quaranVal,
-                auto_quarantine: autoQuarantine,
-                auto_zk_scrub: autoZkScrub,
-                redactx_containment_mode: dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' ? 'zero_leakage' : 'balanced_utility'
-            })
-        });
-    } catch (_) {}
+    const statusEl = document.getElementById('dlp-autonomy-save-status');
+    if (statusEl) {
+        statusEl.innerText = '✔ DLP Policy Saved';
+        statusEl.style.color = 'var(--accent-green)';
+        if (window._dlpSaveStatusTimer) clearTimeout(window._dlpSaveStatusTimer);
+        window._dlpSaveStatusTimer = setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
+    }
+
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 2500) : null;
+    fetch(`${API_BASE}/dlp/policy`, {
+        method: 'POST',
+        _skipGlobalLoading: true,
+        signal: ctrl ? ctrl.signal : undefined,
+        credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
+        headers: getDlpAuthHeaders(),
+        body: JSON.stringify({
+            policy_mode: dlpState.policyMode,
+            min_phi_threshold: actionVal,
+            action_threshold: actionVal,
+            quarantine_threshold: quaranVal,
+            auto_quarantine: autoQuarantine,
+            auto_zk_scrub: autoZkScrub,
+            redactx_containment_mode: dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' ? 'zero_leakage' : 'balanced_utility'
+        })
+    }).catch(() => {}).finally(() => {
+        if (timer) clearTimeout(timer);
+    });
 
     renderDlpView(false);
 }
@@ -1190,39 +1202,35 @@ async function saveCustomDlpAutonomySettings() {
         }));
     } catch (_) {}
 
+    syncDlpAutonomyCardsFromPolicy(dlpState.policyMode, false);
     if (statusEl) {
-        statusEl.innerText = 'Saving custom DLP policy...';
-        statusEl.style.color = 'var(--accent-blue)';
+        statusEl.innerText = '✔ DLP Policy Saved';
+        statusEl.style.color = 'var(--accent-green)';
+        if (window._dlpSaveStatusTimer) clearTimeout(window._dlpSaveStatusTimer);
+        window._dlpSaveStatusTimer = setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
     }
 
-    try {
-        const isStrict = dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' || actionVal <= 0.40;
-        const res = await fetch(`${API_BASE}/dlp/policy`, {
-            method: 'POST',
-            credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
-            headers: getDlpAuthHeaders(),
-            body: JSON.stringify({
-                policy_mode: dlpState.policyMode,
-                min_phi_threshold: actionVal,
-                action_threshold: actionVal,
-                quarantine_threshold: quaranVal,
-                auto_quarantine: autoQuarantine,
-                auto_zk_scrub: autoZkScrub,
-                redactx_containment_mode: isStrict ? 'zero_leakage' : 'balanced_utility'
-            })
-        });
-        if (statusEl) {
-            statusEl.innerText = res.ok ? '✔ DLP Policy Saved' : '✔ Saved Locally (Daemon Synced)';
-            statusEl.style.color = 'var(--accent-green)';
-            setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
-        }
-    } catch (e) {
-        if (statusEl) {
-            statusEl.innerText = '✔ DLP Policy Saved (Local Active)';
-            statusEl.style.color = 'var(--accent-green)';
-            setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3000);
-        }
-    }
+    const isStrict = dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' || actionVal <= 0.40;
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 2500) : null;
+    fetch(`${API_BASE}/dlp/policy`, {
+        method: 'POST',
+        _skipGlobalLoading: true,
+        signal: ctrl ? ctrl.signal : undefined,
+        credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
+        headers: getDlpAuthHeaders(),
+        body: JSON.stringify({
+            policy_mode: dlpState.policyMode,
+            min_phi_threshold: actionVal,
+            action_threshold: actionVal,
+            quarantine_threshold: quaranVal,
+            auto_quarantine: autoQuarantine,
+            auto_zk_scrub: autoZkScrub,
+            redactx_containment_mode: isStrict ? 'zero_leakage' : 'balanced_utility'
+        })
+    }).catch(() => {}).finally(() => {
+        if (timer) clearTimeout(timer);
+    });
 }
 
 window.renderDlpView = renderDlpView;

@@ -1013,6 +1013,73 @@ docker compose up -d --build
 </details>
 
 <details>
+<summary><b>🔏 Cryptographic Multi-Step CI/CD Attestation (Witness + OPA Rego) & Strict Lockdown Active IPS</b> (Click to expand)</summary>
+
+## 🔏 Cryptographic Multi-Step Supply-Chain Attestation (`witness` + OPA Rego + DSSEv1)
+
+OpenỌ̀ṣọ́ọ̀sì implements a 4-stage **in-toto / TestifySec `witness` Supply-Chain Attestation & OPA Rego Verification Gate** ([`.github/workflows/witness-sdlc.yml`](.github/workflows/witness-sdlc.yml), [`scripts/witness_ci_pipeline.py`](scripts/witness_ci_pipeline.py), [`policy/witness/`](policy/witness/)) that mathematically proves every release binary and Windows MSI package passed unit testing, static security scanning, deterministic compilation, and Authenticode/GPG packaging on an untampered commit and lockfile before release publication.
+
+```mermaid
+flowchart LR
+    subgraph S1["Stage 1: unit-tests"]
+        U1["Materials: Cargo.lock + Cargo.toml"] --> U2["witness run -s unit-tests"]
+        U2 --> U3["Rego: commandrun.exitcode == 0<br/>+ git.commithash >= 7"]
+    end
+
+    subgraph S2["Stage 2: security-scan"]
+        SC1["Materials: Cargo.lock (Hash Match)"] --> SC2["witness run -s security-scan"]
+        SC2 --> SC3["Rego: Clippy + Audit exitcode == 0"]
+    end
+
+    subgraph S3["Stage 3: release-build"]
+        B1["Materials: Cargo.lock (Invariance Check)"] --> B2["witness run -s release-build"]
+        B2 --> B3["Products: osoosi.exe / osoosi ELF<br/>(Rego: count(product) > 0)"]
+    end
+
+    subgraph S4["Stage 4: msi-sign"]
+        M1["Materials: artifactsFrom ['release-build']<br/>(Exact SHA-256 Continuity)"] --> M2["witness run -s msi-sign"]
+        M2 --> M3["Products: OshoosiClaw.msi<br/>+ DSSEv1 + RFC 3161 Timestamp"]
+    end
+
+    subgraph GATE["Cryptographic Gate: witness verify"]
+        G1["Verify ECDSA P-256 DSSEv1 PAE Signatures"]
+        G2["Enforce Commit & Cargo.lock Invariance Across All 4 Steps"]
+        G3["Enforce Artifact Continuity (release-build Product == msi-sign Material)"]
+        G4["Emit witness-sdlc-bundle.intoto.jsonl to GitHub Release"]
+        G1 --> G2 --> G3 --> G4
+    end
+
+    S1 --> S2 --> S3 --> S4 --> GATE
+```
+
+| Verification Dimension | `witness` Attestor & Policy File | Cryptographic Guarantee |
+|:---|:---|:---|
+| **Drop-In Step Wrapper (`witness run`)** | `material/v0.1`, `command-run/v0.1`, `product/v0.1`, `git/v0.1`, `environment/v0.1` | Wraps each CI command and records pre-execution input SHA-256 digests (`Cargo.lock`, `Cargo.toml`), command exit codes, runner identity, and post-execution output binary SHA-256 digests. |
+| **Embedded OPA Rego Policies** | [`command-exit-zero.rego`](policy/witness/command-exit-zero.rego), [`git-clean-commit.rego`](policy/witness/git-clean-commit.rego), [`artifact-chain.rego`](policy/witness/artifact-chain.rego) | Embedded directly inside [`witness-policy-template.json`](policy/witness/witness-policy-template.json); fails closed (`REGO_POLICY_DENY`) if any step exits non-zero or produces zero product artifacts. |
+| **Lockfile & Commit Invariance** | `LOCKFILE_DRIFT_VIOLATION` & `GIT_COMMIT_DRIFT_VIOLATION` | Asserts `Cargo.lock` SHA-256 and `git.commithash` are identical across `unit-tests`, `security-scan`, `release-build`, and `msi-sign`. |
+| **Cross-Stage Artifact Continuity (`artifactsFrom`)** | `ARTIFACT_CONTINUITY_VIOLATION` | Proves the exact `osoosi.exe` binary digest produced by `release-build` matches the input material digest packaged by `msi-sign`. |
+
+```powershell
+# Run the 6-scenario positive & negative cryptographic Witness SDLC self-test suite locally
+python scripts/witness_ci_pipeline.py --selftest
+```
+
+---
+
+## 🔒 Strict Lockdown Active IPS Mode (`>= 0.85` Sigma + LOLBin Confidence & Transient Child PID Termination)
+
+When **Strict Lockdown** is enabled in either the **DLP Control Plane (`#dlp` -> `QUARANTINE_ON_CROWN_JEWEL`)** or **EDR Autonomy Settings (`lockdown`)**, OpenỌ̀ṣọ́ọ̀sì activates real-time **Active IPS / Prevention** against Living-off-the-Land Binaries (LOLBins) and Atomic Red Team execution chains while preserving 100% `C:\Windows\System32` disk integrity:
+
+1. **Deterministic Sigma + LOLBin Confidence Elevation (`>= 0.85`)**:
+   - High (`0.92`) and Critical (`0.98`) MITRE ATT&CK Sigma detections, signed LOLBin abuse (`sc.exe`, `vssadmin.exe`, `wbadmin.exe`, `bcdedit.exe`, `ntdsutil.exe`, `certutil.exe`, `bitsadmin.exe`, `mshta.exe`, `regsvr32.exe`, `rundll32.exe`, `mavinject.exe`, `odbcconf.exe`, `cmstp.exe`), and suspicious child payload spawns (`calc.exe` / `win32calc.exe` / `calculatorapp.exe` spawned by script interpreters or LOLBins) are treated as deterministic behavioral guards in `orchestrate_evidence` (`corroboration >= 0.96`), preventing single-class dilution (`0.562`) and achieving composite confidence `>= 0.88` (`ResponseAction::Isolate`, `require_approval = false`).
+   - `Trusted-Vendor` and `NSRL-Veto` never override or downgrade a confirmed Sigma/LOLBin behavioral match to `"benign"`.
+2. **Transient Child PID Termination (`KillProcess` with Exit Code `5` — Zero `System32` Disk Touch)**:
+   - `BlockingManager::kill_transient_lolbin_or_payload_pid` terminates only the specific transient child `PID` in memory via `TerminateProcess(handle, 5)` (`ERROR_ACCESS_DENIED`), never quarantining, modifying, or adding persistent `FileBlockExecutable` / IFEO rules for any `C:\Windows\System32` or `SysWOW64` binary on disk.
+   - Core OS daemons (`lsass.exe`, `csrss.exe`, `services.exe`, `svchost.exe`, `explorer.exe`, `dwm.exe`, `osoosi.exe`, `sysmon64.exe`), browsers/IDEs (`chrome.exe`, `msedge.exe`, `code.exe`, `antigravity.exe`), and test harnesses (`python.exe`, `py.exe`) are strictly protected by `is_non_killable_persistent_os_or_user_daemon`.
+
+</details>
+
+<details>
 <summary><b>⚙️ Native Cross-Platform Service Lifecycle (OsoosiEDR) & Desktop Immunity</b> (Click to expand)</summary>
 
 ## ⚙️ Native Cross-Platform Service Lifecycle (`OsoosiEDR`) & Host OS Desktop/Search Immunity

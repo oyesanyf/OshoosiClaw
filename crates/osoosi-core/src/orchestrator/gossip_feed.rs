@@ -943,7 +943,7 @@ impl EdrOrchestrator {
                 }
             }
         }
-        for entry in self.audit.entries().iter().rev().take(100) {
+        for entry in self.audit.get_recent_entries(100).into_iter().rev() {
             if entry.event_type == "MESH_THREAT_BROADCAST"
                 || entry.event_type == "MESH_THREAT_RECEIVED"
                 || entry.event_type == "THREAT_DETECTED"
@@ -1035,10 +1035,20 @@ impl EdrOrchestrator {
                 continue;
             }
 
+            static REA_PROBED_CANDIDATE_IDS: std::sync::OnceLock<dashmap::DashSet<String>> =
+                std::sync::OnceLock::new();
+            let probed_set = REA_PROBED_CANDIDATE_IDS.get_or_init(dashmap::DashSet::new);
+            if probed_set.contains(&id) {
+                continue;
+            }
             if disk_probes >= 6 {
                 continue;
             }
             disk_probes += 1;
+            if probed_set.len() > 4096 {
+                probed_set.clear();
+            }
+            probed_set.insert(id.clone());
 
             let cand_p = if !proc_str.is_empty() {
                 Some(proc_str)

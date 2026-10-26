@@ -59,26 +59,29 @@ fn extend_simulated_pcr_16(hash_bytes: &[u8]) {
 /// "go back" and alter previous entries.
 #[cfg(target_os = "windows")]
 fn is_hardware_tpm_present() -> bool {
-    use windows::core::w;
-    use windows::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, HKEY_LOCAL_MACHINE, KEY_READ,
-    };
-    unsafe {
-        let mut key = windows::Win32::System::Registry::HKEY::default();
-        let status = RegOpenKeyExW(
-            HKEY_LOCAL_MACHINE,
-            w!("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI"),
-            0,
-            KEY_READ,
-            &mut key,
-        );
-        if status.is_ok() {
-            let _ = RegCloseKey(key);
-            true
-        } else {
-            false
+    static HW_TPM_PRESENT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HW_TPM_PRESENT.get_or_init(|| {
+        use windows::core::w;
+        use windows::Win32::System::Registry::{
+            RegCloseKey, RegOpenKeyExW, HKEY_LOCAL_MACHINE, KEY_READ,
+        };
+        unsafe {
+            let mut key = windows::Win32::System::Registry::HKEY::default();
+            let status = RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                w!("SYSTEM\\CurrentControlSet\\Services\\TPM\\WMI"),
+                0,
+                KEY_READ,
+                &mut key,
+            );
+            if status.is_ok() {
+                let _ = RegCloseKey(key);
+                true
+            } else {
+                false
+            }
         }
-    }
+    })
 }
 
 /// Extend an audit entry hash into the TPM PCR bank.
@@ -374,43 +377,61 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
 
     #[cfg(target_os = "windows")]
     {
-        // Rustify: Use native Event Log API for TPM attestation logging
-        use windows::core::PCWSTR;
-        use windows::Win32::System::EventLog::*;
+        // Rate-limit synchronous Windows EventLog RPC calls (RegisterEventSourceW / ReportEventW)
+        // to at most once every 5 seconds so high-frequency audit logging never stalls threads.
+        static LAST_EVENTLOG_EXTEND_EPOCH: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let prev = LAST_EVENTLOG_EXTEND_EPOCH.load(std::sync::atomic::Ordering::Relaxed);
+        if now_secs.saturating_sub(prev) >= 5
+            && LAST_EVENTLOG_EXTEND_EPOCH
+                .compare_exchange(
+                    prev,
+                    now_secs,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::Relaxed,
+                )
+                .is_ok()
+        {
+            use windows::core::PCWSTR;
+            use windows::Win32::System::EventLog::*;
 
-        unsafe {
-            let handle = RegisterEventSourceW(
-                None,
-                PCWSTR::from_raw(windows::core::w!("OsoosiTPM").as_ptr()),
-            );
-            if let Ok(h) = handle {
-                let msg = format!("Audit PCR extend: {}", hash_hex);
-                let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
-                let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
-
-                // windows-rs 0.58 ReportEventW: (handle, type, category, eventid, sid, dwdatasize, strings, rawdata)
-                let _ = ReportEventW(
-                    h,
-                    EVENTLOG_INFORMATION_TYPE,
-                    0u16,
-                    1001u32,
+            unsafe {
+                let handle = RegisterEventSourceW(
                     None,
-                    0u32,
-                    Some(&strings),
-                    None,
+                    PCWSTR::from_raw(windows::core::w!("OsoosiTPM").as_ptr()),
                 );
-                let _ = DeregisterEventSource(h);
+                if let Ok(h) = handle {
+                    let msg = format!("Audit PCR extend: {}", hash_hex);
+                    let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+                    let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
 
-                return Some(AttestationResult {
-                    hardware_backed: true,
-                    pcr_index: Some(AUDIT_PCR_INDEX),
-                    attestation_hash: hash_hex.to_string(),
-                    timestamp: chrono::Utc::now(),
-                });
+                    let _ = ReportEventW(
+                        h,
+                        EVENTLOG_INFORMATION_TYPE,
+                        0u16,
+                        1001u32,
+                        None,
+                        0u32,
+                        Some(&strings),
+                        None,
+                    );
+                    let _ = DeregisterEventSource(h);
+                }
             }
         }
+        return Some(AttestationResult {
+            hardware_backed: true,
+            pcr_index: Some(AUDIT_PCR_INDEX),
+            attestation_hash: hash_hex.to_string(),
+            timestamp: chrono::Utc::now(),
+        });
     }
 
+    #[cfg(not(target_os = "windows"))]
     None
 }
 
