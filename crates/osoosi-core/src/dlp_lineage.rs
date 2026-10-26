@@ -1467,6 +1467,7 @@ impl DlpLineageTracker {
                     child_rec.policy = parent.policy;
                     child_rec.baggage = parent.baggage.clone();
                     child_rec.last_taint_read_time = parent.last_taint_read_time;
+                    child_rec.read_history = parent.read_history.clone();
                     child_rec
                         .linked_span_contexts
                         .push(parent.origin_span_context.clone());

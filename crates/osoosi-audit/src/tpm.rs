@@ -435,6 +435,33 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
     None
 }
 
+
+/// Telemetry and verification report for F Prime hardware watchdog anchoring against TPM 2.0 PCR 16.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FPrimeWatchdogTpmReport {
+    pub acpi_device_path: String,
+    pub hardware_tpm_present: bool,
+    pub pcr_16_hex: String,
+    pub pcr_16_valid: bool,
+    pub verified_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Verifies TPM 2.0 PCR 16 state for NASA JPL F Prime Svc::Health watchdog strokes.
+pub fn verify_fprime_watchdog_pcr16() -> FPrimeWatchdogTpmReport {
+    let (pcr_16_hex, is_hw) = get_pcr_value(16);
+    let is_valid = pcr_16_hex.len() == 64
+        && !pcr_16_hex.chars().all(|c| c == '0')
+        && hex::decode(&pcr_16_hex).is_ok();
+
+    FPrimeWatchdogTpmReport {
+        acpi_device_path: "ACPI\\MSFT0101\\1".to_string(),
+        hardware_tpm_present: is_hw,
+        pcr_16_hex,
+        pcr_16_valid: is_valid,
+        verified_at: chrono::Utc::now(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,5 +491,13 @@ mod tests {
         map.insert(7, simulated_pcr(7));
         let composite = compute_pcr_composite_digest(&map);
         assert_eq!(composite.len(), 64);
+    }
+
+    #[test]
+    fn test_verify_fprime_watchdog_pcr16() {
+        let report = verify_fprime_watchdog_pcr16();
+        assert_eq!(report.acpi_device_path, "ACPI\\MSFT0101\\1");
+        assert_eq!(report.pcr_16_hex.len(), 64);
+        assert!(report.pcr_16_valid);
     }
 }

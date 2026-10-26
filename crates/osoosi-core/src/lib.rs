@@ -51,6 +51,7 @@ pub mod dlp_lineage;
 pub mod dotscope;
 pub mod fhe_coordinator;
 pub mod firewall;
+pub mod fprime_flight;
 pub mod forensics;
 pub mod geo_mesh;
 pub mod gossip;
@@ -120,6 +121,17 @@ pub use memory_watchdog::{
 pub use orchestrator::*;
 pub use rate_limit_backoff::*;
 pub use rea::*;
+pub use fprime_flight::{
+    create_port_pair, ArenaBinKind, ArenaSlotHandle, BftMeshConsensusComponent,
+    BftQuorumPromotionProof, ComponentHealthVerdict, ContainmentDirective,
+    EbpfPmuTelemetryComponent, FPrimeComponent, FPrimeError, FPrimeFlightRuntime,
+    FPrimeOperatingMode, FPrimeTelemetrySnapshot, FPrimeTopology, InputPort, IsolationAck,
+    OutputPort, PingToken, PongToken, PortConnectionDescriptor, PortEnvelope, PortQosLane,
+    ReaInspectionVerdict, ReaMagikaInspectorComponent, RecoilAssessment,
+    RecoilLikelihoodScorerComponent, SafeModeExecutionReport, SafeModePlaybook, SequencerOp,
+    StaticArenaPool, SvcCmdSequencer, SvcHealthMonitor, TelemetryFrame, WatchdogStrokeReceipt,
+    WfpNetworkIsolatorComponent,
+};
 pub use dlp_lineage::{
     compute_sha256_hex, compute_ssdeep, compare_ssdeep,
     ArtifactKey, ArtifactTaintRecord, ClassificationLattice, DlpBaggage,
