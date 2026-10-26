@@ -21,6 +21,7 @@ $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_agent_anomal
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_dashboard-*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "dlp_lineage_*.exe" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\deps" -Filter "m3_*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\build" -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue
 
 $signedCount = 0

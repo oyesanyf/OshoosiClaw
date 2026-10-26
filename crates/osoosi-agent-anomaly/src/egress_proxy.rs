@@ -99,6 +99,10 @@ pub fn emit_synthetic_blocked_span(
     attrs.insert("dlp.action".to_string(), "BLOCKED".to_string());
     attrs.insert("dlp.policy".to_string(), block_info.policy.clone());
     attrs.insert("dlp.classification".to_string(), block_info.classification.clone());
+    attrs.insert("dlp.threat_type".to_string(), "DATA_EXFILTRATION".to_string());
+    attrs.insert("dlp.retained_taint".to_string(), "true".to_string());
+    attrs.insert("dlp.block_reason".to_string(), "tainted_lineage_policy".to_string());
+    attrs.insert("dlp.trace_id".to_string(), trace_id.clone());
     attrs.insert("otel.status_code".to_string(), "ERROR".to_string());
     attrs.insert("otel.status_description".to_string(), block_info.reason.clone());
     attrs.insert("error.type".to_string(), "DLP_EGRESS_BLOCKED".to_string());
@@ -767,6 +771,18 @@ mod tests {
         assert_eq!(
             last_span.attributes.get("dlp.action").map(|s| s.as_str()),
             Some("BLOCKED")
+        );
+        assert_eq!(
+            last_span.attributes.get("dlp.threat_type").map(|s| s.as_str()),
+            Some("DATA_EXFILTRATION")
+        );
+        assert_eq!(
+            last_span.attributes.get("dlp.retained_taint").map(|s| s.as_str()),
+            Some("true")
+        );
+        assert_eq!(
+            last_span.attributes.get("dlp.block_reason").map(|s| s.as_str()),
+            Some("tainted_lineage_policy")
         );
         assert_eq!(
             last_span.attributes.get("otel.status_code").map(|s| s.as_str()),
