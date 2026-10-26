@@ -67,7 +67,7 @@ OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) implements end-to-end, real-time DLP D
 |---|------|-------|-------------|--------|
 | M1 | Synthetic OTel Producer & Taint State Machine | Features 1–6: `crates/osoosi-core/src/dlp_lineage.rs`, PID/inode keys, lattice dominance, Boundaries 1–3 & unit tests | none | DONE |
 | M2 | osquery, HAR & Kernel Telemetry Correlation | Features 7–10: `siquery-rs` `process_open_files`/`file_events`, ETW/eBPF events, HAR correlation, zero-PII attributes | M1 | DONE |
-| M3 | Inline Egress Blocking & OpenLineage REST API | Features 11–14: Nanosecond blocking in `egress_proxy`, OpenLineage `RunEvent` log records, sub-5ms REST endpoints | M1, M2 | PLANNED |
+| M3 | Inline Egress Blocking & OpenLineage REST API | Features 11–14: Nanosecond blocking in `egress_proxy`, OpenLineage `RunEvent` log records, sub-5ms REST endpoints | M1, M2 | IN_PROGRESS |
 | M4 | Collapsible Data Lineage Section in DLP WebUI | Features 15–16: `<details>` in `dashboard/src/index.html` & `views/dlp.js`, 0-diff parity with `dist/` | M3 | PLANNED |
 | M5 | Cross-Repo Sync & Documentation | Features 17–18: `README.md` Mermaid diagram, `AgentOctopus` lockstep sync, `validate_readme.py` | M1–M4 | PLANNED |
 | M-Final | Full Test Suite & Automated Release Sync | Feature 19: All cargo tests passing, live HTTP verification, Authenticode signing, WDSI submission, PR ship | M1–M5 | PLANNED |

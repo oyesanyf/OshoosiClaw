@@ -9,16 +9,18 @@
 //! - Boundary 2: Encrypted/zero-similarity causal taint preservation (`openssl enc`, `7z.exe`).
 //! - Boundary 3: Cross-host new inode rehydration via exact SHA-256 and fuzzy ssdeep digests.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
 use std::hash::Hash;
 use std::path::Path;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use opentelemetry::trace::{
     Link, SpanContext, SpanId, TraceFlags, TraceId, TraceState,
 };
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
 
@@ -794,6 +796,263 @@ pub enum FileWriteTaintDecision {
     },
 }
 
+// ============================================================================
+// OpenLineage RunEvent & Facet Models (Correlated OTel LogRecord Bodies)
+// ============================================================================
+
+/// Structured OpenLineage RunEvent model adhering to the OpenLineage specification.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageRunEvent {
+    pub event_type: String, // "START", "RUNNING", "COMPLETE", "FAIL", "ABORT"
+    pub event_time: String, // ISO-8601 UTC
+    pub run: OpenLineageRun,
+    pub job: OpenLineageJob,
+    #[serde(default)]
+    pub inputs: Vec<OpenLineageInputDataset>,
+    #[serde(default)]
+    pub outputs: Vec<OpenLineageOutputDataset>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageRun {
+    pub run_id: String, // UUID v4
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub facets: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageJob {
+    pub namespace: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub facets: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageInputDataset {
+    pub namespace: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub facets: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenLineageOutputDataset {
+    pub namespace: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub facets: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Facet containing SHA-256 and fuzzy ssdeep digests with classification & policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DatasetDigestFacet {
+    pub sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuzzy_hash_ssdeep: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub policy: Option<String>,
+}
+
+/// Custom taint facet on OpenLineage output datasets.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutputTaintFacet {
+    pub tainted: bool,
+    pub classification: String,
+    pub policy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    #[serde(default)]
+    pub parent_trace_ids: Vec<String>,
+    #[serde(default)]
+    pub span_links: Vec<String>,
+}
+
+/// Synthetic OpenTelemetry LogRecord carrying OpenLineage RunEvent in its body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyntheticOtelLogRecord {
+    pub timestamp_utc: String,
+    pub trace_id: String,
+    pub span_id: String,
+    pub trace_flags: u8,
+    pub severity_number: u32,
+    pub severity_text: String,
+    pub body: String, // OpenLineage RunEvent formatted as JSON
+    pub attributes: BTreeMap<String, String>,
+}
+
+/// Synthetic child span emitted on blocked egress.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyntheticBlockedChildSpan {
+    pub name: String,
+    pub trace_id: String,
+    pub span_id: String,
+    pub parent_span_id: String,
+    pub start_time_utc: String,
+    pub end_time_utc: String,
+    pub status: String, // "ERROR"
+    pub action: String, // "BLOCKED"
+    pub policy: String,
+    pub classification: String,
+    pub attributes: BTreeMap<String, String>,
+}
+
+impl OpenLineageRunEvent {
+    pub fn new(
+        event_type: impl Into<String>,
+        run_id: impl Into<String>,
+        job_namespace: impl Into<String>,
+        job_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            event_type: event_type.into(),
+            event_time: Utc::now().to_rfc3339(),
+            run: OpenLineageRun {
+                run_id: run_id.into(),
+                facets: serde_json::Map::new(),
+            },
+            job: OpenLineageJob {
+                namespace: job_namespace.into(),
+                name: job_name.into(),
+                facets: serde_json::Map::new(),
+            },
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            producer: Some("https://github.com/oyesanyf/OshoosiClaw/tree/main/dlp_lineage".to_string()),
+            schema_url: Some("https://openlineage.io/spec/1-0-5/OpenLineage.json".to_string()),
+        }
+    }
+
+    pub fn with_input(
+        mut self,
+        namespace: impl Into<String>,
+        name: impl Into<String>,
+        sha256: impl Into<String>,
+        ssdeep: Option<String>,
+        classification: Option<String>,
+        policy: Option<String>,
+    ) -> Self {
+        let digest_facet = DatasetDigestFacet {
+            sha256: sha256.into(),
+            fuzzy_hash_ssdeep: ssdeep,
+            classification,
+            policy,
+        };
+        let mut facets = serde_json::Map::new();
+        if let Ok(v) = serde_json::to_value(&digest_facet) {
+            facets.insert("datasetDigest".to_string(), v);
+        }
+        self.inputs.push(OpenLineageInputDataset {
+            namespace: namespace.into(),
+            name: name.into(),
+            facets,
+        });
+        self
+    }
+
+    pub fn with_output(
+        mut self,
+        namespace: impl Into<String>,
+        name: impl Into<String>,
+        sha256: impl Into<String>,
+        tainted: bool,
+        classification: String,
+        policy: String,
+        action: Option<String>,
+        parent_trace_ids: Vec<String>,
+        span_links: Vec<String>,
+    ) -> Self {
+        let taint_facet = OutputTaintFacet {
+            tainted,
+            classification: classification.clone(),
+            policy: policy.clone(),
+            action: action.clone(),
+            parent_trace_ids,
+            span_links,
+        };
+        let digest_facet = DatasetDigestFacet {
+            sha256: sha256.into(),
+            fuzzy_hash_ssdeep: None,
+            classification: Some(classification),
+            policy: Some(policy),
+        };
+        let mut facets = serde_json::Map::new();
+        if let Ok(v) = serde_json::to_value(&taint_facet) {
+            facets.insert("taintFacet".to_string(), v);
+        }
+        if let Ok(v) = serde_json::to_value(&digest_facet) {
+            facets.insert("datasetDigest".to_string(), v);
+        }
+        self.outputs.push(OpenLineageOutputDataset {
+            namespace: namespace.into(),
+            name: name.into(),
+            facets,
+        });
+        self
+    }
+
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn to_json_compact(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn to_otel_log_record(
+        &self,
+        trace_id: Option<&str>,
+        span_id: Option<&str>,
+    ) -> SyntheticOtelLogRecord {
+        let body_json = serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string());
+        let t_id = trace_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{:032x}", rand::random::<u128>()));
+        let s_id = span_id
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("{:016x}", rand::random::<u64>()));
+
+        let mut attrs = BTreeMap::new();
+        attrs.insert("openlineage.event_type".to_string(), self.event_type.clone());
+        attrs.insert("openlineage.job.name".to_string(), self.job.name.clone());
+        attrs.insert("openlineage.job.namespace".to_string(), self.job.namespace.clone());
+        attrs.insert("openlineage.run_id".to_string(), self.run.run_id.clone());
+        attrs.insert("openlineage.inputs_count".to_string(), self.inputs.len().to_string());
+        attrs.insert("openlineage.outputs_count".to_string(), self.outputs.len().to_string());
+
+        let (severity_number, severity_text) = match self.event_type.as_str() {
+            "FAIL" | "ABORT" => (17, "ERROR".to_string()),
+            "START" | "RUNNING" => (9, "INFO".to_string()),
+            "COMPLETE" => (9, "INFO".to_string()),
+            _ => (9, "INFO".to_string()),
+        };
+
+        SyntheticOtelLogRecord {
+            timestamp_utc: self.event_time.clone(),
+            trace_id: t_id,
+            span_id: s_id,
+            trace_flags: 1, // SAMPLED (100% retention)
+            severity_number,
+            severity_text,
+            body: body_json,
+            attributes: attrs,
+        }
+    }
+}
+
 /// Real-time DLP Data Lineage and Taint State Tracker.
 pub struct DlpLineageTracker {
     /// Active process taint table keyed by `(pid, start_time_100ns)`.
@@ -806,6 +1065,14 @@ pub struct DlpLineageTracker {
     pub read_to_write_ttl_secs: u64,
     /// Set of known long-lived system/interactive process executable names.
     pub long_lived_process_names: HashSet<String>,
+    /// Tamper-evident Merkle audit tree retaining 100% of tainted traces.
+    pub audit_tree: Arc<osoosi_audit::MerkleAuditTree>,
+    /// Bounded in-memory ring-buffer of recent OpenLineage RunEvents (max 1,000).
+    pub openlineage_events: RwLock<VecDeque<OpenLineageRunEvent>>,
+    /// Bounded in-memory ring-buffer of correlated OTel LogRecords (max 1,000).
+    pub otel_log_records: RwLock<VecDeque<SyntheticOtelLogRecord>>,
+    /// Bounded in-memory ring-buffer of synthetic blocked child spans (max 1,000).
+    pub blocked_child_spans: RwLock<VecDeque<SyntheticBlockedChildSpan>>,
 }
 
 impl Default for DlpLineageTracker {
@@ -844,6 +1111,10 @@ impl DlpLineageTracker {
             content_catalog: DashMap::new(),
             read_to_write_ttl_secs,
             long_lived_process_names: long_lived,
+            audit_tree: Arc::new(osoosi_audit::MerkleAuditTree::new()),
+            openlineage_events: RwLock::new(VecDeque::with_capacity(1000)),
+            otel_log_records: RwLock::new(VecDeque::with_capacity(1000)),
+            blocked_child_spans: RwLock::new(VecDeque::with_capacity(1000)),
         }
     }
 
@@ -1775,6 +2046,534 @@ impl DlpLineageTracker {
         Ok(correlated)
     }
 
+    /// Emits a synthetic child span with status ERROR, dlp.action=BLOCKED, and zero-PII OTel attributes.
+    /// Retains 100% of tainted traces in the cryptographic Merkle audit tree (tail-based sampling).
+    pub fn emit_blocked_child_span(
+        &self,
+        parent_context: &SpanContext,
+        policy: &PolicyLattice,
+        classification: &ClassificationLattice,
+        url: Option<&str>,
+        file_path: Option<&str>,
+        hash: Option<&str>,
+        reason: &str,
+    ) -> SyntheticBlockedChildSpan {
+        let now = Utc::now().to_rfc3339();
+        let trace_id = parent_context.trace_id().to_string();
+        let parent_span_id = parent_context.span_id().to_string();
+        let child_span_id = format!("{:016x}", rand::random::<u64>());
+
+        let mut attrs = BTreeMap::new();
+        attrs.insert("dlp.action".to_string(), "BLOCKED".to_string());
+        attrs.insert("dlp.policy".to_string(), policy.to_string());
+        attrs.insert("dlp.classification".to_string(), classification.to_string());
+        attrs.insert("dlp.tainted".to_string(), "true".to_string());
+        attrs.insert("otel.status_code".to_string(), "ERROR".to_string());
+        attrs.insert("otel.status_description".to_string(), reason.to_string());
+        attrs.insert("error.type".to_string(), "DLP_EGRESS_BLOCKED".to_string());
+
+        if let Some(u) = url {
+            attrs.insert("url.full".to_string(), sanitize_url_zero_pii(u));
+        }
+        if let Some(fp) = file_path {
+            attrs.insert("file.path".to_string(), fp.to_string());
+        }
+        if let Some(h) = hash {
+            attrs.insert("file.hash.sha256".to_string(), h.to_string());
+        }
+
+        let child_span = SyntheticBlockedChildSpan {
+            name: "dlp.egress_blocked".to_string(),
+            trace_id: trace_id.clone(),
+            span_id: child_span_id,
+            parent_span_id,
+            start_time_utc: now.clone(),
+            end_time_utc: now,
+            status: "ERROR".to_string(),
+            action: "BLOCKED".to_string(),
+            policy: policy.to_string(),
+            classification: classification.to_string(),
+            attributes: attrs,
+        };
+
+        // Retain 100% of tainted traces: anchor into Merkle audit tree
+        let _ = self.audit_tree.log(
+            "dlp.egress_blocked",
+            serde_json::json!({
+                "trace_id": &child_span.trace_id,
+                "span_id": &child_span.span_id,
+                "action": "BLOCKED",
+                "policy": &child_span.policy,
+                "classification": &child_span.classification,
+                "reason": reason,
+            }),
+        );
+
+        let mut lock = self.blocked_child_spans.write();
+        if lock.len() >= 1000 {
+            lock.pop_front();
+        }
+        lock.push_back(child_span.clone());
+
+        child_span
+    }
+
+    /// Emits a structured OpenLineage RunEvent formatted as JSON and attached as a correlated
+    /// OpenTelemetry LogRecord body stamped with matching TraceId and SpanId.
+    pub fn emit_openlineage_run_event(
+        &self,
+        event: OpenLineageRunEvent,
+        trace_id: Option<&str>,
+        span_id: Option<&str>,
+    ) -> SyntheticOtelLogRecord {
+        let record = event.to_otel_log_record(trace_id, span_id);
+
+        // Tail-based sampling: 100% of tainted traces retained in Merkle audit tree
+        let _ = self.audit_tree.log(
+            "openlineage.run_event",
+            serde_json::json!({
+                "trace_id": &record.trace_id,
+                "span_id": &record.span_id,
+                "event_type": &event.event_type,
+                "job": &event.job.name,
+                "inputs_count": event.inputs.len(),
+                "outputs_count": event.outputs.len(),
+                "timestamp": &record.timestamp_utc,
+            }),
+        );
+
+        // Append to in-memory event buffers
+        {
+            let mut ev_lock = self.openlineage_events.write();
+            if ev_lock.len() >= 1000 {
+                ev_lock.pop_front();
+            }
+            ev_lock.push_back(event);
+        }
+        {
+            let mut rec_lock = self.otel_log_records.write();
+            if rec_lock.len() >= 1000 {
+                rec_lock.pop_front();
+            }
+            rec_lock.push_back(record.clone());
+        }
+
+        record
+    }
+
+    /// Returns live JSON summary directly from in-memory DashMap and ring buffers in < 5ms.
+    pub fn get_lineage_summary_json(&self) -> serde_json::Value {
+        let mut active_traces_set = HashSet::new();
+        let mut hops_count = self.active_processes.len();
+        let mut span_links_count = 0usize;
+
+        let mut input_datasets = Vec::new();
+        let mut jobs = Vec::new();
+        let mut output_datasets = Vec::new();
+
+        // 1. Process active artifacts
+        for entry in self.active_artifacts.iter() {
+            let art = entry.value();
+            if art.tainted {
+                active_traces_set.insert(art.origin_span_context.trace_id().to_string());
+            }
+            span_links_count += art.linked_span_contexts.len();
+
+            let input_obj = serde_json::json!({
+                "namespace": format!("file://{}/{}", entry.key().device_id, entry.key().inode_or_file_id),
+                "name": &art.canonical_path,
+                "sha256": &art.sha256,
+                "fuzzy_hash_ssdeep": art.ssdeep.as_deref().unwrap_or(""),
+                "classification": art.classification.to_string(),
+                "policy": art.policy.to_string(),
+                "tainted": art.tainted,
+                "trace_id": art.origin_span_context.trace_id().to_string(),
+                "span_id": art.origin_span_context.span_id().to_string(),
+            });
+            input_datasets.push(input_obj);
+        }
+
+        // 2. Process active processes
+        for entry in self.active_processes.iter() {
+            let proc = entry.value();
+            if proc.tainted {
+                active_traces_set.insert(proc.origin_span_context.trace_id().to_string());
+            }
+            hops_count += proc.read_history.len();
+            span_links_count += proc.linked_span_contexts.len();
+
+            let job_obj = serde_json::json!({
+                "namespace": "oshoosi://endpoint",
+                "name": format!("{}#pid:{}@start:{}", proc.executable_name, entry.key().pid, entry.key().start_time_100ns),
+                "pid": entry.key().pid,
+                "process_start_time": entry.key().start_time_100ns,
+                "executable_path": &proc.executable_path,
+                "classification": proc.classification.to_string(),
+                "policy": proc.policy.to_string(),
+                "tainted": proc.tainted,
+                "trace_id": proc.origin_span_context.trace_id().to_string(),
+                "span_id": proc.origin_span_context.span_id().to_string(),
+                "span_links_count": proc.linked_span_contexts.len(),
+            });
+            jobs.push(job_obj);
+        }
+
+        // 3. Process output datasets from OpenLineage events and blocked spans
+        {
+            let events_lock = self.openlineage_events.read();
+            for ev in events_lock.iter() {
+                for out in &ev.outputs {
+                    output_datasets.push(serde_json::json!({
+                        "namespace": &out.namespace,
+                        "name": &out.name,
+                        "facets": &out.facets,
+                    }));
+                }
+            }
+        }
+
+        let blocked_lock = self.blocked_child_spans.read();
+        let blocked_count = blocked_lock.len();
+        for sp in blocked_lock.iter() {
+            let sink = sp.attributes.get("url.full").cloned().unwrap_or_else(|| "sink://network/blocked".to_string());
+            output_datasets.push(serde_json::json!({
+                "namespace": "sink://network/blocked",
+                "name": sink,
+                "classification": &sp.classification,
+                "policy": &sp.policy,
+                "action": "BLOCKED",
+                "trace_id": &sp.trace_id,
+                "span_id": &sp.span_id,
+            }));
+        }
+        drop(blocked_lock);
+
+        let active_traces_count = active_traces_set.len();
+        let active_traces_vec: Vec<String> = active_traces_set.into_iter().collect();
+
+        // Recent lineage events preview
+        let recent_events: Vec<serde_json::Value> = self.openlineage_events
+            .read()
+            .iter()
+            .rev()
+            .take(50)
+            .map(|ev| serde_json::to_value(ev).unwrap_or(serde_json::Value::Null))
+            .collect();
+
+        serde_json::json!({
+            "status": "ok",
+            "summary": {
+                "active_tainted_traces": active_traces_count,
+                "osquery_har_hops": hops_count,
+                "blocked_derived_egresses": blocked_count,
+                "span_links_merged": span_links_count,
+            },
+            "kpis": {
+                "active_traces": active_traces_count,
+                "hops": hops_count,
+                "blocked_egresses": blocked_count,
+                "spanlinks_merged": span_links_count,
+            },
+            "active_tainted_traces": active_traces_vec,
+            "input_datasets": input_datasets,
+            "jobs": jobs,
+            "output_datasets": output_datasets,
+            "lineage_events": recent_events,
+        })
+    }
+
+    /// Accepts OpenLineage RunEvent or synthetic taint event payloads, updates in-memory
+    /// DashMap state, evaluates synchronous inline policy, and returns evaluation status.
+    pub fn ingest_lineage_event(
+        &self,
+        event_type: &str,
+        producer: Option<&str>,
+        job_info: Option<&serde_json::Value>,
+        inputs: &[serde_json::Value],
+        outputs: &[serde_json::Value],
+        egress_sink: Option<&str>,
+    ) -> (bool, String, String, String, String) {
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let job_name = job_info
+            .and_then(|j| j.get("command_line").or_else(|| j.get("executable_path")))
+            .and_then(|v| v.as_str())
+            .unwrap_or("lineage_ingest_job");
+        let job_namespace = producer.unwrap_or("oshoosi://endpoint/custom_agent");
+
+        let mut ol_event = OpenLineageRunEvent::new(
+            event_type,
+            run_id,
+            job_namespace,
+            job_name,
+        );
+
+        let mut input_keys = Vec::new();
+        let mut dominant_classification = ClassificationLattice::Public;
+        let mut dominant_policy = PolicyLattice::Monitor;
+        let mut any_tainted = false;
+
+        // Process inputs
+        for inp in inputs {
+            let path = inp.get("path").or_else(|| inp.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+            let sha = inp.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+            let key = if let (Some(dev), Some(ino)) = (
+                inp.get("device_id").and_then(|v| v.as_u64()),
+                inp.get("inode").and_then(|v| v.as_u64()),
+            ) {
+                ArtifactKey::new(dev, ino)
+            } else if !path.is_empty() {
+                ArtifactKey::from_path_or_synthetic(path)
+            } else {
+                ArtifactKey::new(1, rand::random::<u64>())
+            };
+
+            let mut classification = ClassificationLattice::Public;
+            let mut policy = PolicyLattice::Monitor;
+
+            // Check if key or sha256 already exists in active_artifacts or content_catalog
+            if let Some(existing) = self.active_artifacts.get(&key) {
+                if existing.tainted {
+                    any_tainted = true;
+                    classification = existing.classification;
+                    policy = existing.policy;
+                }
+            } else if let Some(existing) = self.content_catalog.get(&sha) {
+                if existing.tainted {
+                    any_tainted = true;
+                    classification = existing.classification;
+                    policy = existing.policy;
+                }
+            } else if let Some(c_str) = inp.get("classification").and_then(|v| v.as_str()) {
+                let parsed_c = ClassificationLattice::from_str_relaxed(c_str);
+                let parsed_p = inp.get("policy").and_then(|v| v.as_str()).map(PolicyLattice::from_str_relaxed).unwrap_or(PolicyLattice::Monitor);
+                if parsed_c.is_sensitive() {
+                    any_tainted = true;
+                    classification = parsed_c;
+                    policy = parsed_p;
+                    self.register_crown_jewel_artifact(key, path, sha.as_bytes(), classification, policy);
+                }
+            }
+
+            dominant_classification = dominant_classification.join(classification);
+            dominant_policy = dominant_policy.join(policy);
+            input_keys.push(key);
+
+            ol_event = ol_event.with_input(
+                format!("file://{}/{}", key.device_id, key.inode_or_file_id),
+                path,
+                sha,
+                None,
+                Some(classification.to_string()),
+                Some(policy.to_string()),
+            );
+        }
+
+        // Process job
+        let pid = job_info.and_then(|j| j.get("pid")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let start_time = job_info.and_then(|j| j.get("process_start_time")).and_then(|v| v.as_u64()).unwrap_or(0);
+        let proc_key = ProcessInstanceKey::new(pid, start_time);
+
+        if pid > 0 {
+            let exe_path = job_info.and_then(|j| j.get("executable_path")).and_then(|v| v.as_str()).unwrap_or("agent_process.exe");
+            let exe_name = std::path::Path::new(exe_path)
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "agent_process.exe".to_string());
+            for k in &input_keys {
+                self.on_file_read(proc_key, &exe_name, exe_path, *k);
+            }
+        }
+
+        let trace_id = format!("{:032x}", rand::random::<u128>());
+        let span_id = format!("{:016x}", rand::random::<u64>());
+
+        // Process outputs
+        for out in outputs {
+            let out_path = out.get("path").or_else(|| out.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+            let out_sha = out.get("sha256").and_then(|v| v.as_str()).unwrap_or("");
+            let out_key = if let (Some(dev), Some(ino)) = (
+                out.get("device_id").and_then(|v| v.as_u64()),
+                out.get("inode").and_then(|v| v.as_u64()),
+            ) {
+                ArtifactKey::new(dev, ino)
+            } else if !out_path.is_empty() {
+                ArtifactKey::from_path_or_synthetic(out_path)
+            } else {
+                ArtifactKey::new(1, rand::random::<u64>())
+            };
+
+            if pid > 0 {
+                let exe_name = job_info.and_then(|j| j.get("executable_path")).and_then(|v| v.as_str()).unwrap_or("agent_process.exe");
+                let _ = self.record_process_transform(
+                    proc_key,
+                    exe_name,
+                    exe_name,
+                    &input_keys,
+                    out_key,
+                    out_path,
+                    out_sha.as_bytes(),
+                    false,
+                );
+            }
+
+            ol_event = ol_event.with_output(
+                format!("file://{}/{}", out_key.device_id, out_key.inode_or_file_id),
+                out_path,
+                out_sha,
+                any_tainted,
+                dominant_classification.to_string(),
+                dominant_policy.to_string(),
+                if any_tainted { Some("TAINT_INHERITED".to_string()) } else { Some("CLEAN".to_string()) },
+                vec![trace_id.clone()],
+                vec![span_id.clone()],
+            );
+        }
+
+        // Check inline egress blocking if sink specified
+        let mut action = if any_tainted { "TAINT_INHERITED".to_string() } else { "PERMITTED".to_string() };
+        let mut rationale = "Lineage ingest completed successfully".to_string();
+
+        if let Some(sink) = egress_sink {
+            if any_tainted && (dominant_classification.is_crown_jewel() || dominant_policy.is_enforced()) {
+                action = "BLOCKED".to_string();
+                rationale = format!(
+                    "Derived artifact inherits {} classification via DashMap lattice dominance; outbound egress to unauthorized sink '{}' blocked before transmission",
+                    dominant_classification, sink
+                );
+
+                // Emit synthetic child span for blocked egress
+                let raw_trace = hex::decode(&trace_id).unwrap_or_default();
+                let mut trace_bytes = [1u8; 16];
+                if raw_trace.len() == 16 {
+                    trace_bytes.copy_from_slice(&raw_trace);
+                }
+                let raw_span = hex::decode(&span_id).unwrap_or_default();
+                let mut span_bytes = [1u8; 8];
+                if raw_span.len() == 8 {
+                    span_bytes.copy_from_slice(&raw_span);
+                }
+
+                let parent_sc = SpanContext::new(
+                    TraceId::from_bytes(trace_bytes),
+                    SpanId::from_bytes(span_bytes),
+                    TraceFlags::SAMPLED,
+                    false,
+                    TraceState::default(),
+                );
+                let _child_span = self.emit_blocked_child_span(
+                    &parent_sc,
+                    &dominant_policy,
+                    &dominant_classification,
+                    Some(sink),
+                    None,
+                    None,
+                    &rationale,
+                );
+            }
+        }
+
+        // Emit OpenLineage RunEvent and correlated OTel LogRecord
+        let _ = self.emit_openlineage_run_event(ol_event, Some(&trace_id), Some(&span_id));
+
+        (any_tainted, action, rationale, trace_id, span_id)
+    }
+
+    /// Evaluates candidate egress for proxy integration in nanoseconds.
+    pub fn check_egress_for_proxy(
+        &self,
+        url: Option<&str>,
+        file_path: Option<&str>,
+        hash: Option<&str>,
+    ) -> Result<(), osoosi_agent_anomaly::egress_proxy::EgressLineageBlockInfo> {
+        match self.check_egress_allowed_full(file_path, hash, None, url, None) {
+            Ok(()) => Ok(()),
+            Err(EgressDecision::Blocked {
+                policy,
+                classification,
+                span_context,
+                reason,
+            }) => {
+                // 1. Emit synthetic child span with status ERROR and zero-PII attributes
+                let child_span = self.emit_blocked_child_span(
+                    &span_context,
+                    &policy,
+                    &classification,
+                    url,
+                    file_path,
+                    hash,
+                    &reason,
+                );
+
+                // 2. Format OpenLineage RunEvent and emit as correlated OTel LogRecord
+                let run_id = uuid::Uuid::new_v4().to_string();
+                let mut event = OpenLineageRunEvent::new(
+                    "FAIL",
+                    run_id,
+                    "oshoosi://endpoint/inline_egress",
+                    format!("egress_block#trace:{}", span_context.trace_id()),
+                );
+                if let Some(fp) = file_path {
+                    event = event.with_input(
+                        "file://local/artifact",
+                        fp,
+                        hash.unwrap_or(""),
+                        None,
+                        Some(classification.to_string()),
+                        Some(policy.to_string()),
+                    );
+                }
+                if let Some(u) = url {
+                    event = event.with_output(
+                        "sink://network/outbound",
+                        u,
+                        hash.unwrap_or(""),
+                        true,
+                        classification.to_string(),
+                        policy.to_string(),
+                        Some("BLOCKED".to_string()),
+                        vec![span_context.trace_id().to_string()],
+                        vec![child_span.span_id.clone()],
+                    );
+                }
+
+                let _ = self.emit_openlineage_run_event(
+                    event,
+                    Some(&child_span.trace_id),
+                    Some(&child_span.span_id),
+                );
+
+                Err(osoosi_agent_anomaly::egress_proxy::EgressLineageBlockInfo {
+                    policy: policy.to_string(),
+                    classification: classification.to_string(),
+                    reason,
+                    trace_id: Some(child_span.trace_id),
+                    span_id: Some(child_span.span_id),
+                })
+            }
+            Err(EgressDecision::Allowed) => Ok(()),
+        }
+    }
+
+    /// Registers the egress proxy hook connecting `osoosi-agent-anomaly` to this tracker.
+    pub fn register_egress_proxy_hooks(&'static self) {
+        static HOOK_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !HOOK_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            osoosi_agent_anomaly::egress_proxy::register_lineage_egress_hook(move |url, file_path, hash| {
+                self.check_egress_for_proxy(url, file_path, hash)
+            });
+        }
+    }
+
+    /// Clears active state for clean test isolation.
+    pub fn reset_for_tests(&self) {
+        self.active_processes.clear();
+        self.active_artifacts.clear();
+        self.content_catalog.clear();
+        self.openlineage_events.write().clear();
+        self.otel_log_records.write().clear();
+        self.blocked_child_spans.write().clear();
+    }
+
     /// Registers bidirectional lineage hooks on `siquery-rs`.
     pub fn register_siquery_hooks(&'static self) {
         osoosi_agent_anomaly::siquery::register_lineage_open_files_hook(move || {
@@ -1813,11 +2612,16 @@ impl DlpLineageTracker {
 }
 
 static GLOBAL_LINEAGE_TRACKER: std::sync::LazyLock<DlpLineageTracker> =
-    std::sync::LazyLock::new(|| DlpLineageTracker::new(30));
+    std::sync::LazyLock::new(|| {
+        let tracker = DlpLineageTracker::new(30);
+        tracker
+    });
 
 /// Returns the global reference to the DLP Lineage Tracker.
 pub fn global_lineage_tracker() -> &'static DlpLineageTracker {
-    &GLOBAL_LINEAGE_TRACKER
+    let t = &GLOBAL_LINEAGE_TRACKER;
+    t.register_egress_proxy_hooks();
+    t
 }
 
 /// Builds standardized OpenTelemetry Resource and Span attributes carrying ZERO raw PII.
@@ -2678,6 +3482,162 @@ mod tests {
         // Correlate with siquery engine
         let res = tracker.correlate_with_siquery(&engine);
         assert!(res.is_ok(), "correlate_with_siquery must succeed");
+    }
+
+    /// Milestone 3 Unit Test: OpenLineage RunEvent to OTel LogRecord Serialization.
+    #[test]
+    fn test_openlineage_run_event_serialization_and_otel_log_record() {
+        let tracker = DlpLineageTracker::new(30);
+
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let event = OpenLineageRunEvent::new(
+            "COMPLETE",
+            &run_id,
+            "oshoosi://endpoint/HOST-01",
+            "7z.exe#pid:14280",
+        )
+        .with_input(
+            "file://dev1/ino100",
+            "C:\\data\\secret.docx",
+            "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+            Some("192:8gWJ9Xq...".to_string()),
+            Some("CROWN_JEWEL".to_string()),
+            Some("QUARANTINE".to_string()),
+        )
+        .with_output(
+            "file://dev1/ino200",
+            "C:\\staging\\upload.zip",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            true,
+            "CROWN_JEWEL".to_string(),
+            "QUARANTINE".to_string(),
+            Some("BLOCKED".to_string()),
+            vec!["4bf92f3577b34da6a3ce929d0e0e4736".to_string()],
+            vec!["00f067aa0ba902b7".to_string()],
+        );
+
+        // 1. Verify JSON serialization
+        let json_str = event.to_json_string().expect("JSON serialization must succeed");
+        assert!(json_str.contains("\"eventType\""));
+        assert!(json_str.contains("\"COMPLETE\""));
+        assert!(json_str.contains("\"runId\""));
+        assert!(json_str.contains("7z.exe#pid:14280"));
+        assert!(json_str.contains("secret.docx"));
+        assert!(json_str.contains("upload.zip"));
+        assert!(json_str.contains("\"datasetDigest\""));
+        assert!(json_str.contains("\"taintFacet\""));
+        assert!(json_str.contains("\"CROWN_JEWEL\""));
+        assert!(json_str.contains("\"QUARANTINE\""));
+
+        // 2. Verify conversion to OpenTelemetry LogRecord
+        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+        let span_id = "00f067aa0ba902b7";
+        let log_rec = event.to_otel_log_record(Some(trace_id), Some(span_id));
+
+        assert_eq!(log_rec.trace_id, trace_id);
+        assert_eq!(log_rec.span_id, span_id);
+        assert_eq!(log_rec.trace_flags, 1);
+        assert_eq!(log_rec.severity_text, "INFO");
+        assert!(log_rec.body.contains("\"eventType\": \"COMPLETE\""));
+        assert_eq!(
+            log_rec.attributes.get("openlineage.job.name").map(|s| s.as_str()),
+            Some("7z.exe#pid:14280")
+        );
+
+        // 3. Emit via tracker and verify retention in Merkle audit tree and ring buffer
+        let emitted = tracker.emit_openlineage_run_event(event, Some(trace_id), Some(span_id));
+        assert_eq!(emitted.trace_id, trace_id);
+        assert_eq!(tracker.openlineage_events.read().len(), 1);
+        assert_eq!(tracker.otel_log_records.read().len(), 1);
+    }
+
+    /// Milestone 3 Unit Test: Synchronous Inline Egress Blocking and Child Span.
+    #[test]
+    fn test_synchronous_inline_egress_blocking_and_child_span() {
+        let tracker = DlpLineageTracker::new(30);
+
+        let secret_key = ArtifactKey::from_path_or_synthetic("C:\\vault\\top_secret.docx");
+        let secret_bytes = b"HIGHLY_CONFIDENTIAL_NATIONAL_SECURITY_ARCHIVE";
+        let sha256_hash = compute_sha256_hex(secret_bytes);
+
+        tracker.register_crown_jewel_artifact(
+            secret_key,
+            "C:\\vault\\top_secret.docx",
+            secret_bytes,
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+
+        // Egress check by URL against suspect sink with active crown jewel
+        let block_res = tracker.check_egress_for_proxy(
+            Some("https://attacker-pastebin.com/exfil"),
+            Some("C:\\vault\\top_secret.docx"),
+            Some(&sha256_hash),
+        );
+
+        assert!(block_res.is_err(), "Tainted egress must be synchronously blocked");
+        let info = block_res.unwrap_err();
+        assert_eq!(info.policy, "QUARANTINE");
+        assert_eq!(info.classification, "CROWN_JEWEL");
+        assert!(info.trace_id.is_some());
+        assert!(info.span_id.is_some());
+
+        // Verify synthetic child span in tracker ring buffer
+        let spans = tracker.blocked_child_spans.read();
+        assert_eq!(spans.len(), 1, "Child span must be emitted into ring buffer");
+        let span = &spans[0];
+        assert_eq!(span.status, "ERROR");
+        assert_eq!(span.action, "BLOCKED");
+        assert_eq!(span.policy, "QUARANTINE");
+        assert_eq!(span.classification, "CROWN_JEWEL");
+        assert_eq!(
+            span.attributes.get("dlp.action").map(|s| s.as_str()),
+            Some("BLOCKED")
+        );
+        assert_eq!(
+            span.attributes.get("otel.status_code").map(|s| s.as_str()),
+            Some("ERROR")
+        );
+    }
+
+    /// Milestone 3 Unit Test: Live Lineage Summary JSON & KPI Rollup.
+    #[test]
+    fn test_lineage_summary_json_and_kpis() {
+        let tracker = DlpLineageTracker::new(30);
+
+        let k1 = ArtifactKey::from_path_or_synthetic("C:\\secret1.docx");
+        let k2 = ArtifactKey::from_path_or_synthetic("C:\\secret2.docx");
+        tracker.register_crown_jewel_artifact(
+            k1,
+            "C:\\secret1.docx",
+            b"secret1",
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+        tracker.register_crown_jewel_artifact(
+            k2,
+            "C:\\secret2.docx",
+            b"secret2",
+            ClassificationLattice::Confidential,
+            PolicyLattice::Block,
+        );
+
+        let proc_key = ProcessInstanceKey::new(8888, 100_000);
+        tracker.on_file_read(proc_key, "worker.exe", "C:\\worker.exe", k1);
+
+        let summary_json = tracker.get_lineage_summary_json();
+        assert_eq!(summary_json["status"], "ok");
+
+        let kpis = &summary_json["kpis"];
+        assert!(kpis["active_traces"].as_u64().unwrap() >= 2);
+        assert!(kpis["hops"].as_u64().unwrap() >= 1);
+
+        let inputs = summary_json["input_datasets"].as_array().unwrap();
+        assert_eq!(inputs.len(), 2);
+
+        let jobs = summary_json["jobs"].as_array().unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0]["pid"], 8888);
     }
 }
 

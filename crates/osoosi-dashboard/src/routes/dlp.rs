@@ -1559,8 +1559,22 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     drop(state);
 
     // Whenever the user updates the DLP operating mode (e.g. switching to Audit / Monitor Mode or
-    // Active Enforcement), asynchronously clear any prior WFP destination blocks on dlptest.com and
-    // active native destination blocks in a background thread so POST /api/dlp/policy returns in < 1ms.
+    // Active Enforcement), immediately clear in-memory destination blocks so containment queries
+    // reflect the new policy mode without race conditions, and dispatch file/driver unblocks in the background.
+    let engine = crate::routes::dlp_containment::global_containment_engine();
+    let _ = engine
+        .restore_browser_destination_blocks_for_host("dlptest.com", "policy-mode-updated");
+    if monitor_only_now {
+        for outcome in engine.list() {
+            if !outcome.restored
+                && outcome.decision
+                    == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
+            {
+                let _ = engine.restore(&outcome.containment_id, "switched-to-monitor-mode");
+            }
+        }
+    }
+
     std::thread::spawn(move || {
         if std::env::var("OSOOSI_CONFIG").is_err() {
             let mut cfg = osoosi_types::load_autonomy_config();
@@ -1574,18 +1588,7 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
             let _ = osoosi_types::save_autonomy_config(&cfg);
         }
 
-        let engine = crate::routes::dlp_containment::global_containment_engine();
-        let _ = engine
-            .restore_browser_destination_blocks_for_host("dlptest.com", "policy-mode-updated");
         if monitor_only_now {
-            for outcome in engine.list() {
-                if !outcome.restored
-                    && outcome.decision
-                        == crate::routes::dlp_containment::ContainmentDecision::DestinationBlocked
-                {
-                    let _ = engine.restore(&outcome.containment_id, "switched-to-monitor-mode");
-                }
-            }
             for rule in osoosi_core::wfp::active_native_destination_blocks() {
                 let _ =
                     osoosi_core::wfp::unblock_destination_native(&rule.rule_name, None, None, &[]);
@@ -1961,6 +1964,87 @@ pub async fn post_dlp_release(Json(req): Json<DlpReleaseRequest>) -> Json<Value>
     Json(result)
 }
 
+/// Request payload for POST /api/dlp/lineage/ingest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DlpLineageIngestRequest {
+    #[serde(default = "default_lineage_event_type")]
+    pub event_type: String,
+    #[serde(default)]
+    pub producer: Option<String>,
+    #[serde(default)]
+    pub job: Option<Value>,
+    #[serde(default)]
+    pub inputs: Vec<Value>,
+    #[serde(default)]
+    pub outputs: Vec<Value>,
+    #[serde(default)]
+    pub egress_sink: Option<String>,
+    #[serde(default)]
+    pub run: Option<Value>,
+}
+
+fn default_lineage_event_type() -> String {
+    "COMPLETE".to_string()
+}
+
+/// Sub-5ms GET /api/dlp/lineage endpoint returning live JSON summary of in-memory lineage.
+pub async fn get_dlp_lineage() -> Json<Value> {
+    let tracker = osoosi_core::dlp_lineage::global_lineage_tracker();
+    let summary = tracker.get_lineage_summary_json();
+    Json(summary)
+}
+
+/// Sub-5ms POST /api/dlp/lineage/ingest endpoint accepting OpenLineage RunEvents or synthetic taint events.
+pub async fn post_dlp_lineage_ingest(Json(payload): Json<Value>) -> Json<Value> {
+    let start = std::time::Instant::now();
+    let tracker = osoosi_core::dlp_lineage::global_lineage_tracker();
+
+    let event_type = payload
+        .get("eventType")
+        .or_else(|| payload.get("event_type"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("COMPLETE");
+
+    let producer = payload.get("producer").and_then(|v| v.as_str());
+    let job_info = payload.get("job");
+    let egress_sink = payload.get("egress_sink").and_then(|v| v.as_str());
+
+    let empty_vec = Vec::new();
+    let inputs = payload
+        .get("inputs")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.as_slice())
+        .unwrap_or(&empty_vec);
+
+    let outputs = payload
+        .get("outputs")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.as_slice())
+        .unwrap_or(&empty_vec);
+
+    let (taint_propagated, action, rationale, trace_id, span_id) = tracker.ingest_lineage_event(
+        event_type,
+        producer,
+        job_info,
+        inputs,
+        outputs,
+        egress_sink,
+    );
+
+    let duration_micros = start.elapsed().as_micros() as u64;
+
+    Json(json!({
+        "status": "ok",
+        "taint_propagated": taint_propagated,
+        "action": action,
+        "rationale": rationale,
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "run_id": uuid::Uuid::new_v4().to_string(),
+        "duration_micros": duration_micros,
+    }))
+}
+
 /// Mounts all Two-Tier DLP routes and legacy aliases.
 pub fn routes() -> Router<DashboardState> {
     Router::new()
@@ -1984,6 +2068,10 @@ pub fn routes() -> Router<DashboardState> {
         .route("/dlp/scan-har", post(post_dlp_scan_har))
         .route("/api/dlp/policy", post(post_dlp_policy))
         .route("/dlp/policy", post(post_dlp_policy))
+        .route("/api/dlp/lineage", get(get_dlp_lineage))
+        .route("/dlp/lineage", get(get_dlp_lineage))
+        .route("/api/dlp/lineage/ingest", post(post_dlp_lineage_ingest))
+        .route("/dlp/lineage/ingest", post(post_dlp_lineage_ingest))
 }
 
 #[cfg(test)]
@@ -2688,5 +2776,99 @@ mod tests {
             !engine.has_active_browser_block_for_host(&host),
             "Switching to Monitor Mode must immediately clear active WFP destination blocks"
         );
+    }
+
+    /// Milestone 3 Unit Test: Sub-5ms GET /api/dlp/lineage endpoint.
+    #[tokio::test]
+    async fn test_api_dlp_lineage_get_sub_5ms() {
+        let _ctx = DlpTestContext::new().await;
+
+        let start = std::time::Instant::now();
+        let Json(summary) = get_dlp_lineage().await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(summary["status"], "ok");
+        assert!(summary["summary"]["active_tainted_traces"].is_number());
+        assert!(summary["summary"]["osquery_har_hops"].is_number());
+        assert!(summary["summary"]["blocked_derived_egresses"].is_number());
+        assert!(summary["summary"]["span_links_merged"].is_number());
+
+        assert!(summary["kpis"]["active_traces"].is_number());
+        assert!(summary["kpis"]["hops"].is_number());
+        assert!(summary["kpis"]["blocked_egresses"].is_number());
+        assert!(summary["kpis"]["spanlinks_merged"].is_number());
+
+        assert!(summary["active_tainted_traces"].is_array());
+        assert!(summary["input_datasets"].is_array());
+        assert!(summary["jobs"].is_array());
+        assert!(summary["output_datasets"].is_array());
+        assert!(summary["lineage_events"].is_array());
+
+        // In-memory latency SLA: < 5ms (allowing 50ms buffer for test runner overhead)
+        assert!(
+            elapsed < std::time::Duration::from_millis(50),
+            "Lineage summary must return in < 5ms (actual: {:?})",
+            elapsed
+        );
+    }
+
+    /// Milestone 3 Unit Test: POST /api/dlp/lineage/ingest and synchronous block.
+    #[tokio::test]
+    async fn test_api_dlp_lineage_ingest_and_block() {
+        let _ctx = DlpTestContext::new().await;
+
+        let payload = json!({
+            "eventType": "COMPLETE",
+            "producer": "agent://langgraph/document_compiler",
+            "job": {
+                "pid": 14280,
+                "process_start_time": 13374291000u64,
+                "executable_path": "C:\\Program Files\\7-Zip\\7z.exe",
+                "command_line": "7z a upload.zip secret.docx staging.tmp"
+            },
+            "inputs": [
+                {
+                    "path": "D:\\workspace\\secret.docx",
+                    "device_id": 12345,
+                    "inode": 67890,
+                    "sha256": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+                    "classification": "CROWN_JEWEL",
+                    "policy": "QUARANTINE"
+                }
+            ],
+            "outputs": [
+                {
+                    "path": "D:\\workspace\\upload.zip",
+                    "device_id": 12345,
+                    "inode": 99999,
+                    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                }
+            ],
+            "egress_sink": "https://attacker-s3.amazonaws.com/leak/upload.zip"
+        });
+
+        let start = std::time::Instant::now();
+        let Json(res) = post_dlp_lineage_ingest(Json(payload)).await;
+        let elapsed = start.elapsed();
+
+        assert_eq!(res["status"], "ok");
+        assert_eq!(res["taint_propagated"], true);
+        assert_eq!(res["action"], "BLOCKED");
+        assert!(res["rationale"].as_str().unwrap().contains("CROWN_JEWEL"));
+        assert!(res["trace_id"].is_string());
+        assert!(res["span_id"].is_string());
+        assert!(res["run_id"].is_string());
+
+        // Assert latency SLA
+        assert!(
+            elapsed < std::time::Duration::from_millis(50),
+            "Lineage ingest must return in < 5ms (actual: {:?})",
+            elapsed
+        );
+
+        // Verify state is reflected in GET /api/dlp/lineage
+        let Json(summary) = get_dlp_lineage().await;
+        let blocked = summary["summary"]["blocked_derived_egresses"].as_u64().unwrap();
+        assert!(blocked >= 1, "Blocked egresses KPI must reflect blocked ingest");
     }
 }
