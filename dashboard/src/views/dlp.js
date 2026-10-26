@@ -588,7 +588,7 @@ async function submitDlpInspection() {
         try {
             const res = await fetch(`${API_BASE}/dlp/inspect`, {
                 method: 'POST',
-                credentials: 'same-origin',
+                credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     actor_process: process,
@@ -893,7 +893,7 @@ async function registerDlpCrownJewel() {
     try {
         await fetch(`${API_BASE}/dlp/crown-jewels/register`, {
             method: 'POST',
-            credentials: 'same-origin',
+            credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(cjEntry)
         });
@@ -1042,7 +1042,7 @@ async function updateDlpPolicyMode() {
     try {
         await fetch(`${API_BASE}/dlp/policy`, {
             method: 'POST',
-            credentials: 'same-origin',
+            credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
             headers: getDlpAuthHeaders(),
             body: JSON.stringify({
                 policy_mode: dlpState.policyMode,
@@ -1199,7 +1199,7 @@ async function saveCustomDlpAutonomySettings() {
         const isStrict = dlpState.policyMode === 'QUARANTINE_ON_CROWN_JEWEL' || actionVal <= 0.40;
         const res = await fetch(`${API_BASE}/dlp/policy`, {
             method: 'POST',
-            credentials: 'same-origin',
+            credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
             headers: getDlpAuthHeaders(),
             body: JSON.stringify({
                 policy_mode: dlpState.policyMode,
@@ -1379,7 +1379,7 @@ document.addEventListener('click', async (event) => {
     try {
         const res = await fetch(`${API_BASE}/dlp/containment/restore`, {
             method: 'POST',
-            credentials: 'same-origin',
+            credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ containment_id: containmentId, operator: 'dashboard' })
         });
@@ -1456,7 +1456,7 @@ const osoosiDlp = {
             };
             const res = await fetch(`${API_BASE}/dlp/release`, {
                 method: 'POST',
-                credentials: 'same-origin',
+                credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
@@ -1482,7 +1482,7 @@ const osoosiDlp = {
             };
             const res = await fetch(`${API_BASE}/dlp/release`, {
                 method: 'POST',
-                credentials: 'same-origin',
+                credentials: (window.location.protocol === 'file:') ? 'omit' : 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });

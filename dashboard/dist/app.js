@@ -1,3 +1,8 @@
+if (window.location.protocol === 'file:') {
+    try {
+        window.location.replace('http://127.0.0.1:3030/' + (window.location.search || '') + (window.location.hash || '#dlp'));
+    } catch (_) {}
+}
 const API_BASE = (window.location.protocol === 'file:' || !window.location.host)
     ? 'http://127.0.0.1:3030/api'
     : '/api';
@@ -532,7 +537,7 @@ async function authFetchWithFallback(endpointPath, fetchOptions = {}) {
                     ...(controller ? { signal: controller.signal } : {})
                 };
                 if (url.startsWith('http://')) {
-                    opts.credentials = 'include';
+                    opts.credentials = (window.location.protocol === 'file:') ? 'omit' : 'include';
                 }
                 const res = await window.fetch(url, opts);
                 if (timeoutId) clearTimeout(timeoutId);
