@@ -81,6 +81,53 @@ impl SiqueryRow {
     }
 }
 
+/// A single live file event record queryable via the `file_events` table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEventRecord {
+    pub target_path: String,
+    pub action: String,
+    pub pid: i64,
+    pub process_name: String,
+    pub sha256: String,
+    pub time: i64,
+}
+
+pub static LIVE_FILE_EVENTS: std::sync::LazyLock<parking_lot::RwLock<std::collections::VecDeque<FileEventRecord>>> =
+    std::sync::LazyLock::new(|| parking_lot::RwLock::new(std::collections::VecDeque::with_capacity(1024)));
+
+/// Records a live file event into the global in-memory buffer queryable by `siquery-rs`.
+pub fn record_live_file_event(event: FileEventRecord) {
+    let mut q = LIVE_FILE_EVENTS.write();
+    if q.len() >= 1024 {
+        q.pop_front();
+    }
+    q.push_back(event);
+}
+
+pub type LineageOpenFilesHook = Box<dyn Fn() -> Vec<(i64, i64, String)> + Send + Sync>;
+pub type LineageFileEventsHook = Box<dyn Fn() -> Vec<FileEventRecord> + Send + Sync>;
+
+pub static LINEAGE_OPEN_FILES_HOOK: parking_lot::RwLock<Option<LineageOpenFilesHook>> =
+    parking_lot::RwLock::new(None);
+pub static LINEAGE_FILE_EVENTS_HOOK: parking_lot::RwLock<Option<LineageFileEventsHook>> =
+    parking_lot::RwLock::new(None);
+
+/// Registers a callback providing active open file descriptors from `DlpLineageTracker`.
+pub fn register_lineage_open_files_hook<F>(hook: F)
+where
+    F: Fn() -> Vec<(i64, i64, String)> + Send + Sync + 'static,
+{
+    *LINEAGE_OPEN_FILES_HOOK.write() = Some(Box::new(hook));
+}
+
+/// Registers a callback providing active file events from `DlpLineageTracker`.
+pub fn register_lineage_file_events_hook<F>(hook: F)
+where
+    F: Fn() -> Vec<FileEventRecord> + Send + Sync + 'static,
+{
+    *LINEAGE_FILE_EVENTS_HOOK.write() = Some(Box::new(hook));
+}
+
 /// 100% Native Rust In-Process Relational SQL Host Discovery Engine.
 #[derive(Debug, Clone, Default)]
 pub struct SiqueryEngine;
@@ -128,6 +175,7 @@ impl SiqueryEngine {
             "etc_hosts",
             "etc_protocols",
             "etc_services",
+            "file_events",
             "firewall_rules",
             "groups",
             "har_entries",
@@ -314,6 +362,7 @@ impl SiqueryEngine {
         let need_edr = !is_pragma && (is_metadata || lower.contains("edr_"));
         let need_env_vars = !is_pragma && (is_metadata || lower.contains("environment_variables"));
         let need_fw = !is_pragma && (is_metadata || lower.contains("firewall_rules"));
+        let need_file_events = !is_pragma && (is_metadata || lower.contains("file_events"));
         let need_open_files = !is_pragma
             && (is_metadata
                 || lower.contains("open_files")
@@ -405,6 +454,7 @@ impl SiqueryEngine {
             || need_edr
             || need_env_vars
             || need_fw
+            || need_file_events
             || need_open_files
             || need_pnp
             || need_registry
@@ -644,6 +694,9 @@ impl SiqueryEngine {
             }
             if need_fw {
                 Self::populate_firewall_rules(&tx)?;
+            }
+            if need_file_events {
+                Self::populate_file_events(&tx)?;
             }
             if need_open_files {
                 Self::populate_open_files(&tx, &sys)?;
@@ -1498,6 +1551,10 @@ impl SiqueryEngine {
 
         CREATE TABLE IF NOT EXISTS open_files (
             pid INTEGER, fd INTEGER, path TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS file_events (
+            target_path TEXT, action TEXT, pid BIGINT, process_name TEXT, sha256 TEXT, time BIGINT
         );
 
         CREATE TABLE IF NOT EXISTS pnp_devices (
@@ -7530,6 +7587,93 @@ impl SiqueryEngine {
             };
             let _ = stmt.execute(rusqlite::params![pid_num, 0i64, path_str]);
         }
+
+        // Correlate with DlpLineageTracker open file descriptors if registered
+        if let Some(ref hook) = *LINEAGE_OPEN_FILES_HOOK.read() {
+            for (pid_num, fd, path_str) in hook() {
+                let _ = stmt.execute(rusqlite::params![pid_num, fd, path_str]);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Populates `file_events` table from live in-memory telemetry, lineage hooks, and persistent SQLite database.
+    fn populate_file_events(conn: &Connection) -> Result<(), String> {
+        let mut stmt = conn
+            .prepare_cached("INSERT INTO file_events (target_path, action, pid, process_name, sha256, time) VALUES (?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        // 1. Live in-memory ring buffer events
+        {
+            let events = LIVE_FILE_EVENTS.read();
+            for ev in events.iter() {
+                let _ = stmt.execute(rusqlite::params![
+                    ev.target_path,
+                    ev.action,
+                    ev.pid,
+                    ev.process_name,
+                    ev.sha256,
+                    ev.time,
+                ]);
+            }
+        }
+
+        // 2. Lineage hook if registered
+        if let Some(ref hook) = *LINEAGE_FILE_EVENTS_HOOK.read() {
+            for ev in hook() {
+                let _ = stmt.execute(rusqlite::params![
+                    ev.target_path,
+                    ev.action,
+                    ev.pid,
+                    ev.process_name,
+                    ev.sha256,
+                    ev.time,
+                ]);
+            }
+        }
+
+        // 3. Persistent SQLite file_events / file_integrity if available
+        let db_candidates = [
+            std::path::PathBuf::from("database/osoosi.db"),
+            std::path::PathBuf::from("osoosi.db"),
+            std::path::PathBuf::from("../database/osoosi.db"),
+            std::path::PathBuf::from("../../database/osoosi.db"),
+            std::path::PathBuf::from("target/release/database/osoosi.db"),
+        ];
+
+        for path in &db_candidates {
+            if !path.exists() {
+                continue;
+            }
+            if let Ok(src_conn) = rusqlite::Connection::open_with_flags(
+                path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            ) {
+                let _ = src_conn.busy_timeout(std::time::Duration::from_millis(1000));
+                // Try reading from persistent file_events table
+                if let Ok(mut src_stmt) = src_conn.prepare(
+                    "SELECT target_path, action, pid, process_name, sha256, time FROM file_events ORDER BY time DESC LIMIT 500;"
+                ) {
+                    if let Ok(rows) = src_stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0).unwrap_or_default(),
+                            row.get::<_, String>(1).unwrap_or_default(),
+                            row.get::<_, i64>(2).unwrap_or(0),
+                            row.get::<_, String>(3).unwrap_or_default(),
+                            row.get::<_, String>(4).unwrap_or_default(),
+                            row.get::<_, i64>(5).unwrap_or(0),
+                        ))
+                    }) {
+                        for r in rows.filter_map(|r| r.ok()) {
+                            let _ = stmt.execute(rusqlite::params![r.0, r.1, r.2, r.3, r.4, r.5]);
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
         Ok(())
     }
 
@@ -9903,5 +10047,38 @@ mod tests {
         assert!(ring_verdict.spectral_radius_rho >= 1.0);
         assert_eq!(ring_verdict.prime_3_cycles, 1);
         assert!(ring_verdict.determinant_at_half < 1.0);
+    }
+
+    #[test]
+    fn test_file_events_table_and_live_buffer() {
+        let engine = SiqueryEngine::new();
+
+        // 1. Record live file events
+        record_live_file_event(FileEventRecord {
+            target_path: "C:\\secret\\crown_jewel.docx".to_string(),
+            action: "WRITE".to_string(),
+            pid: 4321,
+            process_name: "winword.exe".to_string(),
+            sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+            time: 1700000000,
+        });
+
+        // 2. Query file_events table
+        let rows = engine
+            .execute_query("SELECT target_path, action, pid, process_name, sha256, time FROM file_events WHERE target_path LIKE '%crown_jewel.docx%';")
+            .expect("SELECT on file_events must succeed");
+
+        assert!(!rows.is_empty(), "file_events must return recorded live events");
+        let row = &rows[0];
+        assert_eq!(
+            row.get("target_path").and_then(|v| v.as_str()),
+            Some("C:\\secret\\crown_jewel.docx")
+        );
+        assert_eq!(row.get("action").and_then(|v| v.as_str()), Some("WRITE"));
+        assert_eq!(row.get("pid").and_then(|v| v.as_i64()), Some(4321));
+        assert_eq!(
+            row.get("process_name").and_then(|v| v.as_str()),
+            Some("winword.exe")
+        );
     }
 }

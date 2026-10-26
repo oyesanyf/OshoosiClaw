@@ -103,6 +103,20 @@ impl ArtifactKey {
         Self::from_metadata(&meta)
     }
 
+    /// Extracts the OS filesystem identity for a given path, or derives a deterministic synthetic key.
+    pub fn from_path_or_synthetic<P: AsRef<Path>>(path: P) -> Self {
+        if let Ok(key) = Self::from_path(&path) {
+            return key;
+        }
+        let p_str = path.as_ref().to_string_lossy();
+        let hash = blake3::hash(p_str.as_bytes());
+        let mut dev_bytes = [0u8; 8];
+        let mut fid_bytes = [0u8; 8];
+        dev_bytes.copy_from_slice(&hash.as_bytes()[..8]);
+        fid_bytes.copy_from_slice(&hash.as_bytes()[8..16]);
+        Self::new(u64::from_le_bytes(dev_bytes), u64::from_le_bytes(fid_bytes))
+    }
+
     /// On Windows, extracts true `(dwVolumeSerialNumber, (nFileIndexHigh << 32) | nFileIndexLow)`
     /// from an open file handle via Win32 `GetFileInformationByHandle`.
     #[cfg(windows)]
@@ -1397,6 +1411,500 @@ impl DlpLineageTracker {
         }
         EgressDecision::Allowed
     }
+
+    /// Registers a newly created process instance and propagates parent taint if the parent is tainted.
+    pub fn on_process_create(
+        &self,
+        pid: u32,
+        start_time_100ns: u64,
+        image_name: &str,
+        image_path: &str,
+        parent_pid: Option<u32>,
+        parent_start_time_100ns: Option<u64>,
+    ) -> ProcessTaintRecord {
+        let child_key = ProcessInstanceKey::new(pid, start_time_100ns);
+        let is_long_lived = self.is_long_lived(image_name);
+
+        let child_trace_seed = format!("TRACE:PROC:{}", child_key);
+        let child_span_seed = format!("SPAN:PROC:{}:{}", image_name, child_key);
+        let child_sc = Self::synthesize_span_context(
+            Some(&child_trace_seed),
+            Some(&child_span_seed),
+        );
+
+        let mut child_rec = ProcessTaintRecord::new(
+            child_key,
+            image_name,
+            image_path,
+            is_long_lived,
+            child_sc,
+        );
+
+        // Check if parent process is tainted
+        if let Some(p_pid) = parent_pid {
+            let parent_taint_opt = if let Some(p_start) = parent_start_time_100ns {
+                if p_start > 0 {
+                    self.active_processes
+                        .get(&ProcessInstanceKey::new(p_pid, p_start))
+                        .map(|r| r.value().clone())
+                } else {
+                    self.active_processes
+                        .iter()
+                        .find(|e| e.key().pid == p_pid && e.value().tainted)
+                        .map(|e| e.value().clone())
+                }
+            } else {
+                self.active_processes
+                    .iter()
+                    .find(|e| e.key().pid == p_pid && e.value().tainted)
+                    .map(|e| e.value().clone())
+            };
+
+            if let Some(parent) = parent_taint_opt {
+                if parent.tainted {
+                    child_rec.tainted = true;
+                    child_rec.classification = parent.classification;
+                    child_rec.policy = parent.policy;
+                    child_rec.baggage = parent.baggage.clone();
+                    child_rec.last_taint_read_time = parent.last_taint_read_time;
+                    child_rec
+                        .linked_span_contexts
+                        .push(parent.origin_span_context.clone());
+                    for sc in &parent.linked_span_contexts {
+                        child_rec.linked_span_contexts.push(sc.clone());
+                    }
+                }
+            }
+        }
+
+        self.active_processes.insert(child_key, child_rec.clone());
+        child_rec
+    }
+
+    /// Helper for FileRead events taking physical or canonical file path.
+    pub fn on_file_read_path(
+        &self,
+        pid: u32,
+        start_time_100ns: u64,
+        executable_name: &str,
+        executable_path: &str,
+        file_path: &str,
+    ) {
+        let proc_key = ProcessInstanceKey::new(pid, start_time_100ns);
+        let art_key = ArtifactKey::from_path_or_synthetic(file_path);
+
+        // Attempt rehydration if unknown and file exists on disk
+        if !self.active_artifacts.contains_key(&art_key) {
+            if let Ok(bytes) = std::fs::read(file_path) {
+                let _ = self.rehydrate_artifact_if_unknown(&art_key, file_path, &bytes);
+            }
+        }
+
+        let sha = self
+            .active_artifacts
+            .get(&art_key)
+            .map(|r| r.sha256.clone())
+            .unwrap_or_default();
+
+        // Record live file event in siquery-rs table
+        osoosi_agent_anomaly::siquery::record_live_file_event(
+            osoosi_agent_anomaly::siquery::FileEventRecord {
+                target_path: file_path.to_string(),
+                action: "READ".to_string(),
+                pid: pid as i64,
+                process_name: executable_name.to_string(),
+                sha256: sha,
+                time: Utc::now().timestamp(),
+            },
+        );
+
+        self.on_file_read(proc_key, executable_name, executable_path, art_key);
+    }
+
+    /// Helper for FileWrite events taking physical or canonical file path and content.
+    pub fn on_file_write_path(
+        &self,
+        pid: u32,
+        start_time_100ns: u64,
+        output_path: &str,
+        content_bytes: Option<&[u8]>,
+    ) -> FileWriteTaintDecision {
+        let proc_key = ProcessInstanceKey::new(pid, start_time_100ns);
+        let out_key = ArtifactKey::from_path_or_synthetic(output_path);
+
+        let decision = self.on_file_write(
+            &proc_key,
+            &out_key,
+            output_path,
+            content_bytes,
+            Utc::now(),
+        );
+
+        let sha = content_bytes.map(compute_sha256_hex).unwrap_or_default();
+        let proc_name = self
+            .active_processes
+            .get(&proc_key)
+            .map(|p| p.executable_name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Record live file event in siquery-rs table
+        osoosi_agent_anomaly::siquery::record_live_file_event(
+            osoosi_agent_anomaly::siquery::FileEventRecord {
+                target_path: output_path.to_string(),
+                action: "WRITE".to_string(),
+                pid: pid as i64,
+                process_name: proc_name,
+                sha256: sha,
+                time: Utc::now().timestamp(),
+            },
+        );
+
+        decision
+    }
+
+    /// Handles file rename operations, transferring causal taint to the new destination.
+    pub fn on_file_rename(
+        &self,
+        pid: u32,
+        _start_time_100ns: u64,
+        old_path: &str,
+        new_path: &str,
+    ) {
+        let old_key = ArtifactKey::from_path_or_synthetic(old_path);
+        let new_key = ArtifactKey::from_path_or_synthetic(new_path);
+
+        if let Some((_, mut rec)) = self.active_artifacts.remove(&old_key) {
+            rec.artifact_key = new_key;
+            rec.canonical_path = new_path.to_string();
+            rec.updated_at_utc = Utc::now();
+            self.active_artifacts.insert(new_key, rec.clone());
+
+            let sha = rec.sha256.clone();
+            osoosi_agent_anomaly::siquery::record_live_file_event(
+                osoosi_agent_anomaly::siquery::FileEventRecord {
+                    target_path: new_path.to_string(),
+                    action: "RENAME".to_string(),
+                    pid: pid as i64,
+                    process_name: format!("rename:{}", old_path),
+                    sha256: sha,
+                    time: Utc::now().timestamp(),
+                },
+            );
+        }
+    }
+
+    /// Evaluates whether outbound egress is permitted for a file path or cryptographic content digest.
+    pub fn check_egress_allowed(
+        &self,
+        file_path: Option<&str>,
+        content_hash: Option<&str>,
+    ) -> Result<(), EgressDecision> {
+        self.check_egress_allowed_full(file_path, content_hash, None, None, None)
+    }
+
+    /// Evaluates whether outbound egress is permitted for candidate staging file, digest, URL, and PID.
+    pub fn check_egress_allowed_full(
+        &self,
+        file_path: Option<&str>,
+        content_hash: Option<&str>,
+        content_bytes: Option<&[u8]>,
+        url: Option<&str>,
+        pid: Option<u32>,
+    ) -> Result<(), EgressDecision> {
+        // 1. Check content hash in content_catalog
+        if let Some(h) = content_hash {
+            let normalized_hash = h.trim().to_ascii_lowercase();
+            if let Some(matched) = self.content_catalog.get(&normalized_hash) {
+                if matched.tainted && matched.policy.is_enforced() {
+                    return Err(EgressDecision::Blocked {
+                        policy: matched.policy,
+                        classification: matched.classification,
+                        span_context: matched.origin_span_context.clone(),
+                        reason: format!(
+                            "Egress blocked: content hash '{}' matches tainted artifact '{}' ({}, {})",
+                            normalized_hash,
+                            matched.canonical_path,
+                            matched.classification,
+                            matched.policy
+                        ),
+                    });
+                }
+            }
+        }
+
+        // 2. Check content bytes if supplied
+        if let Some(bytes) = content_bytes {
+            let sha = compute_sha256_hex(bytes);
+            if let Some(matched) = self.content_catalog.get(&sha) {
+                if matched.tainted && matched.policy.is_enforced() {
+                    return Err(EgressDecision::Blocked {
+                        policy: matched.policy,
+                        classification: matched.classification,
+                        span_context: matched.origin_span_context.clone(),
+                        reason: format!(
+                            "Egress blocked: content SHA-256 matches tainted artifact '{}' ({}, {})",
+                            matched.canonical_path, matched.classification, matched.policy
+                        ),
+                    });
+                }
+            }
+        }
+
+        // 3. Check candidate file path
+        if let Some(p) = file_path {
+            let key = ArtifactKey::from_path_or_synthetic(p);
+            let decision = self.check_egress_blocking(&key);
+            if let EgressDecision::Blocked {
+                policy,
+                classification,
+                span_context,
+                reason,
+            } = decision
+            {
+                return Err(EgressDecision::Blocked {
+                    policy,
+                    classification,
+                    span_context,
+                    reason,
+                });
+            }
+        }
+
+        // 4. Check PID if provided
+        if let Some(p) = pid {
+            for entry in self.active_processes.iter() {
+                if entry.key().pid == p
+                    && entry.value().tainted
+                    && entry.value().policy.is_enforced()
+                {
+                    let proc = entry.value();
+                    return Err(EgressDecision::Blocked {
+                        policy: proc.policy,
+                        classification: proc.classification,
+                        span_context: proc.origin_span_context.clone(),
+                        reason: format!(
+                            "Process egress blocked: PID {} ({}) is tainted with policy {}",
+                            p, proc.executable_name, proc.policy
+                        ),
+                    });
+                }
+            }
+        }
+
+        // 5. Check URL if provided (defense-in-depth URL sink checks)
+        if let Some(u) = url {
+            let u_lower = u.to_ascii_lowercase();
+            if (u_lower.contains("dlptest.com")
+                || u_lower.contains("pastebin.com")
+                || u_lower.contains("webhook.site"))
+                && self
+                    .active_artifacts
+                    .iter()
+                    .any(|a| a.value().tainted && a.value().classification.is_crown_jewel())
+            {
+                if let Some(first_tainted) = self
+                    .active_artifacts
+                    .iter()
+                    .find(|a| a.value().tainted && a.value().classification.is_crown_jewel())
+                {
+                    return Err(EgressDecision::Blocked {
+                        policy: first_tainted.value().policy,
+                        classification: first_tainted.value().classification,
+                        span_context: first_tainted.value().origin_span_context.clone(),
+                        reason: format!(
+                            "URL egress blocked: destination '{}' blocked under active Crown Jewel taint ({})",
+                            u, first_tainted.value().canonical_path
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Correlates active processes and open files with `siquery-rs` tables.
+    pub fn correlate_with_siquery(
+        &self,
+        siquery: &osoosi_agent_anomaly::siquery::SiqueryEngine,
+    ) -> Result<usize, String> {
+        let mut correlated = 0usize;
+
+        // Query open files from siquery-rs
+        if let Ok(rows) =
+            siquery.execute_query("SELECT pid, fd, path FROM process_open_files LIMIT 1000;")
+        {
+            for row in rows {
+                let pid = row.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                if pid > 0 && !path.is_empty() {
+                    let art_key = ArtifactKey::from_path_or_synthetic(path);
+                    if self.active_artifacts.contains_key(&art_key) {
+                        let proc_key = ProcessInstanceKey::new(pid, 0);
+                        self.on_file_read(proc_key, "siquery_correlated", path, art_key);
+                        correlated += 1;
+                    }
+                }
+            }
+        }
+
+        // Query file events from siquery-rs
+        if let Ok(events) = siquery.execute_query(
+            "SELECT target_path, action, pid, process_name, sha256 FROM file_events LIMIT 500;",
+        ) {
+            for row in events {
+                let path = row
+                    .get("target_path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let sha = row.get("sha256").and_then(|v| v.as_str()).unwrap_or("");
+                if !path.is_empty() && !sha.is_empty() {
+                    if self.content_catalog.contains_key(sha) {
+                        let art_key = ArtifactKey::from_path_or_synthetic(path);
+                        if let Some(matched) = self.content_catalog.get(sha) {
+                            self.active_artifacts
+                                .insert(art_key, matched.value().clone());
+                            correlated += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(correlated)
+    }
+
+    /// Registers bidirectional lineage hooks on `siquery-rs`.
+    pub fn register_siquery_hooks(&'static self) {
+        osoosi_agent_anomaly::siquery::register_lineage_open_files_hook(move || {
+            let mut list = Vec::new();
+            for entry in self.active_processes.iter() {
+                let pid = entry.key().pid as i64;
+                for art_key in &entry.value().read_history {
+                    if let Some(art) = self.active_artifacts.get(art_key) {
+                        list.push((pid, 0i64, art.canonical_path.clone()));
+                    }
+                }
+            }
+            list
+        });
+
+        osoosi_agent_anomaly::siquery::register_lineage_file_events_hook(move || {
+            let mut events = Vec::new();
+            for entry in self.active_artifacts.iter() {
+                let rec = entry.value();
+                events.push(osoosi_agent_anomaly::siquery::FileEventRecord {
+                    target_path: rec.canonical_path.clone(),
+                    action: if rec.tainted {
+                        "TAINTED_WRITE".to_string()
+                    } else {
+                        "REGISTER".to_string()
+                    },
+                    pid: 0,
+                    process_name: "lineage_tracker".to_string(),
+                    sha256: rec.sha256.clone(),
+                    time: rec.updated_at_utc.timestamp(),
+                });
+            }
+            events
+        });
+    }
+}
+
+static GLOBAL_LINEAGE_TRACKER: std::sync::LazyLock<DlpLineageTracker> =
+    std::sync::LazyLock::new(|| DlpLineageTracker::new(30));
+
+/// Returns the global reference to the DLP Lineage Tracker.
+pub fn global_lineage_tracker() -> &'static DlpLineageTracker {
+    &GLOBAL_LINEAGE_TRACKER
+}
+
+/// Builds standardized OpenTelemetry Resource and Span attributes carrying ZERO raw PII.
+///
+/// Invariant: Telemetry must NEVER leak plaintext user content, secrets, or raw prompt tokens.
+/// All sensitive file contents or payloads are represented strictly by cryptographic digests
+/// (`SHA-256`, `ssdeep`, `BLAKE3`).
+pub fn build_zero_pii_otel_attributes(
+    pid: Option<u32>,
+    parent_pid: Option<u32>,
+    executable_path: Option<&str>,
+    file_path: Option<&str>,
+    url_full: Option<&str>,
+    gen_ai_operation: Option<&str>,
+    content_bytes: Option<&[u8]>,
+    content_sha256: Option<&str>,
+    content_ssdeep: Option<&str>,
+) -> Vec<opentelemetry::KeyValue> {
+    let mut attrs = Vec::new();
+
+    if let Some(p) = pid {
+        attrs.push(opentelemetry::KeyValue::new("process.pid", p as i64));
+    }
+    if let Some(pp) = parent_pid {
+        attrs.push(opentelemetry::KeyValue::new("process.parent_pid", pp as i64));
+    }
+    if let Some(exe) = executable_path {
+        attrs.push(opentelemetry::KeyValue::new(
+            "process.executable.path",
+            exe.to_string(),
+        ));
+    }
+    if let Some(fp) = file_path {
+        attrs.push(opentelemetry::KeyValue::new("file.path", fp.to_string()));
+    }
+    if let Some(u) = url_full {
+        let sanitized = sanitize_url_zero_pii(u);
+        attrs.push(opentelemetry::KeyValue::new("url.full", sanitized));
+    }
+    if let Some(op) = gen_ai_operation {
+        attrs.push(opentelemetry::KeyValue::new(
+            "gen_ai.operation.name",
+            op.to_string(),
+        ));
+    }
+
+    // Cryptographic content digests (Zero Raw PII)
+    if let Some(bytes) = content_bytes {
+        let sha = compute_sha256_hex(bytes);
+        let ss = compute_ssdeep(bytes);
+        let b3 = blake3::hash(bytes).to_hex().to_string();
+        attrs.push(opentelemetry::KeyValue::new("file.hash.sha256", sha));
+        attrs.push(opentelemetry::KeyValue::new("file.hash.ssdeep", ss));
+        attrs.push(opentelemetry::KeyValue::new("file.hash.blake3", b3));
+    } else {
+        if let Some(sha) = content_sha256 {
+            attrs.push(opentelemetry::KeyValue::new(
+                "file.hash.sha256",
+                sha.to_string(),
+            ));
+        }
+        if let Some(ss) = content_ssdeep {
+            attrs.push(opentelemetry::KeyValue::new(
+                "file.hash.ssdeep",
+                ss.to_string(),
+            ));
+        }
+    }
+
+    attrs
+}
+
+/// Strips sensitive credentials / basic auth tokens from URLs so telemetry never leaks secrets.
+fn sanitize_url_zero_pii(u: &str) -> String {
+    if let Some(idx) = u.find("://") {
+        let scheme = &u[..idx + 3];
+        let rest = &u[idx + 3..];
+        if let Some(at_idx) = rest.find('@') {
+            if let Some(slash_idx) = rest.find('/') {
+                if at_idx < slash_idx {
+                    return format!("{}{}", scheme, &rest[at_idx + 1..]);
+                }
+            } else {
+                return format!("{}{}", scheme, &rest[at_idx + 1..]);
+            }
+        }
+    }
+    u.to_string()
 }
 
 // ============================================================================
@@ -1940,6 +2448,235 @@ mod tests {
             );
             assert_eq!(key1, key2, "ArtifactKey must be invariant across file modifications");
         }
+    }
+
+    /// Milestone 2 Unit Test: Parent-to-Child Process Taint Propagation on ProcessCreate.
+    #[test]
+    fn test_process_create_taint_propagation() {
+        let tracker = DlpLineageTracker::new(30);
+
+        // 1. Create and taint parent process
+        let parent_proc_key = ProcessInstanceKey::new(1001, 500_000);
+        let secret_key = ArtifactKey::new(1, 777);
+        tracker.register_crown_jewel_artifact(
+            secret_key,
+            "C:\\data\\classified.dat",
+            b"TOP_SECRET_CLASSIFIED_DATA",
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+        tracker.on_file_read(
+            parent_proc_key,
+            "cmd.exe",
+            "C:\\Windows\\system32\\cmd.exe",
+            secret_key,
+        );
+
+        // Parent must be tainted
+        let parent_rec = tracker.active_processes.get(&parent_proc_key).unwrap();
+        assert!(parent_rec.tainted);
+        assert_eq!(parent_rec.classification, ClassificationLattice::CrownJewel);
+
+        // 2. Child process is spawned by parent process
+        let child_rec = tracker.on_process_create(
+            2002,
+            600_000,
+            "powershell.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            Some(1001),
+            Some(500_000),
+        );
+
+        // Child must inherit CrownJewel taint and Quarantine policy
+        assert!(child_rec.tainted, "Child process must inherit parent taint");
+        assert_eq!(child_rec.classification, ClassificationLattice::CrownJewel);
+        assert_eq!(child_rec.policy, PolicyLattice::Quarantine);
+        assert!(!child_rec.linked_span_contexts.is_empty());
+        assert_eq!(
+            child_rec.linked_span_contexts[0].span_id(),
+            parent_rec.origin_span_context.span_id(),
+            "Child process must link parent process SpanContext"
+        );
+    }
+
+    /// Milestone 2 Unit Test: File Events, Writes, and Rename Taint Transfer.
+    #[test]
+    fn test_file_events_and_rename_taint_propagation() {
+        let tracker = DlpLineageTracker::new(30);
+
+        let proc_key = ProcessInstanceKey::new(3003, 100_000);
+        let src_path = "C:\\staging\\draft_report.docx";
+        let dst_path = "C:\\staging\\final_report.docx";
+
+        // 1. Taint process by reading sensitive path
+        let secret_key = ArtifactKey::from_path_or_synthetic("C:\\vault\\credentials.json");
+        tracker.register_crown_jewel_artifact(
+            secret_key,
+            "C:\\vault\\credentials.json",
+            b"super_secret_credentials_key",
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+        tracker.on_file_read(proc_key, "app.exe", "C:\\app.exe", secret_key);
+
+        // 2. Process writes output file
+        let write_decision = tracker.on_file_write_path(
+            3003,
+            100_000,
+            src_path,
+            Some(b"report content derived from credentials"),
+        );
+        assert!(matches!(write_decision, FileWriteTaintDecision::TaintPropagated { .. }));
+
+        let src_key = ArtifactKey::from_path_or_synthetic(src_path);
+        {
+            let src_rec = tracker.active_artifacts.get(&src_key).expect("Artifact must exist");
+            assert!(src_rec.tainted);
+            assert_eq!(src_rec.classification, ClassificationLattice::CrownJewel);
+        }
+
+        // 3. Rename file from draft to final
+        tracker.on_file_rename(3003, 100_000, src_path, dst_path);
+
+        let dst_key = ArtifactKey::from_path_or_synthetic(dst_path);
+        assert!(tracker.active_artifacts.get(&src_key).is_none(), "Old path must be removed");
+        {
+            let dst_rec = tracker.active_artifacts.get(&dst_key).expect("Renamed artifact must exist");
+            assert!(dst_rec.tainted, "Renamed artifact must retain taint");
+            assert_eq!(dst_rec.classification, ClassificationLattice::CrownJewel);
+            assert_eq!(dst_rec.policy, PolicyLattice::Quarantine);
+        }
+    }
+
+    /// Milestone 2 Unit Test: Egress Check and Zero-PII OpenTelemetry Attributes.
+    #[test]
+    fn test_check_egress_allowed_and_zero_pii_otel_attributes() {
+        let tracker = DlpLineageTracker::new(30);
+
+        let raw_secret = b"SECRET_CUSTOMER_CREDIT_CARD_DATA_LEAK_TARGET";
+        let sha256_hash = compute_sha256_hex(raw_secret);
+        let secret_key = ArtifactKey::from_path_or_synthetic("C:\\leak\\cards.csv");
+
+        tracker.register_crown_jewel_artifact(
+            secret_key,
+            "C:\\leak\\cards.csv",
+            raw_secret,
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+
+        // 1. Egress by path must be blocked
+        let res_path = tracker.check_egress_allowed_full(
+            Some("C:\\leak\\cards.csv"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(res_path.is_err(), "Egress by tainted path must be blocked");
+
+        // 2. Egress by hash must be blocked
+        let res_hash = tracker.check_egress_allowed_full(
+            None,
+            Some(&sha256_hash),
+            None,
+            None,
+            None,
+        );
+        assert!(res_hash.is_err(), "Egress by tainted hash must be blocked");
+
+        // 3. Egress to suspect sink with active crown jewel must be blocked
+        let res_url = tracker.check_egress_allowed_full(
+            None,
+            None,
+            None,
+            Some("https://webhook.site/test-leak"),
+            None,
+        );
+        assert!(res_url.is_err(), "Egress to suspect exfiltration sink must be blocked");
+
+        // 4. Benign egress must be allowed
+        let res_clean = tracker.check_egress_allowed_full(
+            Some("C:\\benign\\notes.txt"),
+            Some("0000000000000000000000000000000000000000000000000000000000000000"),
+            None,
+            Some("https://trusted.internal.corp/api/health"),
+            None,
+        );
+        assert!(res_clean.is_ok(), "Benign egress must be allowed");
+
+        // 5. Zero-PII OpenTelemetry Attribute verification
+        let attrs = build_zero_pii_otel_attributes(
+            Some(4567),
+            Some(1234),
+            Some("C:\\bin\\uploader.exe"),
+            Some("C:\\leak\\cards.csv"),
+            Some("https://user:password123@webhook.site/upload?query=1"),
+            Some("inference.completion"),
+            Some(raw_secret),
+            None,
+            None,
+        );
+
+        // Verify standard attributes exist
+        let attr_map: std::collections::HashMap<String, String> = attrs
+            .into_iter()
+            .map(|kv| (kv.key.as_str().to_string(), kv.value.to_string()))
+            .collect();
+
+        assert_eq!(attr_map.get("process.pid").map(|s| s.as_str()), Some("4567"));
+        assert_eq!(attr_map.get("process.parent_pid").map(|s| s.as_str()), Some("1234"));
+        assert_eq!(
+            attr_map.get("process.executable.path").map(|s| s.as_str()),
+            Some("C:\\bin\\uploader.exe")
+        );
+        assert_eq!(attr_map.get("file.path").map(|s| s.as_str()), Some("C:\\leak\\cards.csv"));
+        assert_eq!(
+            attr_map.get("gen_ai.operation.name").map(|s| s.as_str()),
+            Some("inference.completion")
+        );
+
+        // Verify cryptographic hashes are present
+        assert_eq!(attr_map.get("file.hash.sha256").map(|s| s.as_str()), Some(sha256_hash.as_str()));
+        assert!(attr_map.contains_key("file.hash.ssdeep"));
+        assert!(attr_map.contains_key("file.hash.blake3"));
+
+        // Verify Zero-PII invariant: URL basic auth credentials are sanitized
+        let sanitized_url = attr_map.get("url.full").expect("url.full attribute must exist");
+        assert!(
+            !sanitized_url.contains("password123"),
+            "Sanitized URL must NEVER contain raw passwords or basic auth credentials"
+        );
+        assert!(
+            !sanitized_url.contains("user:"),
+            "Sanitized URL must NEVER contain user basic auth credentials"
+        );
+        assert!(sanitized_url.starts_with("https://webhook.site/"));
+    }
+
+    /// Milestone 2 Unit Test: Siquery-rs Bidirectional Correlation.
+    #[test]
+    fn test_siquery_bidirectional_correlation() {
+        let tracker: &'static DlpLineageTracker = Box::leak(Box::new(DlpLineageTracker::new(30)));
+
+        // Register hooks with siquery
+        tracker.register_siquery_hooks();
+
+        let engine = osoosi_agent_anomaly::siquery::SiqueryEngine::new();
+
+        // Populate a crown jewel artifact
+        let key = ArtifactKey::from_path_or_synthetic("C:\\secure\\token.pem");
+        tracker.register_crown_jewel_artifact(
+            key,
+            "C:\\secure\\token.pem",
+            b"CERT_PRIVATE_KEY_BYTES",
+            ClassificationLattice::CrownJewel,
+            PolicyLattice::Quarantine,
+        );
+
+        // Correlate with siquery engine
+        let res = tracker.correlate_with_siquery(&engine);
+        assert!(res.is_ok(), "correlate_with_siquery must succeed");
     }
 }
 

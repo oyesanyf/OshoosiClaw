@@ -1370,6 +1370,9 @@ impl EdrOrchestrator {
         // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
         self.causal_ai.ingest_event(&event);
 
+        // DLP Lineage & Taint State Machine: Wire incoming kernel events into DlpLineageTracker
+        self.ingest_event_into_dlp_lineage(&event);
+
         // Einstein Engine: Check for "Dilation of Truth" (temporal anomalies)
         let temporal_score = self.relativistic.check_temporal_dilation(&event);
 
@@ -1792,6 +1795,215 @@ impl EdrOrchestrator {
         }
 
         Ok(())
+    }
+
+    /// Ingests incoming kernel and host security telemetry events into the DLP Lineage Tracker.
+    /// Maps ProcessCreate, FileRead, FileWrite, FileRename, ProcessTerminate, and NetworkConnect.
+    pub fn ingest_event_into_dlp_lineage(&self, event: &osoosi_types::HostSecurityEvent) {
+        let tracker = crate::dlp_lineage::global_lineage_tracker();
+
+        let pid = extract_event_pid(event).unwrap_or(0);
+        let ppid = event
+            .data
+            .get("ParentProcessId")
+            .or_else(|| event.data.get("parent_process_id"))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })
+            .map(|p| p as u32);
+
+        let start_time_100ns = event
+            .data
+            .get("ProcessStartTime")
+            .or_else(|| event.data.get("StartTime100ns"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| {
+                (event.timestamp.timestamp_nanos_opt().unwrap_or(0) / 100).max(0) as u64
+            });
+
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ImagePath"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let image_name = std::path::Path::new(image)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(if image.is_empty() { "unknown" } else { image });
+
+        let event_name = event
+            .data
+            .get("EventName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        match event.event_id {
+            // 1. ProcessCreate (Sysmon 1, Security 4688)
+            1 | 4688 => {
+                if pid > 0 {
+                    tracker.on_process_create(
+                        pid,
+                        start_time_100ns,
+                        image_name,
+                        image,
+                        ppid,
+                        None,
+                    );
+                }
+            }
+            // 2. ProcessTerminate (Sysmon 5)
+            5 => {
+                if pid > 0 {
+                    tracker.on_process_exit(pid, start_time_100ns);
+                }
+            }
+            // 3. FileCreate / FileWrite (Sysmon 11)
+            11 => {
+                if let Some(target_file) = event
+                    .data
+                    .get("TargetFilename")
+                    .or_else(|| event.data.get("FilePath"))
+                    .or_else(|| event.data.get("Path"))
+                    .and_then(|v| v.as_str())
+                {
+                    let content_bytes = event
+                        .data
+                        .get("PayloadHex")
+                        .and_then(|v| v.as_str())
+                        .and_then(|h| hex::decode(h).ok());
+                    tracker.on_file_write_path(
+                        pid,
+                        start_time_100ns,
+                        target_file,
+                        content_bytes.as_deref(),
+                    );
+                }
+            }
+            // 4. FileRead (Sysmon 28 or custom FileRead event)
+            28 => {
+                if let Some(target_file) = event
+                    .data
+                    .get("TargetFilename")
+                    .or_else(|| event.data.get("FilePath"))
+                    .or_else(|| event.data.get("Path"))
+                    .and_then(|v| v.as_str())
+                {
+                    tracker.on_file_read_path(
+                        pid,
+                        start_time_100ns,
+                        image_name,
+                        image,
+                        target_file,
+                    );
+                }
+            }
+            // 5. FileRename (Sysmon 27)
+            27 => {
+                let old_file = event
+                    .data
+                    .get("SourceFilename")
+                    .or_else(|| event.data.get("OldFilePath"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let new_file = event
+                    .data
+                    .get("TargetFilename")
+                    .or_else(|| event.data.get("NewFilePath"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !old_file.is_empty() && !new_file.is_empty() {
+                    tracker.on_file_rename(pid, start_time_100ns, old_file, new_file);
+                }
+            }
+            // 6. NetworkConnect (Sysmon 3)
+            3 => {
+                if pid > 0 {
+                    let proc_key = crate::dlp_lineage::ProcessInstanceKey::new(pid, start_time_100ns);
+                    let decision = tracker.check_process_egress_blocking(&proc_key);
+                    if let crate::dlp_lineage::EgressDecision::Blocked {
+                        policy,
+                        classification,
+                        span_context,
+                        reason,
+                    } = decision
+                    {
+                        warn!(
+                            "[DLP Lineage Egress Gate]: Outbound network connection blocked for PID {}: {}",
+                            pid, reason
+                        );
+                        let dest_ip = event
+                            .data
+                            .get("DestinationIp")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let dest_port = event
+                            .data
+                            .get("DestinationPort")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        self.audit.log(
+                            "DLP_LINEAGE_EGRESS_BLOCKED",
+                            serde_json::json!({
+                                "pid": pid,
+                                "policy": policy.as_str(),
+                                "classification": classification.as_str(),
+                                "trace_id": span_context.trace_id().to_string(),
+                                "span_id": span_context.span_id().to_string(),
+                                "dest_ip": dest_ip,
+                                "dest_port": dest_port,
+                                "reason": reason,
+                            }),
+                        );
+                    }
+                }
+            }
+            _ => {
+                // Check named event fallbacks (e.g. from eBPF or Linux audit)
+                if event_name == "FileRead" {
+                    if let Some(target_file) = event
+                        .data
+                        .get("TargetFilename")
+                        .or_else(|| event.data.get("FilePath"))
+                        .and_then(|v| v.as_str())
+                    {
+                        tracker.on_file_read_path(
+                            pid,
+                            start_time_100ns,
+                            image_name,
+                            image,
+                            target_file,
+                        );
+                    }
+                } else if event_name == "FileWrite" {
+                    if let Some(target_file) = event
+                        .data
+                        .get("TargetFilename")
+                        .or_else(|| event.data.get("FilePath"))
+                        .and_then(|v| v.as_str())
+                    {
+                        tracker.on_file_write_path(pid, start_time_100ns, target_file, None);
+                    }
+                } else if event_name == "FileRename" {
+                    let old_file = event.data.get("SourceFilename").and_then(|v| v.as_str()).unwrap_or("");
+                    let new_file = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+                    if !old_file.is_empty() && !new_file.is_empty() {
+                        tracker.on_file_rename(pid, start_time_100ns, old_file, new_file);
+                    }
+                } else if event_name == "ProcessCreate" {
+                    if pid > 0 {
+                        tracker.on_process_create(pid, start_time_100ns, image_name, image, ppid, None);
+                    }
+                } else if event_name == "ProcessTerminate" {
+                    if pid > 0 {
+                        tracker.on_process_exit(pid, start_time_100ns);
+                    }
+                }
+            }
+        }
     }
 
     /// Compute alert suppression deduplication key for a ThreatSignature.
