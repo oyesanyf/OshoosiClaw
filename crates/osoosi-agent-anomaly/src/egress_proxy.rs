@@ -6,8 +6,290 @@
 //! 3. [`validate_agent_egress_url`]: HTTPS-only transport, credential stripping, trailing-dot normalization, and domain allowlists.
 //! 4. [`resolve_and_pin`]: OS DNS resolution pinning returning [`PinnedEgress`] with `--resolve` formatting.
 
+use std::collections::BTreeMap;
 use std::net::{IpAddr, ToSocketAddrs};
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use url::Url;
+
+/// Information returned when outbound egress is blocked by the DLP Lineage Tracker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EgressLineageBlockInfo {
+    pub policy: String,
+    pub classification: String,
+    pub reason: String,
+    pub trace_id: Option<String>,
+    pub span_id: Option<String>,
+}
+
+impl std::fmt::Display for EgressLineageBlockInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "policy={}, classification={}, reason={}",
+            self.policy, self.classification, self.reason
+        )
+    }
+}
+
+/// Synthetic child span emitted when outbound egress is blocked (Finding: zero-PII OpenTelemetry attributes).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyntheticBlockedSpan {
+    pub name: String,
+    pub trace_id: String,
+    pub span_id: String,
+    pub parent_span_id: Option<String>,
+    pub status: String, // "ERROR"
+    pub action: String, // "BLOCKED"
+    pub policy: String,
+    pub classification: String,
+    pub timestamp_utc: String,
+    pub attributes: BTreeMap<String, String>,
+}
+
+pub type LineageEgressHook = Box<
+    dyn Fn(Option<&str>, Option<&str>, Option<&str>) -> Result<(), EgressLineageBlockInfo>
+        + Send
+        + Sync,
+>;
+
+pub static LINEAGE_EGRESS_HOOK: parking_lot::RwLock<Option<LineageEgressHook>> =
+    parking_lot::RwLock::new(None);
+
+pub static RECENT_BLOCKED_SPANS: parking_lot::RwLock<Vec<SyntheticBlockedSpan>> =
+    parking_lot::RwLock::new(Vec::new());
+
+/// Registers the callback providing synchronous inline egress blocking from `DlpLineageTracker`.
+pub fn register_lineage_egress_hook<F>(hook: F)
+where
+    F: Fn(Option<&str>, Option<&str>, Option<&str>) -> Result<(), EgressLineageBlockInfo>
+        + Send
+        + Sync
+        + 'static,
+{
+    *LINEAGE_EGRESS_HOOK.write() = Some(Box::new(hook));
+}
+
+/// Helper: returns all recorded synthetic blocked spans (for tests and forensics).
+pub fn get_recent_blocked_spans() -> Vec<SyntheticBlockedSpan> {
+    RECENT_BLOCKED_SPANS.read().clone()
+}
+
+/// Helper: clears recent blocked spans.
+pub fn clear_recent_blocked_spans() {
+    RECENT_BLOCKED_SPANS.write().clear();
+}
+
+/// Records and logs a synthetic blocked child span with status ERROR and zero-PII attributes.
+pub fn emit_synthetic_blocked_span(
+    url: Option<&str>,
+    file_path: Option<&str>,
+    hash: Option<&str>,
+    block_info: &EgressLineageBlockInfo,
+) -> SyntheticBlockedSpan {
+    let now = Utc::now().to_rfc3339();
+    let trace_id = block_info
+        .trace_id
+        .clone()
+        .unwrap_or_else(|| format!("{:032x}", rand::random::<u128>()));
+    let span_id = format!("{:016x}", rand::random::<u64>());
+    let parent_span_id = block_info.span_id.clone();
+
+    let mut attrs = BTreeMap::new();
+    attrs.insert("dlp.action".to_string(), "BLOCKED".to_string());
+    attrs.insert("dlp.policy".to_string(), block_info.policy.clone());
+    attrs.insert("dlp.classification".to_string(), block_info.classification.clone());
+    attrs.insert("otel.status_code".to_string(), "ERROR".to_string());
+    attrs.insert("otel.status_description".to_string(), block_info.reason.clone());
+    attrs.insert("error.type".to_string(), "DLP_EGRESS_BLOCKED".to_string());
+
+    if let Some(u) = url {
+        // Strip any credentials to preserve zero-PII invariant
+        let sanitized = sanitize_url_zero_pii_egress(u);
+        attrs.insert("url.full".to_string(), sanitized);
+    }
+    if let Some(fp) = file_path {
+        attrs.insert("file.path".to_string(), fp.to_string());
+    }
+    if let Some(h) = hash {
+        attrs.insert("file.hash.sha256".to_string(), h.to_string());
+    }
+
+    let span = SyntheticBlockedSpan {
+        name: "dlp.inline_egress_block".to_string(),
+        trace_id,
+        span_id,
+        parent_span_id,
+        status: "ERROR".to_string(),
+        action: "BLOCKED".to_string(),
+        policy: block_info.policy.clone(),
+        classification: block_info.classification.clone(),
+        timestamp_utc: now,
+        attributes: attrs,
+    };
+
+    tracing::error!(
+        status = "ERROR",
+        dlp_action = "BLOCKED",
+        policy = %span.policy,
+        classification = %span.classification,
+        trace_id = %span.trace_id,
+        span_id = %span.span_id,
+        "Synchronous inline egress blocked by DLP Lineage"
+    );
+
+    let mut lock = RECENT_BLOCKED_SPANS.write();
+    if lock.len() >= 1000 {
+        lock.remove(0);
+    }
+    lock.push(span.clone());
+
+    span
+}
+
+fn sanitize_url_zero_pii_egress(u: &str) -> String {
+    if let Some(idx) = u.find("://") {
+        let scheme = &u[..idx + 3];
+        let rest = &u[idx + 3..];
+        if let Some(at_idx) = rest.find('@') {
+            if let Some(slash_idx) = rest.find('/') {
+                if at_idx < slash_idx {
+                    return format!("{}{}", scheme, &rest[at_idx + 1..]);
+                }
+            } else {
+                return format!("{}{}", scheme, &rest[at_idx + 1..]);
+            }
+        }
+    }
+    u.to_string()
+}
+
+/// Flexible conversion trait allowing `&url`, `&str`, `Option<&str>`, `String`, etc.
+pub trait IntoEgressTarget {
+    fn as_target_str(&self) -> Option<&str>;
+}
+
+impl IntoEgressTarget for &str {
+    fn as_target_str(&self) -> Option<&str> {
+        if self.is_empty() { None } else { Some(self) }
+    }
+}
+
+impl IntoEgressTarget for &&str {
+    fn as_target_str(&self) -> Option<&str> {
+        if self.is_empty() { None } else { Some(*self) }
+    }
+}
+
+impl IntoEgressTarget for String {
+    fn as_target_str(&self) -> Option<&str> {
+        if self.is_empty() { None } else { Some(self.as_str()) }
+    }
+}
+
+impl IntoEgressTarget for &String {
+    fn as_target_str(&self) -> Option<&str> {
+        if self.is_empty() { None } else { Some(self.as_str()) }
+    }
+}
+
+impl IntoEgressTarget for Option<&str> {
+    fn as_target_str(&self) -> Option<&str> {
+        *self
+    }
+}
+
+impl IntoEgressTarget for &Option<&str> {
+    fn as_target_str(&self) -> Option<&str> {
+        **self
+    }
+}
+
+impl IntoEgressTarget for Option<String> {
+    fn as_target_str(&self) -> Option<&str> {
+        self.as_deref()
+    }
+}
+
+impl IntoEgressTarget for &Option<String> {
+    fn as_target_str(&self) -> Option<&str> {
+        self.as_deref()
+    }
+}
+
+impl IntoEgressTarget for () {
+    fn as_target_str(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// Global lineage tracker proxy executing synchronous in-memory egress evaluation in nanoseconds.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EgressLineageTrackerProxy;
+
+impl EgressLineageTrackerProxy {
+    /// Queries the global lineage tracker in nanoseconds for URL, file path, and content hash taint.
+    /// If tainted with `Quarantine` or `CrownJewel`, blocks immediately.
+    #[inline]
+    pub fn check_egress_allowed_full<U, F, H>(
+        &self,
+        url: U,
+        file_path: F,
+        hash: H,
+    ) -> Result<(), EgressLineageBlockInfo>
+    where
+        U: IntoEgressTarget,
+        F: IntoEgressTarget,
+        H: IntoEgressTarget,
+    {
+        let u = url.as_target_str();
+        let fp = file_path.as_target_str();
+        let h = hash.as_target_str();
+
+        if let Some(ref hook) = *LINEAGE_EGRESS_HOOK.read() {
+            hook(u, fp, h)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Returns the global lineage tracker accessor for egress proxy checks.
+#[inline]
+pub fn global_lineage_tracker() -> EgressLineageTrackerProxy {
+    EgressLineageTrackerProxy
+}
+
+/// Convenience standalone function checking outbound egress against the DLP Lineage Tracker.
+pub fn check_egress_allowed_inline<U, F, H>(
+    url: U,
+    file_path: F,
+    hash: H,
+) -> Result<(), String>
+where
+    U: IntoEgressTarget,
+    F: IntoEgressTarget,
+    H: IntoEgressTarget,
+{
+    let u_str = url.as_target_str();
+    let fp_str = file_path.as_target_str();
+    let h_str = hash.as_target_str();
+
+    let check_res = global_lineage_tracker().check_egress_allowed_full(u_str, fp_str, h_str);
+    if let Err(block_info) = check_res {
+        let is_blocked = block_info.policy.eq_ignore_ascii_case("QUARANTINE")
+            || block_info.policy.eq_ignore_ascii_case("BLOCK")
+            || block_info.classification.eq_ignore_ascii_case("CROWN_JEWEL");
+        if is_blocked {
+            emit_synthetic_blocked_span(u_str, fp_str, h_str, &block_info);
+            return Err(format!(
+                "DLP_EGRESS_BLOCKED: Egress blocked by DLP Lineage (policy={}, classification={}): {}",
+                block_info.policy, block_info.classification, block_info.reason
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// Mathematical IPv4/IPv6 SSRF & DNS Rebinding Range Classifier.
 ///
@@ -149,6 +431,21 @@ pub fn validate_agent_egress_url(raw_url: &str, allowed_domains: &[String]) -> R
     let trimmed = raw_url.trim();
     if trimmed.is_empty() {
         return Err("SSRF_EMPTY_URL: Outbound URL cannot be empty".to_string());
+    }
+
+    // Synchronous nanosecond inline DLP Lineage check
+    let check_res = global_lineage_tracker().check_egress_allowed_full(&trimmed, &None::<&str>, &None::<&str>);
+    if let Err(block_info) = check_res {
+        let is_blocked = block_info.policy.eq_ignore_ascii_case("QUARANTINE")
+            || block_info.policy.eq_ignore_ascii_case("BLOCK")
+            || block_info.classification.eq_ignore_ascii_case("CROWN_JEWEL");
+        if is_blocked {
+            emit_synthetic_blocked_span(Some(trimmed), None, None, &block_info);
+            return Err(format!(
+                "DLP_EGRESS_BLOCKED: Outbound request to '{}' blocked by DLP Lineage (policy={}, classification={}): {}",
+                trimmed, block_info.policy, block_info.classification, block_info.reason
+            ));
+        }
     }
 
     if let Some(after_scheme) = trimmed.split("://").nth(1) {
@@ -390,5 +687,112 @@ mod tests {
         // Public IP should pass
         assert!(!is_restricted_rebinding_ip(&"8.8.8.8".parse().unwrap()));
         assert!(!is_restricted_rebinding_ip(&"1.1.1.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_synchronous_inline_egress_blocking_and_child_span() {
+        clear_recent_blocked_spans();
+
+        // Register test hook simulating DLP Lineage Tracker
+        register_lineage_egress_hook(|url, file_path, hash| {
+            if let Some(u) = url {
+                if u.contains("tainted-exfil.com") {
+                    return Err(EgressLineageBlockInfo {
+                        policy: "QUARANTINE".to_string(),
+                        classification: "CROWN_JEWEL".to_string(),
+                        reason: "Outbound egress blocked: target destination is classified as CROWN_JEWEL leak sink".to_string(),
+                        trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                        span_id: Some("00f067aa0ba902b7".to_string()),
+                    });
+                }
+            }
+            if let Some(fp) = file_path {
+                if fp.contains("secret.docx") {
+                    return Err(EgressLineageBlockInfo {
+                        policy: "QUARANTINE".to_string(),
+                        classification: "CROWN_JEWEL".to_string(),
+                        reason: "File egress blocked: secret.docx is tainted with QUARANTINE".to_string(),
+                        trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
+                        span_id: Some("00f067aa0ba902b7".to_string()),
+                    });
+                }
+            }
+            if let Some(h) = hash {
+                if h == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+                    return Err(EgressLineageBlockInfo {
+                        policy: "BLOCK".to_string(),
+                        classification: "CONFIDENTIAL".to_string(),
+                        reason: "Hash egress blocked: hash matches confidential artifact".to_string(),
+                        trace_id: None,
+                        span_id: None,
+                    });
+                }
+            }
+            Ok(())
+        });
+
+        // 1. Direct query through global_lineage_tracker() in nanoseconds
+        let tracker = global_lineage_tracker();
+        let res = tracker.check_egress_allowed_full(
+            Some("https://tainted-exfil.com/upload"),
+            None::<&str>,
+            None::<&str>,
+        );
+        assert!(res.is_err());
+        let info = res.unwrap_err();
+        assert_eq!(info.policy, "QUARANTINE");
+        assert_eq!(info.classification, "CROWN_JEWEL");
+
+        // 2. Outbound egress blocked in validate_agent_egress_url
+        let egress_url = "https://user:password123@tainted-exfil.com/upload";
+        let val_res = validate_agent_egress_url(egress_url, &[]);
+        assert!(val_res.is_err());
+        let err_msg = val_res.unwrap_err();
+        assert!(err_msg.contains("DLP_EGRESS_BLOCKED"));
+        assert!(err_msg.contains("QUARANTINE"));
+        assert!(err_msg.contains("CROWN_JEWEL"));
+
+        // 3. Verify synthetic child span emission with status ERROR, dlp.action=BLOCKED, zero PII
+        let spans = get_recent_blocked_spans();
+        assert!(!spans.is_empty(), "A synthetic child span must have been emitted");
+        let last_span = spans.last().unwrap();
+        assert_eq!(last_span.status, "ERROR");
+        assert_eq!(last_span.action, "BLOCKED");
+        assert_eq!(last_span.policy, "QUARANTINE");
+        assert_eq!(last_span.classification, "CROWN_JEWEL");
+        assert_eq!(last_span.trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
+        assert_eq!(last_span.parent_span_id.as_deref(), Some("00f067aa0ba902b7"));
+
+        // Verify zero-PII invariant on attributes
+        assert_eq!(
+            last_span.attributes.get("dlp.action").map(|s| s.as_str()),
+            Some("BLOCKED")
+        );
+        assert_eq!(
+            last_span.attributes.get("otel.status_code").map(|s| s.as_str()),
+            Some("ERROR")
+        );
+        let span_url = last_span.attributes.get("url.full").expect("url.full attribute must exist");
+        assert!(
+            !span_url.contains("password123"),
+            "Zero-PII violation: passwords must be sanitized from OTel span attributes"
+        );
+        assert!(
+            !span_url.contains("user:"),
+            "Zero-PII violation: userinfo must be sanitized from OTel span attributes"
+        );
+
+        // 4. File-based check_egress_allowed_inline
+        let file_res = check_egress_allowed_inline(None::<&str>, Some("C:\\workspace\\secret.docx"), None::<&str>);
+        assert!(file_res.is_err());
+        assert!(file_res.unwrap_err().contains("DLP_EGRESS_BLOCKED"));
+
+        // 5. Clean egress allowed
+        let clean_res = check_egress_allowed_inline(
+            Some("https://trusted-internal-repo.corp/api"),
+            Some("C:\\workspace\\clean.txt"),
+            None::<&str>,
+        );
+        assert!(clean_res.is_ok());
     }
 }
