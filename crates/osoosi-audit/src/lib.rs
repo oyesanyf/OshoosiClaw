@@ -180,8 +180,9 @@ impl MerkleAuditTree {
             inner.epoch_checkpoint_root.as_deref(),
         );
         inner.root = new_root.clone();
+        drop(inner);
 
-        // 5. Extend to hardware TPM for root-of-trust
+        // 5. Extend to hardware TPM for root-of-trust outside the mutex
         let _ = tpm::extend_audit_to_tpm(event_type, &new_root);
 
         new_root
@@ -344,9 +345,8 @@ impl MerkleAuditTree {
                 .unwrap_or("0000000000000000000000000000000000000000000000000000000000000000");
             return inner.root == expected_empty;
         }
-        let recomputed_spine = rebuild_spine(&inner.leaves);
         let computed = Self::compute_root_from_spine(
-            &recomputed_spine,
+            &inner.spine,
             inner.leaves.len(),
             inner.epoch_checkpoint_root.as_deref(),
         );

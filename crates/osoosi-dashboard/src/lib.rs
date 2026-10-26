@@ -2546,10 +2546,13 @@ fn enrich_mitre_threat(
 async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let _ = orch.run_autonomous_rea_threat_adjudication();
+            let orch_bg = Arc::clone(orch);
+            tokio::task::spawn_blocking(move || {
+                let _ = orch_bg.run_autonomous_rea_threat_adjudication();
+            });
             let threats = orch.memory().get_recent_threats(20).unwrap_or_default();
             if threats.is_empty() {
-                let entries = orch.audit().entries();
+                let entries = orch.audit().get_recent_entries(200);
                 let mut seen = std::collections::HashSet::new();
                 let threat_entries: Vec<Value> = entries
                     .iter()
@@ -4368,6 +4371,9 @@ async fn post_autonomy_settings(
 
     let mode = cfg.current_mode();
     let mode_str = mode.as_str();
+    osoosi_types::set_strict_lockdown_override(
+        cfg.auto_quarantine_malware && cfg.action_confidence_threshold <= 0.40,
+    );
 
     if let Some(ref orch) = state.backend {
         orch.audit().log(
@@ -4435,12 +4441,15 @@ async fn get_backup_status(State(state): State<DashboardState>) -> Json<Value> {
 async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let _ = orch.run_autonomous_rea_threat_adjudication();
+            let orch_bg = Arc::clone(orch);
+            tokio::task::spawn_blocking(move || {
+                let _ = orch_bg.run_autonomous_rea_threat_adjudication();
+            });
             let scanner = orch.malware_scanner();
             let stats = scanner.stats();
             let clamav_clean_count = orch
                 .audit()
-                .entries()
+                .get_recent_entries(500)
                 .iter()
                 .filter(|e| e.event_type == "CLAMAV_CLEAN")
                 .count();
@@ -4602,7 +4611,10 @@ async fn post_yara_update(State(state): State<DashboardState>) -> Json<Value> {
 async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let _ = orch.run_autonomous_rea_threat_adjudication();
+            let orch_bg = Arc::clone(orch);
+            tokio::task::spawn_blocking(move || {
+                let _ = orch_bg.run_autonomous_rea_threat_adjudication();
+            });
             let scanner = orch.malware_scanner();
             let detections = scanner.recent_detections();
             let items: Vec<Value> = if !detections.is_empty() {
@@ -6178,8 +6190,11 @@ async fn get_privilege_status() -> Json<Value> {
 async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let _ = orch.run_autonomous_rea_threat_adjudication();
-            let entries = orch.audit().entries();
+            let orch_bg = Arc::clone(orch);
+            tokio::task::spawn_blocking(move || {
+                let _ = orch_bg.run_autonomous_rea_threat_adjudication();
+            });
+            let entries = orch.audit().get_recent_entries(200);
             let mut seen_summaries = std::collections::HashSet::new();
             let items: Vec<Value> = entries
                 .iter()
@@ -6924,7 +6939,7 @@ async fn get_analyst_chat(State(state): State<DashboardState>) -> Json<Value> {
 async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let entries = orch.audit().entries();
+            let entries = orch.audit().get_recent_entries(600);
             let mut buckets = std::collections::BTreeMap::new();
 
             // Bucket events by minute for the last hour

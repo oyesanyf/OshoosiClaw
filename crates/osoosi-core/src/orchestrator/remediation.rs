@@ -583,8 +583,7 @@ impl EdrOrchestrator {
 
         // 3. Dispatch Active Response based on Decision Matrix
         let autonomy = osoosi_types::load_autonomy_config();
-        let is_lockdown_mode =
-            autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+        let is_lockdown_mode = autonomy.is_strict_lockdown();
         let is_catalog_attack = is_mitre_catalog_attack(&signature, event);
         let is_destructive = is_destructive_mutation(&signature, event);
         let has_mitre_technique = signature
@@ -1668,11 +1667,35 @@ impl EdrOrchestrator {
                         .or_else(|| event.data.get("image"))
                         .or_else(|| event.data.get("ImagePath"))
                         .and_then(|i| i.as_str());
+                    let cmd_line = event
+                        .data
+                        .get("CommandLine")
+                        .or_else(|| event.data.get("command_line"))
+                        .or_else(|| event.data.get("cmdline"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
 
                     // Terminate the process tree immediately
                     warn!("Terminating malicious process PID: {}", pid);
                     if let Err(e) = self.remediation.kill_process_tree(pid) {
                         warn!("Failed to terminate process PID {}: {}", pid, e);
+                        if crate::blocking_manager::can_terminate_transient_lolbin_or_payload_pid(
+                            pid,
+                            image.unwrap_or(""),
+                            cmd_line,
+                        ) {
+                            let _ = self
+                                .blocking_manager
+                                .kill_transient_lolbin_or_payload_pid(
+                                    pid,
+                                    None,
+                                    image.unwrap_or(""),
+                                    cmd_line,
+                                    signature.reason.as_deref().unwrap_or(""),
+                                    osoosi_types::load_autonomy_config().is_strict_lockdown(),
+                                )
+                                .await;
+                        }
                     } else {
                         info!("Successfully terminated process PID: {}", pid);
                     }

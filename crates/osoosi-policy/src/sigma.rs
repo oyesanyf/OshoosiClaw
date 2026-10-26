@@ -188,6 +188,26 @@ impl SigmaEngine {
         );
     }
 
+    pub fn add_rule(&mut self, rule: SigmaRule) -> Result<()> {
+        let compiled = self.compile_rule(rule)?;
+        let service = compiled.rule.logsource.service.as_deref();
+        let product = compiled.rule.logsource.product.as_deref();
+        if let Some(s) = service {
+            self.indexed_rules
+                .entry(s.to_lowercase())
+                .or_default()
+                .push(compiled);
+        } else if let Some(p) = product {
+            self.indexed_rules
+                .entry(p.to_lowercase())
+                .or_default()
+                .push(compiled);
+        } else {
+            self.global_rules.push(compiled);
+        }
+        Ok(())
+    }
+
     fn compile_rule(&self, rule: SigmaRule) -> Result<CompiledRule> {
         let mut selections = HashMap::new();
         let mut selection_keys = Vec::new();

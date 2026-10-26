@@ -226,10 +226,12 @@ impl EdrOrchestrator {
                     || r.contains("ASI10")
                     || r.contains("T1003")
                     || r.contains("T1555")
+                    || r.contains("[Sigma-Engine]")
+                    || r.contains("Sigma Match:")
             })
             .unwrap_or(false);
 
-        if has_deterministic_guard && signature.confidence >= 0.90 {
+        if has_deterministic_guard && signature.confidence >= 0.85 {
             return;
         }
 

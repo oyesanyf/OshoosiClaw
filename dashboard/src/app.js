@@ -253,12 +253,19 @@ function setupUniversalUiLoadingInterceptors() {
             const urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
             const method = (init && init.method ? init.method : 'GET').toUpperCase();
             // Show global loading indicator for interactive mutations and explicit view loads
-            const isBackgroundPoll = method === 'GET' && (
+            const isBackgroundPoll = Boolean(init && init._skipGlobalLoading) || (method === 'GET' && (
                 urlStr.endsWith('/api/status') ||
                 urlStr.endsWith('/api/threats') ||
+                urlStr.endsWith('/api/mesh-stats') ||
                 urlStr.endsWith('/api/activity') ||
+                urlStr.endsWith('/api/malware-detections') ||
+                urlStr.endsWith('/api/repair-status') ||
+                urlStr.endsWith('/api/telemetry/timeseries') ||
+                urlStr.endsWith('/api/detection-stats') ||
+                urlStr.endsWith('/api/skyrl/v1/status') ||
+                urlStr.endsWith('/api/dlp/status') ||
                 urlStr.endsWith('/api/supervisor/status')
-            ) && state._appStarted;
+            ) && state._appStarted);
 
             let label = 'Syncing telemetry...';
             if (urlStr.includes('/auth/login')) label = 'Authenticating credentials...';

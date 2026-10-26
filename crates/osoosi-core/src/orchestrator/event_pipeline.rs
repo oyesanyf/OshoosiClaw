@@ -985,8 +985,7 @@ impl EdrOrchestrator {
 
             // 2. Autonomous Remediation Logic (Lockdown Mode and Active Response)
             let autonomy = osoosi_types::load_autonomy_config();
-            let is_lockdown_mode =
-                autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+            let is_lockdown_mode = autonomy.is_strict_lockdown();
             let is_critical_attack = is_critical_security_attack(&signature, &event);
             let is_destructive = is_destructive_mutation(&signature, &event);
             let has_mitre_technique = signature
@@ -995,7 +994,7 @@ impl EdrOrchestrator {
                 .map(|t| !t.trim().is_empty())
                 .unwrap_or(false);
 
-            let effective_action = if is_lockdown_mode
+            let mut effective_action = if is_lockdown_mode
                 && (signature.confidence >= autonomy.action_confidence_threshold
                     || is_critical_attack
                     || is_destructive
@@ -1033,6 +1032,10 @@ impl EdrOrchestrator {
                 );
                 ResponseAction::Alert
             };
+
+            if self.is_monitor_only() {
+                effective_action = ResponseAction::Alert;
+            }
 
             signature.recommended_action = effective_action;
             if signature.require_approval {
@@ -1157,9 +1160,14 @@ impl EdrOrchestrator {
                         let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
                         let reason = signature.reason.as_deref().unwrap_or("");
                         let is_behavioral_threat = reason.contains("Behavioral")
+                            || reason.contains("Sigma")
+                            || reason.contains("CredentialGuard")
+                            || reason.contains("Cedar")
                             || reason.contains("Yara")
                             || reason.contains("Memory")
-                            || reason.contains("Hollows-Hunter");
+                            || reason.contains("Hollows-Hunter")
+                            || signature.mitre_technique.is_some()
+                            || is_lockdown_mode;
 
                         if is_trusted && !is_behavioral_threat {
                             warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
@@ -1216,6 +1224,47 @@ impl EdrOrchestrator {
                                         Err(e) => warn!("Self-Healing rollback failed for PID {}: {}", pid, e),
                                     }
                                 });
+                            }
+                        } else if !self.is_monitor_only()
+                            && (is_lockdown_mode || is_behavioral_threat || signature.confidence >= 0.85)
+                            && extract_event_pid(&event)
+                                .map(|pid| {
+                                    crate::blocking_manager::can_terminate_transient_lolbin_or_payload_pid(
+                                        pid, image, &cmd_line,
+                                    )
+                                })
+                                .unwrap_or(false)
+                        {
+                            if let Some(pid) = extract_event_pid(&event) {
+                                warn!(
+                                    "ACTIVE IPS / STRICT LOCKDOWN: Terminating transient LOLBin/payload child PID {} ({}) under confirmed Sigma/MITRE match (System32 binary on disk untouched).",
+                                    pid, image
+                                );
+                                let _ = self
+                                    .blocking_manager
+                                    .kill_transient_lolbin_or_payload_pid(
+                                        pid,
+                                        ppid.map(|p| p as u32),
+                                        image,
+                                        &cmd_line,
+                                        reason,
+                                        is_lockdown_mode,
+                                    )
+                                    .await;
+                                self.audit.log(
+                                    "TRANSIENT_LOLBIN_PID_TERMINATED",
+                                    serde_json::json!({
+                                        "threat_id": signature.id,
+                                        "pid": pid,
+                                        "parent_pid": ppid,
+                                        "process_name": p_name,
+                                        "image": image,
+                                        "command_line": cmd_line,
+                                        "confidence": signature.confidence,
+                                        "mitre_technique": signature.mitre_technique,
+                                        "disk_binary_untouched": true,
+                                    }),
+                                );
                             }
                         } else {
                             warn!("AUTONOMOUS BLOCK: Skipping persistent FileBlockExecutable and process termination for protected/benign system binary or monitor-only mode: {}", image);

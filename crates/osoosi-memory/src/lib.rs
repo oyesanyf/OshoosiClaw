@@ -1873,11 +1873,12 @@ impl MemoryStore {
             return Ok(false);
         }
 
-        // Support callers passing either a full file path or a bare filename
-        let file_name = std::path::Path::new(raw_proc)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(raw_proc);
+        // Support callers passing either a full file path or a bare filename across Windows and Unix path styles
+        let last_separator = raw_proc.rfind(|c| c == '/' || c == '\\');
+        let file_name = match last_separator {
+            Some(pos) => &raw_proc[pos + 1..],
+            None => raw_proc,
+        };
 
         let proc_lc = file_name.to_lowercase();
         let is_known_component = proc_lc == "msalruntime.dll"
@@ -2639,13 +2640,13 @@ pub fn normalize_truncated_process_name(proc_name: &str, file_path: Option<&str>
     let trimmed = proc_name.trim();
     if let Some(fp) = file_path {
         if fp.contains('\\') || fp.contains('/') {
-            if let Some(fname) = std::path::Path::new(fp)
-                .file_name()
-                .and_then(|n| n.to_str())
-            {
-                if !fname.is_empty() && fname.len() > trimmed.len() {
-                    return fname.to_string();
-                }
+            let last_sep = fp.rfind(|c| c == '/' || c == '\\');
+            let fname = match last_sep {
+                Some(pos) => &fp[pos + 1..],
+                None => fp,
+            };
+            if !fname.is_empty() && fname.len() > trimmed.len() {
+                return fname.to_string();
             }
         }
     }
@@ -2713,7 +2714,7 @@ pub fn compute_real_or_deterministic_hash(
     verdict: &str,
 ) -> String {
     let h = existing_hash.trim();
-    if !h.is_empty() && h != "no-hash" && h != "unknown" && h.len() >= 32 {
+    if !h.is_empty() && h != "no-hash" && h != "unknown" && h.len() >= 16 {
         return h.to_ascii_lowercase();
     }
     let cache = FILE_BLAKE3_MEM_CACHE
@@ -2848,6 +2849,16 @@ pub fn is_consensus_finding_vetoed_or_benign(
         "eicar",
         "reflective_loader",
         "shellcode",
+        "sigma match:",
+        "[sigma-engine]",
+        "credentialguard",
+        "cedar-ring7-forbid",
+        "attack.t1",
+        "keymgr",
+        "comsvcs",
+        "sdset",
+        "procdump",
+        "suspicious child payload spawn",
     ];
     if active_attack_markers
         .iter()

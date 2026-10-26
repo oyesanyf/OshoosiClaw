@@ -547,7 +547,7 @@ impl RemediationController {
             };
 
             if let Ok(handle) = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) } {
-                let _ = unsafe { TerminateProcess(handle, 1) };
+                let _ = unsafe { TerminateProcess(handle, 5) };
                 let _ = unsafe { CloseHandle(handle) };
                 debug!("Immediate Win32 TerminateProcess executed for PID {}", pid);
             }

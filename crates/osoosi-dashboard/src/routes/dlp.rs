@@ -1531,6 +1531,7 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     let monitor_only_now = is_monitor_only_mode(&state.policy_mode, state.auto_quarantine);
     let strict_lockdown_now =
         !monitor_only_now && is_strict_lockdown_mode(&state.policy_mode, state.min_phi_threshold);
+    osoosi_types::set_strict_lockdown_override(strict_lockdown_now);
 
     if let Some(mode) = explicit_containment {
         state.redactx_containment_mode = osoosi_dp::RedactXOperatingMode::from_name(mode).mode_name;
@@ -1558,9 +1559,21 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     drop(state);
 
     // Whenever the user updates the DLP operating mode (e.g. switching to Audit / Monitor Mode or
-    // Active Enforcement), immediately clear any prior WFP destination blocks on dlptest.com and
-    // active native destination blocks so the newly selected mode is tested without stale WFP filters.
-    {
+    // Active Enforcement), asynchronously clear any prior WFP destination blocks on dlptest.com and
+    // active native destination blocks in a background thread so POST /api/dlp/policy returns in < 1ms.
+    std::thread::spawn(move || {
+        if std::env::var("OSOOSI_CONFIG").is_err() {
+            let mut cfg = osoosi_types::load_autonomy_config();
+            cfg.apply_preset(if strict_lockdown_now {
+                "lockdown"
+            } else if monitor_only_now {
+                "audit"
+            } else {
+                "active"
+            });
+            let _ = osoosi_types::save_autonomy_config(&cfg);
+        }
+
         let engine = crate::routes::dlp_containment::global_containment_engine();
         let _ = engine
             .restore_browser_destination_blocks_for_host("dlptest.com", "policy-mode-updated");
@@ -1578,7 +1591,7 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
                     osoosi_core::wfp::unblock_destination_native(&rule.rule_name, None, None, &[]);
             }
         }
-    }
+    });
 
     Json(resp)
 }
