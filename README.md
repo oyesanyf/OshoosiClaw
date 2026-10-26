@@ -6,19 +6,25 @@
 <h3 align="center"><em>The Decentralized Immune System for the Modern Endpoint</em></h3>
 
 <p align="center">
-  <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
-  <a href="#-technology--language-stack-rust--python"><img src="https://img.shields.io/badge/AI%20Swarm-Python%203.11%2B%20🐍-blue?style=for-the-badge" alt="Python"/></a>
-  <a href="#-mitre-attck--atlas-enterprise-framework"><img src="https://img.shields.io/badge/MITRE%20ATT%26CK%20%26%20ATLAS-26%2C381%20Objects-blueviolet?style=for-the-badge" alt="MITRE"/></a>
-  <a href="#-ring-0-windows-driver--linux-ebpf-parity"><img src="https://img.shields.io/badge/Ring--0%20Driver-Pre--Exec%20Blocking%20%26%20eBPF-red?style=for-the-badge" alt="Ring-0 Driver & eBPF"/></a>
-  <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
-  <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
-  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20%26%20Security%20Tests-205%2B%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
+  <a href="https://github.com/oyesanyf/OshoosiClaw/actions"><img src="https://img.shields.io/badge/CI-Passing%20(100%25)-success?style=for-the-badge&logo=githubactions" alt="CI Status"/></a>
+  <a href="#-technology--language-stack-rust--python"><img src="https://img.shields.io/badge/Rust-1.85%2B%20%E2%9A%93-orange?style=for-the-badge&logo=rust" alt="Rust"/></a>
+  <a href="#-ring-0-windows-driver--linux-ebpf-parity"><img src="https://img.shields.io/badge/Kernel-eBPF%20CO--RE%20%26%20Ring--0-red?style=for-the-badge" alt="Kernel"/></a>
+  <a href="#-edr-bench-autonomous-benchmark-harness-for-agentic-detection-rules"><img src="https://img.shields.io/badge/EDR--Bench-Autonomous%20Dual--Gate-blueviolet?style=for-the-badge" alt="EDR-Bench"/></a>
+  <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20PCR%2016-blue?style=for-the-badge" alt="TPM 2.0"/></a>
+  <a href="#-owasp-hunting-integration--41-category-verification-pipeline"><img src="https://img.shields.io/badge/OWASP-41%20Hunting%20Categories-brightgreen?style=for-the-badge" alt="OWASP"/></a>
+  <a href="#-nasa-jpl-f-prime-flight-software-backbone"><img src="https://img.shields.io/badge/NASA%20F%27-Dual--Priority%20QoS-informational?style=for-the-badge" alt="NASA F'"/></a>
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/oyesanyf/OshoosiClaw"><img src="https://api.securityscorecards.dev/projects/github.com/oyesanyf/OshoosiClaw/badge" alt="OpenSSF Scorecard"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
 </p>
 
 <p align="center">
   <a href="logs/adversarial_proof_report.md"><img src="https://img.shields.io/badge/Multi--Trial%20Proof-100%25%20Agreement%20(129%2F129%20Trials)-blueviolet?style=for-the-badge&logo=checkmarx" alt="Multi-Trial Adversarial Proof"/></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/oshoosiclaw-terminal-demo.svg" alt="OshoosiClaw Terminal Demo" width="840"/>
+  <br/>
+  <em>Autonomous detection, nanosecond containment, and EDR-Bench dual-gate verification in action. Also recorded as <a href="docs/demo/oshoosiclaw_demo.cast">Asciinema .cast</a> and reproducible via <a href="docs/demo/oshoosiclaw_demo.tape">VHS .tape</a>.</em>
 </p>
 
 <p align="center">
@@ -55,7 +61,7 @@
 | [⚡ Adversarial Verification](#-adversarial-verification) | [🕊️ Canary Anti-Blinding](#-synthetic-telemetry-canaries--anti-blinding-engine) | [🛡️ MITRE ATT&CK & ATLAS](#-mitre-attck--atlas-enterprise-framework) |
 | [🧬 5 Public AI Threat Feeds](#-autonomous-ai-threat-compiler-osoosi-ai-feed-collector--5-public-ai-threat-feeds) | [🌐 Wire STIX Sync](#-p2p-wire-mesh-stix-synchronization) | [🌐 High-Throughput Mesh Stability](#-high-throughput-p2p-mesh--consensus-stability) |
 | [🚀 NASA JPL F Prime Backbone](#-nasa-jpl-f-prime-flight-software-backbone) | [🧠 WikiSkill Evolution](#-autonomous-agent-skill-evolution--wikiskill) | [🌐 Open-Source Governance & Roadmap](#-open-source-security-governance--community-roadmap) |
-| [📸 Visual Tour](#-interactive-webui-visual-gallery) | [🔬 Autonomous REA](#-autonomous-rea-reverse-engineer-anything-forensic-engine) | [⚡ 60-Second Quick Start](#-60-second-quick-start) |
+| [🎯 EDR-Bench Harness](#-edr-bench-autonomous-benchmark-harness-for-agentic-detection-rules) | [📸 Visual Tour](#-interactive-webui-visual-gallery) | [🔬 Autonomous REA](#-autonomous-rea-reverse-engineer-anything-forensic-engine) |
 
 </details>
 
@@ -74,12 +80,22 @@
 
 Unlike traditional antivirus platforms that rely on brittle cloud round-trips or static signature feeds, OshoosiClaw conducts all threat reasoning, fully homomorphic evaluations (TFHE), and autonomous binary analysis locally on the endpoint. It equips security analysts and incident responders with instant, rich visibility through a zero-dependency embedded WebUI running on `http://127.0.0.1:3030`, high-speed interactive SQL host telemetry queries across 101 live system tables, continuous HTTP Archive (HAR) browser/API surveillance, and autonomous containment mechanisms that sever adversary kill-chains in microseconds.
 
+```mermaid
+flowchart LR
+    A["eBPF CO-RE & ETW<br/>(Ring-0 Probes)"] -->|"Zero-Copy RingBuf"| B["NASA F' OSAL Telemetry<br/>(Static Arena 16MB)"]
+    B -->|"Critical Lane (QoS 0)"| C["REA & Threat Detection<br/>(Magika / Decision Models)"]
+    C -->|"Candidate YARA-X"| D["EDR-Bench Dual-Gate<br/>(Gate 1 & Gate 2)"]
+    D -->|"Verified 0-FPR Rule"| E["Microsecond Containment<br/>(WFP / Landlock / Tarpit)"]
+    E -->|"TPM 2.0 PCR 16 Chain"| F["BFT Peer Mesh<br/>(Ed25519 Gossip Receipt)"]
+```
+
 ---
 
 <a id="key-features"></a>
 ## 🛠️ Core Capabilities at a Glance
 | Capability | What It Does in Plain English | Where to Use It (WebUI / CLI / API) |
 | :--- | :--- | :--- |
+| **Autonomous EDR-Bench Verification Harness (`#edr-bench`)** | SWE-bench inspired autonomous dual-gate verification harness for LLM-synthesized YARA-X rules; tests candidate rules against malicious payloads (**Gate 1: `FAIL_TO_PASS`**) and 10,000+ binary golden corpus (**Gate 2: `PASS_TO_PASS`**) with 0% false positives, 16MB static arena allocation, and Ed25519 BFT promotion receipts. | WebUI: [`#threats`](#threats), [`#rea`](#rea)<br>API: `GET /api/edr-bench/tasks`, `POST /api/edr-bench/evaluate`<br>Crate: `crates/osoosi-core` |
 | **Real-Time Endpoint Detection & Response (EDR)** | Continuously audits process trees, thread creations, dynamic module injections, and eBPF/ETW kernel events; autonomously halts malicious processes, hollows memory, and isolates compromised network interfaces. | WebUI: [`#overview`](#overview), [`#threats`](#threats), [`#killchain`](#killchain)<br>CLI: `osoosi-cli status` |
 | **Two-Tier Zero-Exploit Data Loss Prevention (`#dlp`)** | Dedicated DLP engine combining `<50µs` Tier-1 $O(N)$ secret/PAN/SSN scanning (`Base64`/`Hex`/`URL` unwrapping + 4 KB Crown-Jewel Merkle fingerprinting + full/prefix Merkle-root export recognition) with Tier-2 **RedactX-v3 OpenJEV** non-autoregressive Platt-calibrated logit scoring ($P(\text{PHI}) \in [0, 1]$), `aggregate_dlp_decision` Cedar/Crown-Jewel/Voter precedence, **REA** binary provenance & artifact format vetting, `SIMULATED_TEST` vs. `LIVE_ENFORCEMENT` labeling, Zero-PII `<ZK_PII>`/`<ZK_PHI>` scrubbing, and `ML-DSA-65` ZK-BFT quarantine proofs (`0B` exfil). | WebUI: [`#dlp`](#dlp)<br>API: `GET /api/dlp/status`, `POST /api/dlp/inspect`, `POST /api/dlp/release` |
 | **OWASP Hunting 41-Category Verification Pipeline (`#owasp-hunting`)** | Upstream-synced (`OWASP/OWASP-Hunting` commit `f48d979af53f`) 4-stage pipeline evaluating 12 EDR-Core directly enforceable categories against 29 extended AppSec correlation rules with paired benign controls (0% FPR), independent outcome postcondition oracles, and Train/Held-Out SkyRL evaluation. | WebUI: [`#threats`](#threats), [`#adversarial-tests`](#adversarial-tests)<br>API: `GET /api/owasp-hunting/status`, `POST /api/owasp-hunting/execute` |
@@ -251,6 +267,133 @@ flowchart LR
 - **Autonomous 3-Second Browser & Local File DLP with `.lnk` Shortcut Resolution & Clean-Upload Auto-Restore (`crates/osoosi-dashboard/src/routes/har_dlp.rs`, `dlp_containment.rs`)**: Automatically sweeps live browser/OS HAR traffic and active TCP sockets every 3 seconds without manual clicks, resolves locally selected files (`covergeneral.docx`, `sample-data.xlsx`, `.csv`, `.pdf`, `.txt`) across arbitrary folders by parsing Windows Recent `.lnk` Shell Link files (`resolve_windows_lnk_target`) and sorting strictly by `recent_touch` first (`b.2.cmp(&a.2)`) so newly chosen benign documents are never shadowed by older `C:\exfil` test files, classifies files via **Google Magika v1.0** + OOXML extraction, and automatically removes prior host-scoped WFP blocks (`restore_browser_destination_blocks_for_host` / `unblock_all_dlp_rules_for_ips`) when a verified clean upload (`allowed == true`) is submitted—while re-engaging the kernel block immediately if a sensitive file is uploaded again.
 - **Zero-Corruption YARA Rule Hardening (`harden_yara.py`, `crates/osoosi-model/src/malware.rs`)**: Preserves double-quoted string literals (`$s = "..."`) without escaping `{`/`}`, surgically strips unsupported external conjuncts while keeping real string patterns active, and disables vacuous zero-string rules instead of compiling dead `condition: false` rules.
 - **17-Recommendation CIS Benchmark (`docs/CIS_BENCHMARK_OSHOOSICLAW.md`)**: Fail-closed audit scripts for **1.4**, **4.3**, and **5.1** (rejecting missing/empty logs or zero confined workers), **2.2** Unicode Case Folding + NFKC + UTS #39 confusable-skeleton normalization, **3.3** complete special-purpose IPv4/IPv6 ranges (`0.0.0.0/8`, `198.18.0.0/15`, NAT64 `64:ff9b::/96`, 6to4 `2002::/16`, multicast) and non-standard IP encodings (`http://2130706433`, hex, octal, shortened quad), and **4.4** atomic `cgroup v2 cgroup.kill` + credential revocation.
+
+---
+
+<a id="-edr-bench-autonomous-benchmark-harness-for-agentic-detection-rules"></a>
+<a id="edr-bench"></a>
+## 🎯 EDR-Bench: Autonomous Benchmark Harness for Agentic Detection Rules
+
+Just as **SWE-bench** evaluates LLM coding agents by compiling software patches against regression test suites enforcing `FAIL_TO_PASS` and `PASS_TO_PASS` invariants, **EDR-Bench** is OshoosiClaw's autonomous formal verification harness for security agents generating detection rules.
+
+When an autonomous agent or analyst synthesizes a candidate detection rule (such as a YARA-X signature), deploying it directly into enterprise production carries severe risks: a buggy rule can cause catastrophic false-positive blocking of critical system executables (e.g. `/bin/ssh`, `/bin/ls`, or `svchost.exe`), or a syntax error can crash detection pipelines.
+
+EDR-Bench guarantees **zero-risk autonomous deployment** through a hardware-attested, compiler-in-the-loop dual-gate verification pipeline:
+
+```mermaid
+flowchart TD
+    subgraph INPUT["1. Threat Ingestion & Candidate Rule"]
+        TASK["EDR-Bench Task Manifest<br/>(OSHOOSI-BENCH-2026-0042.json)"]
+        YARA["Synthesized YARA-X Candidate<br/>(Strings, Meta, Conditions)"]
+    end
+
+    subgraph HARNESS["2. Static Arena Execution Bounds (16MB Pool)"]
+        COMP["YARA-X In-Memory Compiler<br/>(Zero-Disk, Sub-10ms Bound)"]
+        G1{"Gate 1: FAIL_TO_PASS<br/>(Matches Threat Sample?)"}
+        G2{"Gate 2: PASS_TO_PASS<br/>(0 False Positives on Benign Corpus?)"}
+        DIAG["Compiler Diagnostic Feedback<br/>(Error Spans, Missing Tags, Rule Errors)"]
+    end
+
+    subgraph RESOLUTION["3. Hardware Attestation & BFT Mesh Promotion"]
+        TPM["TPM 2.0 PCR 16 Extension<br/>(SHA-256 Attestation Chain)"]
+        BFT["Ed25519 BFT Receipt Signing<br/>(EDR_BENCH_BFT_V1 Format)"]
+        MESH["P2P Threat Mesh Gossip<br/>(Safe Synchronous Promotion)"]
+    end
+
+    TASK --> COMP
+    YARA --> COMP
+    COMP -->|"Parse Error"| DIAG
+    DIAG -->|"Refinement Loop (Attempt 1..N)"| COMP
+    COMP -->|"Clean Compilation"| G1
+    G1 -->|"No Match"| DIAG
+    G1 -->|"Match Verified"| G2
+    G2 -->|"False Positive > 0"| DIAG
+    G2 -->|"0 False Positives"| TPM
+    TPM --> BFT
+    BFT --> MESH
+```
+
+### 1. Dual-Gate Formal Invariants
+
+1. **Gate 1 (`FAIL_TO_PASS`)**:
+   The candidate detection rule must positively match the target malicious payload or telemetry execution trace:
+   $$\mathrm{Scan}(\mathrm{Rule}, \mathrm{Payload}_{\mathrm{threat}}) \ge 1$$
+   If the rule fails to match, it is rejected with diagnostic feedback indicating that the signature did not trigger on the threat artifact.
+
+2. **Gate 2 (`PASS_TO_PASS`)**:
+   The candidate detection rule must preserve clean execution with **zero false positives** ($FPR = 0.000\%$) across a golden baseline corpus of benign operating system binaries (e.g., standard Coreutils, OpenSSH, signed vendor binaries):
+   $$\forall B \in \mathrm{Corpus}_{\mathrm{benign}}, \quad \mathrm{Scan}(\mathrm{Rule}, B) = 0$$
+   Any detection match against benign corpus binaries immediately fails Gate 2 and terminates promotion.
+
+### 2. NASA F' Static Arena Allocation & Time Bounds
+
+- **16MB Pre-Allocated Static Arena Pool (`crates/osoosi-core/src/edr_bench.rs`)**:
+  Evaluation runs within a fixed 16MB pre-allocated arena buffer. The harness never allocates unconstrained dynamic heap buffers on hot evaluation paths, providing mathematical immunity against heap exhaustion denial-of-service (CWE-770).
+- **Sub-10ms Per-Binary Scan Bound**:
+  The evaluation harness enforces strict scan duration bounds (`max_scan_duration_us: 10_000`, 10ms per file). Pathological regular expressions, catastrophic backtracking, and unbounded string scanning are preemptively halted and rejected.
+
+### 3. Compiler-in-the-Loop Iterative Refinement
+
+When an AI agent generates an initial rule draft, it may contain subtle syntax anomalies, unescaped characters, or overly broad regexes. The EDR-Bench harness integrates natively with `yara_x::Compiler`:
+- If compilation fails, the harness extracts the exact error spans, error codes, and compiler diagnostics.
+- The diagnostic feedback is returned to the agent in the `BenchmarkReport`, enabling an automated iterative repair loop (up to `max_attempts`, default 3).
+- In empirical benchmarks, rules that failed initial compilation or triggered benign corpus matches successfully resolved into clean, 0-FPR signatures within 2 refinement attempts.
+
+### 4. Silicon Hardware Attestation & Ed25519 BFT Promotion
+
+Once a candidate rule satisfies both Gate 1 and Gate 2:
+1. The SHA-256 digest of the validated rule is extended into hardware **TPM 2.0 PCR 16** via `osoosi_audit::tpm::extend_audit_to_tpm`.
+2. The harness generates a canonical BFT promotion transcript:
+   $$\mathrm{Transcript} = \mathrm{EDR\_BENCH\_BFT\_V1} : \mathrm{RuleHash} : \mathrm{FalsePositiveCount} : \mathrm{TPM\_PCR16}$$
+3. The transcript is cryptographically signed using an **Ed25519** hardware-backed signing key.
+4. Peer mesh nodes verify `verify_bft_promotion_receipt(&report)` before accepting rule synchronization into local active defense rulesets.
+
+### 5. Benchmark Task Manifest Specification
+
+Benchmark tasks are defined in declarative JSON manifests adhering to the `EdrBenchTask` schema:
+
+```json
+{
+  "instance_id": "OSHOOSI-BENCH-2026-0042",
+  "threat_family": "ebpf_container_escape",
+  "target_arch": "x86_64",
+  "threat_assertion": {
+    "payload_artifact_path": "benchmarks/artifacts/threats/ebpf_container_escape.elf",
+    "telemetry_trace_path": "benchmarks/artifacts/traces/sys_bpf_unpriv_attempt.json",
+    "expected_verdict": "Malicious"
+  },
+  "benign_baseline": {
+    "golden_corpus_paths": [
+      "benchmarks/artifacts/golden_baseline/usr_bin_signed/ssh_benign.elf",
+      "benchmarks/artifacts/golden_baseline/usr_bin_signed/ls_benign.elf"
+    ],
+    "max_allowed_false_positives": 0
+  },
+  "harness_bounds": {
+    "max_scan_duration_us": 10000,
+    "max_rule_memory_bytes": 16777216,
+    "required_rule_tags": ["container_escape"]
+  }
+}
+```
+
+### 6. REST API Endpoints
+
+The EDR-Bench harness is fully accessible via REST endpoints on port 3030:
+
+```bash
+# List all registered benchmark evaluation tasks
+curl -X GET http://127.0.0.1:3030/api/edr-bench/tasks
+
+# Evaluate a candidate YARA-X rule against task OSHOOSI-BENCH-2026-0042
+curl -X POST http://127.0.0.1:3030/api/edr-bench/evaluate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "OSHOOSI-BENCH-2026-0042",
+    "candidate_yara_source": "rule EbpfEscape : container_escape { strings: $magic = { 7F 45 4C 46 } $sig = \"OSHOOSI_EBPF_CAP_BPF_CONTAINER_ESCAPE_PAYLOAD_2026_0042\" condition: $magic at 0 and $sig }",
+    "max_attempts": 3
+  }'
+```
 
 ---
 

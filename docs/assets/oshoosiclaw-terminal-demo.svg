@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 460" width="880" height="460">
+  <defs>
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+    <style>
+      @keyframes reveal-1 { 0%, 5% { opacity: 0; transform: translateY(4px); } 8%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-2 { 0%, 15% { opacity: 0; transform: translateY(4px); } 18%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-3 { 0%, 26% { opacity: 0; transform: translateY(4px); } 29%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-4 { 0%, 38% { opacity: 0; transform: translateY(4px); } 42%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-5 { 0%, 50% { opacity: 0; transform: translateY(4px); } 54%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-6 { 0%, 63% { opacity: 0; transform: translateY(4px); } 67%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-7 { 0%, 76% { opacity: 0; transform: translateY(4px); } 80%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes reveal-8 { 0%, 88% { opacity: 0; transform: translateY(4px); } 92%, 100% { opacity: 1; transform: translateY(0); } }
+      @keyframes cursor-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+      .term-text {
+        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+        font-size: 13.5px;
+        line-height: 1.6;
+        fill: #e2e8f0;
+      }
+      .c-prompt { fill: #38bdf8; font-weight: bold; }
+      .c-cmd { fill: #f8fafc; font-weight: 600; }
+      .c-flag { fill: #a5b4fc; }
+      .c-time { fill: #64748b; }
+      .c-boot { fill: #818cf8; font-weight: bold; }
+      .c-probe { fill: #38bdf8; font-weight: bold; }
+      .c-alert { fill: #ef4444; font-weight: bold; }
+      .c-isolate { fill: #f59e0b; font-weight: bold; }
+      .c-synth { fill: #c084fc; font-weight: bold; }
+      .c-gate-ok { fill: #10b981; font-weight: bold; }
+      .c-bft { fill: #06b6d4; font-weight: bold; }
+      .c-data { fill: #94a3b8; }
+      .c-val { fill: #34d399; }
+      .c-warn { fill: #f87171; }
+
+      .line-1 { animation: reveal-1 12s infinite; }
+      .line-2 { animation: reveal-2 12s infinite; }
+      .line-3 { animation: reveal-3 12s infinite; }
+      .line-4 { animation: reveal-4 12s infinite; }
+      .line-5 { animation: reveal-5 12s infinite; }
+      .line-6 { animation: reveal-6 12s infinite; }
+      .line-7 { animation: reveal-7 12s infinite; }
+      .line-8 { animation: reveal-8 12s infinite; }
+      .cursor { animation: cursor-blink 1s infinite; fill: #38bdf8; }
+    </style>
+  </defs>
+
+  <!-- Window Container with Filter Shadow -->
+  <rect x="20" y="20" width="840" height="420" rx="12" fill="url(#bg-grad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+
+  <!-- Titlebar -->
+  <path d="M 20 32 A 12 12 0 0 1 32 20 L 848 20 A 12 12 0 0 1 860 32 L 860 58 L 20 58 Z" fill="#1e293b"/>
+  <line x1="20" y1="58" x2="860" y2="58" stroke="#334155" stroke-width="1"/>
+
+  <!-- Window Controls -->
+  <circle cx="44" cy="39" r="6" fill="#ef4444"/>
+  <circle cx="64" cy="39" r="6" fill="#eab308"/>
+  <circle cx="84" cy="39" r="6" fill="#22c55e"/>
+
+  <!-- Title Text -->
+  <text x="440" y="43" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#94a3b8">
+    oshoosi daemon — NASA F' OSAL / eBPF CO-RE / EDR-Bench
+  </text>
+
+  <!-- Terminal Content Area -->
+  <!-- Line 1: Command execution -->
+  <g class="line-1" transform="translate(45, 92)">
+    <text class="term-text">
+      <tspan class="c-prompt">$ </tspan>
+      <tspan class="c-cmd">osoosi daemon </tspan>
+      <tspan class="c-flag">--enforce </tspan>
+      <tspan class="c-flag">--fprime-qos </tspan>
+      <tspan class="c-flag">--tpm2-audit</tspan>
+    </text>
+  </g>
+
+  <!-- Line 2: NASA F' OSAL -->
+  <g class="line-2" transform="translate(45, 128)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:01] </tspan>
+      <tspan class="c-boot">[BOOT] </tspan>
+      <tspan class="c-boot">[NASA F' OSAL] </tspan>
+      <tspan class="c-data">Flight telemetry active. Static arena pool initialized (16MB).</tspan>
+    </text>
+  </g>
+
+  <!-- Line 3: eBPF CO-RE Probes -->
+  <g class="line-3" transform="translate(45, 164)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:02] </tspan>
+      <tspan class="c-probe">[PROBE] </tspan>
+      <tspan class="c-probe">[eBPF CO-RE] </tspan>
+      <tspan class="c-data">14 tracepoints attached (Ring-0). Zero-LBR hardware watch active.</tspan>
+    </text>
+  </g>
+
+  <!-- Line 4: Alert Container Escape -->
+  <g class="line-4" transform="translate(45, 200)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:04] </tspan>
+      <tspan class="c-alert">[ALERT] </tspan>
+      <tspan class="c-alert">[L1 Ring-0 Breakout] </tspan>
+      <tspan class="c-warn">Unprivileged bpf() container escape detected (PID 14208).</tspan>
+    </text>
+  </g>
+
+  <!-- Line 5: Isolation -->
+  <g class="line-5" transform="translate(45, 236)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:04] </tspan>
+      <tspan class="c-isolate">[ISOLATE] </tspan>
+      <tspan class="c-isolate">[WFP/Landlock] </tspan>
+      <tspan class="c-data">Threat isolated in </tspan>
+      <tspan class="c-val">420ns</tspan>
+      <tspan class="c-data">. Network ring fenced.</tspan>
+    </text>
+  </g>
+
+  <!-- Line 6: Synthesis -->
+  <g class="line-6" transform="translate(45, 272)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:05] </tspan>
+      <tspan class="c-synth">[SYNTHESIS] </tspan>
+      <tspan class="c-synth">[EDR-Bench] </tspan>
+      <tspan class="c-data">Candidate YARA-X rule generated and verified in </tspan>
+      <tspan class="c-val">2 attempts</tspan>
+      <tspan class="c-data">.</tspan>
+    </text>
+  </g>
+
+  <!-- Line 7: Gates 1 & 2 -->
+  <g class="line-7" transform="translate(45, 308)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:05] </tspan>
+      <tspan class="c-gate-ok">[GATE-1: FAIL_TO_PASS = OK] </tspan>
+      <tspan class="c-gate-ok">[GATE-2: PASS_TO_PASS = OK (0 false pos / 10k binaries)]</tspan>
+    </text>
+  </g>
+
+  <!-- Line 8: BFT Mesh + TPM 2.0 PCR 16 -->
+  <g class="line-8" transform="translate(45, 344)">
+    <text class="term-text">
+      <tspan class="c-time">[00:00:06] </tspan>
+      <tspan class="c-bft">[BFT-MESH] </tspan>
+      <tspan class="c-bft">[TPM 2.0 PCR 16] </tspan>
+      <tspan class="c-data">Block signed (Ed25519) and gossiped to </tspan>
+      <tspan class="c-val">12 active peers</tspan>
+      <tspan class="c-data">.</tspan>
+    </text>
+  </g>
+
+  <!-- Blinking Cursor on next prompt line -->
+  <g transform="translate(45, 380)">
+    <text class="term-text">
+      <tspan class="c-prompt">$ </tspan>
+    </text>
+    <rect class="cursor" x="18" y="-12" width="8" height="15" rx="1"/>
+  </g>
+</svg>

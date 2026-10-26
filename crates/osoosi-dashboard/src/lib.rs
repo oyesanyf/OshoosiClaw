@@ -727,6 +727,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/supervisor/fprime", get(get_supervisor_fprime))
         .route("/api/supervisor/fprime/sequencer", post(post_supervisor_fprime_sequencer))
         .route("/supervisor/fprime/sequencer", post(post_supervisor_fprime_sequencer))
+        .route("/api/edr-bench/tasks", get(get_edr_bench_tasks))
+        .route("/edr-bench/tasks", get(get_edr_bench_tasks))
+        .route("/api/edr-bench/evaluate", post(post_edr_bench_evaluate))
+        .route("/edr-bench/evaluate", post(post_edr_bench_evaluate))
         .route("/api/hardware/summary", get(get_hardware_summary))
         .route("/hardware/summary", get(get_hardware_summary))
         .route("/api/models/calibrated", get(get_calibrated_models))
@@ -1445,6 +1449,89 @@ async fn post_supervisor_fprime_sequencer(
         Ok(report) => (axum::http::StatusCode::OK, axum::Json(serde_json::to_value(report).unwrap_or_default())),
         Err(e) => (axum::http::StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({ "error": e.to_string() }))),
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdrBenchEvaluateRequest {
+    pub task: Option<osoosi_core::edr_bench::EdrBenchTask>,
+    pub task_id: Option<String>,
+    pub candidate_yara_source: String,
+    pub max_attempts: Option<usize>,
+}
+
+async fn get_edr_bench_tasks() -> impl axum::response::IntoResponse {
+    let mut tasks = Vec::new();
+    let tasks_dir = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new("benchmarks/tasks"));
+    if tasks_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&tasks_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                    if let Ok(content) = std::fs::read_to_string(&path) {
+                        if let Ok(task) = serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
+                            tasks.push(task);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    axum::Json(tasks)
+}
+
+async fn post_edr_bench_evaluate(
+    axum::Json(payload): axum::Json<EdrBenchEvaluateRequest>,
+) -> impl axum::response::IntoResponse {
+    let task = if let Some(t) = payload.task {
+        t
+    } else if let Some(tid) = &payload.task_id {
+        let task_file = format!("benchmarks/tasks/{}.json", tid);
+        let task_path = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new(&task_file));
+        match std::fs::read_to_string(&task_path) {
+            Ok(content) => match serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
+                Ok(t) => t,
+                Err(e) => {
+                    return (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({ "error": format!("Invalid task JSON: {}", e) })),
+                    );
+                }
+            },
+            Err(e) => {
+                return (
+                    axum::http::StatusCode::NOT_FOUND,
+                    axum::Json(serde_json::json!({ "error": format!("Task not found at {}: {}", task_path.display(), e) })),
+                );
+            }
+        }
+    } else {
+        let task_path = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new("benchmarks/tasks/OSHOOSI-BENCH-2026-0042.json"));
+        match std::fs::read_to_string(&task_path) {
+            Ok(content) => match serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
+                Ok(t) => t,
+                Err(e) => {
+                    return (
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({ "error": format!("Default task JSON invalid: {}", e) })),
+                    );
+                }
+            },
+            Err(e) => {
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(serde_json::json!({ "error": format!("Default task file missing: {}", e) })),
+                );
+            }
+        }
+    };
+
+    let mut harness = osoosi_core::edr_bench::EdrBenchHarness::new();
+    let max_attempts = payload.max_attempts.unwrap_or(3);
+    let report = harness.evaluate_with_compiler_feedback_loop(&task, &payload.candidate_yara_source, max_attempts);
+    (
+        axum::http::StatusCode::OK,
+        axum::Json(serde_json::to_value(report).unwrap_or_default()),
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -10548,6 +10635,43 @@ mod tests {
         let playbook = osoosi_core::fprime_flight::SafeModePlaybook::default();
         let post_resp = post_supervisor_fprime_sequencer(axum::extract::State(state), axum::Json(playbook)).await.into_response();
         assert_eq!(post_resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_api_edr_bench_tasks_and_evaluate() {
+        // 1. GET /api/edr-bench/tasks
+        let resp = get_edr_bench_tasks().await.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let tasks: Vec<osoosi_core::edr_bench::EdrBenchTask> = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(!tasks.is_empty(), "Expected at least 1 benchmark task");
+
+        // 2. POST /api/edr-bench/evaluate
+        let valid_rule = r#"rule SpecificEbpfEscape : container_escape {
+            strings:
+                $magic = { 7F 45 4C 46 }
+                $escape_sig = "OSHOOSI_EBPF_CAP_BPF_CONTAINER_ESCAPE_PAYLOAD_2026_0042"
+            condition:
+                $magic at 0 and $escape_sig
+        }"#;
+
+        let eval_req = EdrBenchEvaluateRequest {
+            task: None,
+            task_id: Some("OSHOOSI-BENCH-2026-0042".to_string()),
+            candidate_yara_source: valid_rule.to_string(),
+            max_attempts: Some(2),
+        };
+
+        let eval_resp = post_edr_bench_evaluate(axum::Json(eval_req)).await.into_response();
+        assert_eq!(eval_resp.status(), axum::http::StatusCode::OK);
+        let eval_bytes = axum::body::to_bytes(eval_resp.into_body(), 1024 * 1024).await.unwrap();
+        let report: osoosi_core::edr_bench::BenchmarkReport = serde_json::from_slice(&eval_bytes).unwrap();
+        assert!(report.compiled_cleanly);
+        assert!(report.fail_to_pass_resolved);
+        assert!(report.pass_to_pass_preserved);
+        assert_eq!(report.false_positive_count, 0);
+        assert!(report.promoted_to_bft_mesh);
+        assert!(osoosi_core::edr_bench::EdrBenchHarness::verify_bft_promotion_receipt(&report));
     }
 
     #[tokio::test]

@@ -49,6 +49,7 @@ pub mod correlator;
 pub mod disk_cleanup;
 pub mod dlp_lineage;
 pub mod dotscope;
+pub mod edr_bench;
 pub mod fhe_coordinator;
 pub mod firewall;
 pub mod fprime_flight;
@@ -131,6 +132,10 @@ pub use fprime_flight::{
     RecoilLikelihoodScorerComponent, SafeModeExecutionReport, SafeModePlaybook, SequencerOp,
     StaticArenaPool, SvcCmdSequencer, SvcHealthMonitor, TelemetryFrame, WatchdogStrokeReceipt,
     WfpNetworkIsolatorComponent,
+};
+pub use edr_bench::{
+    resolve_fixture_path, BenchmarkReport, BenignBaselineAssertion, EdrBenchHarness, EdrBenchTask,
+    ExpectedVerdict, HarnessBounds, TargetArch, TelemetryContext, ThreatAssertion,
 };
 pub use dlp_lineage::{
     compute_sha256_hex, compute_ssdeep, compare_ssdeep,
