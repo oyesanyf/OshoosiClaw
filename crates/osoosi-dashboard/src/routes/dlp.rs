@@ -1579,7 +1579,9 @@ pub async fn post_dlp_browser_event(Json(body): Json<Value>) -> Json<Value> {
         })
     })
     .await
-    .unwrap_or_else(|e| json!({ "ok": false, "error": format!("browser_event task failed: {}", e) }));
+    .unwrap_or_else(
+        |e| json!({ "ok": false, "error": format!("browser_event task failed: {}", e) }),
+    );
 
     Json(result)
 }
@@ -2369,7 +2371,10 @@ mod tests {
             "content": "Patient MRN-442109 SSN 123-45-6789 Diagnosis ICD10-E11"
         });
         let Json(phi_res) = post_dlp_browser_event(Json(phi_payload)).await;
-        assert_eq!(phi_res.get("allowed").and_then(|v| v.as_bool()), Some(false));
+        assert_eq!(
+            phi_res.get("allowed").and_then(|v| v.as_bool()),
+            Some(false)
+        );
         assert_eq!(
             phi_res
                 .get("authorization_decision")
