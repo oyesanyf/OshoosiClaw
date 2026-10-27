@@ -15,9 +15,9 @@
         50%, 100% { opacity: 0.15; }
       }
       @keyframes scanline-sweep {
-        0% { opacity: 0.92; }
+        0% { opacity: 0.94; }
         50% { opacity: 1.0; }
-        100% { opacity: 0.92; }
+        100% { opacity: 0.94; }
       }
       .term-line {
         font-family: Consolas, "SFMono-Regular", "JetBrains Mono", Menlo, "Liberation Mono", monospace;
@@ -48,9 +48,7 @@
   <circle cx="78" cy="33" r="6" fill="#22c55e"/>
 
   <!-- Window Title -->
-  <text x="460" y="38" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#cbd5e1">
-    oshoosi daemon — NASA F' Flight OSAL • eBPF CO-RE • EDR-Bench • TPM 2.0 BFT Mesh
-  </text>
+  <text x="460" y="38" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#cbd5e1">oshoosi daemon — NASA F' Flight OSAL • eBPF CO-RE • EDR-Bench • TPM 2.0 BFT Mesh</text>
 
   <!-- Status Pill in Titlebar Right -->
   <rect x="782" y="23" width="108" height="20" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="1"/>
@@ -58,101 +56,40 @@
   <text x="805" y="37" font-family="Consolas, monospace" font-size="10.5" font-weight="bold" fill="#a7f3d0">ENFORCE: ON</text>
 
   <!-- Line 1: CLI Invocation -->
-  <text x="36" y="84" class="term-line">
-    <tspan fill="#38bdf8" font-weight="bold">$ </tspan>
-    <tspan fill="#f8fafc" font-weight="bold">osoosi daemon </tspan>
-    <tspan fill="#a5b4fc">--mode strict-lockdown </tspan>
-    <tspan fill="#a5b4fc">--fprime-qos </tspan>
-    <tspan fill="#a5b4fc">--edr-bench-verify </tspan>
-    <tspan fill="#a5b4fc">--tpm2-pcr16</tspan>
-  </text>
+  <text x="36" y="84" class="term-line"><tspan fill="#38bdf8" font-weight="bold">$ </tspan><tspan fill="#f8fafc" font-weight="bold">oshoosi daemon </tspan><tspan fill="#a5b4fc">--mode strict-lockdown --fprime-qos --edr-bench-verify --tpm2-pcr16</tspan></text>
 
   <!-- Line 2: NASA F' Static Arena & Dual-Priority QoS Boot -->
-  <text x="36" y="118" class="term-line">
-    <tspan fill="#64748b">[00:00.002] </tspan>
-    <tspan fill="#818cf8" font-weight="bold">[Fw::BufferManager] </tspan>
-    <tspan fill="#cbd5e1">StaticArenaPool sealed (20 MiB ceiling, 25% Tier-0 reserve, </tspan>
-    <tspan fill="#34d399" font-weight="bold">0 heap allocs</tspan>
-    <tspan fill="#cbd5e1">).</tspan>
-  </text>
+  <text x="36" y="118" class="term-line"><tspan fill="#64748b">[00:00.002] </tspan><tspan fill="#818cf8" font-weight="bold">[Fw::BufferManager] </tspan><tspan fill="#cbd5e1">StaticArenaPool sealed (20 MiB ceiling, 25% Tier-0 reserve, </tspan><tspan fill="#34d399" font-weight="bold">0 heap allocs</tspan><tspan fill="#cbd5e1">).</tspan></text>
 
   <!-- Line 3: eBPF CO-RE & Dual-Priority QoS Channel -->
-  <text x="36" y="152" class="term-line">
-    <tspan fill="#64748b">[00:00.009] </tspan>
-    <tspan fill="#38bdf8" font-weight="bold">[eBPF CO-RE | Tier-0 CriticalSecurityLane] </tspan>
-    <tspan fill="#cbd5e1">14 Ring-0 probes + PMU hardware counters active.</tspan>
-  </text>
+  <text x="36" y="152" class="term-line"><tspan fill="#64748b">[00:00.009] </tspan><tspan fill="#38bdf8" font-weight="bold">[eBPF CO-RE | Tier-0 CriticalSecurityLane] </tspan><tspan fill="#cbd5e1">14 Ring-0 probes + PMU hardware counters active.</tspan></text>
 
   <!-- Highlight Box around Container Breakout Detection -->
   <rect x="28" y="168" width="864" height="34" rx="6" fill="#450a0a" fill-opacity="0.45" stroke="#ef4444" stroke-width="1" stroke-opacity="0.6"/>
   <!-- Line 4: Container Escape Alert -->
-  <text x="36" y="190" class="term-line">
-    <tspan fill="#fca5a5">[00:01.412] </tspan>
-    <tspan fill="#ef4444" font-weight="bold">[ALERT: CVE-2026-Linux-eBPF-Breakout] </tspan>
-    <tspan fill="#fecaca">Unprivileged sys_bpf(BPF_PROG_LOAD) in </tspan>
-    <tspan fill="#fde047" font-weight="bold">PID 48192 </tspan>
-    <tspan fill="#fca5a5">(Recoil: 0.942)</tspan>
-  </text>
+  <text x="36" y="190" class="term-line"><tspan fill="#fca5a5">[00:01.412] </tspan><tspan fill="#ef4444" font-weight="bold">[ALERT: CVE-2026-24812 · eBPF-Breakout] </tspan><tspan fill="#fecaca">Unprivileged sys_bpf(BPF_PROG_LOAD) in </tspan><tspan fill="#fde047" font-weight="bold">PID 48192 </tspan><tspan fill="#fca5a5">(Recoil: 0.942)</tspan></text>
 
   <!-- Line 5: REA Magika Disassembly & Panic-Isolated Inspection -->
-  <text x="36" y="228" class="term-line">
-    <tspan fill="#64748b">[00:01.413] </tspan>
-    <tspan fill="#c084fc" font-weight="bold">[Fw::Comp::ReaMagika] </tspan>
-    <tspan fill="#cbd5e1">Artifact: </tspan>
-    <tspan fill="#f8fafc">ebpf_container_escape.elf </tspan>
-    <tspan fill="#94a3b8">(application/x-executable-elf, catch_unwind: OK)</tspan>
-  </text>
+  <text x="36" y="228" class="term-line"><tspan fill="#64748b">[00:01.413] </tspan><tspan fill="#c084fc" font-weight="bold">[Fw::Comp::ReaMagika] </tspan><tspan fill="#cbd5e1">Artifact: </tspan><tspan fill="#f8fafc">ebpf_container_escape.elf </tspan><tspan fill="#94a3b8">(application/x-executable-elf, catch_unwind: OK)</tspan></text>
 
   <!-- Line 6: EDR-Bench Gate 1 (FAIL_TO_PASS) -->
-  <text x="36" y="262" class="term-line">
-    <tspan fill="#64748b">[00:01.424] </tspan>
-    <tspan fill="#10b981" font-weight="bold">[EDR-Bench GATE 1: FAIL_TO_PASS = PASS] </tspan>
-    <tspan fill="#cbd5e1">YARA-X rule caught dropper in </tspan>
-    <tspan fill="#34d399" font-weight="bold">142 µs </tspan>
-    <tspan fill="#94a3b8">[tag: container_escape]</tspan>
-  </text>
+  <text x="36" y="262" class="term-line"><tspan fill="#64748b">[00:01.424] </tspan><tspan fill="#10b981" font-weight="bold">[EDR-Bench GATE 1: FAIL_TO_PASS = PASS] </tspan><tspan fill="#cbd5e1">YARA-X rule caught dropper in </tspan><tspan fill="#34d399" font-weight="bold">142 µs </tspan><tspan fill="#94a3b8">[tag: container_escape]</tspan></text>
 
   <!-- Line 7: EDR-Bench Gate 2 (PASS_TO_PASS) -->
-  <text x="36" y="296" class="term-line">
-    <tspan fill="#64748b">[00:01.426] </tspan>
-    <tspan fill="#10b981" font-weight="bold">[EDR-Bench GATE 2: PASS_TO_PASS = PASS] </tspan>
-    <tspan fill="#34d399" font-weight="bold">0 false positives </tspan>
-    <tspan fill="#cbd5e1">across golden benign corpus (usr_bin_signed/*).</tspan>
-  </text>
+  <text x="36" y="296" class="term-line"><tspan fill="#64748b">[00:01.426] </tspan><tspan fill="#10b981" font-weight="bold">[EDR-Bench GATE 2: PASS_TO_PASS = PASS] </tspan><tspan fill="#34d399" font-weight="bold">0 false positives </tspan><tspan fill="#cbd5e1">across golden benign corpus (/usr/bin/*).</tspan></text>
 
-  <!-- Line 8: Transient Child PID Containment + OTel/OpenLineage DLP Check -->
-  <text x="36" y="330" class="term-line">
-    <tspan fill="#64748b">[00:01.427] </tspan>
-    <tspan fill="#f59e0b" font-weight="bold">[ISOLATE: WFP / Landlock] </tspan>
-    <tspan fill="#cbd5e1">Transient child </tspan>
-    <tspan fill="#fde047" font-weight="bold">PID 48192 terminated </tspan>
-    <tspan fill="#cbd5e1">&amp; egress blocked in </tspan>
-    <tspan fill="#34d399" font-weight="bold">420 ns</tspan>
-    <tspan fill="#cbd5e1">.</tspan>
-  </text>
+  <!-- Line 8: Transient Child PID Containment + Linux OSAL Landlock/eBPF -->
+  <text x="36" y="330" class="term-line"><tspan fill="#64748b">[00:01.427] </tspan><tspan fill="#f59e0b" font-weight="bold">[ISOLATE: OSAL::Landlock + eBPF] </tspan><tspan fill="#cbd5e1">Transient child </tspan><tspan fill="#fde047" font-weight="bold">PID 48192 terminated </tspan><tspan fill="#cbd5e1">&amp; egress blocked in </tspan><tspan fill="#34d399" font-weight="bold">420 ns</tspan><tspan fill="#cbd5e1">.</tspan></text>
 
   <!-- Line 9: Hardware TPM 2.0 PCR 16 & BFT Mesh Broadcast -->
   <rect x="28" y="346" width="864" height="34" rx="6" fill="#042f2e" fill-opacity="0.5" stroke="#14b8a6" stroke-width="1" stroke-opacity="0.6"/>
-  <text x="36" y="368" class="term-line">
-    <tspan fill="#5eead4">[00:01.429] </tspan>
-    <tspan fill="#2dd4bf" font-weight="bold">[TPM 2.0 PCR 16 + BFT MESH] </tspan>
-    <tspan fill="#ccfbf1">Signed receipt (Ed25519 + PCR16 </tspan>
-    <tspan fill="#fde047">8f3a..c91e</tspan>
-    <tspan fill="#ccfbf1">) promoted to </tspan>
-    <tspan fill="#34d399" font-weight="bold">12 BFT peers</tspan>
-    <tspan fill="#ccfbf1">.</tspan>
-  </text>
+  <text x="36" y="368" class="term-line"><tspan fill="#5eead4">[00:01.429] </tspan><tspan fill="#2dd4bf" font-weight="bold">[TPM 2.0 PCR 16 + BFT MESH] </tspan><tspan fill="#ccfbf1">Signed receipt (Ed25519 + PCR16 </tspan><tspan fill="#fde047">8f3a..c91e</tspan><tspan fill="#ccfbf1">) promoted to </tspan><tspan fill="#34d399" font-weight="bold">12 BFT peers</tspan><tspan fill="#ccfbf1">.</tspan></text>
 
   <!-- Bottom Telemetry Summary Footer Bar -->
   <rect x="28" y="394" width="864" height="32" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-  <text x="42" y="415" font-family="Consolas, monospace" font-size="12" fill="#94a3b8">
-    <tspan fill="#38bdf8" font-weight="bold">F' Health:</tspan> 100% (Ping 0.4ms)  |  <tspan fill="#a855f7" font-weight="bold">DLP Lineage p99:</tspan> 0.218ms  |  <tspan fill="#10b981" font-weight="bold">EDR-Bench:</tspan> 100% Pass (0 FP)  |  <tspan fill="#f59e0b" font-weight="bold">Cloud Deps:</tspan> 0
-  </text>
+  <text x="42" y="415" font-family="Consolas, monospace" font-size="12" fill="#94a3b8"><tspan fill="#38bdf8" font-weight="bold">F' Health:</tspan> 100% (Ping 0.4ms)  |  <tspan fill="#a855f7" font-weight="bold">DLP Lineage p99:</tspan> 0.218ms  |  <tspan fill="#10b981" font-weight="bold">EDR-Bench:</tspan> 100% Pass (0 FP)  |  <tspan fill="#f59e0b" font-weight="bold">Cloud Deps:</tspan> 0</text>
 
   <!-- Active Prompt Line -->
-  <text x="36" y="454" class="term-line">
-    <tspan fill="#38bdf8" font-weight="bold">$ </tspan>
-    <tspan fill="#64748b">_ awaiting next kernel event (QoS Tier-0 priority active)</tspan>
-  </text>
+  <text x="36" y="454" class="term-line"><tspan fill="#38bdf8" font-weight="bold">$ </tspan><tspan fill="#64748b">&#160;&#160;awaiting next kernel event (QoS Tier-0 priority active)</tspan></text>
   <rect class="cursor-box" x="52" y="441" width="8" height="15" rx="1"/>
 </svg>
