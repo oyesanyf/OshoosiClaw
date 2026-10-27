@@ -1675,7 +1675,17 @@ impl EdrOrchestrator {
 
                     tokio::spawn(async move {
                         match analyzer.analyze_file(&path_buf).await {
-                            Ok(Some(static_sig)) => {
+                            Ok(Some(raw_static_sig)) => {
+                                let Some(static_sig) = orch
+                                    .adjudicate_threat_signature_with_rea_and_voters(
+                                        Some(&path_buf),
+                                        raw_static_sig,
+                                        Some(&ev),
+                                    )
+                                    .await
+                                else {
+                                    return;
+                                };
                                 warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path_buf);
                                 if let Some(pid) = ev.data.get("ProcessId").and_then(|v| v.as_u64())
                                 {

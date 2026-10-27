@@ -2151,3 +2151,34 @@ details.nav-category-group[open] > summary.nav-category-summary .cat-chevron {
     transform: rotate(-90deg);
 }
 
+
+/* Accessible P2P Switch Controls (Modern Web Guidance `switch` & `forms`) */
+input[type="checkbox"][switch] {
+    accent-color: var(--accent-green, #10b981);
+    margin: 0;
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+}
+
+input[type="checkbox"][switch]:focus-visible {
+    outline: 3px solid var(--focus-color, #38bdf8);
+    outline-offset: 4px;
+}
+
+.p2p-top-switch-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 10px;
+    background: rgba(13, 17, 23, 0.78);
+    border: 1px solid var(--glass-border);
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s ease;
+}
+
+.p2p-top-switch-pill:hover {
+    border-color: rgba(56, 189, 248, 0.5);
+}

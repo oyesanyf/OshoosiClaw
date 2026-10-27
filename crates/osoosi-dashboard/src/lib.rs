@@ -6646,7 +6646,9 @@ async fn get_agent_context(State(state): State<DashboardState>) -> Json<Value> {
             Json(json!({
                 "status": "live",
                 "uptime_secs": orch.uptime().as_secs(),
+                "p2p_enabled": osoosi_types::is_p2p_mesh_enabled(),
                 "peer_count": orch.mesh_peer_count(),
+                "connected_peers": orch.mesh_peer_count(),
                 "pending_joins": pending_joins,
                 "repair": {
                     "pending_count": pending,

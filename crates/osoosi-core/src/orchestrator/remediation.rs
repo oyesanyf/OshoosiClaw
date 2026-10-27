@@ -281,6 +281,23 @@ impl EdrOrchestrator {
 
         let suppression_key = Self::compute_suppression_key(&signature);
 
+        let image_path_opt = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("TargetFilename"))
+            .and_then(|v| v.as_str());
+        let Some(adjudicated_sig) = self
+            .adjudicate_threat_signature_with_rea_and_voters(
+                image_path_opt.map(std::path::Path::new),
+                signature,
+                Some(event),
+            )
+            .await
+        else {
+            return Ok(());
+        };
+        signature = adjudicated_sig;
+
         let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
         if let Some(last) = self.alert_suppression_cache.get(&suppression_key) {
             if last.elapsed() < cooldown {
@@ -391,22 +408,7 @@ impl EdrOrchestrator {
             }
         }
 
-        warn!(
-            "ALARM: Threat identified on node {}: {:?}",
-            event.computer, signature
-        );
-
-        // Log detection to Audit Trail (include image_path for dashboard display)
-        let mut audit_data = serde_json::to_value(&signature)?
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
-            audit_data.insert("image_path".to_string(), serde_json::json!(img));
-        }
-        self.audit
-            .log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
-        let _ = self.memory.log_threat(&signature);
+        // Defer THREAT_DETECTED audit & memory.log_threat until Clef Decision Model noise-suppression gate passes
 
         if matches!(event.event_id, 22) // DnsQuery
             && crate::firewall::dns_autoblock_enabled()
@@ -569,6 +571,23 @@ impl EdrOrchestrator {
                 }
             }
         }
+
+        warn!(
+            "ALARM: Threat identified on node {}: {:?}",
+            event.computer, signature
+        );
+
+        // Log detection to Audit Trail & Threat Intelligence after REA + Voter + Decision Model verification
+        let mut audit_data = serde_json::to_value(&signature)?
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
+            audit_data.insert("image_path".to_string(), serde_json::json!(img));
+        }
+        self.audit
+            .log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
+        let _ = self.memory.log_threat(&signature);
 
         // Auto-generated YARA from high-confidence detections
         if signature.confidence >= 0.8 {

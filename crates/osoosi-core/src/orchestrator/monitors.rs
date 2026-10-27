@@ -614,7 +614,17 @@ impl EdrOrchestrator {
                                 let orch_clone = orchestrator.clone();
                                 tokio::spawn(async move {
                                     match analyzer.analyze_file(&path_buf).await {
-                                    Ok(Some(deep_sig)) => {
+                                    Ok(Some(raw_deep_sig)) => {
+                                        let Some(deep_sig) = orch_clone
+                                            .adjudicate_threat_signature_with_rea_and_voters(
+                                                Some(&path_buf),
+                                                raw_deep_sig,
+                                                None,
+                                            )
+                                            .await
+                                        else {
+                                            return;
+                                        };
                                         let sig_key = deep_sig
                                             .hash_blake3
                                             .clone()

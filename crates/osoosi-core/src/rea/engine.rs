@@ -466,6 +466,28 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
     if osoosi_model::malware::is_informational_or_crt_yara_rule(reason_lower) {
         return true;
     }
+    if let Some(after_yara) = reason_lower.split("yara-x match:").nth(1) {
+        let rule_token = after_yara
+            .split(['|', ';', ',', ' '])
+            .find(|s| !s.trim().is_empty())
+            .unwrap_or("")
+            .trim();
+        if !rule_token.is_empty()
+            && osoosi_model::malware::is_informational_or_crt_yara_rule(rule_token)
+        {
+            return true;
+        }
+    }
+    let is_single_voter_statistical_heuristic = !is_untrusted_writable_or_temp_path(reason_lower)
+        && reason_lower.contains("independent=1")
+        && (reason_lower.contains("behavioral threat model: high-risk pattern detected")
+            || reason_lower.contains("chaotic phase-space trajectory breakout")
+            || reason_lower.contains("diverged from benign limit cycle")
+            || reason_lower.contains("agentic trajectory escape threshold exceeded")
+            || reason_lower.contains("denial of ml service & sponge attack"));
+    if is_single_voter_statistical_heuristic {
+        return true;
+    }
     reason_lower.contains("veto")
         || reason_lower.contains("sponge attack warning")
         || reason_lower.contains("edr-vec-23-unsigned-elevated-conhost")

@@ -1030,9 +1030,33 @@ impl EdrOrchestrator {
                 if let Some(p) = cand_p {
                     if purged_procs.insert(p.to_ascii_lowercase()) {
                         let _ = self.memory.delete_threats_matching_process_substring(p);
-                        // Also record a lightweight REA report once per benign process
-                        let _ =
+                        // Also record a lightweight REA report and ConsensusFinding once per benign process
+                        let (_, rea_summary, rea_hash) =
                             rea.adjudicate_process_or_binary_alert(Some(p), None, Some(&reason));
+                        let fh = rea_hash
+                            .or_else(|| hash.clone())
+                            .filter(|h| !h.is_empty())
+                            .unwrap_or_else(|| {
+                                blake3::hash(format!("rea:adjudicated:clean:{}", p).as_bytes())
+                                    .to_hex()
+                                    .to_string()
+                            });
+                        let finding = osoosi_types::ConsensusFinding {
+                            id: format!("CONS-BENIGN-{}", &fh[..fh.len().min(12)]),
+                            hash_blake3: fh,
+                            process_name: Some(p.to_string()),
+                            file_path: None,
+                            verdict: "benign".to_string(),
+                            confidence: 0.01,
+                            detector_count: 0,
+                            voters_summary: format!(
+                                "Veto [REA-Voter + All-Voter Consensus]: {}",
+                                rea_summary
+                            ),
+                            action_taken: "ignored_and_allowed".to_string(),
+                            evaluated_at: chrono::Utc::now(),
+                        };
+                        let _ = self.memory.record_consensus_finding(&finding);
                     }
                 }
                 dropped += 1;
@@ -1059,7 +1083,7 @@ impl EdrOrchestrator {
             } else {
                 proc.as_deref()
             };
-            let (should_drop, _, resolved_hash) =
+            let (should_drop, rea_summary, resolved_hash) =
                 rea.adjudicate_process_or_binary_alert(cand_p, None, Some(&reason));
 
             if should_drop {
@@ -1079,6 +1103,30 @@ impl EdrOrchestrator {
                             "autonomous_rea",
                         );
                         let _ = self.memory.delete_threats_matching_process_substring(p);
+                        let fh = final_hash
+                            .filter(|h| !h.is_empty())
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| {
+                                blake3::hash(format!("rea:adjudicated:clean:{}", p).as_bytes())
+                                    .to_hex()
+                                    .to_string()
+                            });
+                        let finding = osoosi_types::ConsensusFinding {
+                            id: format!("CONS-BENIGN-{}", &fh[..fh.len().min(12)]),
+                            hash_blake3: fh,
+                            process_name: Some(p.to_string()),
+                            file_path: None,
+                            verdict: "benign".to_string(),
+                            confidence: 0.01,
+                            detector_count: 0,
+                            voters_summary: format!(
+                                "Veto [REA-Voter + All-Voter Consensus]: {}",
+                                rea_summary
+                            ),
+                            action_taken: "ignored_and_allowed".to_string(),
+                            evaluated_at: chrono::Utc::now(),
+                        };
+                        let _ = self.memory.record_consensus_finding(&finding);
                     }
                 }
                 dropped += 1;
