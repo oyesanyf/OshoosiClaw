@@ -1258,6 +1258,7 @@ fn test_rea_and_voters_adjudicate_threat_intelligence_candidates() {
         ("port3030_daemo", "[Agentic-Escape-Detector]: Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid=21616), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: Agentic trajectory escape threshold exceeded (Stochastic Drift: 7.35 >= 2.50); EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.98 confidence=0.63"),
         ("m3_dashboard_a", "[Agentic-Escape-Detector]: Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid=21164), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: Agentic trajectory escape threshold exceeded; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.98 confidence=0.63"),
         ("research_and_a", "[Agentic-Escape-Detector]: Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid=39276), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: Agentic trajectory escape threshold exceeded; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.98 confidence=0.63"),
+        ("old-uninstaller.exe", r"[YaraX-Signatures]: YaraX: THREAT detected - escalate_priv; [MalConv-ML]: MalwareScanner (MalConv/ONNX+YARA): combined=1.000 ml=0.998 sig=1.000 magika=pebin file=C:\Users\oyesanyf\AppData\Local\Temp\nsb52F0.tmp\old-uninstaller.exe; EvidenceOrchestrator: classes=Memory+StaticArtifact independent=2 strong_action=true base=1.00 confidence=1.00"),
     ];
 
     for (proc_name, reason) in false_positive_threats {

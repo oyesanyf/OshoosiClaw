@@ -173,6 +173,10 @@ impl MemoryStore {
                 OR reason LIKE 'YARA-X Match: vmdetect%'
                 OR reason LIKE 'YARA-X Match: win_files_%'
                 OR reason LIKE 'YARA-X Match: RIPEMD160_Constants%'
+                OR reason LIKE 'YARA-X Match: escalate_priv%'
+                OR reason LIKE '%YaraX: THREAT detected - escalate_priv%'
+                OR reason LIKE '%YaraX: THREAT detected - screenshot%'
+                OR reason LIKE '%YaraX: THREAT detected - create_service%'
                 OR (LOWER(COALESCE(file_path, '')) NOT LIKE '%\\temp\\%' AND reason LIKE '%independent=1%' AND (
                     reason LIKE '%Behavioral Threat Model: High-risk pattern detected%'
                     OR reason LIKE '%Chaotic phase-space trajectory breakout%'
@@ -1655,6 +1659,10 @@ impl MemoryStore {
              AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: vmdetect%'
              AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: win_files_%'
              AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: RIPEMD160_Constants%'
+             AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: escalate_priv%'
+             AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - escalate_priv%'
+             AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - screenshot%'
+             AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - create_service%'
              AND NOT (
                  LOWER(COALESCE(t.file_path, '')) NOT LIKE '%\\temp\\%'
                  AND COALESCE(t.reason, '') LIKE '%independent=1%'
