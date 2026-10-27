@@ -49,7 +49,10 @@ fn challenge_dlp_lineage_siquery_bidirectional_correlation_and_egress() {
         .active_processes
         .get(&parent_key)
         .expect("Parent process must be tracked");
-    assert!(parent_rec.tainted, "Parent process must be tainted after reading Crown Jewel");
+    assert!(
+        parent_rec.tainted,
+        "Parent process must be tainted after reading Crown Jewel"
+    );
     assert_eq!(parent_rec.classification, ClassificationLattice::CrownJewel);
     assert_eq!(parent_rec.policy, PolicyLattice::Quarantine);
     drop(parent_rec);
@@ -86,7 +89,10 @@ fn challenge_dlp_lineage_siquery_bidirectional_correlation_and_egress() {
     let write_decision =
         tracker.on_file_write_path(child_pid, child_start, derived_path, Some(derived_bytes));
     assert!(
-        matches!(write_decision, FileWriteTaintDecision::TaintPropagated { .. }),
+        matches!(
+            write_decision,
+            FileWriteTaintDecision::TaintPropagated { .. }
+        ),
         "Derived file write by tainted child process must propagate taint"
     );
 
@@ -119,7 +125,12 @@ fn challenge_dlp_lineage_siquery_bidirectional_correlation_and_egress() {
         egress_res.is_err(),
         "Egress of tainted derived file must be blocked"
     );
-    if let Err(EgressDecision::Blocked { policy, classification, .. }) = egress_res {
+    if let Err(EgressDecision::Blocked {
+        policy,
+        classification,
+        ..
+    }) = egress_res
+    {
         assert_eq!(policy, PolicyLattice::Quarantine);
         assert_eq!(classification, ClassificationLattice::CrownJewel);
     } else {

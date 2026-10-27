@@ -1955,7 +1955,9 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
         None
     };
     let body_sha256 = if !req.body_text.is_empty() {
-        Some(osoosi_core::dlp_lineage::compute_sha256_hex(req.body_text.as_bytes()))
+        Some(osoosi_core::dlp_lineage::compute_sha256_hex(
+            req.body_text.as_bytes(),
+        ))
     } else {
         None
     };
@@ -1992,8 +1994,13 @@ fn inspect_only(req: &HarDlpRequest) -> DlpInspectionEventRecord {
         event.authorization_decision = format!("BLOCK (DLP_LINEAGE_{})", policy.as_str());
         event.dlp_response = format!("QUARANTINED_BY_LINEAGE_{}", classification.as_str());
         event.rationale = format!("[DLP-Lineage]: Egress blocked: {}", reason);
-        if !event.detected_categories.contains(&"CROWN_JEWEL_LINEAGE".to_string()) {
-            event.detected_categories.push("CROWN_JEWEL_LINEAGE".to_string());
+        if !event
+            .detected_categories
+            .contains(&"CROWN_JEWEL_LINEAGE".to_string())
+        {
+            event
+                .detected_categories
+                .push("CROWN_JEWEL_LINEAGE".to_string());
         }
     }
     let strict_lockdown_has_pii = crate::routes::dlp::is_strict_lockdown_active()

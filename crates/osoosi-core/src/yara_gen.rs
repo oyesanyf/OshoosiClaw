@@ -232,9 +232,16 @@ pub fn verify_generated_yara_for_bft_mesh(
     // 4. Construct BenchmarkReport with TPM 2.0 PCR 16 + Ed25519 BFT receipt
     let harness = crate::edr_bench::EdrBenchHarness::new();
     let rule_hash_hex = hex::encode(sha2::Sha256::digest(rule_source.as_bytes()));
-    let attestation_res = osoosi_audit::tpm::extend_audit_to_tpm("edr_bench_bft_promotion", &rule_hash_hex);
-    let tpm_pcr16 = format!("TPM2_PCR16_SHA256:YARA_GEN:{}", attestation_res.attestation_hash);
-    let transcript = format!("EDR_BENCH_BFT_V1:YARA_GEN:{}:0:{}", rule_hash_hex, tpm_pcr16);
+    let attestation_res =
+        osoosi_audit::tpm::extend_audit_to_tpm("edr_bench_bft_promotion", &rule_hash_hex);
+    let tpm_pcr16 = format!(
+        "TPM2_PCR16_SHA256:YARA_GEN:{}",
+        attestation_res.attestation_hash
+    );
+    let transcript = format!(
+        "EDR_BENCH_BFT_V1:YARA_GEN:{}:0:{}",
+        rule_hash_hex, tpm_pcr16
+    );
     use ed25519_dalek::Signer;
     let sig = harness.signing_key.sign(transcript.as_bytes());
 
@@ -288,7 +295,10 @@ mod tests {
             condition:
                 $elf
         }"#;
-        assert!(verify_generated_yara_for_bft_mesh(broad_rule, threat_payload, &benign_corpus).is_none());
+        assert!(
+            verify_generated_yara_for_bft_mesh(broad_rule, threat_payload, &benign_corpus)
+                .is_none()
+        );
     }
 
     #[test]

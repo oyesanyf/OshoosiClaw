@@ -2142,11 +2142,35 @@ impl ThreatVoter for SigmaVoter {
             .to_ascii_lowercase();
 
         const LOLBINS: &[&str] = &[
-            "sc.exe", "reg.exe", "rundll32.exe", "regsvr32.exe", "mshta.exe", "certutil.exe",
-            "vssadmin.exe", "wmic.exe", "bcdedit.exe", "wbadmin.exe", "ntdsutil.exe", "procdump",
-            "comsvcs", "calc.exe", "win32calc.exe", "mavinject", "cmstp", "odbcconf",
-            "bitsadmin", "schtasks", "wevtutil", "nltest", "net.exe", "net1.exe",
-            "powershell.exe", "pwsh.exe", "cmd.exe", "cscript.exe", "wscript.exe",
+            "sc.exe",
+            "reg.exe",
+            "rundll32.exe",
+            "regsvr32.exe",
+            "mshta.exe",
+            "certutil.exe",
+            "vssadmin.exe",
+            "wmic.exe",
+            "bcdedit.exe",
+            "wbadmin.exe",
+            "ntdsutil.exe",
+            "procdump",
+            "comsvcs",
+            "calc.exe",
+            "win32calc.exe",
+            "mavinject",
+            "cmstp",
+            "odbcconf",
+            "bitsadmin",
+            "schtasks",
+            "wevtutil",
+            "nltest",
+            "net.exe",
+            "net1.exe",
+            "powershell.exe",
+            "pwsh.exe",
+            "cmd.exe",
+            "cscript.exe",
+            "wscript.exe",
         ];
         let is_lolbin_or_atomic_cmd = LOLBINS.iter().any(|lb| {
             image.ends_with(lb)
@@ -2159,10 +2183,7 @@ impl ThreatVoter for SigmaVoter {
 
         let matches = self.engine.check(event);
         if matches.is_empty() {
-            let image_filename = image
-                .rsplit(['\\', '/'])
-                .next()
-                .unwrap_or(image.as_str());
+            let image_filename = image.rsplit(['\\', '/']).next().unwrap_or(image.as_str());
             let is_calc_spawn = image_filename == "calc.exe"
                 || image_filename == "win32calc.exe"
                 || image_filename == "calculatorapp.exe"
@@ -2172,10 +2193,25 @@ impl ThreatVoter for SigmaVoter {
 
             if (event.event_id == 1 || event.event_id == 4688) && is_calc_spawn {
                 const SHELL_OR_LOLBIN_INDICATORS: &[&str] = &[
-                    "powershell", "pwsh", "cmd.exe", "wmic", "mshta", "rundll32",
-                    "regsvr32", "cscript", "wscript", "pcalua", "mavinject", "cmstp",
-                    "odbcconf", "fodhelper", "sdclt", "eventvwr", "computerdefaults",
-                    "wsreset", "invoke-atomictest",
+                    "powershell",
+                    "pwsh",
+                    "cmd.exe",
+                    "wmic",
+                    "mshta",
+                    "rundll32",
+                    "regsvr32",
+                    "cscript",
+                    "wscript",
+                    "pcalua",
+                    "mavinject",
+                    "cmstp",
+                    "odbcconf",
+                    "fodhelper",
+                    "sdclt",
+                    "eventvwr",
+                    "computerdefaults",
+                    "wsreset",
+                    "invoke-atomictest",
                 ];
                 let has_shell_parent_or_cmd = SHELL_OR_LOLBIN_INDICATORS.iter().any(|ind| {
                     parent_image.contains(ind)

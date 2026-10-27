@@ -44,7 +44,8 @@ fn challenge_1_synchronous_blocking_before_socket_resolution() {
                 return Err(EgressLineageBlockInfo {
                     policy: "QUARANTINE".to_string(),
                     classification: "CROWN_JEWEL".to_string(),
-                    reason: "Inline egress blocked: destination sink classified as CROWN_JEWEL".to_string(),
+                    reason: "Inline egress blocked: destination sink classified as CROWN_JEWEL"
+                        .to_string(),
                     trace_id: Some("0123456789abcdef0123456789abcdef".to_string()),
                     span_id: Some("abcdef0123456789".to_string()),
                 });
@@ -96,7 +97,10 @@ fn challenge_1_synchronous_blocking_before_socket_resolution() {
 
     // 4. Clean domain permitted
     let clean_res = validate_agent_egress_url("https://clean-repo.internal.corp/api", &[]);
-    assert!(clean_res.is_ok(), "Clean destination must pass without DLP block");
+    assert!(
+        clean_res.is_ok(),
+        "Clean destination must pass without DLP block"
+    );
 }
 
 // ============================================================================
@@ -114,7 +118,8 @@ fn challenge_2_synthetic_blocked_span_attributes_and_zero_pii() {
                 return Err(EgressLineageBlockInfo {
                     policy: "BLOCK".to_string(),
                     classification: "CROWN_JEWEL".to_string(),
-                    reason: "Automated egress block: target host is flagged by DLP Lineage".to_string(),
+                    reason: "Automated egress block: target host is flagged by DLP Lineage"
+                        .to_string(),
                     trace_id: Some("11223344556677889900aabbccddeeff".to_string()),
                     span_id: Some("fedcba9876543210".to_string()),
                 });
@@ -146,7 +151,11 @@ fn challenge_2_synthetic_blocked_span_attributes_and_zero_pii() {
     assert_eq!(span.classification, "CROWN_JEWEL");
     assert_eq!(span.trace_id, "11223344556677889900aabbccddeeff");
     assert_eq!(span.parent_span_id.as_deref(), Some("fedcba9876543210"));
-    assert_eq!(span.span_id.len(), 16, "Synthetic span ID must be 16-hex characters");
+    assert_eq!(
+        span.span_id.len(),
+        16,
+        "Synthetic span ID must be 16-hex characters"
+    );
 
     // 2. Verify required OpenTelemetry attributes
     assert_eq!(
@@ -160,7 +169,9 @@ fn challenge_2_synthetic_blocked_span_attributes_and_zero_pii() {
         "Span must have dlp.threat_type=DATA_EXFILTRATION"
     );
     assert_eq!(
-        span.attributes.get("dlp.retained_taint").map(|s| s.as_str()),
+        span.attributes
+            .get("dlp.retained_taint")
+            .map(|s| s.as_str()),
         Some("true"),
         "Span must have dlp.retained_taint=true"
     );
@@ -181,7 +192,10 @@ fn challenge_2_synthetic_blocked_span_attributes_and_zero_pii() {
     );
 
     // 3. Verify zero-PII invariant: stripped credentials from url.full attribute
-    let sanitized_url = span.attributes.get("url.full").expect("url.full attribute must exist");
+    let sanitized_url = span
+        .attributes
+        .get("url.full")
+        .expect("url.full attribute must exist");
     assert!(
         !sanitized_url.contains("HighlySecretPassword999$#"),
         "Zero-PII invariant violated: raw password leaked in span attributes! Found: {}",
@@ -323,10 +337,26 @@ fn challenge_3_multithreaded_concurrent_egress_stress_test() {
         fp_val
     );
 
-    assert_eq!(fn_val, 0, "CRITICAL DEFECT: Detected {} false negatives under contention!", fn_val);
-    assert_eq!(fp_val, 0, "CRITICAL DEFECT: Detected {} false positives under contention!", fp_val);
-    assert_eq!(blocked_val, total_evals / 2, "Expected exactly 50% blocked requests");
-    assert_eq!(allowed_val, total_evals / 2, "Expected exactly 50% allowed requests");
+    assert_eq!(
+        fn_val, 0,
+        "CRITICAL DEFECT: Detected {} false negatives under contention!",
+        fn_val
+    );
+    assert_eq!(
+        fp_val, 0,
+        "CRITICAL DEFECT: Detected {} false positives under contention!",
+        fp_val
+    );
+    assert_eq!(
+        blocked_val,
+        total_evals / 2,
+        "Expected exactly 50% blocked requests"
+    );
+    assert_eq!(
+        allowed_val,
+        total_evals / 2,
+        "Expected exactly 50% allowed requests"
+    );
 
     // Ring buffer must hold at most 1,000 items (FIFO bounded ring)
     let spans = get_recent_blocked_spans();
@@ -394,12 +424,12 @@ fn challenge_4_boundary_3_rehydrated_out_of_band_artifact_blocking() {
 
     // 1. Rehydrated Crown Jewel artifact under a brand new unmapped path
     let new_path = "D:\\cross_host_incoming\\renamed_secret_copy.bin";
-    let block_res = check_egress_allowed_inline(
-        None::<&str>,
-        Some(new_path),
-        Some(crown_jewel_hash),
+    let block_res =
+        check_egress_allowed_inline(None::<&str>, Some(new_path), Some(crown_jewel_hash));
+    assert!(
+        block_res.is_err(),
+        "Rehydrated Crown Jewel artifact must be blocked on egress"
     );
-    assert!(block_res.is_err(), "Rehydrated Crown Jewel artifact must be blocked on egress");
     let err_str = block_res.unwrap_err();
     assert!(err_str.contains("DLP_EGRESS_BLOCKED"));
     assert!(err_str.contains("QUARANTINE"));
@@ -407,7 +437,9 @@ fn challenge_4_boundary_3_rehydrated_out_of_band_artifact_blocking() {
 
     // Verify synthetic span attributes for rehydrated artifact
     let spans = get_recent_blocked_spans();
-    let last_span = spans.last().expect("Must have emitted synthetic blocked span");
+    let last_span = spans
+        .last()
+        .expect("Must have emitted synthetic blocked span");
     assert_eq!(last_span.action, "BLOCKED");
     assert_eq!(last_span.policy, "QUARANTINE");
     assert_eq!(last_span.classification, "CROWN_JEWEL");
@@ -416,15 +448,24 @@ fn challenge_4_boundary_3_rehydrated_out_of_band_artifact_blocking() {
         Some(new_path)
     );
     assert_eq!(
-        last_span.attributes.get("file.hash.sha256").map(|s| s.as_str()),
+        last_span
+            .attributes
+            .get("file.hash.sha256")
+            .map(|s| s.as_str()),
         Some(crown_jewel_hash)
     );
     assert_eq!(
-        last_span.attributes.get("dlp.threat_type").map(|s| s.as_str()),
+        last_span
+            .attributes
+            .get("dlp.threat_type")
+            .map(|s| s.as_str()),
         Some("DATA_EXFILTRATION")
     );
     assert_eq!(
-        last_span.attributes.get("dlp.retained_taint").map(|s| s.as_str()),
+        last_span
+            .attributes
+            .get("dlp.retained_taint")
+            .map(|s| s.as_str()),
         Some("true")
     );
 
@@ -445,7 +486,10 @@ fn challenge_4_boundary_3_rehydrated_out_of_band_artifact_blocking() {
         Some(clean_path),
         Some(benign_hash),
     );
-    assert!(clean_res.is_ok(), "Benign artifact must be permitted for egress");
+    assert!(
+        clean_res.is_ok(),
+        "Benign artifact must be permitted for egress"
+    );
 }
 
 // ============================================================================

@@ -52,8 +52,8 @@ pub mod dotscope;
 pub mod edr_bench;
 pub mod fhe_coordinator;
 pub mod firewall;
-pub mod fprime_flight;
 pub mod forensics;
+pub mod fprime_flight;
 pub mod geo_mesh;
 pub mod gossip;
 pub mod hardened;
@@ -111,17 +111,15 @@ pub use disk_cleanup::{
     DiskCleanupJobProgress, DiskCleanupJobResponse, DiskCleanupPolicy, DiskCleanupStatusSnapshot,
     DiskCleanupSweepReport, DiskCleanupTierResult, DiskPressureLevel,
 };
-pub use hybrid_runtime::{
-    init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
-    spawn_smart, tokio_worker_threads,
+pub use dlp_lineage::{
+    compare_ssdeep, compute_sha256_hex, compute_ssdeep, ArtifactKey, ArtifactTaintRecord,
+    ClassificationLattice, DlpBaggage, DlpLineageTracker, EgressDecision, FileWriteTaintDecision,
+    PolicyLattice, ProcessInstanceKey, ProcessTaintRecord,
 };
-pub use memory_watchdog::{
-    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel,
-    MemoryWatchdogDebouncer,
+pub use edr_bench::{
+    resolve_fixture_path, BenchmarkReport, BenignBaselineAssertion, EdrBenchHarness, EdrBenchTask,
+    ExpectedVerdict, HarnessBounds, TargetArch, TelemetryContext, ThreatAssertion,
 };
-pub use orchestrator::*;
-pub use rate_limit_backoff::*;
-pub use rea::*;
 pub use fprime_flight::{
     create_port_pair, ArenaBinKind, ArenaSlotHandle, BftMeshConsensusComponent,
     BftQuorumPromotionProof, ComponentHealthVerdict, ContainmentDirective,
@@ -133,13 +131,14 @@ pub use fprime_flight::{
     StaticArenaPool, SvcCmdSequencer, SvcHealthMonitor, TelemetryFrame, WatchdogStrokeReceipt,
     WfpNetworkIsolatorComponent,
 };
-pub use edr_bench::{
-    resolve_fixture_path, BenchmarkReport, BenignBaselineAssertion, EdrBenchHarness, EdrBenchTask,
-    ExpectedVerdict, HarnessBounds, TargetArch, TelemetryContext, ThreatAssertion,
+pub use hybrid_runtime::{
+    init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
+    spawn_smart, tokio_worker_threads,
 };
-pub use dlp_lineage::{
-    compute_sha256_hex, compute_ssdeep, compare_ssdeep,
-    ArtifactKey, ArtifactTaintRecord, ClassificationLattice, DlpBaggage,
-    DlpLineageTracker, EgressDecision, FileWriteTaintDecision, PolicyLattice,
-    ProcessInstanceKey, ProcessTaintRecord,
+pub use memory_watchdog::{
+    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel,
+    MemoryWatchdogDebouncer,
 };
+pub use orchestrator::*;
+pub use rate_limit_backoff::*;
+pub use rea::*;

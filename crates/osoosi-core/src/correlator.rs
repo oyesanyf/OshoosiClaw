@@ -191,6 +191,15 @@ impl EventCorrelator {
                     || cmd_lower.contains("attachconsole");
 
                 if is_console_threat {
+                    if !ctx.is_signed && !image.is_empty() {
+                        let img_path = std::path::Path::new(image);
+                        if (img_path.is_file()
+                            && crate::win_trust::is_trusted_signed_binary(img_path))
+                            || crate::rea::is_rea_benign_system_or_dev_process(image, None)
+                        {
+                            ctx.is_signed = true;
+                        }
+                    }
                     let console_ctx = crate::console_defense::ConsoleProcessContext {
                         pid,
                         process_name: image.to_string(),

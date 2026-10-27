@@ -857,29 +857,6 @@ impl EdrOrchestrator {
     /// Autonomously adjudicate pending candidate threats and live gossip items via REA.
     /// Drops benign toolchain / OS binaries, CVE version-mismatch alerts, and vendor-vetoed threats.
     pub fn run_autonomous_rea_threat_adjudication(&self) -> usize {
-        let now = chrono::Utc::now().timestamp();
-        let last = self
-            .last_rea_adjudication_ts
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if now.saturating_sub(last) < 3 {
-            return 0;
-        }
-        if self
-            .last_rea_adjudication_ts
-            .compare_exchange(
-                last,
-                now,
-                std::sync::atomic::Ordering::SeqCst,
-                std::sync::atomic::Ordering::Relaxed,
-            )
-            .is_err()
-        {
-            return 0;
-        }
-        let mut dropped = self
-            .memory
-            .purge_vetoed_and_false_positive_threats()
-            .unwrap_or(0);
         let rea_for_scanner = crate::rea::global_rea_engine();
         let scanner_purged = self
             .malware_scanner
@@ -894,7 +871,10 @@ impl EdrOrchestrator {
                     return true;
                 }
                 let p = std::path::Path::new(&d.file_path);
-                if p.is_file() && crate::win_trust::is_trusted_signed_binary(p) {
+                if p.is_file()
+                    && (crate::win_trust::is_trusted_signed_binary(p)
+                        || crate::rea::verify_dynamic_binary_trust(p))
+                {
                     return true;
                 }
                 let (should_drop, _, _) = rea_for_scanner.adjudicate_process_or_binary_alert(
@@ -904,7 +884,31 @@ impl EdrOrchestrator {
                 );
                 should_drop
             });
-        dropped += scanner_purged;
+
+        let now = chrono::Utc::now().timestamp();
+        let last = self
+            .last_rea_adjudication_ts
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if now.saturating_sub(last) < 3 {
+            return scanner_purged;
+        }
+        if self
+            .last_rea_adjudication_ts
+            .compare_exchange(
+                last,
+                now,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_err()
+        {
+            return scanner_purged;
+        }
+        let mut dropped = scanner_purged
+            + self
+                .memory
+                .purge_vetoed_and_false_positive_threats()
+                .unwrap_or(0);
         let mut candidates = Vec::new();
         if let Ok(feed) = self.mesh_gossip_feed.read() {
             for item in feed.iter() {

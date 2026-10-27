@@ -67,10 +67,7 @@ pub fn is_non_killable_persistent_os_or_user_daemon(proc_name_or_path: &str) -> 
         return false;
     }
     let lower = raw.to_ascii_lowercase();
-    let filename = lower
-        .rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(lower.as_str());
+    let filename = lower.rsplit(['\\', '/']).next().unwrap_or(lower.as_str());
     let stem = filename.strip_suffix(".exe").unwrap_or(filename);
 
     if stem.starts_with("python") {
@@ -254,7 +251,9 @@ pub fn can_terminate_transient_lolbin_or_payload_pid(
             "-windowstyle hidden",
             "wmic ",
         ];
-        let has_attack = SHELL_ATTACK_INDICATORS.iter().any(|ind| lower_cmd.contains(ind));
+        let has_attack = SHELL_ATTACK_INDICATORS
+            .iter()
+            .any(|ind| lower_cmd.contains(ind));
         let is_cleanup = lower_cmd.contains("-cleanup -force") && !lower_cmd.contains("try {");
         return has_attack && !is_cleanup;
     }
@@ -526,7 +525,9 @@ impl BlockingManager {
                     if ppid > 4 && ppid != std::process::id() {
                         let ppid_name = osoosi_runtime::tarpit::get_process_name(ppid);
                         let ppid_lc = ppid_name.to_ascii_lowercase();
-                        if (ppid_lc == "powershell.exe" || ppid_lc == "pwsh.exe" || ppid_lc == "cmd.exe")
+                        if (ppid_lc == "powershell.exe"
+                            || ppid_lc == "pwsh.exe"
+                            || ppid_lc == "cmd.exe")
                             && !is_non_killable_persistent_os_or_user_daemon(&ppid_name)
                         {
                             let cmd_lc = cmd_line.to_ascii_lowercase();

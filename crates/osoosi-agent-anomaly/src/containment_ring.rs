@@ -1775,20 +1775,21 @@ impl AgentContainmentRing {
         }
 
         // 6. Pre-execution Runtime Alignment Scanner Evaluation
-        let is_high_priv = self
+        let _is_high_priv = self
             .alignment_scanner
             .is_high_privilege_sink(&telemetry.tool_name);
 
-        let pinned = if let Some(mut p) = self
+        let pinned = if let Some(p) = self
             .alignment_scanner
             .pinned_sessions
-            .get_mut(&telemetry.session_id)
+            .get(&telemetry.session_id)
         {
-            if p.initial_privilege_tier == "auto_pinned_default"
-                && !is_high_priv
-                && !p.allowed_tool_envelope.contains(&telemetry.tool_name)
-            {
-                p.allowed_tool_envelope.push(telemetry.tool_name.clone());
+            if !p.allowed_tool_envelope.contains(&telemetry.tool_name) {
+                // Strict least-privilege: prohibit dynamic envelope dilation across turns.
+                return Err(format!(
+                    "[ContainmentRing-Envelope-Veto]: Blocked tool execution for action '{}' outside allowed tool envelope: {:?}",
+                    telemetry.tool_name, p.allowed_tool_envelope
+                ));
             }
             p.clone()
         } else {

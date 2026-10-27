@@ -111,7 +111,10 @@ fn test_adversarial_parent_to_child_taint_and_baggage_inheritance() {
 
     assert!(tracker.active_processes.contains_key(&child_key));
     // Assert Child B inherits taint, classification, policy, and exact Baggage
-    assert!(child_rec.tainted, "Child process B must inherit parent taint");
+    assert!(
+        child_rec.tainted,
+        "Child process B must inherit parent taint"
+    );
     assert_eq!(
         child_rec.classification,
         ClassificationLattice::CrownJewel,
@@ -337,10 +340,17 @@ fn test_adversarial_sibling_process_isolation_zero_false_positives() {
 
     // Child Y writes clean log file
     let clean_log_path = "C:\\logs\\clean_worker.log";
-    let write_decision =
-        tracker.on_file_write_path(9002, 200_000, clean_log_path, Some(b"Clean worker log line"));
+    let write_decision = tracker.on_file_write_path(
+        9002,
+        200_000,
+        clean_log_path,
+        Some(b"Clean worker log line"),
+    );
     assert!(
-        matches!(write_decision, FileWriteTaintDecision::BenignExcluded { .. }),
+        matches!(
+            write_decision,
+            FileWriteTaintDecision::BenignExcluded { .. }
+        ),
         "Write by clean child must remain BenignExcluded"
     );
 
@@ -577,18 +587,14 @@ fn test_adversarial_multi_hop_file_rename_chain() {
 
     // Verify intermediate keys A, B, C are completely removed
     assert!(tracker.active_artifacts.get(&key_a).is_none());
-    assert!(
-        tracker
-            .active_artifacts
-            .get(&ArtifactKey::from_path_or_synthetic(path_b))
-            .is_none()
-    );
-    assert!(
-        tracker
-            .active_artifacts
-            .get(&ArtifactKey::from_path_or_synthetic(path_c))
-            .is_none()
-    );
+    assert!(tracker
+        .active_artifacts
+        .get(&ArtifactKey::from_path_or_synthetic(path_b))
+        .is_none());
+    assert!(tracker
+        .active_artifacts
+        .get(&ArtifactKey::from_path_or_synthetic(path_c))
+        .is_none());
 
     // Verify key D exists and is tainted
     let rec_d = tracker
@@ -633,10 +639,7 @@ fn test_adversarial_real_filesystem_file_rename() {
 
     // Confirm egress on orig_file is blocked
     let res_before = tracker.check_egress_allowed(Some(orig_str), None);
-    assert!(
-        res_before.is_err(),
-        "Egress before rename must be blocked"
-    );
+    assert!(res_before.is_err(), "Egress before rename must be blocked");
 
     // Execute true OS rename on filesystem
     fs::rename(&orig_file, &renamed_file).expect("OS file rename must succeed");
@@ -691,11 +694,7 @@ async fn test_adversarial_event_pipeline_kernel_telemetry_ingestion() {
         secret_key,
     );
 
-    assert!(tracker
-        .active_processes
-        .get(&parent_key)
-        .unwrap()
-        .tainted);
+    assert!(tracker.active_processes.get(&parent_key).unwrap().tainted);
 
     // 2. Sysmon 1 (ProcessCreate) Event: Parent 9110 spawns Child 9111
     let child_pid = 9111u32;
@@ -703,10 +702,7 @@ async fn test_adversarial_event_pipeline_kernel_telemetry_ingestion() {
     proc_create_data.insert("ProcessId".to_string(), json!(child_pid));
     proc_create_data.insert("ParentProcessId".to_string(), json!(parent_pid));
     proc_create_data.insert("ProcessStartTime".to_string(), json!(20_000));
-    proc_create_data.insert(
-        "Image".to_string(),
-        json!("C:\\Windows\\System32\\cmd.exe"),
-    );
+    proc_create_data.insert("Image".to_string(), json!("C:\\Windows\\System32\\cmd.exe"));
 
     let proc_create_event = HostSecurityEvent {
         source: HostEventSource::WindowsEventLog,
@@ -729,10 +725,7 @@ async fn test_adversarial_event_pipeline_kernel_telemetry_ingestion() {
         child_rec.tainted,
         "Child process 9111 must inherit taint via Sysmon 1 ingestion"
     );
-    assert_eq!(
-        child_rec.classification,
-        ClassificationLattice::CrownJewel
-    );
+    assert_eq!(child_rec.classification, ClassificationLattice::CrownJewel);
     assert_eq!(child_rec.policy, PolicyLattice::Quarantine);
 
     // 3. Sysmon 27 (FileRename) Event: Rename tainted secret to an innocuous filename
@@ -771,7 +764,14 @@ fn test_adversarial_child_shell_boundary_1_taint_drop_vulnerability() {
     let parent_pid = 8800u32;
     let parent_start = 50_000u64;
     let parent_key = ProcessInstanceKey::new(parent_pid, parent_start);
-    tracker.on_process_create(parent_pid, parent_start, "tainted_app.exe", "C:\\app.exe", None, None);
+    tracker.on_process_create(
+        parent_pid,
+        parent_start,
+        "tainted_app.exe",
+        "C:\\app.exe",
+        None,
+        None,
+    );
 
     let secret_path = "C:\\vault\\customer_pii.db";
     let secret_key = ArtifactKey::from_path_or_synthetic(secret_path);
@@ -786,7 +786,10 @@ fn test_adversarial_child_shell_boundary_1_taint_drop_vulnerability() {
 
     let parent_rec = tracker.active_processes.get(&parent_key).unwrap();
     assert!(parent_rec.tainted);
-    assert!(!parent_rec.read_history.is_empty(), "Parent must have non-empty read_history");
+    assert!(
+        !parent_rec.read_history.is_empty(),
+        "Parent must have non-empty read_history"
+    );
 
     // 2. Parent spawns a shell process (powershell.exe) to write an exfiltration payload
     let shell_pid = 8801u32;

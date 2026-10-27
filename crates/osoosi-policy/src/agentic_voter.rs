@@ -143,10 +143,28 @@ impl AgentTrajectory {
     }
 }
 
+/// Non-detachable composite process key binding process ID to initial creation epoch.
+/// Prevents PID recycling taint laundering across OS process exits and re-allocations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProcessKey {
+    pub pid: u32,
+    pub start_time_100ns: u64,
+}
+
+impl ProcessKey {
+    pub fn new(pid: u32, start_time_100ns: u64) -> Self {
+        Self {
+            pid,
+            start_time_100ns,
+        }
+    }
+}
+
 /// Threat voter tracking agentic escapes and anomalous AI runtime subprocess executions.
 pub struct AgenticPolicyVoter {
     trajectories: Arc<DashMap<u32, AgentTrajectory>>,
     pub agent_beliefs: Arc<DashMap<u32, f64>>,
+    pub process_keys: Arc<DashMap<u32, ProcessKey>>,
     ai_runtime_regex: Regex,
     command_interpreter_regex: Regex,
     recon_lolbin_regex: Regex,
@@ -191,6 +209,7 @@ impl AgenticPolicyVoter {
         Self {
             trajectories: Arc::new(DashMap::new()),
             agent_beliefs: Arc::new(DashMap::new()),
+            process_keys: Arc::new(DashMap::new()),
             ai_runtime_regex,
             command_interpreter_regex,
             recon_lolbin_regex,
@@ -320,17 +339,70 @@ impl AgenticPolicyVoter {
         self.recon_lolbin_regex.is_match(file_name)
     }
 
-    /// Prunes stale trajectories to prevent memory exhaustion (Edge Case 1).
+    /// Records an agent action for a composite `ProcessKey`, satisfying the M1 <-> M2 interface contract.
+    pub fn record_action(
+        &self,
+        key: &ProcessKey,
+        action_type: &str,
+        target: &str,
+        risk_weight: f64,
+    ) {
+        self.process_keys.insert(key.pid, *key);
+        let mut entry = self
+            .trajectories
+            .entry(key.pid)
+            .or_insert_with(|| AgentTrajectory::new(key.pid, "TrackedProcess".to_string()));
+        entry.record_step(
+            TrajectoryStage::Execution,
+            format!("{}:{}", action_type, target),
+            risk_weight as f32,
+            action_type.to_string(),
+        );
+    }
+
+    /// Handles process termination (Sysmon Event ID 5 / ETW Process Stop) to immediately
+    /// evict the deceased process from trajectories and beliefs, preventing taint laundering.
+    pub fn handle_process_termination(&self, pid: u32) {
+        self.trajectories.remove(&pid);
+        self.agent_beliefs.remove(&pid);
+        self.process_keys.remove(&pid);
+    }
+
+    /// Prunes stale trajectories and unreferenced beliefs to prevent memory exhaustion (Edge Case 1).
     pub fn prune_stale(&self) {
         let now = Utc::now();
         if self.trajectories.len() > MAX_TRACKED_AGENTS {
             self.trajectories
                 .retain(|_, traj| (now - traj.last_updated).num_seconds() < TRAJECTORY_TTL_SECS);
         }
+        if self.agent_beliefs.len() > MAX_TRACKED_AGENTS {
+            self.agent_beliefs
+                .retain(|pid, _| self.trajectories.contains_key(pid));
+        }
+        if self.process_keys.len() > MAX_TRACKED_AGENTS {
+            self.process_keys
+                .retain(|pid, _| self.trajectories.contains_key(pid));
+        }
     }
 
     /// Evaluates a host security event synchronously.
     pub fn evaluate_event(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        // Sysmon Event ID 5: Process Termination -> immediate eviction to close taint laundering vector
+        if event.event_id == 5 {
+            let pid = event
+                .data
+                .get("ProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
+                .unwrap_or(0) as u32;
+            if pid != 0 {
+                self.handle_process_termination(pid);
+            }
+            return None;
+        }
+
         // Event ID 1: Process Creation, Event ID 3: Network Connection, Event ID 11: File Creation
         let parent_image = event
             .data
@@ -540,8 +612,11 @@ impl AgenticPolicyVoter {
             )
         };
 
-        // If completely benign and no existing trajectory, return None
-        if step_risk == 0.0 && !self.trajectories.contains_key(&tracked_pid) {
+        // If completely benign, apply trajectory decay if tracked, and never emit a threat vote
+        if step_risk == 0.0 {
+            if let Some(mut entry) = self.trajectories.get_mut(&tracked_pid) {
+                let _ = entry.record_step(stage, cmd_line.to_string(), 0.0, anomaly);
+            }
             return None;
         }
 

@@ -92,8 +92,11 @@ pub struct FileEventRecord {
     pub time: i64,
 }
 
-pub static LIVE_FILE_EVENTS: std::sync::LazyLock<parking_lot::RwLock<std::collections::VecDeque<FileEventRecord>>> =
-    std::sync::LazyLock::new(|| parking_lot::RwLock::new(std::collections::VecDeque::with_capacity(1024)));
+pub static LIVE_FILE_EVENTS: std::sync::LazyLock<
+    parking_lot::RwLock<std::collections::VecDeque<FileEventRecord>>,
+> = std::sync::LazyLock::new(|| {
+    parking_lot::RwLock::new(std::collections::VecDeque::with_capacity(1024))
+});
 
 /// Records a live file event into the global in-memory buffer queryable by `siquery-rs`.
 pub fn record_live_file_event(event: FileEventRecord) {
@@ -9594,8 +9597,8 @@ mod tests {
         let tables = SiqueryEngine::list_tables();
         assert_eq!(
             tables.len(),
-            103,
-            "Must contain exactly 103 tables and views for comprehensive siquery host discovery"
+            104,
+            "Must contain exactly 104 tables and views for comprehensive siquery host discovery"
         );
 
         for table in tables {
@@ -10068,7 +10071,10 @@ mod tests {
             .execute_query("SELECT target_path, action, pid, process_name, sha256, time FROM file_events WHERE target_path LIKE '%crown_jewel.docx%';")
             .expect("SELECT on file_events must succeed");
 
-        assert!(!rows.is_empty(), "file_events must return recorded live events");
+        assert!(
+            !rows.is_empty(),
+            "file_events must return recorded live events"
+        );
         let row = &rows[0];
         assert_eq!(
             row.get("target_path").and_then(|v| v.as_str()),

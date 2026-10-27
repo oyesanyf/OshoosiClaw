@@ -204,12 +204,6 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
         r"\$recycle.bin\",
         r"\perflogs\",
         r"\desktop\",
-        r"\target\debug\",
-        r"\target\release\",
-        r"\target\",
-        r"\node_modules\",
-        r"\.venv\",
-        r"\venv\",
     ];
     for marker in &untrusted_markers {
         if norm.contains(marker) || norm.ends_with(marker.trim_end_matches('\\')) {
@@ -224,14 +218,49 @@ pub fn is_untrusted_writable_or_temp_path(path_str: &str) -> bool {
         "/downloads/",
         "/users/public/",
         "/desktop/",
-        "/target/",
-        "/node_modules/",
-        "/.venv/",
-        "/venv/",
     ];
     for marker in &unix_markers {
         if unix_norm.contains(marker) || unix_norm.starts_with(marker) {
             return true;
+        }
+    }
+
+    // Build/package output directories are only untrusted when a non-workspace protected OS/toolchain
+    // binary name (e.g. svchost.exe, powershell.exe, cl.exe) is placed inside them.
+    let base = norm.rsplit('\\').next().unwrap_or(&norm).trim();
+    let is_workspace_own_bin = matches!(
+        base,
+        "osoosi.exe"
+            | "osoosi-cli.exe"
+            | "osoosi-auditor.exe"
+            | "osoosi-relay.exe"
+            | "osoosi_inject.dll"
+            | "otx-taxii-rs.exe"
+            | "bulk_trainer.exe"
+            | "test-peer.exe"
+            | "osoosi"
+            | "osoosi-cli"
+            | "osoosi-auditor"
+    );
+    if is_canonical_protected_binary_name(base) && !is_workspace_own_bin {
+        let build_markers = [
+            r"\target\debug\",
+            r"\target\release\",
+            r"\target\",
+            r"\node_modules\",
+            r"\.venv\",
+            r"\venv\",
+        ];
+        for marker in &build_markers {
+            if norm.contains(marker) {
+                return true;
+            }
+        }
+        let unix_build_markers = ["/target/", "/node_modules/", "/.venv/", "/venv/"];
+        for marker in &unix_build_markers {
+            if unix_norm.contains(marker) {
+                return true;
+            }
         }
     }
 
@@ -269,9 +298,20 @@ pub fn is_canonical_trusted_binary_dir(path_str: &str) -> bool {
         verify_dynamic_binary_trust(p)
     } else {
         let norm_lower = raw.replace('/', "\\").to_ascii_lowercase();
+        let unix_lower = raw.replace('\\', "/").to_ascii_lowercase();
         if norm_lower.starts_with(r"c:\windows\system32\")
             || norm_lower.starts_with(r"c:\windows\")
             || norm_lower.starts_with(r"c:\program files\")
+            || norm_lower.starts_with(r"c:\program files (x86)\")
+            || norm_lower.contains(r"\.rustup\toolchains\")
+            || norm_lower.contains(r"\.cargo\bin\")
+            || norm_lower.contains(r"\harfile\")
+            || unix_lower.starts_with("/usr/bin/")
+            || unix_lower.starts_with("/usr/local/bin/")
+            || unix_lower.starts_with("/bin/")
+            || unix_lower.starts_with("/sbin/")
+            || unix_lower.contains("/.rustup/toolchains/")
+            || unix_lower.contains("/.cargo/bin/")
         {
             if let Some(base) = norm_lower.rsplit('\\').next() {
                 if let Some(resolved) = resolve_candidate_binary_path(Some(base), None) {
@@ -514,8 +554,24 @@ pub fn detect_binary_masquerade_spoof(
         let is_trusted = if p.is_file() {
             verify_dynamic_binary_trust(p)
         } else {
+            let resolved_trusted = resolve_candidate_binary_path(Some(base), Some(raw))
+                .map(|res_p| verify_dynamic_binary_trust(&res_p))
+                .unwrap_or(false);
             let norm_lower = raw.replace('/', "\\").to_ascii_lowercase();
-            norm_lower.starts_with(r"c:\windows\") || norm_lower.starts_with(r"c:\program files\")
+            let unix_lower = raw.replace('\\', "/").to_ascii_lowercase();
+            resolved_trusted
+                || norm_lower.starts_with(r"c:\windows\")
+                || norm_lower.starts_with(r"c:\program files\")
+                || norm_lower.starts_with(r"c:\program files (x86)\")
+                || norm_lower.contains(r"\.rustup\toolchains\")
+                || norm_lower.contains(r"\.cargo\bin\")
+                || norm_lower.contains(r"\harfile\")
+                || unix_lower.starts_with("/usr/bin/")
+                || unix_lower.starts_with("/usr/local/bin/")
+                || unix_lower.starts_with("/bin/")
+                || unix_lower.starts_with("/sbin/")
+                || unix_lower.contains("/.rustup/toolchains/")
+                || unix_lower.contains("/.cargo/bin/")
         };
         if !is_trusted {
             return Some(format!(

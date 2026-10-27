@@ -108,9 +108,21 @@ async fn test_m3_dlp_lineage_get_sub_5ms_sla_stress() {
         min_ms, max_ms, avg_ms, p50_ms, p95_ms, p99_ms
     );
 
-    assert!(p50_ms < 2.0, "p50 must be well under 2ms; got {:.4}ms", p50_ms);
-    assert!(p95_ms < 4.0, "p95 must be well under 4ms; got {:.4}ms", p95_ms);
-    assert!(p99_ms < 5.0, "p99 must strictly satisfy < 5ms SLA; got {:.4}ms", p99_ms);
+    assert!(
+        p50_ms < 2.0,
+        "p50 must be well under 2ms; got {:.4}ms",
+        p50_ms
+    );
+    assert!(
+        p95_ms < 4.0,
+        "p95 must be well under 4ms; got {:.4}ms",
+        p95_ms
+    );
+    assert!(
+        p99_ms < 5.0,
+        "p99 must strictly satisfy < 5ms SLA; got {:.4}ms",
+        p99_ms
+    );
 }
 
 /// Scenario 2A: OpenLineage RunEvent Ingest Fuzzing (Partial, Malformed, and Adversarial Payloads)
@@ -240,7 +252,10 @@ async fn test_m3_openlineage_ingest_fuzzing_partial_and_malformed_payloads() {
             "Fuzz payload '{}' failed to return status: ok. Response: {:?}",
             label, res
         );
-        assert!(res["duration_micros"].is_number(), "Must report execution duration");
+        assert!(
+            res["duration_micros"].is_number(),
+            "Must report execution duration"
+        );
         assert!(res["trace_id"].is_string(), "Must emit valid trace_id");
         assert!(res["span_id"].is_string(), "Must emit valid span_id");
         assert!(res["run_id"].is_string(), "Must emit valid run_id");
@@ -463,13 +478,15 @@ async fn test_m3_openlineage_state_consistency_and_blocked_egress_kpi() {
         .expect("active_tainted_traces is number");
 
     assert!(
-        updated_blocked >= initial_blocked + 1,
+        updated_blocked > initial_blocked,
         "blocked_derived_egresses must increment by at least 1 (before: {}, after: {})",
         initial_blocked,
         updated_blocked
     );
     assert_eq!(
-        updated_summary["kpis"]["blocked_egresses"].as_u64().unwrap(),
+        updated_summary["kpis"]["blocked_egresses"]
+            .as_u64()
+            .unwrap(),
         updated_blocked,
         "kpis.blocked_egresses must match summary.blocked_derived_egresses"
     );
@@ -501,7 +518,10 @@ async fn test_m3_openlineage_state_consistency_and_blocked_egress_kpi() {
     let events = updated_summary["lineage_events"]
         .as_array()
         .expect("lineage_events is array");
-    assert!(!events.is_empty(), "lineage_events must contain recorded RunEvents");
+    assert!(
+        !events.is_empty(),
+        "lineage_events must contain recorded RunEvents"
+    );
 }
 
 /// Scenario 4: High-Throughput Concurrency & DashMap Lock Hygiene Stress
@@ -539,7 +559,7 @@ async fn test_m3_openlineage_concurrency_and_dashmap_lock_hygiene() {
                     },
                     "inputs": [{
                         "path": format!("D:\\data\\concurrency_{}_{}.tmp", worker_id, iter),
-                        "device_id": 1000 + worker_id as u64,
+                        "device_id": 1000 + worker_id,
                         "inode": 5000 + iter,
                         "sha256": format!("{:064x}", worker_id * 100 + iter),
                         "classification": if iter % 2 == 0 { "CROWN_JEWEL" } else { "INTERNAL" },
@@ -547,7 +567,7 @@ async fn test_m3_openlineage_concurrency_and_dashmap_lock_hygiene() {
                     }],
                     "outputs": [{
                         "path": format!("D:\\data\\out_{}_{}.bin", worker_id, iter),
-                        "device_id": 1000 + worker_id as u64,
+                        "device_id": 1000 + worker_id,
                         "inode": 9000 + iter
                     }],
                     "egress_sink": if iter % 3 == 0 {
@@ -579,7 +599,12 @@ async fn test_m3_openlineage_concurrency_and_dashmap_lock_hygiene() {
     // Final integrity check
     let Json(final_summary) = get_dlp_lineage().await;
     assert_eq!(final_summary["status"], "ok");
-    assert!(final_summary["summary"]["blocked_derived_egresses"].as_u64().unwrap() > 0);
+    assert!(
+        final_summary["summary"]["blocked_derived_egresses"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
 }
 
 /// Scenario 5: Full-Stack Live HTTP & Legacy Alias Verification

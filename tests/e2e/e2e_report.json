@@ -1,54 +1,46 @@
 {
-  "timestamp": "2026-10-23 20:03:31 UTC",
-  "total_tests": 214,
-  "total_passed": 214,
+  "timestamp": "2026-10-27 06:39:44 UTC",
+  "total_tests": 339,
+  "total_passed": 339,
   "total_failed": 0,
   "total_errors": 0,
+  "pass_percentage": 100.0,
   "success": true,
   "suites": [
     {
-      "suite": "Tier 1: Feature Coverage (30 Features)",
-      "total": 150,
-      "passed": 150,
+      "suite": "Tier 1: Feature Coverage (29 Features)",
+      "total": 145,
+      "passed": 145,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.663,
+      "duration_seconds": 0.209,
       "success": true
     },
     {
-      "suite": "Tier 2: Boundary & Corner Cases",
-      "total": 15,
-      "passed": 15,
+      "suite": "Tier 2: Boundary & Corner Cases (29 Features)",
+      "total": 145,
+      "passed": 145,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.02,
+      "duration_seconds": 0.013,
       "success": true
     },
     {
-      "suite": "Tier 3: Pairwise Module Combinations",
+      "suite": "Tier 3: Pairwise Module Combinations (20 Interactions)",
+      "total": 20,
+      "passed": 20,
+      "failed": 0,
+      "errors": 0,
+      "duration_seconds": 0.032,
+      "success": true
+    },
+    {
+      "suite": "Tier 4: Real-World Application Scenarios (8 Scenarios)",
       "total": 8,
       "passed": 8,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.029,
-      "success": true
-    },
-    {
-      "suite": "Tier 4: Real-World Application Scenarios",
-      "total": 5,
-      "passed": 5,
-      "failed": 0,
-      "errors": 0,
-      "duration_seconds": 0.03,
-      "success": true
-    },
-    {
-      "suite": "Tier 5: 15-Vector Breakout & EDR Compromise (15 Vectors)",
-      "total": 15,
-      "passed": 15,
-      "failed": 0,
-      "errors": 0,
-      "duration_seconds": 2.085,
+      "duration_seconds": 0.042,
       "success": true
     },
     {
@@ -57,7 +49,7 @@
       "passed": 21,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 1.118,
+      "duration_seconds": 0.677,
       "success": true
     }
   ]

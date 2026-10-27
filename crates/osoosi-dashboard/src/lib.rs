@@ -725,8 +725,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/supervisor/status", get(get_supervisor_status))
         .route("/api/supervisor/fprime", get(get_supervisor_fprime))
         .route("/supervisor/fprime", get(get_supervisor_fprime))
-        .route("/api/supervisor/fprime/sequencer", post(post_supervisor_fprime_sequencer))
-        .route("/supervisor/fprime/sequencer", post(post_supervisor_fprime_sequencer))
+        .route(
+            "/api/supervisor/fprime/sequencer",
+            post(post_supervisor_fprime_sequencer),
+        )
+        .route(
+            "/supervisor/fprime/sequencer",
+            post(post_supervisor_fprime_sequencer),
+        )
         .route("/api/edr-bench/tasks", get(get_edr_bench_tasks))
         .route("/edr-bench/tasks", get(get_edr_bench_tasks))
         .route("/api/edr-bench/evaluate", post(post_edr_bench_evaluate))
@@ -1422,14 +1428,18 @@ async fn get_supervisor_status(State(state): State<DashboardState>) -> impl Into
                 last_evaluated_at: chrono::Utc::now(),
                 uptime_seconds: 0,
                 hardware_selection: hw_selection,
-                fprime_status: Some(osoosi_core::fprime_flight::FPrimeFlightRuntime::default().snapshot()),
+                fprime_status: Some(
+                    osoosi_core::fprime_flight::FPrimeFlightRuntime::default().snapshot(),
+                ),
             }
         }
     };
     Json(status)
 }
 
-async fn get_supervisor_fprime(axum::extract::State(state): axum::extract::State<DashboardState>) -> impl axum::response::IntoResponse {
+async fn get_supervisor_fprime(
+    axum::extract::State(state): axum::extract::State<DashboardState>,
+) -> impl axum::response::IntoResponse {
     let snapshot = match &state.backend {
         Some(orch) => orch.supervisor.fprime_runtime.snapshot(),
         None => osoosi_core::fprime_flight::FPrimeFlightRuntime::default().snapshot(),
@@ -1445,9 +1455,18 @@ async fn post_supervisor_fprime_sequencer(
         Some(orch) => orch.supervisor.fprime_runtime.sequencer.clone(),
         None => std::sync::Arc::new(osoosi_core::fprime_flight::SvcCmdSequencer::default()),
     };
-    match sequencer.trigger_safe_mode_demotion(&playbook, "Manual safe mode demotion trigger via dashboard API") {
-        Ok(report) => (axum::http::StatusCode::OK, axum::Json(serde_json::to_value(report).unwrap_or_default())),
-        Err(e) => (axum::http::StatusCode::BAD_REQUEST, axum::Json(serde_json::json!({ "error": e.to_string() }))),
+    match sequencer.trigger_safe_mode_demotion(
+        &playbook,
+        "Manual safe mode demotion trigger via dashboard API",
+    ) {
+        Ok(report) => (
+            axum::http::StatusCode::OK,
+            axum::Json(serde_json::to_value(report).unwrap_or_default()),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": e.to_string() })),
+        ),
     }
 }
 
@@ -1461,14 +1480,17 @@ pub struct EdrBenchEvaluateRequest {
 
 async fn get_edr_bench_tasks() -> impl axum::response::IntoResponse {
     let mut tasks = Vec::new();
-    let tasks_dir = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new("benchmarks/tasks"));
+    let tasks_dir =
+        osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new("benchmarks/tasks"));
     if tasks_dir.is_dir() {
         if let Ok(entries) = std::fs::read_dir(&tasks_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().and_then(|s| s.to_str()) == Some("json") {
                     if let Ok(content) = std::fs::read_to_string(&path) {
-                        if let Ok(task) = serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
+                        if let Ok(task) =
+                            serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content)
+                        {
                             tasks.push(task);
                         }
                     }
@@ -1486,40 +1508,55 @@ async fn post_edr_bench_evaluate(
         t
     } else if let Some(tid) = &payload.task_id {
         let task_file = format!("benchmarks/tasks/{}.json", tid);
-        let task_path = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new(&task_file));
+        let task_path =
+            osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new(&task_file));
         match std::fs::read_to_string(&task_path) {
-            Ok(content) => match serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
-                Ok(t) => t,
-                Err(e) => {
-                    return (
-                        axum::http::StatusCode::BAD_REQUEST,
-                        axum::Json(serde_json::json!({ "error": format!("Invalid task JSON: {}", e) })),
-                    );
+            Ok(content) => {
+                match serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            axum::Json(
+                                serde_json::json!({ "error": format!("Invalid task JSON: {}", e) }),
+                            ),
+                        );
+                    }
                 }
-            },
+            }
             Err(e) => {
                 return (
                     axum::http::StatusCode::NOT_FOUND,
-                    axum::Json(serde_json::json!({ "error": format!("Task not found at {}: {}", task_path.display(), e) })),
+                    axum::Json(
+                        serde_json::json!({ "error": format!("Task not found at {}: {}", task_path.display(), e) }),
+                    ),
                 );
             }
         }
     } else {
-        let task_path = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new("benchmarks/tasks/OSHOOSI-BENCH-2026-0042.json"));
+        let task_path = osoosi_core::edr_bench::resolve_fixture_path(std::path::Path::new(
+            "benchmarks/tasks/OSHOOSI-BENCH-2026-0042.json",
+        ));
         match std::fs::read_to_string(&task_path) {
-            Ok(content) => match serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
-                Ok(t) => t,
-                Err(e) => {
-                    return (
-                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                        axum::Json(serde_json::json!({ "error": format!("Default task JSON invalid: {}", e) })),
-                    );
+            Ok(content) => {
+                match serde_json::from_str::<osoosi_core::edr_bench::EdrBenchTask>(&content) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        return (
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                            axum::Json(
+                                serde_json::json!({ "error": format!("Default task JSON invalid: {}", e) }),
+                            ),
+                        );
+                    }
                 }
-            },
+            }
             Err(e) => {
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    axum::Json(serde_json::json!({ "error": format!("Default task file missing: {}", e) })),
+                    axum::Json(
+                        serde_json::json!({ "error": format!("Default task file missing: {}", e) }),
+                    ),
                 );
             }
         }
@@ -1527,7 +1564,11 @@ async fn post_edr_bench_evaluate(
 
     let mut harness = osoosi_core::edr_bench::EdrBenchHarness::new();
     let max_attempts = payload.max_attempts.unwrap_or(3);
-    let report = harness.evaluate_with_compiler_feedback_loop(&task, &payload.candidate_yara_source, max_attempts);
+    let report = harness.evaluate_with_compiler_feedback_loop(
+        &task,
+        &payload.candidate_yara_source,
+        max_attempts,
+    );
     (
         axum::http::StatusCode::OK,
         axum::Json(serde_json::to_value(report).unwrap_or_default()),
@@ -2661,9 +2702,10 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
             let orch_bg = Arc::clone(orch);
-            tokio::task::spawn_blocking(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 let _ = orch_bg.run_autonomous_rea_threat_adjudication();
-            });
+            })
+            .await;
             let threats = orch.memory().get_recent_threats(20).unwrap_or_default();
             if threats.is_empty() {
                 let entries = orch.audit().get_recent_entries(200);
@@ -4820,7 +4862,13 @@ async fn post_scan_trigger(State(state): State<DashboardState>) -> Json<Value> {
             let orch_bg = Arc::clone(orch);
             tokio::spawn(async move {
                 for path in paths {
-                    orch_bg.malware_scanner().scan_file(&path).await;
+                    if let Some(res) = orch_bg.malware_scanner().scan_file(&path).await {
+                        if res.is_malware {
+                            let _ = orch_bg
+                                .adjudicate_malware_candidate_with_rea_and_voters(&path, &res, None)
+                                .await;
+                        }
+                    }
                 }
                 orch_bg.audit().log(
                     "MALWARE_SCAN_TRIGGERED",
@@ -10618,7 +10666,9 @@ mod tests {
     #[tokio::test]
     async fn test_api_supervisor_fprime() {
         let state = DashboardState::new(None, None);
-        let resp = get_supervisor_fprime(axum::extract::State(state.clone())).await.into_response();
+        let resp = get_supervisor_fprime(axum::extract::State(state.clone()))
+            .await
+            .into_response();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
@@ -10633,7 +10683,10 @@ mod tests {
 
         // Test sequencer POST rejection on invalid/unsigned playbook
         let playbook = osoosi_core::fprime_flight::SafeModePlaybook::default();
-        let post_resp = post_supervisor_fprime_sequencer(axum::extract::State(state), axum::Json(playbook)).await.into_response();
+        let post_resp =
+            post_supervisor_fprime_sequencer(axum::extract::State(state), axum::Json(playbook))
+                .await
+                .into_response();
         assert_eq!(post_resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 
@@ -10642,8 +10695,11 @@ mod tests {
         // 1. GET /api/edr-bench/tasks
         let resp = get_edr_bench_tasks().await.into_response();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
-        let tasks: Vec<osoosi_core::edr_bench::EdrBenchTask> = serde_json::from_slice(&body_bytes).unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let tasks: Vec<osoosi_core::edr_bench::EdrBenchTask> =
+            serde_json::from_slice(&body_bytes).unwrap();
         assert!(!tasks.is_empty(), "Expected at least 1 benchmark task");
 
         // 2. POST /api/edr-bench/evaluate
@@ -10662,10 +10718,15 @@ mod tests {
             max_attempts: Some(2),
         };
 
-        let eval_resp = post_edr_bench_evaluate(axum::Json(eval_req)).await.into_response();
+        let eval_resp = post_edr_bench_evaluate(axum::Json(eval_req))
+            .await
+            .into_response();
         assert_eq!(eval_resp.status(), axum::http::StatusCode::OK);
-        let eval_bytes = axum::body::to_bytes(eval_resp.into_body(), 1024 * 1024).await.unwrap();
-        let report: osoosi_core::edr_bench::BenchmarkReport = serde_json::from_slice(&eval_bytes).unwrap();
+        let eval_bytes = axum::body::to_bytes(eval_resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let report: osoosi_core::edr_bench::BenchmarkReport =
+            serde_json::from_slice(&eval_bytes).unwrap();
         assert!(report.compiled_cleanly);
         assert!(report.fail_to_pass_resolved);
         assert!(report.pass_to_pass_preserved);

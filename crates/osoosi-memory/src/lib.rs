@@ -1874,7 +1874,7 @@ impl MemoryStore {
         }
 
         // Support callers passing either a full file path or a bare filename across Windows and Unix path styles
-        let last_separator = raw_proc.rfind(|c| c == '/' || c == '\\');
+        let last_separator = raw_proc.rfind(['/', '\\']);
         let file_name = match last_separator {
             Some(pos) => &raw_proc[pos + 1..],
             None => raw_proc,
@@ -2640,7 +2640,7 @@ pub fn normalize_truncated_process_name(proc_name: &str, file_path: Option<&str>
     let trimmed = proc_name.trim();
     if let Some(fp) = file_path {
         if fp.contains('\\') || fp.contains('/') {
-            let last_sep = fp.rfind(|c| c == '/' || c == '\\');
+            let last_sep = fp.rfind(['/', '\\']);
             let fname = match last_sep {
                 Some(pos) => &fp[pos + 1..],
                 None => fp,
@@ -2817,24 +2817,28 @@ pub fn is_consensus_finding_vetoed_or_benign(
         .unwrap_or_default()
         .to_ascii_lowercase();
 
-    // 1. Fail-closed on untrusted writable paths
-    if let Some(fp) = file_path {
-        if is_untrusted_writable_path_in_memory(fp)
-            || is_untrusted_writable_path_in_memory(&norm_path_lower)
-        {
-            return false;
-        }
-    }
-    if let Some(pn) = process_name {
-        if is_untrusted_writable_path_in_memory(pn) {
-            return false;
-        }
-    }
-
     let is_in_trusted_system_or_app_dir = norm_path_lower.starts_with(r"c:\windows\")
         || norm_path_lower.starts_with(r"c:\program files\")
         || norm_path_lower.starts_with(r"c:\program files (x86)\")
-        || norm_path_lower.starts_with(r"d:\harfile\oshoosiclaw\");
+        || norm_path_lower.starts_with(r"d:\harfile\")
+        || norm_path_lower.contains(r"\.rustup\toolchains\")
+        || norm_path_lower.contains(r"\.cargo\bin\");
+
+    // 1. Fail-closed on untrusted writable paths (unless inside a verified trusted system/toolchain/workspace dir)
+    if !is_in_trusted_system_or_app_dir {
+        if let Some(fp) = file_path {
+            if is_untrusted_writable_path_in_memory(fp)
+                || is_untrusted_writable_path_in_memory(&norm_path_lower)
+            {
+                return false;
+            }
+        }
+        if let Some(pn) = process_name {
+            if is_untrusted_writable_path_in_memory(pn) {
+                return false;
+            }
+        }
+    }
 
     let active_attack_markers = [
         "mimikatz",
@@ -2887,6 +2891,16 @@ pub fn is_consensus_finding_vetoed_or_benign(
         || summary_lower.contains("cve-2009-2940")
         || summary_lower.contains("behavioral baseline: first outbound connection")
         || summary_lower.contains("cve none scored")
+        || (summary_lower.contains("rea_masquerade_spoof_detected")
+            && is_in_trusted_system_or_app_dir)
+        || (summary_lower.contains("edr-vec-23-unsigned-elevated-conhost")
+            && norm_path_lower.ends_with(r"\conhost.exe"))
+        || (summary_lower.contains("sponge attack warning")
+            && !summary_lower.contains("isolateprocess"))
+        || summary_lower.contains("antisb_threatexpert")
+        || summary_lower.contains("vmdetect")
+        || summary_lower.contains("win_files_operation")
+        || summary_lower.contains("ripemd160_constants")
     {
         return true;
     }

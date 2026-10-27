@@ -678,7 +678,7 @@ mod tests {
                     sys.refresh_memory();
                     let cpu = sys.global_cpu_info().cpu_usage();
                     let mem = sys.used_memory();
-                    assert!(cpu >= 0.0 && cpu <= 100.0);
+                    assert!((0.0..=100.0).contains(&cpu));
                     assert!(mem > 0);
                 }
             });
@@ -703,7 +703,7 @@ mod tests {
 
         let final_cpu = f32::from_bits(controller.last_cpu_usage.load(Ordering::Relaxed));
         let final_mem = f32::from_bits(controller.last_mem_usage.load(Ordering::Relaxed));
-        assert!(final_cpu >= 0.0 && final_cpu <= 100.0);
-        assert!(final_mem >= 0.0 && final_mem <= 100.0);
+        assert!((0.0..=100.0).contains(&final_cpu));
+        assert!((0.0..=100.0).contains(&final_mem));
     }
 }

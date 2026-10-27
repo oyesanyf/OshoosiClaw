@@ -13,9 +13,8 @@ use std::thread;
 
 use chrono::Utc;
 use osoosi_core::dlp_lineage::{
-    compare_ssdeep, compute_ssdeep, ArtifactKey,
-    ClassificationLattice, DlpBaggage, DlpLineageTracker, EgressDecision,
-    FileWriteTaintDecision, PolicyLattice, ProcessInstanceKey,
+    compare_ssdeep, compute_ssdeep, ArtifactKey, ClassificationLattice, DlpBaggage,
+    DlpLineageTracker, EgressDecision, FileWriteTaintDecision, PolicyLattice, ProcessInstanceKey,
 };
 
 // ============================================================================
@@ -182,10 +181,7 @@ fn test_adversarial_multi_file_merge_5_plus_sources_and_links() {
         5,
         "6 tainted files must produce exactly 5 SpanLinks"
     );
-    assert_eq!(
-        merged_b.classification,
-        ClassificationLattice::CrownJewel
-    );
+    assert_eq!(merged_b.classification, ClassificationLattice::CrownJewel);
     assert_eq!(merged_b.policy, PolicyLattice::Quarantine);
 
     // --- Scenario C: Permutation Invariance (Order Reversal) ---
@@ -205,10 +201,7 @@ fn test_adversarial_multi_file_merge_5_plus_sources_and_links() {
         false,
     );
 
-    assert_eq!(
-        merged_c.classification,
-        ClassificationLattice::CrownJewel
-    );
+    assert_eq!(merged_c.classification, ClassificationLattice::CrownJewel);
     assert_eq!(merged_c.policy, PolicyLattice::Quarantine);
     assert_eq!(merged_c.linked_span_contexts.len(), 5);
     // In reversed order, k6 is parent, so k6 must NOT be in secondary links
@@ -269,17 +262,9 @@ fn test_adversarial_lattice_dominance_edge_case_matrix() {
 
             // Consistency with order
             if a <= b {
-                assert_eq!(
-                    a.join(b),
-                    b,
-                    "If a <= b, join(a, b) must equal b"
-                );
+                assert_eq!(a.join(b), b, "If a <= b, join(a, b) must equal b");
             } else {
-                assert_eq!(
-                    a.join(b),
-                    a,
-                    "If a > b, join(a, b) must equal a"
-                );
+                assert_eq!(a.join(b), a, "If a > b, join(a, b) must equal a");
             }
 
             for &c in &all_classifications {
@@ -400,10 +385,7 @@ fn test_adversarial_lattice_dominance_edge_case_matrix() {
         ClassificationLattice::Public
     );
 
-    assert_eq!(
-        PolicyLattice::from_str_relaxed(""),
-        PolicyLattice::Monitor
-    );
+    assert_eq!(PolicyLattice::from_str_relaxed(""), PolicyLattice::Monitor);
     assert_eq!(
         PolicyLattice::from_str_relaxed("QUARANTINE_ON_CROWN_JEWEL"),
         PolicyLattice::Quarantine
@@ -420,7 +402,10 @@ fn test_adversarial_lattice_dominance_edge_case_matrix() {
     // 5. Corrupted W3C Header Parsing
     let corrupted_header = ",,,dlp.classification=CONFIDENTIAL,,dlp.policy=BLOCK,dlp.tainted=TRUE,unknown.key=val=extra,,,";
     let parsed_bag = DlpBaggage::from_w3c_header(corrupted_header);
-    assert_eq!(parsed_bag.classification, ClassificationLattice::Confidential);
+    assert_eq!(
+        parsed_bag.classification,
+        ClassificationLattice::Confidential
+    );
     assert_eq!(parsed_bag.policy, PolicyLattice::Block);
     assert!(parsed_bag.tainted);
 }
@@ -524,15 +509,30 @@ fn test_adversarial_pid_reuse_temporal_collision_immunity() {
     // Verify Gen 1 is STILL quarantined, Gen 3 is STILL blocked, Gen 0/2/4 are STILL allowed!
     assert!(matches!(
         tracker.check_process_egress_blocking(&g1_key),
-        EgressDecision::Blocked { policy: PolicyLattice::Quarantine, .. }
+        EgressDecision::Blocked {
+            policy: PolicyLattice::Quarantine,
+            ..
+        }
     ));
     assert!(matches!(
         tracker.check_process_egress_blocking(&g3_key),
-        EgressDecision::Blocked { policy: PolicyLattice::Block, .. }
+        EgressDecision::Blocked {
+            policy: PolicyLattice::Block,
+            ..
+        }
     ));
-    assert_eq!(tracker.check_process_egress_blocking(&g0_key), EgressDecision::Allowed);
-    assert_eq!(tracker.check_process_egress_blocking(&g2_key), EgressDecision::Allowed);
-    assert_eq!(tracker.check_process_egress_blocking(&g4_key), EgressDecision::Allowed);
+    assert_eq!(
+        tracker.check_process_egress_blocking(&g0_key),
+        EgressDecision::Allowed
+    );
+    assert_eq!(
+        tracker.check_process_egress_blocking(&g2_key),
+        EgressDecision::Allowed
+    );
+    assert_eq!(
+        tracker.check_process_egress_blocking(&g4_key),
+        EgressDecision::Allowed
+    );
 
     // --- High-Churn Stress Test: 500 Recycled PIDs ---
     let churn_pid = 4444u32;
@@ -543,7 +543,10 @@ fn test_adversarial_pid_reuse_temporal_collision_immunity() {
             tracker.on_file_read(churn_key, "worker.exe", "C:\\worker.exe", secret_key);
             assert!(matches!(
                 tracker.check_process_egress_blocking(&churn_key),
-                EgressDecision::Blocked { policy: PolicyLattice::Quarantine, .. }
+                EgressDecision::Blocked {
+                    policy: PolicyLattice::Quarantine,
+                    ..
+                }
             ));
         } else {
             // All other epochs are clean
@@ -600,12 +603,7 @@ fn test_adversarial_concurrency_and_dashmap_lock_hygiene() {
                 );
 
                 // Read artifact
-                t_tracker.on_file_read(
-                    proc_key,
-                    "worker.exe",
-                    "C:\\worker.exe",
-                    art_key,
-                );
+                t_tracker.on_file_read(proc_key, "worker.exe", "C:\\worker.exe", art_key);
 
                 // Verify egress blocked
                 let egress = t_tracker.check_process_egress_blocking(&proc_key);
@@ -642,7 +640,8 @@ fn test_adversarial_concurrency_and_dashmap_lock_hygiene() {
 
     // Wait for all threads to finish without deadlock
     for h in handles {
-        h.join().expect("Thread panicked during concurrency stress test");
+        h.join()
+            .expect("Thread panicked during concurrency stress test");
     }
 
     assert!(tracker.active_artifacts.len() > 100);
@@ -661,7 +660,8 @@ fn test_adversarial_ssdeep_edge_cases() {
     assert_eq!(compare_ssdeep(&empty_ssdeep, &empty_ssdeep), 0);
 
     // 2. Identical long inputs
-    let text_a = b"The quick brown fox jumps over the lazy dog repeatedly to generate block boundaries";
+    let text_a =
+        b"The quick brown fox jumps over the lazy dog repeatedly to generate block boundaries";
     let h_a = compute_ssdeep(text_a);
     assert_eq!(compare_ssdeep(&h_a, &h_a), 100);
 
@@ -670,7 +670,11 @@ fn test_adversarial_ssdeep_edge_cases() {
     text_b.extend_from_slice(b" with slight appendix appended");
     let h_b = compute_ssdeep(&text_b);
     let sim_ab = compare_ssdeep(&h_a, &h_b);
-    assert!(sim_ab >= 30, "Minor change should yield high similarity, got {}", sim_ab);
+    assert!(
+        sim_ab >= 30,
+        "Minor change should yield high similarity, got {}",
+        sim_ab
+    );
 
     // 4. Completely unrelated inputs
     let text_c = b"\x00\xff\xfe\xfd\xfc\xfb\xfa\x01\x02\x03\x04\x05\x06\x07";

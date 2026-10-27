@@ -16,8 +16,7 @@ use std::fs;
 use std::time::Duration;
 
 use osoosi_core::dlp_lineage::{
-    global_lineage_tracker, ArtifactKey, ClassificationLattice,
-    PolicyLattice, ProcessInstanceKey,
+    global_lineage_tracker, ArtifactKey, ClassificationLattice, PolicyLattice, ProcessInstanceKey,
 };
 use osoosi_dashboard::routes::har_dlp::{
     self, ensure_har_dlp_pipeline_started, extract_requests_from_har, HarSourceKind,
@@ -44,7 +43,8 @@ async fn test_adversarial_har_multipart_upload_tainted_file_interception() {
     let temp_dir = std::env::temp_dir();
     let fname = format!("adversarial_crown_jewel_{}.pdf", uuid::Uuid::new_v4());
     let file_path = temp_dir.join(&fname);
-    let secret_payload = b"%PDF-1.7\n1 0 obj\n<< /Title (TOP_SECRET_MILITARY_DEFENSE_PLANS) >>\nendobj\ntrailer\n";
+    let secret_payload =
+        b"%PDF-1.7\n1 0 obj\n<< /Title (TOP_SECRET_MILITARY_DEFENSE_PLANS) >>\nendobj\ntrailer\n";
 
     fs::write(&file_path, secret_payload).expect("Write temporary crown jewel file");
 
@@ -99,11 +99,17 @@ async fn test_adversarial_har_multipart_upload_tainted_file_interception() {
     let reqs = extract_requests_from_har(&doc, "adversarial_test", HarSourceKind::BrowserExtension);
     assert_eq!(reqs.len(), 1, "Must extract 1 inspectable request");
 
-    println!("Pipeline status before enqueue: {}", har_dlp::pipeline_status());
+    println!(
+        "Pipeline status before enqueue: {}",
+        har_dlp::pipeline_status()
+    );
     let (tx, rx) = tokio::sync::oneshot::channel();
     let accepted = har_dlp::enqueue_requests(reqs, Some(tx));
     assert_eq!(accepted, 1, "Request must be accepted by the queue");
-    println!("Pipeline status after enqueue: {}", har_dlp::pipeline_status());
+    println!(
+        "Pipeline status after enqueue: {}",
+        har_dlp::pipeline_status()
+    );
 
     // Await the inline inspection verdict from the worker
     let events = tokio::time::timeout(Duration::from_millis(20000), rx)
@@ -284,14 +290,21 @@ async fn test_adversarial_multipart_header_evasion_formats() {
         }
     });
 
-    let reqs1 = extract_requests_from_har(&doc_single_quote, "evasion1", HarSourceKind::BrowserExtension);
+    let reqs1 = extract_requests_from_har(
+        &doc_single_quote,
+        "evasion1",
+        HarSourceKind::BrowserExtension,
+    );
     let (tx1, rx1) = tokio::sync::oneshot::channel();
     har_dlp::enqueue_requests(reqs1, Some(tx1));
     let evs1 = tokio::time::timeout(Duration::from_millis(30000), rx1)
         .await
         .unwrap()
         .unwrap();
-    assert!(!evs1[0].allowed, "Single-quote filename evasion must be caught");
+    assert!(
+        !evs1[0].allowed,
+        "Single-quote filename evasion must be caught"
+    );
 
     // Evasion Variant 2: Trailing semicolon parameter `filename="..."; size=1024`
     let doc_semicolon = json!({
@@ -318,14 +331,18 @@ async fn test_adversarial_multipart_header_evasion_formats() {
         }
     });
 
-    let reqs2 = extract_requests_from_har(&doc_semicolon, "evasion2", HarSourceKind::BrowserExtension);
+    let reqs2 =
+        extract_requests_from_har(&doc_semicolon, "evasion2", HarSourceKind::BrowserExtension);
     let (tx2, rx2) = tokio::sync::oneshot::channel();
     har_dlp::enqueue_requests(reqs2, Some(tx2));
     let evs2 = tokio::time::timeout(Duration::from_millis(30000), rx2)
         .await
         .unwrap()
         .unwrap();
-    assert!(!evs2[0].allowed, "Semicolon parameter evasion must be caught");
+    assert!(
+        !evs2[0].allowed,
+        "Semicolon parameter evasion must be caught"
+    );
 
     let _ = fs::remove_file(file_path);
 }
