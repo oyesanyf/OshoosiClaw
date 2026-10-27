@@ -1,165 +1,158 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 460" width="880" height="460">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 490" width="920" height="490">
   <defs>
     <linearGradient id="bg-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#1e293b"/>
-      <stop offset="100%" stop-color="#0f172a"/>
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#090d16"/>
     </linearGradient>
-    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.55"/>
-    </filter>
+    <linearGradient id="title-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="50%" stop-color="#0f172a"/>
+      <stop offset="100%" stop-color="#1e293b"/>
+    </linearGradient>
     <style>
-      @keyframes reveal-1 { 0%, 5% { opacity: 0; transform: translateY(4px); } 8%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-2 { 0%, 15% { opacity: 0; transform: translateY(4px); } 18%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-3 { 0%, 26% { opacity: 0; transform: translateY(4px); } 29%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-4 { 0%, 38% { opacity: 0; transform: translateY(4px); } 42%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-5 { 0%, 50% { opacity: 0; transform: translateY(4px); } 54%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-6 { 0%, 63% { opacity: 0; transform: translateY(4px); } 67%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-7 { 0%, 76% { opacity: 0; transform: translateY(4px); } 80%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes reveal-8 { 0%, 88% { opacity: 0; transform: translateY(4px); } 92%, 100% { opacity: 1; transform: translateY(0); } }
-      @keyframes cursor-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
-
-      .term-text {
-        font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-        font-size: 13.5px;
-        line-height: 1.6;
-        fill: #e2e8f0;
+      @keyframes cursor-blink {
+        0%, 49% { opacity: 1; }
+        50%, 100% { opacity: 0.15; }
       }
-      .c-prompt { fill: #38bdf8; font-weight: bold; }
-      .c-cmd { fill: #f8fafc; font-weight: 600; }
-      .c-flag { fill: #a5b4fc; }
-      .c-time { fill: #64748b; }
-      .c-boot { fill: #818cf8; font-weight: bold; }
-      .c-probe { fill: #38bdf8; font-weight: bold; }
-      .c-alert { fill: #ef4444; font-weight: bold; }
-      .c-isolate { fill: #f59e0b; font-weight: bold; }
-      .c-synth { fill: #c084fc; font-weight: bold; }
-      .c-gate-ok { fill: #10b981; font-weight: bold; }
-      .c-bft { fill: #06b6d4; font-weight: bold; }
-      .c-data { fill: #94a3b8; }
-      .c-val { fill: #34d399; }
-      .c-warn { fill: #f87171; }
-
-      .line-1 { animation: reveal-1 12s infinite; }
-      .line-2 { animation: reveal-2 12s infinite; }
-      .line-3 { animation: reveal-3 12s infinite; }
-      .line-4 { animation: reveal-4 12s infinite; }
-      .line-5 { animation: reveal-5 12s infinite; }
-      .line-6 { animation: reveal-6 12s infinite; }
-      .line-7 { animation: reveal-7 12s infinite; }
-      .line-8 { animation: reveal-8 12s infinite; }
-      .cursor { animation: cursor-blink 1s infinite; fill: #38bdf8; }
+      @keyframes scanline-sweep {
+        0% { opacity: 0.92; }
+        50% { opacity: 1.0; }
+        100% { opacity: 0.92; }
+      }
+      .term-line {
+        font-family: Consolas, "SFMono-Regular", "JetBrains Mono", Menlo, "Liberation Mono", monospace;
+        font-size: 13px;
+        opacity: 1;
+        animation: scanline-sweep 4s ease-in-out infinite;
+      }
+      .cursor-box {
+        fill: #38bdf8;
+        animation: cursor-blink 1s steps(2, start) infinite;
+      }
     </style>
   </defs>
 
-  <!-- Window Container with Filter Shadow -->
-  <rect x="20" y="20" width="840" height="420" rx="12" fill="url(#bg-grad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
+  <!-- Outer Backdrop -->
+  <rect x="0" y="0" width="920" height="490" rx="14" fill="#020617"/>
 
-  <!-- Titlebar -->
-  <path d="M 20 32 A 12 12 0 0 1 32 20 L 848 20 A 12 12 0 0 1 860 32 L 860 58 L 20 58 Z" fill="#1e293b"/>
-  <line x1="20" y1="58" x2="860" y2="58" stroke="#334155" stroke-width="1"/>
+  <!-- Terminal Window Frame -->
+  <rect x="14" y="14" width="892" height="462" rx="12" fill="url(#bg-grad)" stroke="#334155" stroke-width="1.5"/>
 
-  <!-- Window Controls -->
-  <circle cx="44" cy="39" r="6" fill="#ef4444"/>
-  <circle cx="64" cy="39" r="6" fill="#eab308"/>
-  <circle cx="84" cy="39" r="6" fill="#22c55e"/>
+  <!-- Window Titlebar -->
+  <path d="M 14 26 A 12 12 0 0 1 26 14 L 894 14 A 12 12 0 0 1 906 26 L 906 52 L 14 52 Z" fill="url(#title-grad)"/>
+  <line x1="14" y1="52" x2="906" y2="52" stroke="#334155" stroke-width="1"/>
 
-  <!-- Title Text -->
-  <text x="440" y="43" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#94a3b8">
-    oshoosi daemon — NASA F' OSAL / eBPF CO-RE / EDR-Bench
+  <!-- macOS / Terminal Traffic Lights -->
+  <circle cx="38" cy="33" r="6" fill="#ef4444"/>
+  <circle cx="58" cy="33" r="6" fill="#eab308"/>
+  <circle cx="78" cy="33" r="6" fill="#22c55e"/>
+
+  <!-- Window Title -->
+  <text x="460" y="38" text-anchor="middle" font-family="Segoe UI, -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif" font-size="12.5" font-weight="600" fill="#cbd5e1">
+    oshoosi daemon — NASA F' Flight OSAL • eBPF CO-RE • EDR-Bench • TPM 2.0 BFT Mesh
   </text>
 
-  <!-- Terminal Content Area -->
-  <!-- Line 1: Command execution -->
-  <g class="line-1" transform="translate(45, 92)">
-    <text class="term-text">
-      <tspan class="c-prompt">$ </tspan>
-      <tspan class="c-cmd">osoosi daemon </tspan>
-      <tspan class="c-flag">--enforce </tspan>
-      <tspan class="c-flag">--fprime-qos </tspan>
-      <tspan class="c-flag">--tpm2-audit</tspan>
-    </text>
-  </g>
+  <!-- Status Pill in Titlebar Right -->
+  <rect x="782" y="23" width="108" height="20" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="1"/>
+  <circle cx="795" cy="33" r="3.5" fill="#34d399"/>
+  <text x="805" y="37" font-family="Consolas, monospace" font-size="10.5" font-weight="bold" fill="#a7f3d0">ENFORCE: ON</text>
 
-  <!-- Line 2: NASA F' OSAL -->
-  <g class="line-2" transform="translate(45, 128)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:01] </tspan>
-      <tspan class="c-boot">[BOOT] </tspan>
-      <tspan class="c-boot">[NASA F' OSAL] </tspan>
-      <tspan class="c-data">Flight telemetry active. Static arena pool initialized (16MB).</tspan>
-    </text>
-  </g>
+  <!-- Line 1: CLI Invocation -->
+  <text x="36" y="84" class="term-line">
+    <tspan fill="#38bdf8" font-weight="bold">$ </tspan>
+    <tspan fill="#f8fafc" font-weight="bold">osoosi daemon </tspan>
+    <tspan fill="#a5b4fc">--mode strict-lockdown </tspan>
+    <tspan fill="#a5b4fc">--fprime-qos </tspan>
+    <tspan fill="#a5b4fc">--edr-bench-verify </tspan>
+    <tspan fill="#a5b4fc">--tpm2-pcr16</tspan>
+  </text>
 
-  <!-- Line 3: eBPF CO-RE Probes -->
-  <g class="line-3" transform="translate(45, 164)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:02] </tspan>
-      <tspan class="c-probe">[PROBE] </tspan>
-      <tspan class="c-probe">[eBPF CO-RE] </tspan>
-      <tspan class="c-data">14 tracepoints attached (Ring-0). Zero-LBR hardware watch active.</tspan>
-    </text>
-  </g>
+  <!-- Line 2: NASA F' Static Arena & Dual-Priority QoS Boot -->
+  <text x="36" y="118" class="term-line">
+    <tspan fill="#64748b">[00:00.002] </tspan>
+    <tspan fill="#818cf8" font-weight="bold">[Fw::BufferManager] </tspan>
+    <tspan fill="#cbd5e1">StaticArenaPool sealed (20 MiB ceiling, 25% Tier-0 reserve, </tspan>
+    <tspan fill="#34d399" font-weight="bold">0 heap allocs</tspan>
+    <tspan fill="#cbd5e1">).</tspan>
+  </text>
 
-  <!-- Line 4: Alert Container Escape -->
-  <g class="line-4" transform="translate(45, 200)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:04] </tspan>
-      <tspan class="c-alert">[ALERT] </tspan>
-      <tspan class="c-alert">[L1 Ring-0 Breakout] </tspan>
-      <tspan class="c-warn">Unprivileged bpf() container escape detected (PID 14208).</tspan>
-    </text>
-  </g>
+  <!-- Line 3: eBPF CO-RE & Dual-Priority QoS Channel -->
+  <text x="36" y="152" class="term-line">
+    <tspan fill="#64748b">[00:00.009] </tspan>
+    <tspan fill="#38bdf8" font-weight="bold">[eBPF CO-RE | Tier-0 CriticalSecurityLane] </tspan>
+    <tspan fill="#cbd5e1">14 Ring-0 probes + PMU hardware counters active.</tspan>
+  </text>
 
-  <!-- Line 5: Isolation -->
-  <g class="line-5" transform="translate(45, 236)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:04] </tspan>
-      <tspan class="c-isolate">[ISOLATE] </tspan>
-      <tspan class="c-isolate">[WFP/Landlock] </tspan>
-      <tspan class="c-data">Threat isolated in </tspan>
-      <tspan class="c-val">420ns</tspan>
-      <tspan class="c-data">. Network ring fenced.</tspan>
-    </text>
-  </g>
+  <!-- Highlight Box around Container Breakout Detection -->
+  <rect x="28" y="168" width="864" height="34" rx="6" fill="#450a0a" fill-opacity="0.45" stroke="#ef4444" stroke-width="1" stroke-opacity="0.6"/>
+  <!-- Line 4: Container Escape Alert -->
+  <text x="36" y="190" class="term-line">
+    <tspan fill="#fca5a5">[00:01.412] </tspan>
+    <tspan fill="#ef4444" font-weight="bold">[ALERT: CVE-2026-Linux-eBPF-Breakout] </tspan>
+    <tspan fill="#fecaca">Unprivileged sys_bpf(BPF_PROG_LOAD) in </tspan>
+    <tspan fill="#fde047" font-weight="bold">PID 48192 </tspan>
+    <tspan fill="#fca5a5">(Recoil: 0.942)</tspan>
+  </text>
 
-  <!-- Line 6: Synthesis -->
-  <g class="line-6" transform="translate(45, 272)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:05] </tspan>
-      <tspan class="c-synth">[SYNTHESIS] </tspan>
-      <tspan class="c-synth">[EDR-Bench] </tspan>
-      <tspan class="c-data">Candidate YARA-X rule generated and verified in </tspan>
-      <tspan class="c-val">2 attempts</tspan>
-      <tspan class="c-data">.</tspan>
-    </text>
-  </g>
+  <!-- Line 5: REA Magika Disassembly & Panic-Isolated Inspection -->
+  <text x="36" y="228" class="term-line">
+    <tspan fill="#64748b">[00:01.413] </tspan>
+    <tspan fill="#c084fc" font-weight="bold">[Fw::Comp::ReaMagika] </tspan>
+    <tspan fill="#cbd5e1">Artifact: </tspan>
+    <tspan fill="#f8fafc">ebpf_container_escape.elf </tspan>
+    <tspan fill="#94a3b8">(application/x-executable-elf, catch_unwind: OK)</tspan>
+  </text>
 
-  <!-- Line 7: Gates 1 & 2 -->
-  <g class="line-7" transform="translate(45, 308)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:05] </tspan>
-      <tspan class="c-gate-ok">[GATE-1: FAIL_TO_PASS = OK] </tspan>
-      <tspan class="c-gate-ok">[GATE-2: PASS_TO_PASS = OK (0 false pos / 10k binaries)]</tspan>
-    </text>
-  </g>
+  <!-- Line 6: EDR-Bench Gate 1 (FAIL_TO_PASS) -->
+  <text x="36" y="262" class="term-line">
+    <tspan fill="#64748b">[00:01.424] </tspan>
+    <tspan fill="#10b981" font-weight="bold">[EDR-Bench GATE 1: FAIL_TO_PASS = PASS] </tspan>
+    <tspan fill="#cbd5e1">YARA-X rule caught dropper in </tspan>
+    <tspan fill="#34d399" font-weight="bold">142 µs </tspan>
+    <tspan fill="#94a3b8">[tag: container_escape]</tspan>
+  </text>
 
-  <!-- Line 8: BFT Mesh + TPM 2.0 PCR 16 -->
-  <g class="line-8" transform="translate(45, 344)">
-    <text class="term-text">
-      <tspan class="c-time">[00:00:06] </tspan>
-      <tspan class="c-bft">[BFT-MESH] </tspan>
-      <tspan class="c-bft">[TPM 2.0 PCR 16] </tspan>
-      <tspan class="c-data">Block signed (Ed25519) and gossiped to </tspan>
-      <tspan class="c-val">12 active peers</tspan>
-      <tspan class="c-data">.</tspan>
-    </text>
-  </g>
+  <!-- Line 7: EDR-Bench Gate 2 (PASS_TO_PASS) -->
+  <text x="36" y="296" class="term-line">
+    <tspan fill="#64748b">[00:01.426] </tspan>
+    <tspan fill="#10b981" font-weight="bold">[EDR-Bench GATE 2: PASS_TO_PASS = PASS] </tspan>
+    <tspan fill="#34d399" font-weight="bold">0 false positives </tspan>
+    <tspan fill="#cbd5e1">across golden benign corpus (usr_bin_signed/*).</tspan>
+  </text>
 
-  <!-- Blinking Cursor on next prompt line -->
-  <g transform="translate(45, 380)">
-    <text class="term-text">
-      <tspan class="c-prompt">$ </tspan>
-    </text>
-    <rect class="cursor" x="18" y="-12" width="8" height="15" rx="1"/>
-  </g>
+  <!-- Line 8: Transient Child PID Containment + OTel/OpenLineage DLP Check -->
+  <text x="36" y="330" class="term-line">
+    <tspan fill="#64748b">[00:01.427] </tspan>
+    <tspan fill="#f59e0b" font-weight="bold">[ISOLATE: WFP / Landlock] </tspan>
+    <tspan fill="#cbd5e1">Transient child </tspan>
+    <tspan fill="#fde047" font-weight="bold">PID 48192 terminated </tspan>
+    <tspan fill="#cbd5e1">&amp; egress blocked in </tspan>
+    <tspan fill="#34d399" font-weight="bold">420 ns</tspan>
+    <tspan fill="#cbd5e1">.</tspan>
+  </text>
+
+  <!-- Line 9: Hardware TPM 2.0 PCR 16 & BFT Mesh Broadcast -->
+  <rect x="28" y="346" width="864" height="34" rx="6" fill="#042f2e" fill-opacity="0.5" stroke="#14b8a6" stroke-width="1" stroke-opacity="0.6"/>
+  <text x="36" y="368" class="term-line">
+    <tspan fill="#5eead4">[00:01.429] </tspan>
+    <tspan fill="#2dd4bf" font-weight="bold">[TPM 2.0 PCR 16 + BFT MESH] </tspan>
+    <tspan fill="#ccfbf1">Signed receipt (Ed25519 + PCR16 </tspan>
+    <tspan fill="#fde047">8f3a..c91e</tspan>
+    <tspan fill="#ccfbf1">) promoted to </tspan>
+    <tspan fill="#34d399" font-weight="bold">12 BFT peers</tspan>
+    <tspan fill="#ccfbf1">.</tspan>
+  </text>
+
+  <!-- Bottom Telemetry Summary Footer Bar -->
+  <rect x="28" y="394" width="864" height="32" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <text x="42" y="415" font-family="Consolas, monospace" font-size="12" fill="#94a3b8">
+    <tspan fill="#38bdf8" font-weight="bold">F' Health:</tspan> 100% (Ping 0.4ms)  |  <tspan fill="#a855f7" font-weight="bold">DLP Lineage p99:</tspan> 0.218ms  |  <tspan fill="#10b981" font-weight="bold">EDR-Bench:</tspan> 100% Pass (0 FP)  |  <tspan fill="#f59e0b" font-weight="bold">Cloud Deps:</tspan> 0
+  </text>
+
+  <!-- Active Prompt Line -->
+  <text x="36" y="454" class="term-line">
+    <tspan fill="#38bdf8" font-weight="bold">$ </tspan>
+    <tspan fill="#64748b">_ awaiting next kernel event (QoS Tier-0 priority active)</tspan>
+  </text>
+  <rect class="cursor-box" x="52" y="441" width="8" height="15" rx="1"/>
 </svg>
