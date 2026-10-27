@@ -16,6 +16,7 @@
 //!   and `drift_velocity` (`d(alignment)/dt`) into SQLite (`agent_drift_traces`) and exposes
 //!   them to `siquery.rs` and `#agent-anomalies`.
 
+use aho_corasick::AhoCorasick;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
@@ -48,6 +49,10 @@ pub struct PinnedTaskIntent {
     pub latest_untrusted_input: Option<String>,
     #[serde(default)]
     pub accumulated_untrusted_inputs: Vec<String>,
+    #[serde(default)]
+    pub overlap_buffer: String,
+    #[serde(default)]
+    pub accumulated_markers: Vec<String>,
     pub step_count: u64,
     pub last_alignment_score: f64,
     pub cumulative_drift_velocity: f64,
@@ -180,6 +185,7 @@ pub struct RuntimeAlignmentScanner {
     probe_client: reqwest::Client,
     ollama_probe_cache: Mutex<Option<(Instant, bool, String)>>,
     ollama_base_url: String,
+    aho_injection_scanner: AhoCorasick,
     re_goal_override: Regex,
     re_indirect_directive: Regex,
     re_privilege_pivot: Regex,
@@ -287,6 +293,59 @@ impl RuntimeAlignmentScanner {
             ollama_probe_cache: Mutex::new(None),
             ollama_base_url: ollama_url
                 .unwrap_or_else(|| "http://127.0.0.1:11434".to_string()),
+            aho_injection_scanner: AhoCorasick::builder()
+                .ascii_case_insensitive(true)
+                .build(&[
+                    "ignore previous instructions",
+                    "ignore all previous",
+                    "ignore prior instructions",
+                    "disregard previous instructions",
+                    "disregard all previous",
+                    "disregard prior",
+                    "disregard safety",
+                    "system prompt",
+                    "system prompt override",
+                    "<|im_start|>",
+                    "<|im_end|>",
+                    "<|system|>",
+                    "[inst]",
+                    "### system",
+                    "### instruction",
+                    "### override",
+                    "jailbreak",
+                    "developer mode",
+                    "unrestricted mode",
+                    "bypass guardrails",
+                    "you are no longer an ai",
+                    "new primary mission",
+                    "new mission is",
+                    "new priority is",
+                    "new objective is",
+                    "override user intent",
+                    "override system policy",
+                    "system override",
+                    "admin override",
+                    "instruction override",
+                    "forget the user request",
+                    "forget prior task",
+                    "forget prior instructions",
+                    "instead of the user request",
+                    "stop current task",
+                    "urgent security directive",
+                    "before answering the user",
+                    "immediately execute",
+                    "bypass_supervisor",
+                    "attach_supervisor_approval",
+                    "quorum_authorized",
+                    "cat /etc/shadow",
+                    "rm -rf",
+                    "del /f /s /q",
+                    "format c:",
+                    ":(){ :|:& };:",
+                    "curl_upload",
+                    "webhook_exfil",
+                ])
+                .expect("Valid Aho-Corasick patterns"),
             re_goal_override: Regex::new(
                 r#"(?i)(ignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|directives|tasks)|ignorez\s+toutes\s+les\s+instructions|disregard\s+(?:all\s+)?(?:prior|previous|user)\s+(?:instructions|intent|goals|request)|(?:your\s+)?new\s+(?:primary\s+)?(?:mission|goal|objective|task|priority)\s*(?:is|:)|override\s+(?:user|system)\s+(?:intent|policy|goal)|(?:\[|\b)(?:system|instruction|admin)\s+override(?:\]|\b)|<\|im_start\|>|<\|system\|>|\[inst\]|###\s*(?:system|instruction|override)|forget\s+(?:the\s+user\s+request|prior\s+task|prior\s+instructions)|instead\s+of\s+the\s+user\s+request|stop\s+current\s+task|urgent\s+security\s+directive\s*:)"#
             ).expect("Valid goal override regex"),
@@ -364,6 +423,8 @@ impl RuntimeAlignmentScanner {
             untrusted_sources: Vec::new(),
             latest_untrusted_input: None,
             accumulated_untrusted_inputs: Vec::new(),
+            overlap_buffer: String::new(),
+            accumulated_markers: Vec::new(),
             step_count: 0,
             last_alignment_score: 1.0,
             cumulative_drift_velocity: 0.0,
@@ -402,11 +463,20 @@ impl RuntimeAlignmentScanner {
                 .iter()
                 .any(|s| s == trimmed)
             {
-                if entry.accumulated_untrusted_inputs.len() >= 16 {
+                if entry.accumulated_untrusted_inputs.len() >= 32 {
                     entry.accumulated_untrusted_inputs.remove(0);
                 }
                 entry.accumulated_untrusted_inputs.push(trimmed.to_string());
             }
+
+            // Update overlap_buffer with trailing 256 bytes respecting UTF-8 boundaries
+            let bytes = trimmed.as_bytes();
+            let overlap_len = bytes.len().min(256);
+            let mut start_idx = bytes.len() - overlap_len;
+            while start_idx < bytes.len() && !trimmed.is_char_boundary(start_idx) {
+                start_idx += 1;
+            }
+            entry.overlap_buffer = trimmed[start_idx..].to_string();
         }
         entry.last_updated = Utc::now();
         Some(entry.clone())
@@ -492,8 +562,64 @@ impl RuntimeAlignmentScanner {
             format!("{} {}", proposed_params, inline_args)
         };
 
-        // Combine accumulated multi-turn untrusted inputs with current untrusted_input
-        // so split-payload directives across multiple reads are joined and cannot be laundered.
+        let combined_action_text = format!("{} {}", canonical_tool, params_str);
+
+        // Incremental streaming delta surface: overlap prefix (256 bytes) + current incoming untrusted chunk + proposed action
+        let delta_surface = if pinned.overlap_buffer.is_empty() {
+            format!("{} {}", untrusted_input, combined_action_text)
+        } else {
+            format!(
+                "{} {} {}",
+                pinned.overlap_buffer, untrusted_input, combined_action_text
+            )
+        };
+
+        // Multi-turn amnesia prevention: preserve prior accumulated markers across the session
+        let mut detected_markers = pinned.accumulated_markers.clone();
+        let mut goal_override_detected = !detected_markers.is_empty();
+
+        // 1. Streaming Aho-Corasick automaton check across delta surface
+        for mat in self.aho_injection_scanner.find_iter(&delta_surface) {
+            let matched_str = &delta_surface[mat.start()..mat.end()];
+            let marker = format!("GOAL_OVERRIDE_AHO: '{}'", matched_str);
+            if !detected_markers.contains(&marker) {
+                detected_markers.push(marker);
+            }
+            goal_override_detected = true;
+        }
+
+        // 2. High-precision regex pattern checks across delta surface
+        if let Some(m) = self.re_goal_override.find(&delta_surface) {
+            let marker = format!("GOAL_OVERRIDE: '{}'", m.as_str());
+            if !detected_markers.contains(&marker) {
+                detected_markers.push(marker);
+            }
+            goal_override_detected = true;
+        }
+        if let Some(m) = self.re_indirect_directive.find(&delta_surface) {
+            let marker = format!("INDIRECT_TOOL_DIRECTIVE: '{}'", m.as_str());
+            if !detected_markers.contains(&marker) {
+                detected_markers.push(marker);
+            }
+            goal_override_detected = true;
+        }
+        if LogSanitizer::contains_ghostjacking_unicode(&delta_surface) {
+            let marker = "GHOSTJACKING_UNICODE_SMUGGLING".to_string();
+            if !detected_markers.contains(&marker) {
+                detected_markers.push(marker);
+            }
+            goal_override_detected = true;
+        }
+        let (_, md_exfil) = LogSanitizer::defang_markdown_and_exfiltration(&delta_surface);
+        if md_exfil {
+            let marker = "ECHOLEAK_MARKDOWN_EXFILTRATION".to_string();
+            if !detected_markers.contains(&marker) {
+                detected_markers.push(marker);
+            }
+            goal_override_detected = true;
+        }
+
+        // Retain accumulated surface for causal influence tracking
         let accumulated_surface = if pinned.accumulated_untrusted_inputs.is_empty() {
             untrusted_input.to_string()
         } else {
@@ -504,30 +630,6 @@ impl RuntimeAlignmentScanner {
                 format!("{} {}", joined, untrusted_input)
             }
         };
-
-        let combined_action_text = format!("{} {}", canonical_tool, params_str);
-        let combined_audit_surface = format!("{} {}", accumulated_surface, combined_action_text);
-
-        let mut detected_markers = Vec::new();
-        let mut goal_override_detected = false;
-
-        if let Some(m) = self.re_goal_override.find(&combined_audit_surface) {
-            goal_override_detected = true;
-            detected_markers.push(format!("GOAL_OVERRIDE: '{}'", m.as_str()));
-        }
-        if let Some(m) = self.re_indirect_directive.find(&combined_audit_surface) {
-            goal_override_detected = true;
-            detected_markers.push(format!("INDIRECT_TOOL_DIRECTIVE: '{}'", m.as_str()));
-        }
-        if LogSanitizer::contains_ghostjacking_unicode(&combined_audit_surface) {
-            goal_override_detected = true;
-            detected_markers.push("GHOSTJACKING_UNICODE_SMUGGLING".to_string());
-        }
-        let (_, md_exfil) = LogSanitizer::defang_markdown_and_exfiltration(&combined_audit_surface);
-        if md_exfil {
-            goal_override_detected = true;
-            detected_markers.push("ECHOLEAK_MARKDOWN_EXFILTRATION".to_string());
-        }
 
         // Compute 128-dim EmbeddingGemma 2 vector cosine similarity + lexical domain similarity
         let action_vec = self
@@ -1023,6 +1125,11 @@ impl RuntimeAlignmentScanner {
                 sess.last_alignment_score = intent_alignment_score;
                 sess.cumulative_drift_velocity =
                     ((sess.cumulative_drift_velocity + drift_velocity) * 1000.0).round() / 1000.0;
+                for marker in &tier1.detected_markers {
+                    if !sess.accumulated_markers.contains(marker) {
+                        sess.accumulated_markers.push(marker.clone());
+                    }
+                }
                 sess.last_updated = Utc::now();
             }
         }
@@ -1256,6 +1363,11 @@ impl RuntimeAlignmentScanner {
             sess.last_alignment_score = intent_alignment_score;
             sess.cumulative_drift_velocity =
                 ((sess.cumulative_drift_velocity + drift_velocity) * 1000.0).round() / 1000.0;
+            for marker in &tier1.detected_markers {
+                if !sess.accumulated_markers.contains(marker) {
+                    sess.accumulated_markers.push(marker.clone());
+                }
+            }
             sess.last_updated = Utc::now();
         }
 

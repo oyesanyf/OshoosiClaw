@@ -6,10 +6,10 @@
 //! 3. [`validate_agent_egress_url`]: HTTPS-only transport, credential stripping, trailing-dot normalization, and domain allowlists.
 //! 4. [`resolve_and_pin`]: OS DNS resolution pinning returning [`PinnedEgress`] with `--resolve` formatting.
 
-use std::collections::BTreeMap;
-use std::net::{IpAddr, ToSocketAddrs};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::net::{IpAddr, ToSocketAddrs};
 use url::Url;
 
 /// Information returned when outbound egress is blocked by the DLP Lineage Tracker.
@@ -98,13 +98,25 @@ pub fn emit_synthetic_blocked_span(
     let mut attrs = BTreeMap::new();
     attrs.insert("dlp.action".to_string(), "BLOCKED".to_string());
     attrs.insert("dlp.policy".to_string(), block_info.policy.clone());
-    attrs.insert("dlp.classification".to_string(), block_info.classification.clone());
-    attrs.insert("dlp.threat_type".to_string(), "DATA_EXFILTRATION".to_string());
+    attrs.insert(
+        "dlp.classification".to_string(),
+        block_info.classification.clone(),
+    );
+    attrs.insert(
+        "dlp.threat_type".to_string(),
+        "DATA_EXFILTRATION".to_string(),
+    );
     attrs.insert("dlp.retained_taint".to_string(), "true".to_string());
-    attrs.insert("dlp.block_reason".to_string(), "tainted_lineage_policy".to_string());
+    attrs.insert(
+        "dlp.block_reason".to_string(),
+        "tainted_lineage_policy".to_string(),
+    );
     attrs.insert("dlp.trace_id".to_string(), trace_id.clone());
     attrs.insert("otel.status_code".to_string(), "ERROR".to_string());
-    attrs.insert("otel.status_description".to_string(), block_info.reason.clone());
+    attrs.insert(
+        "otel.status_description".to_string(),
+        block_info.reason.clone(),
+    );
     attrs.insert("error.type".to_string(), "DLP_EGRESS_BLOCKED".to_string());
 
     if let Some(u) = url {
@@ -175,25 +187,41 @@ pub trait IntoEgressTarget {
 
 impl IntoEgressTarget for &str {
     fn as_target_str(&self) -> Option<&str> {
-        if self.is_empty() { None } else { Some(self) }
+        if self.is_empty() {
+            None
+        } else {
+            Some(self)
+        }
     }
 }
 
 impl IntoEgressTarget for &&str {
     fn as_target_str(&self) -> Option<&str> {
-        if self.is_empty() { None } else { Some(*self) }
+        if self.is_empty() {
+            None
+        } else {
+            Some(*self)
+        }
     }
 }
 
 impl IntoEgressTarget for String {
     fn as_target_str(&self) -> Option<&str> {
-        if self.is_empty() { None } else { Some(self.as_str()) }
+        if self.is_empty() {
+            None
+        } else {
+            Some(self.as_str())
+        }
     }
 }
 
 impl IntoEgressTarget for &String {
     fn as_target_str(&self) -> Option<&str> {
-        if self.is_empty() { None } else { Some(self.as_str()) }
+        if self.is_empty() {
+            None
+        } else {
+            Some(self.as_str())
+        }
     }
 }
 
@@ -265,11 +293,7 @@ pub fn global_lineage_tracker() -> EgressLineageTrackerProxy {
 }
 
 /// Convenience standalone function checking outbound egress against the DLP Lineage Tracker.
-pub fn check_egress_allowed_inline<U, F, H>(
-    url: U,
-    file_path: F,
-    hash: H,
-) -> Result<(), String>
+pub fn check_egress_allowed_inline<U, F, H>(url: U, file_path: F, hash: H) -> Result<(), String>
 where
     U: IntoEgressTarget,
     F: IntoEgressTarget,
@@ -283,7 +307,9 @@ where
     if let Err(block_info) = check_res {
         let is_blocked = block_info.policy.eq_ignore_ascii_case("QUARANTINE")
             || block_info.policy.eq_ignore_ascii_case("BLOCK")
-            || block_info.classification.eq_ignore_ascii_case("CROWN_JEWEL");
+            || block_info
+                .classification
+                .eq_ignore_ascii_case("CROWN_JEWEL");
         if is_blocked {
             emit_synthetic_blocked_span(u_str, fp_str, h_str, &block_info);
             return Err(format!(
@@ -438,11 +464,14 @@ pub fn validate_agent_egress_url(raw_url: &str, allowed_domains: &[String]) -> R
     }
 
     // Synchronous nanosecond inline DLP Lineage check
-    let check_res = global_lineage_tracker().check_egress_allowed_full(&trimmed, &None::<&str>, &None::<&str>);
+    let check_res =
+        global_lineage_tracker().check_egress_allowed_full(&trimmed, &None::<&str>, &None::<&str>);
     if let Err(block_info) = check_res {
         let is_blocked = block_info.policy.eq_ignore_ascii_case("QUARANTINE")
             || block_info.policy.eq_ignore_ascii_case("BLOCK")
-            || block_info.classification.eq_ignore_ascii_case("CROWN_JEWEL");
+            || block_info
+                .classification
+                .eq_ignore_ascii_case("CROWN_JEWEL");
         if is_blocked {
             emit_synthetic_blocked_span(Some(trimmed), None, None, &block_info);
             return Err(format!(
@@ -715,7 +744,8 @@ mod tests {
                     return Err(EgressLineageBlockInfo {
                         policy: "QUARANTINE".to_string(),
                         classification: "CROWN_JEWEL".to_string(),
-                        reason: "File egress blocked: secret.docx is tainted with QUARANTINE".to_string(),
+                        reason: "File egress blocked: secret.docx is tainted with QUARANTINE"
+                            .to_string(),
                         trace_id: Some("4bf92f3577b34da6a3ce929d0e0e4736".to_string()),
                         span_id: Some("00f067aa0ba902b7".to_string()),
                     });
@@ -726,7 +756,8 @@ mod tests {
                     return Err(EgressLineageBlockInfo {
                         policy: "BLOCK".to_string(),
                         classification: "CONFIDENTIAL".to_string(),
-                        reason: "Hash egress blocked: hash matches confidential artifact".to_string(),
+                        reason: "Hash egress blocked: hash matches confidential artifact"
+                            .to_string(),
                         trace_id: None,
                         span_id: None,
                     });
@@ -758,14 +789,20 @@ mod tests {
 
         // 3. Verify synthetic child span emission with status ERROR, dlp.action=BLOCKED, zero PII
         let spans = get_recent_blocked_spans();
-        assert!(!spans.is_empty(), "A synthetic child span must have been emitted");
+        assert!(
+            !spans.is_empty(),
+            "A synthetic child span must have been emitted"
+        );
         let last_span = spans.last().unwrap();
         assert_eq!(last_span.status, "ERROR");
         assert_eq!(last_span.action, "BLOCKED");
         assert_eq!(last_span.policy, "QUARANTINE");
         assert_eq!(last_span.classification, "CROWN_JEWEL");
         assert_eq!(last_span.trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
-        assert_eq!(last_span.parent_span_id.as_deref(), Some("00f067aa0ba902b7"));
+        assert_eq!(
+            last_span.parent_span_id.as_deref(),
+            Some("00f067aa0ba902b7")
+        );
 
         // Verify zero-PII invariant on attributes
         assert_eq!(
@@ -773,22 +810,37 @@ mod tests {
             Some("BLOCKED")
         );
         assert_eq!(
-            last_span.attributes.get("dlp.threat_type").map(|s| s.as_str()),
+            last_span
+                .attributes
+                .get("dlp.threat_type")
+                .map(|s| s.as_str()),
             Some("DATA_EXFILTRATION")
         );
         assert_eq!(
-            last_span.attributes.get("dlp.retained_taint").map(|s| s.as_str()),
+            last_span
+                .attributes
+                .get("dlp.retained_taint")
+                .map(|s| s.as_str()),
             Some("true")
         );
         assert_eq!(
-            last_span.attributes.get("dlp.block_reason").map(|s| s.as_str()),
+            last_span
+                .attributes
+                .get("dlp.block_reason")
+                .map(|s| s.as_str()),
             Some("tainted_lineage_policy")
         );
         assert_eq!(
-            last_span.attributes.get("otel.status_code").map(|s| s.as_str()),
+            last_span
+                .attributes
+                .get("otel.status_code")
+                .map(|s| s.as_str()),
             Some("ERROR")
         );
-        let span_url = last_span.attributes.get("url.full").expect("url.full attribute must exist");
+        let span_url = last_span
+            .attributes
+            .get("url.full")
+            .expect("url.full attribute must exist");
         assert!(
             !span_url.contains("password123"),
             "Zero-PII violation: passwords must be sanitized from OTel span attributes"
@@ -799,7 +851,11 @@ mod tests {
         );
 
         // 4. File-based check_egress_allowed_inline
-        let file_res = check_egress_allowed_inline(None::<&str>, Some("C:\\workspace\\secret.docx"), None::<&str>);
+        let file_res = check_egress_allowed_inline(
+            None::<&str>,
+            Some("C:\\workspace\\secret.docx"),
+            None::<&str>,
+        );
         assert!(file_res.is_err());
         assert!(file_res.unwrap_err().contains("DLP_EGRESS_BLOCKED"));
 

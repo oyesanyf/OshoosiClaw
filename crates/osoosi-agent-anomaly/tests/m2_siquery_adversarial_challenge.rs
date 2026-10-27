@@ -29,7 +29,10 @@ fn challenge_1_siquery_queries_on_core_tables() {
     let proc_rows = engine
         .execute_query("SELECT pid, name, path, cmdline FROM processes LIMIT 20;")
         .expect("SELECT on processes must succeed");
-    assert!(!proc_rows.is_empty(), "processes table must return host processes");
+    assert!(
+        !proc_rows.is_empty(),
+        "processes table must return host processes"
+    );
 
     let current_pid = std::process::id() as i64;
     let current_proc = engine
@@ -249,7 +252,9 @@ fn challenge_3_ring_buffer_bounds_and_fifo_eviction() {
 
     // 3. Query via SQL engine
     let query_res = engine
-        .execute_query("SELECT count(*) as total FROM file_events WHERE target_path LIKE '%flood_test%';")
+        .execute_query(
+            "SELECT count(*) as total FROM file_events WHERE target_path LIKE '%flood_test%';",
+        )
         .expect("Querying flooded file_events must succeed");
     let total = query_res[0]
         .get("total")
@@ -335,8 +340,16 @@ fn challenge_5_lineage_hooks_bidirectional_sync() {
     // Register active open files hook
     register_lineage_open_files_hook(|| {
         vec![
-            (7777, 10, "C:\\hooked_descriptors\\classified_briefing.pdf".to_string()),
-            (7777, 11, "C:\\hooked_descriptors\\database_credentials.key".to_string()),
+            (
+                7777,
+                10,
+                "C:\\hooked_descriptors\\classified_briefing.pdf".to_string(),
+            ),
+            (
+                7777,
+                11,
+                "C:\\hooked_descriptors\\database_credentials.key".to_string(),
+            ),
         ]
     });
 

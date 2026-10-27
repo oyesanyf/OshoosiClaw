@@ -982,6 +982,13 @@ impl CausalSecurityGraph {
         state
     }
 
+    /// Evicts deceased process instance mapping on Sysmon Event 5 (Process Termination)
+    /// to prevent PID reuse / taint laundering.
+    pub fn evict_process_termination(&self, pid: u32) {
+        self.pid_to_latest_instance.remove(&pid);
+        self.broker_attributions.remove(&pid);
+    }
+
     fn sync_session_state(&self, node: &CausalNodeState) {
         let sess_id = node.origin_session_id.clone();
         let existing = self.session_taint.get(&sess_id).map(|r| r.value().clone());
@@ -2618,42 +2625,72 @@ impl Ring7CapabilityEffectAuthorizer {
             .get(&principal.session_id)
             .map(|m| *m.value());
 
-        let decision_input_fingerprint = blake3::hash(
-            format!(
-                "{}|{}|{:?}|{:?}|{}|{:?}|{}|{}|{}|{}|{:?}|{:?}|{}|{:?}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{:?}",
-                principal.session_id,
-                principal.process_instance_key,
-                principal.authority_level,
-                principal.approved_capabilities,
-                resource.resource_type,
-                resource.classification,
-                resource.is_signed_and_allowlisted,
-                resource.is_approved_child_binary,
-                resource.is_task_scoped_destination,
-                resource.is_declassified_approved_sink,
-                resource.service_identity,
-                resource.service_operation,
-                context.has_crown_jewel_taint,
-                context.highest_data_classification,
-                context.taint_level.to_bits(),
-                context.cumulative_salami_turns,
-                context.has_approved_capability,
-                context.has_cryptographic_declassification,
-                context.upward_authority_promotion_attempted,
-                context.egress_budget_exceeded,
-                context.semantic_cosine_similarity.to_bits(),
-                context.covert_jitter_applied_ms,
-                graph_state.session_terminated,
-                graph_state.capabilities_revoked,
-                graph_state.has_crown_jewel_taint,
-                graph_state.taint_level.to_bits(),
-                graph_state.cumulative_turns,
-                workload_mode,
-            )
-            .as_bytes(),
-        )
-        .to_hex()
-        .to_string();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(principal.session_id.as_bytes());
+        hasher.update(b"|");
+        hasher.update(principal.process_instance_key.as_bytes());
+        hasher.update(b"|");
+        hasher.update(&[principal.authority_level.rank()]);
+        hasher.update(b"|");
+        for cap in &principal.approved_capabilities {
+            hasher.update(cap.as_bytes());
+            hasher.update(b",");
+        }
+        hasher.update(b"|");
+        hasher.update(resource.resource_type.as_bytes());
+        hasher.update(b"|");
+        hasher.update(&[resource.classification as u8]);
+        hasher.update(b"|");
+        hasher.update(&[
+            resource.is_signed_and_allowlisted as u8,
+            resource.is_approved_child_binary as u8,
+            resource.is_task_scoped_destination as u8,
+            resource.is_declassified_approved_sink as u8,
+        ]);
+        hasher.update(b"|");
+        if let Some(ref svc) = resource.service_identity {
+            hasher.update(svc.as_bytes());
+        }
+        hasher.update(b"|");
+        if let Some(ref op) = resource.service_operation {
+            hasher.update(op.as_bytes());
+        }
+        hasher.update(b"|");
+        hasher.update(&[context.has_crown_jewel_taint as u8]);
+        hasher.update(b"|");
+        hasher.update(&[context.highest_data_classification as u8]);
+        hasher.update(b"|");
+        hasher.update(&context.taint_level.to_bits().to_le_bytes());
+        hasher.update(b"|");
+        hasher.update(&context.cumulative_salami_turns.to_le_bytes());
+        hasher.update(b"|");
+        hasher.update(&[
+            context.has_approved_capability as u8,
+            context.has_cryptographic_declassification as u8,
+            context.upward_authority_promotion_attempted as u8,
+            context.egress_budget_exceeded as u8,
+        ]);
+        hasher.update(b"|");
+        hasher.update(&context.semantic_cosine_similarity.to_bits().to_le_bytes());
+        hasher.update(b"|");
+        hasher.update(&context.covert_jitter_applied_ms.to_le_bytes());
+        hasher.update(b"|");
+        hasher.update(&[
+            graph_state.session_terminated as u8,
+            graph_state.capabilities_revoked as u8,
+            graph_state.has_crown_jewel_taint as u8,
+        ]);
+        hasher.update(b"|");
+        hasher.update(&graph_state.taint_level.to_bits().to_le_bytes());
+        hasher.update(b"|");
+        hasher.update(&graph_state.cumulative_turns.to_le_bytes());
+        hasher.update(b"|");
+        if let Some(wm) = workload_mode {
+            hasher.update(&[wm as u8]);
+        } else {
+            hasher.update(&[0xFF]);
+        }
+        let decision_input_fingerprint = hasher.finalize().to_hex().to_string();
 
         let cache_key = CapabilityCacheKey {
             principal_id: principal.principal_id.clone(),
@@ -2670,19 +2707,22 @@ impl Ring7CapabilityEffectAuthorizer {
         }
 
         let seq = self.decision_counter.fetch_add(1, Ordering::SeqCst);
-        let decision_hash = blake3::hash(
-            format!(
-                "cedar-eval:{}:{}:{}:{}:{}:{}:{}",
-                principal.principal_id,
-                action.cedar_id(),
-                resource.resource_id,
-                context.causal_event_id,
-                taint_epoch,
-                revocation_seq,
-                seq
-            )
-            .as_bytes(),
-        );
+        let mut d_hasher = blake3::Hasher::new();
+        d_hasher.update(b"cedar-eval:");
+        d_hasher.update(principal.principal_id.as_bytes());
+        d_hasher.update(b":");
+        d_hasher.update(action.cedar_id().as_bytes());
+        d_hasher.update(b":");
+        d_hasher.update(resource.resource_id.as_bytes());
+        d_hasher.update(b":");
+        d_hasher.update(context.causal_event_id.as_bytes());
+        d_hasher.update(b":");
+        d_hasher.update(&taint_epoch.to_le_bytes());
+        d_hasher.update(b":");
+        d_hasher.update(&revocation_seq.to_le_bytes());
+        d_hasher.update(b":");
+        d_hasher.update(&seq.to_le_bytes());
+        let decision_hash = d_hasher.finalize();
         let policy_decision_id = format!("pdec-{:06}-{}", seq, &decision_hash.to_hex()[..14]);
 
         let mut matched_forbid = Vec::new();

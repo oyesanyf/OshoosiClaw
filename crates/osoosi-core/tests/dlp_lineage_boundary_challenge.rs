@@ -44,8 +44,16 @@ fn challenge_boundary_1_ttl_expiry_zero_match_never_falsely_tainted() {
     // Test across multiple long-lived hosts: explorer.exe, code.exe, powershell.exe, bash
     let hosts = [
         ("explorer.exe", "C:\\Windows\\explorer.exe", 1001u32),
-        ("code.exe", "C:\\Users\\user\\AppData\\Local\\Programs\\VSCode\\code.exe", 1002u32),
-        ("powershell.exe", "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", 1003u32),
+        (
+            "code.exe",
+            "C:\\Users\\user\\AppData\\Local\\Programs\\VSCode\\code.exe",
+            1002u32,
+        ),
+        (
+            "powershell.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            1003u32,
+        ),
         ("bash", "/usr/bin/bash", 1004u32),
     ];
 
@@ -57,8 +65,15 @@ fn challenge_boundary_1_ttl_expiry_zero_match_never_falsely_tainted() {
 
         // Verify process is initially marked tainted
         {
-            let p = tracker.active_processes.get(&proc_key).expect("Process must be tracked");
-            assert!(p.tainted, "{}: process should be tainted after reading secret", exe_name);
+            let p = tracker
+                .active_processes
+                .get(&proc_key)
+                .expect("Process must be tracked");
+            assert!(
+                p.tainted,
+                "{}: process should be tainted after reading secret",
+                exe_name
+            );
             assert_eq!(p.classification, ClassificationLattice::CrownJewel);
             assert_eq!(p.policy, PolicyLattice::Quarantine);
         }
@@ -74,19 +89,26 @@ fn challenge_boundary_1_ttl_expiry_zero_match_never_falsely_tainted() {
         //    Case B: .txt (non-benign extension)
         //    Case C: .dat (binary, 0% similarity)
         let write_cases = [
-            (ArtifactKey::new(10, 2001 + pid as u64), "session.log", &b"Log output: 0 errors"[..]),
-            (ArtifactKey::new(10, 3001 + pid as u64), "notes.txt", &b"Meeting scheduled for Monday 10am"[..]),
-            (ArtifactKey::new(10, 4001 + pid as u64), "cache.dat", &b"\x00\x01\x02\x03\x04\x05\x06\x07"[..]),
+            (
+                ArtifactKey::new(10, 2001 + pid as u64),
+                "session.log",
+                &b"Log output: 0 errors"[..],
+            ),
+            (
+                ArtifactKey::new(10, 3001 + pid as u64),
+                "notes.txt",
+                &b"Meeting scheduled for Monday 10am"[..],
+            ),
+            (
+                ArtifactKey::new(10, 4001 + pid as u64),
+                "cache.dat",
+                &b"\x00\x01\x02\x03\x04\x05\x06\x07"[..],
+            ),
         ];
 
         for (out_key, filename, content) in write_cases {
-            let decision = tracker.on_file_write(
-                &proc_key,
-                &out_key,
-                filename,
-                Some(content),
-                future_time,
-            );
+            let decision =
+                tracker.on_file_write(&proc_key, &out_key, filename, Some(content), future_time);
 
             // Must NOT be tainted: must be BenignExcluded
             match decision {
@@ -116,13 +138,8 @@ fn challenge_boundary_1_ttl_expiry_zero_match_never_falsely_tainted() {
 
         // 5. Test None content (metadata-only write) after TTL expiry
         let meta_key = ArtifactKey::new(10, 5001 + pid as u64);
-        let meta_decision = tracker.on_file_write(
-            &proc_key,
-            &meta_key,
-            "metadata_only.tmp",
-            None,
-            future_time,
-        );
+        let meta_decision =
+            tracker.on_file_write(&proc_key, &meta_key, "metadata_only.tmp", None, future_time);
         assert!(
             matches!(meta_decision, FileWriteTaintDecision::BenignExcluded { .. }),
             "Metadata-only write after TTL expiry must be BenignExcluded"
@@ -166,19 +183,29 @@ fn challenge_boundary_1_corroborated_write_after_ttl_still_tainted() {
     );
 
     match decision {
-        FileWriteTaintDecision::TaintPropagated { classification, policy, .. } => {
+        FileWriteTaintDecision::TaintPropagated {
+            classification,
+            policy,
+            ..
+        } => {
             assert_eq!(classification, ClassificationLattice::CrownJewel);
             assert_eq!(policy, PolicyLattice::Quarantine);
         }
         FileWriteTaintDecision::BenignExcluded { reason } => {
-            panic!("Failure: Leaked content after TTL was falsely excluded! Reason: {}", reason);
+            panic!(
+                "Failure: Leaked content after TTL was falsely excluded! Reason: {}",
+                reason
+            );
         }
     }
 
     // Egress MUST be blocked
     assert!(matches!(
         tracker.check_egress_blocking(&leak_key),
-        EgressDecision::Blocked { policy: PolicyLattice::Quarantine, .. }
+        EgressDecision::Blocked {
+            policy: PolicyLattice::Quarantine,
+            ..
+        }
     ));
 }
 
@@ -214,8 +241,15 @@ fn challenge_boundary_2_high_entropy_zero_similarity_egress_quarantine() {
     // Mathematically verify 0% similarity
     let secret_ss = compute_ssdeep(secret_content);
     let enc_ss = compute_ssdeep(&ciphertext);
-    assert_eq!(compare_ssdeep(&secret_ss, &enc_ss), 0, "ssdeep similarity must be 0");
-    assert_ne!(compute_sha256_hex(secret_content), compute_sha256_hex(&ciphertext));
+    assert_eq!(
+        compare_ssdeep(&secret_ss, &enc_ss),
+        0,
+        "ssdeep similarity must be 0"
+    );
+    assert_ne!(
+        compute_sha256_hex(secret_content),
+        compute_sha256_hex(&ciphertext)
+    );
 
     // Record transform
     let out_rec = tracker.record_process_transform(
@@ -233,12 +267,19 @@ fn challenge_boundary_2_high_entropy_zero_similarity_egress_quarantine() {
     assert!(out_rec.tainted);
     assert_eq!(out_rec.classification, ClassificationLattice::CrownJewel);
     assert_eq!(out_rec.policy, PolicyLattice::Quarantine);
-    assert_eq!(out_rec.baggage.transform.as_deref(), Some("ENCRYPTED_OR_ENCODED"));
+    assert_eq!(
+        out_rec.baggage.transform.as_deref(),
+        Some("ENCRYPTED_OR_ENCODED")
+    );
 
     // 2. Verify inline egress check strictly blocks transmission with QUARANTINE policy
     let egress = tracker.check_egress_blocking(&enc_key);
     match egress {
-        EgressDecision::Blocked { policy, classification, .. } => {
+        EgressDecision::Blocked {
+            policy,
+            classification,
+            ..
+        } => {
             assert_eq!(policy, PolicyLattice::Quarantine);
             assert_eq!(classification, ClassificationLattice::CrownJewel);
         }
@@ -252,8 +293,14 @@ fn challenge_boundary_2_high_entropy_zero_similarity_egress_quarantine() {
     // Check how out_rec or tracker correlates to orig_span_context
     let parent_trace_id = orig_span_context.trace_id();
     println!("Original Parent TraceId: {}", parent_trace_id);
-    println!("Output Origin SpanContext: {:?}", out_rec.origin_span_context);
-    println!("Output Linked SpanContexts: {:?}", out_rec.linked_span_contexts);
+    println!(
+        "Output Origin SpanContext: {:?}",
+        out_rec.origin_span_context
+    );
+    println!(
+        "Output Linked SpanContexts: {:?}",
+        out_rec.linked_span_contexts
+    );
 
     // Verify whether the parent context is linked or tracked
     // Note: When record_process_transform is called with 1 tainted input,
@@ -309,11 +356,17 @@ fn challenge_boundary_2_multi_input_high_entropy_archive_transform() {
     // Dominant classification must be CrownJewel, policy Quarantine
     assert_eq!(out_rec.classification, ClassificationLattice::CrownJewel);
     assert_eq!(out_rec.policy, PolicyLattice::Quarantine);
-    assert_eq!(out_rec.baggage.transform.as_deref(), Some("ENCRYPTED_OR_ENCODED"));
+    assert_eq!(
+        out_rec.baggage.transform.as_deref(),
+        Some("ENCRYPTED_OR_ENCODED")
+    );
 
     // Secondary tainted inputs (k3) must be in linked_span_contexts
     assert!(
-        out_rec.linked_span_contexts.iter().any(|sc| sc.span_id() == conf3.origin_span_context.span_id()),
+        out_rec
+            .linked_span_contexts
+            .iter()
+            .any(|sc| sc.span_id() == conf3.origin_span_context.span_id()),
         "Secondary tainted file k3 must be in linked_span_contexts"
     );
 
@@ -321,7 +374,11 @@ fn challenge_boundary_2_multi_input_high_entropy_archive_transform() {
     let egress = tracker.check_egress_blocking(&out_key);
     assert!(matches!(
         egress,
-        EgressDecision::Blocked { policy: PolicyLattice::Quarantine, classification: ClassificationLattice::CrownJewel, .. }
+        EgressDecision::Blocked {
+            policy: PolicyLattice::Quarantine,
+            classification: ClassificationLattice::CrownJewel,
+            ..
+        }
     ));
 }
 
@@ -352,7 +409,10 @@ fn challenge_boundary_3_cross_host_sha256_exact_rehydration() {
         sensitive_content,
     );
 
-    assert!(rehydrated.is_some(), "Exact content cross-host must rehydrate");
+    assert!(
+        rehydrated.is_some(),
+        "Exact content cross-host must rehydrate"
+    );
     let rec = rehydrated.unwrap();
 
     // Verify properties
@@ -360,18 +420,26 @@ fn challenge_boundary_3_cross_host_sha256_exact_rehydration() {
     assert_eq!(rec.classification, ClassificationLattice::CrownJewel);
     assert_eq!(rec.policy, PolicyLattice::Quarantine);
     assert!(rec.tainted);
-    assert_eq!(rec.baggage.rehydrated.as_deref(), Some("content_digest_sha256"));
+    assert_eq!(
+        rec.baggage.rehydrated.as_deref(),
+        Some("content_digest_sha256")
+    );
 
     // Verify linked to original SpanContext
     assert!(
-        rec.linked_span_contexts.iter().any(|sc| sc.span_id() == orig_rec.origin_span_context.span_id()),
+        rec.linked_span_contexts
+            .iter()
+            .any(|sc| sc.span_id() == orig_rec.origin_span_context.span_id()),
         "Rehydrated artifact must link to original SpanContext"
     );
 
     // Verify immediate egress blocking
     assert!(matches!(
         tracker.check_egress_blocking(&new_host_b_key),
-        EgressDecision::Blocked { policy: PolicyLattice::Quarantine, .. }
+        EgressDecision::Blocked {
+            policy: PolicyLattice::Quarantine,
+            ..
+        }
     ));
 }
 
@@ -392,36 +460,50 @@ fn challenge_boundary_3_cross_host_ssdeep_fuzzy_rehydration() {
 
     // Modified version: edited notes, different filename, different inode
     let mut modified_text = orig_text.to_vec();
-    modified_text.extend_from_slice(b" REVISED: PATIENT CANCELLED APPOINTMENT AND RESCHEDULED TO NEXT YEAR");
+    modified_text
+        .extend_from_slice(b" REVISED: PATIENT CANCELLED APPOINTMENT AND RESCHEDULED TO NEXT YEAR");
 
     let fuzzy_score = compare_ssdeep(&compute_ssdeep(orig_text), &compute_ssdeep(&modified_text));
     println!("Computed ssdeep fuzzy similarity: {}%", fuzzy_score);
-    assert!(fuzzy_score >= 50, "Modified text must have >= 50% similarity for this test");
-
-    let new_key = ArtifactKey::new(99, 7777);
-    let rehydrated = tracker.rehydrate_artifact_if_unknown(
-        &new_key,
-        "exfiltrated_leak.doc",
-        &modified_text,
+    assert!(
+        fuzzy_score >= 50,
+        "Modified text must have >= 50% similarity for this test"
     );
 
-    assert!(rehydrated.is_some(), "Fuzzy similarity >= 50% must rehydrate");
+    let new_key = ArtifactKey::new(99, 7777);
+    let rehydrated =
+        tracker.rehydrate_artifact_if_unknown(&new_key, "exfiltrated_leak.doc", &modified_text);
+
+    assert!(
+        rehydrated.is_some(),
+        "Fuzzy similarity >= 50% must rehydrate"
+    );
     let rec = rehydrated.unwrap();
 
     assert_eq!(rec.classification, ClassificationLattice::CrownJewel);
     assert_eq!(rec.policy, PolicyLattice::Quarantine);
-    assert!(rec.baggage.rehydrated.as_ref().unwrap().starts_with("fuzzy_hash_ssdeep"));
+    assert!(rec
+        .baggage
+        .rehydrated
+        .as_ref()
+        .unwrap()
+        .starts_with("fuzzy_hash_ssdeep"));
 
     // Verify link to original SpanContext
     assert!(
-        rec.linked_span_contexts.iter().any(|sc| sc.span_id() == orig_rec.origin_span_context.span_id()),
+        rec.linked_span_contexts
+            .iter()
+            .any(|sc| sc.span_id() == orig_rec.origin_span_context.span_id()),
         "Fuzzy rehydrated artifact must link back to original SpanContext"
     );
 
     // Egress MUST be blocked
     assert!(matches!(
         tracker.check_egress_blocking(&new_key),
-        EgressDecision::Blocked { policy: PolicyLattice::Quarantine, .. }
+        EgressDecision::Blocked {
+            policy: PolicyLattice::Quarantine,
+            ..
+        }
     ));
 }
 
@@ -442,22 +524,20 @@ fn challenge_boundary_3_unrelated_file_and_empty_file_never_rehydrated() {
     // Case 1: Completely unrelated content
     let unrelated_key = ArtifactKey::new(70, 2);
     let unrelated_data = b"Hello world, this is a completely benign and unrelated readme file!";
-    let res1 = tracker.rehydrate_artifact_if_unknown(
-        &unrelated_key,
-        "README.md",
-        unrelated_data,
-    );
+    let res1 = tracker.rehydrate_artifact_if_unknown(&unrelated_key, "README.md", unrelated_data);
     assert!(res1.is_none(), "Unrelated content must NOT be rehydrated");
-    assert_eq!(tracker.check_egress_blocking(&unrelated_key), EgressDecision::Allowed);
+    assert_eq!(
+        tracker.check_egress_blocking(&unrelated_key),
+        EgressDecision::Allowed
+    );
 
     // Case 2: Empty file
     let empty_key = ArtifactKey::new(70, 3);
     let empty_data = b"";
-    let res2 = tracker.rehydrate_artifact_if_unknown(
-        &empty_key,
-        "empty.bin",
-        empty_data,
-    );
+    let res2 = tracker.rehydrate_artifact_if_unknown(&empty_key, "empty.bin", empty_data);
     assert!(res2.is_none(), "Empty content must NOT be rehydrated");
-    assert_eq!(tracker.check_egress_blocking(&empty_key), EgressDecision::Allowed);
+    assert_eq!(
+        tracker.check_egress_blocking(&empty_key),
+        EgressDecision::Allowed
+    );
 }

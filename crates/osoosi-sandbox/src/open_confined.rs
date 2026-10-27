@@ -338,8 +338,26 @@ mod win_confined {
 #[cfg(not(windows))]
 mod unix_confined {
     use osoosi_types::OctopusSecurityError;
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::MetadataExt;
-    use std::path::{Component, Path};
+    use std::os::unix::io::{FromRawFd, RawFd};
+    use std::path::{Component, Path, PathBuf};
+
+    #[cfg(target_os = "linux")]
+    #[repr(C)]
+    struct open_how {
+        flags: u64,
+        mode: u64,
+        resolve: u64,
+    }
+
+    #[cfg(target_os = "linux")]
+    const SYS_openat2: libc::c_long = 437;
+    #[cfg(target_os = "linux")]
+    const RESOLVE_BENEATH: u64 = 0x08;
+    #[cfg(target_os = "linux")]
+    const RESOLVE_NO_SYMLINKS: u64 = 0x04;
 
     pub fn open_confined_unix(
         sandbox_root: &Path,
@@ -358,8 +376,36 @@ mod unix_confined {
             OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_CANON_FAILED: {}", e))
         })?;
 
-        let mut cursor = canonical_root.clone();
-        let comps: Vec<_> = Path::new(relative_input.trim())
+        let root_c = CString::new(canonical_root.as_os_str().as_bytes()).map_err(|e| {
+            OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_CSTRING_FAILED: {}", e))
+        })?;
+
+        let root_fd = unsafe {
+            libc::open(
+                root_c.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            )
+        };
+        if root_fd < 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "CONFINED_OPEN_ROOT_FD_FAILED: {}",
+                err
+            )));
+        }
+
+        struct FdGuard(RawFd);
+        impl Drop for FdGuard {
+            fn drop(&mut self) {
+                if self.0 >= 0 {
+                    unsafe { libc::close(self.0) };
+                }
+            }
+        }
+        let _root_guard = FdGuard(root_fd);
+
+        let clean_rel = relative_input.trim();
+        let comps: Vec<_> = Path::new(clean_rel)
             .components()
             .filter_map(|c| match c {
                 Component::Normal(o) => Some(o.to_os_string()),
@@ -372,63 +418,143 @@ mod unix_confined {
             ));
         }
 
-        for dir_comp in &comps[..comps.len() - 1] {
-            cursor.push(dir_comp);
-            let m = std::fs::symlink_metadata(&cursor).map_err(|e| {
-                OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_DIR_FAILED: {}", e))
-            })?;
-            if m.file_type().is_symlink() || !m.is_dir() {
-                return Err(OctopusSecurityError::IsolationViolation(
-                    "CONFINED_OPEN_SYMLINK_DIR_BLOCKED".to_string(),
-                ));
+        #[cfg(target_os = "linux")]
+        {
+            let flags = if write {
+                (libc::O_RDWR | libc::O_CREAT | libc::O_CLOEXEC) as u64
+            } else {
+                (libc::O_RDONLY | libc::O_CLOEXEC) as u64
+            };
+            let how = open_how {
+                flags,
+                mode: 0o644,
+                resolve: RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS,
+            };
+
+            let rel_path_buf: PathBuf = comps.iter().collect();
+            if let Ok(rel_c) = CString::new(rel_path_buf.as_os_str().as_bytes()) {
+                let res = unsafe {
+                    libc::syscall(
+                        SYS_openat2,
+                        root_fd,
+                        rel_c.as_ptr(),
+                        &how as *const open_how,
+                        std::mem::size_of::<open_how>(),
+                    )
+                };
+                if res >= 0 {
+                    let raw_fd = res as RawFd;
+                    let file = unsafe { std::fs::File::from_raw_fd(raw_fd) };
+                    let fmeta = file.metadata().map_err(|e| {
+                        OctopusSecurityError::IsolationViolation(format!(
+                            "CONFINED_OPEN_META_FAILED: {}",
+                            e
+                        ))
+                    })?;
+                    if fmeta.nlink() > 1 {
+                        return Err(OctopusSecurityError::IsolationViolation(
+                            "CONFINED_OPEN_HARDLINK_BLOCKED".to_string(),
+                        ));
+                    }
+                    if write {
+                        let _ = file.set_len(0);
+                    }
+                    return Ok(file);
+                } else {
+                    let err = std::io::Error::last_os_error();
+                    let raw_os_err = err.raw_os_error().unwrap_or(0);
+                    if raw_os_err == libc::EXDEV || raw_os_err == libc::ELOOP {
+                        return Err(OctopusSecurityError::IsolationViolation(format!(
+                            "CONFINED_OPEN_KERNEL_ESCAPE_BLOCKED: openat2 detected sandbox escape or symlink (OS Error {})",
+                            raw_os_err
+                        )));
+                    }
+                    // If ENOSYS or other failure, fall through to strict handle walking below
+                }
             }
         }
 
-        let leaf_comp = comps.last().ok_or_else(|| {
-            OctopusSecurityError::IsolationViolation(
-                "CONFINED_OPEN_EMPTY_COMPONENTS: Missing leaf path component".to_string(),
-            )
-        })?;
-        cursor.push(leaf_comp);
-        if let Ok(m) = std::fs::symlink_metadata(&cursor) {
-            if m.file_type().is_symlink() {
-                return Err(OctopusSecurityError::IsolationViolation(
-                    "CONFINED_OPEN_SYMLINK_FILE_BLOCKED".to_string(),
-                ));
-            }
-        }
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(write)
-            .create(write)
-            .open(&cursor)
-            .map_err(|e| {
-                OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_FAILED: {}", e))
+        // Strict handle-level iterative directory component walking with O_NOFOLLOW
+        let mut cur_fd = root_fd;
+        let mut held_guards: Vec<FdGuard> = Vec::new();
+
+        for dir_comp in &comps[..comps.len() - 1] {
+            let comp_c = CString::new(dir_comp.as_bytes()).map_err(|e| {
+                OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_OPEN_COMP_CSTRING: {}",
+                    e
+                ))
             })?;
-        let fmeta = file.metadata().map_err(|e| {
+
+            let next_fd = unsafe {
+                libc::openat(
+                    cur_fd,
+                    comp_c.as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if next_fd < 0 {
+                let err = std::io::Error::last_os_error();
+                return Err(OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_OPEN_DIR_FAILED: component {:?} failed openat (OS Error {})",
+                    dir_comp, err
+                )));
+            }
+            held_guards.push(FdGuard(next_fd));
+            cur_fd = next_fd;
+        }
+
+        let leaf_comp = comps.last().unwrap();
+        let leaf_c = CString::new(leaf_comp.as_bytes()).map_err(|e| {
+            OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_LEAF_CSTRING: {}", e))
+        })?;
+
+        let leaf_flags = if write {
+            libc::O_RDWR | libc::O_CREAT | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        } else {
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC
+        };
+
+        let leaf_fd = unsafe { libc::openat(cur_fd, leaf_c.as_ptr(), leaf_flags, 0o644) };
+        if leaf_fd < 0 {
+            let err = std::io::Error::last_os_error();
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "CONFINED_OPEN_LEAF_FAILED: {:?} failed openat (OS Error {})",
+                leaf_comp, err
+            )));
+        }
+
+        let leaf_file = unsafe { std::fs::File::from_raw_fd(leaf_fd) };
+        let fmeta = leaf_file.metadata().map_err(|e| {
             OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_META_FAILED: {}", e))
         })?;
+        if fmeta.file_type().is_symlink() {
+            return Err(OctopusSecurityError::IsolationViolation(
+                "CONFINED_OPEN_SYMLINK_FILE_BLOCKED".to_string(),
+            ));
+        }
         if fmeta.nlink() > 1 {
             return Err(OctopusSecurityError::IsolationViolation(
                 "CONFINED_OPEN_HARDLINK_BLOCKED".to_string(),
             ));
         }
-        let canonical_leaf = std::fs::canonicalize(&cursor).map_err(|e| {
-            OctopusSecurityError::IsolationViolation(format!("CONFINED_OPEN_CANON_LEAF: {}", e))
-        })?;
-        if !canonical_leaf.starts_with(&canonical_root) || canonical_leaf == canonical_root {
-            return Err(OctopusSecurityError::IsolationViolation(
-                "CONFINED_OPEN_ESCAPE_DETECTED".to_string(),
-            ));
+
+        let mut verify_path = canonical_root.clone();
+        for comp in &comps {
+            verify_path.push(comp);
         }
+        if let Ok(canon_leaf) = std::fs::canonicalize(&verify_path) {
+            if !canon_leaf.starts_with(&canonical_root) || canon_leaf == canonical_root {
+                return Err(OctopusSecurityError::IsolationViolation(
+                    "CONFINED_OPEN_ESCAPE_DETECTED".to_string(),
+                ));
+            }
+        }
+
         if write {
-            file.set_len(0).map_err(|e| {
-                OctopusSecurityError::IsolationViolation(format!(
-                    "CONFINED_OPEN_TRUNCATE_FAILED: Failed to truncate leaf file: {}",
-                    e
-                ))
-            })?;
+            let _ = leaf_file.set_len(0);
         }
-        Ok(file)
+
+        Ok(leaf_file)
     }
 }

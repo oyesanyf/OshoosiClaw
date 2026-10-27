@@ -458,10 +458,22 @@ impl ConfusedDeputyBrokerRouter {
 // Persistent Causal Security Graph
 // -----------------------------------------------------------------------------
 
+/// In-memory lock-free cached node state for fast BFS traversals.
+#[derive(Debug, Clone)]
+pub struct CachedNodeState {
+    pub node_id: String,
+    pub taint_level: u32,
+    pub has_crown_jewel: bool,
+    pub is_process: bool,
+    pub is_file: bool,
+    pub inbound_edges: Vec<(String, u32, bool, CausalEdgeType)>,
+}
+
 /// SQLite-backed persistent Causal Security Graph (`database/osoosi.db`).
 pub struct CausalSecurityGraph {
     conn: Arc<Mutex<Connection>>,
     sessions: DashMap<String, SessionCausalState>,
+    pub node_cache: DashMap<String, CachedNodeState>,
     key_store: ServiceIdentityKeyStore,
     pub broker_router: ConfusedDeputyBrokerRouter,
     db_path: String,
@@ -492,6 +504,7 @@ impl CausalSecurityGraph {
         let graph = Self {
             conn: Arc::new(Mutex::new(conn)),
             sessions: DashMap::new(),
+            node_cache: DashMap::new(),
             key_store: ServiceIdentityKeyStore::new(),
             broker_router: ConfusedDeputyBrokerRouter::new(),
             db_path: db_path.to_string(),
@@ -512,6 +525,7 @@ impl CausalSecurityGraph {
         let graph = Self {
             conn: Arc::new(Mutex::new(conn)),
             sessions: DashMap::new(),
+            node_cache: DashMap::new(),
             key_store: ServiceIdentityKeyStore::new(),
             broker_router: ConfusedDeputyBrokerRouter::new(),
             db_path: ":memory:".to_string(),
@@ -756,6 +770,31 @@ impl CausalSecurityGraph {
                 ],
             )?;
         }
+        drop(lock);
+
+        // Populate in-memory node cache
+        let mut node = self
+            .node_cache
+            .entry(identity.instance_id.clone())
+            .or_insert_with(|| CachedNodeState {
+                node_id: identity.instance_id.clone(),
+                taint_level: initial_taint,
+                has_crown_jewel,
+                is_process: true,
+                is_file: false,
+                inbound_edges: Vec::new(),
+            });
+        node.taint_level = std::cmp::max(node.taint_level, initial_taint);
+        node.has_crown_jewel = node.has_crown_jewel || has_crown_jewel;
+        node.is_process = true;
+        if let Some(ref parent_id) = identity.parent_instance_id {
+            node.inbound_edges.push((
+                parent_id.clone(),
+                initial_taint,
+                has_crown_jewel,
+                CausalEdgeType::Spawned,
+            ));
+        }
 
         Ok(())
     }
@@ -826,6 +865,23 @@ impl CausalSecurityGraph {
                 now,
             ],
         )?;
+        drop(lock);
+
+        // Populate in-memory node cache
+        let mut node = self
+            .node_cache
+            .entry(file_id.clone())
+            .or_insert_with(|| CachedNodeState {
+                node_id: file_id.clone(),
+                taint_level,
+                has_crown_jewel,
+                is_process: false,
+                is_file: true,
+                inbound_edges: Vec::new(),
+            });
+        node.taint_level = std::cmp::max(node.taint_level, taint_level);
+        node.has_crown_jewel = node.has_crown_jewel || has_crown_jewel;
+        node.is_file = true;
 
         Ok(file_id)
     }
@@ -903,7 +959,29 @@ impl CausalSecurityGraph {
                 now,
             ],
         )?;
-        Ok(lock.last_insert_rowid())
+        let row_id = lock.last_insert_rowid();
+        drop(lock);
+
+        // Update in-memory node cache
+        self.node_cache
+            .entry(target_id.to_string())
+            .or_insert_with(|| CachedNodeState {
+                node_id: target_id.to_string(),
+                taint_level: 0,
+                has_crown_jewel: false,
+                is_process: false,
+                is_file: false,
+                inbound_edges: Vec::new(),
+            })
+            .inbound_edges
+            .push((
+                source_id.to_string(),
+                taint_propagated,
+                has_crown_jewel,
+                edge_type,
+            ));
+
+        Ok(row_id)
     }
 
     // -------------------------------------------------------------------------
@@ -983,6 +1061,24 @@ impl CausalSecurityGraph {
         )?;
         drop(lock);
 
+        // Update in-memory node cache
+        let mut proc_node = self
+            .node_cache
+            .entry(proc_instance_id.to_string())
+            .or_insert_with(|| CachedNodeState {
+                node_id: proc_instance_id.to_string(),
+                taint_level: new_taint,
+                has_crown_jewel: new_cj,
+                is_process: true,
+                is_file: false,
+                inbound_edges: Vec::new(),
+            });
+        proc_node.taint_level = std::cmp::max(proc_node.taint_level, new_taint);
+        proc_node.has_crown_jewel = proc_node.has_crown_jewel || new_cj;
+        proc_node
+            .inbound_edges
+            .push((file_id, file_taint, file_cj, CausalEdgeType::Read));
+
         // If taint increased, bump session taint epoch
         if new_taint > proc_taint || (new_cj && !proc_cj) {
             self.bump_taint_epoch(&session_id, new_taint, new_cj);
@@ -1044,6 +1140,28 @@ impl CausalSecurityGraph {
              VALUES (?1, ?2, 'Wrote', ?3, ?4, ?5)",
             params![proc_instance_id, file_id, proc_taint, if proc_cj { 1 } else { 0 }, now],
         )?;
+        drop(lock);
+
+        // Update in-memory node cache
+        let mut file_node =
+            self.node_cache
+                .entry(file_id.clone())
+                .or_insert_with(|| CachedNodeState {
+                    node_id: file_id.clone(),
+                    taint_level: proc_taint,
+                    has_crown_jewel: proc_cj,
+                    is_process: false,
+                    is_file: true,
+                    inbound_edges: Vec::new(),
+                });
+        file_node.taint_level = std::cmp::max(file_node.taint_level, proc_taint);
+        file_node.has_crown_jewel = file_node.has_crown_jewel || proc_cj;
+        file_node.inbound_edges.push((
+            proc_instance_id.to_string(),
+            proc_taint,
+            proc_cj,
+            CausalEdgeType::Wrote,
+        ));
 
         Ok(())
     }
@@ -1074,6 +1192,45 @@ impl CausalSecurityGraph {
              VALUES (?1, ?2, 'DerivedFrom', ?3, 0, ?4)",
             params![tool_node_id, output_node_id, output_taint, now],
         )?;
+        drop(lock);
+
+        // Update in-memory node cache
+        let mut tool_node = self
+            .node_cache
+            .entry(tool_node_id.clone())
+            .or_insert_with(|| CachedNodeState {
+                node_id: tool_node_id.clone(),
+                taint_level: output_taint,
+                has_crown_jewel: false,
+                is_process: false,
+                is_file: false,
+                inbound_edges: Vec::new(),
+            });
+        tool_node.inbound_edges.push((
+            proc_instance_id.to_string(),
+            output_taint,
+            false,
+            CausalEdgeType::ToolInvoked,
+        ));
+
+        let mut out_node = self
+            .node_cache
+            .entry(output_node_id.to_string())
+            .or_insert_with(|| CachedNodeState {
+                node_id: output_node_id.to_string(),
+                taint_level: output_taint,
+                has_crown_jewel: false,
+                is_process: false,
+                is_file: false,
+                inbound_edges: Vec::new(),
+            });
+        out_node.taint_level = std::cmp::max(out_node.taint_level, output_taint);
+        out_node.inbound_edges.push((
+            tool_node_id,
+            output_taint,
+            false,
+            CausalEdgeType::DerivedFrom,
+        ));
 
         Ok(())
     }
@@ -1089,9 +1246,8 @@ impl CausalSecurityGraph {
     }
 
     /// Computes full transitive taint report for `node_id` by traversing inbound edges.
+    /// Operates over the lock-free in-memory cache to service BFS requests without blocking on the SQLite connection.
     pub fn get_transitive_taint_report(&self, node_id: &str) -> Result<TransitiveTaintReport> {
-        let lock = self.conn.lock();
-
         let mut visited = HashSet::new();
         let mut queue = VecDeque::new();
         queue.push_back(node_id.to_string());
@@ -1107,7 +1263,40 @@ impl CausalSecurityGraph {
             }
             chain.push(current.clone());
 
-            // 1. Check if current node is a process instance with taint
+            // 1. Check in-memory lock-free node cache
+            if let Some(cached) = self.node_cache.get(&current) {
+                if cached.taint_level > max_taint {
+                    max_taint = cached.taint_level;
+                }
+                if cached.has_crown_jewel {
+                    has_cj = true;
+                }
+                if cached.taint_level > 0 || cached.has_crown_jewel {
+                    if cached.is_process {
+                        origins.push(format!("ProcessInstance:{}", current));
+                    } else if cached.is_file {
+                        origins.push(format!("File:{}", current));
+                    }
+                }
+
+                for (src, prop_t, prop_cj, edge_type) in &cached.inbound_edges {
+                    if *edge_type != CausalEdgeType::DeclassifiedInto {
+                        if *prop_t > max_taint {
+                            max_taint = *prop_t;
+                        }
+                        if *prop_cj {
+                            has_cj = true;
+                        }
+                        if !visited.contains(src) {
+                            queue.push_back(src.clone());
+                        }
+                    }
+                }
+                continue;
+            }
+
+            // 2. Cold-node fallback to SQLite (populates cache for subsequent zero-lock traversal)
+            let lock = self.conn.lock();
             let proc_info: Option<(u32, bool)> = lock
                 .query_row(
                     "SELECT taint_level, has_crown_jewel_taint FROM causal_process_instances WHERE instance_id = ?1",
@@ -1116,19 +1305,9 @@ impl CausalSecurityGraph {
                 )
                 .optional()?;
 
-            if let Some((t, cj)) = proc_info {
-                if t > max_taint {
-                    max_taint = t;
-                }
-                if cj {
-                    has_cj = true;
-                }
-                if t > 0 || cj {
-                    origins.push(format!("ProcessInstance:{}", current));
-                }
-            }
+            let is_proc = proc_info.is_some();
+            let (p_taint, p_cj) = proc_info.unwrap_or((0, false));
 
-            // 2. Check if current node is a file with taint
             let file_info: Option<(u32, bool)> = lock
                 .query_row(
                     "SELECT taint_level, has_crown_jewel_taint FROM causal_files WHERE file_id = ?1",
@@ -1137,32 +1316,40 @@ impl CausalSecurityGraph {
                 )
                 .optional()?;
 
-            if let Some((t, cj)) = file_info {
-                if t > max_taint {
-                    max_taint = t;
-                }
-                if cj {
-                    has_cj = true;
-                }
-                if t > 0 || cj {
+            let is_file = file_info.is_some();
+            let (f_taint, f_cj) = file_info.unwrap_or((0, false));
+
+            let cur_taint = std::cmp::max(p_taint, f_taint);
+            let cur_cj = p_cj || f_cj;
+
+            if cur_taint > max_taint {
+                max_taint = cur_taint;
+            }
+            if cur_cj {
+                has_cj = true;
+            }
+            if cur_taint > 0 || cur_cj {
+                if is_proc {
+                    origins.push(format!("ProcessInstance:{}", current));
+                } else if is_file {
                     origins.push(format!("File:{}", current));
                 }
             }
 
-            // 3. Find all inbound sources (source_id -> current), respecting declassification cuts
             let mut stmt = lock.prepare(
-                "SELECT source_id, taint_propagated, has_crown_jewel_taint FROM causal_edges WHERE target_id = ?1 AND edge_type != 'DeclassifiedInto'",
+                "SELECT source_id, taint_propagated, has_crown_jewel_taint, edge_type FROM causal_edges WHERE target_id = ?1 AND edge_type != 'DeclassifiedInto'",
             )?;
             let rows = stmt.query_map(params![current], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, u32>(1)?,
-                    r.get::<_, i64>(2)? != 0,
-                ))
+                let src: String = r.get(0)?;
+                let prop_t: u32 = r.get(1)?;
+                let prop_cj: bool = r.get::<_, i64>(2)? != 0;
+                let etype_str: String = r.get(3)?;
+                Ok((src, prop_t, prop_cj, etype_str))
             })?;
 
+            let mut loaded_edges = Vec::new();
             for r in rows {
-                let (src, prop_t, prop_cj) = r?;
+                let (src, prop_t, prop_cj, _) = r?;
                 if prop_t > max_taint {
                     max_taint = prop_t;
                 }
@@ -1170,9 +1357,24 @@ impl CausalSecurityGraph {
                     has_cj = true;
                 }
                 if !visited.contains(&src) {
-                    queue.push_back(src);
+                    queue.push_back(src.clone());
                 }
+                loaded_edges.push((src, prop_t, prop_cj, CausalEdgeType::Spawned));
             }
+            drop(stmt);
+            drop(lock);
+
+            self.node_cache.insert(
+                current.clone(),
+                CachedNodeState {
+                    node_id: current.clone(),
+                    taint_level: cur_taint,
+                    has_crown_jewel: cur_cj,
+                    is_process: is_proc,
+                    is_file,
+                    inbound_edges: loaded_edges,
+                },
+            );
         }
 
         Ok(TransitiveTaintReport {
@@ -1280,6 +1482,28 @@ impl CausalSecurityGraph {
                 now,
             ],
         )?;
+        drop(lock);
+
+        // Update in-memory node cache
+        let mut d_node = self
+            .node_cache
+            .entry(declassified_node_id.to_string())
+            .or_insert_with(|| CachedNodeState {
+                node_id: declassified_node_id.to_string(),
+                taint_level: 0,
+                has_crown_jewel: false,
+                is_process: false,
+                is_file: true,
+                inbound_edges: Vec::new(),
+            });
+        d_node.taint_level = 0;
+        d_node.has_crown_jewel = false;
+        d_node.inbound_edges.push((
+            source_node_id.to_string(),
+            0,
+            false,
+            CausalEdgeType::DeclassifiedInto,
+        ));
 
         Ok(DeclassificationResult {
             success: true,

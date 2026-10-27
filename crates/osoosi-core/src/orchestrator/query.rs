@@ -1121,18 +1121,200 @@ impl EdrOrchestrator {
     /// - Evaluates with decision model
     /// - If malicious: applies containment, triggers isolated forensic sandbox execution if high confidence, and records to ledger
     /// - If benign: marks hash as clean ignored, records to ledger, and allows execution
+    ///
+    /// Universal REA + All-Voter Consensus Gate:
+    /// Every candidate malware detection MUST be checked by both `AutonomousReaEngine` (REA)
+    /// and all Voters in `PolicyEngine` (`self.policy.scan_event`).
+    /// If REA vetoes the candidate or the PolicyEngine voter quorum does not confirm it,
+    /// the candidate is immediately purged from `MalwareScanner::detections`, marked clean in
+    /// `MemoryStore`, and recorded as `benign` in `consensus_findings`.
+    pub async fn adjudicate_malware_candidate_with_rea_and_voters(
+        &self,
+        file_path: &std::path::Path,
+        scan_res: &osoosi_model::malware::MalwareScanResult,
+        process_name_hint: Option<&str>,
+    ) -> Option<osoosi_types::ThreatSignature> {
+        let file_path_str = file_path.to_string_lossy().to_string();
+        let file_stem = file_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string());
+        let proc_hint = process_name_hint.or(file_stem.as_deref());
+
+        // 1. Check REA (AutonomousReaEngine) first
+        let rea = crate::rea::global_rea_engine();
+        let (rea_should_drop, rea_reason, rea_hash) = rea.adjudicate_process_or_binary_alert(
+            proc_hint,
+            Some(&scan_res.file_path),
+            Some(&scan_res.malware_type),
+        );
+        let rea_eval = rea.evaluate_detector_candidate(
+            "Malware/YARA",
+            &scan_res.file_path,
+            &scan_res.malware_type,
+            scan_res.combined_score,
+        );
+
+        let hash_key = rea_hash
+            .as_deref()
+            .filter(|h| !h.is_empty())
+            .unwrap_or(&scan_res.file_hash)
+            .to_ascii_lowercase();
+
+        if rea_should_drop
+            || rea_eval.benign_veto
+            || osoosi_model::malware::is_informational_or_crt_yara_rule(&scan_res.malware_type)
+            || crate::rea::is_rea_benign_system_or_dev_process(
+                &scan_res.file_path,
+                Some(&scan_res.malware_type),
+            )
+        {
+            self.malware_scanner.purge_detection_by_path_or_hash(
+                Some(&scan_res.file_path),
+                Some(&scan_res.file_hash),
+            );
+            if let Some(p) = proc_hint {
+                self.malware_scanner
+                    .purge_detection_by_path_or_hash(Some(p), Some(&scan_res.file_hash));
+            }
+            if !hash_key.is_empty() {
+                let _ = self.memory.mark_hash_clean_ignored(
+                    &hash_key,
+                    proc_hint,
+                    Some(&file_path_str),
+                    "rea_and_voter_consensus_veto",
+                );
+                let finding = osoosi_types::ConsensusFinding {
+                    id: format!("CONS-BENIGN-{}", &hash_key[..hash_key.len().min(12)]),
+                    hash_blake3: hash_key,
+                    process_name: proc_hint.map(|s| s.to_string()),
+                    file_path: Some(file_path_str),
+                    verdict: "benign".to_string(),
+                    confidence: 0.01,
+                    detector_count: 0,
+                    voters_summary: format!(
+                        "Veto [REA-Voter + All-Voter Consensus]: {}",
+                        rea_reason
+                    ),
+                    action_taken: "ignored_and_allowed".to_string(),
+                    evaluated_at: chrono::Utc::now(),
+                };
+                let _ = self.memory.record_consensus_finding(&finding);
+            }
+            return None;
+        }
+
+        // 2. Run ALL Voters in PolicyEngine (`self.policy.scan_event`)
+        let synthetic_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 11,
+            timestamp: chrono::Utc::now(),
+            computer: "localhost".to_string(),
+            causal_parent: None,
+            data: serde_json::json!({
+                "Image": file_path_str,
+                "TargetFilename": file_path_str,
+                "ProcessName": proc_hint.unwrap_or("unknown"),
+                "Hashes": format!("SHA256={}", scan_res.file_hash),
+                "MalwareType": scan_res.malware_type,
+                "MLScore": scan_res.ml_score,
+                "SignatureScore": scan_res.signature_score,
+                "CombinedScore": scan_res.combined_score,
+                "Entropy": scan_res.entropy,
+                "YaraMatches": scan_res.yara_matches,
+            }),
+        };
+
+        match self.policy.scan_event(&synthetic_event).await {
+            Some(sig) => Some(sig),
+            None => {
+                // Quorum of all voters + REA vetoed or did not confirm this candidate!
+                self.malware_scanner.purge_detection_by_path_or_hash(
+                    Some(&scan_res.file_path),
+                    Some(&scan_res.file_hash),
+                );
+                if let Some(p) = proc_hint {
+                    self.malware_scanner
+                        .purge_detection_by_path_or_hash(Some(p), Some(&scan_res.file_hash));
+                }
+                if !hash_key.is_empty() {
+                    let _ = self.memory.mark_hash_clean_ignored(
+                        &hash_key,
+                        proc_hint,
+                        Some(&file_path_str),
+                        "all_voter_quorum_veto",
+                    );
+                    let finding = osoosi_types::ConsensusFinding {
+                        id: format!("CONS-BENIGN-{}", &hash_key[..hash_key.len().min(12)]),
+                        hash_blake3: hash_key,
+                        process_name: proc_hint.map(|s| s.to_string()),
+                        file_path: Some(file_path_str),
+                        verdict: "benign".to_string(),
+                        confidence: 0.01,
+                        detector_count: 0,
+                        voters_summary:
+                            "Veto [REA-Voter + PolicyEngine All-Voter Quorum]: Candidate did not meet multi-voter malicious consensus"
+                                .to_string(),
+                        action_taken: "ignored_and_allowed".to_string(),
+                        evaluated_at: chrono::Utc::now(),
+                    };
+                    let _ = self.memory.record_consensus_finding(&finding);
+                }
+                None
+            }
+        }
+    }
+
     pub async fn evaluate_program_consensus(
         &self,
         file_path: &std::path::Path,
     ) -> anyhow::Result<osoosi_types::ConsensusFinding> {
-        Self::evaluate_program_consensus_internal(
+        let mut finding = Self::evaluate_program_consensus_internal(
             &self.memory,
             &self.malware_scanner,
             &self.decision_engine,
             &self.blocking_manager,
             file_path,
         )
-        .await
+        .await?;
+
+        if finding.verdict == "malicious" {
+            let synth_scan = osoosi_model::malware::MalwareScanResult {
+                file_path: file_path.to_string_lossy().to_string(),
+                file_hash: finding.hash_blake3.clone(),
+                magika_label: "pebin".to_string(),
+                malware_type: finding.voters_summary.clone(),
+                ml_score: finding.confidence as f64,
+                signature_score: if finding.detector_count > 1 { 1.0 } else { 0.0 },
+                combined_score: finding.confidence as f64,
+                evasion_indicators: serde_json::json!({}),
+                is_malware: true,
+                features: None,
+                entropy: 0.0,
+                yara_available: true,
+                yara_matches: Vec::new(),
+                timestamp: chrono::Utc::now(),
+            };
+            if self
+                .adjudicate_malware_candidate_with_rea_and_voters(
+                    file_path,
+                    &synth_scan,
+                    finding.process_name.as_deref(),
+                )
+                .await
+                .is_none()
+            {
+                finding.verdict = "benign".to_string();
+                finding.confidence = 0.01;
+                finding.detector_count = 0;
+                finding.action_taken = "ignored_and_allowed".to_string();
+                finding.voters_summary =
+                    "Veto [REA-Voter + All-Voter Consensus]: Verified benign by REA and PolicyEngine voters"
+                        .to_string();
+                let _ = self.memory.record_consensus_finding(&finding);
+            }
+        }
+        Ok(finding)
     }
 
     pub async fn evaluate_program_consensus_internal(

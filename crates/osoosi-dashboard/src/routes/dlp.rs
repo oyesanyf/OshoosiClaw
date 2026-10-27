@@ -478,9 +478,7 @@ pub fn inspect_and_record_with_options(
         };
 
     let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
-    let effective_dlp_block = if monitor_only {
-        false
-    } else if !strict_lockdown && is_format_only_contact {
+    let effective_dlp_block = if monitor_only || (!strict_lockdown && is_format_only_contact) {
         false
     } else {
         dlp_detected
@@ -878,9 +876,7 @@ pub fn inspect_and_record_shared(
         };
 
     let voter_quarantine = openjev_enforcement_agreed || rea_untrusted_actor;
-    let effective_dlp_block = if monitor_only {
-        false
-    } else if !strict_lockdown && is_format_only_contact {
+    let effective_dlp_block = if monitor_only || (!strict_lockdown && is_format_only_contact) {
         false
     } else {
         dlp_detected
@@ -1562,8 +1558,8 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     // Active Enforcement), immediately clear in-memory destination blocks so containment queries
     // reflect the new policy mode without race conditions, and dispatch file/driver unblocks in the background.
     let engine = crate::routes::dlp_containment::global_containment_engine();
-    let _ = engine
-        .restore_browser_destination_blocks_for_host("dlptest.com", "policy-mode-updated");
+    let _ =
+        engine.restore_browser_destination_blocks_for_host("dlptest.com", "policy-mode-updated");
     if monitor_only_now {
         for outcome in engine.list() {
             if !outcome.restored
@@ -2022,14 +2018,8 @@ pub async fn post_dlp_lineage_ingest(Json(payload): Json<Value>) -> Json<Value> 
         .map(|arr| arr.as_slice())
         .unwrap_or(&empty_vec);
 
-    let (taint_propagated, action, rationale, trace_id, span_id) = tracker.ingest_lineage_event(
-        event_type,
-        producer,
-        job_info,
-        inputs,
-        outputs,
-        egress_sink,
-    );
+    let (taint_propagated, action, rationale, trace_id, span_id) =
+        tracker.ingest_lineage_event(event_type, producer, job_info, inputs, outputs, egress_sink);
 
     let duration_micros = start.elapsed().as_micros() as u64;
 
@@ -2868,7 +2858,12 @@ mod tests {
 
         // Verify state is reflected in GET /api/dlp/lineage
         let Json(summary) = get_dlp_lineage().await;
-        let blocked = summary["summary"]["blocked_derived_egresses"].as_u64().unwrap();
-        assert!(blocked >= 1, "Blocked egresses KPI must reflect blocked ingest");
+        let blocked = summary["summary"]["blocked_derived_egresses"]
+            .as_u64()
+            .unwrap();
+        assert!(
+            blocked >= 1,
+            "Blocked egresses KPI must reflect blocked ingest"
+        );
     }
 }

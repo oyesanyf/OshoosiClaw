@@ -8,6 +8,7 @@
 //! - Boundary 1: Anti-Taint Creep in long-lived processes (`explorer.exe`, IDEs).
 //! - Boundary 2: Encrypted/zero-similarity causal taint preservation (`openssl enc`, `7z.exe`).
 //! - Boundary 3: Cross-host new inode rehydration via exact SHA-256 and fuzzy ssdeep digests.
+#![allow(clippy::too_many_arguments)]
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fmt;
@@ -17,9 +18,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use opentelemetry::trace::{
-    Link, SpanContext, SpanId, TraceFlags, TraceId, TraceState,
-};
+use opentelemetry::trace::{Link, SpanContext, SpanId, TraceFlags, TraceId, TraceState};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
@@ -423,7 +422,10 @@ impl DlpBaggage {
         let mut items = vec![
             format!("dlp.classification={}", self.classification.as_str()),
             format!("dlp.policy={}", self.policy.as_str()),
-            format!("dlp.tainted={}", if self.tainted { "true" } else { "false" }),
+            format!(
+                "dlp.tainted={}",
+                if self.tainted { "true" } else { "false" }
+            ),
         ];
         if !self.source_sha256.is_empty() {
             items.push(format!("dlp.source_sha256={}", self.source_sha256));
@@ -619,8 +621,7 @@ impl ProcessTaintRecord {
 // 5. Pure-Rust ssdeep / Context Triggered Piecewise Hashing (CTPH)
 // ============================================================================
 
-const B64_ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const SPAMSUM_LENGTH: usize = 64;
 
 /// Generates a genuine Context Triggered Piecewise Hash (ssdeep / CTPH).
@@ -660,7 +661,9 @@ fn ssdeep_chunk_hash(data: &[u8], block_size: usize) -> (String, String) {
         rolling_window[window_idx] = b;
         window_idx = (window_idx + 1) % 7;
 
-        rolling_sum = rolling_sum.wrapping_sub(old_byte as u32).wrapping_add(b as u32);
+        rolling_sum = rolling_sum
+            .wrapping_sub(old_byte as u32)
+            .wrapping_add(b as u32);
         rolling_sum = (rolling_sum << 5).wrapping_add(b as u32);
 
         // Piecewise chunk hashing (FNV-1a style)
@@ -791,9 +794,7 @@ pub enum FileWriteTaintDecision {
         transform_applied: Option<String>,
     },
     /// Boundary 1 Anti-Taint Creep: file write excluded from taint propagation.
-    BenignExcluded {
-        reason: String,
-    },
+    BenignExcluded { reason: String },
 }
 
 // ============================================================================
@@ -931,7 +932,9 @@ impl OpenLineageRunEvent {
             },
             inputs: Vec::new(),
             outputs: Vec::new(),
-            producer: Some("https://github.com/oyesanyf/OshoosiClaw/tree/main/dlp_lineage".to_string()),
+            producer: Some(
+                "https://github.com/oyesanyf/OshoosiClaw/tree/main/dlp_lineage".to_string(),
+            ),
             schema_url: Some("https://openlineage.io/spec/1-0-5/OpenLineage.json".to_string()),
         }
     }
@@ -1026,12 +1029,24 @@ impl OpenLineageRunEvent {
             .unwrap_or_else(|| format!("{:016x}", rand::random::<u64>()));
 
         let mut attrs = BTreeMap::new();
-        attrs.insert("openlineage.event_type".to_string(), self.event_type.clone());
+        attrs.insert(
+            "openlineage.event_type".to_string(),
+            self.event_type.clone(),
+        );
         attrs.insert("openlineage.job.name".to_string(), self.job.name.clone());
-        attrs.insert("openlineage.job.namespace".to_string(), self.job.namespace.clone());
+        attrs.insert(
+            "openlineage.job.namespace".to_string(),
+            self.job.namespace.clone(),
+        );
         attrs.insert("openlineage.run_id".to_string(), self.run.run_id.clone());
-        attrs.insert("openlineage.inputs_count".to_string(), self.inputs.len().to_string());
-        attrs.insert("openlineage.outputs_count".to_string(), self.outputs.len().to_string());
+        attrs.insert(
+            "openlineage.inputs_count".to_string(),
+            self.inputs.len().to_string(),
+        );
+        attrs.insert(
+            "openlineage.outputs_count".to_string(),
+            self.outputs.len().to_string(),
+        );
 
         let (severity_number, severity_text) = match self.event_type.as_str() {
             "FAIL" | "ABORT" => (17, "ERROR".to_string()),
@@ -1204,7 +1219,10 @@ impl DlpLineageTracker {
         artifact_key: ArtifactKey,
     ) {
         let is_long_lived = self.is_long_lived(executable_name);
-        let artifact_opt = self.active_artifacts.get(&artifact_key).map(|r| r.value().clone());
+        let artifact_opt = self
+            .active_artifacts
+            .get(&artifact_key)
+            .map(|r| r.value().clone());
 
         // Lock hygiene: drop artifact read guard before updating process map
         if let Some(artifact) = artifact_opt {
@@ -1212,10 +1230,8 @@ impl DlpLineageTracker {
             let mut proc_entry = self.active_processes.entry(proc_key).or_insert_with(|| {
                 let proc_trace_seed = format!("TRACE:PROC:{}", proc_key);
                 let proc_span_seed = format!("SPAN:PROC:{}:{}", executable_name, proc_key);
-                let proc_sc = Self::synthesize_span_context(
-                    Some(&proc_trace_seed),
-                    Some(&proc_span_seed),
-                );
+                let proc_sc =
+                    Self::synthesize_span_context(Some(&proc_trace_seed), Some(&proc_span_seed));
                 ProcessTaintRecord::new(
                     proc_key,
                     executable_name,
@@ -1348,7 +1364,10 @@ impl DlpLineageTracker {
         current_time: DateTime<Utc>,
     ) -> FileWriteTaintDecision {
         // Read process state, clone, and immediately drop map reference
-        let proc_state = self.active_processes.get(proc_key).map(|r| r.value().clone());
+        let proc_state = self
+            .active_processes
+            .get(proc_key)
+            .map(|r| r.value().clone());
         let proc = match proc_state {
             Some(p) if p.tainted => p,
             _ => {
@@ -1520,8 +1539,7 @@ impl DlpLineageTracker {
 
         let out_trace_seed = format!("TRACE:OUT:{}:{}", parent_sc.trace_id(), output_path);
         let out_span_seed = format!("SPAN:OUT:{}:{}", output_key, out_sha256);
-        let output_sc =
-            Self::synthesize_span_context(Some(&out_trace_seed), Some(&out_span_seed));
+        let output_sc = Self::synthesize_span_context(Some(&out_trace_seed), Some(&out_span_seed));
 
         let mut output_record = ArtifactTaintRecord::new(
             output_key,
@@ -1543,7 +1561,8 @@ impl DlpLineageTracker {
         self.content_catalog
             .insert(out_sha256, output_record.clone());
         if let Some(ref ss) = out_ssdeep {
-            self.content_catalog.insert(ss.clone(), output_record.clone());
+            self.content_catalog
+                .insert(ss.clone(), output_record.clone());
         }
 
         // Update process state
@@ -1660,10 +1679,7 @@ impl DlpLineageTracker {
     }
 
     /// Evaluates an outbound process network egress attempt in nanoseconds.
-    pub fn check_process_egress_blocking(
-        &self,
-        proc_key: &ProcessInstanceKey,
-    ) -> EgressDecision {
+    pub fn check_process_egress_blocking(&self, proc_key: &ProcessInstanceKey) -> EgressDecision {
         if let Some(proc) = self.active_processes.get(proc_key) {
             if proc.tainted && proc.policy.is_enforced() {
                 return EgressDecision::Blocked {
@@ -1698,18 +1714,11 @@ impl DlpLineageTracker {
 
         let child_trace_seed = format!("TRACE:PROC:{}", child_key);
         let child_span_seed = format!("SPAN:PROC:{}:{}", image_name, child_key);
-        let child_sc = Self::synthesize_span_context(
-            Some(&child_trace_seed),
-            Some(&child_span_seed),
-        );
+        let child_sc =
+            Self::synthesize_span_context(Some(&child_trace_seed), Some(&child_span_seed));
 
-        let mut child_rec = ProcessTaintRecord::new(
-            child_key,
-            image_name,
-            image_path,
-            is_long_lived,
-            child_sc,
-        );
+        let mut child_rec =
+            ProcessTaintRecord::new(child_key, image_name, image_path, is_long_lived, child_sc);
 
         // Check if parent process is tainted
         if let Some(p_pid) = parent_pid {
@@ -1804,13 +1813,8 @@ impl DlpLineageTracker {
         let proc_key = ProcessInstanceKey::new(pid, start_time_100ns);
         let out_key = ArtifactKey::from_path_or_synthetic(output_path);
 
-        let decision = self.on_file_write(
-            &proc_key,
-            &out_key,
-            output_path,
-            content_bytes,
-            Utc::now(),
-        );
+        let decision =
+            self.on_file_write(&proc_key, &out_key, output_path, content_bytes, Utc::now());
 
         let sha = content_bytes.map(compute_sha256_hex).unwrap_or_default();
         let proc_name = self
@@ -1835,13 +1839,7 @@ impl DlpLineageTracker {
     }
 
     /// Handles file rename operations, transferring causal taint to the new destination.
-    pub fn on_file_rename(
-        &self,
-        pid: u32,
-        _start_time_100ns: u64,
-        old_path: &str,
-        new_path: &str,
-    ) {
+    pub fn on_file_rename(&self, pid: u32, _start_time_100ns: u64, old_path: &str, new_path: &str) {
         let old_key = ArtifactKey::from_path_or_synthetic(old_path);
         let new_key = ArtifactKey::from_path_or_synthetic(new_path);
 
@@ -2068,9 +2066,15 @@ impl DlpLineageTracker {
         attrs.insert("dlp.policy".to_string(), policy.to_string());
         attrs.insert("dlp.classification".to_string(), classification.to_string());
         attrs.insert("dlp.tainted".to_string(), "true".to_string());
-        attrs.insert("dlp.threat_type".to_string(), "DATA_EXFILTRATION".to_string());
+        attrs.insert(
+            "dlp.threat_type".to_string(),
+            "DATA_EXFILTRATION".to_string(),
+        );
         attrs.insert("dlp.retained_taint".to_string(), "true".to_string());
-        attrs.insert("dlp.block_reason".to_string(), "tainted_lineage_policy".to_string());
+        attrs.insert(
+            "dlp.block_reason".to_string(),
+            "tainted_lineage_policy".to_string(),
+        );
         attrs.insert("dlp.trace_id".to_string(), trace_id.clone());
         attrs.insert("otel.status_code".to_string(), "ERROR".to_string());
         attrs.insert("otel.status_description".to_string(), reason.to_string());
@@ -2239,7 +2243,11 @@ impl DlpLineageTracker {
         let blocked_lock = self.blocked_child_spans.read();
         let blocked_count = blocked_lock.len();
         for sp in blocked_lock.iter() {
-            let sink = sp.attributes.get("url.full").cloned().unwrap_or_else(|| "sink://network/blocked".to_string());
+            let sink = sp
+                .attributes
+                .get("url.full")
+                .cloned()
+                .unwrap_or_else(|| "sink://network/blocked".to_string());
             output_datasets.push(serde_json::json!({
                 "namespace": "sink://network/blocked",
                 "name": sink,
@@ -2256,7 +2264,8 @@ impl DlpLineageTracker {
         let active_traces_vec: Vec<String> = active_traces_set.into_iter().collect();
 
         // Recent lineage events preview
-        let recent_events: Vec<serde_json::Value> = self.openlineage_events
+        let recent_events: Vec<serde_json::Value> = self
+            .openlineage_events
             .read()
             .iter()
             .rev()
@@ -2304,12 +2313,7 @@ impl DlpLineageTracker {
             .unwrap_or("lineage_ingest_job");
         let job_namespace = producer.unwrap_or("oshoosi://endpoint/custom_agent");
 
-        let mut ol_event = OpenLineageRunEvent::new(
-            event_type,
-            run_id,
-            job_namespace,
-            job_name,
-        );
+        let mut ol_event = OpenLineageRunEvent::new(event_type, run_id, job_namespace, job_name);
 
         let mut input_keys = Vec::new();
         let mut dominant_classification = ClassificationLattice::Public;
@@ -2318,8 +2322,16 @@ impl DlpLineageTracker {
 
         // Process inputs
         for inp in inputs {
-            let path = inp.get("path").or_else(|| inp.get("name")).and_then(|v| v.as_str()).unwrap_or("");
-            let sha = inp.get("sha256").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
+            let path = inp
+                .get("path")
+                .or_else(|| inp.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sha = inp
+                .get("sha256")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
             let key = if let (Some(dev), Some(ino)) = (
                 inp.get("device_id").and_then(|v| v.as_u64()),
                 inp.get("inode").and_then(|v| v.as_u64()),
@@ -2349,12 +2361,22 @@ impl DlpLineageTracker {
                 }
             } else if let Some(c_str) = inp.get("classification").and_then(|v| v.as_str()) {
                 let parsed_c = ClassificationLattice::from_str_relaxed(c_str);
-                let parsed_p = inp.get("policy").and_then(|v| v.as_str()).map(PolicyLattice::from_str_relaxed).unwrap_or(PolicyLattice::Monitor);
+                let parsed_p = inp
+                    .get("policy")
+                    .and_then(|v| v.as_str())
+                    .map(PolicyLattice::from_str_relaxed)
+                    .unwrap_or(PolicyLattice::Monitor);
                 if parsed_c.is_sensitive() {
                     any_tainted = true;
                     classification = parsed_c;
                     policy = parsed_p;
-                    self.register_crown_jewel_artifact(key, path, sha.as_bytes(), classification, policy);
+                    self.register_crown_jewel_artifact(
+                        key,
+                        path,
+                        sha.as_bytes(),
+                        classification,
+                        policy,
+                    );
                 }
             }
 
@@ -2373,12 +2395,21 @@ impl DlpLineageTracker {
         }
 
         // Process job
-        let pid = job_info.and_then(|j| j.get("pid")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-        let start_time = job_info.and_then(|j| j.get("process_start_time")).and_then(|v| v.as_u64()).unwrap_or(0);
+        let pid = job_info
+            .and_then(|j| j.get("pid"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+        let start_time = job_info
+            .and_then(|j| j.get("process_start_time"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let proc_key = ProcessInstanceKey::new(pid, start_time);
 
         if pid > 0 {
-            let exe_path = job_info.and_then(|j| j.get("executable_path")).and_then(|v| v.as_str()).unwrap_or("agent_process.exe");
+            let exe_path = job_info
+                .and_then(|j| j.get("executable_path"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("agent_process.exe");
             let exe_name = std::path::Path::new(exe_path)
                 .file_name()
                 .map(|s| s.to_string_lossy().to_string())
@@ -2393,7 +2424,11 @@ impl DlpLineageTracker {
 
         // Process outputs
         for out in outputs {
-            let out_path = out.get("path").or_else(|| out.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+            let out_path = out
+                .get("path")
+                .or_else(|| out.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let out_sha = out.get("sha256").and_then(|v| v.as_str()).unwrap_or("");
             let out_key = if let (Some(dev), Some(ino)) = (
                 out.get("device_id").and_then(|v| v.as_u64()),
@@ -2407,7 +2442,10 @@ impl DlpLineageTracker {
             };
 
             if pid > 0 {
-                let exe_name = job_info.and_then(|j| j.get("executable_path")).and_then(|v| v.as_str()).unwrap_or("agent_process.exe");
+                let exe_name = job_info
+                    .and_then(|j| j.get("executable_path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("agent_process.exe");
                 let _ = self.record_process_transform(
                     proc_key,
                     exe_name,
@@ -2427,18 +2465,28 @@ impl DlpLineageTracker {
                 any_tainted,
                 dominant_classification.to_string(),
                 dominant_policy.to_string(),
-                if any_tainted { Some("TAINT_INHERITED".to_string()) } else { Some("CLEAN".to_string()) },
+                if any_tainted {
+                    Some("TAINT_INHERITED".to_string())
+                } else {
+                    Some("CLEAN".to_string())
+                },
                 vec![trace_id.clone()],
                 vec![span_id.clone()],
             );
         }
 
         // Check inline egress blocking if sink specified
-        let mut action = if any_tainted { "TAINT_INHERITED".to_string() } else { "PERMITTED".to_string() };
+        let mut action = if any_tainted {
+            "TAINT_INHERITED".to_string()
+        } else {
+            "PERMITTED".to_string()
+        };
         let mut rationale = "Lineage ingest completed successfully".to_string();
 
         if let Some(sink) = egress_sink {
-            if any_tainted && (dominant_classification.is_crown_jewel() || dominant_policy.is_enforced()) {
+            if any_tainted
+                && (dominant_classification.is_crown_jewel() || dominant_policy.is_enforced())
+            {
                 action = "BLOCKED".to_string();
                 rationale = format!(
                     "Derived artifact inherits {} classification via DashMap lattice dominance; outbound egress to unauthorized sink '{}' blocked before transmission",
@@ -2562,9 +2610,9 @@ impl DlpLineageTracker {
     pub fn register_egress_proxy_hooks(&'static self) {
         static HOOK_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !HOOK_ONCE.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            osoosi_agent_anomaly::egress_proxy::register_lineage_egress_hook(move |url, file_path, hash| {
-                self.check_egress_for_proxy(url, file_path, hash)
-            });
+            osoosi_agent_anomaly::egress_proxy::register_lineage_egress_hook(
+                move |url, file_path, hash| self.check_egress_for_proxy(url, file_path, hash),
+            );
         }
     }
 
@@ -2616,10 +2664,7 @@ impl DlpLineageTracker {
 }
 
 static GLOBAL_LINEAGE_TRACKER: std::sync::LazyLock<DlpLineageTracker> =
-    std::sync::LazyLock::new(|| {
-        let tracker = DlpLineageTracker::new(30);
-        tracker
-    });
+    std::sync::LazyLock::new(|| DlpLineageTracker::new(30));
 
 /// Returns the global reference to the DLP Lineage Tracker.
 pub fn global_lineage_tracker() -> &'static DlpLineageTracker {
@@ -2650,7 +2695,10 @@ pub fn build_zero_pii_otel_attributes(
         attrs.push(opentelemetry::KeyValue::new("process.pid", p as i64));
     }
     if let Some(pp) = parent_pid {
-        attrs.push(opentelemetry::KeyValue::new("process.parent_pid", pp as i64));
+        attrs.push(opentelemetry::KeyValue::new(
+            "process.parent_pid",
+            pp as i64,
+        ));
     }
     if let Some(exe) = executable_path {
         attrs.push(opentelemetry::KeyValue::new(
@@ -2790,7 +2838,10 @@ mod tests {
         }
 
         // Confirm egress on the log file is permitted
-        assert_eq!(tracker.check_egress_blocking(&log_key), EgressDecision::Allowed);
+        assert_eq!(
+            tracker.check_egress_blocking(&log_key),
+            EgressDecision::Allowed
+        );
     }
 
     /// Mandatory Test 2: Boundary 2 Encrypted/Zero-Similarity Transform Preserves Causal Taint.
@@ -2816,7 +2867,12 @@ mod tests {
 
         // 2. Transformation process (7z.exe) reads secret
         let proc_key = ProcessInstanceKey::new(5500, 200_000_000);
-        tracker.on_file_read(proc_key, "7z.exe", "C:\\Program Files\\7-Zip\\7z.exe", secret_key);
+        tracker.on_file_read(
+            proc_key,
+            "7z.exe",
+            "C:\\Program Files\\7-Zip\\7z.exe",
+            secret_key,
+        );
 
         // 3. 7z.exe writes high-entropy pseudo-random encrypted payload (0% similarity)
         let encrypted_key = ArtifactKey::new(2, 808);
@@ -2858,7 +2914,11 @@ mod tests {
         // Assert inline egress check drops the packet / blocks transmission
         let egress_res = tracker.check_egress_blocking(&encrypted_key);
         match egress_res {
-            EgressDecision::Blocked { policy, classification, .. } => {
+            EgressDecision::Blocked {
+                policy,
+                classification,
+                ..
+            } => {
                 assert_eq!(policy, PolicyLattice::Quarantine);
                 assert_eq!(classification, ClassificationLattice::CrownJewel);
             }
@@ -2920,12 +2980,20 @@ mod tests {
             &modified_data,
         );
 
-        assert!(rehydrated_b.is_some(), "Fuzzy ssdeep match must rehydrate lineage");
+        assert!(
+            rehydrated_b.is_some(),
+            "Fuzzy ssdeep match must rehydrate lineage"
+        );
         let rec_b = rehydrated_b.unwrap();
         assert_eq!(rec_b.classification, ClassificationLattice::CrownJewel);
         assert_eq!(rec_b.policy, PolicyLattice::Quarantine);
         assert!(
-            rec_b.baggage.rehydrated.as_ref().unwrap().starts_with("fuzzy_hash_ssdeep"),
+            rec_b
+                .baggage
+                .rehydrated
+                .as_ref()
+                .unwrap()
+                .starts_with("fuzzy_hash_ssdeep"),
             "Expected fuzzy hash rehydration tag"
         );
 
@@ -3095,7 +3163,10 @@ mod tests {
 
         let single_taint = "dlp.tainted=true;auth=ok";
         let b2 = DlpBaggage::from_w3c_header(single_taint);
-        assert!(b2.tainted, "tainted=true with property parameter must parse as true");
+        assert!(
+            b2.tainted,
+            "tainted=true with property parameter must parse as true"
+        );
 
         let multi = "dlp.classification=CROWN_JEWEL;ttl=30;p0=true, dlp.policy=QUARANTINE;tier=critical, dlp.tainted=true;auth=ok, dlp.source_sha256=11223344;v=2, custom_param=val;extra=ignored";
         let b3 = DlpBaggage::from_w3c_header(multi);
@@ -3162,7 +3233,9 @@ mod tests {
         let past = Utc::now() - chrono::Duration::seconds(100);
         record.updated_at_utc = past;
         tracker.active_artifacts.insert(art_key, record.clone());
-        tracker.content_catalog.insert(record.sha256.clone(), record.clone());
+        tracker
+            .content_catalog
+            .insert(record.sha256.clone(), record.clone());
         if let Some(ref ss) = record.ssdeep {
             tracker.content_catalog.insert(ss.clone(), record);
         }
@@ -3174,7 +3247,10 @@ mod tests {
 
         // Evict entries older than 30 seconds
         let evicted = tracker.evict_expired(30, 30);
-        assert_eq!(evicted, 2, "Expected 1 artifact and 1 process to be evicted");
+        assert_eq!(
+            evicted, 2,
+            "Expected 1 artifact and 1 process to be evicted"
+        );
         assert!(!tracker.active_artifacts.contains_key(&art_key));
         assert!(!tracker.active_processes.contains_key(&proc_key));
     }
@@ -3198,7 +3274,10 @@ mod tests {
             tracker.on_file_read(proc_key, "reader.exe", "C:\\reader.exe", art);
         }
 
-        let proc = tracker.active_processes.get(&proc_key).expect("Process must exist");
+        let proc = tracker
+            .active_processes
+            .get(&proc_key)
+            .expect("Process must exist");
         assert_eq!(
             proc.read_history.len(),
             MAX_READ_HISTORY_PER_PROCESS,
@@ -3255,7 +3334,10 @@ mod tests {
                 key1.inode_or_file_id, key2.inode_or_file_id,
                 "File Index must be invariant across writes"
             );
-            assert_eq!(key1, key2, "ArtifactKey must be invariant across file modifications");
+            assert_eq!(
+                key1, key2,
+                "ArtifactKey must be invariant across file modifications"
+            );
         }
     }
 
@@ -3335,11 +3417,17 @@ mod tests {
             src_path,
             Some(b"report content derived from credentials"),
         );
-        assert!(matches!(write_decision, FileWriteTaintDecision::TaintPropagated { .. }));
+        assert!(matches!(
+            write_decision,
+            FileWriteTaintDecision::TaintPropagated { .. }
+        ));
 
         let src_key = ArtifactKey::from_path_or_synthetic(src_path);
         {
-            let src_rec = tracker.active_artifacts.get(&src_key).expect("Artifact must exist");
+            let src_rec = tracker
+                .active_artifacts
+                .get(&src_key)
+                .expect("Artifact must exist");
             assert!(src_rec.tainted);
             assert_eq!(src_rec.classification, ClassificationLattice::CrownJewel);
         }
@@ -3348,9 +3436,15 @@ mod tests {
         tracker.on_file_rename(3003, 100_000, src_path, dst_path);
 
         let dst_key = ArtifactKey::from_path_or_synthetic(dst_path);
-        assert!(tracker.active_artifacts.get(&src_key).is_none(), "Old path must be removed");
+        assert!(
+            tracker.active_artifacts.get(&src_key).is_none(),
+            "Old path must be removed"
+        );
         {
-            let dst_rec = tracker.active_artifacts.get(&dst_key).expect("Renamed artifact must exist");
+            let dst_rec = tracker
+                .active_artifacts
+                .get(&dst_key)
+                .expect("Renamed artifact must exist");
             assert!(dst_rec.tainted, "Renamed artifact must retain taint");
             assert_eq!(dst_rec.classification, ClassificationLattice::CrownJewel);
             assert_eq!(dst_rec.policy, PolicyLattice::Quarantine);
@@ -3375,23 +3469,13 @@ mod tests {
         );
 
         // 1. Egress by path must be blocked
-        let res_path = tracker.check_egress_allowed_full(
-            Some("C:\\leak\\cards.csv"),
-            None,
-            None,
-            None,
-            None,
-        );
+        let res_path =
+            tracker.check_egress_allowed_full(Some("C:\\leak\\cards.csv"), None, None, None, None);
         assert!(res_path.is_err(), "Egress by tainted path must be blocked");
 
         // 2. Egress by hash must be blocked
-        let res_hash = tracker.check_egress_allowed_full(
-            None,
-            Some(&sha256_hash),
-            None,
-            None,
-            None,
-        );
+        let res_hash =
+            tracker.check_egress_allowed_full(None, Some(&sha256_hash), None, None, None);
         assert!(res_hash.is_err(), "Egress by tainted hash must be blocked");
 
         // 3. Egress to suspect sink with active crown jewel must be blocked
@@ -3402,7 +3486,10 @@ mod tests {
             Some("https://webhook.site/test-leak"),
             None,
         );
-        assert!(res_url.is_err(), "Egress to suspect exfiltration sink must be blocked");
+        assert!(
+            res_url.is_err(),
+            "Egress to suspect exfiltration sink must be blocked"
+        );
 
         // 4. Benign egress must be allowed
         let res_clean = tracker.check_egress_allowed_full(
@@ -3433,25 +3520,39 @@ mod tests {
             .map(|kv| (kv.key.as_str().to_string(), kv.value.to_string()))
             .collect();
 
-        assert_eq!(attr_map.get("process.pid").map(|s| s.as_str()), Some("4567"));
-        assert_eq!(attr_map.get("process.parent_pid").map(|s| s.as_str()), Some("1234"));
+        assert_eq!(
+            attr_map.get("process.pid").map(|s| s.as_str()),
+            Some("4567")
+        );
+        assert_eq!(
+            attr_map.get("process.parent_pid").map(|s| s.as_str()),
+            Some("1234")
+        );
         assert_eq!(
             attr_map.get("process.executable.path").map(|s| s.as_str()),
             Some("C:\\bin\\uploader.exe")
         );
-        assert_eq!(attr_map.get("file.path").map(|s| s.as_str()), Some("C:\\leak\\cards.csv"));
+        assert_eq!(
+            attr_map.get("file.path").map(|s| s.as_str()),
+            Some("C:\\leak\\cards.csv")
+        );
         assert_eq!(
             attr_map.get("gen_ai.operation.name").map(|s| s.as_str()),
             Some("inference.completion")
         );
 
         // Verify cryptographic hashes are present
-        assert_eq!(attr_map.get("file.hash.sha256").map(|s| s.as_str()), Some(sha256_hash.as_str()));
+        assert_eq!(
+            attr_map.get("file.hash.sha256").map(|s| s.as_str()),
+            Some(sha256_hash.as_str())
+        );
         assert!(attr_map.contains_key("file.hash.ssdeep"));
         assert!(attr_map.contains_key("file.hash.blake3"));
 
         // Verify Zero-PII invariant: URL basic auth credentials are sanitized
-        let sanitized_url = attr_map.get("url.full").expect("url.full attribute must exist");
+        let sanitized_url = attr_map
+            .get("url.full")
+            .expect("url.full attribute must exist");
         assert!(
             !sanitized_url.contains("password123"),
             "Sanitized URL must NEVER contain raw passwords or basic auth credentials"
@@ -3521,7 +3622,9 @@ mod tests {
         );
 
         // 1. Verify JSON serialization
-        let json_str = event.to_json_string().expect("JSON serialization must succeed");
+        let json_str = event
+            .to_json_string()
+            .expect("JSON serialization must succeed");
         assert!(json_str.contains("\"eventType\""));
         assert!(json_str.contains("\"COMPLETE\""));
         assert!(json_str.contains("\"runId\""));
@@ -3544,7 +3647,10 @@ mod tests {
         assert_eq!(log_rec.severity_text, "INFO");
         assert!(log_rec.body.contains("\"eventType\": \"COMPLETE\""));
         assert_eq!(
-            log_rec.attributes.get("openlineage.job.name").map(|s| s.as_str()),
+            log_rec
+                .attributes
+                .get("openlineage.job.name")
+                .map(|s| s.as_str()),
             Some("7z.exe#pid:14280")
         );
 
@@ -3579,7 +3685,10 @@ mod tests {
             Some(&sha256_hash),
         );
 
-        assert!(block_res.is_err(), "Tainted egress must be synchronously blocked");
+        assert!(
+            block_res.is_err(),
+            "Tainted egress must be synchronously blocked"
+        );
         let info = block_res.unwrap_err();
         assert_eq!(info.policy, "QUARANTINE");
         assert_eq!(info.classification, "CROWN_JEWEL");
@@ -3588,7 +3697,11 @@ mod tests {
 
         // Verify synthetic child span in tracker ring buffer
         let spans = tracker.blocked_child_spans.read();
-        assert_eq!(spans.len(), 1, "Child span must be emitted into ring buffer");
+        assert_eq!(
+            spans.len(),
+            1,
+            "Child span must be emitted into ring buffer"
+        );
         let span = &spans[0];
         assert_eq!(span.status, "ERROR");
         assert_eq!(span.action, "BLOCKED");
@@ -3644,4 +3757,3 @@ mod tests {
         assert_eq!(jobs[0]["pid"], 8888);
     }
 }
-

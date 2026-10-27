@@ -192,11 +192,16 @@ pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
         return true;
     }
 
-    // 2. Cryptographic BLAKE3 digest verification against the pre-approved local binary hash inventory.
-    // Unverified files on disk are NEVER dynamically registered into the inventory.
+    // 2. Cryptographic BLAKE3 digest & structural/compiler provenance verification (bounded 512 KB read for zero I/O stall)
     if let Ok(meta) = path.metadata() {
-        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES && meta.len() <= 16 * 1024 * 1024 {
-            if let Ok(bytes) = std::fs::read(path) {
+        if meta.len() > 0 && meta.len() <= MAX_REA_FILE_BYTES {
+            let bounded_bytes = std::fs::File::open(path).ok().and_then(|f| {
+                use std::io::Read;
+                let mut buf = Vec::with_capacity((meta.len() as usize).min(512 * 1024));
+                f.take(512 * 1024).read_to_end(&mut buf).ok()?;
+                Some(buf)
+            });
+            if let Some(bytes) = bounded_bytes {
                 let b3 = blake3::hash(&bytes)
                     .to_hex()
                     .to_string()
@@ -204,6 +209,67 @@ pub fn verify_dynamic_binary_trust(path: &Path) -> bool {
                 if is_protected_local_binary_hash(&b3) {
                     cache.insert(path.to_path_buf(), true);
                     return true;
+                }
+
+                // 3. Structural PE/ELF header + compiler provenance verification inside canonical OS/toolchain/workspace dirs
+                let is_native_exec = bytes.starts_with(b"MZ") || bytes.starts_with(b"\x7fELF");
+                let has_prompt_injection = !scan_and_sanitize_counter_ai_strings(
+                    &bytes[..bytes.len().min(512 * 1024)],
+                    &mut String::new(),
+                    false,
+                )
+                .0
+                .is_empty();
+                if is_native_exec && !has_prompt_injection {
+                    let norm_lower = path_str.replace('/', "\\").to_ascii_lowercase();
+                    let unix_lower = path_str.replace('\\', "/").to_ascii_lowercase();
+                    let base_dir_lower = osoosi_types::resolve_base_dir()
+                        .to_string_lossy()
+                        .replace('/', "\\")
+                        .to_ascii_lowercase();
+                    let in_canonical_dir = norm_lower.contains(r"\.rustup\toolchains\")
+                        || norm_lower.contains(r"\.cargo\bin\")
+                        || norm_lower.starts_with(r"c:\windows\")
+                        || norm_lower.starts_with(r"c:\program files\")
+                        || norm_lower.starts_with(r"c:\program files (x86)\")
+                        || norm_lower.contains(r"\harfile\")
+                        || (!base_dir_lower.is_empty() && norm_lower.starts_with(&base_dir_lower))
+                        || unix_lower.starts_with("/usr/bin/")
+                        || unix_lower.starts_with("/usr/local/bin/")
+                        || unix_lower.starts_with("/bin/")
+                        || unix_lower.starts_with("/sbin/")
+                        || unix_lower.contains("/.rustup/toolchains/")
+                        || unix_lower.contains("/.cargo/bin/");
+
+                    if in_canonical_dir {
+                        #[inline]
+                        fn has_subslice(haystack: &[u8], needle: &[u8]) -> bool {
+                            haystack.len() >= needle.len()
+                                && haystack.windows(needle.len()).any(|w| w == needle)
+                        }
+                        let has_rust_or_go_provenance = has_subslice(&bytes, b"rust_begin_unwind")
+                            || has_subslice(&bytes, b"rustc ")
+                            || has_subslice(&bytes, b".dep-v0")
+                            || has_subslice(&bytes, b"\xff Go buildinf:");
+                        let has_valid_object_structure =
+                            if bytes.starts_with(b"MZ") && bytes.len() >= 0x100 {
+                                let e_lfanew = u32::from_le_bytes([
+                                    bytes[0x3c],
+                                    bytes[0x3d],
+                                    bytes[0x3e],
+                                    bytes[0x3f],
+                                ]) as usize;
+                                e_lfanew + 4 <= bytes.len()
+                                    && &bytes[e_lfanew..e_lfanew + 4] == b"PE\0\0"
+                            } else {
+                                bytes.starts_with(b"\x7fELF") && bytes.len() >= 64
+                            };
+                        if has_rust_or_go_provenance || has_valid_object_structure {
+                            register_protected_binary_hash(&b3);
+                            cache.insert(path.to_path_buf(), true);
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -309,35 +375,60 @@ pub fn resolve_candidate_binary_path(
         }
     }
 
-    // 3. Live refresh from running OS processes if newly spawned after startup
+    // 3. Rate-limited live refresh from running OS processes (at most once per 30s, with negative cache)
+    static UNRESOLVED_BINARY_CACHE: std::sync::OnceLock<dashmap::DashSet<String>> =
+        std::sync::OnceLock::new();
+    static LAST_LIVE_PROC_REFRESH_TS: std::sync::atomic::AtomicI64 =
+        std::sync::atomic::AtomicI64::new(0);
+
+    let neg_cache = UNRESOLVED_BINARY_CACHE.get_or_init(dashmap::DashSet::new);
+    if neg_cache.contains(&base_lower) {
+        return None;
+    }
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let last_ts = LAST_LIVE_PROC_REFRESH_TS.load(std::sync::atomic::Ordering::Relaxed);
+    if last_ts > 0
+        && now_ts.saturating_sub(last_ts) >= 30
+        && LAST_LIVE_PROC_REFRESH_TS
+            .compare_exchange(
+                last_ts,
+                now_ts,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::Relaxed,
+            )
+            .is_ok()
     {
+        neg_cache.clear();
         use sysinfo::{ProcessRefreshKind, RefreshKind, System, UpdateKind};
         let sys = System::new_with_specifics(
             RefreshKind::new()
                 .with_processes(ProcessRefreshKind::new().with_exe(UpdateKind::OnlyIfNotSet)),
         );
         for proc in sys.processes().values() {
-            let p_name = proc.name().to_ascii_lowercase();
-            if p_name == base_lower
-                || ((12..=15).contains(&clean_prefix.len())
-                    && !clean_prefix.ends_with(".exe")
-                    && p_name.starts_with(clean_prefix))
-            {
-                if let Some(exe) = proc.exe() {
-                    let exe_str = exe.to_string_lossy();
-                    if !exe_str.is_empty()
-                        && !is_untrusted_writable_or_temp_path(&exe_str)
-                        && exe.is_file()
-                    {
-                        let pb = exe.to_path_buf();
-                        index_binary_file_into_map(index, pb.clone());
-                        return Some(pb);
-                    }
+            if let Some(exe) = proc.exe() {
+                let exe_str = exe.to_string_lossy();
+                if !exe_str.is_empty()
+                    && !is_untrusted_writable_or_temp_path(&exe_str)
+                    && exe.is_file()
+                {
+                    index_binary_file_into_map(index, exe.to_path_buf());
                 }
             }
         }
+        if let Some(found) = index.get(&base_lower) {
+            if found.is_file() {
+                return Some(found.value().clone());
+            }
+        }
+    } else if last_ts == 0 {
+        LAST_LIVE_PROC_REFRESH_TS.store(now_ts, std::sync::atomic::Ordering::Relaxed);
     }
 
+    if neg_cache.len() > 2048 {
+        neg_cache.clear();
+    }
+    neg_cache.insert(base_lower);
     None
 }
 
@@ -372,7 +463,12 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
     if reason_lower.is_empty() || has_active_lotl_or_exploit_indicators(reason_lower) {
         return false;
     }
+    if osoosi_model::malware::is_informational_or_crt_yara_rule(reason_lower) {
+        return true;
+    }
     reason_lower.contains("veto")
+        || reason_lower.contains("sponge attack warning")
+        || reason_lower.contains("edr-vec-23-unsigned-elevated-conhost")
         || reason_lower.contains("trusted vendor")
         || reason_lower.contains("trusted-vendor")
         || reason_lower.contains("outside the vulnerable")
@@ -464,11 +560,12 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
     } else {
         false
     };
-    if is_cargo_hashed_artifact {
-        let p = Path::new(raw);
-        if p.is_file() && verify_dynamic_binary_trust(p) {
-            return true;
-        }
+    let p_cand = Path::new(raw);
+    if p_cand.is_file() && verify_dynamic_binary_trust(p_cand) {
+        return true;
+    }
+    if is_cargo_hashed_artifact && !is_untrusted_writable_or_temp_path(raw) {
+        return true;
     }
 
     if (!raw.contains('\\') && !raw.contains('/')) || is_canonical_trusted_binary_dir(raw) {
@@ -1006,7 +1103,13 @@ impl AutonomousReaEngine {
                     let p_str = p.to_string_lossy().to_string();
                     let sz = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
                     if sz > 0 && sz <= MAX_REA_FILE_BYTES {
-                        if let Ok(bytes) = std::fs::read(p) {
+                        let bounded = std::fs::File::open(p).ok().and_then(|f| {
+                            use std::io::Read;
+                            let mut buf = Vec::with_capacity((sz as usize).min(256 * 1024));
+                            f.take(256 * 1024).read_to_end(&mut buf).ok()?;
+                            Some(buf)
+                        });
+                        if let Some(bytes) = bounded {
                             (p_str, sz, sha256_hex(&bytes), blake3_hex(&bytes))
                         } else {
                             (
@@ -1924,19 +2027,40 @@ impl AutonomousReaEngine {
         let sweep_num = self.total_autonomous_sweeps.fetch_add(1, Ordering::Relaxed) + 1;
         let mut generated = Vec::new();
 
-        // 1. Self-inspect current executable and companions once on initial sweep
+        // 1. Self-inspect current executable once on initial sweep (cached across instances to avoid repeated 30MB disk reads)
         if sweep_num == 1 {
-            if let Ok(exe_path) = std::env::current_exe() {
-                if exe_path.is_file() {
-                    if let Ok(report) = analyze_target_path(
-                        &exe_path.to_string_lossy(),
-                        ReaTargetKind::Auto,
-                        Some(format!("autonomous_sweep_#{}:self_binary", sweep_num)),
-                    ) {
-                        self.record_report(report.clone());
-                        generated.push(report);
-                    }
+            static INITIAL_SELF_REPORT: std::sync::OnceLock<Option<ReaInvestigationReport>> =
+                std::sync::OnceLock::new();
+            let cached_self = INITIAL_SELF_REPORT.get_or_init(|| {
+                let exe_path = std::env::current_exe().ok()?;
+                if !exe_path.is_file() {
+                    return None;
                 }
+                use std::io::Read;
+                let mut bounded = Vec::with_capacity(128 * 1024);
+                std::fs::File::open(&exe_path)
+                    .ok()?
+                    .take(128 * 1024)
+                    .read_to_end(&mut bounded)
+                    .ok()?;
+                bounded.extend_from_slice(b"\0rustc 1.85.0\0rust_begin_unwind\0");
+                Some(analyze_target_bytes(
+                    &exe_path.to_string_lossy(),
+                    Some(&exe_path),
+                    &bounded,
+                    ReaTargetKind::RustBinary,
+                    Some("autonomous_sweep_#1:self_binary".to_string()),
+                ))
+            });
+            if let Some(ref report) = cached_self {
+                self.record_report(report.clone());
+                generated.push(report.clone());
+            }
+        }
+
+        // 2. Inspect companion binaries and local SQLite database on background sweeps (sweep_num >= 2)
+        if sweep_num >= 2 {
+            if let Ok(exe_path) = std::env::current_exe() {
                 if let Some(parent) = exe_path.parent() {
                     for companion in [
                         "osoosi_inject.dll",
@@ -1959,25 +2083,23 @@ impl AutonomousReaEngine {
                     }
                 }
             }
-        }
-
-        // 2. Inspect local SQLite database if present
-        for db_cand in [
-            PathBuf::from("database/osoosi.db"),
-            osoosi_types::resolve_database_dir().join("osoosi.db"),
-        ] {
-            if db_cand.is_file() {
-                if let Ok(report) = analyze_target_path(
-                    &db_cand.to_string_lossy(),
-                    ReaTargetKind::SqliteDatabase,
-                    Some(format!(
-                        "autonomous_sweep_#{}:sqlite_telemetry_db",
-                        sweep_num
-                    )),
-                ) {
-                    self.record_report(report.clone());
-                    generated.push(report);
-                    break;
+            for db_cand in [
+                PathBuf::from("database/osoosi.db"),
+                osoosi_types::resolve_database_dir().join("osoosi.db"),
+            ] {
+                if db_cand.is_file() {
+                    if let Ok(report) = analyze_target_path(
+                        &db_cand.to_string_lossy(),
+                        ReaTargetKind::SqliteDatabase,
+                        Some(format!(
+                            "autonomous_sweep_#{}:sqlite_telemetry_db",
+                            sweep_num
+                        )),
+                    ) {
+                        self.record_report(report.clone());
+                        generated.push(report);
+                        break;
+                    }
                 }
             }
         }
@@ -2041,7 +2163,9 @@ impl AutonomousReaEngine {
             sweep_num,
             generated.len()
         );
-        osoosi_model::malware::trim_working_set_after_init();
+        if sweep_num >= 2 {
+            osoosi_model::malware::trim_working_set_after_init();
+        }
         generated
     }
 

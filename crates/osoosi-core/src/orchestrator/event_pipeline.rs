@@ -711,8 +711,19 @@ impl EdrOrchestrator {
             }
         }
 
-        // 1. Tier-1/2 on Async Consensus (policy)
+        // 1. Tier-1/2 on Async Consensus (policy: REA + All Voters)
         let mut signature = self.policy.scan_event(&event).await;
+        if signature.is_none() {
+            // If REA + All-Voter Quorum in PolicyEngine vetoed or abstained on this event,
+            // immediately purge any side-effect candidate pushed to MalwareScanner::detections
+            // by MalConvVoter during voting.
+            for key in ["Image", "TargetImage", "TargetFilename"] {
+                if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
+                    self.malware_scanner
+                        .purge_detection_by_path_or_hash(Some(p), None);
+                }
+            }
+        }
 
         // Route into Behavioral Analysis Pipeline (SecureBERT / CoLog autonomous sequence check)
         let log_ev = osoosi_behavioral::LogEvent::from(&event);
@@ -1845,14 +1856,7 @@ impl EdrOrchestrator {
             // 1. ProcessCreate (Sysmon 1, Security 4688)
             1 | 4688 => {
                 if pid > 0 {
-                    tracker.on_process_create(
-                        pid,
-                        start_time_100ns,
-                        image_name,
-                        image,
-                        ppid,
-                        None,
-                    );
+                    tracker.on_process_create(pid, start_time_100ns, image_name, image, ppid, None);
                 }
             }
             // 2. ProcessTerminate (Sysmon 5)
@@ -1922,7 +1926,8 @@ impl EdrOrchestrator {
             // 6. NetworkConnect (Sysmon 3)
             3 => {
                 if pid > 0 {
-                    let proc_key = crate::dlp_lineage::ProcessInstanceKey::new(pid, start_time_100ns);
+                    let proc_key =
+                        crate::dlp_lineage::ProcessInstanceKey::new(pid, start_time_100ns);
                     let decision = tracker.check_process_egress_blocking(&proc_key);
                     if let crate::dlp_lineage::EgressDecision::Blocked {
                         policy,
@@ -1988,14 +1993,29 @@ impl EdrOrchestrator {
                         tracker.on_file_write_path(pid, start_time_100ns, target_file, None);
                     }
                 } else if event_name == "FileRename" {
-                    let old_file = event.data.get("SourceFilename").and_then(|v| v.as_str()).unwrap_or("");
-                    let new_file = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+                    let old_file = event
+                        .data
+                        .get("SourceFilename")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let new_file = event
+                        .data
+                        .get("TargetFilename")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     if !old_file.is_empty() && !new_file.is_empty() {
                         tracker.on_file_rename(pid, start_time_100ns, old_file, new_file);
                     }
                 } else if event_name == "ProcessCreate" {
                     if pid > 0 {
-                        tracker.on_process_create(pid, start_time_100ns, image_name, image, ppid, None);
+                        tracker.on_process_create(
+                            pid,
+                            start_time_100ns,
+                            image_name,
+                            image,
+                            ppid,
+                            None,
+                        );
                     }
                 } else if event_name == "ProcessTerminate" {
                     if pid > 0 {

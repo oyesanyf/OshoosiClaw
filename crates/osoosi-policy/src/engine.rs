@@ -364,7 +364,7 @@ fn classify_vote(
         name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
         "ZeroDayTracker" => (EvidenceClass::ThreatIntel, 1.0, true),
         "SandboxSurfaceAnalysis" => (EvidenceClass::Behavior, 0.85, true),
-        "Agentic-Escape-Detector" => (EvidenceClass::Behavior, 0.95, true),
+        "Agentic-Escape-Detector" => (EvidenceClass::Behavior, 0.95, result.confidence >= 0.85),
         "Agent-Egress-Voter" => (EvidenceClass::LiveNetwork, 1.0, true),
         "HAR-L7-Inspector" => (EvidenceClass::LiveNetwork, 0.94, true),
         "Mercury-Fluid-Dynamics" => (EvidenceClass::Behavior, 0.95, true),

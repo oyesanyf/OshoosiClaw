@@ -5657,6 +5657,7 @@ name = "osoosi-agent-anomaly"
 version = "1.2.0"
 dependencies = [
  "agent-thermostat",
+ "aho-corasick",
  "anyhow",
  "async-trait",
  "blake3",
@@ -6074,6 +6075,7 @@ name = "osoosi-model"
 version = "1.2.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "candle-core",
  "candle-nn",
  "chrono",

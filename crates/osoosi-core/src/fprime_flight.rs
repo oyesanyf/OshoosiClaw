@@ -22,13 +22,17 @@ use tokio::sync::mpsc;
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FPrimeError {
-    #[error("Post-initialization dynamic heap allocation is strictly forbidden (CWE-770 immunity)")]
+    #[error(
+        "Post-initialization dynamic heap allocation is strictly forbidden (CWE-770 immunity)"
+    )]
     PostInitAllocationForbidden,
 
     #[error("Static arena pool exhausted for bin {bin:?}; backpressure applied")]
     ArenaPoolExhausted { bin: ArenaBinKind },
 
-    #[error("Bulk quota exhausted for bin {bin:?}; reserved critical quota protected from noise flood")]
+    #[error(
+        "Bulk quota exhausted for bin {bin:?}; reserved critical quota protected from noise flood"
+    )]
     ArenaBulkQuotaExhausted { bin: ArenaBinKind },
 
     #[error("Invalid arena slot index {slot_idx} for bin {bin:?}")]
@@ -46,7 +50,9 @@ pub enum FPrimeError {
     #[error("Playbook magic bytes invalid: expected *b\"FSEQ\", found {0:?}")]
     InvalidMagicBytes([u8; 4]),
 
-    #[error("Playbook CRC32C checksum mismatch: computed {computed:#010x}, expected {expected:#010x}")]
+    #[error(
+        "Playbook CRC32C checksum mismatch: computed {computed:#010x}, expected {expected:#010x}"
+    )]
     ChecksumMismatch { computed: u32, expected: u32 },
 
     #[error("Playbook SHA256 digest mismatch")]
@@ -55,7 +61,9 @@ pub enum FPrimeError {
     #[error("BFT quorum promotion rejected: insufficient valid signatures ({valid}/{required})")]
     QuorumPromotionRejected { valid: usize, required: usize },
 
-    #[error("Hardware watchdog stroke rejected: component {component_id} is in hung/degraded state")]
+    #[error(
+        "Hardware watchdog stroke rejected: component {component_id} is in hung/degraded state"
+    )]
     WatchdogStrokeRejected { component_id: String },
 
     #[error("Hardware watchdog stroke rejected: TPM 2.0 PCR 16 verification failed")]
@@ -253,7 +261,8 @@ impl<T: Send + Sync> OutputPort<T> {
     }
 
     pub fn sent_count(&self) -> u64 {
-        self.critical_sent_count.load(Ordering::SeqCst) + self.bulk_sent_count.load(Ordering::SeqCst)
+        self.critical_sent_count.load(Ordering::SeqCst)
+            + self.bulk_sent_count.load(Ordering::SeqCst)
     }
 
     pub fn dropped_count(&self) -> u64 {
@@ -298,24 +307,37 @@ pub struct TelemetryFrame {
 }
 
 impl TelemetryFrame {
-    /// Classifies incoming telemetry into QoS lanes.
+    /// Classifies incoming telemetry into QoS lanes with zero heap allocation.
     pub fn classify_qos_lane(&self) -> PortQosLane {
-        let kind = self.event_kind.to_ascii_lowercase();
-        if kind.contains("createremotethread")
-            || kind.contains("lsass")
-            || kind.contains("processcreate")
-            || kind.contains("driverload")
-            || kind.contains("dlp")
-            || kind.contains("shadowcopy")
-            || kind.contains("lolbin")
-            || self.syscall_id == 0xDEAD_BEEF
+        // Fast numeric paths evaluated first with zero string overhead
+        if self.syscall_id == 0xDEAD_BEEF
             || self.syscall_id == 1
             || self.pmu_branch_misses > 200_000
         {
-            PortQosLane::CriticalSecurityLane
-        } else {
-            PortQosLane::BulkTelemetryLane
+            return PortQosLane::CriticalSecurityLane;
         }
+
+        // Zero-allocation ASCII case-insensitive substring search
+        let bytes = self.event_kind.as_bytes();
+        const CRITICAL_KEYWORDS: [&[u8]; 7] = [
+            b"createremotethread",
+            b"lsass",
+            b"processcreate",
+            b"driverload",
+            b"dlp",
+            b"shadowcopy",
+            b"lolbin",
+        ];
+
+        for &kw in &CRITICAL_KEYWORDS {
+            if bytes.len() >= kw.len()
+                && bytes.windows(kw.len()).any(|w| w.eq_ignore_ascii_case(kw))
+            {
+                return PortQosLane::CriticalSecurityLane;
+            }
+        }
+
+        PortQosLane::BulkTelemetryLane
     }
 }
 
@@ -643,17 +665,21 @@ impl FPrimeTopology {
     }
 
     /// Synchronously executes a deterministic pipeline cycle for a single frame.
-    pub fn execute_pipeline_frame(&self, frame: TelemetryFrame) -> Result<IsolationAck, FPrimeError> {
+    pub fn execute_pipeline_frame(
+        &self,
+        frame: TelemetryFrame,
+    ) -> Result<IsolationAck, FPrimeError> {
         let lane = frame.classify_qos_lane();
-        let slot = self
-            .arena
-            .lease_slot_for_lane(ArenaBinKind::SyscallEventBin, lane, self.ebpf_comp.comp_id)?;
+        let slot = self.arena.lease_slot_for_lane(
+            ArenaBinKind::SyscallEventBin,
+            lane,
+            self.ebpf_comp.comp_id,
+        )?;
 
         let verdict = self
             .rea_comp
             .inspect_frame(&frame, &self.arena, Some(&slot));
-        self.arena
-            .release_and_scrub_slot(slot.bin, slot.slot_idx);
+        self.arena.release_and_scrub_slot(slot.bin, slot.slot_idx);
 
         let assessment = self.recoil_comp.score(&verdict);
         let directive = self.bft_comp.evaluate_consensus(&assessment);
@@ -694,10 +720,68 @@ pub struct ArenaSlotHandle {
     pub slot_size: usize,
 }
 
+pub struct SlotOwner {
+    ptr: std::sync::atomic::AtomicPtr<u8>,
+    len: AtomicUsize,
+}
+
+impl SlotOwner {
+    pub const fn new() -> Self {
+        Self {
+            ptr: std::sync::atomic::AtomicPtr::new(std::ptr::null_mut()),
+            len: AtomicUsize::new(0),
+        }
+    }
+
+    #[inline]
+    pub fn set(&self, owner: Option<&'static str>) {
+        if let Some(s) = owner {
+            self.ptr.store(s.as_ptr() as *mut u8, Ordering::Release);
+            self.len.store(s.len(), Ordering::Release);
+        } else {
+            self.ptr.store(std::ptr::null_mut(), Ordering::Release);
+            self.len.store(0, Ordering::Release);
+        }
+    }
+
+    #[inline]
+    pub fn matches(&self, target: &str) -> bool {
+        let p = self.ptr.load(Ordering::Acquire);
+        if p.is_null() {
+            return false;
+        }
+        let l = self.len.load(Ordering::Acquire);
+        if l != target.len() {
+            return false;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(p, l) };
+        slice == target.as_bytes()
+    }
+
+    pub fn get(&self) -> Option<&'static str> {
+        let p = self.ptr.load(Ordering::Acquire);
+        if p.is_null() {
+            None
+        } else {
+            let l = self.len.load(Ordering::Acquire);
+            unsafe {
+                let bytes = std::slice::from_raw_parts(p, l);
+                std::str::from_utf8(bytes).ok()
+            }
+        }
+    }
+}
+
+impl Default for SlotOwner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct ArenaSlot {
     pub buffer: Mutex<Vec<u8>>,
     pub in_use: AtomicBool,
-    pub owner_component: RwLock<Option<&'static str>>,
+    pub owner_component: SlotOwner,
 }
 
 pub struct ArenaBin {
@@ -707,6 +791,8 @@ pub struct ArenaBin {
     pub critical_reserved_slots: usize,
     pub active_leases: AtomicUsize,
     pub exhaustion_backpressure_events: AtomicU64,
+    pub bulk_cursor: AtomicUsize,
+    pub critical_cursor: AtomicUsize,
 }
 
 pub struct StaticArenaPool {
@@ -724,11 +810,13 @@ impl StaticArenaPool {
                 .map(|_| ArenaSlot {
                     buffer: Mutex::new(vec![0u8; 512]),
                     in_use: AtomicBool::new(false),
-                    owner_component: RwLock::new(None),
+                    owner_component: SlotOwner::new(),
                 })
                 .collect(),
             active_leases: AtomicUsize::new(0),
             exhaustion_backpressure_events: AtomicU64::new(0),
+            bulk_cursor: AtomicUsize::new(0),
+            critical_cursor: AtomicUsize::new(0),
         };
 
         let bin1 = ArenaBin {
@@ -739,11 +827,13 @@ impl StaticArenaPool {
                 .map(|_| ArenaSlot {
                     buffer: Mutex::new(vec![0u8; 2048]),
                     in_use: AtomicBool::new(false),
-                    owner_component: RwLock::new(None),
+                    owner_component: SlotOwner::new(),
                 })
                 .collect(),
             active_leases: AtomicUsize::new(0),
             exhaustion_backpressure_events: AtomicU64::new(0),
+            bulk_cursor: AtomicUsize::new(0),
+            critical_cursor: AtomicUsize::new(0),
         };
 
         let bin2 = ArenaBin {
@@ -754,11 +844,13 @@ impl StaticArenaPool {
                 .map(|_| ArenaSlot {
                     buffer: Mutex::new(vec![0u8; 16384]),
                     in_use: AtomicBool::new(false),
-                    owner_component: RwLock::new(None),
+                    owner_component: SlotOwner::new(),
                 })
                 .collect(),
             active_leases: AtomicUsize::new(0),
             exhaustion_backpressure_events: AtomicU64::new(0),
+            bulk_cursor: AtomicUsize::new(0),
+            critical_cursor: AtomicUsize::new(0),
         };
 
         Self {
@@ -785,7 +877,7 @@ impl StaticArenaPool {
         }
     }
 
-    /// Leases a pre-allocated slot enforcing QoS reserved quotas.
+    /// Leases a pre-allocated slot enforcing QoS reserved quotas with lock-free O(1) allocation.
     /// Bulk telemetry cannot exhaust the reserved critical quota.
     pub fn lease_slot_for_lane(
         &self,
@@ -795,6 +887,12 @@ impl StaticArenaPool {
     ) -> Result<ArenaSlotHandle, FPrimeError> {
         let b = &self.bins[bin.bin_idx()];
         let total_slots = b.slots.len();
+        if total_slots == 0 {
+            b.exhaustion_backpressure_events
+                .fetch_add(1, Ordering::SeqCst);
+            return Err(FPrimeError::ArenaPoolExhausted { bin });
+        }
+
         let current_active = b.active_leases.load(Ordering::SeqCst);
         let free_slots = total_slots.saturating_sub(current_active);
 
@@ -804,13 +902,28 @@ impl StaticArenaPool {
             return Err(FPrimeError::ArenaBulkQuotaExhausted { bin });
         }
 
-        for (i, slot) in b.slots.iter().enumerate() {
+        // Lock-free O(1) slot leasing via rotating cursor & segregated quotas
+        let (start_idx, max_search) = match lane {
+            PortQosLane::BulkTelemetryLane => {
+                let bulk_capacity = total_slots.saturating_sub(b.critical_reserved_slots).max(1);
+                let start = b.bulk_cursor.fetch_add(1, Ordering::Relaxed) % bulk_capacity;
+                (start, bulk_capacity)
+            }
+            PortQosLane::CriticalSecurityLane => {
+                let start = b.critical_cursor.fetch_add(1, Ordering::Relaxed) % total_slots;
+                (start, total_slots)
+            }
+        };
+
+        for step in 0..max_search {
+            let i = (start_idx + step) % max_search;
+            let slot = &b.slots[i];
             if slot
                 .in_use
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
-                *slot.owner_component.write().unwrap() = Some(owner_component);
+                slot.owner_component.set(Some(owner_component));
                 b.active_leases.fetch_add(1, Ordering::SeqCst);
                 return Ok(ArenaSlotHandle {
                     bin,
@@ -834,7 +947,7 @@ impl StaticArenaPool {
         self.lease_slot_for_lane(bin, PortQosLane::CriticalSecurityLane, owner_component)
     }
 
-    /// Zero-scrubs and releases a leased slot back to the static pool.
+    /// Zero-scrubs and releases a leased slot back to the static pool without locks.
     pub fn release_and_scrub_slot(&self, bin: ArenaBinKind, slot_idx: usize) {
         let b = &self.bins[bin.bin_idx()];
         if slot_idx < b.slots.len() {
@@ -842,10 +955,10 @@ impl StaticArenaPool {
             if let Ok(mut buf) = slot.buffer.lock() {
                 buf.fill(0u8);
             }
-            *slot.owner_component.write().unwrap() = None;
+            slot.owner_component.set(None);
             if slot
                 .in_use
-                .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
                 b.active_leases.fetch_sub(1, Ordering::SeqCst);
@@ -853,15 +966,12 @@ impl StaticArenaPool {
         }
     }
 
-    /// Reclaims and zero-scrubs all slots leased by a hung or severed component.
+    /// Reclaims and zero-scrubs all slots leased by a hung or severed component with lock-free matching.
     pub fn reclaim_component_leases(&self, owner_component: &str) -> usize {
         let mut reclaimed = 0;
         for b in &self.bins {
             for (i, slot) in b.slots.iter().enumerate() {
-                let is_owner = {
-                    let guard = slot.owner_component.read().unwrap();
-                    guard.as_deref() == Some(owner_component)
-                };
+                let is_owner = slot.owner_component.matches(owner_component);
 
                 if is_owner && slot.in_use.load(Ordering::SeqCst) {
                     self.release_and_scrub_slot(b.kind, i);
@@ -912,8 +1022,12 @@ pub struct PongToken {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ComponentHealthVerdict {
-    Healthy { latency_ms: u64 },
-    Warning { elapsed_ms: u64 },
+    Healthy {
+        latency_ms: u64,
+    },
+    Warning {
+        elapsed_ms: u64,
+    },
     AbortedAndRespawned {
         reclaimed_arena_slots: usize,
         respawn_epoch: u64,
@@ -1509,7 +1623,10 @@ mod tests {
 
         // Now leasing succeeds into the vacated scrubbed slot
         let slot3 = arena
-            .lease_slot(ArenaBinKind::SyscallEventBin, "Fw::Comp::ReaMagikaInspector")
+            .lease_slot(
+                ArenaBinKind::SyscallEventBin,
+                "Fw::Comp::ReaMagikaInspector",
+            )
             .expect("lease into scrubbed slot");
         assert_eq!(slot3.slot_idx, slot1.slot_idx);
 
@@ -1599,7 +1716,10 @@ mod tests {
         let report = sequencer
             .trigger_safe_mode_demotion(&playbook, "Kernel breach detected by eBPF")
             .expect("demotion must succeed");
-        assert_eq!(report.transitioned_to, FPrimeOperatingMode::HardenedSafeMode);
+        assert_eq!(
+            report.transitioned_to,
+            FPrimeOperatingMode::HardenedSafeMode
+        );
         assert_eq!(
             sequencer.current_mode(),
             FPrimeOperatingMode::HardenedSafeMode

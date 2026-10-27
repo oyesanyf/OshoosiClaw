@@ -1197,3 +1197,48 @@ fn test_rea_vetoes_oem_inventory_cargo_build_and_low_p_openjev_in_mesh_and_conse
         vote
     );
 }
+
+#[test]
+fn test_rea_and_voters_check_and_veto_all_reported_developer_and_system_binaries() {
+    let engine = AutonomousReaEngine::new();
+    let reported_benign_candidates = [
+        ("C:\\Program Files\\Git\\usr\\bin\\gpg.exe", "RIPEMD160_Constants"),
+        ("C:\\Users\\dev\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\cargo.exe", "vmdetect"),
+        ("C:\\Users\\dev\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\rustc.exe", "win_files_operation"),
+        ("C:\\Users\\dev\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\rustfmt.exe", "win_files_operation"),
+        ("d:\\harfile\\OshoosiClaw\\target\\release\\climcp.exe", "vmdetect"),
+        ("d:\\harfile\\OshoosiClaw\\target\\release\\build\\osoosi-core-1234\\build-script-build.exe", "antisb_threatExpert"),
+        ("d:\\harfile\\OshoosiClaw\\target\\release\\killswitch.exe", "antisb_threatExpert"),
+        ("d:\\harfile\\OshoosiClaw\\target\\release\\deps\\killswitch_server-a9f2608be92304af.exe", "antisb_threatExpert"),
+        ("C:\\Windows\\System32\\conhost.exe", "EDR-VEC-23-UNSIGNED-ELEVATED-CONHOST"),
+        ("C:\\Program Files\\Velociraptor\\velociraptor.exe", "Agentic-Escape-Detector: [AML.T0029] Sponge Attack Warning"),
+    ];
+
+    for (path, rule_or_reason) in reported_benign_candidates {
+        let eval = engine.evaluate_detector_candidate("Malware/YARA", path, rule_or_reason, 0.99);
+        assert!(
+            eval.benign_veto,
+            "REA + Voter gate must veto benign developer/system binary '{}' matching '{}', got: {:?}",
+            path, rule_or_reason, eval
+        );
+        let vote = engine.cast_consensus_vote(path, "Malware/YARA", rule_or_reason, 0.99);
+        assert!(
+            vote.benign_veto && vote.weight < 0.0,
+            "REA-Voter must cast negative benign veto vote for '{}', got: {:?}",
+            path,
+            vote
+        );
+    }
+
+    let mal_eval = engine.evaluate_detector_candidate(
+        "Malware/YARA",
+        "C:\\Users\\Public\\Downloads\\svchost.exe",
+        "CobaltStrike_Beacon_ReflectiveLoader",
+        0.98,
+    );
+    assert!(
+        !mal_eval.benign_veto,
+        "Masquerading malware in Public Downloads must NEVER be vetoed by REA: {:?}",
+        mal_eval
+    );
+}

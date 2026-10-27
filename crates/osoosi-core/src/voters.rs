@@ -173,7 +173,10 @@ impl ThreatVoter for YaraXVoter {
             let scan_result = adaptive
                 .run_adaptive(ResourceCategory::AI, Priority::High, async move {
                     if let Ok(matches) = ym.scan_file(&path_buf) {
-                        if let Some(primary) = matches.first() {
+                        if let Some(primary) = matches
+                            .into_iter()
+                            .find(|m| !osoosi_model::malware::is_informational_or_crt_yara_rule(m))
+                        {
                             return Some(VoteResult {
                                 confidence: 1.0,
                                 reason: format!("YaraX: THREAT detected - {}", primary),

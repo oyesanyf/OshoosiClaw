@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use wasmtime::{Caller, Config, Engine, Linker, Module, ResourceLimiter, Store};
 
@@ -135,7 +136,7 @@ pub struct WasmExecutionReceipt {
 /// Per-invocation host state owned by `wasmtime::Store<WasmHostState>`.
 pub struct WasmHostState {
     pub limits: WasmSandboxLimits,
-    pub input_bytes: Vec<u8>,
+    pub input_bytes: Arc<[u8]>,
     pub output_buffer: Vec<u8>,
     pub peak_memory_bytes: usize,
     pub memory_limit_exceeded: bool,
@@ -146,10 +147,10 @@ pub struct WasmHostState {
 }
 
 impl WasmHostState {
-    pub fn new(limits: WasmSandboxLimits, input_bytes: Vec<u8>) -> Self {
+    pub fn new(limits: WasmSandboxLimits, input_bytes: impl Into<Arc<[u8]>>) -> Self {
         Self {
             limits,
-            input_bytes,
+            input_bytes: input_bytes.into(),
             output_buffer: Vec::new(),
             peak_memory_bytes: 65_536,
             memory_limit_exceeded: false,
@@ -293,6 +294,7 @@ pub const WASM_LEDGER_VALIDATOR_WAT: &str = r#"
 #[derive(Clone)]
 pub struct WasmTier1Executor {
     engine: Engine,
+    linker: Arc<Linker<WasmHostState>>,
     doc_extractor_module: Module,
     ledger_validator_module: Module,
 }
@@ -309,6 +311,10 @@ impl WasmTier1Executor {
                 e
             ))
         })?;
+
+        let mut linker: Linker<WasmHostState> = Linker::new(&engine);
+        Self::bind_octopus_wasi_imports(&mut linker)?;
+        let linker = Arc::new(linker);
 
         let doc_extractor_module = Module::new(&engine, WASM_DOC_EXTRACTOR_WAT).map_err(|e| {
             OctopusSecurityError::IsolationViolation(format!(
@@ -327,6 +333,7 @@ impl WasmTier1Executor {
 
         Ok(Self {
             engine,
+            linker,
             doc_extractor_module,
             ledger_validator_module,
         })
@@ -409,7 +416,7 @@ impl WasmTier1Executor {
 
         let fuel_budget = limits.fuel_budget;
         let max_linear_memory_bytes = limits.max_linear_memory_bytes;
-        let host_state = WasmHostState::new(limits, input_bytes.to_vec());
+        let host_state = WasmHostState::new(limits, Arc::<[u8]>::from(input_bytes));
 
         let mut store = Store::new(&self.engine, host_state);
         store.limiter(|state| state as &mut dyn ResourceLimiter);
@@ -421,10 +428,7 @@ impl WasmTier1Executor {
         })?;
         store.set_epoch_deadline(2);
 
-        let mut linker: Linker<WasmHostState> = Linker::new(&self.engine);
-        Self::bind_octopus_wasi_imports(&mut linker)?;
-
-        let instance = linker.instantiate(&mut store, module).map_err(|e| {
+        let instance = self.linker.instantiate(&mut store, module).map_err(|e| {
             let mem_exceeded = store.data().memory_limit_exceeded;
             if mem_exceeded {
                 OctopusSecurityError::ResourceQuotaExceeded(format!(
@@ -546,6 +550,8 @@ impl WasmTier1Executor {
                     let Some(wasmtime::Extern::Memory(mem)) = caller.get_export("memory") else {
                         return WASI_ERR_FAULT;
                     };
+                    // Zero-copy Arc slicing: cloning Arc<[u8]> increments reference count (0 heap allocations)
+                    // and slices direct memory into the guest linear memory buffer.
                     let input = caller.data().input_bytes.clone();
                     let copy_len = input.len().min(dst_cap as usize);
                     let start = dst_ptr as usize;

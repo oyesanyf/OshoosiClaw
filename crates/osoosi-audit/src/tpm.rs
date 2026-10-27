@@ -423,18 +423,17 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
                 }
             }
         }
-        return Some(AttestationResult {
+        Some(AttestationResult {
             hardware_backed: true,
             pcr_index: Some(AUDIT_PCR_INDEX),
             attestation_hash: hash_hex.to_string(),
             timestamp: chrono::Utc::now(),
-        });
+        })
     }
 
     #[cfg(not(target_os = "windows"))]
     None
 }
-
 
 /// Telemetry and verification report for F Prime hardware watchdog anchoring against TPM 2.0 PCR 16.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

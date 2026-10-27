@@ -223,6 +223,18 @@ impl EdrOrchestrator {
                                         );
                                         return; // Clean — let it go
                                     }
+                                    // Mandatory REA + All-Voter Consensus check before confirming detection
+                                    if orch
+                                        .adjudicate_malware_candidate_with_rea_and_voters(
+                                            &path,
+                                            &result,
+                                            Some(&process_name),
+                                        )
+                                        .await
+                                        .is_none()
+                                    {
+                                        return;
+                                    }
                                     // Distinguish between a pure resource anomaly and confirmed malicious code.
                                     // Never kill a process on an ambiguous or borderline heuristic ML score.
                                     let is_dev = is_developer_tool(&process_name_lc, Some(&path));
@@ -649,6 +661,17 @@ impl EdrOrchestrator {
                             }
 
                             if result.is_malware {
+                                if orchestrator
+                                    .adjudicate_malware_candidate_with_rea_and_voters(
+                                        path,
+                                        &result,
+                                        file_stem,
+                                    )
+                                    .await
+                                    .is_none()
+                                {
+                                    return;
+                                }
                                 if !path.exists() {
                                     debug!(
                                         "File Monitor: candidate malware vanished before action: {}",

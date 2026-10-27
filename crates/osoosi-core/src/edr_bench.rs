@@ -380,7 +380,10 @@ impl EdrBenchHarness {
             }
 
             // Tag verification for YaraMatch verdicts
-            if let ExpectedVerdict::YaraMatch { ref required_rule_tag } = threat.expected_verdict {
+            if let ExpectedVerdict::YaraMatch {
+                ref required_rule_tag,
+            } = threat.expected_verdict
+            {
                 let required_clean = required_rule_tag.trim().to_ascii_lowercase();
                 if !required_clean.is_empty() {
                     let has_tag = tags.iter().any(|t| t == &required_clean);
@@ -414,6 +417,12 @@ impl EdrBenchHarness {
         // =========================================================================
         let mut total_false_positives = 0usize;
 
+        static CORPUS_FILE_CACHE: std::sync::OnceLock<
+            dashmap::DashMap<PathBuf, std::sync::Arc<Vec<u8>>>,
+        > = std::sync::OnceLock::new();
+        let corpus_cache = CORPUS_FILE_CACHE.get_or_init(dashmap::DashMap::new);
+        let mut pass_scanner = yara_x::Scanner::new(&rules);
+
         for baseline in &task.pass_to_pass {
             let corpus_dir = resolve_fixture_path(&baseline.corpus_directory);
             if corpus_dir.is_dir() {
@@ -421,15 +430,21 @@ impl EdrBenchHarness {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_file() {
-                            if let Ok(payload) = std::fs::read(&path) {
-                                self.scan_buffer.clear();
-                                self.scan_buffer.extend_from_slice(&payload);
-
-                                let mut scanner = yara_x::Scanner::new(&rules);
+                            let payload_arc = if let Some(cached) = corpus_cache.get(&path) {
+                                Some(cached.clone())
+                            } else if let Ok(bytes) = std::fs::read(&path) {
+                                let arc = std::sync::Arc::new(bytes);
+                                corpus_cache.insert(path.clone(), arc.clone());
+                                Some(arc)
+                            } else {
+                                None
+                            };
+                            if let Some(payload) = payload_arc {
                                 let scan_start = Instant::now();
-                                if let Ok(scan_res) = scanner.scan(&self.scan_buffer) {
+                                if let Ok(scan_res) = pass_scanner.scan(&payload) {
                                     let scan_elapsed_us = scan_start.elapsed().as_micros() as u64;
-                                    max_observed_scan_us = max_observed_scan_us.max(scan_elapsed_us);
+                                    max_observed_scan_us =
+                                        max_observed_scan_us.max(scan_elapsed_us);
 
                                     if scan_res.matching_rules().count() > 0 {
                                         total_false_positives += 1;
@@ -472,8 +487,12 @@ impl EdrBenchHarness {
         let rule_hash_hex = hex::encode(Sha256::digest(candidate_yara_source.as_bytes()));
 
         // Silicon TPM 2.0 PCR 16 Watchdog Stroke
-        let attestation_res = osoosi_audit::tpm::extend_audit_to_tpm("edr_bench_bft_promotion", &rule_hash_hex);
-        let tpm_pcr16_attestation = format!("TPM2_PCR16_SHA256:{}:{}", task.instance_id, attestation_res.attestation_hash);
+        let attestation_res =
+            osoosi_audit::tpm::extend_audit_to_tpm("edr_bench_bft_promotion", &rule_hash_hex);
+        let tpm_pcr16_attestation = format!(
+            "TPM2_PCR16_SHA256:{}:{}",
+            task.instance_id, attestation_res.attestation_hash
+        );
 
         // Cryptographic Ed25519 BFT Promotion Transcript
         let transcript = format!(
@@ -517,7 +536,11 @@ impl EdrBenchHarness {
         }
 
         for attempt in 2..=max_attempts {
-            current_rule = Self::synthesize_refined_yara_from_feedback(task, &current_rule, &last_report.diagnostic_log);
+            current_rule = Self::synthesize_refined_yara_from_feedback(
+                task,
+                &current_rule,
+                &last_report.diagnostic_log,
+            );
             last_report = self.evaluate_candidate_yara(task, &current_rule);
             last_report.attempts_used = attempt;
 
@@ -545,12 +568,15 @@ impl EdrBenchHarness {
 
         let clean_id = task.instance_id.replace('-', "_");
 
-        let mut marker_string = "OSHOOSI_EBPF_CAP_BPF_CONTAINER_ESCAPE_PAYLOAD_2026_0042".to_string();
+        let mut marker_string =
+            "OSHOOSI_EBPF_CAP_BPF_CONTAINER_ESCAPE_PAYLOAD_2026_0042".to_string();
         if let Some(first_threat) = task.fail_to_pass.first() {
             let sample_path = resolve_fixture_path(&first_threat.sample_path);
             if let Ok(bytes) = std::fs::read(&sample_path) {
                 if let Some(pos) = bytes.windows(16).find(|window| {
-                    window.iter().all(|&b| b.is_ascii_graphic() && b != b'"' && b != b'\\')
+                    window
+                        .iter()
+                        .all(|&b| b.is_ascii_graphic() && b != b'"' && b != b'\\')
                 }) {
                     if let Ok(s) = std::str::from_utf8(pos) {
                         marker_string = s.to_string();
@@ -559,7 +585,7 @@ impl EdrBenchHarness {
             }
         }
 
-        let safe_diag = diagnostic.replace('\"', "'").replace('\r', " ").replace('\n', " ");
+        let safe_diag = diagnostic.replace('\"', "'").replace(['\r', '\n'], " ");
         format!(
             r#"rule OsoosiBench_{} : {} {{
     meta:
@@ -629,7 +655,9 @@ impl EdrBenchHarness {
             _ => return false,
         };
 
-        pubkey_bytes.verify_strict(transcript.as_bytes(), &sig_bytes).is_ok()
+        pubkey_bytes
+            .verify_strict(transcript.as_bytes(), &sig_bytes)
+            .is_ok()
     }
 }
 
@@ -638,7 +666,8 @@ mod tests {
     use super::*;
 
     fn load_fixture_task() -> EdrBenchTask {
-        let task_path = resolve_fixture_path(Path::new("benchmarks/tasks/OSHOOSI-BENCH-2026-0042.json"));
+        let task_path =
+            resolve_fixture_path(Path::new("benchmarks/tasks/OSHOOSI-BENCH-2026-0042.json"));
         let content = std::fs::read_to_string(&task_path)
             .unwrap_or_else(|_| panic!("Failed to read benchmark task at {}", task_path.display()));
         serde_json::from_str(&content).expect("Valid task JSON")
@@ -701,7 +730,9 @@ mod tests {
         assert!(report.compiled_cleanly);
         assert!(!report.fail_to_pass_resolved);
         assert!(!report.promoted_to_bft_mesh);
-        assert!(report.diagnostic_log.contains("missing required_rule_tag 'container_escape'"));
+        assert!(report
+            .diagnostic_log
+            .contains("missing required_rule_tag 'container_escape'"));
     }
 
     #[test]
@@ -721,7 +752,9 @@ mod tests {
         assert!(!report.pass_to_pass_preserved);
         assert!(report.false_positive_count > 0);
         assert!(!report.promoted_to_bft_mesh);
-        assert!(report.diagnostic_log.contains("PASS_TO_PASS regression failed"));
+        assert!(report
+            .diagnostic_log
+            .contains("PASS_TO_PASS regression failed"));
     }
 
     #[test]
