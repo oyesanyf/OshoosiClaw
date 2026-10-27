@@ -466,7 +466,11 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
     if osoosi_model::malware::is_informational_or_crt_yara_rule(reason_lower) {
         return true;
     }
-    if let Some(after_yara) = reason_lower.split("yara-x match:").nth(1) {
+    if let Some(after_yara) = reason_lower
+        .split("yara-x match:")
+        .nth(1)
+        .or_else(|| reason_lower.split("yarax: threat detected -").nth(1))
+    {
         let rule_token = after_yara
             .split(['|', ';', ',', ' '])
             .find(|s| !s.trim().is_empty())
