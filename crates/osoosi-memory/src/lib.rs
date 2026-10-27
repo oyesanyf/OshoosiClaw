@@ -168,6 +168,18 @@ impl MemoryStore {
                 OR reason LIKE '%Noul p=0.01%'
                 OR reason LIKE '%detected sensitive/exfil tokens []%'
                 OR reason LIKE '%Anti-Chaff Alert%'
+                OR reason LIKE 'YARA-X Match: antisb_%'
+                OR reason LIKE 'YARA-X Match: anti_dbg%'
+                OR reason LIKE 'YARA-X Match: vmdetect%'
+                OR reason LIKE 'YARA-X Match: win_files_%'
+                OR reason LIKE 'YARA-X Match: RIPEMD160_Constants%'
+                OR (LOWER(COALESCE(file_path, '')) NOT LIKE '%\\temp\\%' AND reason LIKE '%independent=1%' AND (
+                    reason LIKE '%Behavioral Threat Model: High-risk pattern detected%'
+                    OR reason LIKE '%Chaotic phase-space trajectory breakout%'
+                    OR reason LIKE '%diverged from benign limit cycle%'
+                    OR reason LIKE '%Agentic trajectory escape threshold exceeded%'
+                    OR reason LIKE '%Denial of ML Service & Sponge Attack%'
+                ))
                 OR (reason LIKE '%matches KEV product%' AND reason NOT LIKE '%verified_version=%')
                 OR process_name = '<unknown process>'
                 OR process_name = 'unknown'
@@ -1638,6 +1650,22 @@ impl MemoryStore {
              AND COALESCE(t.reason, '') NOT LIKE '%CVE None%'
              AND COALESCE(t.reason, '') NOT LIKE '%Autonomous REA Verified Clean%'
              AND COALESCE(t.reason, '') NOT LIKE '%Execution Of Non-Existing File%'
+             AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: antisb_%'
+             AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: anti_dbg%'
+             AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: vmdetect%'
+             AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: win_files_%'
+             AND COALESCE(t.reason, '') NOT LIKE 'YARA-X Match: RIPEMD160_Constants%'
+             AND NOT (
+                 LOWER(COALESCE(t.file_path, '')) NOT LIKE '%\\temp\\%'
+                 AND COALESCE(t.reason, '') LIKE '%independent=1%'
+                 AND (
+                     COALESCE(t.reason, '') LIKE '%Behavioral Threat Model: High-risk pattern detected%'
+                     OR COALESCE(t.reason, '') LIKE '%Chaotic phase-space trajectory breakout%'
+                     OR COALESCE(t.reason, '') LIKE '%diverged from benign limit cycle%'
+                     OR COALESCE(t.reason, '') LIKE '%Agentic trajectory escape threshold exceeded%'
+                     OR COALESCE(t.reason, '') LIKE '%Denial of ML Service & Sponge Attack%'
+                 )
+             )
              AND COALESCE(t.process_name, '') != '<unknown process>'
              AND COALESCE(t.process_name, '') != 'unknown'
              AND LOWER(COALESCE(t.process_name, '')) NOT IN (

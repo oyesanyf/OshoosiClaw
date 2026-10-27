@@ -261,10 +261,16 @@
                         <span id="defense-mode-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; display: inline-block;"></span>
                         <span id="defense-mode-top-text" style="font-weight: 600; color: #38bdf8;">MODE: AUDIT 🛡️</span>
                     </button>
-                    <button id="mesh-status-top-btn" class="icon-btn glass" title="P2P Mesh Swarm Connection Status (Click to view mesh)" onclick="window.navigateToView('mesh')" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); padding: 6px 14px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                        <span id="mesh-status-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; transition: all 0.3s ease;"></span>
-                        <span id="mesh-status-top-text" style="font-weight: 600; color: #94a3b8; transition: all 0.3s ease;">MESH: STANDALONE (0 PEERS)</span>
-                    </button>
+                    <div style="display: inline-flex; align-items: center; gap: 6px;">
+                        <button id="mesh-status-top-btn" class="icon-btn glass" title="P2P Mesh Swarm Connection Status &amp; Connected Peers Count (Click to view mesh)" onclick="window.navigateToView('mesh')" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); padding: 6px 14px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                            <span id="mesh-status-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; transition: all 0.3s ease;"></span>
+                            <span id="mesh-status-top-text" style="font-weight: 600; color: #94a3b8; transition: all 0.3s ease;">MESH: STANDALONE (0 PEERS)</span>
+                        </button>
+                        <label for="top-p2p-switch" class="p2p-top-switch-pill glass" title="Enable or disable Peer-to-Peer (P2P) swarm networking">
+                            <span id="top-p2p-switch-label" style="font-size: 11.5px; font-weight: 700; color: #10b981;">P2P ON</span>
+                            <input id="top-p2p-switch" name="top_p2p_enabled" type="checkbox" switch checked onchange="window.toggleP2pMesh(this.checked)">
+                        </label>
+                    </div>
                     <button id="admin-settings-top-btn" class="icon-btn glass" title="Admin Security Settings" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
                         <i data-lucide="shield" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                         <span>Admin</span>
@@ -825,8 +831,43 @@
 
             <!-- Mesh Network View -->
             <div id="mesh-view" class="view-content">
+                <!-- Peer-to-Peer (P2P) Control & Connected Peers Bar -->
+                <div class="card glass shadow-glow" id="p2p-mesh-control-card" style="margin-bottom: 16px; padding: 14px 18px; border: 1px solid var(--glass-border-bright);">
+                    <form action="/api/mesh/p2p" method="POST" onsubmit="event.preventDefault(); return false;" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; margin: 0;">
+                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            <span id="mesh-p2p-status-badge" class="badge green" style="font-size: 12px; font-weight: 700; padding: 4px 10px;">🟢 P2P ENABLED</span>
+                            <div style="font-size: 14px; font-weight: 700; color: #f8fafc;">
+                                Connected Peers: <span id="mesh-connected-peers-count" style="color: #00ff88; font-family: monospace; font-size: 15px;">0</span>
+                            </div>
+                            <span style="font-size: 12px; color: var(--text-muted);">
+                                Disable Peer-to-Peer at any time to isolate this host in standalone local-only mode.
+                            </span>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            <label for="mesh-p2p-switch" style="display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: #e2e8f0; cursor: pointer;">
+                                <span>Peer-to-Peer (P2P) Swarm</span>
+                                <input id="mesh-p2p-switch" name="p2p_enabled" type="checkbox" switch checked onchange="window.toggleP2pMesh(this.checked)">
+                            </label>
+                            <button type="button" id="mesh-p2p-action-btn" class="btn-secondary" onclick="window.toggleP2pMesh(!(window.state && window.state.p2p_enabled !== false))" style="padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid rgba(239, 68, 68, 0.45); background: rgba(239, 68, 68, 0.12); color: #f87171;">
+                                Disable Peer-to-Peer
+                            </button>
+                        </div>
+                    </form>
+                </div>
                 <div id="network-connection-banner" style="margin-bottom: 16px;"></div>
                 <div class="stats-grid" id="mesh-stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Connected Peers</span>
+                            <span class="stat-value" id="stat-mesh-peer-count" style="color: var(--accent-green);">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">P2P Swarm Mode</span>
+                            <span class="stat-value" id="stat-mesh-p2p-mode" style="font-size: 16px; color: var(--accent-green);">Enabled</span>
+                        </div>
+                    </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-info">
                             <span class="stat-label">Pending Joins</span>

@@ -20,6 +20,8 @@ pub struct BroadcastRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapPeersResponse {
+    #[serde(default = "default_true_val")]
+    pub p2p_enabled: bool,
     pub peers: Vec<String>,
     pub public_ip: Option<String>,
     pub mesh_port: u16,
@@ -45,11 +47,17 @@ fn default_true_val() -> bool {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct UpdateBootstrapPeersRequest {
+    pub p2p_enabled: Option<bool>,
     #[serde(default)]
     pub peers: Option<Vec<String>>,
     pub dial_now: Option<bool>,
     pub duckdns_domain: Option<String>,
     pub auto_bootstrap_duckdns: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct P2pToggleRequest {
+    pub enabled: bool,
 }
 
 #[allow(dead_code)]
@@ -266,6 +274,89 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
     update_wire_config_content(content, Some(peers), None, None)
 }
 
+pub fn update_wire_p2p_enabled_content(content: &str, p2p_enabled: bool) -> String {
+    let has_crlf = content.contains("\r\n");
+    let line_sep = if has_crlf { "\r\n" } else { "\n" };
+    let formatted = format!("p2p_enabled = {}", p2p_enabled);
+    let mut lines = Vec::new();
+    let mut in_wire = false;
+    let mut wire_found = false;
+    let mut updated = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        let code_part = trimmed
+            .split_once('#')
+            .map(|(c, _)| c.trim())
+            .unwrap_or(trimmed);
+        if code_part.starts_with('[') && code_part.ends_with(']') {
+            if in_wire && !updated {
+                lines.push(formatted.clone());
+                updated = true;
+            }
+            in_wire = code_part == "[wire]";
+            if in_wire {
+                wire_found = true;
+            }
+        } else if in_wire && !updated && code_part.starts_with("p2p_enabled") {
+            if let Some((k, _)) = code_part.split_once('=') {
+                if k.trim() == "p2p_enabled" {
+                    lines.push(formatted.clone());
+                    updated = true;
+                    continue;
+                }
+            }
+        }
+        lines.push(line.to_string());
+    }
+    if in_wire && !updated {
+        lines.push(formatted.clone());
+    } else if !wire_found {
+        if !lines.is_empty() && !lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.push(String::new());
+        }
+        lines.push("[wire]".to_string());
+        lines.push(formatted);
+    }
+    let mut res = lines.join(line_sep);
+    if content.is_empty() || content.ends_with('\n') {
+        res.push_str(line_sep);
+    }
+    res
+}
+
+pub fn save_wire_p2p_enabled(p2p_enabled: bool) -> anyhow::Result<PathBuf> {
+    let _lock = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let path = if let Ok(p) = std::env::var("OSOOSI_CONFIG") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            PathBuf::from(trimmed)
+        } else {
+            osoosi_types::resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"))
+        }
+    } else {
+        osoosi_types::resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"))
+    };
+    let content = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+    let updated = update_wire_p2p_enabled_content(&content, p2p_enabled);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(&path, updated)?;
+    if let Err(e) = osoosi_core::config_integrity::sign_config_file(&path) {
+        tracing::warn!("Could not sign updated config {:?}: {}", path, e);
+    }
+    osoosi_types::config::sign_all_configs();
+    osoosi_core::config_integrity::sign_all_critical_configs();
+    Ok(path)
+}
+
 pub fn save_wire_config(
     peers: Option<&[String]>,
     duckdns_domain: Option<&str>,
@@ -336,7 +427,12 @@ pub async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> 
             let topo = orch.mesh_topology();
             let topo_peer_count =
                 topo.get("peer_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
-            let effective_peer_count = orch.mesh_peer_count().max(topo_peer_count);
+            let p2p_enabled = osoosi_types::is_p2p_mesh_enabled();
+            let effective_peer_count = if p2p_enabled {
+                orch.mesh_peer_count().max(topo_peer_count)
+            } else {
+                0
+            };
             let nodes = topo.get("nodes").cloned().unwrap_or_else(|| json!([]));
             let live_mesh_hosts = 1u64 + (effective_peer_count as u64);
             let live_eff =
@@ -346,13 +442,15 @@ pub async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> 
                     2.0,
                 );
             Json(json!({
+                "p2p_enabled": p2p_enabled,
                 "peer_count": effective_peer_count,
+                "connected_peers": effective_peer_count,
                 "gossip_count": orch.mesh_gossip_count(),
                 "nodes": nodes,
-                "pending_joins": pending_joins,
+                "pending_joins": if p2p_enabled { pending_joins } else { 0 },
                 "quarantined_peers": quarantined_peers,
                 "trust_verified": chain_verified,
-                "live": true,
+                "live": p2p_enabled,
                 "live_mesh_hosts": live_mesh_hosts,
                 "live_mesh_effectiveness": live_eff.get("active_point")
             }))
@@ -363,8 +461,11 @@ pub async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> 
                 osoosi_wire::HierarchicalRollupVerifier::compute_mesh_effectiveness_curve(
                     1, 1.0, 2.0,
                 );
+            let p2p_enabled = osoosi_types::is_p2p_mesh_enabled();
             Json(json!({
+                "p2p_enabled": p2p_enabled,
                 "peer_count": 0,
+                "connected_peers": 0,
                 "gossip_count": 0,
                 "nodes": [],
                 "pending_joins": pending_joins,
@@ -481,6 +582,7 @@ pub async fn get_bootstrap_peers(
     };
 
     Json(BootstrapPeersResponse {
+        p2p_enabled: osoosi_types::is_p2p_mesh_enabled(),
         peers,
         public_ip: Some(public_ip),
         mesh_port,
@@ -548,6 +650,11 @@ pub async fn post_bootstrap_peers(
             s.to_string()
         })
         .filter(|s| !s.is_empty());
+
+    if let Some(enabled) = req.p2p_enabled {
+        osoosi_types::set_p2p_mesh_enabled(enabled);
+        let _ = save_wire_p2p_enabled(enabled);
+    }
 
     if let Err(e) = save_wire_config(
         sanitized_peers.as_deref(),
@@ -625,6 +732,97 @@ pub async fn set_bootstrap_peers(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     post_bootstrap_peers(state, req).await.into_response()
+}
+
+pub async fn get_p2p_status(State(state): State<DashboardState>) -> Json<Value> {
+    let p2p_enabled = osoosi_types::is_p2p_mesh_enabled();
+    let peer_count = if p2p_enabled {
+        state
+            .backend
+            .as_ref()
+            .map(|orch| {
+                let topo_peers = orch
+                    .mesh_topology()
+                    .get("peer_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                orch.mesh_peer_count().max(topo_peers)
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    Json(json!({
+        "ok": true,
+        "p2p_enabled": p2p_enabled,
+        "peer_count": peer_count,
+        "connected_peers": peer_count,
+        "mode": if !p2p_enabled {
+            "disabled"
+        } else if peer_count > 0 {
+            "connected"
+        } else {
+            "standalone"
+        }
+    }))
+}
+
+pub async fn post_p2p_toggle(
+    State(state): State<DashboardState>,
+    Json(req): Json<P2pToggleRequest>,
+) -> Json<Value> {
+    osoosi_types::set_p2p_mesh_enabled(req.enabled);
+    if let Err(e) = save_wire_p2p_enabled(req.enabled) {
+        tracing::warn!("Could not persist p2p_enabled to config file: {}", e);
+    }
+
+    if let Some(ref orch) = state.backend {
+        orch.audit().log(
+            "P2P_MESH_TOGGLED",
+            json!({
+                "p2p_enabled": req.enabled,
+                "source": "web_ui",
+            }),
+        );
+        if req.enabled {
+            let peers = osoosi_types::load_wire_bootstrap_peers();
+            for peer in peers {
+                let orch_clone = orch.clone();
+                tokio::spawn(async move {
+                    orch_clone.dial_mesh_peer(&peer).await;
+                });
+            }
+        }
+    }
+
+    let peer_count = if req.enabled {
+        state
+            .backend
+            .as_ref()
+            .map(|orch| {
+                let topo_peers = orch
+                    .mesh_topology()
+                    .get("peer_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                orch.mesh_peer_count().max(topo_peers)
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    Json(json!({
+        "ok": true,
+        "p2p_enabled": req.enabled,
+        "peer_count": peer_count,
+        "connected_peers": peer_count,
+        "message": if req.enabled {
+            "Peer-to-Peer (P2P) mesh networking enabled."
+        } else {
+            "Peer-to-Peer (P2P) mesh networking disabled. Node operating in isolated standalone mode (0 peers)."
+        }
+    }))
 }
 
 pub async fn get_pending_joins(State(state): State<DashboardState>) -> Json<Value> {
@@ -1708,6 +1906,10 @@ pub async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
 pub fn routes() -> Router<DashboardState> {
     Router::new()
         .route("/api/mesh-stats", get(get_mesh_stats))
+        .route("/api/mesh/p2p", get(get_p2p_status).post(post_p2p_toggle))
+        .route("/mesh/p2p", get(get_p2p_status).post(post_p2p_toggle))
+        .route("/api/mesh/p2p-toggle", post(post_p2p_toggle))
+        .route("/mesh/p2p-toggle", post(post_p2p_toggle))
         .route("/api/mesh/topology", get(get_mesh_topology))
         .route("/api/topology", get(get_mesh_topology))
         .route("/api/peers", get(get_peers))

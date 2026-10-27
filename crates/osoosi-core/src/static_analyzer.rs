@@ -99,6 +99,8 @@ impl StaticAnalyzer {
         let path_str = file_path.to_string_lossy();
         if Self::is_oshoosi_managed_tool(file_path)
             || crate::win_trust::is_trusted_signed_binary(file_path)
+            || crate::rea::verify_dynamic_binary_trust(file_path)
+            || crate::rea::is_rea_benign_system_or_dev_process(&path_str, None)
             || osoosi_model::malware::is_ide_or_build_path(&path_str)
             || crate::voters::scanner_skip_path(&path_str)
             || crate::should_skip_file_malware_scan(file_path)
@@ -259,7 +261,11 @@ impl StaticAnalyzer {
                 if let Ok(results) = scanner.scan(&bytes) {
                     results
                         .matching_rules()
-                        .next()
+                        .find(|r| {
+                            !osoosi_model::malware::is_informational_or_crt_yara_rule(
+                                r.identifier(),
+                            )
+                        })
                         .map(|r| r.identifier().to_string())
                 } else {
                     None

@@ -420,6 +420,18 @@ impl EdrOrchestrator {
             "size": 32
         }));
 
+        if !osoosi_types::is_p2p_mesh_enabled() {
+            return serde_json::json!({
+                "nodes": nodes,
+                "edges": edges,
+                "mesh_health": "Disabled (Standalone)",
+                "peer_count": 0,
+                "connected_peers": 0,
+                "p2p_enabled": false,
+                "total_nodes": nodes.len()
+            });
+        }
+
         // Nostr Relays
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let nostr_relays = if mesh_config.nostr_relays.is_empty() {
@@ -753,6 +765,8 @@ impl EdrOrchestrator {
             "edges": edges,
             "mesh_health": "Optimal",
             "peer_count": effective_peer_count,
+            "connected_peers": effective_peer_count,
+            "p2p_enabled": true,
             "total_nodes": nodes.len()
         })
     }
@@ -908,9 +922,8 @@ impl EdrOrchestrator {
 
     /// Get an aggregate summary of the security state of the entire zone.
     pub async fn get_zone_summary(&self) -> serde_json::Value {
-        let peer_count = self
-            .mesh_peer_count
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let p2p_enabled = osoosi_types::is_p2p_mesh_enabled();
+        let peer_count = self.mesh_peer_count();
 
         // Run assess_security safely inside tokio::task::spawn_blocking with a 2-second timeout fallback.
         let assess_handle = tokio::task::spawn_blocking(crate::hardened::assess_security);
@@ -989,39 +1002,40 @@ impl EdrOrchestrator {
         })];
 
         let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
-        if let Ok(known_peers) = self.memory().query_json(
-            query,
-            &[self.trust.did().to_string(), self.trust.did().to_string()],
-        ) {
-            for peer in known_peers {
-                let id = peer["node_id"].as_str().unwrap_or("?");
-                if id == self.trust.did().id.as_str() || nodes.iter().any(|n| n["id"] == id) {
-                    continue;
-                }
-                let score = peer["score"].as_f64().unwrap_or(0.85);
-                let is_threat = score < 0.3;
-                let is_hotspot = id.contains("10812adc")
-                    || peer["ip"]
-                        .as_str()
-                        .is_some_and(|ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
-                let network_type = if is_hotspot { "hotspot" } else { "lan" };
-                let role = if is_threat {
-                    "Suspect Node"
-                } else if is_hotspot {
-                    "Mobile Hotspot Peer"
-                } else {
-                    "LAN Mesh Peer"
-                };
-                let label = if is_hotspot {
-                    format!("Hotspot Host ({})", &id[id.len().saturating_sub(8)..])
-                } else if id.starts_with("did:") && id.len() > 18 {
-                    format!("Node {}", &id[12..20])
-                } else if id.contains("10.0.0.") || id.contains("192.168.") {
-                    format!("Peer ({})", id)
-                } else {
-                    format!("Node {}", &id[..id.len().min(8)])
-                };
-                nodes.push(serde_json::json!({
+        if p2p_enabled {
+            if let Ok(known_peers) = self.memory().query_json(
+                query,
+                &[self.trust.did().to_string(), self.trust.did().to_string()],
+            ) {
+                for peer in known_peers {
+                    let id = peer["node_id"].as_str().unwrap_or("?");
+                    if id == self.trust.did().id.as_str() || nodes.iter().any(|n| n["id"] == id) {
+                        continue;
+                    }
+                    let score = peer["score"].as_f64().unwrap_or(0.85);
+                    let is_threat = score < 0.3;
+                    let is_hotspot = id.contains("10812adc")
+                        || peer["ip"].as_str().is_some_and(|ip| {
+                            ip.contains("192.168.43.") || ip.contains("172.20.10.")
+                        });
+                    let network_type = if is_hotspot { "hotspot" } else { "lan" };
+                    let role = if is_threat {
+                        "Suspect Node"
+                    } else if is_hotspot {
+                        "Mobile Hotspot Peer"
+                    } else {
+                        "LAN Mesh Peer"
+                    };
+                    let label = if is_hotspot {
+                        format!("Hotspot Host ({})", &id[id.len().saturating_sub(8)..])
+                    } else if id.starts_with("did:") && id.len() > 18 {
+                        format!("Node {}", &id[12..20])
+                    } else if id.contains("10.0.0.") || id.contains("192.168.") {
+                        format!("Peer ({})", id)
+                    } else {
+                        format!("Node {}", &id[..id.len().min(8)])
+                    };
+                    nodes.push(serde_json::json!({
                     "id": id,
                     "name": label,
                     "address": if is_hotspot { "Cellular WAN / Nostr Relay" } else { "P2P Mesh Swarm" },
@@ -1032,27 +1046,33 @@ impl EdrOrchestrator {
                     "status": if is_threat { "Quarantined" } else { "Synchronized" },
                     "latency_ms": if is_hotspot { 45.0 } else { 1.2 }
                 }));
+                }
             }
         }
-
         let mesh_config = osoosi_types::load_mesh_listen_config();
-        let relay_count = mesh_config
-            .nostr_relays
-            .iter()
-            .filter(|r| !r.trim().is_empty())
-            .count();
-        for relay in &mesh_config.nostr_relays {
-            if !relay.trim().is_empty() {
-                nodes.push(serde_json::json!({
-                    "id": format!("relay:{}", relay),
-                    "name": format!("Nostr Relay ({})", relay),
-                    "address": relay,
-                    "role": "Nostr Relay Pool",
-                    "node_type": "message_relay",
-                    "attestation": "Public / Configured Transport",
-                    "status": "Configured",
-                    "latency_ms": 15.0
-                }));
+        let relay_count = if p2p_enabled {
+            mesh_config
+                .nostr_relays
+                .iter()
+                .filter(|r| !r.trim().is_empty())
+                .count()
+        } else {
+            0
+        };
+        if p2p_enabled {
+            for relay in &mesh_config.nostr_relays {
+                if !relay.trim().is_empty() {
+                    nodes.push(serde_json::json!({
+                        "id": format!("relay:{}", relay),
+                        "name": format!("Nostr Relay ({})", relay),
+                        "address": relay,
+                        "role": "Nostr Relay Pool",
+                        "node_type": "message_relay",
+                        "attestation": "Public / Configured Transport",
+                        "status": "Configured",
+                        "latency_ms": 15.0
+                    }));
+                }
             }
         }
 
@@ -1077,6 +1097,8 @@ impl EdrOrchestrator {
 
         serde_json::json!({
             "peer_count": effective_peer_count,
+            "connected_peers": effective_peer_count,
+            "p2p_enabled": p2p_enabled,
             "host_count": host_count,
             "relay_count": relay_count,
             "security_score": security_score,
@@ -1263,6 +1285,191 @@ impl EdrOrchestrator {
                 None
             }
         }
+    }
+
+    /// Universal REA + All-Voter Consensus Gate for Threat Intelligence (`ThreatSignature`).
+    /// Guarantees that every candidate threat signature (from `StaticAnalyzer`, `FileMonitor`,
+    /// `ProcessCreation`, or single-voter heuristics) is inspected by `AutonomousReaEngine`
+    /// and corroborated by the multi-voter `PolicyEngine` quorum before entering `#threats`.
+    pub async fn adjudicate_threat_signature_with_rea_and_voters(
+        &self,
+        file_path: Option<&std::path::Path>,
+        sig: osoosi_types::ThreatSignature,
+        event_opt: Option<&osoosi_types::HostSecurityEvent>,
+    ) -> Option<osoosi_types::ThreatSignature> {
+        let file_path_str = file_path
+            .map(|p| p.to_string_lossy().to_string())
+            .or_else(|| {
+                event_opt.and_then(|ev| {
+                    ev.data
+                        .get("Image")
+                        .or_else(|| ev.data.get("TargetFilename"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+            });
+
+        let proc_name_owned = sig.process_name.clone().or_else(|| {
+            file_path_str.as_deref().and_then(|p| {
+                std::path::Path::new(p)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+            })
+        });
+        let proc_hint = proc_name_owned.as_deref();
+        let target_label = file_path_str
+            .as_deref()
+            .or(proc_hint)
+            .unwrap_or("unknown_target");
+        let reason_str = sig.reason.clone().unwrap_or_default();
+
+        // 1. Run Autonomous REA Engine + OpenJEV Voter verification
+        let rea = crate::rea::global_rea_engine();
+        let (rea_should_drop, rea_reason, rea_hash) = rea.adjudicate_process_or_binary_alert(
+            proc_hint.or(Some(target_label)),
+            file_path_str.as_deref(),
+            Some(&reason_str),
+        );
+        let rea_eval = rea.evaluate_detector_candidate(
+            "ThreatIntelligence",
+            target_label,
+            &reason_str,
+            sig.confidence as f64,
+        );
+
+        let hash_key = rea_hash
+            .as_deref()
+            .filter(|h| !h.is_empty())
+            .or_else(|| sig.hash_blake3.as_deref().filter(|h| !h.is_empty()))
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        if rea_should_drop
+            || rea_eval.benign_veto
+            || crate::rea::is_rea_benign_system_or_dev_process(target_label, Some(&reason_str))
+        {
+            let _ = self.memory.delete_threat_by_id_or_pattern(
+                Some(&sig.id),
+                proc_hint,
+                if hash_key.is_empty() {
+                    None
+                } else {
+                    Some(&hash_key)
+                },
+            );
+            let finding_hash = if hash_key.is_empty() {
+                blake3::hash(format!("rea:threat:veto:{}:{}", target_label, sig.id).as_bytes())
+                    .to_hex()
+                    .to_string()
+            } else {
+                let _ = self.memory.mark_hash_clean_ignored(
+                    &hash_key,
+                    proc_hint,
+                    file_path_str.as_deref(),
+                    "rea_and_voter_threat_veto",
+                );
+                hash_key
+            };
+            let finding = osoosi_types::ConsensusFinding {
+                id: format!(
+                    "CONS-BENIGN-{}",
+                    &finding_hash[..finding_hash.len().min(12)]
+                ),
+                hash_blake3: finding_hash,
+                process_name: proc_name_owned,
+                file_path: file_path_str,
+                verdict: "benign".to_string(),
+                confidence: 0.01,
+                detector_count: 0,
+                voters_summary: format!("Veto [REA-Voter + All-Voter Consensus]: {}", rea_reason),
+                action_taken: "ignored_and_allowed".to_string(),
+                evaluated_at: chrono::Utc::now(),
+            };
+            let _ = self.memory.record_consensus_finding(&finding);
+            return None;
+        }
+
+        // 2. If candidate came from a single static/composition detector without PolicyEngine multi-voter evaluation,
+        // route through `self.policy.scan_event` so ALL voters + REA check it before it enters Threat Intelligence.
+        let already_multi_voter = reason_str.contains("EvidenceOrchestrator:")
+            || sig.id.starts_with("dlp_")
+            || sig.id.starts_with("aad-")
+            || reason_str.contains("[Heuristic] Unsigned process in temp/user dir");
+
+        if !already_multi_voter
+            && (sig.id.starts_with("STATIC-")
+                || sig.id.starts_with("COMP-")
+                || sig.detector_count <= 1)
+        {
+            let synth_event = match event_opt {
+                Some(ev) => ev.clone(),
+                None => osoosi_types::HostSecurityEvent {
+                    source: osoosi_types::HostEventSource::WindowsEventLog,
+                    event_id: 11,
+                    timestamp: chrono::Utc::now(),
+                    computer: "localhost".to_string(),
+                    causal_parent: None,
+                    data: serde_json::json!({
+                        "Image": target_label,
+                        "TargetFilename": target_label,
+                        "ProcessName": proc_hint.unwrap_or("unknown"),
+                        "Hashes": format!("SHA256={}", hash_key),
+                        "StaticReason": reason_str,
+                        "StaticConfidence": sig.confidence,
+                    }),
+                },
+            };
+
+            match self.policy.scan_event(&synth_event).await {
+                Some(mut voter_sig) => {
+                    if !reason_str.is_empty()
+                        && !voter_sig
+                            .reason
+                            .as_deref()
+                            .unwrap_or("")
+                            .contains(&reason_str)
+                    {
+                        voter_sig.add_reason(reason_str);
+                    }
+                    return Some(voter_sig);
+                }
+                None => {
+                    let finding_hash = if hash_key.is_empty() {
+                        blake3::hash(
+                            format!("rea:quorum:veto:{}:{}", target_label, sig.id).as_bytes(),
+                        )
+                        .to_hex()
+                        .to_string()
+                    } else {
+                        let _ = self.memory.mark_hash_clean_ignored(
+                            &hash_key,
+                            proc_hint,
+                            file_path_str.as_deref(),
+                            "all_voter_threat_quorum_veto",
+                        );
+                        hash_key
+                    };
+                    let finding = osoosi_types::ConsensusFinding {
+                        id: format!("CONS-BENIGN-{}", &finding_hash[..finding_hash.len().min(12)]),
+                        hash_blake3: finding_hash,
+                        process_name: proc_name_owned,
+                        file_path: file_path_str,
+                        verdict: "benign".to_string(),
+                        confidence: 0.01,
+                        detector_count: 0,
+                        voters_summary:
+                            "Veto [REA-Voter + PolicyEngine All-Voter Quorum]: Single-detector static/heuristic signal did not meet multi-voter malicious consensus"
+                                .to_string(),
+                        action_taken: "ignored_and_allowed".to_string(),
+                        evaluated_at: chrono::Utc::now(),
+                    };
+                    let _ = self.memory.record_consensus_finding(&finding);
+                    return None;
+                }
+            }
+        }
+
+        Some(sig)
     }
 
     pub async fn evaluate_program_consensus(

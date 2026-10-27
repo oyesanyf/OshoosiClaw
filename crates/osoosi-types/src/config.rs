@@ -643,8 +643,32 @@ pub fn save_autonomy_config(cfg: &AutonomyConfig) -> anyhow::Result<()> {
 }
 
 /// Partial wire config for loading from file (peer rules only; listen_addr etc. from env/args).
+fn default_p2p_enabled_true() -> bool {
+    true
+}
+
+static P2P_MESH_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+static P2P_MESH_ENABLED_INITIALIZED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Returns whether Peer-to-Peer (P2P) mesh networking is currently enabled.
+pub fn is_p2p_mesh_enabled() -> bool {
+    if !P2P_MESH_ENABLED_INITIALIZED.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = load_mesh_listen_config_extended();
+    }
+    P2P_MESH_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Dynamically enables or disables Peer-to-Peer (P2P) mesh networking at runtime.
+pub fn set_p2p_mesh_enabled(enabled: bool) {
+    P2P_MESH_ENABLED_INITIALIZED.store(true, std::sync::atomic::Ordering::SeqCst);
+    P2P_MESH_ENABLED.store(enabled, std::sync::atomic::Ordering::SeqCst);
+}
+
 #[derive(Debug, Deserialize, Default)]
 struct WireConfigPartial {
+    #[serde(default = "default_p2p_enabled_true")]
+    pub p2p_enabled: bool,
     #[serde(default)]
     pub listen_addr: Option<String>,
     #[serde(default)]
@@ -1839,6 +1863,7 @@ pub fn load_peer_rules_config() -> PeerRulesConfig {
     cfg
 }
 pub struct WireListenConfig {
+    pub p2p_enabled: bool,
     pub listen_addrs: Vec<String>,
     pub bootstrap_peers: Vec<String>,
     pub master_node_public_key: Option<String>,
@@ -1854,6 +1879,7 @@ pub struct WireListenConfig {
 }
 
 pub fn load_mesh_listen_config_extended() -> WireListenConfig {
+    let mut file_p2p_enabled = true;
     let mut listen_addrs = Vec::new();
     let mut bootstrap_peers = Vec::new();
     let mut master_node_public_key = None;
@@ -1870,6 +1896,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                file_p2p_enabled = fc.wire.p2p_enabled;
                 master_node_public_key = fc.wire.master_node_public_key.clone();
                 membership_proof = fc.wire.membership_proof.clone();
                 if let Some(addr) = fc.wire.listen_addr {
@@ -1961,11 +1988,25 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
         }
     }
 
+    if let Ok(v) = std::env::var("OSOOSI_P2P_ENABLED") {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            file_p2p_enabled = trimmed == "1"
+                || trimmed.eq_ignore_ascii_case("true")
+                || trimmed.eq_ignore_ascii_case("yes");
+        }
+    }
+    if !P2P_MESH_ENABLED_INITIALIZED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        P2P_MESH_ENABLED.store(file_p2p_enabled, std::sync::atomic::Ordering::SeqCst);
+    }
+    let p2p_enabled = P2P_MESH_ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+
     if listen_addrs.is_empty() {
         listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
     }
 
     WireListenConfig {
+        p2p_enabled,
         listen_addrs,
         bootstrap_peers,
         master_node_public_key,

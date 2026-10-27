@@ -748,8 +748,11 @@ impl EdrOrchestrator {
         Ok(())
     }
 
-    /// Current mesh peer count (approved peers).
+    /// Current mesh peer count (approved peers). Returns 0 when P2P mesh is disabled.
     pub fn mesh_peer_count(&self) -> u32 {
+        if !osoosi_types::is_p2p_mesh_enabled() {
+            return 0;
+        }
         self.mesh_peer_count.load(Ordering::Relaxed)
     }
 
@@ -759,6 +762,13 @@ impl EdrOrchestrator {
 
     /// Actively dial a bootstrap or remote mesh peer multiaddr.
     pub async fn dial_mesh_peer(&self, addr: &str) {
+        if !osoosi_types::is_p2p_mesh_enabled() {
+            debug!(
+                "[Mesh] P2P mesh disabled by user; skipping dial to {}",
+                addr
+            );
+            return;
+        }
         let tx_guard = self.mesh_command_tx.lock().await;
         if let Some(ref tx) = *tx_guard {
             let _ = tx
@@ -769,6 +779,10 @@ impl EdrOrchestrator {
 
     /// Broadcast a detected threat to the P2P wire mesh and Nostr with debouncing and cryptographic signing.
     pub async fn broadcast_threat_to_mesh(&self, mut sig: osoosi_types::ThreatSignature) {
+        if !osoosi_types::is_p2p_mesh_enabled() {
+            debug!("[Mesh] P2P mesh disabled by user; skipping outbound threat broadcast");
+            return;
+        }
         let reason_str = sig.reason.as_deref().unwrap_or("");
         let mesh_verdict = crate::rea::global_rea_engine().inspect_and_vet_mesh_frame(
             "outbound",
@@ -977,6 +991,9 @@ impl EdrOrchestrator {
 
     /// Broadcast intelligence across the mesh network.
     pub async fn broadcast_intelligence(&self, summary: String) -> anyhow::Result<()> {
+        if !osoosi_types::is_p2p_mesh_enabled() {
+            anyhow::bail!("Peer-to-Peer (P2P) mesh is currently disabled by user policy");
+        }
         let mut intel = osoosi_types::GlobalIntelligence {
             source_url: "user_dashboard".to_string(),
             summary: summary.clone(),

@@ -1242,3 +1242,53 @@ fn test_rea_and_voters_check_and_veto_all_reported_developer_and_system_binaries
         mal_eval
     );
 }
+
+#[test]
+fn test_rea_and_voters_adjudicate_threat_intelligence_candidates() {
+    let engine = AutonomousReaEngine::new();
+    let false_positive_threats = [
+        ("docker-mcp.exe", "[Behavioral-Threat-Model]: Behavioral Threat Model: High-risk pattern detected (0.9988) based on process lineage and version context.; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=1.00 confidence=0.64"),
+        ("docker-dhi.exe", "[Behavioral-Threat-Model]: Behavioral Threat Model: High-risk pattern detected (1.0000) based on process lineage and version context.; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=1.00 confidence=0.64"),
+        ("docker-ai.exe", "[Behavioral-Threat-Model]: Behavioral Threat Model: High-risk pattern detected (0.9995) based on process lineage and version context.; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=1.00 confidence=0.64"),
+        ("OllamaSetup.exe", "[Behavioral-Threat-Model]: Behavioral Threat Model: High-risk pattern detected (0.9647) based on process lineage and version context.; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.96 confidence=0.62"),
+        ("_rust.pyd", r#"YARA-X Match: antisb_threatExpert | Artifacts: ["http://schemas.microsoft.com/SMI/2005/WindowsSettings"]"#),
+        ("_cffi_backend.cp314-win_amd64.pyd", r#"YARA-X Match: anti_dbg | Magika: pebin (application/x-dosexec) | NablaScore: 0.20 | Sections: [] | SuspiciousDeps: ["VirtualAlloc"]"#),
+        ("UpdateDriver.e", "[EDR-PhaseLock-Attractor]: [EDR-PhaseLock-Attractor]: Chaotic phase-space trajectory breakout on PID 26744 — state diverged from benign limit cycle; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.94 confidence=0.61"),
+        ("rustc_signer.e", "[EDR-PhaseLock-Attractor]: [EDR-PhaseLock-Attractor]: Chaotic phase-space trajectory breakout on PID 48812 — state diverged from benign limit cycle; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.94 confidence=0.61"),
+        ("port3030_daemo", "[Agentic-Escape-Detector]: Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid=21616), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: Agentic trajectory escape threshold exceeded (Stochastic Drift: 7.35 >= 2.50); EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.98 confidence=0.63"),
+        ("m3_dashboard_a", "[Agentic-Escape-Detector]: Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid=21164), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: Agentic trajectory escape threshold exceeded; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.98 confidence=0.63"),
+        ("research_and_a", "[Agentic-Escape-Detector]: Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid=39276), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: Agentic trajectory escape threshold exceeded; EvidenceOrchestrator: classes=Behavior independent=1 strong_action=true base=0.98 confidence=0.63"),
+    ];
+
+    for (proc_name, reason) in false_positive_threats {
+        assert!(
+            is_rea_benign_system_or_dev_process(proc_name, Some(reason)),
+            "REA must veto uncorroborated single-voter / informational YARA threat '{}' ({})",
+            proc_name,
+            reason
+        );
+        let eval =
+            engine.evaluate_detector_candidate("ThreatIntelligence", proc_name, reason, 0.85);
+        assert!(
+            eval.benign_veto,
+            "evaluate_detector_candidate must veto '{}' ({}), got: {:?}",
+            proc_name, reason, eval
+        );
+    }
+
+    let genuine_threats = [
+        ("Elevated Probe", "[Sigma-Engine]: Sigma: System Owner/User Discovery; [MemoryInspection-Native]: Direct Syscall Stub Detected (Hell's Gate/Halo's Gate pattern: 4c 8b d1 b8) at 0x7ffb99c9f7e0; EvidenceOrchestrator: classes=Behavior+Memory independent=2 strong_action=true base=0.99 confidence=0.99"),
+        ("T1027.004_DynamicCompile.exe", "[Sigma-Engine]: Sigma: Suspicious CSharp Compile; [MemoryInspection-Native]: Direct Syscall Stub Detected; EvidenceOrchestrator: classes=Behavior+StaticArtifact+Memory independent=3 strong_action=true base=1.00 confidence=1.00"),
+        ("ninja_syscall1.exe", "[Sigma-Engine]: Sigma: Direct Syscall Execution; [MemoryInspection-Native]: Direct Syscall Stub Detected; EvidenceOrchestrator: classes=StaticArtifact+Memory+Behavior independent=3 strong_action=true base=1.00 confidence=1.00"),
+        ("Heuristic Anomaly", r"[Heuristic] Unsigned process in temp/user dir requesting elevated privileges: C:\Users\oyesanyf\AppData\Local\Temp\T1010.exe"),
+    ];
+
+    for (proc_name, reason) in genuine_threats {
+        assert!(
+            !is_rea_benign_system_or_dev_process(proc_name, Some(reason)),
+            "REA must NEVER veto genuine multi-voter or %TEMP% threat '{}' ({})",
+            proc_name,
+            reason
+        );
+    }
+}

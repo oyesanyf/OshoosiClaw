@@ -1190,10 +1190,24 @@ impl PolicyEngine {
         }
 
         // Deterministic active behavioral/exploit threats (Sigma, CredentialGuard, ProcessInjection, live C2 network, Cedar forbid)
-        // override NSRL/Trusted-Vendor/Merkle static known-good, whereas statistical heuristics alone do not.
+        // override NSRL/Trusted-Vendor/Merkle/REA static known-good, whereas uncorroborated statistical heuristics alone do not.
+        let is_statistical_only_vote = |reason: &str| -> bool {
+            let rl = reason.to_ascii_lowercase();
+            rl.contains("behavioral threat model: high-risk pattern detected")
+                || rl.contains("chaotic phase-space trajectory breakout")
+                || rl.contains("diverged from benign limit cycle")
+                || rl.contains("agentic trajectory escape threshold exceeded")
+                || rl.contains("denial of ml service & sponge attack")
+                || rl.contains("sponge attack warning")
+        };
+        let non_statistical_attack_votes = evidence_votes
+            .iter()
+            .filter(|v| !is_statistical_only_vote(&v.result.reason))
+            .count();
         let has_deterministic_active_attack = matches!(event.event_id, 8 | 10 | 25)
             || evidence_votes.iter().any(|v| {
-                v.strong_action
+                !is_statistical_only_vote(&v.result.reason)
+                    && v.strong_action
                     && (matches!(
                         v.class,
                         EvidenceClass::Memory
@@ -1202,6 +1216,7 @@ impl PolicyEngine {
                     ) || v.result.confidence >= 0.85
                         || v.reliability >= 0.90)
             })
+            || (non_statistical_attack_votes >= 1 && evidence_votes.len() >= 2)
             || evidence_votes.iter().any(|v| {
                 let r = &v.result.reason;
                 r.contains("Cedar-Ring7-Forbid")

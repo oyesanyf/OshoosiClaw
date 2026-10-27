@@ -11,6 +11,7 @@ const POLL_INTERVAL = 3000;
 const state = {
     uptime: '',
     node_id: '',
+    p2p_enabled: true,
     peer_count: 0,
     threats: [],
     suppressedThreatKeys: new Set(),
@@ -1344,21 +1345,96 @@ window.navigateToView = function(viewName) {
     }
 };
 
-function updateMeshConnectionIndicators(peerCount, gossipCount) {
-    const count = (typeof peerCount === 'number' && !isNaN(peerCount)) ? peerCount : (parseInt(peerCount, 10) || 0);
+function updateMeshConnectionIndicators(peerCount, gossipCount, p2pEnabledOpt) {
+    if (typeof p2pEnabledOpt === 'boolean') {
+        state.p2p_enabled = p2pEnabledOpt;
+    }
+    const p2pEnabled = state.p2p_enabled !== false;
+    const rawCount = (typeof peerCount === 'number' && !isNaN(peerCount)) ? peerCount : (parseInt(peerCount, 10) || 0);
+    const count = p2pEnabled ? rawCount : 0;
     state.peer_count = count;
     updateStats('peer-count', count);
     const netPeerVal = document.getElementById('network-peer-count-val');
     if (netPeerVal) {
         netPeerVal.textContent = String(count);
     }
+    const meshConnectedCount = document.getElementById('mesh-connected-peers-count');
+    if (meshConnectedCount) {
+        meshConnectedCount.textContent = String(count);
+        meshConnectedCount.style.color = !p2pEnabled ? '#f87171' : (count > 0 ? '#00ff88' : '#94a3b8');
+    }
+    const statMeshPeerCount = document.getElementById('stat-mesh-peer-count');
+    if (statMeshPeerCount) {
+        statMeshPeerCount.textContent = String(count);
+        statMeshPeerCount.style.color = !p2pEnabled ? '#f87171' : (count > 0 ? 'var(--accent-green)' : '#94a3b8');
+    }
+    const statMeshP2pMode = document.getElementById('stat-mesh-p2p-mode');
+    if (statMeshP2pMode) {
+        statMeshP2pMode.textContent = p2pEnabled ? (count > 0 ? `Active (${count} Peer${count === 1 ? '' : 's'})` : 'Enabled (0 Peers)') : 'Disabled (Local Only)';
+        statMeshP2pMode.style.color = p2pEnabled ? 'var(--accent-green)' : '#f87171';
+    }
+    const topSwitch = document.getElementById('top-p2p-switch');
+    if (topSwitch && topSwitch.checked !== p2pEnabled) {
+        topSwitch.checked = p2pEnabled;
+    }
+    const topSwitchLabel = document.getElementById('top-p2p-switch-label');
+    if (topSwitchLabel) {
+        topSwitchLabel.textContent = p2pEnabled ? 'P2P ON' : 'P2P OFF';
+        topSwitchLabel.style.color = p2pEnabled ? '#10b981' : '#f87171';
+    }
+    const meshSwitch = document.getElementById('mesh-p2p-switch');
+    if (meshSwitch && meshSwitch.checked !== p2pEnabled) {
+        meshSwitch.checked = p2pEnabled;
+    }
+    const meshStatusBadge = document.getElementById('mesh-p2p-status-badge');
+    if (meshStatusBadge) {
+        meshStatusBadge.className = p2pEnabled ? 'badge green' : 'badge red';
+        meshStatusBadge.textContent = p2pEnabled ? '🟢 P2P ENABLED' : '🔴 P2P DISABLED';
+    }
+    const meshActionBtn = document.getElementById('mesh-p2p-action-btn');
+    if (meshActionBtn) {
+        if (p2pEnabled) {
+            meshActionBtn.textContent = 'Disable Peer-to-Peer';
+            meshActionBtn.style.borderColor = 'rgba(239, 68, 68, 0.45)';
+            meshActionBtn.style.background = 'rgba(239, 68, 68, 0.12)';
+            meshActionBtn.style.color = '#f87171';
+        } else {
+            meshActionBtn.textContent = 'Enable Peer-to-Peer';
+            meshActionBtn.style.borderColor = 'rgba(16, 185, 129, 0.45)';
+            meshActionBtn.style.background = 'rgba(16, 185, 129, 0.14)';
+            meshActionBtn.style.color = '#10b981';
+        }
+    }
+
     const topBtn = document.getElementById('mesh-status-top-btn');
     const topDot = document.getElementById('mesh-status-indicator-dot');
     const topText = document.getElementById('mesh-status-top-text');
     const sideDot = document.getElementById('sidebar-mesh-dot');
     const sideText = document.getElementById('sidebar-mesh-text');
 
-    if (count > 0) {
+    if (!p2pEnabled) {
+        if (topDot) {
+            topDot.style.background = '#ef4444';
+            topDot.style.boxShadow = '0 0 8px rgba(239, 68, 68, 0.6)';
+        }
+        if (topText) {
+            topText.textContent = '🔴 MESH: P2P DISABLED (0 PEERS)';
+            topText.style.color = '#f87171';
+        }
+        if (topBtn) {
+            topBtn.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+            topBtn.style.background = 'rgba(239, 68, 68, 0.08)';
+        }
+        if (sideDot) {
+            sideDot.className = 'status-dot offline';
+            sideDot.style.background = '#ef4444';
+            sideDot.style.boxShadow = 'none';
+        }
+        if (sideText) {
+            sideText.textContent = 'P2P Swarm: Disabled (0 Peers)';
+            sideText.style.color = '#f87171';
+        }
+    } else if (count > 0) {
         if (topDot) {
             topDot.style.background = '#00ff88';
             topDot.style.boxShadow = '0 0 10px #00ff88';
@@ -1377,7 +1453,7 @@ function updateMeshConnectionIndicators(peerCount, gossipCount) {
             sideDot.style.boxShadow = '0 0 10px #00ff88';
         }
         if (sideText) {
-            sideText.textContent = `P2P Swarm: ${count} Peer Linked`;
+            sideText.textContent = `P2P Swarm: ${count} Peer${count > 1 ? 's' : ''} Connected`;
             sideText.style.color = 'var(--accent-green)';
         }
     } else {
@@ -1399,7 +1475,7 @@ function updateMeshConnectionIndicators(peerCount, gossipCount) {
             sideDot.style.boxShadow = 'none';
         }
         if (sideText) {
-            sideText.textContent = 'P2P Swarm: Standalone';
+            sideText.textContent = 'P2P Swarm: Standalone (0 Peers)';
             sideText.style.color = 'var(--text-muted)';
         }
     }
@@ -1408,6 +1484,43 @@ function updateMeshConnectionIndicators(peerCount, gossipCount) {
         updateLiveMeshEffectivenessUI(getLiveMeshHostCount());
     }
 }
+
+window.state = state;
+window.toggleP2pMesh = async function(enableFlag) {
+    const targetEnabled = (typeof enableFlag === 'boolean') ? enableFlag : !(state.p2p_enabled !== false);
+    state.p2p_enabled = targetEnabled;
+    if (!targetEnabled) {
+        state.peer_count = 0;
+    }
+    updateMeshConnectionIndicators(state.peer_count, state.gossip_count, targetEnabled);
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/mesh/p2p`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: targetEnabled })
+        });
+        const data = await res.json().catch(() => ({ ok: false }));
+        if (res.ok && data && data.ok !== false) {
+            state.p2p_enabled = data.p2p_enabled !== false;
+            state.peer_count = Number(data.peer_count || 0);
+            updateMeshConnectionIndicators(state.peer_count, state.gossip_count, state.p2p_enabled);
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(
+                    state.p2p_enabled
+                        ? `Peer-to-Peer (P2P) mesh enabled (${state.peer_count} connected peer${state.peer_count === 1 ? '' : 's'}).`
+                        : 'Peer-to-Peer (P2P) mesh disabled. Node is now isolated in standalone mode (0 peers).',
+                    state.p2p_enabled ? 'success' : 'info'
+                );
+            }
+            if (typeof renderMeshView === 'function' && state.current_view === 'mesh') {
+                renderMeshView(state.mesh);
+            }
+            updateDashboard();
+        }
+    } catch (err) {
+        console.warn('[toggleP2pMesh] Error toggling P2P:', err);
+    }
+};
 
 /**
  * Main update loop
@@ -1480,14 +1593,17 @@ async function updateDashboard() {
 
         let meshChanged = false;
         if (mesh && typeof mesh === 'object' && mesh.peer_count !== undefined) {
+            if (typeof mesh.p2p_enabled === 'boolean') {
+                state.p2p_enabled = mesh.p2p_enabled;
+            }
             state.mesh = mesh;
-            state.peer_count = mesh.peer_count;
+            state.peer_count = state.p2p_enabled === false ? 0 : mesh.peer_count;
             state.gossip_count = mesh.gossip_count || 0;
-            updateStats('peer-count', mesh.peer_count);
+            updateStats('peer-count', state.peer_count);
             updateStats('gossip-count', mesh.gossip_count || 0);
             updateStats('pending-joins', mesh.pending_joins || 0);
             updateStats('quarantined', mesh.quarantined_peers || 0);
-            updateMeshConnectionIndicators(mesh.peer_count, mesh.gossip_count);
+            updateMeshConnectionIndicators(state.peer_count, mesh.gossip_count, state.p2p_enabled);
             if (typeof updateLiveMeshEffectivenessUI === 'function') {
                 updateLiveMeshEffectivenessUI(getLiveMeshHostCount());
             }

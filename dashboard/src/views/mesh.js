@@ -51,18 +51,44 @@ async function renderMeshView(mesh) {
             );
         }
 
+        if (effectiveMesh && typeof effectiveMesh.p2p_enabled === 'boolean') {
+            state.p2p_enabled = effectiveMesh.p2p_enabled;
+        }
+        const p2pEnabled = state.p2p_enabled !== false;
         const rawPeerCount = (effectiveMesh && effectiveMesh.peer_count !== undefined && effectiveMesh.peer_count !== null)
             ? Number(effectiveMesh.peer_count)
             : Number(state.peer_count || 0);
-        const peerCount = (Number.isFinite(rawPeerCount) && rawPeerCount >= 0) ? rawPeerCount : 0;
+        const peerCount = p2pEnabled && Number.isFinite(rawPeerCount) && rawPeerCount >= 0 ? rawPeerCount : 0;
         const gossipCount = (effectiveMesh && effectiveMesh.gossip_count !== undefined)
             ? Number(effectiveMesh.gossip_count || 0)
             : Number(state.gossip_count || 0);
-        updateMeshConnectionIndicators(peerCount, gossipCount);
+        updateMeshConnectionIndicators(peerCount, gossipCount, p2pEnabled);
 
         const banner = document.getElementById('network-connection-banner');
         if (banner) {
-            if (peerCount > 0) {
+            if (!p2pEnabled) {
+                banner.innerHTML = `
+                    <div class="card glass shadow-glow" style="border-left: 4px solid #ef4444; background: rgba(239, 68, 68, 0.06); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
+                        <div style="display: flex; align-items: center; gap: 14px;">
+                            <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(239, 68, 68, 0.15); display: flex; align-items: center; justify-content: center; color: #f87171; font-size: 20px;">
+                                <i data-lucide="wifi-off"></i>
+                            </div>
+                            <div>
+                                <div style="font-weight: 700; font-size: 15px; color: #f87171; display: flex; align-items: center; gap: 8px;">
+                                    <span>P2P MESH SWARM: DISABLED BY USER (0 PEERS)</span>
+                                    <span class="badge red">Standalone Local-Only Mode</span>
+                                </div>
+                                <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+                                    Peer-to-Peer GossipSub and Nostr mesh synchronization are turned off. All EDR sensors, REA, and Voter consensus continue protecting this host locally.
+                                </div>
+                            </div>
+                        </div>
+                        <button type="button" class="btn-primary" onclick="window.toggleP2pMesh(true)" style="padding: 8px 14px; font-size: 12px; font-weight: 700; cursor: pointer;">
+                            Enable Peer-to-Peer
+                        </button>
+                    </div>
+                `;
+            } else if (peerCount > 0) {
                 banner.innerHTML = `
                     <div class="card glass shadow-glow" style="border-left: 4px solid #00ff88; background: rgba(0, 255, 136, 0.05); padding: 16px 20px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; gap: 16px;">
                         <div style="display: flex; align-items: center; gap: 14px;">
