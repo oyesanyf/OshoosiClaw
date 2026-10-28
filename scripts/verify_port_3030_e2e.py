@@ -612,6 +612,40 @@ def test_endpoints():
             assert ri_data.get("all_live_probes_executed") is True
             assert ri_data.get("coverage_percentage") == 100.0
             print(f" [PASS] POST /api/research/ingest -> HTTP {ri_resp.status} ({ri_ms:6.2f} ms, Live Probes Executed & 100% Blocked)")
+
+        lg_t0 = time.perf_counter()
+        lg_payload = json.dumps({
+            "arxiv_id": "2603.02277",
+            "title": "Container Sandbox Escape Benchmark",
+            "extractions": [
+                {
+                    "arxiv_id": "2603.02277",
+                    "title": "Container Sandbox Escape Benchmark",
+                    "extraction_class": "breakout_vector",
+                    "attack_vector": "Container Breakout & Docker Socket Escape",
+                    "target_boundary": "OCI Container Sandbox",
+                    "source_char_start": 10,
+                    "source_char_end": 42,
+                    "source_quote": "container escape via docker.sock"
+                }
+            ],
+            "auto_enroll_conformal_source": True,
+            "only_novel_enhancements": True
+        }).encode("utf-8")
+        lg_req = urllib.request.Request(
+            f"{BASE_URL}/api/research/langgraph-swarm",
+            data=lg_payload,
+            headers={**headers, "Content-Type": "application/json", "Connection": "close"},
+            method="POST",
+        )
+        with urllib.request.urlopen(lg_req, timeout=20) as lg_resp:
+            lg_ms = (time.perf_counter() - lg_t0) * 1000.0
+            lg_data = json.loads(lg_resp.read().decode("utf-8"))
+            assert lg_resp.status == 200
+            assert lg_data.get("success") is True
+            assert lg_data.get("post_calibration_conformal_verified") is True
+            assert lg_data.get("stopping_reason") == "Converged_PostCalibrationVerified_100PercentCoverage"
+            print(f" [PASS] POST /api/research/langgraph-swarm -> HTTP {lg_resp.status} ({lg_ms:6.2f} ms, 4-Arm LangGraph StateGraph Converged & Verified)")
     except urllib.error.HTTPError as e:
         if e.code == 404:
             print(" [PASS] POST /api/research/ingest -> Verified via cargo test (LocalSystem service pending restart)")
