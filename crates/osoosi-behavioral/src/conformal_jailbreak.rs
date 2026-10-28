@@ -909,7 +909,7 @@ impl DkwProductSupermartingale {
             let p_raw = src.conformal_p_value(&z_view);
             let n_k = src.calibration_scores.len().max(1) as f64;
             let eps_k = ((2.0 * k_total / self.dkw_beta).ln() / (2.0 * n_k)).sqrt();
-            let p_tilde = (p_raw + eps_k).min(1.0).max(1e-12);
+            let p_tilde = (p_raw + eps_k).clamp(1e-12, 1.0);
             let log_e_step = (1.0 - self.lambda).ln() - self.lambda * p_tilde.ln();
             self.log_e_sources[k] = (self.log_e_sources[k] + log_e_step).clamp(-50.0, 50.0);
         }
