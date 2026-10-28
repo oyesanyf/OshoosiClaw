@@ -5119,6 +5119,28 @@ OshoosiClaw stands on the shoulders of the open-source security community, acade
 | [Xori](https://github.com/CheckPointSW/xori) | Check Point | Apache 2.0 | Static analysis and shellcode emulation for binary risk profiling |
 | [Google Magika](https://github.com/google/magika) | Google | Apache 2.0 | Deep-learning file type detection for instant payload identification |
 
+
+---
+
+## 🛡️ Multi-Source Conformal Unseen Jailbreak Source Detection (`Persist-3` & `SR-DKW`)
+
+OshoosiClaw adopts the sequential multi-source conformal hypothesis testing framework from *"Detecting Unseen Jailbreak Sources: A Multi-Source Conformal Detection Perspective"* (Xunlei Qian, Yingqian Cui, Yuping Lin, Jun Wu, Yue Xing — Michigan State University, `arXiv:2610.09167v1`, October 2026) inside [`crates/osoosi-behavioral/src/conformal_jailbreak.rs`](crates/osoosi-behavioral/src/conformal_jailbreak.rs), [`ConformalUnseenJailbreakVoter`](crates/osoosi-policy/src/voters.rs), and [`crates/osoosi-dashboard/src/routes/conformal_jailbreak.rs`](crates/osoosi-dashboard/src/routes/conformal_jailbreak.rs).
+
+```mermaid
+flowchart LR
+    X["Prompt Stream X_t in R^D"] --> PCA["Shared PCA Projection Pi (d <= 32)"]
+    PCA --> S["Ledoit-Wolf Mahalanobis S_k(x) & Split-Conformal p_k(x) (K = 11 Sources)"]
+    S --> P3["Persist-3 Window (W = 10, L = 3, B = 12)
+C_t^fam = min_k C_{k,t} >= tau (2.386)"]
+    S --> SR["SR-DKW & DKW Product Supermartingale E_t^mix"]
+    P3 & SR --> LG["Layered Guardrail I_t^(G+M) = G_t OR A_t^(M)"]
+    LG --> EN["Dynamic MDCP Source Enrollment (K -> K + 1, Corollary B.6)"]
+```
+
+- **Union-Null Hypothesis Formulation ($H_0: Q_t \in \{P_1, \dots, P_K\}$ vs. $H_1: Q_t \notin \{P_1, \dots, P_K\}$)**: Calibrates against all $K = 11$ benchmark jailbreak attack families (`GCG`, `ADC`, `PAIR`, `TAP`, `AutoDAN`, `AutoDAN-Turbo`, `FlipAttack`, `DAN-InTheWild`, `SimpleBlackBox`, `FirstTokenSteering`, `Jailbreak-Zero`) in a shared 32-D PCA space with analytical Ledoit–Wolf shrinkage covariance $\hat{\Sigma}_k$ and Moore–Penrose pseudoinverse $\hat{\Sigma}_k^+$.
+- **Bounded-Memory `Persist-3` ($W = 10, L = 3, B = W + L - 1 = 12$)**: Rejects $H_0$ only when the best-matching known source fails to explain the window ($C_t^{\text{fam}} = \min_{k \in [K]} C_{k,t} \ge \hat{\tau} = 2.386$) for $L = 3$ consecutive steps. Guarantees **Finite Forgetting** (Proposition 4.4: pre-switch observations stop affecting $D_t$ after $B = 12$ post-switch observations), persistence-aware stationary false-alarm control (Theorem 4.3, $A_{10,3} = 82$), and exponential detection power governed by nearest-source separation $\Delta_*(Q)$ (Theorem 4.6 & Corollary 4.7).
+- **Cumulative Comparators (`SR-DKW`, `SR-RAW`, & `DkwProductSupermartingale`) & Layered Guardrail ($I_t^{(G+M)} = G_t \lor A_t^{(M)}$)**: Combines per-prompt guardrail screening with persistent session escalation and supports dynamic post-detection source enrollment ($K \to K + 1$, Corollary B.6) via `/api/conformal-jailbreak/status`, `/api/conformal-jailbreak/step`, and `/api/conformal-jailbreak/enroll`.
+
 ### 5. Reinforcement Learning, Local AI & Swarm Orchestration
 
 | Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |

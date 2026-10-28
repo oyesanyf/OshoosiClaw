@@ -1,4 +1,5 @@
 pub mod browser_sensor;
+pub mod conformal_jailbreak;
 pub mod dlp;
 pub mod dlp_containment;
 pub mod har;
@@ -25,4 +26,5 @@ pub fn mount_routes() -> Router<DashboardState> {
         .merge(vcdb::routes())
         .merge(skyrl::routes())
         .merge(workflow_guard::routes())
+        .merge(conformal_jailbreak::routes())
 }
