@@ -5141,6 +5141,49 @@ C_t^fam = min_k C_{k,t} >= tau (2.386)"]
 - **Bounded-Memory `Persist-3` ($W = 10, L = 3, B = W + L - 1 = 12$)**: Rejects $H_0$ only when the best-matching known source fails to explain the window ($C_t^{\text{fam}} = \min_{k \in [K]} C_{k,t} \ge \hat{\tau} = 2.386$) for $L = 3$ consecutive steps. Guarantees **Finite Forgetting** (Proposition 4.4: pre-switch observations stop affecting $D_t$ after $B = 12$ post-switch observations), persistence-aware stationary false-alarm control (Theorem 4.3, $A_{10,3} = 82$), and exponential detection power governed by nearest-source separation $\Delta_*(Q)$ (Theorem 4.6 & Corollary 4.7).
 - **Cumulative Comparators (`SR-DKW`, `SR-RAW`, & `DkwProductSupermartingale`) & Layered Guardrail ($I_t^{(G+M)} = G_t \lor A_t^{(M)}$)**: Combines per-prompt guardrail screening with persistent session escalation and supports dynamic post-detection source enrollment ($K \to K + 1$, Corollary B.6) via `/api/conformal-jailbreak/status`, `/api/conformal-jailbreak/step`, and `/api/conformal-jailbreak/enroll`.
 
+---
+
+## 🔬 Autonomous Novelty-Filtered arXiv Security Discovery, Google LangExtract Source Grounding & Live Regression Probe Audit (`POST /api/research/ingest` & `arxiv-langextract` MCP)
+
+OshoosiClaw, KillSwitch, and AgentOctopus integrate an autonomous academic research discovery, novelty filtering, character-interval source grounding (**[Google LangExtract](https://github.com/google/langextract)** `AnnotatedDocument`, `Extraction`, `CharInterval`), and **live regression probe verification** pipeline (`scripts/arxiv_langextract_feed.py`, `scripts/arxiv_langextract_mcp_server.py`, and [`crates/osoosi-dashboard/src/routes/research_ingest.rs`](crates/osoosi-dashboard/src/routes/research_ingest.rs)):
+
+```mermaid
+flowchart TD
+    subgraph DISCOVERY["1. arXiv Discovery & Strict Novelty Gate"]
+        ARXIV["arXiv Search Engine<br/>(Container Escapes, Jailbreaks, SSRF, Agent Breakouts)"]
+        NOVEL{"Strict Codebase Novelty Filter<br/>(Rejects Already-Implemented Papers<br/>e.g. 2610.09167, 2610.14224)"}
+    end
+
+    subgraph LANGEXTRACT["2. Google LangExtract 3-Class Source Grounding"]
+        BV["Class 1: BreakoutVector<br/>(Exact CharInterval [start:end] Quote)"]
+        MF["Class 2: MathematicalFormulation<br/>(Theorems, Martingales, Conformal/PAC Bounds)"]
+        DC["Class 3: DefenseCountermeasure<br/>(Mapped to Target Rust Crate Enhancement)"]
+    end
+
+    subgraph OUTPUTS["3. Visual Audit & Multi-Target Live Probe Ingestion"]
+        HTML["Interactive HTML Report<br/>(langextract.visualize CSS Highlights)"]
+        INGEST["POST /api/research/ingest<br/>(OshoosiClaw :3030 • KillSwitch :3031 • AgentOctopus)"]
+    end
+
+    subgraph LIVE_PROBES["4. Zero-Mock Live Regression Probe Verification"]
+        P1["Container / Sandbox Probe<br/>(BreakoutDefenseCoordinator + \\.\\pipe\\docker_engine)"]
+        P2["Mathematical SSRF Probe<br/>(169.254.169.254 + ::ffff:169.254.169.254 + CGNAT)"]
+        P3["NTFS ADS & Crown-Jewel DLP Probe<br/>(ElasticWorkspaceAdsGuard + SAM Read Block)"]
+        P4["Conformal Unseen Jailbreak Probe<br/>(Persist-3 Window + SR-DKW OOD +6.5 Shift)"]
+        P5["Velocity & Lateral Mesh Probe<br/>(StatisticalScreener Burst + Homological Boundary)"]
+    end
+
+    ARXIV --> NOVEL
+    NOVEL -->|"Novel & Enhances Codebase"| BV & MF & DC
+    BV & MF & DC --> HTML & INGEST
+    INGEST --> P1 & P2 & P3 & P4 & P5
+```
+
+- **Strict Codebase Novelty & Enhancement Filtering (`only_novel_enhancements = True`)**: Automatically filters out papers already implemented in the baseline (`CODEBASE_IMPLEMENTED_PAPERS`: `arXiv:2610.09167`, `arXiv:2610.14224`) and requires candidate papers to contain grounded `BreakoutVector`, `MathematicalFormulation`, or `DefenseCountermeasure` spans that map to concrete Rust crate enhancements (`osoosi-behavioral`, `osoosi-agent-anomaly`, `osoosi-policy`, `osoosi-sandbox`, `osoosi-dp`).
+- **Zero-Hallucination 3-Class Source Grounding (`google/langextract`)**: Anchors every extracted attack vector, mathematical formulation, and defense countermeasure to exact character offsets (`CharInterval(start_pos, end_pos)`) in the paper text and renders self-contained interactive HTML reports via `langextract.visualize(annotated_doc)`.
+- **Mathematically Rigorous Live Regression Probe Audit (`POST /api/research/ingest`, `GET /api/research/status`, `POST /api/research/novelty-check`)**: Rather than checking static category strings, `execute_live_regression_probe` synthesizes and executes real adversarial probes against `BreakoutDefenseCoordinator`, `validate_agent_egress_url`, `validate_agent_filesystem_access`, `PersistDetector::persist_3` + `SrDetector`, and `StatisticalScreener`—scoring `100% COVERAGE` only when the live Rust gate actively blocks the test vector.
+- **Antigravity MCP Server Integration (`arxiv-langextract`)**: Exposes 7 MCP tools (`rank_arxiv_security_papers`, `extract_grounded_breakout_vectors`, `audit_defense_coverage`, `search_and_rank_breakout_articles`, `extract_and_ground_article`, `ingest_ranked_articles_to_killswitch`, `langextract_status`) for direct invocation across Antigravity sessions.
+
 ### 5. Reinforcement Learning, Local AI & Swarm Orchestration
 
 | Tool / Project | Author / Maintainer | License | Role in OshoosiClaw |
