@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=78.1.1", "wheel"]
+requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -14,10 +14,10 @@ dependencies = ["pydantic>=2.10,<3"]
 
 [project.optional-dependencies]
 spreadsheet = ["openpyxl>=3.1"]
-datasets = ["huggingface-hub>=0.30", "pyarrow>=17", "pandas>=2"]
+datasets = ["huggingface-hub>=0.30", "pyarrow>=19.0.1", "pandas>=2"]
 plots = ["matplotlib>=3.8"]
 paper = ["PyYAML>=6"]
-mcp = ["mcp>=1.30.0,<2"]
+mcp = ["mcp>=1.31.0,<2"]
 dev = ["pytest>=9.0.3", "openpyxl>=3.1", "build>=1", "PyYAML>=6"]
 
 [project.scripts]

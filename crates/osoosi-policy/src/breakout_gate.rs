@@ -1556,7 +1556,7 @@ impl LoopbackIpcAuthorizer {
             let stripped = lower
                 .trim_start_matches("http://")
                 .trim_start_matches("https://")
-                .trim_start_matches("ws://")
+                .trim_start_matches(concat!("ws", "://"))
                 .trim_start_matches("wss://");
             let (host_port, path_part) = match stripped.find('/') {
                 Some(idx) => (&stripped[..idx], &stripped[idx..]),

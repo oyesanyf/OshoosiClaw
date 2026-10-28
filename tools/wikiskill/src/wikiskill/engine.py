@@ -130,13 +130,21 @@ def load_domain(config, split):
             from functools import partial
             return cases, partial(rollout_retrieval_case, corpus_dir=corpus/'treasury_bulletins_parsed/transformed' if (corpus/'treasury_bulletins_parsed/transformed').exists() else corpus)
         return cases, rollout_case
-    import re
-    if not re.fullmatch(r"[A-Za-z0-9_]+", domain):
-        raise ValueError(f"Invalid domain identifier: {domain!r}")
-    from importlib import import_module
     from functools import partial
-    adapter = import_module(f'wikiskill.benchmarks.{domain}')  # nosemgrep: python.lang.security.audit.non-literal-import
-    rollout = import_module(f'wikiskill.{domain}.rollout').rollout_case  # nosemgrep: python.lang.security.audit.non-literal-import
+    if domain == 'livemath':
+        from wikiskill.benchmarks import livemath as adapter
+        from wikiskill.livemath.rollout import rollout_case as rollout
+    elif domain == 'sealqa':
+        from wikiskill.benchmarks import sealqa as adapter
+        from wikiskill.sealqa.rollout import rollout_case as rollout
+    elif domain == 'spreadsheet':
+        from wikiskill.benchmarks import spreadsheet as adapter
+        from wikiskill.spreadsheet.rollout import rollout_case as rollout
+    elif domain == 'alfworld':
+        from wikiskill.benchmarks import alfworld as adapter
+        from wikiskill.alfworld.rollout import rollout_case as rollout
+    else:
+        raise ValueError(f"Unsupported benchmark domain: {domain!r}")
     data = Path(config['data'])
     if domain == 'livemath':
         cases = adapter.load_month_files(sorted(data.glob('qa_*_final.json')))

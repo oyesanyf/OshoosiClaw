@@ -286,14 +286,6 @@ if (-not $SkipBuild) {
                 & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
                 try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
             }
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\deps") -Filter "*.dll" -ErrorAction SilentlyContinue | Where-Object {
-                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
-                (-not $sig) -or ($sig.SignerCertificate -eq $null)
-            } | ForEach-Object {
-                $wt = $_.LastWriteTimeUtc
-                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
-                try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
-            }
         }
 
         if ($script:CargoExePath -and (Test-Path $script:CargoExePath)) {
@@ -308,14 +300,6 @@ if (-not $SkipBuild) {
         if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 25) {
             Write-Host "       [WDAC] Signing newly compiled build scripts & proc-macro DLLs before retry ($attempt/25)..." -ForegroundColor Cyan
             Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe") -ErrorAction SilentlyContinue | Where-Object {
-                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
-                (-not $sig) -or ($sig.SignerCertificate -eq $null)
-            } | ForEach-Object {
-                $wt = $_.LastWriteTimeUtc
-                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $_.FullName 2>$null | Out-Null
-                try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
-            }
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\deps") -Filter "*.dll" -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null)
             } | ForEach-Object {

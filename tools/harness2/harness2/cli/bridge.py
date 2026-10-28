@@ -106,6 +106,10 @@ def main(argv=None):
     except (ValueError, TypeError) as ex:
         p.exit(1, f"Invalid endpoint port: {ex}\n")
 
+    import re
+    import subprocess
+    if not re.fullmatch(r"[A-Za-z0-9._:/-]+", args.model):
+        p.exit(1, f"Invalid --model identifier: {args.model!r}\n")
     litellm_config = root / "bridge.yaml"
     litellm_config.write_text(LITELLM_CONFIG.format(model=args.model), encoding="utf-8")
 
@@ -129,9 +133,9 @@ def main(argv=None):
     if not os.path.isfile(litellm_path):
         p.exit(1, f"LiteLLM binary not found at {litellm_path}\n")
     safe_port = int(port)
-    command = [litellm_path, "--config", str(litellm_config.resolve()), "--host", host_str]
-    # nosemgrep: python.lang.security.audit.dangerous-os-exec-tainted-env-args
-    os.execve(litellm_path, [*command, "--port", str(safe_port)], env)
+    command = [litellm_path, "--config", str(litellm_config.resolve()), "--host", host_str, "--port", str(safe_port)]
+    proc = subprocess.run(command, env=env, check=False)
+    return proc.returncode
 
 
 if __name__ == "__main__":

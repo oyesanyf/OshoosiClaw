@@ -2,7 +2,7 @@
 import os
 import requests
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, urlsplit
 
 
 def _validate_base_url(raw_url: str) -> str:
@@ -28,24 +28,33 @@ def _headers() -> dict:
 
 
 def _validate_safe_url(url: str) -> str:
-    parsed = urllib.parse.urlsplit(url)
-    if parsed.scheme == "https":
-        return url
+    parsed = urlsplit(url)
+    if parsed.scheme == "https" and parsed.hostname in ("127.0.0.1", "localhost"):
+        return f"https://{parsed.netloc}{parsed.path}"
     if parsed.scheme == "http" and parsed.hostname in ("127.0.0.1", "localhost"):
-        return url
+        return f"http://{parsed.netloc}{parsed.path}"
     raise ValueError(f"Disallowed destination URL: {url!r}")
 
+
+def _validate_api_path(path: str) -> str:
+    if not path.startswith("/") or ".." in path or "//" in path:
+        raise ValueError(f"Invalid API path: {path!r}")
+    return path
+
+
 def _get(path: str) -> dict:
-    url = _validate_safe_url(f"{OSOOSI_BASE}{path}")
-    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
+    safe_path = _validate_api_path(path)
+    url = _validate_safe_url(f"{OSOOSI_BASE}{safe_path}")
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, workspaces.raptor.engine.semgrep.rules.sinks.raptor.web.ssrf.taint.python, raptor.web.ssrf.taint.python
     r = requests.get(url, headers=_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 def _post(path: str, json: Optional[dict] = None) -> dict:
-    url = _validate_safe_url(f"{OSOOSI_BASE}{path}")
-    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, raptor.ssrf.taint.python
+    safe_path = _validate_api_path(path)
+    url = _validate_safe_url(f"{OSOOSI_BASE}{safe_path}")
+    # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected, workspaces.raptor.engine.semgrep.rules.sinks.raptor.web.ssrf.taint.python, raptor.web.ssrf.taint.python
     r = requests.post(url, json=json or {}, headers=_headers(), timeout=10)
     r.raise_for_status()
     return r.json()

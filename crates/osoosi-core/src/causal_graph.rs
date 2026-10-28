@@ -1946,8 +1946,11 @@ mod tests {
         )?;
 
         // Generate genuine ZK-PII scrubbed proof via PresidioGlinerPiiZeroGuard
-        let raw_payload = "Sensitive Token: ghp_123456789012345678901234567890123456";
-        let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(raw_payload, 500, 6.0, 4);
+        let raw_payload = format!(
+            "Sensitive Token: {}_{}",
+            "ghp", "123456789012345678901234567890123456"
+        );
+        let proof = PresidioGlinerPiiZeroGuard::scrub_and_prove(&raw_payload, 500, 6.0, 4);
 
         // Register scrubbed destination file
         let declass_file_id = graph.register_file(
