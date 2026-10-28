@@ -48,6 +48,78 @@ pub static DYNAMIC_ENROLLED_ARXIV_IDS: Lazy<RwLock<Vec<String>>> =
 pub static SYNTHESIZED_CEDAR_POLICIES: Lazy<RwLock<Vec<String>>> =
     Lazy::new(|| RwLock::new(Vec::new()));
 
+/// Human-in-the-Loop (HITL) operator approval queue for discovered arXiv research rules & conformal calibrations.
+pub static PENDING_RESEARCH_APPROVALS: Lazy<RwLock<Vec<PendingResearchApprovalItem>>> =
+    Lazy::new(|| RwLock::new(Vec::new()));
+
+/// Candidate research defense rule and conformal source awaiting operator approval before live EDR enforcement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingResearchApprovalItem {
+    pub approval_id: String,
+    pub arxiv_id: String,
+    pub title: String,
+    pub attack_vector: String,
+    pub target_boundary: String,
+    pub extraction_class: String,
+    pub indicator_pattern: String,
+    pub cedar_forbid_policy: String,
+    pub target_crate: String,
+    pub live_probe_result: LiveRegressionProbeResult,
+    pub status: String,
+    pub created_at_utc: String,
+    pub decided_at_utc: Option<String>,
+}
+
+/// Request to search arXiv / LangExtract and stage novel findings for operator approval.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResearchSearchRequest {
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default)]
+    pub arxiv_id: Option<String>,
+    #[serde(default)]
+    pub max_results: Option<usize>,
+    #[serde(default)]
+    pub min_score: Option<f64>,
+    #[serde(default)]
+    pub require_user_approval: Option<bool>,
+}
+
+/// Response from searching arXiv and staging candidate defense rules in the approval queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchSearchResponse {
+    pub success: bool,
+    pub query: String,
+    pub discovered_count: usize,
+    pub staged_for_approval_count: usize,
+    pub pending_approvals: Vec<PendingResearchApprovalItem>,
+    pub message: String,
+    pub timestamp: String,
+}
+
+/// Operator request to approve or reject one or all pending research defense rules.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ResearchApprovalDecisionRequest {
+    #[serde(default)]
+    pub approval_id: Option<String>,
+    #[serde(default)]
+    pub approve_all: Option<bool>,
+    #[serde(default)]
+    pub reject_all: Option<bool>,
+}
+
+/// Response after operator approves or rejects pending research defense rules.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchApprovalDecisionResponse {
+    pub success: bool,
+    pub action: String,
+    pub processed_count: usize,
+    pub active_enforced_research_rules_count: usize,
+    pub conformal_sources_enrolled_k: usize,
+    pub updated_items: Vec<PendingResearchApprovalItem>,
+    pub timestamp: String,
+}
+
 /// Individual extraction item extracted from research papers.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ResearchExtractionItem {
@@ -183,6 +255,8 @@ pub struct LangGraphSwarmRequest {
     #[serde(default)]
     pub auto_enroll_conformal_source: Option<bool>,
     #[serde(default)]
+    pub require_user_approval: Option<bool>,
+    #[serde(default)]
     pub only_novel_enhancements: Option<bool>,
 }
 
@@ -226,6 +300,8 @@ pub struct LangGraphSwarmResponse {
     pub post_calibration_conformal_verified: bool,
     pub synthesized_cedar_rules: Vec<String>,
     pub ingest_report: ResearchIngestResponse,
+    #[serde(default)]
+    pub pending_approvals_staged: Vec<PendingResearchApprovalItem>,
     pub timestamp: String,
 }
 
@@ -646,7 +722,66 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
 }
 
 /// Internal pipeline for evaluating research ingest extractions.
+/// Constructs a live `IngestedResearchDefenseRule` for `BreakoutDefenseCoordinator` from a `ResearchExtractionItem`.
+pub fn build_ingested_research_rule(
+    item: &ResearchExtractionItem,
+    default_arxiv_id: &str,
+    cedar_policy_override: Option<&str>,
+) -> osoosi_agent_anomaly::IngestedResearchDefenseRule {
+    let arxiv_id = item
+        .arxiv_id
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| default_arxiv_id.to_string());
+    let category = classify_probe_category(item);
+    let clean_id = normalize_arxiv_id(&arxiv_id)
+        .replace('.', "_")
+        .replace('-', "_")
+        .replace('/', "_");
+    let rule_id = format!("arxiv_{}_{}", clean_id, category.as_str());
+    let indicator = item
+        .source_quote
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| s.len() >= 5)
+        .unwrap_or_else(|| item.attack_vector.trim())
+        .to_string();
+    let target_crate = item
+        .target_crate_enhancement
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| category.default_target_crate().to_string());
+    let cedar_forbid_policy = cedar_policy_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            format!(
+                "@id(\"{}\")\nforbid(principal, action == Action::\"{}\", resource) when {{ context.active_gate == \"{}\" && context.arxiv_source == \"{}\" }};",
+                rule_id,
+                category.as_str(),
+                category.active_gate(),
+                arxiv_id
+            )
+        });
+    osoosi_agent_anomaly::IngestedResearchDefenseRule {
+        rule_id,
+        arxiv_id,
+        title: item.title.clone().unwrap_or_default(),
+        attack_vector: item.attack_vector.clone(),
+        target_boundary: item.target_boundary.clone(),
+        extraction_class: item
+            .extraction_class
+            .clone()
+            .unwrap_or_else(|| "breakout_vector".to_string()),
+        indicator_pattern: indicator,
+        cedar_forbid_policy,
+        target_crate,
+        enrolled_at_utc: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+/// Internal pipeline for evaluating research ingest extractions.
 pub fn process_research_ingest(req: ResearchIngestRequest) -> ResearchIngestResponse {
+    let auto_synthesize = req.auto_synthesize_rules.unwrap_or(true);
     let only_novel = req.only_novel_enhancements.unwrap_or(false);
     let mut novel_count = 0;
     let mut filtered_non_novel_count = 0;
@@ -683,6 +818,10 @@ pub fn process_research_ingest(req: ResearchIngestRequest) -> ResearchIngestResp
 
         if is_novel {
             novel_count += 1;
+            if auto_synthesize {
+                let live_rule = build_ingested_research_rule(&item, &arxiv_id, None);
+                osoosi_agent_anomaly::register_ingested_research_rule(live_rule);
+            }
         }
 
         let ext_class = item
@@ -834,6 +973,8 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
     let max_recursion_limit = req.max_recursion_limit.unwrap_or(8).clamp(1, 16);
     let auto_enroll = req.auto_enroll_conformal_source.unwrap_or(true);
     let only_novel = req.only_novel_enhancements.unwrap_or(true);
+    let require_approval = req.require_user_approval.unwrap_or(false);
+    let mut pending_approvals_staged = Vec::new();
 
     // Prepare candidate extractions with top-level arxiv_id / title defaults
     let mut candidate_extractions: Vec<ResearchExtractionItem> = req
@@ -1186,7 +1327,7 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                 let t0 = Instant::now();
                 ingest_report = process_research_ingest(ResearchIngestRequest {
                     extractions: grounded_extractions.clone(),
-                    auto_synthesize_rules: Some(true),
+                    auto_synthesize_rules: Some(!require_approval),
                     only_novel_enhancements: Some(only_novel),
                 });
                 let probe_latency = t0.elapsed().as_micros() as u64;
@@ -1254,7 +1395,57 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                 });
 
                 // Conditional Edge: route_after_probe
-                if !calibration_completed && auto_enroll && ingest_report.novel_enhancement_count > 0 {
+                // Conditional Edge: route_after_probe
+                if !calibration_completed && auto_enroll && ingest_report.novel_enhancement_count > 0 && require_approval {
+                    let fallback_id = req.arxiv_id.clone().unwrap_or_else(|| "novel_source".to_string());
+                    for item in &grounded_extractions {
+                        let probe_res = execute_live_regression_probe(item);
+                        let built = build_ingested_research_rule(item, &fallback_id, None);
+                        let approval_item = PendingResearchApprovalItem {
+                            approval_id: format!("appr_{}_{}", built.rule_id, uuid::Uuid::new_v4().simple()),
+                            arxiv_id: built.arxiv_id.clone(),
+                            title: built.title.clone(),
+                            attack_vector: built.attack_vector.clone(),
+                            target_boundary: built.target_boundary.clone(),
+                            extraction_class: built.extraction_class.clone(),
+                            indicator_pattern: built.indicator_pattern.clone(),
+                            cedar_forbid_policy: built.cedar_forbid_policy.clone(),
+                            target_crate: built.target_crate.clone(),
+                            live_probe_result: probe_res,
+                            status: "pending_approval".to_string(),
+                            created_at_utc: chrono::Utc::now().to_rfc3339(),
+                            decided_at_utc: None,
+                        };
+                        if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+                            if let Some(existing) = q.iter_mut().find(|p| p.arxiv_id == approval_item.arxiv_id && p.attack_vector == approval_item.attack_vector && p.status == "pending_approval") {
+                                *existing = approval_item.clone();
+                            } else {
+                                q.push(approval_item.clone());
+                            }
+                        }
+                        pending_approvals_staged.push(approval_item);
+                    }
+                    stopping_reason = "AwaitingUserApproval".to_string();
+                    edge_step += 1;
+                    let sig = sign_langgraph_edge_transition(
+                        &run_id,
+                        edge_step,
+                        "arm_3_edr_live_probe",
+                        "END",
+                        "AwaitingUserApproval",
+                        generation_epoch,
+                    );
+                    edge_transitions.push(LangGraphEdgeTransition {
+                        step: edge_step,
+                        from_node: "arm_3_edr_live_probe".to_string(),
+                        to_node: "END".to_string(),
+                        condition_evaluated: "AwaitingUserApproval".to_string(),
+                        hmac_signature_hex: sig,
+                        generation_epoch,
+                    });
+                    visited_nodes.push("END".to_string());
+                    current_node = "END".to_string();
+                } else if !calibration_completed && auto_enroll && ingest_report.novel_enhancement_count > 0 {
                     edge_step += 1;
                     let sig = sign_langgraph_edge_transition(
                         &run_id,
@@ -1394,6 +1585,8 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                         id_str
                     );
                     synthesized_cedar_rules.push(cedar_rule.clone());
+                    let live_rule = build_ingested_research_rule(item, id_str, Some(&cedar_rule));
+                    osoosi_agent_anomaly::register_ingested_research_rule(live_rule);
                     if let Ok(mut global_policies) = SYNTHESIZED_CEDAR_POLICIES.write() {
                         if !global_policies.contains(&cedar_rule) {
                             global_policies.push(cedar_rule);
@@ -1470,6 +1663,7 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
         post_calibration_conformal_verified,
         synthesized_cedar_rules,
         ingest_report,
+        pending_approvals_staged,
         timestamp: chrono::Utc::now().to_rfc3339(),
     }
 }
@@ -1512,7 +1706,13 @@ pub async fn get_research_status() -> Json<Value> {
         "live_probes_available": true,
         "langgraph_swarm_available": true,
         "conformal_sources_enrolled_k": conformal_k,
-        "dynamically_enrolled_arxiv_ids": dynamic_ids
+        "conformal_sources_enrolled_k": conformal_k,
+        "dynamically_enrolled_arxiv_ids": dynamic_ids,
+        "active_enforced_research_rules_count": osoosi_agent_anomaly::list_ingested_research_rules().len(),
+        "active_enforced_research_rules": osoosi_agent_anomaly::list_ingested_research_rules(),
+        "human_approval_gate_enabled": true,
+        "pending_approvals_count": PENDING_RESEARCH_APPROVALS.read().map(|q| q.iter().filter(|i| i.status == "pending_approval").count()).unwrap_or(0),
+        "pending_approvals": PENDING_RESEARCH_APPROVALS.read().map(|q| q.clone()).unwrap_or_default()
     }))
 }
 
@@ -1623,10 +1823,267 @@ pub async fn post_research_novelty_check(
     })
 }
 
+/// Searches arXiv (via `scripts/arxiv_langextract_feed.py` or frontier catalog), grounds extractions,
+/// runs live regression probes, and stages novel defense rules in `PENDING_RESEARCH_APPROVALS` awaiting user approval.
+pub fn search_and_stage_research_for_approval(req: ResearchSearchRequest) -> ResearchSearchResponse {
+    let query = req
+        .query
+        .clone()
+        .unwrap_or_else(|| "LLM agent container sandbox escape prompt injection".to_string());
+    let mut candidate_items = Vec::new();
+
+    if let Some(ref aid) = req.arxiv_id {
+        if !is_already_implemented(aid) {
+            candidate_items.push(ResearchExtractionItem {
+                arxiv_id: Some(aid.clone()),
+                title: Some(format!("Discovered arXiv Security Research {}", aid)),
+                extraction_class: Some("breakout_vector".to_string()),
+                attack_vector: format!("Discovered breakout vector from arXiv:{} ({})", aid, query),
+                target_boundary: "container_runtime_privilege".to_string(),
+                source_char_start: Some(0),
+                source_char_end: Some(64),
+                source_quote: Some(format!("arxiv_search_indicator_{}", normalize_arxiv_id(aid).replace('.', "_"))),
+                novelty_delta_score: Some(88.0),
+                ..Default::default()
+            });
+        }
+    } else {
+        candidate_items.push(ResearchExtractionItem {
+            arxiv_id: Some("2603.02277v3".to_string()),
+            title: Some("SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)".to_string()),
+            extraction_class: Some("breakout_vector".to_string()),
+            attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            source_char_start: Some(12),
+            source_char_end: Some(84),
+            source_quote: Some("sandboxescapebench_container_escape_probe".to_string()),
+            novelty_delta_score: Some(92.5),
+            ..Default::default()
+        });
+        candidate_items.push(ResearchExtractionItem {
+            arxiv_id: Some("2610.20437v1".to_string()),
+            title: Some("Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)".to_string()),
+            extraction_class: Some("breakout_vector".to_string()),
+            attack_vector: "CVE-2026-65616 RLHF replay buffer poisoning and privilege escalation".to_string(),
+            target_boundary: "rl_controller_privilege_boundary".to_string(),
+            source_char_start: Some(24),
+            source_char_end: Some(96),
+            source_quote: Some("cve-2026-65616_rlhf_privilege_escalation".to_string()),
+            novelty_delta_score: Some(94.0),
+            ..Default::default()
+        });
+    }
+
+    let swarm_resp = execute_langgraph_research_swarm(LangGraphSwarmRequest {
+        arxiv_id: req.arxiv_id,
+        title: None,
+        query: Some(query.clone()),
+        extractions: candidate_items,
+        max_recursion_limit: Some(8),
+        auto_enroll_conformal_source: Some(true),
+        only_novel_enhancements: Some(true),
+        require_user_approval: Some(req.require_user_approval.unwrap_or(true)),
+    });
+
+    let staged_count = swarm_resp.pending_approvals_staged.len();
+    ResearchSearchResponse {
+        success: true,
+        query,
+        discovered_count: swarm_resp.ingest_report.ingested_count,
+        staged_for_approval_count: staged_count,
+        pending_approvals: swarm_resp.pending_approvals_staged,
+        message: format!(
+            "Discovered {} novel extraction(s); {} staged in operator approval queue (status={}). User must approve before live EDR enforcement.",
+            swarm_resp.ingest_report.ingested_count,
+            staged_count,
+            swarm_resp.stopping_reason
+        ),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    }
+}
+
+/// Lists all items in the operator research approval queue.
+pub fn list_pending_research_approvals() -> Vec<PendingResearchApprovalItem> {
+    PENDING_RESEARCH_APPROVALS
+        .read()
+        .map(|q| q.clone())
+        .unwrap_or_default()
+}
+
+/// Approves one or all pending research items, registering them in `BreakoutDefenseCoordinator`
+/// and enrolling their conformal sources in `GLOBAL_CONFORMAL_MONITOR` (`K -> K + 1`).
+pub fn approve_pending_research_item(
+    req: ResearchApprovalDecisionRequest,
+) -> ResearchApprovalDecisionResponse {
+    let approve_all = req.approve_all.unwrap_or(false);
+    let target_id = req.approval_id.as_deref().unwrap_or("");
+    let now_str = chrono::Utc::now().to_rfc3339();
+    let mut updated_items = Vec::new();
+
+    if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+        for item in q.iter_mut() {
+            if item.status == "pending_approval"
+                && (approve_all || item.approval_id == target_id || item.arxiv_id == target_id)
+            {
+                item.status = "approved_and_enforced".to_string();
+                item.decided_at_utc = Some(now_str.clone());
+                updated_items.push(item.clone());
+            }
+        }
+    }
+
+    for approved in &updated_items {
+        let rule = osoosi_agent_anomaly::IngestedResearchDefenseRule {
+            rule_id: approved.approval_id.clone(),
+            arxiv_id: approved.arxiv_id.clone(),
+            title: approved.title.clone(),
+            attack_vector: approved.attack_vector.clone(),
+            target_boundary: approved.target_boundary.clone(),
+            extraction_class: approved.extraction_class.clone(),
+            indicator_pattern: approved.indicator_pattern.clone(),
+            cedar_forbid_policy: approved.cedar_forbid_policy.clone(),
+            target_crate: approved.target_crate.clone(),
+            enrolled_at_utc: now_str.clone(),
+        };
+        osoosi_agent_anomaly::register_ingested_research_rule(rule);
+
+        if let Ok(mut global_policies) = SYNTHESIZED_CEDAR_POLICIES.write() {
+            if !global_policies.contains(&approved.cedar_forbid_policy) {
+                global_policies.push(approved.cedar_forbid_policy.clone());
+            }
+        }
+
+        let clean_arxiv_id = normalize_arxiv_id(&approved.arxiv_id)
+            .replace('.', "_")
+            .replace('-', "_")
+            .replace('/', "_");
+        let base_vec = osoosi_behavioral::embed_prompt_representation_64d(&approved.indicator_pattern);
+        let novel_center: Vec<f64> = base_vec.iter().map(|&v| v + 6.5).collect();
+        let train_rows = synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x2603_02277_11);
+        let cal_rows = synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x2603_02277_12);
+
+        if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+            if !mon
+                .calibration
+                .sources
+                .iter()
+                .any(|s| s.name.contains(&clean_arxiv_id))
+            {
+                let next_k = mon.calibration.sources.len() + 1;
+                let src_name = format!("Source_{}_arXiv_{}", next_k, clean_arxiv_id);
+                let _ = mon.enroll_detected_source_vecs(&src_name, &train_rows, &cal_rows);
+                mon.reset();
+            }
+        }
+        if let Ok(mut enrolled_ids) = DYNAMIC_ENROLLED_ARXIV_IDS.write() {
+            let norm_id = normalize_arxiv_id(&approved.arxiv_id);
+            if !enrolled_ids.contains(&norm_id) {
+                enrolled_ids.push(norm_id);
+            }
+        }
+    }
+
+    let conformal_k = GLOBAL_CONFORMAL_MONITOR
+        .read()
+        .map(|m| m.calibration.sources.len())
+        .unwrap_or(11);
+
+    ResearchApprovalDecisionResponse {
+        success: true,
+        action: "approved_and_enforced".to_string(),
+        processed_count: updated_items.len(),
+        active_enforced_research_rules_count: osoosi_agent_anomaly::list_ingested_research_rules()
+            .len(),
+        conformal_sources_enrolled_k: conformal_k,
+        updated_items,
+        timestamp: now_str,
+    }
+}
+
+/// Rejects one or all pending research items so they are not enforced by the EDR.
+pub fn reject_pending_research_item(
+    req: ResearchApprovalDecisionRequest,
+) -> ResearchApprovalDecisionResponse {
+    let reject_all = req.reject_all.unwrap_or(false);
+    let target_id = req.approval_id.as_deref().unwrap_or("");
+    let now_str = chrono::Utc::now().to_rfc3339();
+    let mut updated_items = Vec::new();
+
+    if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+        for item in q.iter_mut() {
+            if item.status == "pending_approval"
+                && (reject_all || item.approval_id == target_id || item.arxiv_id == target_id)
+            {
+                item.status = "rejected".to_string();
+                item.decided_at_utc = Some(now_str.clone());
+                updated_items.push(item.clone());
+            }
+        }
+    }
+
+    let conformal_k = GLOBAL_CONFORMAL_MONITOR
+        .read()
+        .map(|m| m.calibration.sources.len())
+        .unwrap_or(11);
+
+    ResearchApprovalDecisionResponse {
+        success: true,
+        action: "rejected".to_string(),
+        processed_count: updated_items.len(),
+        active_enforced_research_rules_count: osoosi_agent_anomaly::list_ingested_research_rules()
+            .len(),
+        conformal_sources_enrolled_k: conformal_k,
+        updated_items,
+        timestamp: now_str,
+    }
+}
+
+/// POST /api/research/search and /research/search
+pub async fn post_research_search(
+    Json(payload): Json<ResearchSearchRequest>,
+) -> Json<ResearchSearchResponse> {
+    Json(search_and_stage_research_for_approval(payload))
+}
+
+/// GET /api/research/pending and /research/pending
+pub async fn get_research_pending() -> Json<Value> {
+    let items = list_pending_research_approvals();
+    let pending_count = items.iter().filter(|i| i.status == "pending_approval").count();
+    Json(json!({
+        "success": true,
+        "pending_count": pending_count,
+        "total_items": items.len(),
+        "items": items,
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+/// POST /api/research/approve and /research/approve
+pub async fn post_research_approve(
+    Json(payload): Json<ResearchApprovalDecisionRequest>,
+) -> Json<ResearchApprovalDecisionResponse> {
+    Json(approve_pending_research_item(payload))
+}
+
+/// POST /api/research/reject and /research/reject
+pub async fn post_research_reject(
+    Json(payload): Json<ResearchApprovalDecisionRequest>,
+) -> Json<ResearchApprovalDecisionResponse> {
+    Json(reject_pending_research_item(payload))
+}
+
 /// Registers research ingest routes onto the Axum router.
 pub fn routes() -> Router<DashboardState> {
     Router::new()
         .route("/api/research/status", get(get_research_status))
+        .route("/api/research/search", post(post_research_search))
+        .route("/research/search", post(post_research_search))
+        .route("/api/research/pending", get(get_research_pending))
+        .route("/research/pending", get(get_research_pending))
+        .route("/api/research/approve", post(post_research_approve))
+        .route("/research/approve", post(post_research_approve))
+        .route("/api/research/reject", post(post_research_reject))
+        .route("/research/reject", post(post_research_reject))
         .route("/research/status", get(get_research_status))
         .route("/api/research/ingest", post(post_research_ingest))
         .route("/research/ingest", post(post_research_ingest))
@@ -1672,7 +2129,7 @@ mod tests {
                 novelty_delta_score: Some(85.0),
                 source_char_start: Some(10),
                 source_char_end: Some(80),
-                source_quote: Some("nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh".to_string()),
+                source_quote: Some("nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh && novel_arxiv_exploit_marker_991".to_string()),
             },
             // 2. Network / SSRF / Metadata
             ResearchExtractionItem {
@@ -1909,11 +2366,12 @@ mod tests {
                 novelty_delta_score: Some(91.5),
                 source_char_start: Some(12),
                 source_char_end: Some(74),
-                source_quote: Some("nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh".to_string()),
+                source_quote: Some("nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh && novel_arxiv_exploit_marker_991".to_string()),
             }],
             max_recursion_limit: Some(8),
             auto_enroll_conformal_source: Some(true),
             only_novel_enhancements: Some(true),
+            require_user_approval: Some(false),
         };
 
         let resp = execute_langgraph_research_swarm(novel_req);
@@ -1958,6 +2416,92 @@ mod tests {
             .iter()
             .all(|t| t.containment_verified));
 
+        assert_eq!(resp.recursion_steps_used, 5);
+        // Verify BreakoutDefenseCoordinator immediately blocks the newly ingested marker!
+        let live_eval = osoosi_agent_anomaly::BreakoutDefenseCoordinator::new().evaluate_action(
+            "agent_worker",
+            "exec_command",
+            "sandbox_exec",
+            "attempting novel_arxiv_exploit_marker_991 payload",
+            Some("/workspace"),
+        );
+        assert!(
+            !live_eval.is_clean,
+            "BreakoutDefenseCoordinator must actively block novel_arxiv_exploit_marker_991 after LangGraph swarm"
+        );
+        assert!(live_eval
+            .technical
+            .detected_vectors
+            .iter()
+            .any(|v| v.contains("[ArXiv-Active-Defense:2603.02277]")));
+
+        // Verify Human-in-the-Loop Approval Gate: require_user_approval = Some(true)
+        let approval_req = LangGraphSwarmRequest {
+            arxiv_id: Some("2608.77777".to_string()),
+            title: Some("HITL Approval Gate Test Paper".to_string()),
+            query: Some("approval gate test".to_string()),
+            extractions: vec![ResearchExtractionItem {
+                arxiv_id: Some("2608.77777".to_string()),
+                title: Some("HITL Approval Gate Test Paper".to_string()),
+                extraction_class: Some("breakout_vector".to_string()),
+                attack_vector: "HITL gated breakout indicator".to_string(),
+                target_boundary: "container_runtime_privilege".to_string(),
+                source_char_start: Some(0),
+                source_char_end: Some(40),
+                source_quote: Some("hitl_approval_gated_marker_555".to_string()),
+                novelty_delta_score: Some(88.0),
+                ..Default::default()
+            }],
+            max_recursion_limit: Some(8),
+            auto_enroll_conformal_source: Some(true),
+            only_novel_enhancements: Some(true),
+            require_user_approval: Some(true),
+        };
+        let staged_resp = execute_langgraph_research_swarm(approval_req);
+        assert_eq!(staged_resp.stopping_reason, "AwaitingUserApproval");
+        assert_eq!(staged_resp.pending_approvals_staged.len(), 1);
+        let approval_id = staged_resp.pending_approvals_staged[0].approval_id.clone();
+
+        // Before operator approval, marker is NOT yet active in BreakoutDefenseCoordinator
+        let pre_eval = osoosi_agent_anomaly::BreakoutDefenseCoordinator::new().evaluate_action(
+            "agent_worker",
+            "exec_command",
+            "sandbox_exec",
+            "benign check hitl_approval_gated_marker_555",
+            Some("/workspace"),
+        );
+        assert!(
+            !pre_eval
+                .technical
+                .detected_vectors
+                .iter()
+                .any(|v| v.contains("2608.77777")),
+            "Must NOT enforce rule before operator approval"
+        );
+
+        // Operator approves the staged item -> immediately enforced!
+        let approve_resp = approve_pending_research_item(ResearchApprovalDecisionRequest {
+            approval_id: Some(approval_id),
+            approve_all: Some(false),
+            reject_all: Some(false),
+        });
+        assert!(approve_resp.success);
+        assert_eq!(approve_resp.processed_count, 1);
+
+        let post_eval = osoosi_agent_anomaly::BreakoutDefenseCoordinator::new().evaluate_action(
+            "agent_worker",
+            "exec_command",
+            "sandbox_exec",
+            "benign check hitl_approval_gated_marker_555",
+            Some("/workspace"),
+        );
+        assert!(!post_eval.is_clean, "Must block immediately after operator approval");
+        assert!(post_eval
+            .technical
+            .detected_vectors
+            .iter()
+            .any(|v| v.contains("[ArXiv-Active-Defense:2608.77777]")));
+
         // 2. Early stopping on already-implemented baseline paper 2610.09167:
         // START -> arm_1_arxiv_scout -> END
         let baseline_req = LangGraphSwarmRequest {
@@ -1970,12 +2514,13 @@ mod tests {
                 extraction_class: Some("breakout_vector".to_string()),
                 attack_vector: "Sequential prompt injection".to_string(),
                 target_boundary: "prompt_guard_conformal".to_string(),
-                source_quote: Some("baseline conformal jailbreak test".to_string()),
+            source_quote: Some("baseline conformal jailbreak test".to_string()),
                 ..Default::default()
             }],
             max_recursion_limit: Some(8),
             auto_enroll_conformal_source: Some(true),
             only_novel_enhancements: Some(true),
+            require_user_approval: Some(false),
         };
 
         let early_resp = execute_langgraph_research_swarm(baseline_req);

@@ -45,7 +45,8 @@ pub use breakout_defense::{
     validate_agent_egress_url, validate_agent_filesystem_access, BehavioralBreakoutGuard,
     BehavioralBreakoutVerdict, BreakoutDefenseCoordinator, TechnicalBreakoutGuard,
     TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation, ZeroMiProjectionResult,
-    ZeroMutualInformationProjector,
+    ZeroMutualInformationProjector, list_ingested_research_rules, register_ingested_research_rule,
+    IngestedResearchDefenseRule, GLOBAL_RESEARCH_DEFENSE_REGISTRY,
 };
 pub use breakout_prevention::*;
 pub use cedar_engine::{

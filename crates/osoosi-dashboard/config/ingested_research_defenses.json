@@ -1,0 +1,86 @@
+[
+  {
+    "rule_id": "arxiv_2603_02277v3_sandbox_escape_bench",
+    "arxiv_id": "2603.02277v3",
+    "title": "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)",
+    "attack_vector": "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)",
+    "target_boundary": "container_runtime_privilege",
+    "extraction_class": "breakout_vector",
+    "indicator_pattern": "sandboxescapebench",
+    "cedar_forbid_policy": "@id(\"arxiv_2603_02277v3\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2603.02277v3\" };",
+    "target_crate": "osoosi-agent-anomaly::breakout_defense",
+    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+  },
+  {
+    "rule_id": "arxiv_2604_20496v1_mythos_z3_cage",
+    "arxiv_id": "2604.20496v1",
+    "title": "What Holds Acquisition Back? Formal Z3 Sandbox Verification vs. Mythos-Class Breakouts",
+    "attack_vector": "Mythos-class unverified sandbox cage bypass against non-SMT-verified policy boundaries",
+    "target_boundary": "cedar_smt_sandbox_verification",
+    "extraction_class": "defense_countermeasure",
+    "indicator_pattern": "mythos_unverified_cage_bypass",
+    "cedar_forbid_policy": "@id(\"arxiv_2604_20496v1\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2604.20496v1\" };",
+    "target_crate": "osoosi-agent-anomaly::cedar_engine",
+    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+  },
+  {
+    "rule_id": "arxiv_2610_20437v1_cve_2026_65616",
+    "arxiv_id": "2610.20437v1",
+    "title": "Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)",
+    "attack_vector": "CVE-2026-65616 RLHF replay buffer poisoning and autonomous privilege escalation",
+    "target_boundary": "rl_controller_privilege_boundary",
+    "extraction_class": "breakout_vector",
+    "indicator_pattern": "cve-2026-65616",
+    "cedar_forbid_policy": "@id(\"arxiv_2610_20437v1_cve\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };",
+    "target_crate": "osoosi-agent-anomaly::rl_controller",
+    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+  },
+  {
+    "rule_id": "arxiv_2610_20437v1_rlhf_priv_esc",
+    "arxiv_id": "2610.20437v1",
+    "title": "Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)",
+    "attack_vector": "RLHF reward-hacking privilege escalation trajectory",
+    "target_boundary": "rl_controller_privilege_boundary",
+    "extraction_class": "breakout_vector",
+    "indicator_pattern": "rlhf_privilege_escalation",
+    "cedar_forbid_policy": "@id(\"arxiv_2610_20437v1_rlhf\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };",
+    "target_crate": "osoosi-agent-anomaly::rl_controller",
+    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+  },
+  {
+    "rule_id": "arxiv_2601_11893v1_mac_priv_esc",
+    "arxiv_id": "2601.11893v1",
+    "title": "Mandatory Access Control for Autonomous AI Agents Against Privilege Escalation",
+    "attack_vector": "Autonomous agent mandatory access control (MAC) privilege escalation bypass",
+    "target_boundary": "mac_authority_lattice",
+    "extraction_class": "defense_countermeasure",
+    "indicator_pattern": "mac_privilege_escalation_bypass",
+    "cedar_forbid_policy": "@id(\"arxiv_2601_11893v1\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2601.11893v1\" };",
+    "target_crate": "osoosi-agent-anomaly::containment_ring",
+    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+  },
+  {
+    "rule_id": "arxiv_2603_02277_container_sandbox_escape",
+    "arxiv_id": "2603.02277",
+    "title": "Container Escape & Cross-Namespace Breakout",
+    "attack_vector": "Docker socket nsenter host namespace breakout",
+    "target_boundary": "container_runtime_privilege",
+    "extraction_class": "breakout_vector",
+    "indicator_pattern": "nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh && novel_arxiv_exploit_marker_991",
+    "cedar_forbid_policy": "@id(\"arxiv_2603_02277_container_sandbox_escape\")\nforbid(principal, action == Action::\"container_sandbox_escape\", resource) when { context.active_gate == \"BreakoutDefenseCoordinator\" && context.arxiv_source == \"2603.02277\" };",
+    "target_crate": "osoosi-agent-anomaly::breakout_defense",
+    "enrolled_at_utc": "2026-10-28T23:09:12.759168700+00:00"
+  },
+  {
+    "rule_id": "appr_arxiv_2608_77777_container_sandbox_escape_1defd3000cd44950a9d5a524ad21ba8b",
+    "arxiv_id": "2608.77777",
+    "title": "HITL Approval Gate Test Paper",
+    "attack_vector": "HITL gated breakout indicator",
+    "target_boundary": "container_runtime_privilege",
+    "extraction_class": "breakout_vector",
+    "indicator_pattern": "hitl_approval_gated_marker_555",
+    "cedar_forbid_policy": "@id(\"arxiv_2608_77777_container_sandbox_escape\")\nforbid(principal, action == Action::\"container_sandbox_escape\", resource) when { context.active_gate == \"BreakoutDefenseCoordinator\" && context.arxiv_source == \"2608.77777\" };",
+    "target_crate": "osoosi-agent-anomaly::breakout_defense",
+    "enrolled_at_utc": "2026-10-28T23:09:12.898717300+00:00"
+  }
+]

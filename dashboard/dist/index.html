@@ -119,9 +119,9 @@
 
                 <!-- 4. Adversarial Testing -->
                 <details class="nav-category-group" data-category="adversarial-testing">
-                    <summary class="nav-category-summary" title="Adversarial Testing (Test Suite &amp; RL Policy Training)">
+                    <summary class="nav-category-summary" title="Adversarial Testing (Test Suite, RL Policy Training &amp; arXiv Research Swarm)">
                         <span>🚀 Adversarial Testing</span>
-                        <span id="cat-badge-adversarial-testing" class="badge purple" style="font-size: 9px; padding: 1px 5px; margin-left: auto; margin-right: 4px;">2</span>
+                        <span id="cat-badge-adversarial-testing" class="badge purple" style="font-size: 9px; padding: 1px 5px; margin-left: auto; margin-right: 4px;">3</span>
                         <span class="cat-chevron">▸</span>
                     </summary>
                     <div class="nav-category-items">
@@ -133,6 +133,11 @@
                         <a href="#skyrl" class="nav-item" data-view="skyrl" title="RL Policy Training">
                             <i data-lucide="brain-circuit"></i>
                             <span>RL Policy Training</span>
+                        </a>
+                        <a href="#research" class="nav-item" data-view="research" title="arXiv Research &amp; 4-Arm LangGraph Swarm">
+                            <i data-lucide="book-marked"></i>
+                            <span>arXiv Research Swarm</span>
+                            <span id="nav-research-badge" class="badge cyan" style="margin-left: auto; font-size: 9.5px; padding: 1px 6px; border-radius: 999px;">LIVE</span>
                         </a>
                     </div>
                 </details>
@@ -5004,6 +5009,266 @@
                     </div>
                 </div>
             </div>
+
+            <!-- arXiv Research & 4-Arm LangGraph Swarm View -->
+            <div id="research-view" class="view-content">
+                <!-- Header Banner -->
+                <div class="card glass shadow-glow" style="padding: 20px; margin-bottom: 18px; border-left: 4px solid #06b6d4; background: linear-gradient(135deg, rgba(6, 182, 212, 0.10), rgba(15, 23, 42, 0.92));">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 14px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                <h3 style="margin: 0; font-size: 18px; font-weight: 700; color: #f8fafc;">
+                                    📚 arXiv Breakout Research &amp; 4-Arm LangGraph Verification Swarm
+                                </h3>
+                                <span id="research-header-status-badge" class="badge cyan" style="font-size: 11px; padding: 3px 10px;">OPERATOR APPROVAL GATE ARMED</span>
+                                <span class="badge purple" style="font-size: 11px; padding: 3px 10px;">HMAC-SHA256 EPOCH SEALED</span>
+                            </div>
+                            <p style="margin: 6px 0 0 0; font-size: 12.5px; color: var(--text-muted); line-height: 1.5; max-width: 960px;">
+                                Continuously discovers novel LLM container escape, sandbox breakout, and prompt-injection papers from arXiv, grounds exact character-span indicators via Google LangExtract, executes live regression probes against <code>BreakoutDefenseCoordinator</code>, and stages candidate Cedar <code>forbid</code> policies &amp; Conformal $P_{K+1}$ calibration sources in the <strong>Operator Approval Queue</strong> before live EDR enforcement.
+                            </p>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" class="btn-secondary" onclick="window.loadResearchSwarmStatus()" style="padding: 8px 14px; font-size: 12px; font-weight: 600;">
+                                🔄 Refresh Status (GET /api/research/status)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Summary Stats Row -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-bottom: 18px;">
+                    <div class="card glass" style="padding: 16px; border-top: 2px solid #10b981;">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;">Active Enforced Research Rules</div>
+                        <div id="research-stat-rules-count" style="font-size: 26px; font-weight: 700; color: #10b981; margin-top: 6px;">4</div>
+                        <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Live in <code>BreakoutDefenseCoordinator</code></div>
+                    </div>
+                    <div class="card glass" style="padding: 16px; border-top: 2px solid #a855f7;">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;">Enrolled Conformal Sources (K)</div>
+                        <div id="research-stat-conformal-k" style="font-size: 26px; font-weight: 700; color: #a855f7; margin-top: 6px;">11</div>
+                        <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Inductive Conformal $P_{K+1}$ Calibrator</div>
+                    </div>
+                    <div class="card glass" style="padding: 16px; border-top: 2px solid #38bdf8;">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;">Total Extractions Ingested</div>
+                        <div id="research-stat-ingested-total" style="font-size: 26px; font-weight: 700; color: #38bdf8; margin-top: 6px;">4</div>
+                        <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Character-span grounded vectors</div>
+                    </div>
+                    <div class="card glass" style="padding: 16px; border-top: 2px solid #06b6d4;">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;">Live Regression Probe Coverage</div>
+                        <div id="research-stat-coverage" style="font-size: 26px; font-weight: 700; color: #06b6d4; margin-top: 6px;">100.0%</div>
+                        <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Verified against 7-Ring Monitor</div>
+                    </div>
+                    <div class="card glass" style="padding: 16px; border-top: 2px solid #f59e0b;">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600;">Pending Operator Approval</div>
+                        <div id="research-stat-pending-count" style="font-size: 26px; font-weight: 700; color: #f59e0b; margin-top: 6px;">0</div>
+                        <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">Awaiting human review before enforce</div>
+                    </div>
+                </div>
+
+                <!-- 1. Live arXiv Search & Grounding Bar -->
+                <div class="card glass shadow-glow" style="padding: 18px; margin-bottom: 18px; border-left: 3px solid #38bdf8;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #f8fafc;">
+                                🔍 Live arXiv Breakout Discovery &amp; LangExtract Grounding Search
+                            </h4>
+                            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 3px;">
+                                Query arXiv for novel agent breakout, container escape, and prompt-injection papers. Discovered vectors are tested by Arm 3 and staged in the <strong>Pending Operator Approval Queue</strong> below.
+                            </div>
+                        </div>
+                        <span class="badge blue" style="font-size: 10.5px;">HUMAN-IN-THE-LOOP STAGING</span>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 160px auto; gap: 12px; align-items: end;">
+                        <div>
+                            <label for="research-search-query-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 5px;">arXiv Search Query (Keywords / CVE / Breakout Class)</label>
+                            <input type="text" id="research-search-query-input" value="LLM container sandbox escape jailbreak" placeholder="e.g. LLM container sandbox escape jailbreak" style="width: 100%; padding: 9px 12px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px;">
+                        </div>
+                        <div>
+                            <label for="research-min-score-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 5px;">Min Breakout Score</label>
+                            <input type="number" id="research-min-score-input" value="60" min="0" max="100" style="width: 100%; padding: 9px 12px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px;">
+                        </div>
+                        <div>
+                            <button type="button" id="research-search-btn" class="btn-primary" onclick="window.searchArxivAndStageForApproval()" style="padding: 9px 16px; font-size: 12.5px; font-weight: 700; white-space: nowrap;">
+                                🔍 Search arXiv &amp; Stage for Approval
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Mandatory User Approval Queue Panel (#research-pending-approvals-card) -->
+                <div id="research-pending-approvals-card" class="card glass shadow-glow" style="padding: 18px; margin-bottom: 18px; border-left: 4px solid #f59e0b; background: linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(15, 23, 42, 0.94));">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #fde68a;">
+                                    🛡️ Pending Operator Approval Queue (User Must Approve Before EDR Enforcement)
+                                </h4>
+                                <span id="research-pending-badge" class="badge yellow" style="font-size: 10.5px;">0 AWAITING APPROVAL</span>
+                            </div>
+                            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 4px;">
+                                Candidate arXiv breakout rules and Conformal $P_{K+1}$ calibration sources discovered by the 4-Arm Swarm are held here (`stopping_reason = AwaitingUserApproval`) until an operator explicitly approves them.
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" id="research-approve-all-btn" class="btn-primary" onclick="window.approveAllResearchItems()" style="padding: 7px 14px; font-size: 12px; font-weight: 700; background: linear-gradient(135deg, #10b981, #059669); border: none;">
+                                ✅ Approve All Pending
+                            </button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto; border: 1px solid var(--glass-border); border-radius: 8px;">
+                        <table class="data-table" style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: rgba(255,255,255,0.04); border-bottom: 1px solid var(--glass-border); color: var(--text-muted);">
+                                    <th style="padding: 9px 10px; text-align: left; width: 20%;">arXiv ID &amp; Title</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 16%;">Attack Vector</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 14%;">Target Boundary</th>
+                                    <th style="padding: 9px 10px; text-align: center; width: 13%;">Live Probe Verdict</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 21%;">Proposed Cedar Policy &amp; Conformal $P_{K+1}$ Enrollment</th>
+                                    <th style="padding: 9px 10px; text-align: right; width: 16%;">Operator Decision</th>
+                                </tr>
+                            </thead>
+                            <tbody id="research-pending-tbody">
+                                <tr>
+                                    <td colspan="6" style="padding: 16px; text-align: center; color: var(--text-muted);">
+                                        No pending research rules awaiting approval. Click <strong>"🔍 Search arXiv &amp; Stage for Approval"</strong> or <strong>"Run 4-Arm LangGraph Swarm"</strong> to stage candidate rules for review.
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 3. Interactive 4-Arm LangGraph Swarm Launcher Card -->
+                <div class="card glass shadow-glow" style="padding: 18px; margin-bottom: 18px; border-left: 3px solid #a855f7;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 12px; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 700; color: #f8fafc;">
+                                🧬 Interactive 4-Arm LangGraph Swarm Launcher (Scout &rarr; LangExtract &rarr; Live EDR Probe &rarr; Calibrator)
+                            </h4>
+                            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 3px;">
+                                Select a frontier arXiv paper preset or edit character-span grounded attributes below to execute the cyclic LangGraph StateGraph.
+                            </div>
+                        </div>
+                        <label style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.4); font-size: 12px; font-weight: 600; color: #fde68a; cursor: pointer;">
+                            <input type="checkbox" id="research-require-approval-checkbox" checked style="accent-color: #f59e0b; width: 15px; height: 15px; cursor: pointer;">
+                            <span>Require Operator Approval before enrolling Conformal source &amp; enforcing Cedar rule</span>
+                        </label>
+                    </div>
+
+                    <!-- Quick-Preset Buttons for the 4 Discovered Novel Frontier Papers -->
+                    <div style="margin-bottom: 14px;">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">
+                            Discovered Frontier arXiv Breakout Papers (Quick Presets):
+                        </div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                            <button type="button" class="btn-secondary" onclick="window.selectResearchPaperPreset('2603.02277')" style="font-size: 11.5px; padding: 6px 11px; border-color: rgba(6, 182, 212, 0.45); color: #67e8f9;">
+                                📄 arXiv:2603.02277v3 (UK AISI Container Escape &mdash; 89.0)
+                            </button>
+                            <button type="button" class="btn-secondary" onclick="window.selectResearchPaperPreset('2604.20496')" style="font-size: 11.5px; padding: 6px 11px; border-color: rgba(168, 85, 247, 0.45); color: #d8b4fe;">
+                                📄 arXiv:2604.20496v1 (Mythos Z3 Sandbox Cage &mdash; 85.5)
+                            </button>
+                            <button type="button" class="btn-secondary" onclick="window.selectResearchPaperPreset('2610.20437')" style="font-size: 11.5px; padding: 6px 11px; border-color: rgba(245, 158, 11, 0.45); color: #fde68a;">
+                                📄 arXiv:2610.20437v1 (CVE-2026-65616 RLHF PrivEsc &mdash; 84.5)
+                            </button>
+                            <button type="button" class="btn-secondary" onclick="window.selectResearchPaperPreset('2601.11893')" style="font-size: 11.5px; padding: 6px 11px; border-color: rgba(16, 185, 129, 0.45); color: #6ee7b7;">
+                                📄 arXiv:2601.11893v1 (MAC Agent Framework &mdash; 63.0)
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Editable Grounded Extraction Inputs -->
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                        <div>
+                            <label for="research-arxiv-id-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">arXiv Paper ID</label>
+                            <input type="text" id="research-arxiv-id-input" value="2603.02277" style="width: 100%; padding: 8px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px; font-family: monospace;">
+                        </div>
+                        <div>
+                            <label for="research-title-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">Paper Title</label>
+                            <input type="text" id="research-title-input" value="Quantifying Frontier LLM Capabilities for Container Sandbox Escape" style="width: 100%; padding: 8px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px;">
+                        </div>
+                        <div>
+                            <label for="research-class-select" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">LangExtract Grounding Class</label>
+                            <select id="research-class-select" style="width: 100%; padding: 8px 10px; background: rgba(15,23,42,0.95); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px;">
+                                <option value="breakout_vector" selected>breakout_vector</option>
+                                <option value="mathematical_formulation">mathematical_formulation</option>
+                                <option value="defense_countermeasure">defense_countermeasure</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="research-vector-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">Attack Vector Name</label>
+                            <input type="text" id="research-vector-input" value="Container Breakout &amp; Docker Socket Escape" style="width: 100%; padding: 8px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px;">
+                        </div>
+                        <div>
+                            <label for="research-boundary-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">Target Security Boundary</label>
+                            <input type="text" id="research-boundary-input" value="OCI Container Sandbox" style="width: 100%; padding: 8px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #f8fafc; font-size: 12.5px;">
+                        </div>
+                        <div>
+                            <label for="research-quote-input" style="display: block; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px;">Verbatim Character-Span Grounded Quote / Payload</label>
+                            <input type="text" id="research-quote-input" value="nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh" style="width: 100%; padding: 8px 10px; background: rgba(0,0,0,0.4); border: 1px solid var(--glass-border); border-radius: 8px; color: #67e8f9; font-size: 12px; font-family: monospace;">
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px;">
+                        <button type="button" id="research-run-swarm-btn" class="btn-primary" onclick="window.runResearchLangGraphSwarm()" style="padding: 9px 16px; font-size: 12.5px; font-weight: 700;">
+                            🚀 Run 4-Arm LangGraph Swarm (POST /api/research/langgraph-swarm)
+                        </button>
+                        <button type="button" id="research-run-ingest-btn" class="btn-secondary" onclick="window.runResearchLiveIngest()" style="padding: 9px 16px; font-size: 12.5px; font-weight: 600; border-color: rgba(16, 185, 129, 0.45); color: #6ee7b7;">
+                            ⚡ Run Live Regression Probe Ingest (POST /api/research/ingest)
+                        </button>
+                        <button type="button" class="btn-secondary" onclick="window.loadResearchSwarmStatus()" style="padding: 9px 14px; font-size: 12px;">
+                            🔄 Refresh Status (GET /api/research/status)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 4. 4-Arm LangGraph Execution Trace & Live Probe Verdict Panel -->
+                <div class="card glass shadow-glow" style="padding: 18px; margin-bottom: 18px; border-left: 3px solid #06b6d4;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                        <h4 style="margin: 0; font-size: 14.5px; font-weight: 700; color: #f8fafc;">
+                            🕸️ 4-Arm LangGraph StateGraph Execution Trace &amp; Live Probe Verdicts
+                        </h4>
+                        <span id="research-swarm-trace-badge" class="badge cyan" style="font-size: 10.5px;">STATEGRAPH READY</span>
+                    </div>
+                    <div id="research-swarm-output-panel" style="font-size: 12.5px; color: #cbd5e1; line-height: 1.55;">
+                        <!-- Populated dynamically by app.js -->
+                    </div>
+                </div>
+
+                <!-- 5. Active Enforced Research Defense Rules Table -->
+                <div class="card glass shadow-glow" style="padding: 18px; margin-bottom: 18px; border-left: 3px solid #10b981;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                        <div>
+                            <h4 style="margin: 0; font-size: 14.5px; font-weight: 700; color: #f8fafc;">
+                                🛡️ Active Enforced Research Defense Rules (Live in <code>BreakoutDefenseCoordinator</code>)
+                            </h4>
+                            <div style="font-size: 11.5px; color: var(--text-muted); margin-top: 2px;">
+                                Every rule below is actively evaluated inside <code>BreakoutDefenseCoordinator::evaluate_action</code> on live agent tool calls, shell commands, and network egress.
+                            </div>
+                        </div>
+                        <span id="research-active-rules-badge" class="badge green" style="font-size: 10.5px;">4 ACTIVE RULES ENFORCED</span>
+                    </div>
+                    <div style="overflow-x: auto; border: 1px solid var(--glass-border); border-radius: 8px;">
+                        <table class="data-table" style="width: 100%; font-size: 12px; border-collapse: collapse;">
+                            <thead>
+                                <tr style="background: rgba(255,255,255,0.04); border-bottom: 1px solid var(--glass-border); color: var(--text-muted);">
+                                    <th style="padding: 9px 10px; text-align: left; width: 13%;">Rule ID</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 10%;">arXiv ID</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 19%;">Title</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 15%;">Attack Vector</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 13%;">Target Boundary</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 14%;">Indicator Pattern</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 8%;">Target Crate</th>
+                                    <th style="padding: 9px 10px; text-align: center; width: 8%;">Enforcement Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="research-active-rules-tbody">
+                                <!-- Populated dynamically by loadResearchSwarmStatus() -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
 </main>
     </div>
 

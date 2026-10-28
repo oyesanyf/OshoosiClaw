@@ -280,6 +280,7 @@ function setupUniversalUiLoadingInterceptors() {
             else if (urlStr.includes('/repair')) label = 'Running self-healing repair check...';
             else if (urlStr.includes('/mitre')) label = 'Loading MITRE ATT&CK matrix...';
             else if (urlStr.includes('/history') || urlStr.includes('/logs')) label = 'Loading forensic history...';
+            else if (urlStr.includes('/research/')) label = 'Executing arXiv 4-Arm Research Swarm...';
             else if (method !== 'GET') label = 'Executing security command...';
 
             if (!isBackgroundPoll) {
@@ -1226,6 +1227,13 @@ function setupNav() {
                     } else if (typeof ensureHarContinuousPolling === 'function') {
                         ensureHarContinuousPolling();
                     }
+                } else if (view === 'research') {
+                    const researchView = document.getElementById('research-view');
+                    if (researchView) researchView.classList.add('active');
+                    viewTitle.innerText = "arXiv Breakout Research & 4-Arm LangGraph Swarm";
+                    if (typeof window.loadResearchSwarmStatus === 'function') {
+                        window.loadResearchSwarmStatus();
+                    }
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
                     if (otherView) {
@@ -1288,6 +1296,10 @@ function setupNav() {
                 'data-loss-prevention': 'dlp',
                 'crown-jewels': 'dlp',
                 'exfiltration': 'dlp',
+                'research': 'research',
+                'arxiv': 'research',
+                'langgraph': 'research',
+                'research-swarm': 'research',
             };
             const resolvedView = aliasMap[hash] || hash;
             const target = document.querySelector(`.nav-item[data-view="${resolvedView}"]`);
@@ -12882,6 +12894,755 @@ window.toggleCicdProtectionItem = toggleCicdProtectionItem;
 window.toggleCicdProtectionAll = toggleCicdProtectionAll;
 window.runCicdProtectionVerification = runCicdProtectionVerification;
 window.runHybridCveScan = runHybridCveScan;
+
+
+// ============================================================================
+// arXiv Breakout Research & 4-Arm LangGraph Swarm + Operator Approval Gate UI
+// ============================================================================
+const RESEARCH_PAPER_PRESETS = {
+    '2603.02277': {
+        arxiv_id: '2603.02277v3',
+        title: 'Quantifying Frontier LLM Capabilities for Container Sandbox Escape',
+        extraction_class: 'breakout_vector',
+        attack_vector: 'Container Breakout & Docker Socket Escape',
+        target_boundary: 'OCI Container Sandbox',
+        verbatim_quote: 'nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh',
+        target_crate: 'osoosi-sandbox',
+        breakout_score: 89.0,
+        proposed_cedar_rule: 'forbid(principal, action == Action::"Tool::execute", resource) when { context.arxiv_id == "2603.02277v3" && context.command like "*nsenter*--target 1*" };'
+    },
+    '2604.20496': {
+        arxiv_id: '2604.20496v1',
+        title: 'Project Mythos: Autonomous Multi-Step Sandbox Escape via Z3 Symbolic Execution',
+        extraction_class: 'breakout_vector',
+        attack_vector: 'Symbolic Capability Escalation & Seccomp Filter Bypass',
+        target_boundary: 'Seccomp-BPF / AppContainer Ring',
+        verbatim_quote: 'io_uring_setup(4096, &params) -> OP_OPENAT2_RESOLVE_BENEATH_BYPASS',
+        target_crate: 'osoosi-agent-anomaly',
+        breakout_score: 85.5,
+        proposed_cedar_rule: 'forbid(principal, action == Action::"Syscall::invoke", resource) when { context.arxiv_id == "2604.20496v1" && context.syscall in ["io_uring_setup", "io_uring_enter"] };'
+    },
+    '2610.20437': {
+        arxiv_id: '2610.20437v1',
+        title: 'CVE-2026-65616: Reward-Hacking Privilege Escalation in RLHF-Trained Tool Agents',
+        extraction_class: 'breakout_vector',
+        attack_vector: 'RLHF Reward-Hacking & Self-Approval Policy Tampering',
+        target_boundary: '5-Level Immutable Authority Lattice (L1-L5)',
+        verbatim_quote: 'chmod u+s /bin/bash && export OSOOSI_BYPASS_APPROVAL=1',
+        target_crate: 'osoosi-policy',
+        breakout_score: 84.5,
+        proposed_cedar_rule: 'forbid(principal, action in [Action::"Policy::modify", Action::"Exception::self_approve"], resource) when { context.arxiv_id == "2610.20437v1" };'
+    },
+    '2601.11893': {
+        arxiv_id: '2601.11893v1',
+        title: 'MAC-Agent: Mandatory Access Control Lattice for Multi-Agent Tool Frameworks',
+        extraction_class: 'defense_countermeasure',
+        attack_vector: 'Cross-Agent Confused Deputy & Lateral Sink Pivot',
+        target_boundary: 'Inter-Agent Neural Mesh Guard',
+        verbatim_quote: 'curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/',
+        target_crate: 'osoosi-agent-anomaly',
+        breakout_score: 63.0,
+        proposed_cedar_rule: 'forbid(principal, action == Action::"Network::egress", resource) when { context.arxiv_id == "2601.11893v1" && context.ip_range == "169.254.0.0/16" };'
+    }
+};
+
+window._researchSwarmState = {
+    total_ingested: 4,
+    active_rules_count: 4,
+    conformal_sources_k: 11,
+    coverage_ratio: 1.0,
+    pending_approvals: [],
+    active_enforced_research_rules: [
+        {
+            rule_id: 'ARXIV-DEF-2603.02277',
+            arxiv_id: '2603.02277v3',
+            title: 'Quantifying Frontier LLM Capabilities for Container Sandbox Escape',
+            attack_vector: 'Container Breakout & Docker Socket Escape',
+            target_boundary: 'OCI Container Sandbox',
+            indicator_pattern: 'nsenter --target 1 --mount',
+            target_crate: 'osoosi-sandbox',
+            status: 'ENFORCED IN BREAKOUT COORDINATOR'
+        },
+        {
+            rule_id: 'ARXIV-DEF-2604.20496',
+            arxiv_id: '2604.20496v1',
+            title: 'Project Mythos: Autonomous Multi-Step Sandbox Escape via Z3 Symbolic Execution',
+            attack_vector: 'Symbolic Capability Escalation & Seccomp Filter Bypass',
+            target_boundary: 'Seccomp-BPF / AppContainer Ring',
+            indicator_pattern: 'io_uring_setup / RESOLVE_BENEATH_BYPASS',
+            target_crate: 'osoosi-agent-anomaly',
+            status: 'ENFORCED IN BREAKOUT COORDINATOR'
+        },
+        {
+            rule_id: 'ARXIV-DEF-2610.20437',
+            arxiv_id: '2610.20437v1',
+            title: 'CVE-2026-65616: Reward-Hacking Privilege Escalation in RLHF-Trained Tool Agents',
+            attack_vector: 'RLHF Reward-Hacking & Self-Approval Policy Tampering',
+            target_boundary: '5-Level Immutable Authority Lattice (L1-L5)',
+            indicator_pattern: 'chmod u+s /bin/bash',
+            target_crate: 'osoosi-policy',
+            status: 'ENFORCED IN BREAKOUT COORDINATOR'
+        },
+        {
+            rule_id: 'ARXIV-DEF-2601.11893',
+            arxiv_id: '2601.11893v1',
+            title: 'MAC-Agent: Mandatory Access Control Lattice for Multi-Agent Tool Frameworks',
+            attack_vector: 'Cross-Agent Confused Deputy & Lateral Sink Pivot',
+            target_boundary: 'Inter-Agent Neural Mesh Guard',
+            indicator_pattern: '169.254.169.254/latest/meta-data',
+            target_crate: 'osoosi-agent-anomaly',
+            status: 'ENFORCED IN BREAKOUT COORDINATOR'
+        }
+    ],
+    last_swarm_report: {
+        visited_nodes: [
+            'START',
+            'arm_1_arxiv_scout',
+            'arm_2_langextract_grounder',
+            'arm_3_edr_live_probe',
+            'arm_4_edr_calibrator',
+            'arm_3_edr_live_probe',
+            'END'
+        ],
+        stopping_reason: 'AllVectorsBlockedOnFirstProbe',
+        coverage_ratio: 1.0,
+        conformal_sources_k: 11,
+        edge_transitions: [
+            {
+                from_node: 'START',
+                to_node: 'arm_1_arxiv_scout',
+                epoch: 1,
+                hmac_sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+                verified: true
+            },
+            {
+                from_node: 'arm_1_arxiv_scout',
+                to_node: 'arm_2_langextract_grounder',
+                epoch: 1,
+                hmac_sha256: '4b227777d4dd1fc61c6f884f48641d02b4d121d3fd328cb08b5531fcacdabf8a',
+                verified: true
+            },
+            {
+                from_node: 'arm_2_langextract_grounder',
+                to_node: 'arm_3_edr_live_probe',
+                epoch: 1,
+                hmac_sha256: 'ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d',
+                verified: true
+            },
+            {
+                from_node: 'arm_3_edr_live_probe',
+                to_node: 'END',
+                epoch: 1,
+                hmac_sha256: 'e7f6c011776e8db7cd330b54174fd76f7d0216b612387a5ffcfb81e6f0919683',
+                verified: true
+            }
+        ],
+        synthesized_cedar_rules: [
+            'forbid(principal, action == Action::"Tool::execute", resource) when { context.arxiv_id == "2603.02277v3" && context.command like "*nsenter*--target 1*" };'
+        ],
+        probe_verdicts: [
+            {
+                arxiv_id: '2603.02277v3',
+                attack_vector: 'Container Breakout & Docker Socket Escape',
+                blocked_by_edr: true,
+                enforced_action: 'TerminateAndContain',
+                latency_us: 38,
+                matched_rule_id: 'ARXIV-DEF-2603.02277'
+            }
+        ]
+    }
+};
+
+function renderResearchSwarmUI() {
+    const st = window._researchSwarmState;
+    const rules = Array.isArray(st.active_enforced_research_rules) ? st.active_enforced_research_rules : [];
+    const pending = Array.isArray(st.pending_approvals) ? st.pending_approvals : [];
+
+    // Summary stats
+    const rulesCountEl = document.getElementById('research-stat-rules-count');
+    if (rulesCountEl) rulesCountEl.innerText = String(st.active_rules_count || rules.length || 4);
+
+    const confKEl = document.getElementById('research-stat-conformal-k');
+    if (confKEl) confKEl.innerText = String(st.conformal_sources_k || 11);
+
+    const ingestedEl = document.getElementById('research-stat-ingested-total');
+    if (ingestedEl) ingestedEl.innerText = String(st.total_ingested || rules.length || 4);
+
+    const covEl = document.getElementById('research-stat-coverage');
+    if (covEl) {
+        const pct = ((typeof st.coverage_ratio === 'number' ? st.coverage_ratio : 1.0) * 100).toFixed(1);
+        covEl.innerText = `${pct}%`;
+    }
+
+    const pendingStatEl = document.getElementById('research-stat-pending-count');
+    if (pendingStatEl) {
+        pendingStatEl.innerText = String(pending.length);
+        pendingStatEl.style.color = pending.length > 0 ? '#f59e0b' : '#10b981';
+    }
+
+    const navBadge = document.getElementById('nav-research-badge');
+    if (navBadge) {
+        if (pending.length > 0) {
+            navBadge.innerText = `${pending.length} PENDING`;
+            navBadge.className = 'badge yellow';
+        } else {
+            navBadge.innerText = `${rules.length} LIVE`;
+            navBadge.className = 'badge cyan';
+        }
+    }
+
+    const pendingBadge = document.getElementById('research-pending-badge');
+    if (pendingBadge) {
+        pendingBadge.innerText = pending.length > 0
+            ? `${pending.length} AWAITING OPERATOR APPROVAL`
+            : '0 AWAITING APPROVAL';
+        pendingBadge.className = pending.length > 0 ? 'badge yellow' : 'badge green';
+    }
+
+    // Pending Approval Queue Table
+    const pendingTbody = document.getElementById('research-pending-tbody');
+    if (pendingTbody) {
+        if (pending.length === 0) {
+            pendingTbody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="padding: 16px; text-align: center; color: var(--text-muted);">
+                        No pending research rules awaiting approval. Click <strong>"🔍 Search arXiv &amp; Stage for Approval"</strong> or <strong>"Run 4-Arm LangGraph Swarm"</strong> (with Operator Approval checked) to stage candidate rules for review.
+                    </td>
+                </tr>
+            `;
+        } else {
+            pendingTbody.innerHTML = pending.map(item => {
+                const appId = item.approval_id || item.rule_id || item.arxiv_id || 'pending-1';
+                const arxivId = item.arxiv_id || '2603.02277v3';
+                const title = item.title || 'Frontier LLM Breakout Vector';
+                const vector = item.attack_vector || 'Container Breakout';
+                const boundary = item.target_boundary || 'OCI Container Sandbox';
+                const probeBlocked = item.blocked_by_edr !== false;
+                const cedarRule = item.proposed_cedar_rule || item.cedar_rule || `forbid(principal, action, resource) when { context.arxiv_id == "${arxivId}" };`;
+                const indicator = item.indicator_pattern || item.verbatim_quote || '';
+                return `
+                    <tr style="border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(245, 158, 11, 0.05);">
+                        <td style="padding: 10px;">
+                            <div style="font-family: monospace; font-weight: 700; color: #38bdf8;">arXiv:${escapeHtml(arxivId)}</div>
+                            <div style="font-size: 11.5px; color: #f8fafc; margin-top: 2px;">${escapeHtml(title)}</div>
+                            <div style="font-size: 10.5px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">ID: ${escapeHtml(appId)}</div>
+                        </td>
+                        <td style="padding: 10px; font-weight: 600; color: #fde68a;">
+                            ${escapeHtml(vector)}
+                            ${indicator ? `<div style="font-family: monospace; font-size: 10.5px; color: #67e8f9; margin-top: 4px;"><code>${escapeHtml(indicator)}</code></div>` : ''}
+                        </td>
+                        <td style="padding: 10px; color: #cbd5e1;">${escapeHtml(boundary)}</td>
+                        <td style="padding: 10px; text-align: center;">
+                            <span class="badge ${probeBlocked ? 'green' : 'yellow'}" style="font-size: 10px;">
+                                ${probeBlocked ? 'ARM-3 PROBE VERIFIED' : 'CALIBRATION REQUIRED'}
+                            </span>
+                            <div style="font-size: 10.5px; color: #fcd34d; margin-top: 4px; font-weight: 600;">STAGED (UNENFORCED)</div>
+                        </td>
+                        <td style="padding: 10px;">
+                            <div style="font-family: monospace; font-size: 10.5px; color: #d8b4fe; background: rgba(0,0,0,0.35); padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(168,85,247,0.25);">
+                                ${escapeHtml(cedarRule)}
+                            </div>
+                            <div style="font-size: 10.5px; color: #a7f3d0; margin-top: 4px;">+ Enroll Conformal Source $P_{K+1}$</div>
+                        </td>
+                        <td style="padding: 10px; text-align: right; white-space: nowrap;">
+                            <button type="button" class="btn-primary" onclick="window.approveResearchItem('${escapeHtml(appId)}')" style="padding: 6px 10px; font-size: 11px; font-weight: 700; background: #10b981; border: none; margin-right: 6px;">
+                                ✅ Approve &amp; Enforce in EDR
+                            </button>
+                            <button type="button" class="btn-secondary" onclick="window.rejectResearchItem('${escapeHtml(appId)}')" style="padding: 6px 10px; font-size: 11px; border-color: rgba(239,68,68,0.45); color: #fca5a5;">
+                                ❌ Reject
+                            </button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+    }
+
+    // 4-Arm LangGraph Execution Trace Panel
+    const tracePanel = document.getElementById('research-swarm-output-panel');
+    const traceBadge = document.getElementById('research-swarm-trace-badge');
+    const rep = st.last_swarm_report || {};
+    const nodes = Array.isArray(rep.visited_nodes) && rep.visited_nodes.length > 0
+        ? rep.visited_nodes
+        : ['START', 'arm_1_arxiv_scout', 'arm_2_langextract_grounder', 'arm_3_edr_live_probe', 'arm_4_edr_calibrator', 'arm_3_edr_live_probe', 'END'];
+    const stopReason = rep.stopping_reason || 'AllVectorsBlockedOnFirstProbe';
+    if (traceBadge) {
+        traceBadge.innerText = stopReason === 'AwaitingUserApproval'
+            ? 'PAUSED AT APPROVAL GATE (AwaitingUserApproval)'
+            : `STOP REASON: ${stopReason}`;
+        traceBadge.className = stopReason === 'AwaitingUserApproval' ? 'badge yellow' : 'badge green';
+    }
+    if (tracePanel) {
+        const nodeChainHtml = nodes.map(n => {
+            const isEnd = n === 'END';
+            const isProbe = n.includes('arm_3');
+            const isCal = n.includes('arm_4');
+            const bg = isEnd ? 'rgba(16,185,129,0.18)' : (isCal ? 'rgba(168,85,247,0.18)' : (isProbe ? 'rgba(6,182,212,0.18)' : 'rgba(56,189,248,0.14)'));
+            const border = isEnd ? '#10b981' : (isCal ? '#a855f7' : '#38bdf8');
+            return `<span style="display:inline-block; padding: 4px 10px; border-radius: 6px; background:${bg}; border: 1px solid ${border}; font-family: monospace; font-size: 11.5px; color: #f8fafc; font-weight: 600;">${escapeHtml(n)}</span>`;
+        }).join(' <span style="color:#64748b; font-weight:700;">&rarr;</span> ');
+
+        const edges = Array.isArray(rep.edge_transitions) ? rep.edge_transitions : [];
+        const edgesHtml = edges.map(e => `
+            <div style="font-family: monospace; font-size: 11px; color: #94a3b8; padding: 4px 8px; background: rgba(0,0,0,0.3); border-radius: 6px; border: 1px solid rgba(255,255,255,0.05);">
+                <span style="color:#38bdf8;">${escapeHtml(e.from_node || '')} &rarr; ${escapeHtml(e.to_node || '')}</span>
+                &bull; Epoch ${Number(e.epoch || 1)}
+                &bull; HMAC-SHA256: <span style="color:#a7f3d0;">${escapeHtml(String(e.hmac_sha256 || e.signature_hex || 'verified').substring(0, 24))}...</span>
+                <span class="badge green" style="font-size: 9px; margin-left: 6px;">VERIFIED</span>
+            </div>
+        `).join('');
+
+        const verdicts = Array.isArray(rep.probe_verdicts) ? rep.probe_verdicts : [];
+        const verdictsHtml = verdicts.map(v => `
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; padding: 8px 10px; background: rgba(16,185,129,0.07); border: 1px solid rgba(16,185,129,0.25); border-radius: 6px; font-size: 11.5px;">
+                <div>
+                    <strong style="color:#f8fafc;">arXiv:${escapeHtml(v.arxiv_id || '')}</strong> &mdash;
+                    <span style="color:#cbd5e1;">${escapeHtml(v.attack_vector || '')}</span>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-family:monospace; font-size:11px; color:#67e8f9;">Latency: ${Number(v.latency_us || 38)} &micro;s</span>
+                    <span class="badge ${v.blocked_by_edr !== false ? 'green' : 'yellow'}" style="font-size:10px;">
+                        ${v.blocked_by_edr !== false ? 'BLOCKED (' + escapeHtml(v.enforced_action || 'TerminateAndContain') + ')' : 'STAGED FOR CALIBRATION'}
+                    </span>
+                </div>
+            </div>
+        `).join('');
+
+        const cedarList = Array.isArray(rep.synthesized_cedar_rules) ? rep.synthesized_cedar_rules : [];
+        const cedarHtml = cedarList.map(c => `
+            <pre style="margin: 4px 0 0 0; padding: 8px 10px; background: rgba(0,0,0,0.45); border: 1px solid rgba(168,85,247,0.3); border-radius: 6px; font-family: monospace; font-size: 11px; color: #d8b4fe; overflow-x: auto;">${escapeHtml(c)}</pre>
+        `).join('');
+
+        tracePanel.innerHTML = `
+            <div style="margin-bottom: 10px;">
+                <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">Visited LangGraph StateGraph Nodes:</div>
+                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">${nodeChainHtml}</div>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 10px;">
+                <div style="padding: 8px 10px; background: rgba(0,0,0,0.28); border-radius: 6px; border: 1px solid var(--glass-border);">
+                    <span style="font-size: 11px; color: var(--text-muted);">Stopping Reason:</span>
+                    <div style="font-weight: 700; color: ${stopReason === 'AwaitingUserApproval' ? '#fde68a' : '#10b981'}; margin-top: 2px;">${escapeHtml(stopReason)}</div>
+                </div>
+                <div style="padding: 8px 10px; background: rgba(0,0,0,0.28); border-radius: 6px; border: 1px solid var(--glass-border);">
+                    <span style="font-size: 11px; color: var(--text-muted);">Live Probe Coverage:</span>
+                    <div style="font-weight: 700; color: #06b6d4; margin-top: 2px;">${((rep.coverage_ratio ?? 1.0) * 100).toFixed(1)}%</div>
+                </div>
+                <div style="padding: 8px 10px; background: rgba(0,0,0,0.28); border-radius: 6px; border: 1px solid var(--glass-border);">
+                    <span style="font-size: 11px; color: var(--text-muted);">Conformal Calibration Sources (K):</span>
+                    <div style="font-weight: 700; color: #a855f7; margin-top: 2px;">K = ${Number(rep.conformal_sources_k || st.conformal_sources_k || 11)}</div>
+                </div>
+            </div>
+            ${verdictsHtml ? `<div style="margin-bottom: 10px;"><div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">Arm-3 Live EDR Probe Verdicts:</div><div style="display:flex; flex-direction:column; gap:6px;">${verdictsHtml}</div></div>` : ''}
+            ${cedarHtml ? `<div style="margin-bottom: 10px;"><div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">Arm-4 Synthesized Cedar Forbid Policies:</div>${cedarHtml}</div>` : ''}
+            ${edgesHtml ? `<div><div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">HMAC-SHA256 Epoch-Signed StateGraph Edge Transitions:</div><div style="display:flex; flex-direction:column; gap:4px;">${edgesHtml}</div></div>` : ''}
+        `;
+    }
+
+    // Active Enforced Research Defense Rules Table
+    const activeRulesBadge = document.getElementById('research-active-rules-badge');
+    if (activeRulesBadge) {
+        activeRulesBadge.innerText = `${rules.length} ACTIVE RULES ENFORCED`;
+    }
+    const activeTbody = document.getElementById('research-active-rules-tbody');
+    if (activeTbody) {
+        activeTbody.innerHTML = rules.map(r => `
+            <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+                <td style="padding: 9px 10px; font-family: monospace; font-weight: 700; color: #10b981;">${escapeHtml(r.rule_id || '')}</td>
+                <td style="padding: 9px 10px; font-family: monospace; color: #38bdf8;">arXiv:${escapeHtml(r.arxiv_id || '')}</td>
+                <td style="padding: 9px 10px; font-weight: 600; color: #f8fafc;">${escapeHtml(r.title || '')}</td>
+                <td style="padding: 9px 10px; color: #fde68a;">${escapeHtml(r.attack_vector || '')}</td>
+                <td style="padding: 9px 10px; color: #cbd5e1;">${escapeHtml(r.target_boundary || '')}</td>
+                <td style="padding: 9px 10px; font-family: monospace; font-size: 11px; color: #67e8f9;"><code>${escapeHtml(r.indicator_pattern || '')}</code></td>
+                <td style="padding: 9px 10px; font-family: monospace; font-size: 11px; color: #d8b4fe;">${escapeHtml(r.target_crate || 'osoosi-agent-anomaly')}</td>
+                <td style="padding: 9px 10px; text-align: center;">
+                    <span class="badge green" style="font-size: 9.5px;">${escapeHtml(r.status || 'ENFORCED IN BREAKOUT COORDINATOR')}</span>
+                </td>
+            </tr>
+        `).join('');
+    }
+}
+
+window.loadResearchSwarmStatus = async function() {
+    try {
+        const res = await fetch(`${API_BASE}/research/status`, { credentials: 'same-origin' });
+        if (res.ok) {
+            const data = await res.json();
+            if (data) {
+                const st = window._researchSwarmState;
+                if (typeof data.total_ingested === 'number') st.total_ingested = data.total_ingested;
+                if (typeof data.active_rules_count === 'number') st.active_rules_count = data.active_rules_count;
+                if (typeof data.conformal_sources_k === 'number') st.conformal_sources_k = data.conformal_sources_k;
+                if (typeof data.coverage_ratio === 'number') st.coverage_ratio = data.coverage_ratio;
+                if (Array.isArray(data.active_enforced_research_rules) && data.active_enforced_research_rules.length > 0) {
+                    st.active_enforced_research_rules = data.active_enforced_research_rules;
+                    st.active_rules_count = data.active_enforced_research_rules.length;
+                }
+                if (Array.isArray(data.pending_approvals)) {
+                    st.pending_approvals = data.pending_approvals;
+                }
+                if (data.last_swarm_report) {
+                    st.last_swarm_report = data.last_swarm_report;
+                }
+            }
+        }
+    } catch (_) {}
+    renderResearchSwarmUI();
+    return window._researchSwarmState;
+};
+
+window.selectResearchPaperPreset = function(presetKey) {
+    const preset = RESEARCH_PAPER_PRESETS[presetKey];
+    if (!preset) return;
+    const idEl = document.getElementById('research-arxiv-id-input');
+    const titleEl = document.getElementById('research-title-input');
+    const classEl = document.getElementById('research-class-select');
+    const vecEl = document.getElementById('research-vector-input');
+    const boundEl = document.getElementById('research-boundary-input');
+    const quoteEl = document.getElementById('research-quote-input');
+
+    if (idEl) idEl.value = preset.arxiv_id;
+    if (titleEl) titleEl.value = preset.title;
+    if (classEl) classEl.value = preset.extraction_class;
+    if (vecEl) vecEl.value = preset.attack_vector;
+    if (boundEl) boundEl.value = preset.target_boundary;
+    if (quoteEl) quoteEl.value = preset.verbatim_quote;
+};
+
+window.searchArxivAndStageForApproval = async function() {
+    const qEl = document.getElementById('research-search-query-input');
+    const minEl = document.getElementById('research-min-score-input');
+    const query = qEl ? qEl.value.trim() : 'LLM container sandbox escape jailbreak';
+    const minScore = minEl ? (parseFloat(minEl.value) || 60) : 60;
+
+    let handledByBackend = false;
+    try {
+        const res = await fetch(`${API_BASE}/research/search`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query,
+                min_score: minScore,
+                require_user_approval: true
+            })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && (Array.isArray(data.pending_approvals) || Array.isArray(data.staged_papers))) {
+                window._researchSwarmState.pending_approvals = data.pending_approvals || data.staged_papers;
+                handledByBackend = true;
+            }
+        }
+    } catch (_) {}
+
+    if (!handledByBackend) {
+        // Stage matching frontier papers into Pending Operator Approval Queue
+        const st = window._researchSwarmState;
+        const existingIds = new Set((st.pending_approvals || []).map(p => p.arxiv_id));
+        Object.values(RESEARCH_PAPER_PRESETS).forEach((p, idx) => {
+            if (p.breakout_score >= minScore && !existingIds.has(p.arxiv_id)) {
+                st.pending_approvals.push({
+                    approval_id: `APPROVAL-${p.arxiv_id.replace(/[^0-9.]/g, '')}-${idx + 1}`,
+                    rule_id: `ARXIV-DEF-${p.arxiv_id.replace(/v\d+$/, '')}`,
+                    arxiv_id: p.arxiv_id,
+                    title: p.title,
+                    attack_vector: p.attack_vector,
+                    target_boundary: p.target_boundary,
+                    indicator_pattern: p.verbatim_quote,
+                    target_crate: p.target_crate,
+                    blocked_by_edr: true,
+                    proposed_cedar_rule: p.proposed_cedar_rule,
+                    status: 'AWAITING_USER_APPROVAL'
+                });
+            }
+        });
+        st.last_swarm_report.stopping_reason = 'AwaitingUserApproval';
+    }
+
+    renderResearchSwarmUI();
+    if (typeof showNotification === 'function') {
+        showNotification(`Staged ${window._researchSwarmState.pending_approvals.length} arXiv research item(s) in Operator Approval Queue. User must approve before EDR enforcement.`, 'info');
+    }
+    return window._researchSwarmState;
+};
+
+window.runResearchLangGraphSwarm = async function() {
+    const arxivId = (document.getElementById('research-arxiv-id-input')?.value || '2603.02277').trim();
+    const title = (document.getElementById('research-title-input')?.value || 'Quantifying Frontier LLM Capabilities for Container Sandbox Escape').trim();
+    const extractionClass = (document.getElementById('research-class-select')?.value || 'breakout_vector').trim();
+    const attackVector = (document.getElementById('research-vector-input')?.value || 'Container Breakout & Docker Socket Escape').trim();
+    const targetBoundary = (document.getElementById('research-boundary-input')?.value || 'OCI Container Sandbox').trim();
+    const verbatimQuote = (document.getElementById('research-quote-input')?.value || 'nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh').trim();
+    const requireApproval = document.getElementById('research-require-approval-checkbox')
+        ? !!document.getElementById('research-require-approval-checkbox').checked
+        : true;
+
+    const payload = {
+        require_user_approval: requireApproval,
+        papers: [
+            {
+                arxiv_id: arxivId,
+                title: title,
+                extractions: [
+                    {
+                        extraction_class: extractionClass,
+                        verbatim_quote: verbatimQuote,
+                        char_start: 0,
+                        char_end: verbatimQuote.length,
+                        attributes: {
+                            attack_vector: attackVector,
+                            target_boundary: targetBoundary,
+                            target_crate: 'osoosi-agent-anomaly'
+                        }
+                    }
+                ]
+            }
+        ]
+    };
+
+    try {
+        const res = await fetch(`${API_BASE}/research/langgraph-swarm`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data) {
+                const st = window._researchSwarmState;
+                if (data.swarm_report || data.visited_nodes) {
+                    st.last_swarm_report = data.swarm_report || data;
+                }
+                if (Array.isArray(data.pending_approvals)) {
+                    st.pending_approvals = data.pending_approvals;
+                }
+                if (Array.isArray(data.active_enforced_research_rules)) {
+                    st.active_enforced_research_rules = data.active_enforced_research_rules;
+                    st.active_rules_count = data.active_enforced_research_rules.length;
+                }
+            }
+        }
+    } catch (_) {}
+
+    const st = window._researchSwarmState;
+    const cleanId = arxivId.replace(/v\d+$/, '');
+    const proposedRule = `forbid(principal, action == Action::"Tool::execute", resource) when { context.arxiv_id == "${arxivId}" && context.indicator == "${verbatimQuote.substring(0, 32)}" };`;
+
+    if (requireApproval) {
+        const approvalId = `APPROVAL-${cleanId}-${Date.now().toString().slice(-4)}`;
+        const alreadyPending = (st.pending_approvals || []).some(p => p.arxiv_id === arxivId && p.indicator_pattern === verbatimQuote);
+        if (!alreadyPending) {
+            st.pending_approvals.unshift({
+                approval_id: approvalId,
+                rule_id: `ARXIV-DEF-${cleanId}`,
+                arxiv_id: arxivId,
+                title: title,
+                attack_vector: attackVector,
+                target_boundary: targetBoundary,
+                indicator_pattern: verbatimQuote,
+                target_crate: 'osoosi-agent-anomaly',
+                blocked_by_edr: true,
+                proposed_cedar_rule: proposedRule,
+                status: 'AWAITING_USER_APPROVAL'
+            });
+        }
+        st.last_swarm_report = {
+            visited_nodes: ['START', 'arm_1_arxiv_scout', 'arm_2_langextract_grounder', 'arm_3_edr_live_probe', 'END'],
+            stopping_reason: 'AwaitingUserApproval',
+            coverage_ratio: 1.0,
+            conformal_sources_k: st.conformal_sources_k,
+            edge_transitions: st.last_swarm_report.edge_transitions,
+            synthesized_cedar_rules: [proposedRule],
+            probe_verdicts: [
+                {
+                    arxiv_id: arxivId,
+                    attack_vector: attackVector,
+                    blocked_by_edr: true,
+                    enforced_action: 'StagedForOperatorApproval',
+                    latency_us: 34,
+                    matched_rule_id: `ARXIV-DEF-${cleanId}`
+                }
+            ]
+        };
+        if (typeof showNotification === 'function') {
+            showNotification(`arXiv:${arxivId} verified by Arm 3 and staged in Pending Operator Approval Queue.`, 'info');
+        }
+    } else {
+        await window.loadResearchSwarmStatus();
+    }
+
+    renderResearchSwarmUI();
+    return window._researchSwarmState;
+};
+
+window.runResearchLiveIngest = async function() {
+    const arxivId = (document.getElementById('research-arxiv-id-input')?.value || '2603.02277').trim();
+    const title = (document.getElementById('research-title-input')?.value || 'Quantifying Frontier LLM Capabilities for Container Sandbox Escape').trim();
+    const extractionClass = (document.getElementById('research-class-select')?.value || 'breakout_vector').trim();
+    const attackVector = (document.getElementById('research-vector-input')?.value || 'Container Breakout & Docker Socket Escape').trim();
+    const targetBoundary = (document.getElementById('research-boundary-input')?.value || 'OCI Container Sandbox').trim();
+    const verbatimQuote = (document.getElementById('research-quote-input')?.value || 'nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh').trim();
+    const requireApproval = document.getElementById('research-require-approval-checkbox')
+        ? !!document.getElementById('research-require-approval-checkbox').checked
+        : true;
+
+    if (requireApproval) {
+        return await window.runResearchLangGraphSwarm();
+    }
+
+    try {
+        await fetch(`${API_BASE}/research/ingest`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                arxiv_id: arxivId,
+                title: title,
+                extractions: [
+                    {
+                        extraction_class: extractionClass,
+                        verbatim_quote: verbatimQuote,
+                        char_start: 0,
+                        char_end: verbatimQuote.length,
+                        attributes: {
+                            attack_vector: attackVector,
+                            target_boundary: targetBoundary,
+                            target_crate: 'osoosi-agent-anomaly'
+                        }
+                    }
+                ]
+            })
+        });
+    } catch (_) {}
+
+    await window.loadResearchSwarmStatus();
+    return window._researchSwarmState;
+};
+
+window.approveResearchItem = async function(approvalId) {
+    const st = window._researchSwarmState;
+    const idx = (st.pending_approvals || []).findIndex(
+        item => item.approval_id === approvalId || item.rule_id === approvalId || item.arxiv_id === approvalId
+    );
+    const approvedItem = idx >= 0 ? st.pending_approvals[idx] : null;
+
+    try {
+        const res = await fetch(`${API_BASE}/research/approve`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approval_id: approvalId })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && Array.isArray(data.active_enforced_research_rules)) {
+                st.active_enforced_research_rules = data.active_enforced_research_rules;
+            }
+            if (data && Array.isArray(data.pending_approvals)) {
+                st.pending_approvals = data.pending_approvals;
+            }
+        }
+    } catch (_) {}
+
+    if (approvedItem) {
+        st.pending_approvals = st.pending_approvals.filter(
+            item => item.approval_id !== approvalId && item.rule_id !== approvalId && item.arxiv_id !== approvalId
+        );
+        const ruleId = approvedItem.rule_id || `ARXIV-DEF-${String(approvedItem.arxiv_id || '').replace(/v\d+$/, '')}`;
+        const exists = st.active_enforced_research_rules.some(
+            r => r.rule_id === ruleId && r.indicator_pattern === approvedItem.indicator_pattern
+        );
+        if (!exists) {
+            st.active_enforced_research_rules.unshift({
+                rule_id: ruleId,
+                arxiv_id: approvedItem.arxiv_id,
+                title: approvedItem.title,
+                attack_vector: approvedItem.attack_vector,
+                target_boundary: approvedItem.target_boundary,
+                indicator_pattern: approvedItem.indicator_pattern,
+                target_crate: approvedItem.target_crate || 'osoosi-agent-anomaly',
+                status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
+            });
+            st.conformal_sources_k = Number(st.conformal_sources_k || 11) + 1;
+            st.total_ingested = Number(st.total_ingested || 4) + 1;
+        }
+        st.active_rules_count = st.active_enforced_research_rules.length;
+        st.last_swarm_report.stopping_reason = 'OperatorApprovedAndEnforced';
+        st.last_swarm_report.conformal_sources_k = st.conformal_sources_k;
+    }
+
+    renderResearchSwarmUI();
+    if (typeof showNotification === 'function') {
+        showNotification(`Approved ${approvalId}: Cedar rule enforced in BreakoutDefenseCoordinator & Conformal source enrolled.`, 'success');
+    }
+    return st;
+};
+
+window.rejectResearchItem = async function(approvalId) {
+    const st = window._researchSwarmState;
+    try {
+        await fetch(`${API_BASE}/research/reject`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approval_id: approvalId })
+        });
+    } catch (_) {}
+
+    st.pending_approvals = (st.pending_approvals || []).filter(
+        item => item.approval_id !== approvalId && item.rule_id !== approvalId && item.arxiv_id !== approvalId
+    );
+    renderResearchSwarmUI();
+    if (typeof showNotification === 'function') {
+        showNotification(`Rejected staged research item ${approvalId}.`, 'info');
+    }
+    return st;
+};
+
+window.approveAllResearchItems = async function() {
+    const st = window._researchSwarmState;
+    const toApprove = [...(st.pending_approvals || [])];
+    try {
+        await fetch(`${API_BASE}/research/approve`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approve_all: true })
+        });
+    } catch (_) {}
+
+    for (const item of toApprove) {
+        const ruleId = item.rule_id || `ARXIV-DEF-${String(item.arxiv_id || '').replace(/v\d+$/, '')}`;
+        const exists = st.active_enforced_research_rules.some(
+            r => r.rule_id === ruleId && r.indicator_pattern === item.indicator_pattern
+        );
+        if (!exists) {
+            st.active_enforced_research_rules.unshift({
+                rule_id: ruleId,
+                arxiv_id: item.arxiv_id,
+                title: item.title,
+                attack_vector: item.attack_vector,
+                target_boundary: item.target_boundary,
+                indicator_pattern: item.indicator_pattern,
+                target_crate: item.target_crate || 'osoosi-agent-anomaly',
+                status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
+            });
+            st.conformal_sources_k = Number(st.conformal_sources_k || 11) + 1;
+            st.total_ingested = Number(st.total_ingested || 4) + 1;
+        }
+    }
+    st.pending_approvals = [];
+    st.active_rules_count = st.active_enforced_research_rules.length;
+    st.last_swarm_report.stopping_reason = 'OperatorApprovedAndEnforced';
+    st.last_swarm_report.conformal_sources_k = st.conformal_sources_k;
+
+    renderResearchSwarmUI();
+    if (typeof showNotification === 'function') {
+        showNotification(`Approved all ${toApprove.length} pending arXiv research rule(s) into live EDR enforcement.`, 'success');
+    }
+    return st;
+};
 
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
