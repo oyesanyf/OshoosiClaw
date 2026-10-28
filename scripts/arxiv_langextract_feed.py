@@ -2102,6 +2102,10 @@ def main():
     parser.add_argument("--include-implemented", action="store_true", help="Include papers already implemented in the codebase (default: False)")
     parser.add_argument("--targets", type=str, default="all", help="Target systems for defense audit (e.g. 'all', 'oshoosiclaw', 'killswitch', 'octopus')")
     parser.add_argument("--langgraph", action="store_true", help="Execute the compiled 4-Arm LangGraph StateGraph Research Swarm")
+    parser.add_argument("--require-approval", action="store_true", help="Stage discovered arXiv research rules in the Human-in-the-Loop Operator Approval Queue before live EDR enforcement")
+    parser.add_argument("--list-pending", action="store_true", help="List all pending arXiv research rules awaiting operator approval")
+    parser.add_argument("--approve", type=str, default=None, help="Approve a pending arXiv research rule by ID or 'all'")
+    parser.add_argument("--reject", type=str, default=None, help="Reject a pending arXiv research rule by ID")
 
     args = parser.parse_args()
 
@@ -2110,6 +2114,47 @@ def main():
         sys.exit(0 if success else 1)
 
     only_novel = not args.include_implemented
+
+    if args.list_pending:
+        try:
+            resp = requests.get(f"{args.server.rstrip('/')}/api/research/pending", timeout=5)
+            print(json.dumps(resp.json(), indent=2))
+        except Exception as e:
+            print(f"[!] Could not reach {args.server}/api/research/pending: {e}")
+        return
+
+    if args.approve:
+        payload = {"approve_all": True} if args.approve.lower() == "all" else {"approval_id": args.approve}
+        try:
+            resp = requests.post(f"{args.server.rstrip('/')}/api/research/approve", json=payload, timeout=5)
+            print(json.dumps(resp.json(), indent=2))
+        except Exception as e:
+            print(f"[!] Approval request failed against {args.server}/api/research/approve: {e}")
+        return
+
+    if args.reject:
+        try:
+            resp = requests.post(f"{args.server.rstrip('/')}/api/research/reject", json={"approval_id": args.reject}, timeout=5)
+            print(json.dumps(resp.json(), indent=2))
+        except Exception as e:
+            print(f"[!] Rejection request failed against {args.server}/api/research/reject: {e}")
+        return
+
+    if args.require_approval and not args.langgraph:
+        payload = {
+            "query": args.query,
+            "arxiv_id": args.arxiv_id,
+            "max_results": args.max_results,
+            "min_score": args.min_score,
+            "only_novel_enhancements": only_novel,
+            "require_user_approval": True,
+        }
+        try:
+            resp = requests.post(f"{args.server.rstrip('/')}/api/research/search", json=payload, timeout=10)
+            print(json.dumps(resp.json(), indent=2))
+            return
+        except Exception as e:
+            print(f"[*] Live server {args.server} unreachable ({e}); running local discovery with approval staging notice...")
 
     if args.langgraph:
         print("================================================================================")

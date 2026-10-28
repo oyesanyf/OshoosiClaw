@@ -412,6 +412,16 @@ enum Commands {
         #[command(subcommand)]
         action: ReaAction,
     },
+    /// arXiv Security Research Discovery, 4-Arm LangGraph Swarm & Human-in-the-Loop Operator Approval Queue
+    #[command(
+        name = "research",
+        alias = "arxiv",
+        about = "arXiv Security Research Discovery, 4-Arm LangGraph Swarm & Operator Approval Queue"
+    )]
+    Research {
+        #[command(subcommand)]
+        action: ResearchAction,
+    },
     /// Built-In Adversarial Red-Team & Bypass-Resistance Gauntlet (MITRE STIX/Atomic/CALDERA, Promptfoo/Garak AgentOctopus, OWASP Agentic/LLM/Web, Reviewer Bypass & Independent OS Oracle)
     #[command(
         name = "redteam",
@@ -426,6 +436,59 @@ enum Commands {
         /// Output scorecard as JSON
         #[arg(long, default_value_t = false)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ResearchAction {
+    /// Display active enforced arXiv research defense rules, enrolled Conformal sources (K), and pending operator approvals
+    Status,
+    /// Search arXiv / Google LangExtract for novel breakout papers and stage candidate rules in the operator approval queue
+    Search {
+        /// Search query for arXiv security research
+        #[arg(long, default_value = "LLM agent container sandbox escape jailbreak")]
+        query: String,
+        /// Optional specific arXiv ID (e.g. 2603.02277)
+        #[arg(long)]
+        arxiv_id: Option<String>,
+        /// Maximum number of papers to retrieve and rank
+        #[arg(long, default_value_t = 5)]
+        max_results: usize,
+        /// Minimum rank score (0-100)
+        #[arg(long, default_value_t = 60.0)]
+        min_score: f64,
+        /// Require explicit operator approval before enforcing discovered rules in the EDR (default: true)
+        #[arg(long, default_value_t = true)]
+        require_approval: bool,
+    },
+    /// Execute the 4-Arm Contained LangGraph Research Swarm (stages rules for approval by default unless --auto-approve is passed)
+    Langgraph {
+        /// Target arXiv ID to evaluate through the 4-Arm StateGraph
+        #[arg(long, default_value = "2603.02277")]
+        arxiv_id: String,
+        /// Require operator approval before Arm 4 enforces rules in the live EDR (default: true)
+        #[arg(long, default_value_t = true)]
+        require_approval: bool,
+        /// Bypass the operator approval queue and immediately calibrate/enforce in Arm 4
+        #[arg(long, default_value_t = false)]
+        auto_approve: bool,
+    },
+    /// List all candidate arXiv research rules awaiting operator approval
+    Pending,
+    /// Approve pending arXiv research rule(s) and immediately enforce them in BreakoutDefenseCoordinator & Conformal Monitor
+    Approve {
+        /// Approval ID or arXiv ID to approve
+        #[arg(long)]
+        id: Option<String>,
+        /// Approve all pending candidate research rules
+        #[arg(long, default_value_t = false)]
+        all: bool,
+    },
+    /// Reject a pending arXiv research rule so it is not enforced in the EDR
+    Reject {
+        /// Approval ID or arXiv ID to reject
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -2675,6 +2738,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     }
                 }
             }
+        }
+        Some(Commands::Research { action }) => {
+            handle_research_command(action).await?;
         }
         Some(Commands::Redteam { suite, json }) => {
             let mut scorecard =
@@ -7412,6 +7478,258 @@ async fn handle_swarm_command(action: SwarmAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_research_command(action: ResearchAction) -> anyhow::Result<()> {
+    let token = osoosi_dashboard::get_or_init_dashboard_api_token();
+    let base_url = std::env::var("OSOOSI_SERVER_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:3030".to_string());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
+
+    match action {
+        ResearchAction::Status => {
+            println!("================================================================================");
+            println!("  OpenỌ̀ṣọ́ọ̀sì arXiv Research-to-EDR Enforcement & Operator Approval Status");
+            println!("================================================================================");
+            let url = format!("{}/api/research/status", base_url.trim_end_matches('/'));
+            let status_val = match client
+                .get(&url)
+                .header("X-Osoosi-Token", &token)
+                .bearer_auth(&token)
+                .send()
+                .await
+            {
+                Ok(resp) if resp.status().is_success() => resp.json::<serde_json::Value>().await.ok(),
+                _ => None,
+            };
+            let val = match status_val {
+                Some(v) => v,
+                None => osoosi_dashboard::routes::research_ingest::get_research_status().await.0,
+            };
+            println!(
+                "  Active Enforced Research Rules : {}",
+                val.get("active_enforced_research_rules_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            );
+            println!(
+                "  Conformal Sources Enrolled (K) : {}",
+                val.get("conformal_sources_enrolled_k")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(11)
+            );
+            println!(
+                "  Human Approval Gate Enabled    : {}",
+                val.get("human_approval_gate_enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true)
+            );
+            println!(
+                "  Pending Operator Approvals     : {}",
+                val.get("pending_approvals_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0)
+            );
+            if let Some(rules) = val
+                .get("active_enforced_research_rules")
+                .and_then(|v| v.as_array())
+            {
+                println!("--------------------------------------------------------------------------------");
+                for (i, r) in rules.iter().enumerate() {
+                    println!(
+                        "  [{}] arXiv:{:<13} | Rule: {:<36} | Indicator: {}",
+                        i + 1,
+                        r.get("arxiv_id").and_then(|v| v.as_str()).unwrap_or(""),
+                        r.get("rule_id").and_then(|v| v.as_str()).unwrap_or(""),
+                        r.get("indicator_pattern")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                    );
+                }
+            }
+            println!("================================================================================");
+        }
+        ResearchAction::Search {
+            query,
+            arxiv_id,
+            max_results,
+            min_score,
+            require_approval,
+        } => {
+            let req = osoosi_dashboard::routes::research_ingest::ResearchSearchRequest {
+                query: Some(query),
+                arxiv_id,
+                max_results: Some(max_results),
+                min_score: Some(min_score),
+                require_user_approval: Some(require_approval),
+            };
+            let url = format!("{}/api/research/search", base_url.trim_end_matches('/'));
+            let resp = match client
+                .post(&url)
+                .header("X-Osoosi-Token", &token)
+                .bearer_auth(&token)
+                .json(&req)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => r.json().await.ok(),
+                _ => None,
+            }
+            .unwrap_or_else(|| {
+                osoosi_dashboard::routes::research_ingest::search_and_stage_research_for_approval(
+                    req,
+                )
+            });
+            println!("================================================================================");
+            println!("  arXiv Research Search & LangExtract Staging Complete");
+            println!("================================================================================");
+            println!("  Message              : {}", resp.message);
+            println!("  Discovered Count     : {}", resp.discovered_count);
+            println!("  Staged for Approval  : {}", resp.staged_for_approval_count);
+            for item in &resp.pending_approvals {
+                println!(
+                    "  • [{}] ID: {} | arXiv: {} | Vector: {} | Indicator: '{}'",
+                    item.status,
+                    item.approval_id,
+                    item.arxiv_id,
+                    item.attack_vector,
+                    item.indicator_pattern
+                );
+            }
+            if !resp.pending_approvals.is_empty() {
+                println!("\n  Run `osoosi research approve --all` or `osoosi research approve --id <ID>` to enforce.");
+            }
+            println!("================================================================================");
+        }
+        ResearchAction::Langgraph {
+            arxiv_id,
+            require_approval,
+            auto_approve,
+        } => {
+            let need_approval = require_approval && !auto_approve;
+            let req = osoosi_dashboard::routes::research_ingest::LangGraphSwarmRequest {
+                arxiv_id: Some(arxiv_id),
+                require_user_approval: Some(need_approval),
+                auto_enroll_conformal_source: Some(true),
+                only_novel_enhancements: Some(true),
+                max_recursion_limit: Some(8),
+                ..Default::default()
+            };
+            let url = format!(
+                "{}/api/research/langgraph-swarm",
+                base_url.trim_end_matches('/')
+            );
+            let resp = match client
+                .post(&url)
+                .header("X-Osoosi-Token", &token)
+                .bearer_auth(&token)
+                .json(&req)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => r.json().await.ok(),
+                _ => None,
+            }
+            .unwrap_or_else(|| {
+                osoosi_dashboard::routes::research_ingest::execute_langgraph_research_swarm(req)
+            });
+            println!("================================================================================");
+            println!("  4-Arm Contained LangGraph Research Swarm Result");
+            println!("================================================================================");
+            println!("  Run ID               : {}", resp.run_id);
+            println!("  Visited Nodes        : {:?}", resp.visited_nodes);
+            println!("  Stopping Reason      : {}", resp.stopping_reason);
+            println!(
+                "  Conformal Sources K  : {} -> {}",
+                resp.initial_conformal_sources_k, resp.final_conformal_sources_k
+            );
+            if !resp.pending_approvals_staged.is_empty() {
+                println!(
+                    "  Staged for Approval  : {} item(s) awaiting operator approval",
+                    resp.pending_approvals_staged.len()
+                );
+                for p in &resp.pending_approvals_staged {
+                    println!("    • Approval ID: {} (arXiv:{})", p.approval_id, p.arxiv_id);
+                }
+                println!("  Use `osoosi research approve --id <ID>` or `--all` to approve and enforce.");
+            }
+            println!("================================================================================");
+        }
+        ResearchAction::Pending => {
+            let items = osoosi_dashboard::routes::research_ingest::list_pending_research_approvals();
+            println!("================================================================================");
+            println!(
+                "  Operator Research Approval Queue ({} total items)",
+                items.len()
+            );
+            println!("================================================================================");
+            for item in &items {
+                println!(
+                    "  • [{}] ID: {} | arXiv: {} | Indicator: '{}' | Crate: {}",
+                    item.status,
+                    item.approval_id,
+                    item.arxiv_id,
+                    item.indicator_pattern,
+                    item.target_crate
+                );
+            }
+            println!("================================================================================");
+        }
+        ResearchAction::Approve { id, all } => {
+            let req = osoosi_dashboard::routes::research_ingest::ResearchApprovalDecisionRequest {
+                approval_id: id,
+                approve_all: Some(all),
+                reject_all: Some(false),
+            };
+            let url = format!("{}/api/research/approve", base_url.trim_end_matches('/'));
+            let resp = match client
+                .post(&url)
+                .header("X-Osoosi-Token", &token)
+                .bearer_auth(&token)
+                .json(&req)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => r.json().await.ok(),
+                _ => None,
+            }
+            .unwrap_or_else(|| {
+                osoosi_dashboard::routes::research_ingest::approve_pending_research_item(req)
+            });
+            println!(
+                "✅ Approved {} research rule(s). Active enforced rules: {} | Conformal K: {}",
+                resp.processed_count,
+                resp.active_enforced_research_rules_count,
+                resp.conformal_sources_enrolled_k
+            );
+        }
+        ResearchAction::Reject { id } => {
+            let req = osoosi_dashboard::routes::research_ingest::ResearchApprovalDecisionRequest {
+                approval_id: Some(id),
+                approve_all: Some(false),
+                reject_all: Some(false),
+            };
+            let url = format!("{}/api/research/reject", base_url.trim_end_matches('/'));
+            let resp = match client
+                .post(&url)
+                .header("X-Osoosi-Token", &token)
+                .bearer_auth(&token)
+                .json(&req)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => r.json().await.ok(),
+                _ => None,
+            }
+            .unwrap_or_else(|| {
+                osoosi_dashboard::routes::research_ingest::reject_pending_research_item(req)
+            });
+            println!("🚫 Rejected {} pending research rule(s).", resp.processed_count);
+        }
+    }
+    Ok(())
+}
+
 fn handle_check_resources_command() {
     let host_profile = osoosi_core::system_check::HostResourceProfile::detect();
     let res_cfg = osoosi_types::load_resources_config();
@@ -8901,5 +9219,55 @@ mod tests {
 
         assert_eq!(console_hardening::CREATE_NO_WINDOW, 0x08000000);
         assert_eq!(osoosi_types::CREATE_NO_WINDOW, 0x08000000);
+    }
+
+    #[test]
+    fn test_research_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "research", "status"]).unwrap();
+        assert!(matches!(
+            cli_status.command,
+            Some(Commands::Research {
+                action: ResearchAction::Status
+            })
+        ));
+
+        let cli_search = Cli::try_parse_from([
+            "osoosi",
+            "research",
+            "search",
+            "--query",
+            "sandbox escape",
+            "--arxiv-id",
+            "2603.02277",
+        ])
+        .unwrap();
+        match cli_search.command {
+            Some(Commands::Research {
+                action:
+                    ResearchAction::Search {
+                        query,
+                        arxiv_id,
+                        require_approval,
+                        ..
+                    },
+            }) => {
+                assert_eq!(query, "sandbox escape");
+                assert_eq!(arxiv_id.as_deref(), Some("2603.02277"));
+                assert!(require_approval);
+            }
+            _ => panic!("Expected Commands::Research Search"),
+        }
+
+        let cli_approve =
+            Cli::try_parse_from(["osoosi", "research", "approve", "--all"]).unwrap();
+        match cli_approve.command {
+            Some(Commands::Research {
+                action: ResearchAction::Approve { id, all },
+            }) => {
+                assert!(id.is_none());
+                assert!(all);
+            }
+            _ => panic!("Expected Commands::Research Approve"),
+        }
     }
 }

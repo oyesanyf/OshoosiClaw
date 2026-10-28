@@ -982,6 +982,158 @@ pub fn validate_agent_filesystem_access(
     Ok(p.to_path_buf())
 }
 
+/// Real-time active defense rule grounded from arXiv security research via `arxiv-langextract`
+/// and enforced on every agent action inside `BreakoutDefenseCoordinator::evaluate_action`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IngestedResearchDefenseRule {
+    pub rule_id: String,
+    pub arxiv_id: String,
+    pub title: String,
+    pub attack_vector: String,
+    pub target_boundary: String,
+    pub extraction_class: String,
+    pub indicator_pattern: String,
+    pub cedar_forbid_policy: String,
+    pub target_crate: String,
+    pub enrolled_at_utc: String,
+}
+
+const INGESTED_RESEARCH_DEFENSES_PATH: &str = "config/ingested_research_defenses.json";
+
+fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
+    let mut rules = vec![
+        IngestedResearchDefenseRule {
+            rule_id: "arxiv_2603_02277v3_sandbox_escape_bench".to_string(),
+            arxiv_id: "2603.02277v3".to_string(),
+            title: "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)"
+                .to_string(),
+            attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)"
+                .to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "sandboxescapebench".to_string(),
+            cedar_forbid_policy: "@id(\"arxiv_2603_02277v3\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2603.02277v3\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::breakout_defense".to_string(),
+            enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+        },
+        IngestedResearchDefenseRule {
+            rule_id: "arxiv_2604_20496v1_mythos_z3_cage".to_string(),
+            arxiv_id: "2604.20496v1".to_string(),
+            title: "What Holds Acquisition Back? Formal Z3 Sandbox Verification vs. Mythos-Class Breakouts"
+                .to_string(),
+            attack_vector: "Mythos-class unverified sandbox cage bypass against non-SMT-verified policy boundaries"
+                .to_string(),
+            target_boundary: "cedar_smt_sandbox_verification".to_string(),
+            extraction_class: "defense_countermeasure".to_string(),
+            indicator_pattern: "mythos_unverified_cage_bypass".to_string(),
+            cedar_forbid_policy: "@id(\"arxiv_2604_20496v1\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2604.20496v1\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::cedar_engine".to_string(),
+            enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+        },
+        IngestedResearchDefenseRule {
+            rule_id: "arxiv_2610_20437v1_cve_2026_65616".to_string(),
+            arxiv_id: "2610.20437v1".to_string(),
+            title: "Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)"
+                .to_string(),
+            attack_vector: "CVE-2026-65616 RLHF replay buffer poisoning and autonomous privilege escalation"
+                .to_string(),
+            target_boundary: "rl_controller_privilege_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "cve-2026-65616".to_string(),
+            cedar_forbid_policy: "@id(\"arxiv_2610_20437v1_cve\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::rl_controller".to_string(),
+            enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+        },
+        IngestedResearchDefenseRule {
+            rule_id: "arxiv_2610_20437v1_rlhf_priv_esc".to_string(),
+            arxiv_id: "2610.20437v1".to_string(),
+            title: "Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)"
+                .to_string(),
+            attack_vector: "RLHF reward-hacking privilege escalation trajectory".to_string(),
+            target_boundary: "rl_controller_privilege_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "rlhf_privilege_escalation".to_string(),
+            cedar_forbid_policy: "@id(\"arxiv_2610_20437v1_rlhf\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::rl_controller".to_string(),
+            enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+        },
+        IngestedResearchDefenseRule {
+            rule_id: "arxiv_2601_11893v1_mac_priv_esc".to_string(),
+            arxiv_id: "2601.11893v1".to_string(),
+            title: "Mandatory Access Control for Autonomous AI Agents Against Privilege Escalation"
+                .to_string(),
+            attack_vector: "Autonomous agent mandatory access control (MAC) privilege escalation bypass"
+                .to_string(),
+            target_boundary: "mac_authority_lattice".to_string(),
+            extraction_class: "defense_countermeasure".to_string(),
+            indicator_pattern: "mac_privilege_escalation_bypass".to_string(),
+            cedar_forbid_policy: "@id(\"arxiv_2601_11893v1\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2601.11893v1\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::containment_ring".to_string(),
+            enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+        },
+    ];
+
+    if let Ok(raw) = std::fs::read_to_string(INGESTED_RESEARCH_DEFENSES_PATH) {
+        if let Ok(persisted) = serde_json::from_str::<Vec<IngestedResearchDefenseRule>>(&raw) {
+            for item in persisted {
+                if let Some(existing) = rules.iter_mut().find(|r| {
+                    r.rule_id == item.rule_id
+                        || (r.arxiv_id == item.arxiv_id && r.attack_vector == item.attack_vector)
+                }) {
+                    *existing = item;
+                } else {
+                    rules.push(item);
+                }
+            }
+        }
+    }
+
+    rules
+}
+
+pub static GLOBAL_RESEARCH_DEFENSE_REGISTRY: std::sync::OnceLock<
+    RwLock<Vec<IngestedResearchDefenseRule>>,
+> = std::sync::OnceLock::new();
+
+fn research_defense_registry() -> &'static RwLock<Vec<IngestedResearchDefenseRule>> {
+    GLOBAL_RESEARCH_DEFENSE_REGISTRY
+        .get_or_init(|| RwLock::new(default_seeded_research_defense_rules()))
+}
+
+/// Registers or updates an ingested arXiv research defense rule in the live enforcement registry,
+/// persists the updated registry to `config/ingested_research_defenses.json`, and returns the total active rule count.
+pub fn register_ingested_research_rule(rule: IngestedResearchDefenseRule) -> usize {
+    let snapshot = {
+        let mut guard = research_defense_registry()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = guard.iter_mut().find(|r| {
+            r.rule_id == rule.rule_id
+                || (r.arxiv_id == rule.arxiv_id && r.attack_vector == rule.attack_vector)
+        }) {
+            *existing = rule;
+        } else {
+            guard.push(rule);
+        }
+        guard.clone()
+    };
+
+    let _ = std::fs::create_dir_all("config");
+    if let Ok(serialized) = serde_json::to_string_pretty(&snapshot) {
+        let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, serialized);
+    }
+
+    snapshot.len()
+}
+
+/// Returns a snapshot of all currently active arXiv research defense rules enforced by `BreakoutDefenseCoordinator`.
+pub fn list_ingested_research_rules() -> Vec<IngestedResearchDefenseRule> {
+    research_defense_registry()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Unified Breakout Defense Coordinator (4-Category Guards + Physics of Zero & Thermodynamic Governor)
 pub struct BreakoutDefenseCoordinator {
     pub technical: Arc<TechnicalBreakoutGuard>,
@@ -1102,6 +1254,27 @@ impl BreakoutDefenseCoordinator {
                 behav_res.detected_deviations.push(
                     "[Zero-Divine-Equilibrium]: Cognitive refusal subspace suppression breach detected".to_string(),
                 );
+            }
+        }
+
+        // 4. Enforce live ingested arXiv security research defense rules (arxiv-langextract + LangGraph Arm 4)
+        let resource_lc = resource.to_ascii_lowercase();
+        for rule in list_ingested_research_rules() {
+            let pat = rule.indicator_pattern.trim().to_ascii_lowercase();
+            let matched = (pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)))
+                || pat
+                    .split("&&")
+                    .flat_map(|s| s.split(';'))
+                    .map(|s| s.trim())
+                    .filter(|s| s.len() >= 5)
+                    .any(|sub| payload_lc.contains(sub) || resource_lc.contains(sub));
+            if matched {
+                tech_res.is_clean = false;
+                tech_res.sandbox_quarantine_required = true;
+                tech_res.detected_vectors.push(format!(
+                    "[ArXiv-Active-Defense:{}]: Blocked by ingested research rule '{}' ({})",
+                    rule.arxiv_id, rule.rule_id, rule.attack_vector
+                ));
             }
         }
 
@@ -1678,5 +1851,84 @@ mod tests {
         assert!(validate_agent_egress_url("http://0x7f000001/admin", false).is_err());
         assert!(validate_agent_egress_url("http://0177.0.0.1/admin", false).is_err());
         assert!(validate_agent_egress_url("http://127.1/admin", false).is_err());
+    }
+
+    #[test]
+    fn test_ingested_arxiv_research_rules_actively_enforced_by_coordinator() {
+        let rules = list_ingested_research_rules();
+        assert!(
+            rules.iter().any(|r| r.arxiv_id == "2603.02277v3"),
+            "Must contain pre-seeded UK AISI 2603.02277v3 rule"
+        );
+        assert!(
+            rules.iter().any(|r| r.arxiv_id == "2604.20496v1"),
+            "Must contain pre-seeded Mythos Z3 2604.20496v1 rule"
+        );
+        assert!(
+            rules.iter().any(|r| r.arxiv_id == "2610.20437v1"),
+            "Must contain pre-seeded CVE-2026-65616 2610.20437v1 rule"
+        );
+        assert!(
+            rules.iter().any(|r| r.arxiv_id == "2601.11893v1"),
+            "Must contain pre-seeded MAC 2601.11893v1 rule"
+        );
+
+        let coord = BreakoutDefenseCoordinator::new();
+
+        // 1. Pre-seeded CVE-2026-65616 / rlhf_privilege_escalation payload must be blocked
+        let cve_eval = coord.evaluate_action(
+            "agent_worker",
+            "exec_command",
+            "replay_buffer_trainer",
+            "trigger exploit cve-2026-65616 with rlhf_privilege_escalation",
+            Some("/workspace"),
+        );
+        assert!(!cve_eval.is_clean, "CVE-2026-65616 payload must be blocked");
+        assert!(cve_eval
+            .technical
+            .detected_vectors
+            .iter()
+            .any(|v| v.contains("[ArXiv-Active-Defense:2610.20437v1]")));
+
+        // 2. Dynamically register a brand-new research rule and verify immediate enforcement
+        let custom_rule = IngestedResearchDefenseRule {
+            rule_id: "arxiv_2699_88888_custom_test".to_string(),
+            arxiv_id: "2699.88888v1".to_string(),
+            title: "Dynamic Test Research Rule".to_string(),
+            attack_vector: "Dynamic zero-day indicator test".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "dynamic_arxiv_zero_day_marker_777".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly::breakout_defense".to_string(),
+            enrolled_at_utc: "2026-10-28T22:40:00Z".to_string(),
+        };
+        let count_after = register_ingested_research_rule(custom_rule);
+        assert!(count_after >= 6);
+
+        let dyn_eval = coord.evaluate_action(
+            "agent_worker",
+            "exec_command",
+            "sandbox_exec",
+            "attempting dynamic_arxiv_zero_day_marker_777 payload",
+            Some("/workspace"),
+        );
+        assert!(
+            !dyn_eval.is_clean,
+            "Dynamically registered research rule must immediately block matching action"
+        );
+        assert!(dyn_eval
+            .technical
+            .detected_vectors
+            .iter()
+            .any(|v| v.contains("[ArXiv-Active-Defense:2699.88888v1]")));
+    }
+
+    #[test]
+    fn test_research_rule_idempotent_deduplication() {
+        let initial_len = list_ingested_research_rules().len();
+        let first = list_ingested_research_rules()[0].clone();
+        let after_len = register_ingested_research_rule(first);
+        assert_eq!(initial_len, after_len);
     }
 }
