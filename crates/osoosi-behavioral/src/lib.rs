@@ -16,6 +16,7 @@ pub mod agentic_arbitrator;
 mod analyzer;
 mod classifier;
 mod colog;
+pub mod conformal_jailbreak;
 pub mod consensus;
 pub mod deception;
 pub mod decision_model;
@@ -35,6 +36,12 @@ pub mod skyrl;
 pub mod spider_eyes;
 pub mod yara_analyzer;
 
+pub use conformal_jailbreak::{
+    bounds as conformal_bounds, embed_prompt_representation_64d, CalibratedSource,
+    DkwProductSupermartingale, KnownJailbreakSourceFamily, LayeredGuardrail, LayeredReplayMetrics,
+    MultiSourceCalibration, PersistDetector, PersistStepResult, SourceMonitor, SrDetector,
+    ThresholdCalibrationSummary,
+};
 pub use decision_model::{ClefDecisionEngine, LocalDecisionEngine, SecurityIncidentDecision};
 pub use hardware_selection::{
     detect_live_resources, get_system_resources, query_installed_ollama_models,

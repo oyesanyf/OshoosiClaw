@@ -4355,6 +4355,189 @@ impl MartingaleZeroDriftDetector {
     }
 }
 
+
+/// Verdict emitted by the Multi-Source Conformal Unseen Jailbreak Detector (`Persist-3` + `SR-DKW`,
+/// Qian et al., `arXiv:2610.09167v1`, October 2026).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ConformalJailbreakVerdict {
+    pub session_id: String,
+    pub step: usize,
+    pub c_fam: f64,
+    pub tau: f64,
+    pub best_matching_source: String,
+    pub persist3_d_t: bool,
+    pub persist3_escalated: bool,
+    pub sr_dkw_statistic: f64,
+    pub sr_dkw_escalated: bool,
+    pub guardrail_blocked: bool,
+    pub combined_intervention: bool,
+    pub stationary_false_alarm_bound: f64,
+    pub rationale: String,
+}
+
+/// Multi-Source Conformal Unseen Jailbreak Source Voter (`Persist-3` & `SR-DKW`).
+///
+/// Evaluates streams of AI agent prompts and command lines against the $K = 11$ calibrated
+/// jailbreak attack distributions ($P_1, \dots, P_{11}$) in a shared 32-D PCA space with
+/// Ledoit–Wolf Mahalanobis nonconformity scores. Rejects $H_0: Q_t \in \{P_1, \dots, P_K\}$
+/// when $C_t^{\text{fam}} = \min_{k \in [K]} C_{k,t} \ge \hat{\tau} = 2.386$ persists for
+/// $L = 3$ consecutive steps ($W = 10, B = 12$) or when the DKW-adjusted Shiryaev–Roberts
+/// recursion (`SR-DKW`) crosses its threshold, escalating the session via $I_t^{(G+M)} = G_t \lor A_t^{(M)}$.
+pub struct ConformalUnseenJailbreakVoter {
+    base_calibration: osoosi_behavioral::MultiSourceCalibration,
+    sessions: parking_lot::Mutex<
+        std::collections::HashMap<
+            String,
+            (
+                osoosi_behavioral::PersistDetector,
+                osoosi_behavioral::SrDetector,
+            ),
+        >,
+    >,
+}
+
+impl Default for ConformalUnseenJailbreakVoter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConformalUnseenJailbreakVoter {
+    pub const MAX_SESSIONS: usize = 512;
+
+    pub fn new() -> Self {
+        Self {
+            base_calibration: osoosi_behavioral::MultiSourceCalibration::default_11_sources_32d(),
+            sessions: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        }
+    }
+
+    /// Evaluates a raw 64-D hidden representation $X_t$ for `session_id` alongside the
+    /// prompt-level guardrail decision $G_t \in \{0, 1\}$.
+    pub fn observe_embedding(
+        &self,
+        session_id: &str,
+        x_slice: &[f64],
+        guardrail_blocked: bool,
+    ) -> ConformalJailbreakVerdict {
+        let mut guard = self.sessions.lock();
+        if guard.len() >= Self::MAX_SESSIONS && !guard.contains_key(session_id) {
+            if let Some(first_key) = guard.keys().next().cloned() {
+                guard.remove(&first_key);
+            }
+        }
+        let cal_ref = &self.base_calibration;
+        let (persist_det, sr_det) = guard.entry(session_id.to_string()).or_insert_with(|| {
+            (
+                osoosi_behavioral::PersistDetector::persist_3(
+                    cal_ref.clone(),
+                    osoosi_behavioral::PersistDetector::DEFAULT_TAU_ORIGINAL_SPLIT,
+                ),
+                osoosi_behavioral::SrDetector::new(cal_ref.clone(), 25.0, Some(0.05), None),
+            )
+        });
+
+        let p_res = persist_det.observe_slice(x_slice);
+        let (sr_val, sr_esc) = sr_det.observe_slice(x_slice);
+        let combined = guardrail_blocked || p_res.escalated || sr_esc;
+        let fa_bound = osoosi_behavioral::conformal_bounds::stationary_false_alarm_bound(
+            persist_det.window_size,
+            persist_det.persistence_length,
+            persist_det.tau,
+            1.0,
+            100,
+        );
+
+        let rationale = if p_res.escalated || sr_esc {
+            format!(
+                "[Conformal-Unseen-Jailbreak-Escalation]: Unseen attack source detected for session '{}' at step {} (C_t^fam={:.3} >= tau={:.3}, best_known='{}', D_t={}, SR-DKW={:.2}, FA_bound={:.4e})",
+                session_id,
+                p_res.step,
+                p_res.c_fam,
+                persist_det.tau,
+                p_res.best_matching_source_name,
+                p_res.d_t,
+                sr_val,
+                fa_bound
+            )
+        } else {
+            format!(
+                "[Conformal-Known-Null-Intact]: Session '{}' step {} consistent with H_0 (C_t^fam={:.3} < tau={:.3}, best_known='{}', SR-DKW={:.2})",
+                session_id,
+                p_res.step,
+                p_res.c_fam,
+                persist_det.tau,
+                p_res.best_matching_source_name,
+                sr_val
+            )
+        };
+
+        ConformalJailbreakVerdict {
+            session_id: session_id.to_string(),
+            step: p_res.step,
+            c_fam: p_res.c_fam,
+            tau: persist_det.tau,
+            best_matching_source: p_res.best_matching_source_name,
+            persist3_d_t: p_res.d_t,
+            persist3_escalated: p_res.escalated,
+            sr_dkw_statistic: sr_val,
+            sr_dkw_escalated: sr_esc,
+            guardrail_blocked,
+            combined_intervention: combined,
+            stationary_false_alarm_bound: fa_bound,
+            rationale,
+        }
+    }
+
+    /// Extracts a 64-D representation from a prompt or command string and evaluates `Persist-3` + `SR-DKW`.
+    pub fn observe_prompt(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        guardrail_blocked: bool,
+    ) -> ConformalJailbreakVerdict {
+        let repr = osoosi_behavioral::embed_prompt_representation_64d(prompt);
+        self.observe_embedding(session_id, &repr, guardrail_blocked)
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for ConformalUnseenJailbreakVoter {
+    fn name(&self) -> String {
+        "ConformalUnseenJailbreakPersist3".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let prompt_or_cmd = event
+            .data
+            .get("Prompt")
+            .or_else(|| event.data.get("CommandLine"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if prompt_or_cmd.is_empty() {
+            return None;
+        }
+        let session_id = event
+            .data
+            .get("SessionId")
+            .or_else(|| event.data.get("ParentProcessId"))
+            .or_else(|| event.data.get("ProcessId"))
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "default-agent-stream".to_string());
+
+        let verdict = self.observe_prompt(&session_id, prompt_or_cmd, false);
+        if verdict.persist3_escalated || verdict.sr_dkw_escalated {
+            Some(VoteResult {
+                confidence: 0.94,
+                reason: verdict.rationale,
+                weight: 1.15,
+            })
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod hybrid_cve_and_kev_tests {
     use super::kev_product_matches_stem;
