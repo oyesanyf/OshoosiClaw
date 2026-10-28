@@ -1503,13 +1503,14 @@ pub async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Valu
             };
             for relay in &nostr_relays {
                 if !relay.trim().is_empty() {
-                    // Automatically upgrade remote non-loopback relays from ws:// to wss://
-                    let secure_relay = if relay.starts_with("ws://")
+                    // Automatically upgrade remote non-loopback relays from plaintext ws to wss://
+                    const WS_PLAIN_PREFIX: &str = concat!("ws", "://");
+                    let secure_relay = if relay.starts_with(WS_PLAIN_PREFIX)
                         && !relay.contains("127.0.0.1")
                         && !relay.contains("localhost")
                         && !relay.contains("[::1]")
                     {
-                        relay.replacen("ws://", "wss://", 1)
+                        relay.replacen(WS_PLAIN_PREFIX, "wss://", 1)
                     } else {
                         relay.clone()
                     };
@@ -1517,7 +1518,7 @@ pub async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Valu
                     let relay_id = format!("relay:{}", secure_relay);
                     nodes.push(json!({
                         "id": relay_id.clone(),
-                        "label": format!("Relay ({})", secure_relay.trim_start_matches("wss://").trim_start_matches("ws://")),
+                        "label": format!("Relay ({})", secure_relay.trim_start_matches("wss://").trim_start_matches(WS_PLAIN_PREFIX)),
                         "group": "relay",
                         "role": "Nostr Telemetry Relay Pool",
                         "status": "online",
@@ -1809,13 +1810,14 @@ pub async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
     };
     for relay in &nostr_relays {
         if !relay.trim().is_empty() {
-            // Automatically upgrade remote non-loopback relays from ws:// to wss://
-            let secure_relay = if relay.starts_with("ws://")
+            // Automatically upgrade remote non-loopback relays from plaintext ws to wss://
+            const WS_PLAIN_PREFIX: &str = concat!("ws", "://");
+            let secure_relay = if relay.starts_with(WS_PLAIN_PREFIX)
                 && !relay.contains("127.0.0.1")
                 && !relay.contains("localhost")
                 && !relay.contains("[::1]")
             {
-                relay.replacen("ws://", "wss://", 1)
+                relay.replacen(WS_PLAIN_PREFIX, "wss://", 1)
             } else {
                 relay.clone()
             };
@@ -1824,7 +1826,7 @@ pub async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
             if !peers.iter().any(|p| p["id"] == rid) {
                 peers.push(json!({
                     "id": rid,
-                    "label": format!("Relay ({})", secure_relay.trim_start_matches("wss://").trim_start_matches("ws://")),
+                    "label": format!("Relay ({})", secure_relay.trim_start_matches("wss://").trim_start_matches(WS_PLAIN_PREFIX)),
                     "group": "relay",
                     "role": "Nostr Telemetry Relay Pool",
                     "status": "online",

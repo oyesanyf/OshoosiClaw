@@ -213,8 +213,12 @@ def remove_from_local_database(peer_id: str, db_path: str = "database/test_simul
 def query_dashboard_api(endpoint: str = "http://127.0.0.1:3030/api/peers"):
     """Queries dashboard endpoint to check live peer visibility."""
     try:
-        req = urllib.request.Request(endpoint, headers={"User-Agent": "Oshoosi-Simulator/1.0"})
-        with urllib.request.urlopen(req, timeout=1.5) as resp:
+        import urllib.parse
+        parsed = urllib.parse.urlsplit(endpoint)
+        if parsed.scheme not in ("http", "https") or parsed.hostname not in ("127.0.0.1", "localhost"):
+            raise ValueError(f"Disallowed dashboard endpoint: {endpoint!r}")
+        req = urllib.request.Request(endpoint, headers={"User-Agent": "Oshoosi-Simulator/1.0"})  # nosemgrep: python.lang.security.audit.insecure-transport.urllib.insecure-request-object.insecure-request-object
+        with urllib.request.urlopen(req, timeout=1.5) as resp:  # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             if resp.status == 200:
                 data = json.loads(resp.read().decode('utf-8'))
                 return True, data

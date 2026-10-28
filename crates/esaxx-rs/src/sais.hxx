@@ -35,6 +35,7 @@
 #endif
 
 #include <iterator>
+#include <vector>
 #ifdef _OPENMP
 # include <omp.h>
 #endif
@@ -117,7 +118,8 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
   getBuckets(C, B, k, true); /* find ends of buckets */
 
   for(i = n - 1, b = SA + B[c1 = 0]; 0 <= i; --i) {
-    if(0 < (j = SA[i])) {
+    j = SA[i];
+    if(0 < j) {
       if((c0 = T[--j]) != c1) { B[c1] = b - SA; b = SA + B[c1 = c0]; }
       *--b = ((j == 0) || (T[j - 1] > c1)) ? ~j : j;
     } else {
@@ -140,8 +142,10 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
   b = SA + B[c1 = T[j = n - 1]];
   *b++ = ((0 < j) && (T[j - 1] < c1)) ? ~j : j;
   for(i = 0; i < n; ++i) {
-    if(0 < (j = SA[i])) {
-      SA[i] = ~(c0 = T[--j]);
+    j = SA[i];
+    if(0 < j) {
+      c0 = T[--j];
+      SA[i] = ~c0;
       if(c0 != c1) { B[c1] = b - SA; b = SA + B[c1 = c0]; }
       *b++ = ((0 < j) && (T[j - 1] < c1)) ? ~j : j;
     } else if(j != 0) {
@@ -152,8 +156,10 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
   if(C == B) { getCounts(T, C, n, k); }
   getBuckets(C, B, k, true); /* find ends of buckets */
   for(i = n - 1, b = SA + B[c1 = 0]; 0 <= i; --i) {
-    if(0 < (j = SA[i])) {
-      SA[i] = (c0 = T[--j]);
+    j = SA[i];
+    if(0 < j) {
+      c0 = T[--j];
+      SA[i] = c0;
       if(c0 != c1) { B[c1] = b - SA; b = SA + B[c1 = c0]; }
       *--b = ((0 < j) && (T[j - 1] > c1)) ? ~((index_type)T[j - 1]) : j;
     } else if(j != 0) {
@@ -188,9 +194,9 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
   /* stage 1: reduce the problem by at least 1/2
      sort all the S-substrings */
   if(fs < (maxthreads * k)) {
-    index_type *C, *B;
-    if((C = new index_type[maxthreads * k]) == 0) { return -2; }
-    B = (1 < maxthreads) ? C + k : C;
+    std::vector<index_type> C_vec(static_cast<size_t>(maxthreads * k));
+    index_type *C = &C_vec[0];
+    index_type *B = (1 < maxthreads) ? C + k : C;
     getCounts(T, C, n, k); getBuckets(C, B, k, true); /* find ends of buckets */
 #ifdef _OPENMP
 #pragma omp parallel for default(shared) private(i)
@@ -201,7 +207,6 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
       else if(c != 0) { SA[--B[c1]] = i + 1, c = 0; }
     }
     induceSA(T, SA, C, B, n, k);
-    delete [] C;
   } else {
     sarray_type C, B;
     C = SA + n;
@@ -224,19 +229,25 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
 #pragma omp parallel for default(shared) private(i, j, p, c0, c1)
   for(i = 0; i < n; ++i) {
     p = SA[i];
-    if((0 < p) && (T[p - 1] > (c0 = T[p]))) {
-      for(j = p + 1; (j < n) && (c0 == (c1 = T[j])); ++j) { }
-      if((j < n) && (c0 < c1)) { SA[i] = ~p; }
+    if(0 < p) {
+      c0 = T[p];
+      if(T[p - 1] > c0) {
+        for(j = p + 1; (j < n) && (c0 == (c1 = T[j])); ++j) { }
+        if((j < n) && (c0 < c1)) { SA[i] = ~p; }
+      }
     }
   }
   for(i = 0, m = 0; i < n; ++i) { if((p = SA[i]) < 0) { SA[m++] = ~p; } }
 #else
   for(i = 0, m = 0; i < n; ++i) {
     p = SA[i];
-    if((0 < p) && (T[p - 1] > (c0 = T[p]))) {
-      for(j = p + 1; (j < n) && (c0 == (c1 = T[j])); ++j) { }
-      if((j < n) && (c0 < c1)) { 
-          SA[m++] = p; }
+    if(0 < p) {
+      c0 = T[p];
+      if(T[p - 1] > c0) {
+        for(j = p + 1; (j < n) && (c0 == (c1 = T[j])); ++j) { }
+        if((j < n) && (c0 < c1)) { 
+            SA[m++] = p; }
+      }
     }
   }
 #endif
@@ -281,9 +292,9 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
 
   /* stage 3: induce the result for the original problem */
   if(fs < (maxthreads * k)) {
-    index_type *B, *C;
-    if((C = new index_type[maxthreads * k]) == 0) { return -2; }
-    B = (1 < maxthreads) ? C + k : C;
+    std::vector<index_type> C_vec(static_cast<size_t>(maxthreads * k));
+    index_type *C = &C_vec[0];
+    index_type *B = (1 < maxthreads) ? C + k : C;
     /* put all left-most S characters into their buckets */
     getCounts(T, C, n, k); getBuckets(C, B, k, true); /* find ends of buckets */
 #ifdef _OPENMP
@@ -296,7 +307,6 @@ typedef typename std::iterator_traits<string_type>::value_type char_type;
     }
     if(isbwt == false) { induceSA(T, SA, C, B, n, k); }
     else { pidx = computeBWT(T, SA, C, B, n, k); }
-    delete [] C;
   } else {
     sarray_type C, B;
     C = SA + n;

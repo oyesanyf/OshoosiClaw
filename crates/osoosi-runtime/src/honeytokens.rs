@@ -123,8 +123,9 @@ impl HoneytokenManager {
         payload: &[u8],
     ) -> anyhow::Result<std::os::fd::RawFd> {
         use std::ffi::CString;
-        let c_name =
-            CString::new(name).unwrap_or_else(|_| CString::new("edr_canary_token").unwrap());
+        let sanitized_name = name.replace('\0', "_");
+        let c_name = CString::new(sanitized_name)
+            .map_err(|e| anyhow::anyhow!("Invalid canary memfd name: {}", e))?;
         let fd = unsafe {
             libc::syscall(libc::SYS_memfd_create, c_name.as_ptr(), libc::MFD_CLOEXEC)
                 as std::os::fd::RawFd

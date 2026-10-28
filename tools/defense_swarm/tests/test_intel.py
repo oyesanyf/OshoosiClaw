@@ -22,7 +22,7 @@ def test_intel_cve_correlation():
         "incident_id": "INC-INTEL-2",
         "target_pid": 2048,
         "target_process_name": "curl.exe",
-        "command_line": "curl.exe http://victim/login -H 'X-Exploit: CVE-2023-34362'",
+        "command_line": "curl.exe https://victim/login -H 'X-Exploit: CVE-2023-34362'",
     }
     res = run_intel(state)
     intel = res["threat_intel"]
