@@ -37,17 +37,23 @@ DIST_DIR="$(cd "${DIST_DIR}" && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-PLIST_FILE="${SCRIPT_DIR}/dev.oshoosiclaw.edr.plist"
+PLIST_DEV_FILE="${SCRIPT_DIR}/dev.oshoosiclaw.edr.plist"
+PLIST_COM_FILE="${SCRIPT_DIR}/com.oshoosiclaw.edr.plist"
 CONFIG_FILE="${ROOT_DIR}/osoosi.toml"
 PUBLIC_KEY_FILE="${ROOT_DIR}/PUBLIC_KEY.asc"
+INSTALL_SH="${SCRIPT_DIR}/install.sh"
+UNINSTALL_SH="${SCRIPT_DIR}/uninstall.sh"
 
 # 1. Portable macOS Tarball (.tar.gz)
 TAR_STAGING="$(mktemp -d)/${PACKAGE_NAME}-${VERSION}-macos-${MACOS_ARCH}"
 mkdir -p "${TAR_STAGING}"
 
 install -m 755 "${BINARY_PATH}" "${TAR_STAGING}/osoosi"
-if [ -f "${PLIST_FILE}" ]; then
-    install -m 644 "${PLIST_FILE}" "${TAR_STAGING}/dev.oshoosiclaw.edr.plist"
+if [ -f "${PLIST_COM_FILE}" ]; then
+    install -m 644 "${PLIST_COM_FILE}" "${TAR_STAGING}/com.oshoosiclaw.edr.plist"
+fi
+if [ -f "${PLIST_DEV_FILE}" ]; then
+    install -m 644 "${PLIST_DEV_FILE}" "${TAR_STAGING}/dev.oshoosiclaw.edr.plist"
 fi
 if [ -f "${CONFIG_FILE}" ]; then
     install -m 640 "${CONFIG_FILE}" "${TAR_STAGING}/osoosi.toml"
@@ -55,27 +61,25 @@ fi
 if [ -f "${PUBLIC_KEY_FILE}" ]; then
     install -m 644 "${PUBLIC_KEY_FILE}" "${TAR_STAGING}/PUBLIC_KEY.asc"
 fi
-
-cat <<'EOF' > "${TAR_STAGING}/install.sh"
-#!/usr/bin/env bash
-set -eu
-sudo mkdir -p /usr/local/bin /etc/osoosi /var/lib/osoosi /var/log/osoosi /Library/LaunchDaemons
-sudo install -m 755 ./osoosi /usr/local/bin/osoosi
-if [ -f ./osoosi.toml ] && [ ! -f /etc/osoosi/osoosi.toml ]; then
-    sudo install -m 640 ./osoosi.toml /etc/osoosi/osoosi.toml
+if [ -f "${INSTALL_SH}" ]; then
+    install -m 755 "${INSTALL_SH}" "${TAR_STAGING}/install.sh"
 fi
-if [ -f ./dev.oshoosiclaw.edr.plist ]; then
-    sudo install -m 644 ./dev.oshoosiclaw.edr.plist /Library/LaunchDaemons/dev.oshoosiclaw.edr.plist
-    sudo launchctl load -w /Library/LaunchDaemons/dev.oshoosiclaw.edr.plist || true
+if [ -f "${UNINSTALL_SH}" ]; then
+    install -m 755 "${UNINSTALL_SH}" "${TAR_STAGING}/uninstall.sh"
 fi
-echo "[+] OpenOsoosi EDR installed and LaunchDaemon registered."
-EOF
-chmod 755 "${TAR_STAGING}/install.sh"
 
 TAR_OUT="${DIST_DIR}/${PACKAGE_NAME}-${VERSION}-macos-${MACOS_ARCH}.tar.gz"
 tar -czf "${TAR_OUT}" -C "$(dirname "${TAR_STAGING}")" "$(basename "${TAR_STAGING}")"
 echo "[+] Created: ${TAR_OUT}"
 cp -f "${TAR_OUT}" "${DIST_DIR}/osoosi-edr-${VERSION}-macos-${MACOS_ARCH}.tar.gz" 2>/dev/null || true
+cp -f "${TAR_OUT}" "${DIST_DIR}/${PACKAGE_NAME}-${VERSION}-darwin-${MACOS_ARCH}.tar.gz" 2>/dev/null || true
+
+# Mirror to deploy/macos if exists or requested
+DEPLOY_MACOS="${ROOT_DIR}/deploy/macos"
+mkdir -p "${DEPLOY_MACOS}"
+cp -f "${TAR_OUT}" "${DEPLOY_MACOS}/${PACKAGE_NAME}-${VERSION}-darwin-${MACOS_ARCH}.tar.gz"
+cp -f "${TAR_OUT}" "${DEPLOY_MACOS}/${PACKAGE_NAME}-${VERSION}-macos-${MACOS_ARCH}.tar.gz"
+cp -f "${TAR_OUT}" "${DEPLOY_MACOS}/osoosi-edr-${VERSION}-macos-${MACOS_ARCH}.tar.gz" 2>/dev/null || true
 
 # 2. macOS Application Bundle (OshoosiClaw.app.tar.gz)
 APP_STAGING="$(mktemp -d)"
@@ -123,8 +127,10 @@ if command -v pkgbuild >/dev/null 2>&1; then
     if [ -f "${CONFIG_FILE}" ]; then
         install -m 640 "${CONFIG_FILE}" "${PKG_ROOT}/etc/osoosi/osoosi.toml"
     fi
-    if [ -f "${PLIST_FILE}" ]; then
-        install -m 644 "${PLIST_FILE}" "${PKG_ROOT}/Library/LaunchDaemons/dev.oshoosiclaw.edr.plist"
+    if [ -f "${PLIST_COM_FILE}" ]; then
+        install -m 644 "${PLIST_COM_FILE}" "${PKG_ROOT}/Library/LaunchDaemons/com.oshoosiclaw.edr.plist"
+    elif [ -f "${PLIST_DEV_FILE}" ]; then
+        install -m 644 "${PLIST_DEV_FILE}" "${PKG_ROOT}/Library/LaunchDaemons/dev.oshoosiclaw.edr.plist"
     fi
     pkgbuild --root "${PKG_ROOT}" \
         --identifier "dev.oshoosiclaw.edr" \

@@ -1290,6 +1290,8 @@ pub async fn spawn_dashboard_with_backend(
         }
     });
 
+    crate::routes::research_ingest::start_weekly_autonomous_research_scheduler();
+
     let app = dashboard_router(state, asset_path);
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))

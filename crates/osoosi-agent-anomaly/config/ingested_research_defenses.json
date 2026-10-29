@@ -9,7 +9,12 @@
     "indicator_pattern": "sandboxescapebench",
     "cedar_forbid_policy": "@id(\"ARXIV-DEF-2603.02277\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2603.02277v3\" };",
     "target_crate": "osoosi-agent-anomaly::breakout_defense",
-    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+    "enrolled_at_utc": "2026-10-28T00:00:00Z",
+    "relevance_score": 98.5,
+    "accuracy_score": 99.4,
+    "arxiv_url": "https://arxiv.org/abs/2603.02277",
+    "has_code_repo": true,
+    "code_repo_url": "https://github.com/UKGovernmentBEIS/inspect_evals"
   },
   {
     "rule_id": "ARXIV-DEF-2604.20496",
@@ -21,7 +26,12 @@
     "indicator_pattern": "mythos_unverified_cage_bypass",
     "cedar_forbid_policy": "@id(\"ARXIV-DEF-2604.20496\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2604.20496v1\" };",
     "target_crate": "osoosi-agent-anomaly::cedar_engine",
-    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+    "enrolled_at_utc": "2026-10-28T00:00:00Z",
+    "relevance_score": 97.2,
+    "accuracy_score": 99.1,
+    "arxiv_url": "https://arxiv.org/abs/2604.20496",
+    "has_code_repo": true,
+    "code_repo_url": "https://github.com/cedar-policy/cedar-spec"
   },
   {
     "rule_id": "ARXIV-DEF-2610.20437",
@@ -33,7 +43,12 @@
     "indicator_pattern": "cve-2026-65616 | rlhf_privilege_escalation",
     "cedar_forbid_policy": "@id(\"ARXIV-DEF-2610.20437\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };",
     "target_crate": "osoosi-agent-anomaly::rl_controller",
-    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+    "enrolled_at_utc": "2026-10-28T00:00:00Z",
+    "relevance_score": 99.0,
+    "accuracy_score": 99.6,
+    "arxiv_url": "https://arxiv.org/abs/2610.20437",
+    "has_code_repo": true,
+    "code_repo_url": "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark"
   },
   {
     "rule_id": "ARXIV-DEF-2601.11893",
@@ -45,6 +60,11 @@
     "indicator_pattern": "mac_privilege_escalation_bypass",
     "cedar_forbid_policy": "@id(\"ARXIV-DEF-2601.11893\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2601.11893v1\" };",
     "target_crate": "osoosi-agent-anomaly::containment_ring",
-    "enrolled_at_utc": "2026-10-28T00:00:00Z"
+    "enrolled_at_utc": "2026-10-28T00:00:00Z",
+    "relevance_score": 96.8,
+    "accuracy_score": 98.9,
+    "arxiv_url": "https://arxiv.org/abs/2601.11893",
+    "has_code_repo": true,
+    "code_repo_url": "https://github.com/oshoosiclaw/mac-agent-bench"
   }
 ]
