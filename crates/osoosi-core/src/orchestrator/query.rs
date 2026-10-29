@@ -901,7 +901,13 @@ impl EdrOrchestrator {
                 adaptive_inner.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                     info!("BrowserGuard: Periodic sweep running...");
                     let threats = guard_inner.run_sweep().await;
-                    for threat in threats {
+                    for raw_threat in threats {
+                        let Some(threat) = orch_inner
+                            .adjudicate_threat_signature_with_rea_and_voters(None, raw_threat, None)
+                            .await
+                        else {
+                            continue;
+                        };
                         // 1. Log locally to MemoryStore and AuditTrail
                         let _ = memory_inner.log_threat(&threat);
                         warn!("ALARM: Browser Security Threat Identified: {:?}", threat);
@@ -1295,20 +1301,40 @@ impl EdrOrchestrator {
     pub async fn adjudicate_threat_signature_with_rea_and_voters(
         &self,
         file_path: Option<&std::path::Path>,
-        sig: osoosi_types::ThreatSignature,
+        mut sig: osoosi_types::ThreatSignature,
         event_opt: Option<&osoosi_types::HostSecurityEvent>,
     ) -> Option<osoosi_types::ThreatSignature> {
+        let reason_str = sig.reason.clone().unwrap_or_default();
+        let embedded_file_path = reason_str.split("file=").nth(1).and_then(|after| {
+            let candidate = after
+                .split([';', '|', '\n', '\r'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .trim_matches('"');
+            if candidate.contains('\\') || candidate.contains('/') {
+                Some(candidate.to_string())
+            } else {
+                None
+            }
+        });
+
         let file_path_str = file_path
             .map(|p| p.to_string_lossy().to_string())
+            .filter(|s| s.contains('\\') || s.contains('/'))
             .or_else(|| {
                 event_opt.and_then(|ev| {
                     ev.data
                         .get("Image")
                         .or_else(|| ev.data.get("TargetFilename"))
+                        .or_else(|| ev.data.get("ImagePath"))
+                        .or_else(|| ev.data.get("NewProcessName"))
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string())
                 })
-            });
+            })
+            .or(embedded_file_path)
+            .or_else(|| file_path.map(|p| p.to_string_lossy().to_string()));
 
         let proc_name_owned = sig.process_name.clone().or_else(|| {
             file_path_str.as_deref().and_then(|p| {
@@ -1322,7 +1348,6 @@ impl EdrOrchestrator {
             .as_deref()
             .or(proc_hint)
             .unwrap_or("unknown_target");
-        let reason_str = sig.reason.clone().unwrap_or_default();
 
         // 1. Run Autonomous REA Engine + OpenJEV Voter verification
         let rea = crate::rea::global_rea_engine();
@@ -1337,6 +1362,11 @@ impl EdrOrchestrator {
             &reason_str,
             sig.confidence as f64,
         );
+        let ojev_vote = crate::rea::evaluate_openjev_consensus_vote(
+            target_label,
+            "ThreatIntelligence",
+            &reason_str,
+        );
 
         let hash_key = rea_hash
             .as_deref()
@@ -1345,9 +1375,22 @@ impl EdrOrchestrator {
             .unwrap_or("")
             .to_ascii_lowercase();
 
+        let reason_lc = reason_str.to_ascii_lowercase();
+        let is_uncorroborated_single_voter = reason_lc.contains("independent=1")
+            && !crate::rea::has_active_lotl_or_exploit_indicators(&reason_lc)
+            && !rea_eval.masquerade_escalated
+            && !rea_eval.prompt_injection_escalated
+            && !reason_lc.contains("cedar-ring7-forbid")
+            && !reason_lc.contains("direct syscall")
+            && !reason_lc.contains("canary");
+
         if rea_should_drop
             || rea_eval.benign_veto
+            || is_uncorroborated_single_voter
             || crate::rea::is_rea_benign_system_or_dev_process(target_label, Some(&reason_str))
+            || proc_hint
+                .map(|p| crate::rea::is_rea_benign_system_or_dev_process(p, Some(&reason_str)))
+                .unwrap_or(false)
         {
             let _ = self.memory.delete_threat_by_id_or_pattern(
                 Some(&sig.id),
@@ -1430,9 +1473,9 @@ impl EdrOrchestrator {
                             .unwrap_or("")
                             .contains(&reason_str)
                     {
-                        voter_sig.add_reason(reason_str);
+                        voter_sig.add_reason(reason_str.clone());
                     }
-                    return Some(voter_sig);
+                    sig = voter_sig;
                 }
                 None => {
                     let finding_hash = if hash_key.is_empty() {
@@ -1467,6 +1510,32 @@ impl EdrOrchestrator {
                     let _ = self.memory.record_consensus_finding(&finding);
                     return None;
                 }
+            }
+        }
+
+        // 3. Stamp explicit [REA-Voter] + [OpenJEV-Voter] consensus verification onto every confirmed threat signature
+        // and trigger autonomous REA binary reverse engineering when a file exists on disk.
+        let current_reason = sig.reason.clone().unwrap_or_default();
+        if !current_reason.contains("[REA-Voter]") {
+            sig.add_reason(format!(
+                "{} (verdict={}, seal={})",
+                rea_eval.explanation,
+                rea_eval.verdict,
+                &rea_eval.rea_seal_blake3[..rea_eval.rea_seal_blake3.len().min(16)]
+            ));
+        }
+        if !current_reason.contains("[OpenJEV-Voter]") && !ojev_vote.benign_veto {
+            sig.add_reason(ojev_vote.reason);
+        }
+        sig.detector_count = sig.detector_count.max(2);
+        if let Some(ref fp) = file_path_str {
+            let fp_buf = std::path::PathBuf::from(fp);
+            if fp_buf.is_file() && !crate::blocking_manager::is_protected_or_benign_system_path(fp)
+            {
+                crate::rea::spawn_autonomous_rea_for_threat(
+                    fp_buf,
+                    format!("adjudicated_threat:{}", sig.id),
+                );
             }
         }
 

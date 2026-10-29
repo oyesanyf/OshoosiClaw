@@ -1332,6 +1332,13 @@ impl EdrOrchestrator {
                         mitre_technique_name: Some("Adversarial AI / Agentic Breakout".to_string()),
                     };
 
+                    let Some(threat_sig) = aad_orch
+                        .adjudicate_threat_signature_with_rea_and_voters(None, threat_sig, None)
+                        .await
+                    else {
+                        continue;
+                    };
+
                     let _ = aad_orch.memory.log_threat(&threat_sig);
                     aad_orch.record_gossip_threat(&threat_sig, "AGENT_BREAKOUT_ISOLATED");
 

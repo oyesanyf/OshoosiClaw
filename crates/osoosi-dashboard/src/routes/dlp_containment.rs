@@ -986,7 +986,42 @@ fn record_alert_and_audit(
     } else {
         osoosi_types::ResponseAction::Alert
     };
-    sig.reason = Some(summary.clone());
+    let voters_summary = outcome
+        .voters
+        .ballots
+        .iter()
+        .map(|b| {
+            format!(
+                "[{}]: {}({:.2})",
+                b.voter,
+                if b.escalate { "escalate" } else { "abstain" },
+                b.confidence
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let rea_eval = osoosi_core::rea::global_rea_engine().evaluate_detector_candidate(
+        "DLP",
+        &outcome.actor,
+        &summary,
+        sig.confidence as f64,
+    );
+    let ojev_vote = osoosi_core::rea::evaluate_openjev_consensus_vote(
+        &outcome.actor,
+        &outcome.destination_host,
+        &summary,
+    );
+    if rea_eval.benign_veto {
+        return;
+    }
+    sig.reason = Some(format!(
+        "{}; {}; {} (seal={}); {}",
+        summary,
+        voters_summary,
+        rea_eval.explanation,
+        &rea_eval.rea_seal_blake3[..rea_eval.rea_seal_blake3.len().min(16)],
+        ojev_vote.reason
+    ));
     sig.mitre_tactic = Some("TA0010".to_string());
     sig.mitre_technique = Some("T1567".to_string());
     sig.mitre_technique_name = Some("Exfiltration Over Web Service".to_string());

@@ -2822,14 +2822,55 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             ""
                         };
 
-                        if osoosi_core::rea::is_rea_benign_system_or_dev_process(proc_for_mitre, reason) {
+                        let reason_str = reason.unwrap_or("");
+                        let conf_val = obj.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.85);
+                        let rea_eval = osoosi_core::rea::global_rea_engine().evaluate_detector_candidate(
+                            "ThreatIntelligence",
+                            proc_for_mitre,
+                            reason_str,
+                            conf_val,
+                        );
+                        if rea_eval.benign_veto
+                            || osoosi_core::rea::is_rea_benign_system_or_dev_process(proc_for_mitre, reason)
+                        {
+                            if let Some(tid) = obj.get("id").and_then(|v| v.as_str()) {
+                                let _ = orch.memory().delete_threat_by_id_or_pattern(
+                                    Some(tid),
+                                    if proc_for_mitre.is_empty() { None } else { Some(proc_for_mitre) },
+                                    obj.get("hash_blake3").and_then(|v| v.as_str()),
+                                );
+                            }
                             return None;
                         }
 
-                        let reason_str = reason.unwrap_or("");
+                        let ojev_vote = osoosi_core::rea::evaluate_openjev_consensus_vote(
+                            proc_for_mitre,
+                            "ThreatIntelligence",
+                            reason_str,
+                        );
+                        let mut final_reason = reason_str.to_string();
+                        if !final_reason.contains("[REA-Voter]") {
+                            if !final_reason.is_empty() {
+                                final_reason.push_str("; ");
+                            }
+                            final_reason.push_str(&format!(
+                                "{} (verdict={}, seal={})",
+                                rea_eval.explanation,
+                                rea_eval.verdict,
+                                &rea_eval.rea_seal_blake3[..rea_eval.rea_seal_blake3.len().min(16)]
+                            ));
+                            if !final_reason.contains("[OpenJEV-Voter]") && !ojev_vote.benign_veto {
+                                final_reason.push_str("; ");
+                                final_reason.push_str(&ojev_vote.reason);
+                            }
+                            if let Some(tid) = obj.get("id").and_then(|v| v.as_str()) {
+                                let _ = orch.memory().update_threat_reason(tid, &final_reason);
+                            }
+                        }
+
                         let existing_tech = obj.get("mitre_technique").and_then(|v| v.as_str());
                         let existing_name = obj.get("mitre_technique_name").and_then(|v| v.as_str());
-                        let (tech_id, tech_name, display_title) = enrich_mitre_threat(proc_for_mitre, cve_id, reason_str, existing_tech, existing_name);
+                        let (tech_id, tech_name, display_title) = enrich_mitre_threat(proc_for_mitre, cve_id, &final_reason, existing_tech, existing_name);
 
                         Some(json!({
                             "id": obj.get("id"),
@@ -2841,7 +2882,10 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "source_node": obj.get("source_node"),
                             "file_path": obj.get("file_path").or(obj.get("image_path")),
                             "hash_blake3": obj.get("hash_blake3"),
-                            "reason": reason,
+                            "reason": final_reason,
+                            "rea_verified": true,
+                            "rea_verdict": rea_eval.verdict,
+                            "rea_seal_blake3": rea_eval.rea_seal_blake3,
                             "entropy": obj.get("entropy"),
                             "predicted_next": predicted_next,
                             "mitre_technique": tech_id,
@@ -6357,26 +6401,51 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
             let orch_bg = Arc::clone(orch);
-            tokio::task::spawn_blocking(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 let _ = orch_bg.run_autonomous_rea_threat_adjudication();
-            });
+            })
+            .await;
+            let active_threat_ids: std::collections::HashSet<String> = orch
+                .memory()
+                .get_recent_threats(100)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|t| t.get("id").and_then(|v| v.as_str()).map(String::from))
+                .collect();
             let entries = orch.audit().get_recent_entries(200);
             let mut seen_summaries = std::collections::HashSet::new();
             let items: Vec<Value> = entries
                 .iter()
                 .rev()
                 .filter_map(|e| {
+                    if e.event_type == "ACTION_PENDING_APPROVAL" {
+                        let tid = e
+                            .data
+                            .get("threat_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        if tid.is_empty() || !active_threat_ids.contains(tid) {
+                            return None;
+                        }
+                    }
                     if e.event_type == "THREAT_DETECTED"
                         || e.event_type == "MESH_THREAT_RECEIVED"
                         || e.event_type == "MESH_THREAT_BROADCAST"
                     {
                         let proc = e.data.get("process_name").and_then(|v| v.as_str());
-                        let summary_or_reason = e
+                        let reason_opt = e.data.get("reason").and_then(|v| v.as_str());
+                        let summary_opt = e
                             .data
                             .get("summary")
-                            .or_else(|| e.data.get("reason"))
                             .or_else(|| e.data.get("message"))
                             .and_then(|v| v.as_str());
+                        let combined_reason = match (reason_opt, summary_opt) {
+                            (Some(r), Some(s)) if r != s => Some(format!("{} | {}", r, s)),
+                            (Some(r), _) => Some(r.to_string()),
+                            (None, Some(s)) => Some(s.to_string()),
+                            (None, None) => None,
+                        };
+                        let summary_or_reason = combined_reason.as_deref();
 
                         if let Some(p) = proc {
                             if osoosi_core::rea::is_rea_benign_system_or_dev_process(

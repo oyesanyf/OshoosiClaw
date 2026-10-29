@@ -1083,8 +1083,18 @@ impl EdrOrchestrator {
             } else {
                 proc.as_deref()
             };
-            let (should_drop, rea_summary, resolved_hash) =
+            let (mut should_drop, mut rea_summary, resolved_hash) =
                 rea.adjudicate_process_or_binary_alert(cand_p, None, Some(&reason));
+            let rea_eval = rea.evaluate_detector_candidate(
+                "ThreatIntelligence",
+                cand_p.unwrap_or("unknown"),
+                &reason,
+                0.85,
+            );
+            if rea_eval.benign_veto {
+                should_drop = true;
+                rea_summary = rea_eval.explanation.clone();
+            }
 
             if should_drop {
                 if let Some(ref b) = proc_base {
@@ -1130,6 +1140,45 @@ impl EdrOrchestrator {
                     }
                 }
                 dropped += 1;
+            } else if !id.starts_with("audit-") && !reason.is_empty() {
+                let ojev_vote = crate::rea::evaluate_openjev_consensus_vote(
+                    cand_p.unwrap_or("unknown"),
+                    "ThreatIntelligence",
+                    &reason,
+                );
+                if !reason.contains("[REA-Voter]") {
+                    let mut enriched = format!(
+                        "{}; {} (verdict={}, seal={})",
+                        reason,
+                        rea_eval.explanation,
+                        rea_eval.verdict,
+                        &rea_eval.rea_seal_blake3[..rea_eval.rea_seal_blake3.len().min(16)]
+                    );
+                    if !reason.contains("[OpenJEV-Voter]") && !ojev_vote.benign_veto {
+                        enriched.push_str("; ");
+                        enriched.push_str(&ojev_vote.reason);
+                    }
+                    let _ = self.memory.update_threat_reason(&id, &enriched);
+                }
+                if let Some(after_file) = reason.split("file=").nth(1) {
+                    let fp = after_file
+                        .split([';', '|', '\n', '\r'])
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .trim_matches('"');
+                    if !fp.is_empty() {
+                        let fp_buf = std::path::PathBuf::from(fp);
+                        if fp_buf.is_file()
+                            && !crate::blocking_manager::is_protected_or_benign_system_path(fp)
+                        {
+                            crate::rea::spawn_autonomous_rea_for_threat(
+                                fp_buf,
+                                format!("autonomous_rea_threat:{}", id),
+                            );
+                        }
+                    }
+                }
             }
         }
 
@@ -1171,21 +1220,59 @@ impl EdrOrchestrator {
             });
         }
 
-        // Purge audit log of false positive threat detection & gossip events
+        let active_threat_ids: std::collections::HashSet<String> = self
+            .memory
+            .get_recent_threats(100)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|t| t.get("id").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+
+        // Purge audit log of false positive threat detection, orphaned approvals, & gossip events
         self.audit.retain_entries(|entry| {
+            if entry.event_type == "ACTION_PENDING_APPROVAL" {
+                let tid = entry
+                    .data
+                    .get("threat_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if tid.is_empty()
+                    || self.dismissed_gossip_ids.contains(tid)
+                    || !active_threat_ids.contains(tid)
+                {
+                    return false;
+                }
+            }
             if entry.event_type == "MESH_THREAT_BROADCAST"
                 || entry.event_type == "MESH_THREAT_RECEIVED"
                 || entry.event_type == "THREAT_DETECTED"
             {
+                if let Some(tid) = entry
+                    .data
+                    .get("threat_id")
+                    .or_else(|| entry.data.get("id"))
+                    .and_then(|v| v.as_str())
+                {
+                    if self.dismissed_gossip_ids.contains(tid) {
+                        return false;
+                    }
+                }
                 let proc = entry.data.get("process_name").and_then(|v| v.as_str());
-                let summary = entry
+                let reason_opt = entry.data.get("reason").and_then(|v| v.as_str());
+                let summary_opt = entry
                     .data
                     .get("summary")
-                    .or_else(|| entry.data.get("reason"))
                     .or_else(|| entry.data.get("message"))
                     .and_then(|v| v.as_str());
+                let combined_reason = match (reason_opt, summary_opt) {
+                    (Some(r), Some(s)) if r != s => Some(format!("{} | {}", r, s)),
+                    (Some(r), _) => Some(r.to_string()),
+                    (None, Some(s)) => Some(s.to_string()),
+                    (None, None) => None,
+                };
+                let summary = combined_reason.as_deref();
 
-                let ext = summary.and_then(|s| crate::rea::extract_process_from_summary(s));
+                let ext = summary.and_then(crate::rea::extract_process_from_summary);
                 let cand_p = proc.or(ext);
 
                 if let Some(p) = cand_p {
