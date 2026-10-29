@@ -173,14 +173,17 @@ function Invoke-AuthenticodeSigning {
                 continue
             }
             # Break any Cargo NTFS hardlink (e.g. target\release\osoosi.exe <-> target\release\deps\osoosi.exe)
-            # using cmd.exe copy /y before signtool modifies the PE in place, preserving Windows 11 Smart App Control origin EA.
+            # by removing peer hardlinks in deps\ so $file retains the original link.exe inode and Smart App Control EA.
             $hlOut = & fsutil hardlink list $file 2>$null
             if ($hlOut -and ($hlOut.Count -gt 1)) {
-                $unlinkedTmp = "$file.unlinked_tmp"
-                Copy-Item -Path $file -Destination $unlinkedTmp -Force -ErrorAction SilentlyContinue
-                Remove-Item -Path $file -Force -ErrorAction SilentlyContinue
-                Copy-Item -Path $unlinkedTmp -Destination $file -Force -ErrorAction SilentlyContinue
-                Remove-Item -Path $unlinkedTmp -Force -ErrorAction SilentlyContinue
+                $targetFull = [System.IO.Path]::GetFullPath($file)
+                $driveRoot = [System.IO.Path]::GetPathRoot($targetFull).TrimEnd('\')
+                foreach ($hlRel in $hlOut) {
+                    $hlCandidate = "$driveRoot$hlRel"
+                    if ([System.IO.Path]::GetFullPath($hlCandidate) -ne $targetFull) {
+                        Remove-Item -Path $hlCandidate -Force -ErrorAction SilentlyContinue
+                    }
+                }
             }
             Write-Host "       Signing '$file' (SHA-256 + RFC 3161 timestamp)..." -ForegroundColor Cyan
             $signedOk = $false
@@ -668,6 +671,10 @@ $SoloShipScript = Join-Path $ProjectRoot "scripts\solo_pr_ship.ps1"
 if (Test-Path $SoloShipScript) {
     Write-Host "`n>>> [8/8] Invoking Solo-Developer PR Workflow (Branch Protection Auto-Approval)..." -ForegroundColor Yellow
     & powershell -ExecutionPolicy Bypass -File $SoloShipScript -Title $PrTitle
+    if (Test-Path $ReleaseSyncScript) {
+        Write-Host "`n>>> [8b/8] Re-syncing GitHub Release Tag v1.2.0 to Merged main HEAD..." -ForegroundColor Yellow
+        & python $ReleaseSyncScript
+    }
 }
 
 Write-Host "`n======================================================================" -ForegroundColor Green
