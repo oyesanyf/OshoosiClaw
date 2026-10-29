@@ -1001,6 +1001,10 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
             covert_jitter_applied_ms: 0,
             taint_epoch: auth.capability_cache.current_taint_epoch(),
             revocation_seq: auth.capability_cache.current_revocation_seq(),
+            has_untrusted_web_input: false,
+            has_scratch_file_write: false,
+            subprocess_env_or_arg_tainted: false,
+            temporal_trace_window_seconds: 7200,
         };
         let dec = auth.evaluate_cedar_request(
             &princ,
@@ -1151,6 +1155,10 @@ pub async fn run_breakout_prevention_proof_suite() -> BreakoutPreventionReport {
             covert_jitter_applied_ms: 0,
             taint_epoch: auth.capability_cache.current_taint_epoch(),
             revocation_seq: auth.capability_cache.current_revocation_seq(),
+            has_untrusted_web_input: false,
+            has_scratch_file_write: false,
+            subprocess_env_or_arg_tainted: false,
+            temporal_trace_window_seconds: 7200,
         },
         EnforcementStage::PreExecutionPrevented,
     );

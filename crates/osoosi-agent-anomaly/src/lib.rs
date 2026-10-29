@@ -44,10 +44,12 @@ pub use alignment_scanner::{
 pub use breakout_defense::{
     clear_all_ingested_research_rules, list_ingested_research_rules,
     register_ingested_research_rule, remove_ingested_research_rule, restore_default_research_rules,
-    validate_agent_egress_url, validate_agent_filesystem_access, BehavioralBreakoutGuard,
-    BehavioralBreakoutVerdict, BreakoutDefenseCoordinator, IngestedResearchDefenseRule,
-    TechnicalBreakoutGuard, TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation,
-    ZeroMiProjectionResult, ZeroMutualInformationProjector, GLOBAL_RESEARCH_DEFENSE_REGISTRY,
+    sanitize_and_validate_subprocess_env, validate_agent_egress_url,
+    validate_agent_filesystem_access, BehavioralBreakoutGuard, BehavioralBreakoutVerdict,
+    BreakoutDefenseCoordinator, BreakoutDefenseError, EnvironmentInspectionResult,
+    ExecutionEnvironmentGuard, IngestedResearchDefenseRule, TechnicalBreakoutGuard,
+    TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation, ZeroMiProjectionResult,
+    ZeroMutualInformationProjector, GLOBAL_RESEARCH_DEFENSE_REGISTRY,
 };
 pub use breakout_prevention::*;
 pub use cedar_engine::{

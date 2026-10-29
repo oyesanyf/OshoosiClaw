@@ -4124,10 +4124,20 @@ async fn post_system_disk_cleanup(
                 orch_clone.cleanup_disk_background(days, job_id_clone);
             });
 
+            let fmt_freed = if imm_freed >= 1_048_576 {
+                format!("{:.2} MB", imm_freed as f64 / 1_048_576.0)
+            } else if imm_freed >= 1024 {
+                format!("{:.1} KB", imm_freed as f64 / 1024.0)
+            } else {
+                format!("{} B", imm_freed)
+            };
             Json(json!({
+                "ok": true,
                 "job_id": job_id,
-                "status": "scheduled",
+                "status": "success",
+                "schedule_status": "scheduled",
                 "immediate_freed_bytes": imm_freed,
+                "formatted_bytes_freed": fmt_freed,
                 "effective_retention_days": days,
                 "pressure_tier": "NOMINAL",
                 "in_memory_evicted": in_mem_details,
@@ -4140,9 +4150,12 @@ async fn post_system_disk_cleanup(
             let working_set_trimmed = osoosi_core::memory_watchdog::trim_process_working_set();
             let job_id = format!("cleanup-{}", uuid::Uuid::new_v4());
             Json(json!({
+                "ok": true,
                 "job_id": job_id,
-                "status": "scheduled",
+                "status": "success",
+                "schedule_status": "scheduled",
                 "immediate_freed_bytes": 0,
+                "formatted_bytes_freed": "0 B",
                 "effective_retention_days": days,
                 "pressure_tier": "NOMINAL",
                 "in_memory_evicted": {},
