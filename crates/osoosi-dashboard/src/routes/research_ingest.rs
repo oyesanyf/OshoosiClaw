@@ -1177,10 +1177,7 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
             for item in &candidate_extractions {
                 if let Some(ref raw_id) = item.arxiv_id {
                     if !is_already_implemented(raw_id) {
-                        let clean_id = normalize_arxiv_id(raw_id)
-                            .replace('.', "_")
-                            .replace('-', "_")
-                            .replace('/', "_");
+                        let clean_id = normalize_arxiv_id(raw_id).replace(['.', '-', '/'], "_");
                         let before_len = mon.calibration.sources.len();
                         let mut idx = 0;
                         mon.calibration.sources.retain(|s| {
@@ -1749,10 +1746,8 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                     .and_then(|e| e.arxiv_id.clone())
                     .or_else(|| req.arxiv_id.clone())
                     .unwrap_or_else(|| "novel_source".to_string());
-                let clean_arxiv_id = normalize_arxiv_id(&raw_arxiv_id)
-                    .replace('.', "_")
-                    .replace('-', "_")
-                    .replace('/', "_");
+                let clean_arxiv_id =
+                    normalize_arxiv_id(&raw_arxiv_id).replace(['.', '-', '/'], "_");
                 let representative_quote = primary_item
                     .and_then(|e| e.source_quote.as_deref())
                     .unwrap_or("novel_frontier_breakout_vector");
@@ -1761,9 +1756,9 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                 let novel_center: Vec<f64> = base_vec.iter().map(|&v| v + 6.5).collect();
 
                 let train_rows =
-                    synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x2603_02277_01);
+                    synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x0260_3022_7701);
                 let cal_rows =
-                    synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x2603_02277_02);
+                    synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x0260_3022_7702);
 
                 let (enrolled_source_name, new_k) =
                     if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
@@ -1813,10 +1808,7 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                 for (idx, item) in grounded_extractions.iter().enumerate() {
                     let category = classify_probe_category(item);
                     let id_str = item.arxiv_id.as_deref().unwrap_or(&raw_arxiv_id);
-                    let clean_id = normalize_arxiv_id(id_str)
-                        .replace('.', "_")
-                        .replace('-', "_")
-                        .replace('/', "_");
+                    let clean_id = normalize_arxiv_id(id_str).replace(['.', '-', '/'], "_");
                     let policy_id = format!(
                         "oshoosi_swarm_arxiv_{}_{}_{}",
                         clean_id,
@@ -2709,15 +2701,13 @@ pub fn approve_pending_research_item(
             }
         }
 
-        let clean_arxiv_id = normalize_arxiv_id(&approved.arxiv_id)
-            .replace('.', "_")
-            .replace('-', "_")
-            .replace('/', "_");
+        let clean_arxiv_id = normalize_arxiv_id(&approved.arxiv_id).replace(['.', '-', '/'], "_");
         let base_vec =
             osoosi_behavioral::embed_prompt_representation_64d(&approved.indicator_pattern);
         let novel_center: Vec<f64> = base_vec.iter().map(|&v| v + 6.5).collect();
-        let train_rows = synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x2603_02277_11);
-        let cal_rows = synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x2603_02277_12);
+        let train_rows =
+            synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x0260_3022_7711);
+        let cal_rows = synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x0260_3022_7712);
 
         if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
             if !mon
@@ -3056,7 +3046,7 @@ mod tests {
 
     #[test]
     fn test_live_regression_probes_all_categories_block() {
-        let probe_items = vec![
+        let probe_items = [
             // 1. Container / OCI / Sandbox / Privilege
             ResearchExtractionItem {
                 arxiv_id: Some("2603.99991".to_string()),
@@ -3647,6 +3637,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_clear_all_research_rules_and_synthesized_policies() {
         let _lock = TEST_CONFORMAL_LOCK
             .lock()

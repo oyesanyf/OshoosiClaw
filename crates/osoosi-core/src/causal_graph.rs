@@ -1841,6 +1841,21 @@ impl CausalSecurityGraph {
     }
 }
 
+static GLOBAL_CAUSAL_GRAPH: std::sync::LazyLock<Arc<CausalSecurityGraph>> =
+    std::sync::LazyLock::new(|| {
+        let db_path = "database/osoosi.db";
+        let graph = CausalSecurityGraph::open(db_path).unwrap_or_else(|_| {
+            CausalSecurityGraph::in_memory()
+                .expect("in-memory fallback for persistent causal graph")
+        });
+        Arc::new(graph)
+    });
+
+/// Returns a shared thread-safe handle to the global persistent Causal Security Graph.
+pub fn global_causal_security_graph() -> Arc<CausalSecurityGraph> {
+    GLOBAL_CAUSAL_GRAPH.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2233,19 +2248,4 @@ mod tests {
 
         Ok(())
     }
-}
-
-static GLOBAL_CAUSAL_GRAPH: std::sync::LazyLock<Arc<CausalSecurityGraph>> =
-    std::sync::LazyLock::new(|| {
-        let db_path = "database/osoosi.db";
-        let graph = CausalSecurityGraph::open(db_path).unwrap_or_else(|_| {
-            CausalSecurityGraph::in_memory()
-                .expect("in-memory fallback for persistent causal graph")
-        });
-        Arc::new(graph)
-    });
-
-/// Returns a shared thread-safe handle to the global persistent Causal Security Graph.
-pub fn global_causal_security_graph() -> Arc<CausalSecurityGraph> {
-    GLOBAL_CAUSAL_GRAPH.clone()
 }
