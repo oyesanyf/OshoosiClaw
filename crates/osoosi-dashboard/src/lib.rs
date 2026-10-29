@@ -12990,7 +12990,23 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_dlp_dashboard_endpoints() {
+        let _guard = crate::routes::dlp_containment::DLP_TEST_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        {
+            let mut state = crate::routes::dlp::get_global_dlp_state().write();
+            state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+            state.min_phi_threshold = 0.50;
+            state.quarantine_threshold = 0.80;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+            state.redactx_detection_mode = "zero_leakage".to_string();
+            state.redactx_containment_mode = "balanced_utility".to_string();
+        }
+        osoosi_types::set_strict_lockdown_override(false);
+
         let state = DashboardState::new(None, None);
         let temp_dir = std::env::temp_dir().join(format!("dash_test_dlp_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);

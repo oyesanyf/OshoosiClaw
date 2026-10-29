@@ -2450,11 +2450,11 @@ mod tests {
         assert_ne!(a, c);
     }
 
-    static TEST_HAR_STAGE_LOCK: Mutex<()> = Mutex::new(());
+    use crate::routes::dlp_containment::DLP_TEST_MUTEX;
 
     #[test]
     fn test_resolve_local_uploaded_file_direct_and_search() {
-        let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = std::env::temp_dir();
         let fname = format!("test_patient_phi_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
@@ -2495,7 +2495,7 @@ mod tests {
 
     #[test]
     fn test_extract_requests_with_file_upload_metadata() {
-        let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let temp_dir = std::env::temp_dir();
         let fname = format!("test_discharge_{}.csv", uuid::Uuid::new_v4());
         let file_path = temp_dir.join(&fname);
@@ -2541,11 +2541,31 @@ mod tests {
         let _ = std::fs::remove_file(file_path);
     }
 
+    struct HarFileBackupGuard {
+        backups: Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+    }
+
+    impl Drop for HarFileBackupGuard {
+        fn drop(&mut self) {
+            for (p, orig) in &self.backups {
+                if let Some(ref bytes) = orig {
+                    let _ = std::fs::write(p, bytes);
+                } else if p.exists() {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+            osoosi_core::dlp_lineage::global_lineage_tracker().clear();
+        }
+    }
+
     #[test]
     fn test_is_dlp_event_allowlisted() {
-        let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let allowlist_file = crate::routes::dlp::released_allowlist_path();
         let orig_content = std::fs::read(&allowlist_file).ok();
+        let _guard_backup = HarFileBackupGuard {
+            backups: vec![(allowlist_file.clone(), orig_content)],
+        };
 
         // 1. Non-existent or empty allowlist check
         assert!(!is_dlp_event_allowlisted(
@@ -2597,18 +2617,36 @@ mod tests {
             "specific-scrubbed-preview-content",
             ""
         ));
+    }
 
-        // Cleanup: restore exact original bytes so git status -s remains 100% clean
-        if let Some(ref bytes) = orig_content {
-            let _ = std::fs::write(&allowlist_file, bytes);
-        } else {
-            let _ = std::fs::remove_file(&allowlist_file);
+    fn paths_match(a: &Path, b: &Path) -> bool {
+        if a == b {
+            return true;
+        }
+        if a.file_name() != b.file_name() {
+            return false;
+        }
+        match (a.canonicalize(), b.canonicalize()) {
+            (Ok(ca), Ok(cb)) => ca == cb,
+            _ => false,
         }
     }
 
     #[test]
     fn test_recent_touch_and_clean_upload_restores_browser_block() {
-        let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        {
+            let mut state = crate::routes::dlp::get_global_dlp_state().write();
+            state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+            state.min_phi_threshold = 0.50;
+            state.quarantine_threshold = 0.80;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+            state.redactx_detection_mode = "zero_leakage".to_string();
+            state.redactx_containment_mode = "balanced_utility".to_string();
+        }
+        osoosi_types::set_strict_lockdown_override(false);
+        osoosi_core::dlp_lineage::global_lineage_tracker().clear();
         let reg_paths = vec![
             std::path::PathBuf::from("database").join("dlp_containment_registry.json"),
             std::path::PathBuf::from("crates")
@@ -2628,6 +2666,7 @@ mod tests {
                 backups.push((p, bytes));
             }
         }
+        let _guard_backup = HarFileBackupGuard { backups };
 
         // 1. Verify that a newly touched benign file in temp_dir is resolved by URL-only lookup
         //    ahead of any older files on disk because `recent_touch` is sorted first (`b.2.cmp(&a.2)`).
@@ -2668,7 +2707,11 @@ mod tests {
             body_truncated: false,
         };
         let ev = inspect_only(&req);
-        assert!(ev.allowed, "benign cover letter must be allowed by DLP");
+        assert!(
+            ev.allowed,
+            "benign cover letter must be allowed by DLP: {:?}",
+            ev
+        );
         let processed = post_process(&req, ev);
         assert!(processed.allowed);
 
@@ -2679,24 +2722,34 @@ mod tests {
         lnk_bytes.push(0x00);
         std::fs::write(&lnk_path, &lnk_bytes).expect("write test .lnk");
         let resolved_lnk = resolve_windows_lnk_target(&lnk_path);
-        assert_eq!(resolved_lnk, Some(clean_path.clone()));
+        assert!(
+            resolved_lnk
+                .as_ref()
+                .map(|p| paths_match(p, &clean_path))
+                .unwrap_or(false),
+            "resolved_lnk {:?} must match clean_path {:?}",
+            resolved_lnk,
+            clean_path
+        );
 
         let _ = std::fs::remove_file(lnk_path);
         let _ = std::fs::remove_file(clean_path);
-
-        // Restore disk state
-        for (p, orig) in backups {
-            if let Some(ref bytes) = orig {
-                let _ = std::fs::write(&p, bytes);
-            } else if p.exists() {
-                let _ = std::fs::remove_file(&p);
-            }
-        }
     }
 
     #[test]
     fn test_rapid_alternating_uploads_within_single_bucket_and_atime_immunity() {
-        let _guard = TEST_HAR_STAGE_LOCK.lock();
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        {
+            let mut state = crate::routes::dlp::get_global_dlp_state().write();
+            state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+            state.min_phi_threshold = 0.50;
+            state.quarantine_threshold = 0.80;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+            state.redactx_detection_mode = "zero_leakage".to_string();
+            state.redactx_containment_mode = "balanced_utility".to_string();
+        }
+        osoosi_types::set_strict_lockdown_override(false);
         // Verify that rapid alternating uploads (Sensitive A -> Benign B -> Sensitive A) within the
         // EXACT SAME 15-second `time_bucket` produce distinct deduplication keys (`compute_live_sink_dedupe_key`)
         // so `dedupe_new` never drops the re-selected file as a duplicate.
@@ -2713,7 +2766,12 @@ mod tests {
         std::fs::write(&sens_path, sensitive_csv).expect("write sensitive csv");
         let r_a1 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/")
             .expect("resolve sensitive A1");
-        assert_eq!(r_a1.resolved_path, sens_path);
+        assert!(
+            paths_match(&r_a1.resolved_path, &sens_path),
+            "r_a1.resolved_path {:?} must match sens_path {:?}",
+            r_a1.resolved_path,
+            sens_path
+        );
 
         let fixed_bucket = 119_500_000i64;
         let key_a1 = compute_live_sink_dedupe_key(&r_a1, fixed_bucket);
@@ -2732,8 +2790,8 @@ mod tests {
 
         let r_b1 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/")
             .expect("resolve benign B1");
-        assert_eq!(
-            r_b1.resolved_path, clean_path,
+        assert!(
+            paths_match(&r_b1.resolved_path, &clean_path),
             "reading an older file must never let its atime shadow a newer mtime selection"
         );
         let key_b1 = compute_live_sink_dedupe_key(&r_b1, fixed_bucket);
@@ -2749,8 +2807,8 @@ mod tests {
 
         let r_a2 = resolve_local_uploaded_file(None, "https://dlptest.com/https-post/")
             .expect("resolve sensitive A2 via .lnk");
-        assert_eq!(
-            r_a2.resolved_path, sens_path,
+        assert!(
+            paths_match(&r_a2.resolved_path, &sens_path),
             "touching .lnk for Sensitive A must immediately make Sensitive A the winner again"
         );
         let key_a2 = compute_live_sink_dedupe_key(&r_a2, fixed_bucket);
@@ -2799,6 +2857,7 @@ mod tests {
 
     #[test]
     fn test_user_upload_staging_dirs_discovers_recent_and_temp() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dirs = get_user_upload_staging_dirs();
         assert!(
             !dirs.is_empty(),
