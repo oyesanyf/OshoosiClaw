@@ -2442,20 +2442,62 @@ impl BreakoutDefenseCoordinator {
         let mut oper_res = self.operational.evaluate_context_leakage(payload);
 
         // Execution environment & interpreter hijacking inspection
-        let (has_env_hijack, env_violations) =
+        let (has_env_hijack_pay, env_violations_pay) =
             self.env_guard.inspect_execution_environment_hijacking_str(payload);
-        if has_env_hijack {
+        if has_env_hijack_pay {
             oper_res.is_clean = false;
-            oper_res.detected_leaks.extend(env_violations);
+            oper_res.detected_leaks.extend(env_violations_pay);
             oper_res.description = format!(
                 "Operational containment defect: {} leak(s)/hijack(s) intercepted",
                 oper_res.detected_leaks.len()
             );
         }
+
+        let (has_env_hijack_res, env_violations_res) =
+            self.env_guard.inspect_execution_environment_hijacking_str(resource);
+        if has_env_hijack_res {
+            oper_res.is_clean = false;
+            oper_res.detected_leaks.extend(env_violations_res);
+            oper_res.description = format!(
+                "Operational containment defect: {} leak(s)/hijack(s) intercepted",
+                oper_res.detected_leaks.len()
+            );
+        }
+
+        let empty_env = HashMap::new();
+        let (has_cmd_hijack_res, cmd_violations_res) =
+            self.env_guard.inspect_execution_environment_hijacking(&empty_env, resource);
+        if has_cmd_hijack_res {
+            oper_res.is_clean = false;
+            oper_res.detected_leaks.extend(cmd_violations_res);
+            oper_res.description = format!(
+                "Operational containment defect: {} leak(s)/hijack(s) intercepted",
+                oper_res.detected_leaks.len()
+            );
+        }
+
+        let (has_cmd_hijack_pay, cmd_violations_pay) =
+            self.env_guard.inspect_execution_environment_hijacking(&empty_env, payload);
+        if has_cmd_hijack_pay {
+            oper_res.is_clean = false;
+            oper_res.detected_leaks.extend(cmd_violations_pay);
+            oper_res.description = format!(
+                "Operational containment defect: {} leak(s)/hijack(s) intercepted",
+                oper_res.detected_leaks.len()
+            );
+        }
+
         if let Some(ws_path) = workspace_root {
             let ws_p = Path::new(ws_path);
             if ws_p.exists() {
-                let env_res = self.env_guard.inspect_environment_and_configs(&[], payload, ws_p);
+                let combined_cmd = if resource.is_empty() {
+                    payload.to_string()
+                } else if payload.is_empty() {
+                    resource.to_string()
+                } else {
+                    format!("{} {}", resource, payload)
+                };
+                let env_res = self.env_guard.inspect_environment_and_configs(&[], &combined_cmd, ws_p);
                 if !env_res.is_clean {
                     oper_res.is_clean = false;
                     oper_res.detected_leaks.extend(env_res.prohibited_variables);
