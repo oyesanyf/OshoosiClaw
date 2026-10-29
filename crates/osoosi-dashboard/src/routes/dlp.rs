@@ -272,7 +272,7 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
             });
         }
 
-        let state = DlpDashboardState {
+        let mut state = DlpDashboardState {
             engine,
             policy_mode: "ENFORCE_BLOCK_AND_SCRUB".to_string(),
             min_phi_threshold: 0.50,
@@ -289,6 +289,29 @@ pub fn get_global_dlp_state() -> &'static osoosi_core::parking_lot::RwLock<DlpDa
             recent_events: load_persisted_dlp_events(250),
         };
 
+        if let Some(saved) = crate::load_ui_setting_sqlite("dlp_policy_settings") {
+            if let Some(m) = saved.get("policy_mode").and_then(|v| v.as_str()) {
+                state.policy_mode = m.to_string();
+            }
+            if let Some(v) = saved.get("min_phi_threshold").and_then(|v| v.as_f64()) {
+                state.min_phi_threshold = v.clamp(0.0, 1.0);
+            }
+            if let Some(v) = saved.get("quarantine_threshold").and_then(|v| v.as_f64()) {
+                state.quarantine_threshold = v.clamp(0.0, 1.0);
+            }
+            if let Some(v) = saved.get("auto_quarantine").and_then(|v| v.as_bool()) {
+                state.auto_quarantine = v;
+            }
+            if let Some(v) = saved.get("auto_zk_scrub").and_then(|v| v.as_bool()) {
+                state.auto_zk_scrub = v;
+            }
+            if let Some(m) = saved.get("redactx_detection_mode").and_then(|v| v.as_str()) {
+                state.redactx_detection_mode = m.to_string();
+            }
+            if let Some(m) = saved.get("redactx_containment_mode").and_then(|v| v.as_str()) {
+                state.redactx_containment_mode = m.to_string();
+            }
+        }
         osoosi_core::parking_lot::RwLock::new(state)
     })
 }
@@ -1553,6 +1576,7 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
         "redactx_containment_mode": state.redactx_containment_mode
     });
     drop(state);
+    crate::save_ui_setting_sqlite("dlp_policy_settings", &resp);
 
     // Whenever the user updates the DLP operating mode (e.g. switching to Audit / Monitor Mode or
     // Active Enforcement), immediately clear in-memory destination blocks so containment queries

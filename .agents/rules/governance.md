@@ -45,6 +45,13 @@ model: gemini-3.1-pro
    - Commit and ship incremental checkpoints immediately via `scripts/solo_pr_ship.ps1` rather than batching uncommitted changes across long runs; verify `git status -s` is empty at the end of every turn.
    - Continuously check open Pull Requests and GitHub Actions workflow runs; immediately diagnose and fix any failing GitHub Actions workflow, CI check, or blocked PR until merged and green.
 
-## Mandatory Cross-Repository Synchronization (`D:\harfile\AgentOctopus`)
-- **User Preference:** "alway update agentoctopus when you update here"
-- **Rule:** Whenever security controls, containment rings, breakout defenses, CIS Benchmark rules, DLP logic, console suppression, or documentation are updated in `D:\harfile\OshoosiClaw`, always synchronize the corresponding changes to `D:\harfile\AgentOctopus` (`https://github.com/oyesanyf/AgentOctopus.git`), verify zero compiler warnings, commit, and push so both repositories remain in lockstep.
+## Cross-Repository Synchronization (`D:\harfile\AgentOctopus`) — Disabled
+- **User Preference:** "no need to be sync agent octupus anymore"
+- **Rule:** Do NOT synchronize changes to `D:\harfile\AgentOctopus`. Keep all development, packaging, and git pushes strictly scoped to `https://github.com/oyesanyf/OshoosiClaw.git`.
+
+## Awesome Lists Community Traction Protocol (4 Verticals)
+- **Vertical 1 (Direct EDR & Detection Engineering):** `shadawck/awesome-endpoint-detection-and-response`, `infosecB/awesome-detection-engineering`, `0x4D31/awesome-threat-detection`, `threat-hunting/awesome_Threat-Hunting`.
+- **Vertical 2 (Blue Team, DFIR, Forensics & Reverse Engineering):** `fabacab/awesome-cybersecurity-blueteam`, `A-poc/BlueTeam-Tools`, `sbilly/awesome-security`, `meirwah/awesome-incident-response`, `cugu/awesome-forensics`, `dsopas/awesome-reverse-engineering`.
+- **Vertical 3 (Rust & eBPF Systems Directories):** `rust-unofficial/awesome-rust`, `osirislab/awesome-rust-security`, `0xflotus/awesome-rust-security`, `qmonnet/awesome-ebpf`, `zoidbergwill/awesome-ebpf`, `aya-rs/awesome-aya`.
+- **Vertical 4 (Specialized YARA Signature & Agentic AI Security Lists):** `InQuest/awesome-yara`, `pedramamini/awesome-yara`, `corca-ai/awesome-ai-security`, `requie/awesome-ai-cybersecurity`.
+- **Automation Script:** Use `python scripts/submit_awesome_lists.py` (or `powershell -ExecutionPolicy Bypass -File scripts/submit_awesome_lists.ps1`) to inspect targets, generate category-tailored descriptions, and automate forked PR submissions across all four verticals.

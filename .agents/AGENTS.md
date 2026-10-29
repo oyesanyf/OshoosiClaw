@@ -74,6 +74,13 @@
 1. **RETRIEVE:** Cite specific context sources, files, logs, or external docs referenced.
 2. **CONTEXT:** Summarize key verified facts and remaining open variables.
 3. **ANSWER:** Present a concise, scannable response using bullet points or tables.
-## Mandatory Cross-Repository Synchronization (`D:\harfile\AgentOctopus`)
-- **User Preference:** "alway update agentoctopus when you update here"
-- **Rule:** Whenever security controls, containment rings, breakout defenses, CIS Benchmark rules, DLP logic, console suppression, or documentation are updated in `D:\harfile\OshoosiClaw`, always synchronize the corresponding changes to `D:\harfile\AgentOctopus` (`https://github.com/oyesanyf/AgentOctopus.git`), verify zero compiler warnings, commit, and push so both repositories remain in lockstep.
+## Cross-Repository Synchronization (`D:\harfile\AgentOctopus`) — Disabled
+- **User Preference:** "no need to be sync agent octupus anymore"
+- **Rule:** Do NOT synchronize changes to `D:\harfile\AgentOctopus`. Keep all development, packaging, and git pushes strictly scoped to `https://github.com/oyesanyf/OshoosiClaw.git`.
+
+## Awesome Lists Community Traction Protocol (4 Verticals)
+- **Vertical 1 (Direct EDR & Detection Engineering):** `shadawck/awesome-endpoint-detection-and-response`, `infosecB/awesome-detection-engineering`, `0x4D31/awesome-threat-detection`, `threat-hunting/awesome_Threat-Hunting`.
+- **Vertical 2 (Blue Team, DFIR, Forensics & Reverse Engineering):** `fabacab/awesome-cybersecurity-blueteam`, `A-poc/BlueTeam-Tools`, `sbilly/awesome-security`, `meirwah/awesome-incident-response`, `cugu/awesome-forensics`, `dsopas/awesome-reverse-engineering`.
+- **Vertical 3 (Rust & eBPF Systems Directories):** `rust-unofficial/awesome-rust`, `osirislab/awesome-rust-security`, `0xflotus/awesome-rust-security`, `qmonnet/awesome-ebpf`, `zoidbergwill/awesome-ebpf`, `aya-rs/awesome-aya`.
+- **Vertical 4 (Specialized YARA Signature & Agentic AI Security Lists):** `InQuest/awesome-yara`, `pedramamini/awesome-yara`, `corca-ai/awesome-ai-security`, `requie/awesome-ai-cybersecurity`.
+- **Automation Script:** Use `python scripts/submit_awesome_lists.py` (or `powershell -ExecutionPolicy Bypass -File scripts/submit_awesome_lists.ps1`) to inspect targets, generate category-tailored descriptions, and automate forked PR submissions across all four verticals.

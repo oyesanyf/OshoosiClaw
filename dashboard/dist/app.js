@@ -8,6 +8,98 @@ const API_BASE = (window.location.protocol === 'file:' || !window.location.host)
     : '/api';
 const POLL_INTERVAL = 3000;
 
+// Universal SQLite Settings & Unsettings Persistence Bridge (/api/settings/ui)
+(function initOshoosiSqliteSettingsBridge() {
+    if (window.__oshoosiSqliteBridgeInstalled) return;
+    window.__oshoosiSqliteBridgeInstalled = true;
+    let isHydratingFromDb = false;
+    const rawSetItem = Storage.prototype.setItem;
+    const rawRemoveItem = Storage.prototype.removeItem;
+
+    function shouldSyncSettingKey(key) {
+        if (!key || typeof key !== 'string') return false;
+        if (key.includes('token') || key.includes('session') || key.includes('auth')) return false;
+        return key.startsWith('oshoosi_') || key.startsWith('osoosi_') || key.startsWith('ui_') || key.startsWith('dlp_') || key.startsWith('har_') || key.startsWith('research_');
+    }
+
+    window.persistUiSettingToDb = function(key, value) {
+        if (!key || isHydratingFromDb) return;
+        try {
+            fetch(`${API_BASE}/settings/ui`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: String(key), value: value === undefined ? null : value })
+            }).catch(() => {});
+        } catch (_) {}
+    };
+
+    window.unsetUiSettingInDb = function(key) {
+        if (!key || isHydratingFromDb) return;
+        try {
+            fetch(`${API_BASE}/settings/ui`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: String(key), unset: true })
+            }).catch(() => {});
+        } catch (_) {}
+    };
+
+    Storage.prototype.setItem = function(key, value) {
+        rawSetItem.call(this, key, value);
+        if (this === window.localStorage && !isHydratingFromDb && shouldSyncSettingKey(key)) {
+            window.persistUiSettingToDb(key, String(value));
+        }
+    };
+
+    Storage.prototype.removeItem = function(key) {
+        rawRemoveItem.call(this, key);
+        if (this === window.localStorage && !isHydratingFromDb && shouldSyncSettingKey(key)) {
+            window.unsetUiSettingInDb(key);
+        }
+    };
+
+    window.hydrateUiSettingsFromSqlite = async function() {
+        try {
+            const resp = await fetch(`${API_BASE}/settings/ui`);
+            if (!resp.ok) return;
+            const data = await resp.json();
+            const settings = (data && data.settings && typeof data.settings === 'object') ? data.settings : {};
+            isHydratingFromDb = true;
+            try {
+                for (const [k, v] of Object.entries(settings)) {
+                    if (!shouldSyncSettingKey(k)) continue;
+                    if (v === null || v === undefined) {
+                        rawRemoveItem.call(window.localStorage, k);
+                    } else if (typeof v === 'string') {
+                        rawSetItem.call(window.localStorage, k, v);
+                    } else {
+                        rawSetItem.call(window.localStorage, k, JSON.stringify(v));
+                    }
+                }
+            } finally {
+                isHydratingFromDb = false;
+            }
+            if (typeof state !== 'undefined' && state) {
+                try {
+                    const cp = JSON.parse(window.localStorage.getItem('oshoosi_collapsed_panels_v1') || '[]');
+                    if (Array.isArray(cp)) state.collapsedPanels = new Set(cp);
+                    const ec = JSON.parse(window.localStorage.getItem('oshoosi_collapsed_engine_cats_v1') || '[]');
+                    if (Array.isArray(ec)) state.collapsedEngineCategories = new Set(ec);
+                    const vc = JSON.parse(window.localStorage.getItem('oshoosi_collapsed_voter_cards_v1') || '[]');
+                    if (Array.isArray(vc)) state.collapsedVoterCards = new Set(vc);
+                    state.voterCardsCompactMode = window.localStorage.getItem('oshoosi_voter_compact_mode_v1') === 'true';
+                } catch (_) {}
+            }
+        } catch (_) {}
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => { window.hydrateUiSettingsFromSqlite(); });
+    } else {
+        setTimeout(() => { window.hydrateUiSettingsFromSqlite(); }, 10);
+    }
+})();
+
 const state = {
     uptime: '',
     node_id: '',

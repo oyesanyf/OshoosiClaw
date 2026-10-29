@@ -108,6 +108,51 @@ flowchart LR
 | **NASA JPL F Prime (`F'`) Flight-Software Backbone (`#fprime`)** | Decouples EDR pipeline via 4 flight-software primitives and Dual-Priority QoS Channels (`CriticalSecurityLane` QoS 0 vs. `BulkTelemetryLane` QoS 1); enforces zero-heap-allocation static arena pools (CWE-770 immunity) with 25% critical reserve, 25ms/100ms TPM 2.0 PCR 16 watchdog monitoring, and Ed25519 authenticated sequencer demotion with BFT quorum promotion. | WebUI: [`#overview`](#overview), [`#threats`](#threats)<br>API: `GET /api/supervisor/fprime`, `POST /api/supervisor/fprime/sequencer`<br>Crate: `crates/osoosi-core` |
 | **Cryptographic Audit Ledger & P2P Threat Mesh (with Connected Peers Count & P2P Disable Toggle)** | Secures every detection, config change, and audit event in a tamper-evident BLAKE3 Merkle tree; securely syncs threat indicators across peer nodes using ML-KEM-768 and privacy-preserving TFHE voter consensus. Surfaces live **Connected Peers Count** in the Top Header Bar, Sidebar, and `#mesh` view, and lets users **enable or disable Peer-to-Peer (P2P)** at runtime (`[wire] p2p_enabled = true/false` in `osoosi.toml`) to isolate the host in standalone local-only mode (`0` peers). | WebUI: [`#mesh`](#mesh), [`#zone`](#zone), [`#otel-map`](#otel-map)<br>API: `GET /api/mesh/p2p`, `POST /api/mesh/p2p`, `GET /api/mesh-stats` |
 | **Adaptive Concurrency & Zero-Lock Performance Engine (`#adaptive-performance`)** | Guarantees bounded heap memory under telemetry bursts via a 4096-slot queue with low-priority load shedding and zero high-priority drops; eliminates Tokio async lock starvation via `parking_lot::Mutex<System>`, decoupled Rayon snapshot training with sub-100ns atomic weight swapping, and zero-allocation thread-local scratch buffer YARA-X evaluation. | WebUI: [`#overview`](#overview), [`#threats`](#threats)<br>Crate: `crates/osoosi-core` |
+| **Autonomous 4-Arm Research Swarm & Code-Backed Paper Prioritization (`#research-swarm`)** | 4-Arm LangGraph StateGraph (Arm 1: arXiv & GitHub/GitLab Code-Repo Discovery, Arm 2: Character-Span LangExtract Grounding, Arm 3: Live EDR Probe against `BreakoutDefenseCoordinator`, Arm 4: EDR Calibrator & 64-Rule Capacity Cap). Prioritizes papers with runnable code repositories (`has_code_repo = true`, `+15..+25` relevance/novelty boost & 64-rule tie-breaker) and persists all enforced rules, cleared/removed state (`research_registry_meta`), and scheduled cadences in SQLite. | WebUI: [`#research-swarm`](#research-swarm)<br>API: `GET /api/research/status`, `POST /api/research/ingest`, `POST /api/research/clear`, `POST /api/research/schedule`<br>Crate: `crates/osoosi-agent-anomaly`, `crates/osoosi-dashboard` |
+| **CI/CD Supply-Chain & Workflow Guard Protection (`#cicd-protection`)** | Protects build/release pipelines with 6 Supply-Chain Gates, 6-Scenario Pipeline Breakout Gauntlet, 8 Runtime Breakout Vector Gates, 15-Vector Agent/EDR Verification Suite, 4-Pillar Hybrid CVE Exploitability Engine (`NVD + CISA KEV + OSV/RustSec Cargo.lock + REA/OpenJEV`), Witness DSSE `.intoto.jsonl` SLSA v1.0 provenance, and OPA Rego policies. | WebUI: [`#cicd-protection`](#cicd-protection)<br>API: `GET /api/cicd-protection/status`, `POST /api/cicd-protection/toggle`, `POST /api/cicd-protection/verify`, `GET /api/cve/hybrid`<br>Crate: `crates/osoosi-dashboard::routes::workflow_guard` |
+| **Universal SQLite Persistence for All UI Settings & Unsettings (`#sqlite-settings-persistence`)** | Persists every WebUI setting, toggle, mode, schedule, rule, and **unsetting** (`false`, cleared, disabled, removed) to `database/osoosi.db` (`ui_settings_kv`, `research_registry_meta`, `research_schedule_config`) so operator configurations survive browser reloads and daemon restarts without default re-seeding overwrites. | WebUI: All views<br>API: `GET/POST/DELETE /api/settings/ui`, `POST /api/settings/autonomy`, `POST /api/dlp/policy`, `POST /api/cicd-protection/toggle`, `POST /api/research/clear` |
+| **4-Vertical Awesome Lists Traction Automation (`scripts/submit_awesome_lists.py`)** | Automates tailored Markdown entry generation, README section matching, fork provisioning, and Pull Request submission across 20 curated Awesome Lists spanning Direct EDR & Detection Engineering, Blue Team/DFIR/Forensics/REA, Rust & eBPF Systems Directories, and YARA/Agentic AI Security. | CLI: `python scripts/submit_awesome_lists.py --list`<br>Docs: [`docs/AWESOME_LISTS_SUBMISSION_STRATEGY.md`](docs/AWESOME_LISTS_SUBMISSION_STRATEGY.md) |
+
+---
+
+<a id="research-swarm-and-cicd-protection"></a>
+## 🔬 Autonomous 4-Arm Research Swarm & CI/CD Supply-Chain Protection
+
+OshoosiClaw unifies **autonomous frontier security research ingestion** with **fail-closed CI/CD supply-chain enforcement** and **universal SQLite settings persistence**:
+
+```mermaid
+flowchart LR
+    subgraph ResearchSwarm["4-Arm Autonomous Research Swarm (arXiv + LangExtract)"]
+        A1["Arm 1: arXiv & Code-Repo Discovery<br/>(+15..+25 Boost for GitHub/GitLab PoCs)"] --> A2["Arm 2: LangExtract Grounding<br/>(Character-Span Indicators & Cedar)"]
+        A2 --> A3["Arm 3: EDR Live Probe<br/>(Reproducible Payload vs. BreakoutDefenseCoordinator)"]
+        A3 --> A4["Arm 4: EDR Calibrator<br/>(64-Rule Cap & Code-Backed Tie-Breaker)"]
+    end
+
+    subgraph CICDGuard["CI/CD Supply-Chain & Workflow Guard"]
+        C1["6 Supply-Chain Protections<br/>(Stage Separation, PR Vault Lock, build.rs AST)"] --> C2["6-Scenario Pipeline Breakout Gauntlet<br/>& 15-Vector Agent/EDR Suite"]
+        C2 --> C3["4-Pillar Hybrid CVE Engine<br/>(NVD + CISA KEV + OSV/Cargo.lock + REA/OpenJEV)"]
+        C3 --> C4["SLSA v1.0 DSSE (.intoto.jsonl)<br/>+ Witness + OPA Rego Release Gate"]
+    end
+
+    subgraph SQLiteStore["Universal SQLite Persistence (database/osoosi.db)"]
+        S1["enforced_research_rules &<br/>research_registry_meta (Clear/Remove State)"]
+        S2["ui_settings_kv (Autonomy, DLP,<br/>CI/CD Toggles, UI Settings & Unsettings)"]
+    end
+
+    A4 --> S1
+    C4 --> S2
+```
+
+### 1. Code-Backed Paper Prioritization in the Research Swarm (`#research-swarm`)
+- **Concrete, Non-Theoretical Payloads (Arm 3 — EDR Live Probe)**: Papers with public code repositories (`github.com/...`, `gitlab.com/...`, or official benchmark suites like UK AISI's `SandboxEscapeBench` in `arXiv:2603.02277v3`) provide real command sequences, syscall patterns, container mount flags, and prompt payloads for `execute_live_regression_probe`.
+- **Priority Scoring Boost (`+15` to `+25` points)**: During weekly or on-demand autonomous discovery, verified code-backed papers (`has_code_repo = true`) receive a deterministic priority boost in `novelty_delta_score` and `relevance_score`, ranking ahead of text-only preprints.
+- **64-Rule Capacity Tie-Breaker (`MAX_ACTIVE_RESEARCH_RULES = 64`)**: When active research rules reach the 64-rule cap, code-backed rules (`has_code_repo = true`) automatically take precedence over theoretical-only rules.
+- **Persistent Clear & Remove State (`research_registry_meta`)**: Clicking **Clear Research & Code** (`POST /api/research/clear`) or removing an individual rule (`POST /api/research/remove`) records the cleared state in SQLite `research_registry_meta` so cleared rules are never re-seeded on daemon restart unless explicitly restored via `POST /api/research/restore-defaults`.
+
+### 2. CI/CD Supply-Chain & Workflow Guard Protection (`#cicd-protection`)
+- **6 Supply-Chain Protections & 6-Scenario Pipeline Breakout Gauntlet**: Enforces Cedar pipeline stage separation (`build` vs. `publish`), untrusted fork PR secret isolation (`Crown-Jewel 4 KB Merkle Guard`), `Cargo.lock` & `build.rs` AST inspection (blocking IMDS `169.254.169.254` and `SAM` access during builds), 4-Tuple cryptographic artifact + SLSA v1.0 `.intoto.jsonl` digest matching, L1–L5 release authority separation (forbidding agent self-approval), and recursive Base64/Hex/URL DLP unwrapping on runner egress.
+- **4-Pillar Hybrid CVE Exploitability Engine (`GET /api/cve/hybrid`)**: Combines NIST NVD version-pinned CPE lookup, disambiguated CISA KEV correlation, OSV/RustSec `Cargo.lock` SCA, and `AutonomousReaEngine` + `OpenJEV` symbol reachability to suppress ghost version false positives while blocking confirmed reachable exploits (`CVE-2024-3094`, `CVE-2021-44228`).
+- **Single Canonical Release Artifact Per OS**: Every release publishes exactly one canonical, signed artifact per OS/format (`OshoosiClaw.msi` for Windows, `oshoosiclaw_1.2.0_amd64.deb`, `oshoosiclaw-1.2.0-1.x86_64.rpm`, and `oshoosiclaw-1.2.0-linux-x86_64.tar.gz` for Linux, and `oshoosiclaw-1.2.0-macos-universal.tar.gz` for macOS) accompanied by `.asc`, `.sig`, `SHA256SUMS.txt`, and `witness-sdlc-bundle.intoto.jsonl`.
 
 ---
 
