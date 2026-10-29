@@ -2812,6 +2812,7 @@ mod tests {
             .any(|v| v.contains("[ArXiv-Active-Defense:2603.02277]")));
 
         // Verify Human-in-the-Loop Approval Gate: require_user_approval = Some(true)
+        osoosi_agent_anomaly::breakout_defense::reset_research_defense_registry();
         let approval_req = LangGraphSwarmRequest {
             arxiv_id: Some("2608.77777".to_string()),
             title: Some("HITL Approval Gate Test Paper".to_string()),
@@ -2845,17 +2846,6 @@ mod tests {
             "sandbox_exec",
             "benign check hitl_approval_gated_marker_555",
             Some("/workspace"),
-        );
-        eprintln!(
-            "DEBUG pre_eval vectors: {:?}",
-            pre_eval.technical.detected_vectors
-        );
-        eprintln!(
-            "DEBUG list_ingested_research_rules: {:?}",
-            osoosi_agent_anomaly::list_ingested_research_rules()
-                .iter()
-                .map(|r| (&r.rule_id, &r.arxiv_id, &r.indicator_pattern))
-                .collect::<Vec<_>>()
         );
         assert!(
             !pre_eval
