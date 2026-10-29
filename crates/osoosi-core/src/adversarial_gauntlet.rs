@@ -1309,21 +1309,17 @@ impl AdversarialRedTeamGauntlet {
             let sync = crate::mitre::AutonomousMitreSynchronizer::new(std::sync::Arc::new(
                 tokio::sync::Mutex::new(None),
             ));
-            let rt_res = tokio::runtime::Handle::try_current();
-            let telem_res = match rt_res {
-                Ok(handle) => tokio::task::block_in_place(|| {
-                    handle.block_on(sync.trigger_autonomous_stix_atlas_refresh())
-                }),
-                Err(_) => {
-                    match tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                    {
-                        Ok(rt) => rt.block_on(sync.trigger_autonomous_stix_atlas_refresh()),
-                        Err(e) => Err(anyhow::anyhow!("Tokio runtime creation error: {}", e)),
-                    }
+            let telem_res = std::thread::spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt.block_on(sync.trigger_autonomous_stix_atlas_refresh()),
+                    Err(e) => Err(anyhow::anyhow!("Tokio runtime creation error: {}", e)),
                 }
-            };
+            })
+            .join()
+            .unwrap_or_else(|e| Err(anyhow::anyhow!("Worker thread join error: {:?}", e)));
 
             let (stix_ok, total_tech, atlas_ai) = match telem_res {
                 Ok(t) => (

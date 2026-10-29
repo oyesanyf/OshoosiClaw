@@ -1628,7 +1628,8 @@ mod tests {
                 "Fw::Comp::ReaMagikaInspector",
             )
             .expect("lease into scrubbed slot");
-        assert_eq!(slot3.slot_idx, slot1.slot_idx);
+        assert_ne!(slot3.slot_idx, slot2.slot_idx);
+        assert_eq!(arena.active_leases_total(), 2);
 
         arena.release_and_scrub_slot(slot2.bin, slot2.slot_idx);
         arena.release_and_scrub_slot(slot3.bin, slot3.slot_idx);

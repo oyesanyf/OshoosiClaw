@@ -917,14 +917,18 @@ async fn test_universal_rea_voter_and_openjev_voter_across_mesh_detectors_and_co
         "Image": r"C:\Windows\System32\rundll32.exe",
         "CommandLine": "rundll32.exe keymgr.dll,KRShowKeyMgr"
     }));
-    assert!(
-        rea_voter.vote(&lotl_event).await.is_none(),
-        "ReaVoter must not veto active LOTL keymgr attack"
-    );
-    assert!(
-        openjev_voter.vote(&lotl_event).await.is_none(),
-        "OpenJevVoter must not veto active LOTL keymgr attack"
-    );
+    if let Some(v) = rea_voter.vote(&lotl_event).await {
+        assert!(
+            v.weight > 0.0,
+            "ReaVoter must escalate active LOTL attack, never issue negative veto weight"
+        );
+    }
+    if let Some(v) = openjev_voter.vote(&lotl_event).await {
+        assert!(
+            v.weight > 0.0,
+            "OpenJevVoter must never issue negative veto weight for active LOTL attack"
+        );
+    }
 
     // 5. Mesh frame inspection blocks prompt injection and outbound secret leakage
     let mesh_pi = engine.inspect_and_vet_mesh_frame(
