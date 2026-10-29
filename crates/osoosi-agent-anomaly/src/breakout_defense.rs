@@ -1039,6 +1039,10 @@ pub struct IngestedResearchDefenseRule {
     pub accuracy_score: f64,
     #[serde(default)]
     pub arxiv_url: String,
+    #[serde(default)]
+    pub has_code_repo: bool,
+    #[serde(default)]
+    pub code_repo_url: String,
 }
 
 impl Default for IngestedResearchDefenseRule {
@@ -1057,6 +1061,8 @@ impl Default for IngestedResearchDefenseRule {
             relevance_score: default_relevance_score(),
             accuracy_score: default_accuracy_score(),
             arxiv_url: String::new(),
+            has_code_repo: false,
+            code_repo_url: String::new(),
         }
     }
 }
@@ -1120,9 +1126,42 @@ pub fn canonical_research_rule_id(arxiv_id: &str) -> String {
     format!("ARXIV-DEF-{}", base)
 }
 
+/// Minimum arXiv YY year allowed for frontier research ingestion (26 = 2026).
+pub const MIN_CURRENT_RESEARCH_ARXIV_YY: u32 = 26;
+
+/// Parses the 4-digit YYMM prefix of an arXiv ID into (year, month).
+pub fn parse_arxiv_year_month(arxiv_id: &str) -> Option<(u32, u32)> {
+    let base = normalize_base_arxiv_id(arxiv_id);
+    let dot_pos = base.find('.')?;
+    let yymm = &base[..dot_pos];
+    if yymm.len() == 4 && yymm.chars().all(|c| c.is_ascii_digit()) {
+        let yy: u32 = yymm[..2].parse().ok()?;
+        let mm: u32 = yymm[2..].parse().ok()?;
+        if (1..=12).contains(&mm) {
+            return Some((2000 + yy, mm));
+        }
+    }
+    None
+}
+
+/// Returns true if an arXiv paper is current frontier research (2026+, YY >= 26).
+pub fn is_current_research_arxiv_id(arxiv_id: &str) -> bool {
+    if let Some((year, _)) = parse_arxiv_year_month(arxiv_id) {
+        year >= 2000 + MIN_CURRENT_RESEARCH_ARXIV_YY
+    } else {
+        let base = normalize_base_arxiv_id(arxiv_id);
+        if base.len() >= 2 {
+            if let Ok(yy) = base[..2].parse::<u32>() {
+                return yy >= MIN_CURRENT_RESEARCH_ARXIV_YY;
+            }
+        }
+        false
+    }
+}
+
 /// Deterministic 3-Gate Research Acceptance Validator.
 /// Evaluates whether an ingested research rule is acceptable into live EDR enforcement:
-/// - Gate 1: Not Novel (`RejectedNotNovel`): checks known implemented baseline papers, non-positive novelty delta score, or already enrolled identical rules.
+/// - Gate 1: Not Novel (`RejectedNotNovel` / `RejectedOutdatedResearch`): checks recency (2026+), known implemented baseline papers, non-positive novelty delta score, or already enrolled identical rules.
 /// - Gate 2: Redundant (`RejectedRedundant`): checks coverage of (arxiv_id, target_boundary), overlapping indicator patterns, or single built-in static tokens.
 /// - Gate 3: Conflicts with Existing Protection (`RejectedConflictsWithExistingProtection`): verifies Cedar forbid policy and ensures pattern is >= 6 chars and does not conflict with core system binaries or Ollama allowlist.
 pub fn validate_research_rule_acceptance(
@@ -1134,6 +1173,18 @@ pub fn validate_research_rule_acceptance(
     let base_id = normalize_base_arxiv_id(&rule.arxiv_id);
     let pat = rule.indicator_pattern.trim();
     let pat_lc = pat.to_ascii_lowercase();
+
+    // Recency check: must be current 2026+ frontier research only
+    if !is_current_research_arxiv_id(&rule.arxiv_id) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedOutdatedResearch".to_string()),
+            rejection_reason: Some(format!(
+                "Outdated research rejected: arXiv:{} is from prior years; only current 2026+ frontier security research (26XX.NNNNN) is accepted",
+                rule.arxiv_id
+            )),
+        };
+    }
 
     // Gate 3: Conflicts with Existing Protection (Fail-closed safety first)
     if rule.cedar_forbid_policy.contains("permit(") || !rule.cedar_forbid_policy.contains("forbid(")
@@ -1271,6 +1322,8 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             relevance_score: 98.5,
             accuracy_score: 99.4,
             arxiv_url: "https://arxiv.org/abs/2603.02277".to_string(),
+            has_code_repo: true,
+            code_repo_url: "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2604.20496".to_string(),
@@ -1288,6 +1341,8 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             relevance_score: 97.2,
             accuracy_score: 99.1,
             arxiv_url: "https://arxiv.org/abs/2604.20496".to_string(),
+            has_code_repo: true,
+            code_repo_url: "https://github.com/cedar-policy/cedar-spec".to_string(),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2610.20437".to_string(),
@@ -1305,6 +1360,8 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             relevance_score: 99.0,
             accuracy_score: 99.6,
             arxiv_url: "https://arxiv.org/abs/2610.20437".to_string(),
+            has_code_repo: true,
+            code_repo_url: "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string(),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2601.11893".to_string(),
@@ -1322,6 +1379,8 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             relevance_score: 96.8,
             accuracy_score: 98.9,
             arxiv_url: "https://arxiv.org/abs/2601.11893".to_string(),
+            has_code_repo: true,
+            code_repo_url: "https://github.com/oshoosiclaw/mac-agent-bench".to_string(),
         },
     ];
 
@@ -1450,7 +1509,9 @@ pub fn init_research_rules_sqlite() {
         enrolled_at_utc TEXT NOT NULL,
         relevance_score REAL NOT NULL DEFAULT 96.0,
         accuracy_score REAL NOT NULL DEFAULT 99.0,
-        arxiv_url TEXT NOT NULL DEFAULT ''
+        arxiv_url TEXT NOT NULL DEFAULT '',
+        has_code_repo INTEGER NOT NULL DEFAULT 0,
+        code_repo_url TEXT NOT NULL DEFAULT ''
     );
     DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');";
 
@@ -1463,6 +1524,8 @@ pub fn init_research_rules_sqlite() {
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN relevance_score REAL NOT NULL DEFAULT 96.0;", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN accuracy_score REAL NOT NULL DEFAULT 99.0;", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN arxiv_url TEXT NOT NULL DEFAULT '';", []);
+            let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN has_code_repo INTEGER NOT NULL DEFAULT 0;", []);
+            let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN code_repo_url TEXT NOT NULL DEFAULT '';", []);
         }
     }
 }
@@ -1497,8 +1560,8 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
     let sql = "INSERT INTO enforced_research_rules (
         rule_id, base_arxiv_id, arxiv_id, title, attack_vector, target_boundary,
         extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc,
-        relevance_score, accuracy_score, arxiv_url
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+        relevance_score, accuracy_score, arxiv_url, has_code_repo, code_repo_url
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
     ON CONFLICT(base_arxiv_id) DO UPDATE SET
         rule_id = excluded.rule_id,
         arxiv_id = excluded.arxiv_id,
@@ -1512,7 +1575,9 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
         enrolled_at_utc = excluded.enrolled_at_utc,
         relevance_score = excluded.relevance_score,
         accuracy_score = excluded.accuracy_score,
-        arxiv_url = excluded.arxiv_url;";
+        arxiv_url = excluded.arxiv_url,
+        has_code_repo = excluded.has_code_repo,
+        code_repo_url = excluded.code_repo_url;";
 
     for db_path in RESEARCH_DB_PATHS {
         if let Some(parent) = std::path::Path::new(db_path).parent() {
@@ -1536,6 +1601,8 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
                     relevance,
                     accuracy,
                     safe_url,
+                    if rule.has_code_repo { 1 } else { 0 },
+                    &rule.code_repo_url,
                 ],
             );
         }
@@ -1556,7 +1623,7 @@ pub fn load_research_rules_sqlite() -> Vec<IngestedResearchDefenseRule> {
             db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         ) {
-            let mut stmt = match conn.prepare("SELECT rule_id, arxiv_id, title, attack_vector, target_boundary, extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc, COALESCE(relevance_score, 96.0), COALESCE(accuracy_score, 99.0), COALESCE(arxiv_url, '') FROM enforced_research_rules") {
+            let mut stmt = match conn.prepare("SELECT rule_id, arxiv_id, title, attack_vector, target_boundary, extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc, COALESCE(relevance_score, 96.0), COALESCE(accuracy_score, 99.0), COALESCE(arxiv_url, ''), COALESCE(has_code_repo, 0), COALESCE(code_repo_url, '') FROM enforced_research_rules") {
                 Ok(s) => s,
                 Err(_) => continue,
             };
@@ -1575,6 +1642,8 @@ pub fn load_research_rules_sqlite() -> Vec<IngestedResearchDefenseRule> {
                     relevance_score: row.get::<_, f64>(10).unwrap_or(96.0),
                     accuracy_score: row.get::<_, f64>(11).unwrap_or(99.0),
                     arxiv_url: row.get::<_, String>(12).unwrap_or_default(),
+                    has_code_repo: row.get::<_, i64>(13).unwrap_or(0) != 0,
+                    code_repo_url: row.get::<_, String>(14).unwrap_or_default(),
                 })
             });
             if let Ok(mapped) = rows {
@@ -1606,6 +1675,13 @@ fn research_defense_registry() -> &'static RwLock<Vec<IngestedResearchDefenseRul
 /// persists to SQLite `enforced_research_rules` table with UNIQUE constraint on base_arxiv_id,
 /// persists the updated registry to `config/ingested_research_defenses.json`, and returns the total active rule count.
 pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) -> usize {
+    if !is_current_research_arxiv_id(&rule.arxiv_id) {
+        tracing::warn!(
+            "Rejecting outdated research arXiv:{} from registration (must be 2026+)",
+            rule.arxiv_id
+        );
+        return list_ingested_research_rules().len();
+    }
     let item_base = normalize_base_arxiv_id(&rule.arxiv_id);
     let canonical_id = canonical_research_rule_id(&rule.arxiv_id);
     rule.rule_id = canonical_id.clone();
@@ -1629,11 +1705,51 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
         }) {
             *existing = rule.clone();
         } else {
-            // Capacity bound: max 64 rules. Preserve pinned baseline 0..4
+            // Capacity bound: max 64 rules. Preserve pinned baseline 0..4.
+            // Tie-breaker: If at capacity and candidate is code-backed (rule.has_code_repo == true),
+            // evict the lowest-relevance theoretical rule (!r.has_code_repo) from memory and SQLite.
+            // Otherwise, evict the oldest dynamic rule (index 4).
             if guard.len() >= MAX_ACTIVE_RESEARCH_RULES && guard.len() > 4 {
-                guard.remove(4); // evict oldest dynamic rule
+                let evicted_rule: IngestedResearchDefenseRule = if rule.has_code_repo {
+                    let mut lowest_idx = None;
+                    let mut lowest_rel = f64::MAX;
+                    for (idx, r) in guard.iter().enumerate().skip(4) {
+                        if !r.has_code_repo && r.relevance_score < lowest_rel {
+                            lowest_rel = r.relevance_score;
+                            lowest_idx = Some(idx);
+                        }
+                    }
+                    if let Some(idx) = lowest_idx {
+                        guard.remove(idx)
+                    } else {
+                        guard.remove(4)
+                    }
+                } else {
+                    guard.remove(4)
+                };
+
+                let ev_base = normalize_base_arxiv_id(&evicted_rule.arxiv_id);
+                let ev_sql = "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR base_arxiv_id = ?2;";
+                for db_path in RESEARCH_DB_PATHS {
+                    if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                        let _ = conn.execute(ev_sql, rusqlite::params![evicted_rule.rule_id, ev_base]);
+                    }
+                }
             }
             guard.push(rule.clone());
+        }
+
+        // Sort dynamic rules (index >= 4) so code-backed rules rank ahead
+        if guard.len() > 4 {
+            guard[4..].sort_by(|a, b| {
+                b.has_code_repo
+                    .cmp(&a.has_code_repo)
+                    .then_with(|| {
+                        b.relevance_score
+                            .partial_cmp(&a.relevance_score)
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+            });
         }
         guard.clone()
     };
@@ -2836,6 +2952,98 @@ mod tests {
     }
 
     #[test]
+    fn test_code_backed_priority_and_capacity_tie_breaker() {
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        reset_research_defense_registry();
+
+        // Verify seeded rules have verified code repos
+        let seeded = list_ingested_research_rules();
+        assert_eq!(seeded.len(), 4);
+        for r in &seeded {
+            assert!(r.has_code_repo, "Seeded rule {} must be code-backed", r.rule_id);
+            assert!(
+                r.code_repo_url.starts_with("https://github.com/"),
+                "Seeded rule {} repo url must be GitHub",
+                r.rule_id
+            );
+        }
+
+        // Fill dynamic slots up to 64 with theoretical rules of varying relevance
+        for i in 0..60 {
+            let rel = 50.0 + (i as f64) * 0.5; // 50.0 to 79.5
+            let rule = IngestedResearchDefenseRule {
+                rule_id: format!("ARXIV-DEF-2688.{:05}", i),
+                arxiv_id: format!("2688.{:05}v1", i),
+                title: format!("Theoretical Paper {}", i),
+                attack_vector: format!("Theoretical Vector {}", i),
+                target_boundary: "container_runtime_privilege".to_string(),
+                extraction_class: "breakout_vector".to_string(),
+                indicator_pattern: format!("theoretical_pattern_{:05}", i),
+                cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+                target_crate: "osoosi-agent-anomaly".to_string(),
+                enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+                relevance_score: rel,
+                has_code_repo: false,
+                code_repo_url: String::new(),
+                ..Default::default()
+            };
+            register_ingested_research_rule(rule);
+        }
+
+        let at_capacity = list_ingested_research_rules();
+        assert_eq!(at_capacity.len(), MAX_ACTIVE_RESEARCH_RULES);
+
+        // Register a high-priority code-backed paper
+        let code_backed_new = IngestedResearchDefenseRule {
+            rule_id: "ARXIV-DEF-2699.77777".to_string(),
+            arxiv_id: "2699.77777v1".to_string(),
+            title: "Frontier Code-Backed Benchmark Paper".to_string(),
+            attack_vector: "Verified Code PoC Breakout".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "code_backed_poc_indicator_77777".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+            relevance_score: 95.0,
+            has_code_repo: true,
+            code_repo_url: "https://github.com/frontier-sec/poc-bench".to_string(),
+            ..Default::default()
+        };
+
+        let new_count = register_ingested_research_rule(code_backed_new);
+        assert_eq!(new_count, MAX_ACTIVE_RESEARCH_RULES);
+
+        let final_rules = list_ingested_research_rules();
+        assert_eq!(final_rules.len(), MAX_ACTIVE_RESEARCH_RULES);
+
+        // Verify the code-backed paper is present and sorted ahead of theoretical dynamic papers
+        assert!(final_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2699.77777"));
+        // The lowest relevance theoretical rule (relevance 50.0, arXiv:2688.00000) must have been evicted
+        assert!(
+            !final_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2688.00000"),
+            "Lowest relevance theoretical rule must be evicted by code-backed tie breaker"
+        );
+
+        // In dynamic slice (index >= 4), code-backed rules must precede theoretical rules
+        let dynamic_slice = &final_rules[4..];
+        let mut seen_theoretical = false;
+        for r in dynamic_slice {
+            if !r.has_code_repo {
+                seen_theoretical = true;
+            } else {
+                assert!(
+                    !seen_theoretical,
+                    "Code-backed rule {} must not appear after theoretical rules",
+                    r.rule_id
+                );
+            }
+        }
+
+        reset_research_defense_registry();
+    }
+
+    #[test]
     fn test_sqlite_enforced_research_rules_unique_constraint() {
         let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
         let ddl = "CREATE TABLE IF NOT EXISTS enforced_research_rules (
@@ -2959,5 +3167,41 @@ mod tests {
             )
             .unwrap();
         assert_eq!(updated_title, "Updated SandboxEscapeBench");
+    }
+
+    #[test]
+    fn test_current_research_recency_gate() {
+        assert!(is_current_research_arxiv_id("2603.02277v3"));
+        assert!(is_current_research_arxiv_id("2610.20437"));
+        assert!(is_current_research_arxiv_id("arXiv:2604.20496v1"));
+        assert!(!is_current_research_arxiv_id("2403.02277v1"));
+        assert!(!is_current_research_arxiv_id("2310.12345"));
+        assert!(!is_current_research_arxiv_id("arXiv:2512.99999"));
+
+        let outdated_rule = IngestedResearchDefenseRule {
+            rule_id: "test_outdated".to_string(),
+            arxiv_id: "2403.02277v1".to_string(),
+            title: "Outdated 2024 Paper".to_string(),
+            attack_vector: "Ancient vector".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "ancient_outdated_pattern_2024".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+            ..Default::default()
+        };
+
+        let verdict = validate_research_rule_acceptance(&outdated_rule, Some(95.0), &[], false);
+        assert!(!verdict.accepted);
+        assert_eq!(
+            verdict.rejection_code.as_deref(),
+            Some("RejectedOutdatedResearch")
+        );
+        assert!(verdict
+            .rejection_reason
+            .as_deref()
+            .unwrap()
+            .contains("prior years"));
     }
 }

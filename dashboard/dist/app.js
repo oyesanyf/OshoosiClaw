@@ -13140,12 +13140,35 @@ function buildSafeArxivUrl(arxivId, type = 'abs') {
 }
 window.buildSafeArxivUrl = buildSafeArxivUrl;
 
+/**
+ * Builds a secure, strictly validated public code repository URL (GitHub/GitLab).
+ */
+function buildSafeRepoUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    const clean = url.trim();
+    const repoRegex = /^https:\/\/(github\.com|gitlab\.com)\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\/)?$/i;
+    if (!repoRegex.test(clean)) return '';
+    return clean;
+}
+window.buildSafeRepoUrl = buildSafeRepoUrl;
+
 window._researchSwarmState = {
     total_ingested: 4,
     active_rules_count: 4,
     conformal_sources_k: 11,
     coverage_ratio: 1.0,
     pending_approvals: [],
+    research_schedule: {
+        enabled: true,
+        cadence: 'weekly',
+        interval_secs: 604800,
+        custom_interval_hours: 168,
+        cron_expression: '0 2 * * 0',
+        last_run_utc: null,
+        next_run_utc: null,
+        current_research_only: true,
+        min_publication_year: 2026
+    },
     active_enforced_research_rules: [
         {
             rule_id: 'ARXIV-DEF-2603.02277',
@@ -13158,6 +13181,8 @@ window._researchSwarmState = {
             relevance_score: 98.5,
             accuracy_score: 99.4,
             arxiv_url: 'https://arxiv.org/abs/2603.02277',
+            has_code_repo: true,
+            code_repo_url: 'https://github.com/UKGovernmentBEIS/inspect_evals',
             status: 'ENFORCED IN BREAKOUT COORDINATOR'
         },
         {
@@ -13171,6 +13196,8 @@ window._researchSwarmState = {
             relevance_score: 97.2,
             accuracy_score: 99.1,
             arxiv_url: 'https://arxiv.org/abs/2604.20496',
+            has_code_repo: true,
+            code_repo_url: 'https://github.com/cedar-policy/cedar-spec',
             status: 'ENFORCED IN BREAKOUT COORDINATOR'
         },
         {
@@ -13184,6 +13211,8 @@ window._researchSwarmState = {
             relevance_score: 99.0,
             accuracy_score: 99.6,
             arxiv_url: 'https://arxiv.org/abs/2610.20437',
+            has_code_repo: true,
+            code_repo_url: 'https://github.com/AlignmentResearch/rlhf-poisoning-benchmark',
             status: 'ENFORCED IN BREAKOUT COORDINATOR'
         },
         {
@@ -13197,6 +13226,8 @@ window._researchSwarmState = {
             relevance_score: 96.8,
             accuracy_score: 98.9,
             arxiv_url: 'https://arxiv.org/abs/2601.11893',
+            has_code_repo: true,
+            code_repo_url: 'https://github.com/oshoosiclaw/mac-agent-bench',
             status: 'ENFORCED IN BREAKOUT COORDINATOR'
         }
     ],
@@ -13281,10 +13312,73 @@ function renderResearchSwarmUI() {
             dedupedRules.push(r);
         }
     }
+    // Sort code-backed rules first, then by relevance descending
+    dedupedRules.sort((a, b) => {
+        const aCode = !!a.has_code_repo;
+        const bCode = !!b.has_code_repo;
+        if (aCode !== bCode) return aCode ? -1 : 1;
+        const aRel = typeof a.relevance_score === 'number' ? a.relevance_score : (parseFloat(a.relevance_score) || 0);
+        const bRel = typeof b.relevance_score === 'number' ? b.relevance_score : (parseFloat(b.relevance_score) || 0);
+        return bRel - aRel;
+    });
     st.active_enforced_research_rules = dedupedRules;
     st.active_rules_count = dedupedRules.length;
     const rules = dedupedRules;
-    const pending = Array.isArray(st.pending_approvals) ? st.pending_approvals : [];
+    const pending = Array.isArray(st.pending_approvals) ? [...st.pending_approvals] : [];
+    pending.sort((a, b) => {
+        const aCode = !!a.has_code_repo;
+        const bCode = !!b.has_code_repo;
+        if (aCode !== bCode) return aCode ? -1 : 1;
+        const aScore = typeof a.priority_score === 'number' ? a.priority_score : (parseFloat(a.priority_score) || 0);
+        const bScore = typeof b.priority_score === 'number' ? b.priority_score : (parseFloat(b.priority_score) || 0);
+        return bScore - aScore;
+    });
+
+    // Autonomous Research Scheduler & Recency Controls
+    const sched = st.research_schedule || {
+        enabled: true,
+        cadence: 'weekly',
+        interval_secs: 604800,
+        custom_interval_hours: 168,
+        cron_expression: '0 2 * * 0',
+        last_run_utc: null,
+        next_run_utc: null,
+        current_research_only: true,
+        min_publication_year: 2026
+    };
+    const schedEnabledEl = document.getElementById('research-schedule-enabled');
+    if (schedEnabledEl) schedEnabledEl.checked = sched.enabled !== false;
+
+    const schedCadenceEl = document.getElementById('research-schedule-cadence');
+    if (schedCadenceEl) schedCadenceEl.value = sched.cadence || 'weekly';
+
+    const schedCustomHoursEl = document.getElementById('research-schedule-custom-hours');
+    if (schedCustomHoursEl) schedCustomHoursEl.value = String(sched.custom_interval_hours || Math.round((sched.interval_secs || 604800) / 3600) || 168);
+
+    const schedCustomWrap = document.getElementById('research-schedule-custom-hours-wrap');
+    if (schedCustomWrap) schedCustomWrap.style.display = sched.cadence === 'custom' ? 'flex' : 'none';
+
+    const schedBadge = document.getElementById('research-schedule-status-badge');
+    if (schedBadge) {
+        if (sched.enabled === false) {
+            schedBadge.className = 'badge yellow';
+            schedBadge.innerText = 'PAUSED • AUTONOMOUS SCHEDULER DISABLED';
+        } else {
+            schedBadge.className = 'badge green';
+            const cadenceLabel = (sched.cadence || 'weekly').toUpperCase();
+            schedBadge.innerText = `ACTIVE • ${cadenceLabel} CADENCE`;
+        }
+    }
+
+    const schedLastRunEl = document.getElementById('research-schedule-last-run');
+    if (schedLastRunEl) {
+        schedLastRunEl.innerText = sched.last_run_utc ? new Date(sched.last_run_utc).toLocaleString() : 'Pending first cycle';
+    }
+
+    const schedNextRunEl = document.getElementById('research-schedule-next-run');
+    if (schedNextRunEl) {
+        schedNextRunEl.innerText = sched.next_run_utc ? new Date(sched.next_run_utc).toLocaleString() : 'Scheduled';
+    }
 
     // Summary stats
     const rulesCountEl = document.getElementById('research-stat-rules-count');
@@ -13348,10 +13442,17 @@ function renderResearchSwarmUI() {
                 const probeBlocked = item.blocked_by_edr !== false;
                 const cedarRule = item.proposed_cedar_rule || item.cedar_rule || `forbid(principal, action, resource) when { context.arxiv_id == "${arxivId}" };`;
                 const indicator = item.indicator_pattern || item.verbatim_quote || '';
+                const safeRepo = buildSafeRepoUrl(item.code_repo_url);
+                const codeBadge = item.has_code_repo ? `
+                    <div style="display: flex; align-items: center; gap: 4px; margin-top: 3px; flex-wrap: wrap;">
+                        <span class="badge purple" style="font-size: 8.5px; font-weight: 700; padding: 1px 5px; width: fit-content; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #d8b4fe;">⚡ CODE-BACKED (+20pt Priority)</span>
+                        ${safeRepo ? `<a href="${escapeHtml(safeRepo)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #c084fc; font-size: 10px; text-decoration: underline; font-family: monospace;">[💻 Code Repo ↗]</a>` : ''}
+                    </div>` : '';
                 return `
                     <tr style="border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(245, 158, 11, 0.05);">
                         <td style="padding: 10px;">
                             <div style="font-family: monospace; font-weight: 700; color: #38bdf8;">arXiv:${escapeHtml(arxivId)}</div>
+                            ${codeBadge}
                             <div style="font-size: 11.5px; color: #f8fafc; margin-top: 2px;">${escapeHtml(title)}</div>
                             <div style="font-size: 10.5px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">ID: ${escapeHtml(appId)}</div>
                         </td>
@@ -13484,14 +13585,22 @@ function renderResearchSwarmUI() {
             const accScore = accVal.toFixed(1);
             const ruleId = r.rule_id || (baseArxiv ? `ARXIV-DEF-${baseArxiv}` : 'ARXIV-DEF');
 
+            const safeRepo = buildSafeRepoUrl(r.code_repo_url);
+            const codeBadge = r.has_code_repo ? `
+                <span class="badge purple" style="font-size: 8.5px; font-weight: 700; padding: 1px 5px; width: fit-content; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #d8b4fe;">⚡ CODE-BACKED (+20pt Priority)</span>
+                ${safeRepo ? `<a href="${escapeHtml(safeRepo)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #c084fc; font-size: 10px; text-decoration: underline; font-family: monospace;">[💻 Code Repo ↗]</a>` : ''}
+            ` : '';
+
             const linkHtml = absUrl ? `
                 <div style="display: flex; flex-direction: column; gap: 3px;">
                     <a href="${escapeHtml(absUrl)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #38bdf8; text-decoration: underline; font-weight: 700; font-family: monospace; font-size: 11px; display: inline-flex; align-items: center; gap: 3px;">
                         arXiv:${escapeHtml(cleanArxiv)} ↗
                     </a>
                     ${pdfUrl ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #94a3b8; font-size: 10px; text-decoration: underline; display: inline-flex; align-items: center; gap: 2px;">[PDF ↗]</a>` : ''}
+                    <span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; margin-top: 2px; width: fit-content;">📅 2026+ (CURRENT)</span>
+                    ${codeBadge}
                 </div>
-            ` : `<span style="font-family: monospace; color: #38bdf8;">arXiv:${escapeHtml(cleanArxiv)}</span>`;
+            ` : `<div style="display: flex; flex-direction: column; gap: 3px;"><span style="font-family: monospace; color: #38bdf8;">arXiv:${escapeHtml(cleanArxiv)}</span><span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2026+ (CURRENT)</span>${codeBadge}</div>`;
 
             return `
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
@@ -13545,6 +13654,21 @@ window.loadResearchSwarmStatus = async function() {
                 }
                 if (data.last_swarm_report) {
                     st.last_swarm_report = data.last_swarm_report;
+                }
+                if (data.research_schedule) {
+                    st.research_schedule = data.research_schedule;
+                } else if (data.autonomous_weekly_schedule_enabled !== undefined) {
+                    st.research_schedule = {
+                        enabled: !!data.autonomous_weekly_schedule_enabled,
+                        cadence: data.autonomous_schedule_cadence || 'weekly',
+                        interval_secs: data.autonomous_schedule_interval_secs || 604800,
+                        custom_interval_hours: Math.round((data.autonomous_schedule_interval_secs || 604800) / 3600),
+                        cron_expression: data.autonomous_schedule_cron || '0 2 * * 0',
+                        last_run_utc: data.last_autonomous_run_utc || null,
+                        next_run_utc: data.next_autonomous_run_utc || null,
+                        current_research_only: true,
+                        min_publication_year: data.min_publication_year || 2026
+                    };
                 }
             }
         }
@@ -13840,6 +13964,8 @@ window.approveResearchItem = async function(approvalId) {
             relevance_score: typeof approvedItem.relevance_score === 'number' ? approvedItem.relevance_score : 96.0,
             accuracy_score: typeof approvedItem.accuracy_score === 'number' ? approvedItem.accuracy_score : 99.0,
             arxiv_url: approvedItem.arxiv_url || buildSafeArxivUrl(approvedItem.arxiv_id, 'abs'),
+            has_code_repo: !!approvedItem.has_code_repo,
+            code_repo_url: approvedItem.code_repo_url || '',
             status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
         };
 
@@ -13916,6 +14042,8 @@ window.approveAllResearchItems = async function() {
             relevance_score: typeof item.relevance_score === 'number' ? item.relevance_score : 96.0,
             accuracy_score: typeof item.accuracy_score === 'number' ? item.accuracy_score : 99.0,
             arxiv_url: item.arxiv_url || buildSafeArxivUrl(item.arxiv_id, 'abs'),
+            has_code_repo: !!item.has_code_repo,
+            code_repo_url: item.code_repo_url || '',
             status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
         };
 
@@ -14031,6 +14159,84 @@ window.removeSingleResearchRule = async function(targetId) {
     );
     st.active_rules_count = st.active_enforced_research_rules.length;
     renderResearchSwarmUI();
+};
+
+window.handleCadenceChange = function(val) {
+    const wrap = document.getElementById('research-schedule-custom-hours-wrap');
+    if (wrap) {
+        wrap.style.display = val === 'custom' ? 'flex' : 'none';
+    }
+};
+
+window.saveResearchSchedule = async function() {
+    const enabledEl = document.getElementById('research-schedule-enabled');
+    const cadenceEl = document.getElementById('research-schedule-cadence');
+    const customEl = document.getElementById('research-schedule-custom-hours');
+    const enabled = enabledEl ? !!enabledEl.checked : true;
+    const cadence = cadenceEl ? cadenceEl.value : 'weekly';
+    const customHours = customEl ? (parseInt(customEl.value, 10) || 168) : 168;
+
+    try {
+        const res = await fetch(`${API_BASE}/research/schedule`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                enabled,
+                cadence,
+                custom_interval_hours: customHours,
+                current_research_only: true
+            })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            if (data && data.schedule) {
+                window._researchSwarmState.research_schedule = data.schedule;
+            }
+            if (typeof showNotification === 'function') {
+                showNotification(`Autonomous research scheduler updated to ${cadence.toUpperCase()} cadence.`, 'success');
+            }
+            renderResearchSwarmUI();
+            return;
+        }
+    } catch (err) {
+        console.error('Failed to update research schedule:', err);
+    }
+    window._researchSwarmState.research_schedule = {
+        enabled,
+        cadence,
+        custom_interval_hours: customHours,
+        interval_secs: customHours * 3600,
+        current_research_only: true
+    };
+    renderResearchSwarmUI();
+    if (typeof showNotification === 'function') {
+        showNotification(`Autonomous research schedule saved (${cadence}).`, 'info');
+    }
+};
+
+window.triggerAutonomousResearchCycle = async function() {
+    if (typeof showNotification === 'function') {
+        showNotification('Triggering immediate autonomous research cycle (discovering 2026+ arXiv papers)...', 'info');
+    }
+    try {
+        const res = await fetch(`${API_BASE}/research/schedule`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ trigger_cycle_now: true })
+        });
+        if (res.ok) {
+            await window.loadResearchSwarmStatus();
+            if (typeof showNotification === 'function') {
+                showNotification('Autonomous research cycle completed successfully.', 'success');
+            }
+            return;
+        }
+    } catch (err) {
+        console.error('Failed to trigger autonomous research cycle:', err);
+    }
+    await window.searchArxivAndStageForApproval();
 };
 
 if (document.readyState === 'loading') {
