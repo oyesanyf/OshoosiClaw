@@ -812,8 +812,19 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
 
     for text in candidates {
         for word in text.split_whitespace() {
-            let clean = word.trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == '<' || c == '>' || c == '"' || c == '\'' || c == ',');
-            if clean.starts_with("https://github.com/") || clean.starts_with("https://gitlab.com/") {
+            let clean = word.trim_matches(|c: char| {
+                c == '('
+                    || c == ')'
+                    || c == '['
+                    || c == ']'
+                    || c == '<'
+                    || c == '>'
+                    || c == '"'
+                    || c == '\''
+                    || c == ','
+            });
+            if clean.starts_with("https://github.com/") || clean.starts_with("https://gitlab.com/")
+            {
                 return (true, clean.to_string());
             }
         }
@@ -822,10 +833,30 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
     if let Some(ref aid) = item.arxiv_id {
         let base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(aid);
         match base.as_str() {
-            "2603.02277" => return (true, "https://github.com/UKGovernmentBEIS/inspect_evals".to_string()),
-            "2604.20496" => return (true, "https://github.com/cedar-policy/cedar-spec".to_string()),
-            "2610.20437" => return (true, "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string()),
-            "2601.11893" => return (true, "https://github.com/oshoosiclaw/mac-agent-bench".to_string()),
+            "2603.02277" => {
+                return (
+                    true,
+                    "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
+                )
+            }
+            "2604.20496" => {
+                return (
+                    true,
+                    "https://github.com/cedar-policy/cedar-spec".to_string(),
+                )
+            }
+            "2610.20437" => {
+                return (
+                    true,
+                    "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string(),
+                )
+            }
+            "2601.11893" => {
+                return (
+                    true,
+                    "https://github.com/oshoosiclaw/mac-agent-bench".to_string(),
+                )
+            }
             _ => {}
         }
     }
@@ -1888,7 +1919,6 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
     }
 }
 
-
 pub const WEEKLY_RESEARCH_INTERVAL_SECS: u64 = 7 * 24 * 60 * 60; // 604,800s
 pub const WEEKLY_RESEARCH_CRON: &str = "0 2 * * 0";
 
@@ -1931,7 +1961,10 @@ pub fn resolve_interval_and_cron(cadence: &str, custom_hours: Option<u64>) -> (u
             let hours = custom_hours.unwrap_or(168).max(1);
             (hours * 3600, format!("custom: {}h", hours))
         }
-        _ => (WEEKLY_RESEARCH_INTERVAL_SECS, WEEKLY_RESEARCH_CRON.to_string()),
+        _ => (
+            WEEKLY_RESEARCH_INTERVAL_SECS,
+            WEEKLY_RESEARCH_CRON.to_string(),
+        ),
     }
 }
 
@@ -1956,7 +1989,10 @@ pub fn init_research_schedule_sqlite() {
         if let Ok(conn) = rusqlite::Connection::open(db_path) {
             let _ = conn.execute_batch(ddl);
             let _ = conn.execute("ALTER TABLE research_schedule_config ADD COLUMN cadence TEXT NOT NULL DEFAULT 'weekly';", []);
-            let _ = conn.execute("ALTER TABLE research_schedule_config ADD COLUMN custom_hours INTEGER;", []);
+            let _ = conn.execute(
+                "ALTER TABLE research_schedule_config ADD COLUMN custom_hours INTEGER;",
+                [],
+            );
         }
     }
 }
@@ -2167,7 +2203,10 @@ pub async fn post_research_schedule(
         let cfg_clone = guard.clone();
         tokio::task::spawn_blocking(|| {
             let _ = search_and_stage_research_for_approval(ResearchSearchRequest {
-                query: Some("2026 container sandbox escape RLHF privilege escalation prompt injection".to_string()),
+                query: Some(
+                    "2026 container sandbox escape RLHF privilege escalation prompt injection"
+                        .to_string(),
+                ),
                 arxiv_id: None,
                 require_user_approval: Some(true),
                 ..Default::default()
@@ -2520,9 +2559,14 @@ pub fn search_and_stage_research_for_approval(
         let b_p = b.priority_score.unwrap_or(0.0);
         let a_rel = a.novelty_delta_score.unwrap_or(0.0);
         let b_rel = b.novelty_delta_score.unwrap_or(0.0);
-        b_has.cmp(&a_has)
+        b_has
+            .cmp(&a_has)
             .then_with(|| b_p.partial_cmp(&a_p).unwrap_or(std::cmp::Ordering::Equal))
-            .then_with(|| b_rel.partial_cmp(&a_rel).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| {
+                b_rel
+                    .partial_cmp(&a_rel)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
     });
 
     if candidate_items.is_empty() {
@@ -3661,50 +3705,62 @@ mod tests {
         let initial = get_research_schedule().await;
         assert!(initial.success);
         assert_eq!(initial.schedule.cadence, "weekly");
-        assert_eq!(initial.schedule.interval_secs, WEEKLY_RESEARCH_INTERVAL_SECS);
+        assert_eq!(
+            initial.schedule.interval_secs,
+            WEEKLY_RESEARCH_INTERVAL_SECS
+        );
         assert_eq!(initial.schedule.cron_expr, WEEKLY_RESEARCH_CRON);
         assert!(initial.schedule.enabled);
 
         // 2. Update to daily
-        let update_daily = post_research_schedule(axum::extract::Json(ResearchScheduleUpdateRequest {
-            enabled: Some(true),
-            cadence: Some("daily".to_string()),
-            interval_secs: None,
-            custom_hours: None,
-            cron_expr: None,
-            trigger_now: None,
-        })).await;
+        let update_daily =
+            post_research_schedule(axum::extract::Json(ResearchScheduleUpdateRequest {
+                enabled: Some(true),
+                cadence: Some("daily".to_string()),
+                interval_secs: None,
+                custom_hours: None,
+                cron_expr: None,
+                trigger_now: None,
+            }))
+            .await;
         assert!(update_daily.success);
         assert_eq!(update_daily.schedule.cadence, "daily");
         assert_eq!(update_daily.schedule.interval_secs, 86400);
         assert_eq!(update_daily.schedule.cron_expr, "0 2 * * *");
 
         // 3. Update to custom (48 hours)
-        let update_custom = post_research_schedule(axum::extract::Json(ResearchScheduleUpdateRequest {
-            enabled: Some(true),
-            cadence: Some("custom".to_string()),
-            interval_secs: None,
-            custom_hours: Some(48),
-            cron_expr: None,
-            trigger_now: None,
-        })).await;
+        let update_custom =
+            post_research_schedule(axum::extract::Json(ResearchScheduleUpdateRequest {
+                enabled: Some(true),
+                cadence: Some("custom".to_string()),
+                interval_secs: None,
+                custom_hours: Some(48),
+                cron_expr: None,
+                trigger_now: None,
+            }))
+            .await;
         assert!(update_custom.success);
         assert_eq!(update_custom.schedule.cadence, "custom");
         assert_eq!(update_custom.schedule.interval_secs, 48 * 3600);
         assert_eq!(update_custom.schedule.custom_hours, Some(48));
 
         // 4. Reset to weekly default
-        let reset_weekly = post_research_schedule(axum::extract::Json(ResearchScheduleUpdateRequest {
-            enabled: Some(true),
-            cadence: Some("weekly".to_string()),
-            interval_secs: None,
-            custom_hours: Some(168),
-            cron_expr: None,
-            trigger_now: None,
-        })).await;
+        let reset_weekly =
+            post_research_schedule(axum::extract::Json(ResearchScheduleUpdateRequest {
+                enabled: Some(true),
+                cadence: Some("weekly".to_string()),
+                interval_secs: None,
+                custom_hours: Some(168),
+                cron_expr: None,
+                trigger_now: None,
+            }))
+            .await;
         assert!(reset_weekly.success);
         assert_eq!(reset_weekly.schedule.cadence, "weekly");
-        assert_eq!(reset_weekly.schedule.interval_secs, WEEKLY_RESEARCH_INTERVAL_SECS);
+        assert_eq!(
+            reset_weekly.schedule.interval_secs,
+            WEEKLY_RESEARCH_INTERVAL_SECS
+        );
 
         // 5. Status endpoint includes scheduler fields and current_research_only
         let status = get_research_status().await;
@@ -3721,12 +3777,20 @@ mod tests {
         });
         let res = post_research_novelty_check(req).await;
         assert!(res.success);
-        let eval_2024 = res.evaluations.iter().find(|e| e.arxiv_id == "2403.02277v1").unwrap();
+        let eval_2024 = res
+            .evaluations
+            .iter()
+            .find(|e| e.arxiv_id == "2403.02277v1")
+            .unwrap();
         assert!(!eval_2024.is_novel_to_codebase);
         assert_eq!(eval_2024.status, "outdated_prior_year_paper");
         assert!(eval_2024.notes.contains("prior years"));
 
-        let eval_2026 = res.evaluations.iter().find(|e| e.arxiv_id == "2603.99991").unwrap();
+        let eval_2026 = res
+            .evaluations
+            .iter()
+            .find(|e| e.arxiv_id == "2603.99991")
+            .unwrap();
         assert!(eval_2026.is_novel_to_codebase);
         assert_eq!(eval_2026.status, "novel_frontier_paper");
     }
@@ -3745,7 +3809,9 @@ mod tests {
 
         let item_gitlab = ResearchExtractionItem {
             arxiv_id: Some("2605.12345".to_string()),
-            mitigation: Some("Implemented in https://gitlab.com/security-bench/defense".to_string()),
+            mitigation: Some(
+                "Implemented in https://gitlab.com/security-bench/defense".to_string(),
+            ),
             ..Default::default()
         };
         let (has_gl, gl_url) = detect_verified_code_repo(&item_gitlab);
@@ -3876,7 +3942,9 @@ mod tests {
         assert_eq!(test_queue.len(), MAX_PENDING_APPROVAL_QUEUE);
         // The theoretical item must have been evicted, leaving all remaining items as code-backed
         assert!(
-            !test_queue.iter().any(|it| it.approval_id == "appr_th_first"),
+            !test_queue
+                .iter()
+                .any(|it| it.approval_id == "appr_th_first"),
             "Theoretical item must be evicted before code-backed items"
         );
         assert!(test_queue.iter().all(|it| it.has_code_repo));
