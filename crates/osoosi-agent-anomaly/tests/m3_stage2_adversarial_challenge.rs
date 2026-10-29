@@ -553,6 +553,10 @@ fn challenge_cedar_reserved_principal_spoofing() {
         covert_jitter_applied_ms: 0,
         taint_epoch: 1,
         revocation_seq: 1,
+        has_untrusted_web_input: false,
+        has_scratch_file_write: false,
+        subprocess_env_or_arg_tainted: false,
+        temporal_trace_window_seconds: 7200,
     };
 
     let decision = authorizer.evaluate_cedar_request(
@@ -598,6 +602,10 @@ fn challenge_cedar_reserved_principal_spoofing() {
         covert_jitter_applied_ms: 0,
         taint_epoch: 1,
         revocation_seq: 1,
+        has_untrusted_web_input: false,
+        has_scratch_file_write: false,
+        subprocess_env_or_arg_tainted: false,
+        temporal_trace_window_seconds: 7200,
     };
 
     let decision_auth = authorizer.evaluate_cedar_request(

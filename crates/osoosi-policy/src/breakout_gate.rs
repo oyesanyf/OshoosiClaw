@@ -692,6 +692,264 @@ pub struct CedarResource {
     pub service_operation: Option<String>,
 }
 
+// ============================================================================
+// 2.5. Dogwood MFOTL Past-Only Sliding-Window Temporal Policy Evaluator
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TemporalEventType {
+    UntrustedWebInput,
+    ScratchFileWrite,
+    SubprocessEnvOrArg,
+    SupervisorDeclassification,
+}
+
+pub type TemporalActionKind = TemporalEventType;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemporalTraceAtom {
+    pub timestamp_utc: i64,
+    pub event_type: TemporalEventType,
+    pub session_id: String,
+    pub resource_path: Option<String>,
+}
+
+impl TemporalTraceAtom {
+    pub fn new(
+        timestamp_utc: i64,
+        event_type: TemporalEventType,
+        session_id: impl Into<String>,
+        resource_path: Option<String>,
+    ) -> Self {
+        Self {
+            timestamp_utc,
+            event_type,
+            session_id: session_id.into(),
+            resource_path,
+        }
+    }
+}
+
+pub fn default_temporal_trace_window_seconds() -> u64 {
+    7200
+}
+
+#[derive(Debug, Clone)]
+pub struct DogwoodTemporalPolicyEvaluator {
+    pub default_window_seconds: u64,
+    trace_events: Arc<DashMap<String, Vec<TemporalTraceAtom>>>,
+}
+
+impl Default for DogwoodTemporalPolicyEvaluator {
+    fn default() -> Self {
+        Self::new(7200)
+    }
+}
+
+impl DogwoodTemporalPolicyEvaluator {
+    pub fn new(default_window_seconds: u64) -> Self {
+        Self {
+            default_window_seconds,
+            trace_events: Arc::new(DashMap::new()),
+        }
+    }
+
+    pub fn record_event(
+        &self,
+        session_id: &str,
+        event_type: TemporalEventType,
+        resource_path: Option<String>,
+    ) {
+        let now = Utc::now().timestamp();
+        self.record_atom(TemporalTraceAtom {
+            timestamp_utc: now,
+            event_type,
+            session_id: session_id.to_string(),
+            resource_path,
+        });
+    }
+
+    pub fn record_atom(&self, atom: TemporalTraceAtom) {
+        let mut entry = self.trace_events.entry(atom.session_id.clone()).or_default();
+        let cutoff = atom.timestamp_utc.saturating_sub(self.default_window_seconds as i64);
+        entry.retain(|e| e.timestamp_utc >= cutoff);
+        entry.push(atom);
+    }
+
+    pub fn record_declassification(&self, session_id: &str) {
+        self.record_event(session_id, TemporalEventType::SupervisorDeclassification, None);
+    }
+
+    pub fn clear_session(&self, session_id: &str) {
+        self.trace_events.remove(session_id);
+    }
+
+    pub fn get_session_events(&self, session_id: &str) -> Vec<TemporalTraceAtom> {
+        self.trace_events
+            .get(session_id)
+            .map(|e| e.value().clone())
+            .unwrap_or_default()
+    }
+
+    /// Evaluates past-only sliding-window Dogwood MFOTL temporal formula:
+    /// forbid when temporal {
+    ///     formerly within W (Action::UntrustedWebInput)
+    ///     && formerly within W (Action::ScratchFileWrite)
+    ///     && Action::SubprocessEnvOrArg
+    /// } unless temporal {
+    ///     formerly within W (Action::SupervisorDeclassification)
+    /// }
+    pub fn evaluate_taint_flow(
+        &self,
+        session_id: &str,
+        current_time_utc: i64,
+        window_seconds: Option<u64>,
+    ) -> (bool, Option<String>) {
+        let win = window_seconds.unwrap_or(self.default_window_seconds) as i64;
+        let Some(events) = self.trace_events.get(session_id) else {
+            return (false, None);
+        };
+
+        let cutoff = current_time_utc.saturating_sub(win);
+        let window_events: Vec<&TemporalTraceAtom> = events
+            .iter()
+            .filter(|e| e.timestamp_utc >= cutoff && e.timestamp_utc <= current_time_utc)
+            .collect();
+
+        // Check for latest supervisor declassification
+        let last_declass_time = window_events
+            .iter()
+            .filter(|e| e.event_type == TemporalEventType::SupervisorDeclassification)
+            .map(|e| e.timestamp_utc)
+            .max();
+
+        let mut has_web_input = false;
+        let mut has_scratch_write = false;
+
+        for e in window_events {
+            if let Some(dec_time) = last_declass_time {
+                if e.timestamp_utc <= dec_time {
+                    continue;
+                }
+            }
+
+            if e.event_type == TemporalEventType::UntrustedWebInput {
+                has_web_input = true;
+            } else if e.event_type == TemporalEventType::ScratchFileWrite && has_web_input {
+                has_scratch_write = true;
+            } else if e.event_type == TemporalEventType::SubprocessEnvOrArg
+                && has_web_input
+                && has_scratch_write
+            {
+                return (
+                    true,
+                    Some(
+                        "CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION: CEDAR-FORBID-004D: Multi-turn payload fragmentation detected: untrusted web input flowed into scratch file and subsequently into subprocess execution within temporal window"
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+
+        (false, None)
+    }
+
+    /// Evaluates if a proposed child process execution references or touches any scratch file
+    /// written after untrusted web input was recorded within the sliding temporal window.
+    pub fn evaluate_scratch_file_touch(
+        &self,
+        session_id: &str,
+        command_line_or_resource: &str,
+        current_time_utc: i64,
+        window_seconds: Option<u64>,
+    ) -> (bool, Option<String>) {
+        let win = window_seconds.unwrap_or(self.default_window_seconds) as i64;
+        let Some(events) = self.trace_events.get(session_id) else {
+            return (false, None);
+        };
+
+        let cutoff = current_time_utc.saturating_sub(win);
+        let window_events: Vec<&TemporalTraceAtom> = events
+            .iter()
+            .filter(|e| e.timestamp_utc >= cutoff && e.timestamp_utc <= current_time_utc)
+            .collect();
+
+        // Check for latest supervisor declassification
+        let last_declass_time = window_events
+            .iter()
+            .filter(|e| e.event_type == TemporalEventType::SupervisorDeclassification)
+            .map(|e| e.timestamp_utc)
+            .max();
+
+        let web_inputs: Vec<&TemporalTraceAtom> = window_events
+            .iter()
+            .filter(|e| e.event_type == TemporalEventType::UntrustedWebInput)
+            .copied()
+            .collect();
+
+        let scratch_writes: Vec<&TemporalTraceAtom> = window_events
+            .iter()
+            .filter(|e| e.event_type == TemporalEventType::ScratchFileWrite)
+            .copied()
+            .collect();
+
+        if web_inputs.is_empty() || scratch_writes.is_empty() {
+            return (false, None);
+        }
+
+        let earliest_web_input = web_inputs.iter().map(|e| e.timestamp_utc).min().unwrap_or(0);
+        let writes_after_web: Vec<&TemporalTraceAtom> = scratch_writes
+            .into_iter()
+            .filter(|sw| sw.timestamp_utc >= earliest_web_input)
+            .collect();
+
+        if writes_after_web.is_empty() {
+            return (false, None);
+        }
+
+        if let Some(dec_time) = last_declass_time {
+            let latest_write = writes_after_web.iter().map(|e| e.timestamp_utc).max().unwrap_or(0);
+            if dec_time >= latest_write {
+                return (false, None);
+            }
+        }
+
+        let lower_cmd = command_line_or_resource.to_ascii_lowercase();
+        for sw in &writes_after_web {
+            if let Some(ref path) = sw.resource_path {
+                let norm_path = path.replace('\\', "/").to_ascii_lowercase();
+                let file_name = std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(path)
+                    .to_ascii_lowercase();
+                if (!file_name.is_empty() && lower_cmd.contains(&file_name))
+                    || lower_cmd.contains(&norm_path)
+                    || lower_cmd.contains(&path.to_ascii_lowercase())
+                {
+                    return (
+                        true,
+                        Some(format!(
+                            "CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION: CEDAR-FORBID-004D: Multi-turn payload fragmentation detected: untrusted web input flowed into scratch file '{}' and subsequently into subprocess execution within temporal window",
+                            path
+                        )),
+                    );
+                }
+            } else {
+                return (
+                    true,
+                    Some(
+                        "CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION: CEDAR-FORBID-004D: Multi-turn payload fragmentation detected: untrusted web input flowed into scratch file and subsequently into subprocess execution within temporal window"
+                            .to_string(),
+                    ),
+                );
+            }
+        }
+
+        (false, None)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CedarContext {
     pub policy_version: String,
@@ -708,6 +966,71 @@ pub struct CedarContext {
     pub covert_jitter_applied_ms: u64,
     pub taint_epoch: u64,
     pub revocation_seq: u64,
+    #[serde(default)]
+    pub has_untrusted_web_input: bool,
+    #[serde(default)]
+    pub has_scratch_file_write: bool,
+    #[serde(default)]
+    pub subprocess_env_or_arg_tainted: bool,
+    #[serde(default = "default_temporal_trace_window_seconds")]
+    pub temporal_trace_window_seconds: u64,
+}
+
+impl Default for CedarContext {
+    fn default() -> Self {
+        Self {
+            policy_version: CEDAR_BREAKOUT_POLICY_VERSION.to_string(),
+            causal_event_id: String::new(),
+            has_crown_jewel_taint: false,
+            highest_data_classification: DataClassification::Public,
+            taint_level: 0.0,
+            cumulative_salami_turns: 0,
+            has_approved_capability: false,
+            has_cryptographic_declassification: false,
+            upward_authority_promotion_attempted: false,
+            egress_budget_exceeded: false,
+            semantic_cosine_similarity: 0.0,
+            covert_jitter_applied_ms: 0,
+            taint_epoch: 0,
+            revocation_seq: 0,
+            has_untrusted_web_input: false,
+            has_scratch_file_write: false,
+            subprocess_env_or_arg_tainted: false,
+            temporal_trace_window_seconds: 7200,
+        }
+    }
+}
+
+impl CedarContext {
+    pub fn new(policy_version: impl Into<String>, causal_event_id: impl Into<String>) -> Self {
+        Self {
+            policy_version: policy_version.into(),
+            causal_event_id: causal_event_id.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_temporal_trace(
+        mut self,
+        has_untrusted_web_input: bool,
+        has_scratch_file_write: bool,
+        subprocess_env_or_arg_tainted: bool,
+    ) -> Self {
+        self.has_untrusted_web_input = has_untrusted_web_input;
+        self.has_scratch_file_write = has_scratch_file_write;
+        self.subprocess_env_or_arg_tainted = subprocess_env_or_arg_tainted;
+        self
+    }
+
+    pub fn with_temporal_window(mut self, window_seconds: u64) -> Self {
+        self.temporal_trace_window_seconds = window_seconds;
+        self
+    }
+
+    pub fn with_declassification(mut self, declassified: bool) -> Self {
+        self.has_cryptographic_declassification = declassified;
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2453,6 +2776,7 @@ pub struct Ring7CapabilityEffectAuthorizer {
     pub overload_controller: Arc<SafeTelemetryOverloadController>,
     pub integrity_recovery: Arc<ExternalIntegrityVerifierAndRecovery>,
     pub embedding_engine: EmbeddingGemma2Engine,
+    pub temporal_evaluator: Arc<DogwoodTemporalPolicyEvaluator>,
     crown_jewels: DashMap<String, CrownJewelProtectedAsset>,
     egress_budgets: DashMap<String, SessionEgressBudgetState>,
     decision_counter: AtomicU64,
@@ -2475,6 +2799,7 @@ impl Ring7CapabilityEffectAuthorizer {
             overload_controller: Arc::new(SafeTelemetryOverloadController::default()),
             integrity_recovery: Arc::new(ExternalIntegrityVerifierAndRecovery::default()),
             embedding_engine: EmbeddingGemma2Engine::new(MatryoshkaDim::Dim128),
+            temporal_evaluator: Arc::new(DogwoodTemporalPolicyEvaluator::default()),
             crown_jewels: DashMap::new(),
             egress_budgets: DashMap::new(),
             decision_counter: AtomicU64::new(1),
@@ -2485,6 +2810,21 @@ impl Ring7CapabilityEffectAuthorizer {
             "Proprietary OshoosiClaw Phaselock sub-linear zero-allocation ring buffer kernel consensus algorithm with secret prime modulus 2147483647 and HMAC epoch key derivation.",
         );
         auth
+    }
+
+    pub fn record_temporal_event(
+        &self,
+        session_id: &str,
+        event_type: TemporalEventType,
+        resource_path: Option<String>,
+    ) {
+        self.temporal_evaluator
+            .record_event(session_id, event_type, resource_path);
+    }
+
+    pub fn record_temporal_declassification(&self, session_id: &str) {
+        self.temporal_evaluator
+            .record_declassification(session_id);
     }
 
     pub fn register_crown_jewel_asset(&self, asset_id: &str, canonical_path: &str, content: &str) {
@@ -2842,6 +3182,47 @@ impl Ring7CapabilityEffectAuthorizer {
                     effective_taint_level
                 ));
             }
+            // F05: Dogwood MFOTL past-only temporal evaluation:
+            // Multi-turn payload fragmentation: UntrustedWebInput -> ScratchFileWrite -> SubprocessEnvOrArg
+            if context.subprocess_env_or_arg_tainted
+                || (context.has_untrusted_web_input && context.has_scratch_file_write)
+            {
+                if !context.has_cryptographic_declassification {
+                    matched_forbid.push(
+                        "CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION: CEDAR-FORBID-004D: Multi-turn payload fragmentation detected: untrusted web input flowed into scratch file and subsequently into subprocess execution within temporal window".to_string(),
+                    );
+                }
+            } else {
+                let now_sec = Utc::now().timestamp();
+                let (violated, reason) = self.temporal_evaluator.evaluate_scratch_file_touch(
+                    &principal.session_id,
+                    &resource.resource_id,
+                    now_sec,
+                    Some(context.temporal_trace_window_seconds),
+                );
+                if violated {
+                    if !context.has_cryptographic_declassification {
+                        matched_forbid.push(
+                            reason.unwrap_or_else(|| {
+                                "CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION: CEDAR-FORBID-004D: Multi-turn payload fragmentation detected: untrusted web input flowed into scratch file and subsequently into subprocess execution within temporal window".to_string()
+                            }),
+                        );
+                    }
+                } else {
+                    let (flow_violated, flow_reason) = self.temporal_evaluator.evaluate_taint_flow(
+                        &principal.session_id,
+                        now_sec,
+                        Some(context.temporal_trace_window_seconds),
+                    );
+                    if flow_violated && !context.has_cryptographic_declassification {
+                        matched_forbid.push(
+                            flow_reason.unwrap_or_else(|| {
+                                "CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION: CEDAR-FORBID-004D: Multi-turn payload fragmentation detected: untrusted web input flowed into scratch file and subsequently into subprocess execution within temporal window".to_string()
+                            }),
+                        );
+                    }
+                }
+            }
         }
 
         if action == CedarAction::DynamicCodeExec
@@ -3008,6 +3389,10 @@ impl Ring7CapabilityEffectAuthorizer {
             covert_jitter_applied_ms: 0,
             taint_epoch: self.capability_cache.current_taint_epoch(),
             revocation_seq: self.capability_cache.current_revocation_seq(),
+            has_untrusted_web_input: false,
+            has_scratch_file_write: false,
+            subprocess_env_or_arg_tainted: false,
+            temporal_trace_window_seconds: 7200,
         };
 
         let decision = self.evaluate_cedar_request(
@@ -3120,6 +3505,10 @@ impl Ring7CapabilityEffectAuthorizer {
             covert_jitter_applied_ms: jitter_ms,
             taint_epoch: self.capability_cache.current_taint_epoch(),
             revocation_seq: self.capability_cache.current_revocation_seq(),
+            has_untrusted_web_input: false,
+            has_scratch_file_write: false,
+            subprocess_env_or_arg_tainted: false,
+            temporal_trace_window_seconds: 7200,
         };
 
         let decision = self.evaluate_cedar_request(
@@ -3565,6 +3954,26 @@ impl Ring7CapabilityEffectAuthorizer {
             covert_jitter_applied_ms: jitter_ms,
             taint_epoch: self.capability_cache.current_taint_epoch(),
             revocation_seq: self.capability_cache.current_revocation_seq(),
+            has_untrusted_web_input: event
+                .data
+                .get("HasUntrustedWebInput")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            has_scratch_file_write: event
+                .data
+                .get("HasScratchFileWrite")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            subprocess_env_or_arg_tainted: event
+                .data
+                .get("SubprocessEnvOrArgTainted")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            temporal_trace_window_seconds: event
+                .data
+                .get("TemporalTraceWindowSeconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(7200),
         };
 
         self.evaluate_cedar_request(&principal, action, &resource, context, stage)
@@ -4093,5 +4502,157 @@ mod tests {
         assert!(eval_valid.proposal_valid_for_dual_approval);
         assert!(eval_valid.active_policy_unchanged_until_signed);
         assert_eq!(store.active_version_num(), initial_ver);
+    }
+
+    #[test]
+    fn test_dogwood_mfotl_temporal_taint_flow_forbid() {
+        let evaluator = DogwoodTemporalPolicyEvaluator::new(7200);
+        let session = "sess-temporal-test-1";
+
+        // Step 1: UntrustedWebInput
+        evaluator.record_event(
+            session,
+            TemporalEventType::UntrustedWebInput,
+            Some("https://attacker.example.com/payload.js".to_string()),
+        );
+
+        // Subprocess at this point is not yet fragmented
+        let (forbid, _) = evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
+        assert!(!forbid, "Should not forbid before scratch file write");
+
+        // Step 2: ScratchFileWrite
+        evaluator.record_event(
+            session,
+            TemporalEventType::ScratchFileWrite,
+            Some("/tmp/scratch_stage1.sh".to_string()),
+        );
+
+        // Step 3: SubprocessEnvOrArg referencing scratch file
+        evaluator.record_event(
+            session,
+            TemporalEventType::SubprocessEnvOrArg,
+            Some("/tmp/scratch_stage1.sh".to_string()),
+        );
+
+        // Evaluation must now trigger forbid
+        let (forbid, reason) = evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
+        assert!(forbid, "Dogwood MFOTL must forbid multi-turn temporal taint chain");
+        assert!(reason.unwrap().contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"));
+    }
+
+    #[test]
+    fn test_dogwood_mfotl_supervisor_declassification_clears_forbid() {
+        let evaluator = DogwoodTemporalPolicyEvaluator::new(7200);
+        let session = "sess-temporal-declass-test";
+        let now = chrono::Utc::now().timestamp();
+
+        evaluator.record_atom(TemporalTraceAtom {
+            timestamp_utc: now - 100,
+            event_type: TemporalEventType::UntrustedWebInput,
+            session_id: session.to_string(),
+            resource_path: Some("https://partner-api.com/data".to_string()),
+        });
+        evaluator.record_atom(TemporalTraceAtom {
+            timestamp_utc: now - 80,
+            event_type: TemporalEventType::ScratchFileWrite,
+            session_id: session.to_string(),
+            resource_path: Some("/tmp/parsed_data.json".to_string()),
+        });
+        evaluator.record_atom(TemporalTraceAtom {
+            timestamp_utc: now - 60,
+            event_type: TemporalEventType::SubprocessEnvOrArg,
+            session_id: session.to_string(),
+            resource_path: Some("/tmp/parsed_data.json".to_string()),
+        });
+
+        // Without declassification, it is forbidden
+        let (forbid_before, _) = evaluator.evaluate_taint_flow(session, now, None);
+        assert!(forbid_before);
+
+        // Record supervisor cryptographic declassification
+        evaluator.record_declassification(session);
+
+        // After supervisor declassification, forbid is cleared
+        let (forbid_after, reason) = evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
+        assert!(!forbid_after, "Supervisor declassification must clear temporal taint forbid");
+        assert!(reason.is_none());
+    }
+
+    #[test]
+    fn test_dogwood_mfotl_sliding_window_expiry() {
+        let evaluator = DogwoodTemporalPolicyEvaluator::new(7200);
+        let session = "sess-temporal-expiry-test";
+        let now = chrono::Utc::now().timestamp();
+        let three_hours_ago = now - 10800; // outside 2h (7200s) window
+
+        evaluator.record_atom(TemporalTraceAtom {
+            timestamp_utc: three_hours_ago,
+            event_type: TemporalEventType::UntrustedWebInput,
+            session_id: session.to_string(),
+            resource_path: Some("https://old-input.com".to_string()),
+        });
+        evaluator.record_atom(TemporalTraceAtom {
+            timestamp_utc: three_hours_ago + 10,
+            event_type: TemporalEventType::ScratchFileWrite,
+            session_id: session.to_string(),
+            resource_path: Some("/tmp/old_scratch.txt".to_string()),
+        });
+        evaluator.record_atom(TemporalTraceAtom {
+            timestamp_utc: now,
+            event_type: TemporalEventType::SubprocessEnvOrArg,
+            session_id: session.to_string(),
+            resource_path: Some("/tmp/old_scratch.txt".to_string()),
+        });
+
+        // Out-of-window web input should not trigger the temporal taint chain
+        let (forbid, _) = evaluator.evaluate_taint_flow(session, now, None);
+        assert!(!forbid, "Events outside sliding window (2h) must expire and not trigger forbid");
+    }
+
+    #[test]
+    fn test_ring7_authorizer_child_process_exec_blocked_on_taint_fragmentation() {
+        let authorizer = Ring7CapabilityEffectAuthorizer::new();
+        let principal = CedarPrincipal {
+            principal_id: "agent-coder-1".to_string(),
+            session_id: "sess-r7-temporal".to_string(),
+            process_instance_key: "proc-1".to_string(),
+            authority_level: AuthorityLevel::L3TrustedApplicationInstruction,
+            approved_capabilities: vec!["process_spawn".to_string()],
+            authenticated_role: None,
+        };
+        let resource = CedarResource {
+            resource_id: "proc_child_1".to_string(),
+            resource_type: "ChildProcess".to_string(),
+            classification: DataClassification::InternalWorkspace,
+            is_signed_and_allowlisted: false,
+            is_approved_child_binary: true,
+            is_task_scoped_destination: true,
+            is_declassified_approved_sink: false,
+            service_identity: None,
+            service_operation: None,
+        };
+
+        let mut context = CedarContext::default();
+        context.has_untrusted_web_input = true;
+        context.has_scratch_file_write = true;
+        context.subprocess_env_or_arg_tainted = true;
+
+        let decision = authorizer.evaluate_cedar_request(
+            &principal,
+            CedarAction::ChildProcessExec,
+            &resource,
+            context,
+            EnforcementStage::PreExecutionPrevented,
+        );
+
+        assert!(!decision.allowed, "ChildProcessExec must be forbidden on temporal taint fragmentation");
+        assert!(
+            decision
+                .matched_forbid_policies
+                .iter()
+                .any(|p| p.contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")),
+            "Matched policies: {:?}",
+            decision.matched_forbid_policies
+        );
     }
 }

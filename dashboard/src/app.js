@@ -10734,15 +10734,27 @@ async function runDynamicDiskCleanup(aggressive = false) {
         }
 
         const data = await resp.json();
-        if (data.status === 'success') {
+        const isSuccess = data.status === 'success' || data.status === 'scheduled' || data.status === 'completed' || data.ok === true;
+        if (isSuccess) {
+            const immBytes = Number(data.immediate_freed_bytes || data.bytes_freed || 0);
+            const fmtImm = immBytes >= 1048576
+                ? `${(immBytes / 1048576).toFixed(2)} MB`
+                : immBytes >= 1024
+                    ? `${(immBytes / 1024).toFixed(1)} KB`
+                    : `${immBytes} B`;
+            const freedLabel = data.formatted_bytes_freed || (immBytes > 0 ? `${fmtImm} immediate + background sweep` : 'Working set trimmed + background sweep active');
+            const detailMsg = data.message || 'In-memory caches pruned and OS working set trimmed.';
             if (banner) {
                 banner.style.background = 'rgba(16, 185, 129, 0.15)';
                 banner.style.border = '1px solid var(--accent-green, #10b981)';
                 banner.style.color = 'var(--accent-green, #10b981)';
-                banner.innerHTML = `✅ <strong>Cleanup Successful:</strong> Freed <strong>${escapeHtml(data.formatted_bytes_freed || '0 B')}</strong>. Effective retention: ${data.effective_retention_days}d (Pressure: ${escapeHtml(data.pressure_tier)}). In-memory caches pruned and OS working set trimmed.`;
+                banner.innerHTML = `✅ <strong>Cleanup Complete:</strong> Freed <strong>${escapeHtml(freedLabel)}</strong>. Effective retention: ${data.effective_retention_days ?? 30}d (Pressure: ${escapeHtml(data.pressure_tier || 'NOMINAL')}). ${escapeHtml(detailMsg)}`;
             }
             if (typeof showToast === 'function') {
-                showToast(`🧹 Host Disk & Memory Cleanup: Freed ${data.formatted_bytes_freed || '0 B'}`, 'success');
+                showToast(`🧹 Host Disk & Memory Cleanup: ${freedLabel}`, 'success');
+            }
+            if (data.background_purge_active) {
+                setTimeout(() => { loadDynamicDiskStatus(); }, 2500);
             }
         } else {
             throw new Error(data.message || 'Cleanup returned non-success');

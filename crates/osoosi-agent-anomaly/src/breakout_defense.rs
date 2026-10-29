@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use thiserror::Error;
 use url::Url;
 
 /// Compile-time embedded bytes of the primary adversarial evaluation harnesses.
@@ -233,6 +234,344 @@ impl OperationalContainmentGuard {
             description,
         }
     }
+}
+
+/// Execution Environment Hijacking & Configuration Tampering Error
+#[derive(Debug, Error, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BreakoutDefenseError {
+    #[error("Execution environment hijacking blocked: {0}")]
+    EnvironmentHijack(String),
+    #[error("Unauthorized configuration tampering blocked: {0}")]
+    ConfigurationTampering(String),
+    #[error("Command line hijacking blocked: {0}")]
+    CommandTampering(String),
+    #[error("Execution blocked by breakout defense: {0}")]
+    ExecutionBlocked(String),
+}
+
+/// Result of execution environment and workspace configuration inspection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentInspectionResult {
+    pub is_clean: bool,
+    pub prohibited_variables: Vec<String>,
+    pub prohibited_configurations: Vec<String>,
+    pub sanitized_environment: Vec<(String, String)>,
+    pub reason: String,
+}
+
+/// Execution Environment Guard
+///
+/// Defends against interpreter hijacking, environment variable poisoning,
+/// build script RCE (`build.rs`), Python site-configuration drops (`.pth`),
+/// and unauthorized Cargo configuration overrides (`.cargo/config.toml`).
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionEnvironmentGuard;
+
+impl ExecutionEnvironmentGuard {
+    pub const HIJACK_ENV_VARS: &'static [&'static str] = &[
+        "GIT_SSH_COMMAND",
+        "GIT_EXTERNAL_DIFF",
+        "RUSTC_WRAPPER",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "PYTHONSTARTUP",
+        "PYTHONPATH",
+        "PYTHONHOME",
+        "NODE_OPTIONS",
+        "NODE_PATH",
+        "PERL5OPT",
+        "RUBYOPT",
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+    ];
+
+    pub const FORBIDDEN_CONFIG_FILES: &'static [&'static str] = &[
+        ".cargo/config.toml",
+        ".cargo/config",
+        "build.rs",
+        ".pth",
+    ];
+
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Inspects environment variables and command line for interpreter and dynamic linker hijacking
+    pub fn inspect_execution_environment_hijacking(
+        &self,
+        env_vars: &HashMap<String, String>,
+        command_line: &str,
+    ) -> (bool, Vec<String>) {
+        let mut violations = Vec::new();
+        for (k, v) in env_vars {
+            let upper_k = k.to_ascii_uppercase();
+            if Self::HIJACK_ENV_VARS.contains(&upper_k.as_str()) {
+                violations.push(format!("Forbidden environment variable: {}={}", k, v));
+            }
+            let v_norm = v.replace('\\', "/").to_ascii_lowercase();
+            if Self::FORBIDDEN_CONFIG_FILES
+                .iter()
+                .any(|&cfg| v_norm.ends_with(cfg) || v_norm.contains(cfg))
+            {
+                violations.push(format!("Forbidden configuration target in env {}: {}", k, v_norm));
+            }
+        }
+
+        // Inspect command line for inline config overrides
+        let lower_cmd = command_line.to_ascii_lowercase();
+        if lower_cmd.contains("-c")
+            && (lower_cmd.contains("git_ssh_command")
+                || lower_cmd.contains("rustc_wrapper")
+                || lower_cmd.contains("node_options")
+                || lower_cmd.contains("pythonpath")
+                || lower_cmd.contains("ld_preload"))
+        {
+            violations.push("Inline command line config hijack parameter detected".to_string());
+        }
+        if lower_cmd.contains("--config") && lower_cmd.contains(".cargo") {
+            violations.push("Inline cargo config hijack detected".to_string());
+        }
+        for &var in Self::HIJACK_ENV_VARS {
+            let lower_var = var.to_ascii_lowercase();
+            if lower_cmd.contains(&format!("{}=", lower_var))
+                || lower_cmd.contains(&format!("-e {}=", lower_var))
+                || lower_cmd.contains(&format!("--env {}=", lower_var))
+            {
+                violations.push(format!(
+                    "Inline environment variable assignment detected in command line: {}",
+                    var
+                ));
+            }
+        }
+
+        (!violations.is_empty(), violations)
+    }
+
+    /// Inspects payload text for embedded environment hijacking tokens
+    pub fn inspect_execution_environment_hijacking_str(&self, payload: &str) -> (bool, Vec<String>) {
+        let mut violations = Vec::new();
+        let upper = payload.to_ascii_uppercase();
+        for &var in Self::HIJACK_ENV_VARS {
+            if upper.contains(var)
+                && (upper.contains(&format!("{}=", var))
+                    || upper.contains(&format!("${}", var))
+                    || upper.contains(&format!("%{}%", var)))
+            {
+                violations.push(format!(
+                    "Forbidden execution environment variable detected in payload: '{}'",
+                    var
+                ));
+            }
+        }
+        let lower = payload.to_ascii_lowercase();
+        for &cfg in Self::FORBIDDEN_CONFIG_FILES {
+            let lower_cfg = cfg.to_ascii_lowercase();
+            if lower.contains(&lower_cfg) {
+                violations.push(format!(
+                    "Forbidden build/interpreter configuration reference in payload: '{}'",
+                    cfg
+                ));
+            }
+        }
+        (!violations.is_empty(), violations)
+    }
+
+    /// Inspects environment variables slice, command line, and working directory configuration files
+    pub fn inspect_environment_and_configs(
+        &self,
+        env_vars: &[(String, String)],
+        command_line: &str,
+        working_directory: &Path,
+    ) -> EnvironmentInspectionResult {
+        let mut prohibited_variables = Vec::new();
+        let mut prohibited_configurations = Vec::new();
+        let mut sanitized = Vec::new();
+
+        for (k, v) in env_vars {
+            let upper_k = k.to_ascii_uppercase();
+            let v_norm = v.replace('\\', "/").to_ascii_lowercase();
+            if Self::HIJACK_ENV_VARS.contains(&upper_k.as_str()) {
+                prohibited_variables.push(format!("{}={}", k, v));
+            } else if Self::FORBIDDEN_CONFIG_FILES
+                .iter()
+                .any(|&cfg| v_norm.ends_with(cfg) || v_norm.contains(cfg))
+            {
+                prohibited_variables.push(format!(
+                    "Forbidden configuration target in env {}: {}",
+                    k, v_norm
+                ));
+            } else {
+                sanitized.push((k.clone(), v.clone()));
+            }
+        }
+
+        // Check for inline command-line hijacking flags
+        let lower_cmd = command_line.to_ascii_lowercase();
+        if (lower_cmd.contains("git_ssh_command")
+            || lower_cmd.contains("rustc_wrapper")
+            || lower_cmd.contains("node_options")
+            || lower_cmd.contains("pythonpath")
+            || lower_cmd.contains("ld_preload"))
+            && (lower_cmd.contains("-c")
+                || lower_cmd.contains('=')
+                || lower_cmd.contains("export ")
+                || lower_cmd.contains("set "))
+        {
+            prohibited_variables.push(
+                "Inline environment variable assignment detected in command line".to_string(),
+            );
+        }
+        if lower_cmd.contains("--config") && lower_cmd.contains(".cargo") {
+            prohibited_variables.push("Inline cargo config hijack detected".to_string());
+        }
+
+        // Inspect working directory configuration files
+        if working_directory.exists() {
+            let cargo_config = working_directory.join(".cargo").join("config.toml");
+            let cargo_config_legacy = working_directory.join(".cargo").join("config");
+            for p in [&cargo_config, &cargo_config_legacy] {
+                if p.exists() {
+                    if let Ok(content) = std::fs::read_to_string(p) {
+                        let lower = content.to_ascii_lowercase();
+                        if lower.contains("rustc-wrapper")
+                            || lower.contains("rustc_wrapper")
+                            || lower.contains("runner =")
+                            || lower.contains("runner=")
+                        {
+                            prohibited_configurations.push(format!(
+                                "{}: Contains rustc-wrapper or custom runner",
+                                p.display()
+                            ));
+                        } else {
+                            prohibited_configurations.push(format!(
+                                "{}: Unauthorized cargo configuration detected in task workspace",
+                                p.display()
+                            ));
+                        }
+                    } else {
+                        prohibited_configurations.push(format!(
+                            "{}: Unauthorized cargo configuration detected in task workspace",
+                            p.display()
+                        ));
+                    }
+                }
+            }
+
+            let build_rs = working_directory.join("build.rs");
+            if build_rs.exists() {
+                prohibited_configurations.push(format!(
+                    "{}: Unverified build.rs detected in task workspace",
+                    build_rs.display()
+                ));
+            }
+
+            // Check for .pth files in working directory
+            if let Ok(entries) = std::fs::read_dir(working_directory) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let is_pth = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|ext| ext.eq_ignore_ascii_case("pth"))
+                        .unwrap_or(false)
+                        || entry
+                            .file_name()
+                            .to_string_lossy()
+                            .to_ascii_lowercase()
+                            .ends_with(".pth");
+                    if is_pth {
+                        prohibited_configurations.push(format!(
+                            "{}: Python site-configuration .pth file detected",
+                            path.display()
+                        ));
+                    }
+                }
+            }
+        }
+
+        let is_clean = prohibited_variables.is_empty() && prohibited_configurations.is_empty();
+        let reason = if is_clean {
+            "Execution environment verified".to_string()
+        } else {
+            format!(
+                "Interpreter hijacking blocked: {} prohibited var(s), {} prohibited config(s)",
+                prohibited_variables.len(),
+                prohibited_configurations.len()
+            )
+        };
+
+        EnvironmentInspectionResult {
+            is_clean,
+            prohibited_variables,
+            prohibited_configurations,
+            sanitized_environment: sanitized,
+            reason,
+        }
+    }
+
+    /// Sanitizes and validates subprocess environment, returning a sorted UTF-16
+    /// double-null-terminated block for Win32 CreateProcessW, or failing closed on violation.
+    pub fn sanitize_and_validate_subprocess_env(
+        &self,
+        env_vars: &HashMap<String, String>,
+        working_dir: &Path,
+        command_line: &str,
+    ) -> Result<Vec<u16>, BreakoutDefenseError> {
+        let vars_vec: Vec<(String, String)> = env_vars
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let inspection = self.inspect_environment_and_configs(&vars_vec, command_line, working_dir);
+
+        let (has_hijack, violations) =
+            self.inspect_execution_environment_hijacking(env_vars, command_line);
+
+        if !inspection.is_clean || has_hijack {
+            if !inspection.prohibited_variables.is_empty() {
+                return Err(BreakoutDefenseError::EnvironmentHijack(
+                    inspection.prohibited_variables.join("; "),
+                ));
+            }
+            if !inspection.prohibited_configurations.is_empty() {
+                return Err(BreakoutDefenseError::ConfigurationTampering(
+                    inspection.prohibited_configurations.join("; "),
+                ));
+            }
+            if has_hijack {
+                return Err(BreakoutDefenseError::EnvironmentHijack(
+                    violations.join("; "),
+                ));
+            }
+            return Err(BreakoutDefenseError::ExecutionBlocked(inspection.reason));
+        }
+
+        // Construct sorted UTF-16 double-null-terminated environment block
+        let mut entries: Vec<String> = inspection
+            .sanitized_environment
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+        entries.sort_by_key(|a| a.to_uppercase());
+
+        let mut block_utf16: Vec<u16> = Vec::new();
+        for entry in entries {
+            block_utf16.extend(entry.encode_utf16());
+            block_utf16.push(0);
+        }
+        block_utf16.push(0); // terminating null
+
+        Ok(block_utf16)
+    }
+}
+
+/// Standalone function for sanitizing and validating subprocess environment
+pub fn sanitize_and_validate_subprocess_env(
+    env_vars: &HashMap<String, String>,
+    working_dir: &Path,
+    command_line: &str,
+) -> Result<Vec<u16>, BreakoutDefenseError> {
+    ExecutionEnvironmentGuard::new().sanitize_and_validate_subprocess_env(env_vars, working_dir, command_line)
 }
 
 /// Behavioral Breakout Verdict
@@ -2051,6 +2390,7 @@ pub struct BreakoutDefenseCoordinator {
     pub operational: Arc<OperationalContainmentGuard>,
     pub behavioral: Arc<BehavioralBreakoutGuard>,
     pub data: Arc<DataBreakoutGuard>,
+    pub env_guard: Arc<ExecutionEnvironmentGuard>,
     pub thermostat: Arc<std::sync::Mutex<agent_thermostat::ThermodynamicGovernor>>,
     pub genesis_vessel: Arc<std::sync::Mutex<zero_genesis_capacity::GenesisVessel>>,
     pub algebraic_kernel: Arc<std::sync::Mutex<zero_algebraic_kernel::AlgebraicKernelMonitor>>,
@@ -2065,6 +2405,7 @@ impl Default for BreakoutDefenseCoordinator {
             operational: Arc::new(OperationalContainmentGuard::new()),
             behavioral: Arc::new(BehavioralBreakoutGuard::new()),
             data: Arc::new(DataBreakoutGuard::new()),
+            env_guard: Arc::new(ExecutionEnvironmentGuard::new()),
             thermostat: Arc::new(std::sync::Mutex::new(
                 agent_thermostat::ThermodynamicGovernor::default_edr_governor(),
             )),
@@ -2098,7 +2439,34 @@ impl BreakoutDefenseCoordinator {
         workspace_root: Option<&str>,
     ) -> UnifiedBreakoutEvaluation {
         let mut tech_res = self.technical.evaluate_execution(resource, payload);
-        let oper_res = self.operational.evaluate_context_leakage(payload);
+        let mut oper_res = self.operational.evaluate_context_leakage(payload);
+
+        // Execution environment & interpreter hijacking inspection
+        let (has_env_hijack, env_violations) =
+            self.env_guard.inspect_execution_environment_hijacking_str(payload);
+        if has_env_hijack {
+            oper_res.is_clean = false;
+            oper_res.detected_leaks.extend(env_violations);
+            oper_res.description = format!(
+                "Operational containment defect: {} leak(s)/hijack(s) intercepted",
+                oper_res.detected_leaks.len()
+            );
+        }
+        if let Some(ws_path) = workspace_root {
+            let ws_p = Path::new(ws_path);
+            if ws_p.exists() {
+                let env_res = self.env_guard.inspect_environment_and_configs(&[], payload, ws_p);
+                if !env_res.is_clean {
+                    oper_res.is_clean = false;
+                    oper_res.detected_leaks.extend(env_res.prohibited_variables);
+                    oper_res.detected_leaks.extend(env_res.prohibited_configurations);
+                    oper_res.description = format!(
+                        "Operational containment defect: {} leak(s)/hijack(s) intercepted",
+                        oper_res.detected_leaks.len()
+                    );
+                }
+            }
+        }
         let mut behav_res = self.behavioral.evaluate_action(action, resource, payload);
         let data_res = self.data.evaluate_data_access(principal, resource, payload);
 

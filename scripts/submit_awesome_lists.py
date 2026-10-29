@@ -512,6 +512,26 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
             "- **7-Ring Agentic Breakout Prevention**: Protects AI coding and automation agents against prompt injection, SSRF, and container sandbox escape."
         ),
     ),
+    AwesomeListTarget(
+        repo="machinae/awesome-claws",
+        vertical=4,
+        vertical_name="Specialized Signature (YARA) & Agentic AI Security Lists",
+        wave=4,
+        category_focus="OpenClaw-Inspired Autonomous AI Security & Endpoint Defense Agent",
+        target_sections=["Main Projects", "Projects"],
+        entry_markdown=(
+            "- **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** - Rust - OpenClaw-inspired autonomous "
+            "security agent and endpoint defense runtime with kernel-enforced sandboxing, eBPF/ETW telemetry, "
+            "YARA-X scanning, and multi-agent containment."
+        ),
+        pr_title="Add OshoosiClaw",
+        pr_body=(
+            "## Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** to **Main Projects** following the `CONTRIBUTING.md` guidelines.\n\n"
+            "- **Format**: `- **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** - Rust - OpenClaw-inspired autonomous security agent and endpoint defense runtime with kernel-enforced sandboxing, eBPF/ETW telemetry, YARA-X scanning, and multi-agent containment.`\n"
+            "- **Independent Open-Source Project**: Written in Rust (`Apache-2.0`), actively maintained with multi-platform releases (`v1.2.0`)."
+        ),
+    ),
 ]
 
 
