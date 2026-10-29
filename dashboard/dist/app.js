@@ -13,8 +13,15 @@ const POLL_INTERVAL = 3000;
     if (window.__oshoosiSqliteBridgeInstalled) return;
     window.__oshoosiSqliteBridgeInstalled = true;
     let isHydratingFromDb = false;
-    const rawSetItem = Storage.prototype.setItem;
-    const rawRemoveItem = Storage.prototype.removeItem;
+    const storageTarget = (typeof Storage !== 'undefined' && Storage.prototype)
+        ? Storage.prototype
+        : (typeof window !== 'undefined' && window.localStorage ? window.localStorage : null);
+    const rawSetItem = (storageTarget && typeof storageTarget.setItem === 'function')
+        ? storageTarget.setItem
+        : null;
+    const rawRemoveItem = (storageTarget && typeof storageTarget.removeItem === 'function')
+        ? storageTarget.removeItem
+        : null;
 
     function shouldSyncSettingKey(key) {
         if (!key || typeof key !== 'string') return false;
@@ -44,19 +51,23 @@ const POLL_INTERVAL = 3000;
         } catch (_) {}
     };
 
-    Storage.prototype.setItem = function(key, value) {
-        rawSetItem.call(this, key, value);
-        if (this === window.localStorage && !isHydratingFromDb && shouldSyncSettingKey(key)) {
-            window.persistUiSettingToDb(key, String(value));
-        }
-    };
+    if (storageTarget && rawSetItem) {
+        storageTarget.setItem = function(key, value) {
+            rawSetItem.call(this, key, value);
+            if ((!window.localStorage || this === window.localStorage) && !isHydratingFromDb && shouldSyncSettingKey(key)) {
+                window.persistUiSettingToDb(key, String(value));
+            }
+        };
+    }
 
-    Storage.prototype.removeItem = function(key) {
-        rawRemoveItem.call(this, key);
-        if (this === window.localStorage && !isHydratingFromDb && shouldSyncSettingKey(key)) {
-            window.unsetUiSettingInDb(key);
-        }
-    };
+    if (storageTarget && rawRemoveItem) {
+        storageTarget.removeItem = function(key) {
+            rawRemoveItem.call(this, key);
+            if ((!window.localStorage || this === window.localStorage) && !isHydratingFromDb && shouldSyncSettingKey(key)) {
+                window.unsetUiSettingInDb(key);
+            }
+        };
+    }
 
     window.hydrateUiSettingsFromSqlite = async function() {
         try {
@@ -69,11 +80,11 @@ const POLL_INTERVAL = 3000;
                 for (const [k, v] of Object.entries(settings)) {
                     if (!shouldSyncSettingKey(k)) continue;
                     if (v === null || v === undefined) {
-                        rawRemoveItem.call(window.localStorage, k);
+                        if (rawRemoveItem && window.localStorage) rawRemoveItem.call(window.localStorage, k);
                     } else if (typeof v === 'string') {
-                        rawSetItem.call(window.localStorage, k, v);
+                        if (rawSetItem && window.localStorage) rawSetItem.call(window.localStorage, k, v);
                     } else {
-                        rawSetItem.call(window.localStorage, k, JSON.stringify(v));
+                        if (rawSetItem && window.localStorage) rawSetItem.call(window.localStorage, k, JSON.stringify(v));
                     }
                 }
             } finally {
