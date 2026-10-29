@@ -73,7 +73,7 @@ Candidate Telemetry Across All 8 Detectors
 | M1 | REA & Decision Voter Consensus Routing with Behavioral Engine Voter | Features 1–9: Bypass elimination, `BehavioralProcessLineageVoter`, `ClefDecisionVoter`, universal 8-detector REA voting, `universal_coverage_snapshot()`, `query.rs` refactor, consensus integration tests | none | DONE (PR #295 merged, Gate PASS) |
 | M2 | RAPTOR Penetration Testing & Security Audit Validation | Features 10–12: Pre-flight checks, RAPTOR scan across 39 crates, 5-phase audit validation, `findings.json` ledger | M1 | DONE (Audit Report Run-4, Gate PASS) |
 | M3 | Comprehensive Vulnerability Remediation, CI Workflow Fix & Code Commit | Features 13–18: 100% remediation of confirmed findings across all severity levels, fix failing GitHub Actions workflows in `.github/workflows/`, zero regressions, AgentOctopus sync, PR ship | M2 | DONE (PR #298 merged, Gate PASS) |
-| M4 | Multi-Platform Release Artifact Packaging | Features 19–21: Windows MSI signing/WDSI submission, Linux package verification, macOS universal archive & launchd daemon, release sync | M3 | IN_PROGRESS |
+| M4 | Multi-Platform Release Artifact Packaging | Features 19–21: Windows MSI signing/WDSI submission, Linux package verification, macOS universal archive & launchd daemon, release sync | M3 | DONE (PR #305 & #306 merged, Gate PASS) |
 
 ---
 
