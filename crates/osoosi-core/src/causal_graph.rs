@@ -850,9 +850,11 @@ impl CausalSecurityGraph {
             "SELECT COUNT(1) FROM causal_process_instances WHERE pid = ?1 AND (taint_level > 0 OR has_crown_jewel_taint > 0)"
         };
         let count: i64 = if let Some(parent_pid) = ppid {
-            lock.query_row(query, params![pid, parent_pid], |r| r.get(0)).unwrap_or(0)
+            lock.query_row(query, params![pid, parent_pid], |r| r.get(0))
+                .unwrap_or(0)
         } else {
-            lock.query_row(query, params![pid], |r| r.get(0)).unwrap_or(0)
+            lock.query_row(query, params![pid], |r| r.get(0))
+                .unwrap_or(0)
         };
         count > 0
     }
@@ -2247,4 +2249,3 @@ static GLOBAL_CAUSAL_GRAPH: std::sync::LazyLock<Arc<CausalSecurityGraph>> =
 pub fn global_causal_security_graph() -> Arc<CausalSecurityGraph> {
     GLOBAL_CAUSAL_GRAPH.clone()
 }
-

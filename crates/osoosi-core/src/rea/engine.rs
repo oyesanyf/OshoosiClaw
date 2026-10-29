@@ -498,10 +498,10 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
     if is_single_voter_statistical_heuristic {
         return true;
     }
-    let is_uncorroborated_suspicious_folder_installer =
-        reason_lower.contains("process start from suspicious folder")
-            && reason_lower.contains("call stack spoofing detected")
-            && !reason_lower.contains("direct syscall");
+    let is_uncorroborated_suspicious_folder_installer = reason_lower
+        .contains("process start from suspicious folder")
+        && reason_lower.contains("call stack spoofing detected")
+        && !reason_lower.contains("direct syscall");
     if is_uncorroborated_suspicious_folder_installer {
         return true;
     }
@@ -1372,9 +1372,11 @@ impl AutonomousReaEngine {
         let canonical_threat_id = format!("rea:adjudicated:threat:{}:{}", target, reason_str);
         let synth_sha256 = sha256_hex(canonical_threat_id.as_bytes());
         let synth_blake3 = blake3_hex(canonical_threat_id.as_bytes());
-        let already_recorded = self.investigations.read().iter().any(|r| {
-            r.target_path.eq_ignore_ascii_case(target) || r.blake3 == synth_blake3
-        });
+        let already_recorded = self
+            .investigations
+            .read()
+            .iter()
+            .any(|r| r.target_path.eq_ignore_ascii_case(target) || r.blake3 == synth_blake3);
         if !already_recorded && !target.is_empty() && target != "unknown_target" {
             let auto_yara = synthesize_rea_yara_rule(
                 target,

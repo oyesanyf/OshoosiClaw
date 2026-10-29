@@ -558,7 +558,10 @@ function renderDlpEventsTable() {
         return `
             <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                 <td style="padding: 8px 10px; font-family: monospace; color: var(--text-muted); font-size: 11px;">${ev.timestamp || new Date().toISOString().slice(11, 19)}</td>
-                <td style="padding: 8px 10px; font-weight: 600; color: #f8fafc; font-family: monospace;">${escapeHtml(ev.process || 'agent.exe')} ${reaTag}</td>
+                <td style="padding: 8px 10px; font-weight: 600; color: #f8fafc; font-family: monospace;">
+                    <div><i data-lucide="cpu" style="width:11px; height:11px; vertical-align:middle; margin-right:3px;"></i>${escapeHtml(ev.process || 'agent.exe')}${ev.pid ? ' (' + escapeHtml(String(ev.pid)) + ')' : ''} ${reaTag}</div>
+                    <div style="font-size: 10px; color: var(--accent-blue); font-family: monospace; margin-top: 2px;" title="${escapeHtml(ev.file_path || ev.source_file || '')}"><i data-lucide="file" style="width:10px; height:10px; vertical-align:middle; margin-right:3px;"></i>${escapeHtml(ev.file_name || (ev.file_path ? ev.file_path.split(/[\\/]/).pop() : (ev.source || 'payload.bin')))}</div>
+                </td>
                 <td style="padding: 8px 10px; font-size: 11px; font-family: monospace;">
                     <div style="color: #38bdf8; word-break: break-all;">${escapeHtml(ev.sink || 'https://...')}</div>
                     <div style="color: #64748b; font-size: 10px;">${escapeHtml(ev.channel || 'HTTPS_POST')}</div>
@@ -566,7 +569,10 @@ function renderDlpEventsTable() {
                 <td style="padding: 8px 10px; text-align: center;">${verdictBadge}</td>
                 <td style="padding: 8px 10px; text-align: center; font-weight: 800; color: ${phiColor};">φ=${phiFormatted}</td>
                 <td style="padding: 8px 10px;">${categoriesPills}</td>
-                <td style="padding: 8px 10px; font-family: monospace; font-size: 11px; color: #e6edf3; word-break: break-all;" title="${escapeHtml(ev.scrubbed || '')}">${scrubbedPreview}</td>
+                <td style="padding: 8px 10px; font-family: monospace; font-size: 11px;">
+                    <div style="font-size: 10.5px; color: var(--accent-blue); font-weight: 600; margin-bottom: 2px;"><i data-lucide="info" style="width:10px; height:10px; vertical-align:middle; margin-right:3px;"></i>${escapeHtml(ev.what_is_this || (ev.categories && ev.categories.length ? `Intercepted ${ev.categories.join(', ')} secret payload destined for egress sink.` : 'Egress payload evaluated under ZK-BFT DLP policies.'))}</div>
+                    <div style="color: #e6edf3; word-break: break-all;" title="${escapeHtml(ev.scrubbed || '')}">${scrubbedPreview}</div>
+                </td>
                 <td style="padding: 8px 10px; font-family: monospace; font-size: 10.5px;">
                     <div style="color: #10b981;">${commitPreview}</div>
                     <div style="color: #64748b;">${sigPreview}</div>

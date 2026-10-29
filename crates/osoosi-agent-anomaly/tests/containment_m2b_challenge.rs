@@ -232,7 +232,7 @@ fn challenge_repository_path_immunity() {
     assert!(tracker.is_poisoned_digest(&lib_hash));
 
     let tel_lib = build_telemetry(
-        "session-adv-2",
+        "session-adv-3",
         "agent-developer",
         "inspect_source",
         json!({"source": lib_rs.to_string_lossy().to_string()}),

@@ -249,13 +249,13 @@ impl EdrOrchestrator {
                 snap_pid, comm, rip_hex, sigma_score, payload_sha256
             ));
 
-            let f_path_opt = event.data.get("Image").and_then(|v| v.as_str()).map(std::path::Path::new);
+            let f_path_opt = event
+                .data
+                .get("Image")
+                .and_then(|v| v.as_str())
+                .map(std::path::Path::new);
             let Some(mut signature) = self
-                .adjudicate_threat_signature_with_rea_and_voters(
-                    f_path_opt,
-                    sig,
-                    Some(&event),
-                )
+                .adjudicate_threat_signature_with_rea_and_voters(f_path_opt, sig, Some(&event))
                 .await
             else {
                 return Ok(());
@@ -517,7 +517,8 @@ impl EdrOrchestrator {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("");
 
-                            let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                            let mut sig =
+                                osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                             sig.confidence = 0.95;
                             sig.process_name = if !source_image.is_empty() {
                                 Some(source_image.to_string())
@@ -525,7 +526,9 @@ impl EdrOrchestrator {
                                 None
                             };
                             sig.mitre_technique = Some("T1003".to_string());
-                            sig.mitre_technique_name = Some("OS Credential Dumping / Process Access Violation".to_string());
+                            sig.mitre_technique_name = Some(
+                                "OS Credential Dumping / Process Access Violation".to_string(),
+                            );
                             sig.mitre_tactic = Some("Credential Access".to_string());
                             sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                             sig.action_state = osoosi_types::ActionState::Pending;

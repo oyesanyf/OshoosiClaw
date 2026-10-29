@@ -763,32 +763,68 @@ pub fn is_suspicious_lineage(parent: &str, child: &str, cmdline: &str) -> (bool,
 
     // 1. Office applications spawning command shells / script interpreters (T1204 / T1059)
     let office_apps = [
-        "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe",
-        "msaccess.exe", "mspub.exe", "acrord32.exe", "acrobat.exe",
+        "winword.exe",
+        "excel.exe",
+        "powerpnt.exe",
+        "outlook.exe",
+        "msaccess.exe",
+        "mspub.exe",
+        "acrord32.exe",
+        "acrobat.exe",
     ];
     let script_shells = [
-        "cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe",
-        "cscript.exe", "mshta.exe", "certutil.exe", "bitsadmin.exe",
-        "bash.exe", "wsl.exe", "rundll32.exe",
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe",
+        "certutil.exe",
+        "bitsadmin.exe",
+        "bash.exe",
+        "wsl.exe",
+        "rundll32.exe",
     ];
     if office_apps.contains(&p_base) && script_shells.contains(&c_base) {
         return (true, "Office/Productivity application spawned command or script interpreter (MITRE T1204/T1059)");
     }
 
     // 2. Web servers spawning shells (T1505.003 - Web Shell)
-    let web_servers = ["w3wp.exe", "httpd.exe", "nginx.exe", "tomcat.exe", "php-cgi.exe"];
-    if web_servers.contains(&p_base) && (c_base == "cmd.exe" || c_base == "powershell.exe" || c_base == "sh" || c_base == "bash") {
-        return (true, "Web server spawned interactive shell (MITRE T1505.003 Web Shell)");
+    let web_servers = [
+        "w3wp.exe",
+        "httpd.exe",
+        "nginx.exe",
+        "tomcat.exe",
+        "php-cgi.exe",
+    ];
+    if web_servers.contains(&p_base)
+        && (c_base == "cmd.exe" || c_base == "powershell.exe" || c_base == "sh" || c_base == "bash")
+    {
+        return (
+            true,
+            "Web server spawned interactive shell (MITRE T1505.003 Web Shell)",
+        );
     }
 
     // 3. Spawning ransomware / shadow copy deletion tools (T1490 - Inhibit System Recovery)
     let shadow_deleters = ["vssadmin.exe", "wbadmin.exe", "bcdedit.exe"];
-    if shadow_deleters.contains(&c_base) && (cmd_lower.contains("delete shadows") || cmd_lower.contains("resize shadowstorage") || cmd_lower.contains("recoveryenabled no")) {
-        return (true, "Suspicious lineage invoking system recovery inhibition tool (MITRE T1490)");
+    if shadow_deleters.contains(&c_base)
+        && (cmd_lower.contains("delete shadows")
+            || cmd_lower.contains("resize shadowstorage")
+            || cmd_lower.contains("recoveryenabled no"))
+    {
+        return (
+            true,
+            "Suspicious lineage invoking system recovery inhibition tool (MITRE T1490)",
+        );
     }
 
     // 4. LSASS credential dumping / injection tools (T1003.001)
-    if c_base.contains("mimikatz") || c_base.contains("procdump") || cmd_lower.contains("sekurlsa") || cmd_lower.contains("minidump") {
+    if c_base.contains("mimikatz")
+        || c_base.contains("procdump")
+        || cmd_lower.contains("sekurlsa")
+        || cmd_lower.contains("minidump")
+    {
         return (true, "Credential dumping tool lineage (MITRE T1003.001)");
     }
 
@@ -838,7 +874,10 @@ impl ThreatVoter for BehavioralProcessLineageVoter {
             .get("ProcessId")
             .or_else(|| event.data.get("process_id"))
             .or_else(|| event.data.get("pid"))
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .map(|n| n as u32)
             .unwrap_or(0);
 
@@ -847,7 +886,10 @@ impl ThreatVoter for BehavioralProcessLineageVoter {
             .get("ParentProcessId")
             .or_else(|| event.data.get("parent_process_id"))
             .or_else(|| event.data.get("ppid"))
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
             .map(|n| n as u32);
 
         let parent_image = event
@@ -885,8 +927,10 @@ impl ThreatVoter for BehavioralProcessLineageVoter {
             None,
         );
 
-        let (is_suspicious_tree, lineage_reason) = is_suspicious_lineage(parent_image, image, cmdline);
-        let is_tainted = (pid > 0 || ppid.is_some()) && self.causal_graph.is_process_or_parent_tainted(pid, ppid);
+        let (is_suspicious_tree, lineage_reason) =
+            is_suspicious_lineage(parent_image, image, cmdline);
+        let is_tainted = (pid > 0 || ppid.is_some())
+            && self.causal_graph.is_process_or_parent_tainted(pid, ppid);
 
         let log_ev: osoosi_behavioral::LogEvent = event.into();
         let colog_score = self.analyzer.autonomous_check(log_ev).await;
@@ -1046,9 +1090,7 @@ impl ThreatVoter for ClefDecisionVoter {
                 ),
                 weight: 1.85,
             })
-        } else if decision.verdict == "benign"
-            && decision.verdict_probability >= 0.85
-            && !has_lotl
+        } else if decision.verdict == "benign" && decision.verdict_probability >= 0.85 && !has_lotl
         {
             let conf = (decision.verdict_probability as f32).clamp(0.70, 0.99);
             Some(VoteResult {
@@ -1066,7 +1108,6 @@ impl ThreatVoter for ClefDecisionVoter {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

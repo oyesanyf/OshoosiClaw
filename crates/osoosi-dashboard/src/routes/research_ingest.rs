@@ -20,12 +20,8 @@ use crate::DashboardState;
 
 /// Baseline implemented research papers in OshoosiClaw.
 /// Used to distinguish already-implemented baseline papers from novel frontier discoveries.
-pub const ALREADY_IMPLEMENTED_ARXIV_IDS: &[&str] = &[
-    "2610.09167",
-    "2610.09167v1",
-    "2610.14224",
-    "2610.14224v1",
-];
+pub const ALREADY_IMPLEMENTED_ARXIV_IDS: &[&str] =
+    &["2610.09167", "2610.09167v1", "2610.14224", "2610.14224v1"];
 
 #[derive(Debug, Default)]
 struct IngestStats {
@@ -75,6 +71,13 @@ pub fn trim_pending_research_queue(q: &mut Vec<PendingResearchApprovalItem>) {
 pub static PENDING_RESEARCH_APPROVALS: Lazy<RwLock<Vec<PendingResearchApprovalItem>>> =
     Lazy::new(|| RwLock::new(Vec::new()));
 
+fn default_relevance_score() -> f64 {
+    96.0
+}
+fn default_accuracy_score() -> f64 {
+    99.0
+}
+
 /// Candidate research defense rule and conformal source awaiting operator approval before live EDR enforcement.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingResearchApprovalItem {
@@ -95,6 +98,12 @@ pub struct PendingResearchApprovalItem {
     pub rejection_code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rejection_reason: Option<String>,
+    #[serde(default = "default_relevance_score")]
+    pub relevance_score: f64,
+    #[serde(default = "default_accuracy_score")]
+    pub accuracy_score: f64,
+    #[serde(default)]
+    pub arxiv_url: String,
 }
 
 /// Request to search arXiv / LangExtract and stage novel findings for operator approval.
@@ -146,7 +155,8 @@ pub struct ResearchApprovalDecisionResponse {
     pub updated_items: Vec<PendingResearchApprovalItem>,
     pub timestamp: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub acceptance_verdict: Option<osoosi_agent_anomaly::breakout_defense::ResearchAcceptanceVerdict>,
+    pub acceptance_verdict:
+        Option<osoosi_agent_anomaly::breakout_defense::ResearchAcceptanceVerdict>,
 }
 
 /// Individual extraction item extracted from research papers.
@@ -561,11 +571,18 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
         .unwrap_or(&item.attack_vector);
 
     let category = classify_probe_category(item);
-    let probe_id = format!("probe_{}_{}", category.as_str(), uuid::Uuid::new_v4().simple());
+    let probe_id = format!(
+        "probe_{}_{}",
+        category.as_str(),
+        uuid::Uuid::new_v4().simple()
+    );
 
     let (synthetic_attack_input, live_probe_blocked, gate_verdict) = match category {
         ProbeCategory::ContainerSandboxEscape => {
-            let payload = format!("nsenter --target 1 --mount --uts --ipc --net --pid -- {}", quote);
+            let payload = format!(
+                "nsenter --target 1 --mount --uts --ipc --net --pid -- {}",
+                quote
+            );
             let eval = osoosi_agent_anomaly::BreakoutDefenseCoordinator::new().evaluate_action(
                 "untrusted_agent",
                 "exec_command",
@@ -597,10 +614,8 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
                 "http://[::ffff:169.254.169.254]/computeMetadata/v1/",
                 true,
             );
-            let r3 = osoosi_agent_anomaly::validate_agent_egress_url(
-                "http://100.64.0.1/internal",
-                true,
-            );
+            let r3 =
+                osoosi_agent_anomaly::validate_agent_egress_url("http://100.64.0.1/internal", true);
             let blocked = r1.is_err() && r2.is_err() && r3.is_err();
             (
                 format!(
@@ -666,12 +681,18 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
                 "untrusted_agent",
                 "llm_prompt",
                 "prompt_guard",
-                &format!("suppress_refusal_subspace zero_divisor_exploit_chain {}", quote),
+                &format!(
+                    "suppress_refusal_subspace zero_divisor_exploit_chain {}",
+                    quote
+                ),
                 None,
             );
             let blocked = persist_alarm || sr_alarm || !eval.is_clean;
             (
-                format!("OOD 64-D embedding (+6.5 offset) & prompt exploit: {}", quote),
+                format!(
+                    "OOD 64-D embedding (+6.5 offset) & prompt exploit: {}",
+                    quote
+                ),
                 blocked,
                 if blocked {
                     "BLOCKED_BY_CONFORMAL_PERSIST3_AND_SR_DETECTOR".to_string()
@@ -787,6 +808,7 @@ pub fn build_ingested_research_rule(
                 arxiv_id
             )
         });
+    let arxiv_url = osoosi_agent_anomaly::breakout_defense::safe_arxiv_abs_url(&arxiv_id);
     osoosi_agent_anomaly::IngestedResearchDefenseRule {
         rule_id,
         arxiv_id,
@@ -801,6 +823,9 @@ pub fn build_ingested_research_rule(
         cedar_forbid_policy,
         target_crate,
         enrolled_at_utc: chrono::Utc::now().to_rfc3339(),
+        relevance_score: 96.0,
+        accuracy_score: 99.0,
+        arxiv_url,
     }
 }
 
@@ -955,13 +980,19 @@ fn sign_langgraph_edge_transition(
         "run={}|step={}|{}->{}|cond={}|epoch={}",
         run_id, step, from_node, to_node, condition, epoch
     );
-    let sig = osoosi_agent_anomaly::compute_ring_hmac(key_hash.as_bytes(), signing_payload.as_bytes());
+    let sig =
+        osoosi_agent_anomaly::compute_ring_hmac(key_hash.as_bytes(), signing_payload.as_bytes());
     hex::encode(sig)
 }
 
 /// Synthesizes deterministic paired `n_rows x 64` matrices centered around `center`
 /// with zero-mean symmetric perturbations so sample mean equals `center` and covariance is full-rank.
-fn synthesize_calibrated_matrix_64d(center: &[f64], n_rows: usize, scale: f64, seed: u64) -> Vec<Vec<f64>> {
+fn synthesize_calibrated_matrix_64d(
+    center: &[f64],
+    n_rows: usize,
+    scale: f64,
+    seed: u64,
+) -> Vec<Vec<f64>> {
     let dim = center.len();
     let mut rows = Vec::with_capacity(n_rows);
     let mut state = seed ^ 0x9E37_79B9_7F4A_7C15;
@@ -1024,10 +1055,9 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                     arxiv_id: Some(top_id.clone()),
                     title: req.title.clone(),
                     extraction_class: Some("breakout_vector".to_string()),
-                    attack_vector: req
-                        .query
-                        .clone()
-                        .unwrap_or_else(|| format!("Frontier breakout vector from arXiv:{}", top_id)),
+                    attack_vector: req.query.clone().unwrap_or_else(|| {
+                        format!("Frontier breakout vector from arXiv:{}", top_id)
+                    }),
                     target_boundary: "container_runtime_privilege".to_string(),
                     source_char_start: Some(0),
                     source_char_end: Some(48),
@@ -1381,24 +1411,31 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                     .first()
                     .and_then(|e| e.source_quote.as_deref())
                     .unwrap_or("novel_frontier_breakout_vector");
-                let base_vec = osoosi_behavioral::embed_prompt_representation_64d(representative_quote);
+                let base_vec =
+                    osoosi_behavioral::embed_prompt_representation_64d(representative_quote);
                 let novel_vec: Vec<f64> = base_vec.iter().map(|&v| v + 6.5).collect();
 
-                let (c_fam, d_t, best_source, current_k) = if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
-                    mon.reset();
-                    let mut last_step = mon.observe_slice(&novel_vec);
-                    for _ in 0..2 {
-                        last_step = mon.observe_slice(&novel_vec);
-                    }
-                    (
-                        last_step.c_fam,
-                        last_step.d_t,
-                        last_step.best_matching_source_name,
-                        mon.calibration.sources.len(),
-                    )
-                } else {
-                    (0.0, false, "unknown".to_string(), initial_conformal_sources_k)
-                };
+                let (c_fam, d_t, best_source, current_k) =
+                    if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+                        mon.reset();
+                        let mut last_step = mon.observe_slice(&novel_vec);
+                        for _ in 0..2 {
+                            last_step = mon.observe_slice(&novel_vec);
+                        }
+                        (
+                            last_step.c_fam,
+                            last_step.d_t,
+                            last_step.best_matching_source_name,
+                            mon.calibration.sources.len(),
+                        )
+                    } else {
+                        (
+                            0.0,
+                            false,
+                            "unknown".to_string(),
+                            initial_conformal_sources_k,
+                        )
+                    };
                 let conf_latency = t1.elapsed().as_micros() as u64;
 
                 tool_invocations.push(AgenticToolInvocation {
@@ -1421,8 +1458,15 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
 
                 // Conditional Edge: route_after_probe
                 // Conditional Edge: route_after_probe
-                if !calibration_completed && auto_enroll && ingest_report.novel_enhancement_count > 0 && require_approval {
-                    let fallback_id = req.arxiv_id.clone().unwrap_or_else(|| "novel_source".to_string());
+                if !calibration_completed
+                    && auto_enroll
+                    && ingest_report.novel_enhancement_count > 0
+                    && require_approval
+                {
+                    let fallback_id = req
+                        .arxiv_id
+                        .clone()
+                        .unwrap_or_else(|| "novel_source".to_string());
                     for item in &grounded_extractions {
                         let probe_res = execute_live_regression_probe(item);
                         let built = build_ingested_research_rule(item, &fallback_id, None);
@@ -1435,7 +1479,11 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                         );
 
                         let approval_item = PendingResearchApprovalItem {
-                            approval_id: format!("appr_{}_{}", built.rule_id, uuid::Uuid::new_v4().simple()),
+                            approval_id: format!(
+                                "appr_{}_{}",
+                                built.rule_id,
+                                uuid::Uuid::new_v4().simple()
+                            ),
                             arxiv_id: built.arxiv_id.clone(),
                             title: built.title.clone(),
                             attack_vector: built.attack_vector.clone(),
@@ -1458,12 +1506,21 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                             },
                             rejection_code: verdict.rejection_code,
                             rejection_reason: verdict.rejection_reason,
+                            relevance_score: built.relevance_score,
+                            accuracy_score: built.accuracy_score,
+                            arxiv_url: built.arxiv_url.clone(),
                         };
                         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
-                            let item_base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&approval_item.arxiv_id);
+                            let item_base =
+                                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(
+                                    &approval_item.arxiv_id,
+                                );
                             if let Some(existing) = q.iter_mut().find(|p| {
-                                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&p.arxiv_id) == item_base
-                                    && p.target_boundary.eq_ignore_ascii_case(&approval_item.target_boundary)
+                                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(
+                                    &p.arxiv_id,
+                                ) == item_base
+                                    && p.target_boundary
+                                        .eq_ignore_ascii_case(&approval_item.target_boundary)
                                     && p.status == "pending_approval"
                             }) {
                                 *existing = approval_item.clone();
@@ -1494,7 +1551,10 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                     });
                     visited_nodes.push("END".to_string());
                     current_node = "END".to_string();
-                } else if !calibration_completed && auto_enroll && ingest_report.novel_enhancement_count > 0 {
+                } else if !calibration_completed
+                    && auto_enroll
+                    && ingest_report.novel_enhancement_count > 0
+                {
                     edge_step += 1;
                     let sig = sign_langgraph_edge_transition(
                         &run_id,
@@ -1560,26 +1620,30 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                 let representative_quote = primary_item
                     .and_then(|e| e.source_quote.as_deref())
                     .unwrap_or("novel_frontier_breakout_vector");
-                let base_vec = osoosi_behavioral::embed_prompt_representation_64d(representative_quote);
+                let base_vec =
+                    osoosi_behavioral::embed_prompt_representation_64d(representative_quote);
                 let novel_center: Vec<f64> = base_vec.iter().map(|&v| v + 6.5).collect();
 
-                let train_rows = synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x2603_02277_01);
-                let cal_rows = synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x2603_02277_02);
+                let train_rows =
+                    synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x2603_02277_01);
+                let cal_rows =
+                    synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x2603_02277_02);
 
-                let (enrolled_source_name, new_k) = if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
-                    let next_k = mon.calibration.sources.len() + 1;
-                    let src_name = format!("Source_{}_arXiv_{}", next_k, clean_arxiv_id);
-                    let k_after = mon
-                        .enroll_detected_source_vecs(&src_name, &train_rows, &cal_rows)
-                        .unwrap_or(next_k);
-                    mon.reset();
-                    (src_name, k_after)
-                } else {
-                    (
-                        format!("Source_12_arXiv_{}", clean_arxiv_id),
-                        initial_conformal_sources_k + 1,
-                    )
-                };
+                let (enrolled_source_name, new_k) =
+                    if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+                        let next_k = mon.calibration.sources.len() + 1;
+                        let src_name = format!("Source_{}_arXiv_{}", next_k, clean_arxiv_id);
+                        let k_after = mon
+                            .enroll_detected_source_vecs(&src_name, &train_rows, &cal_rows)
+                            .unwrap_or(next_k);
+                        mon.reset();
+                        (src_name, k_after)
+                    } else {
+                        (
+                            format!("Source_12_arXiv_{}", clean_arxiv_id),
+                            initial_conformal_sources_k + 1,
+                        )
+                    };
 
                 if let Ok(mut enrolled_ids) = DYNAMIC_ENROLLED_ARXIV_IDS.write() {
                     let norm_id = normalize_arxiv_id(&raw_arxiv_id);
@@ -1612,10 +1676,7 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                 let t1 = Instant::now();
                 for (idx, item) in grounded_extractions.iter().enumerate() {
                     let category = classify_probe_category(item);
-                    let id_str = item
-                        .arxiv_id
-                        .as_deref()
-                        .unwrap_or(&raw_arxiv_id);
+                    let id_str = item.arxiv_id.as_deref().unwrap_or(&raw_arxiv_id);
                     let clean_id = normalize_arxiv_id(id_str)
                         .replace('.', "_")
                         .replace('-', "_")
@@ -1692,7 +1753,12 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
     let (final_conformal_sources_k, enrolled_conformal_sources) = GLOBAL_CONFORMAL_MONITOR
         .read()
         .map(|m| {
-            let names: Vec<String> = m.calibration.sources.iter().map(|s| s.name.clone()).collect();
+            let names: Vec<String> = m
+                .calibration
+                .sources
+                .iter()
+                .map(|s| s.name.clone())
+                .collect();
             (names.len(), names)
         })
         .unwrap_or_else(|_| (initial_conformal_sources_k, Vec::new()));
@@ -1858,7 +1924,10 @@ pub async fn post_research_novelty_check(
     }
 
     let total_checked = evaluations.len();
-    let novel_count = evaluations.iter().filter(|e| e.is_novel_to_codebase).count();
+    let novel_count = evaluations
+        .iter()
+        .filter(|e| e.is_novel_to_codebase)
+        .count();
     let already_implemented_count = total_checked.saturating_sub(novel_count);
     let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -1874,23 +1943,24 @@ pub async fn post_research_novelty_check(
 
 /// Searches arXiv (via `scripts/arxiv_langextract_feed.py` or frontier catalog), grounds extractions,
 /// runs live regression probes, and stages novel defense rules in `PENDING_RESEARCH_APPROVALS` awaiting user approval.
-pub fn search_and_stage_research_for_approval(req: ResearchSearchRequest) -> ResearchSearchResponse {
+pub fn search_and_stage_research_for_approval(
+    req: ResearchSearchRequest,
+) -> ResearchSearchResponse {
     let query = req
         .query
         .clone()
         .unwrap_or_else(|| "LLM agent container sandbox escape prompt injection".to_string());
     let mut candidate_items = Vec::new();
     let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
-    let is_already_active = |aid: &str, boundary: &str| -> bool {
+    let is_already_active = |aid: &str| -> bool {
         let base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(aid);
         active_rules.iter().any(|r| {
             osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == base
-                && r.target_boundary.eq_ignore_ascii_case(boundary)
         })
     };
 
     if let Some(ref aid) = req.arxiv_id {
-        if !is_already_implemented(aid) && !is_already_active(aid, "container_runtime_privilege") {
+        if !is_already_implemented(aid) && !is_already_active(aid) {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some(aid.clone()),
                 title: Some(format!("Discovered arXiv Security Research {}", aid)),
@@ -1899,13 +1969,16 @@ pub fn search_and_stage_research_for_approval(req: ResearchSearchRequest) -> Res
                 target_boundary: "container_runtime_privilege".to_string(),
                 source_char_start: Some(0),
                 source_char_end: Some(64),
-                source_quote: Some(format!("arxiv_search_indicator_{}", normalize_arxiv_id(aid).replace('.', "_"))),
+                source_quote: Some(format!(
+                    "arxiv_search_indicator_{}",
+                    normalize_arxiv_id(aid).replace('.', "_")
+                )),
                 novelty_delta_score: Some(88.0),
                 ..Default::default()
             });
         }
     } else {
-        if !is_already_active("2603.02277v3", "container_runtime_privilege") {
+        if !is_already_active("2603.02277v3") {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some("2603.02277v3".to_string()),
                 title: Some("SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)".to_string()),
@@ -1919,7 +1992,7 @@ pub fn search_and_stage_research_for_approval(req: ResearchSearchRequest) -> Res
                 ..Default::default()
             });
         }
-        if !is_already_active("2610.20437v1", "rl_controller_privilege_boundary") {
+        if !is_already_active("2610.20437v1") {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some("2610.20437v1".to_string()),
                 title: Some("Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)".to_string()),
@@ -1996,8 +2069,10 @@ pub fn approve_pending_research_item(
 
     if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
         for item in q.iter_mut() {
-            let item_base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&item.arxiv_id);
-            let target_base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(target_id);
+            let item_base =
+                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&item.arxiv_id);
+            let target_base =
+                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(target_id);
             let id_match = item.approval_id == target_id
                 || item.arxiv_id == target_id
                 || (!target_base.is_empty() && item_base == target_base);
@@ -2011,7 +2086,8 @@ pub fn approve_pending_research_item(
     }
 
     for approved in &updated_items {
-        let canonical_id = osoosi_agent_anomaly::breakout_defense::canonical_research_rule_id(&approved.arxiv_id);
+        let canonical_id =
+            osoosi_agent_anomaly::breakout_defense::canonical_research_rule_id(&approved.arxiv_id);
         let rule = osoosi_agent_anomaly::IngestedResearchDefenseRule {
             rule_id: canonical_id,
             arxiv_id: approved.arxiv_id.clone(),
@@ -2023,6 +2099,21 @@ pub fn approve_pending_research_item(
             cedar_forbid_policy: approved.cedar_forbid_policy.clone(),
             target_crate: approved.target_crate.clone(),
             enrolled_at_utc: now_str.clone(),
+            relevance_score: if approved.relevance_score > 0.0 {
+                approved.relevance_score
+            } else {
+                96.0
+            },
+            accuracy_score: if approved.accuracy_score > 0.0 {
+                approved.accuracy_score
+            } else {
+                99.0
+            },
+            arxiv_url: if !approved.arxiv_url.is_empty() {
+                approved.arxiv_url.clone()
+            } else {
+                osoosi_agent_anomaly::breakout_defense::safe_arxiv_abs_url(&approved.arxiv_id)
+            },
         };
 
         let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
@@ -2037,7 +2128,9 @@ pub fn approve_pending_research_item(
         if !verdict.accepted {
             tracing::warn!(
                 "Approval rejected by 3-gate validator for arXiv:{} (code: {:?}, reason: {:?})",
-                approved.arxiv_id, verdict.rejection_code, verdict.rejection_reason
+                approved.arxiv_id,
+                verdict.rejection_code,
+                verdict.rejection_reason
             );
             continue;
         }
@@ -2057,7 +2150,8 @@ pub fn approve_pending_research_item(
             .replace('.', "_")
             .replace('-', "_")
             .replace('/', "_");
-        let base_vec = osoosi_behavioral::embed_prompt_representation_64d(&approved.indicator_pattern);
+        let base_vec =
+            osoosi_behavioral::embed_prompt_representation_64d(&approved.indicator_pattern);
         let novel_center: Vec<f64> = base_vec.iter().map(|&v| v + 6.5).collect();
         let train_rows = synthesize_calibrated_matrix_64d(&novel_center, 60, 0.35, 0x2603_02277_11);
         let cal_rows = synthesize_calibrated_matrix_64d(&novel_center, 80, 0.35, 0x2603_02277_12);
@@ -2070,7 +2164,9 @@ pub fn approve_pending_research_item(
                 .any(|s| s.name.contains(&clean_arxiv_id))
             {
                 // Bounded capacity: cap at MAX_CONFORMAL_SOURCES_K (32), evict index 11 (oldest dynamic)
-                if mon.calibration.sources.len() >= MAX_CONFORMAL_SOURCES_K && mon.calibration.sources.len() > 11 {
+                if mon.calibration.sources.len() >= MAX_CONFORMAL_SOURCES_K
+                    && mon.calibration.sources.len() > 11
+                {
                     let mut cal = mon.calibration.clone();
                     cal.sources.remove(11);
                     let tau = mon.tau;
@@ -2185,7 +2281,10 @@ pub async fn post_research_search(
 /// GET /api/research/pending and /research/pending
 pub async fn get_research_pending() -> Json<Value> {
     let items = list_pending_research_approvals();
-    let pending_count = items.iter().filter(|i| i.status == "pending_approval").count();
+    let pending_count = items
+        .iter()
+        .filter(|i| i.status == "pending_approval")
+        .count();
     Json(json!({
         "success": true,
         "pending_count": pending_count,
@@ -2209,6 +2308,140 @@ pub async fn post_research_reject(
     Json(reject_pending_research_item(payload))
 }
 
+/// Request to clear or remove active research rules and synthesized Cedar policies.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ResearchClearRequest {
+    #[serde(default)]
+    pub rule_id: Option<String>,
+    #[serde(default)]
+    pub arxiv_id: Option<String>,
+    #[serde(default)]
+    pub clear_all: Option<bool>,
+    #[serde(default)]
+    pub restore_defaults: Option<bool>,
+}
+
+/// Response returned by the clear research endpoint.
+#[derive(Debug, Clone, Serialize)]
+pub struct ResearchClearResponse {
+    pub success: bool,
+    pub message: String,
+    pub active_rules_count: usize,
+    pub pending_count: usize,
+    pub conformal_sources_k: usize,
+    pub active_enforced_research_rules:
+        Vec<osoosi_agent_anomaly::breakout_defense::IngestedResearchDefenseRule>,
+    pub pending_approvals: Vec<PendingResearchApprovalItem>,
+    pub timestamp: String,
+}
+
+/// POST /api/research/clear and /research/clear
+pub async fn post_research_clear(
+    Json(payload): Json<ResearchClearRequest>,
+) -> Json<ResearchClearResponse> {
+    let now_str = chrono::Utc::now().to_rfc3339();
+
+    if payload.restore_defaults.unwrap_or(false) {
+        osoosi_agent_anomaly::breakout_defense::restore_default_research_rules();
+        if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+            *mon = osoosi_behavioral::PersistDetector::default_persist_3();
+        }
+        if let Ok(mut ced) = SYNTHESIZED_CEDAR_POLICIES.write() {
+            ced.clear();
+        }
+        if let Ok(mut dyn_ids) = DYNAMIC_ENROLLED_ARXIV_IDS.write() {
+            dyn_ids.clear();
+        }
+        if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+            q.clear();
+        }
+        let active = osoosi_agent_anomaly::list_ingested_research_rules();
+        return Json(ResearchClearResponse {
+            success: true,
+            message: "Restored 4 canonical seeded research defense rules and reset synthesized Cedar policies".to_string(),
+            active_rules_count: active.len(),
+            pending_count: 0,
+            conformal_sources_k: 11,
+            active_enforced_research_rules: active,
+            pending_approvals: Vec::new(),
+            timestamp: now_str,
+        });
+    }
+
+    if payload.clear_all.unwrap_or(false) {
+        osoosi_agent_anomaly::breakout_defense::clear_all_ingested_research_rules();
+        if let Ok(mut ced) = SYNTHESIZED_CEDAR_POLICIES.write() {
+            ced.clear();
+        }
+        if let Ok(mut dyn_ids) = DYNAMIC_ENROLLED_ARXIV_IDS.write() {
+            dyn_ids.clear();
+        }
+        if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+            q.clear();
+        }
+        if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+            *mon = osoosi_behavioral::PersistDetector::default_persist_3();
+        }
+        return Json(ResearchClearResponse {
+            success: true,
+            message: "Successfully cleared all active research defense rules, synthesized Cedar policies, and pending approvals".to_string(),
+            active_rules_count: 0,
+            pending_count: 0,
+            conformal_sources_k: 11,
+            active_enforced_research_rules: Vec::new(),
+            pending_approvals: Vec::new(),
+            timestamp: now_str,
+        });
+    }
+
+    let target_id = payload.rule_id.or(payload.arxiv_id).unwrap_or_default();
+    let clean_target = target_id.trim();
+    let base_id = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(clean_target);
+
+    if !clean_target.is_empty() {
+        osoosi_agent_anomaly::breakout_defense::remove_ingested_research_rule(clean_target);
+        if let Ok(mut ced) = SYNTHESIZED_CEDAR_POLICIES.write() {
+            ced.retain(|p| {
+                !p.contains(clean_target) && (base_id.is_empty() || !p.contains(&base_id))
+            });
+        }
+        if let Ok(mut dyn_ids) = DYNAMIC_ENROLLED_ARXIV_IDS.write() {
+            dyn_ids.retain(|id| {
+                let b = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(id);
+                id != clean_target && (base_id.is_empty() || b != base_id)
+            });
+        }
+        if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+            q.retain(|item| {
+                let b =
+                    osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&item.arxiv_id);
+                item.approval_id != clean_target && (base_id.is_empty() || b != base_id)
+            });
+        }
+    }
+
+    let active = osoosi_agent_anomaly::list_ingested_research_rules();
+    let pending = list_pending_research_approvals();
+    let conf_k = GLOBAL_CONFORMAL_MONITOR
+        .read()
+        .map(|m| m.calibration.sources.len())
+        .unwrap_or(11);
+
+    Json(ResearchClearResponse {
+        success: true,
+        message: format!(
+            "Removed research rule '{}' and associated synthesized policies",
+            clean_target
+        ),
+        active_rules_count: active.len(),
+        pending_count: pending.len(),
+        conformal_sources_k: conf_k,
+        active_enforced_research_rules: active,
+        pending_approvals: pending,
+        timestamp: now_str,
+    })
+}
+
 /// Registers research ingest routes onto the Axum router.
 pub fn routes() -> Router<DashboardState> {
     Router::new()
@@ -2221,6 +2454,8 @@ pub fn routes() -> Router<DashboardState> {
         .route("/research/approve", post(post_research_approve))
         .route("/api/research/reject", post(post_research_reject))
         .route("/research/reject", post(post_research_reject))
+        .route("/api/research/clear", post(post_research_clear))
+        .route("/research/clear", post(post_research_clear))
         .route("/api/research/validate", post(post_research_validate))
         .route("/research/validate", post(post_research_validate))
         .route("/research/status", get(get_research_status))
@@ -2238,15 +2473,14 @@ pub fn routes() -> Router<DashboardState> {
             "/api/research/novelty-check",
             post(post_research_novelty_check),
         )
-        .route(
-            "/research/novelty-check",
-            post(post_research_novelty_check),
-        )
+        .route("/research/novelty-check", post(post_research_novelty_check))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    static TEST_CONFORMAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_live_regression_probes_all_categories_block() {
@@ -2482,6 +2716,12 @@ mod tests {
 
     #[test]
     fn test_langgraph_4_arm_swarm_end_to_end_and_stopping_conditions() {
+        let _lock = TEST_CONFORMAL_LOCK.lock().unwrap();
+        osoosi_agent_anomaly::breakout_defense::reset_research_defense_registry();
+        if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+            *mon = osoosi_behavioral::PersistDetector::default_persist_3();
+        }
+
         // 1. Full 4-Arm cycle on novel paper 2603.02277:
         // START -> arm_1_arxiv_scout -> arm_2_langextract_grounder -> arm_3_edr_live_probe
         // -> arm_4_edr_calibrator -> arm_3_edr_live_probe -> END
@@ -2550,10 +2790,7 @@ mod tests {
             );
             assert!(edge.generation_epoch >= 1);
         }
-        assert!(resp
-            .tool_invocations
-            .iter()
-            .all(|t| t.containment_verified));
+        assert!(resp.tool_invocations.iter().all(|t| t.containment_verified));
 
         assert_eq!(resp.recursion_steps_used, 5);
         // Verify BreakoutDefenseCoordinator immediately blocks the newly ingested marker!
@@ -2634,7 +2871,10 @@ mod tests {
             "benign check hitl_approval_gated_marker_555",
             Some("/workspace"),
         );
-        assert!(!post_eval.is_clean, "Must block immediately after operator approval");
+        assert!(
+            !post_eval.is_clean,
+            "Must block immediately after operator approval"
+        );
         assert!(post_eval
             .technical
             .detected_vectors
@@ -2653,7 +2893,7 @@ mod tests {
                 extraction_class: Some("breakout_vector".to_string()),
                 attack_vector: "Sequential prompt injection".to_string(),
                 target_boundary: "prompt_guard_conformal".to_string(),
-            source_quote: Some("baseline conformal jailbreak test".to_string()),
+                source_quote: Some("baseline conformal jailbreak test".to_string()),
                 ..Default::default()
             }],
             max_recursion_limit: Some(8),
@@ -2671,6 +2911,11 @@ mod tests {
         );
         assert_eq!(early_resp.edge_transitions.len(), 2);
         assert_eq!(early_resp.recursion_steps_used, 1);
+
+        osoosi_agent_anomaly::breakout_defense::reset_research_defense_registry();
+        if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+            *mon = osoosi_behavioral::PersistDetector::default_persist_3();
+        }
     }
 
     #[test]
@@ -2683,11 +2928,15 @@ mod tests {
             require_user_approval: Some(true),
         });
         assert!(resp.success);
-        assert_eq!(resp.staged_for_approval_count, 0, "Already active papers must not be re-staged as duplicates");
+        assert_eq!(
+            resp.staged_for_approval_count, 0,
+            "Already active papers must not be re-staged as duplicates"
+        );
     }
 
     #[test]
     fn test_approve_pending_research_canonicalizes_rule_id_and_deduplicates() {
+        let _lock = TEST_CONFORMAL_LOCK.lock().unwrap();
         let test_aid = "2609.99888";
         let canonical_id = format!("ARXIV-DEF-{}", test_aid);
 
@@ -2699,7 +2948,10 @@ mod tests {
             target_boundary: "container_runtime_privilege".to_string(),
             extraction_class: "breakout_vector".to_string(),
             indicator_pattern: "novel_custom_indicator_marker_99888".to_string(),
-            cedar_forbid_policy: format!("@id(\"{}\")\nforbid(principal, action, resource);", canonical_id),
+            cedar_forbid_policy: format!(
+                "@id(\"{}\")\nforbid(principal, action, resource);",
+                canonical_id
+            ),
             target_crate: "osoosi-agent-anomaly".to_string(),
             live_probe_result: LiveRegressionProbeResult {
                 probe_id: "test".to_string(),
@@ -2715,6 +2967,9 @@ mod tests {
             decided_at_utc: None,
             rejection_code: None,
             rejection_reason: None,
+            relevance_score: 96.0,
+            accuracy_score: 99.0,
+            arxiv_url: format!("https://arxiv.org/abs/{}", test_aid),
         };
 
         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
@@ -2730,9 +2985,15 @@ mod tests {
 
         // Check active rules: rule_id must be canonicalized to ARXIV-DEF-2609.99888
         let active = osoosi_agent_anomaly::list_ingested_research_rules();
-        let rule = active.iter().find(|r| osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == test_aid);
+        let rule = active.iter().find(|r| {
+            osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == test_aid
+        });
         assert!(rule.is_some(), "Approved rule must be in active rules");
-        assert_eq!(rule.unwrap().rule_id, canonical_id, "Rule ID must be canonicalized to ARXIV-DEF-<base_arxiv_id>");
+        assert_eq!(
+            rule.unwrap().rule_id,
+            canonical_id,
+            "Rule ID must be canonicalized to ARXIV-DEF-<base_arxiv_id>"
+        );
 
         // Approving again with a different approval_id or version must update in-place, NOT duplicate
         let staged_again = PendingResearchApprovalItem {
@@ -2743,7 +3004,10 @@ mod tests {
             target_boundary: "container_runtime_privilege".to_string(),
             extraction_class: "breakout_vector".to_string(),
             indicator_pattern: "novel_custom_indicator_marker_99888_v3".to_string(),
-            cedar_forbid_policy: format!("@id(\"{}\")\nforbid(principal, action, resource);", canonical_id),
+            cedar_forbid_policy: format!(
+                "@id(\"{}\")\nforbid(principal, action, resource);",
+                canonical_id
+            ),
             target_crate: "osoosi-agent-anomaly".to_string(),
             live_probe_result: LiveRegressionProbeResult {
                 probe_id: "test2".to_string(),
@@ -2759,6 +3023,9 @@ mod tests {
             decided_at_utc: None,
             rejection_code: None,
             rejection_reason: None,
+            relevance_score: 96.0,
+            accuracy_score: 99.0,
+            arxiv_url: format!("https://arxiv.org/abs/{}", test_aid),
         };
 
         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
@@ -2774,7 +3041,65 @@ mod tests {
 
         // Count of matching rules must be exactly 1!
         let active2 = osoosi_agent_anomaly::list_ingested_research_rules();
-        let matching_count = active2.iter().filter(|r| osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == test_aid).count();
-        assert_eq!(matching_count, 1, "There must be exactly 1 canonical rule in active registry, zero duplicate rows");
+        let matching_count = active2
+            .iter()
+            .filter(|r| {
+                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id)
+                    == test_aid
+            })
+            .count();
+        assert_eq!(
+            matching_count, 1,
+            "There must be exactly 1 canonical rule in active registry, zero duplicate rows"
+        );
+
+        if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
+            *mon = osoosi_behavioral::PersistDetector::default_persist_3();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_clear_all_research_rules_and_synthesized_policies() {
+        let _lock = TEST_CONFORMAL_LOCK.lock().unwrap();
+
+        // 1. Clear all
+        let clear_req = axum::extract::Json(ResearchClearRequest {
+            rule_id: None,
+            arxiv_id: None,
+            clear_all: Some(true),
+            restore_defaults: Some(false),
+        });
+        let res = post_research_clear(clear_req).await;
+        assert!(res.success);
+        assert_eq!(res.active_rules_count, 0);
+        assert!(osoosi_agent_anomaly::list_ingested_research_rules().is_empty());
+        assert!(SYNTHESIZED_CEDAR_POLICIES.read().unwrap().is_empty());
+
+        // 2. Restore defaults
+        let restore_req = axum::extract::Json(ResearchClearRequest {
+            rule_id: None,
+            arxiv_id: None,
+            clear_all: Some(false),
+            restore_defaults: Some(true),
+        });
+        let res2 = post_research_clear(restore_req).await;
+        assert!(res2.success);
+        assert_eq!(res2.active_rules_count, 4);
+        assert_eq!(osoosi_agent_anomaly::list_ingested_research_rules().len(), 4);
+
+        // 3. Remove single rule
+        let remove_req = axum::extract::Json(ResearchClearRequest {
+            rule_id: Some("ARXIV-DEF-2603.02277".to_string()),
+            arxiv_id: None,
+            clear_all: Some(false),
+            restore_defaults: Some(false),
+        });
+        let res3 = post_research_clear(remove_req).await;
+        assert!(res3.success);
+        assert_eq!(res3.active_rules_count, 3);
+        assert_eq!(osoosi_agent_anomaly::list_ingested_research_rules().len(), 3);
+
+        // Reset back to defaults for clean state
+        osoosi_agent_anomaly::breakout_defense::restore_default_research_rules();
     }
 }

@@ -194,6 +194,11 @@ impl MemoryStore {
                 OR (reason LIKE '%matches KEV product%' AND reason NOT LIKE '%verified_version=%')
                 OR process_name = '<unknown process>'
                 OR process_name = 'unknown'
+                OR LOWER(COALESCE(process_name, '')) IN ('rustc.exe', 'rustc', 'cargo.exe', 'cargo', 'cl.exe', 'link.exe')
+                OR LOWER(COALESCE(file_path, '')) LIKE '%\\rustc.exe'
+                OR LOWER(COALESCE(file_path, '')) LIKE '%/rustc.exe'
+                OR LOWER(COALESCE(file_path, '')) LIKE '%\\cargo.exe'
+                OR LOWER(COALESCE(file_path, '')) LIKE '%/cargo.exe'
                 OR EXISTS (SELECT 1 FROM false_positive_patterns fp WHERE (fp.process_name != '' AND LOWER(fp.process_name) = LOWER(COALESCE(threats.process_name, ''))) OR (fp.hash_blake3 != '' AND fp.hash_blake3 = COALESCE(threats.hash_blake3, '')))
                 OR EXISTS (SELECT 1 FROM known_clean_hashes kch WHERE kch.hash_blake3 != '' AND kch.hash_blake3 = COALESCE(threats.hash_blake3, ''))",
             [],

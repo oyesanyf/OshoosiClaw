@@ -42,11 +42,12 @@ pub use alignment_scanner::{
     RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
 pub use breakout_defense::{
+    clear_all_ingested_research_rules, list_ingested_research_rules,
+    register_ingested_research_rule, remove_ingested_research_rule, restore_default_research_rules,
     validate_agent_egress_url, validate_agent_filesystem_access, BehavioralBreakoutGuard,
-    BehavioralBreakoutVerdict, BreakoutDefenseCoordinator, TechnicalBreakoutGuard,
-    TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation, ZeroMiProjectionResult,
-    ZeroMutualInformationProjector, list_ingested_research_rules, register_ingested_research_rule,
-    IngestedResearchDefenseRule, GLOBAL_RESEARCH_DEFENSE_REGISTRY,
+    BehavioralBreakoutVerdict, BreakoutDefenseCoordinator, IngestedResearchDefenseRule,
+    TechnicalBreakoutGuard, TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation,
+    ZeroMiProjectionResult, ZeroMutualInformationProjector, GLOBAL_RESEARCH_DEFENSE_REGISTRY,
 };
 pub use breakout_prevention::*;
 pub use cedar_engine::{
