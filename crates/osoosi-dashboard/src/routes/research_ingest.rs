@@ -2846,6 +2846,17 @@ mod tests {
             "benign check hitl_approval_gated_marker_555",
             Some("/workspace"),
         );
+        eprintln!(
+            "DEBUG pre_eval vectors: {:?}",
+            pre_eval.technical.detected_vectors
+        );
+        eprintln!(
+            "DEBUG list_ingested_research_rules: {:?}",
+            osoosi_agent_anomaly::list_ingested_research_rules()
+                .iter()
+                .map(|r| (&r.rule_id, &r.arxiv_id, &r.indicator_pattern))
+                .collect::<Vec<_>>()
+        );
         assert!(
             !pre_eval
                 .technical
@@ -3060,7 +3071,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_all_research_rules_and_synthesized_policies() {
-        let _lock = TEST_CONFORMAL_LOCK.lock().unwrap();
+        let _lock = TEST_CONFORMAL_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         // 1. Clear all
         let clear_req = axum::extract::Json(ResearchClearRequest {
@@ -3085,7 +3098,10 @@ mod tests {
         let res2 = post_research_clear(restore_req).await;
         assert!(res2.success);
         assert_eq!(res2.active_rules_count, 4);
-        assert_eq!(osoosi_agent_anomaly::list_ingested_research_rules().len(), 4);
+        assert_eq!(
+            osoosi_agent_anomaly::list_ingested_research_rules().len(),
+            4
+        );
 
         // 3. Remove single rule
         let remove_req = axum::extract::Json(ResearchClearRequest {
@@ -3097,7 +3113,10 @@ mod tests {
         let res3 = post_research_clear(remove_req).await;
         assert!(res3.success);
         assert_eq!(res3.active_rules_count, 3);
-        assert_eq!(osoosi_agent_anomaly::list_ingested_research_rules().len(), 3);
+        assert_eq!(
+            osoosi_agent_anomaly::list_ingested_research_rules().len(),
+            3
+        );
 
         // Reset back to defaults for clean state
         osoosi_agent_anomaly::breakout_defense::restore_default_research_rules();
