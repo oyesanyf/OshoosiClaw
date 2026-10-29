@@ -8456,7 +8456,7 @@ pub fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                             .file_name()
                             .and_then(|n| n.to_str())
                     })
-                    .or_else(|| item.process_name.as_deref())
+                    .or(item.process_name.as_deref())
                     .unwrap_or("—");
                 obj.insert("file_name".to_string(), serde_json::json!(fname));
             }

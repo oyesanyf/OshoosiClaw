@@ -697,10 +697,12 @@ async fn test_clef_decision_voter_malicious_and_benign_veto() -> Result<()> {
     let temp_model_dir = std::env::temp_dir().join(format!("clef_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_model_dir).ok();
 
-    let mut cfg = DecisionModelConfig::default();
-    cfg.enabled = true;
-    cfg.provider = "local".to_string();
-    cfg.model_dir = temp_model_dir.to_str().unwrap().to_string();
+    let cfg = DecisionModelConfig {
+        enabled: true,
+        provider: "local".to_string(),
+        model_dir: temp_model_dir.to_str().unwrap().to_string(),
+        ..Default::default()
+    };
 
     let engine = Arc::new(ClefDecisionEngine::new(cfg));
     let adaptive = Arc::new(TelemetryController::new());

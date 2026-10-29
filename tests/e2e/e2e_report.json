@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-29 07:21:22 UTC",
+  "timestamp": "2026-10-29 07:37:09 UTC",
   "total_tests": 339,
   "total_passed": 339,
   "total_failed": 0,
@@ -13,7 +13,7 @@
       "passed": 145,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.252,
+      "duration_seconds": 0.262,
       "success": true
     },
     {
@@ -22,7 +22,7 @@
       "passed": 145,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.015,
+      "duration_seconds": 0.032,
       "success": true
     },
     {
@@ -31,7 +31,7 @@
       "passed": 20,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.038,
+      "duration_seconds": 0.071,
       "success": true
     },
     {
@@ -40,7 +40,7 @@
       "passed": 8,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.051,
+      "duration_seconds": 0.048,
       "success": true
     },
     {
@@ -49,7 +49,7 @@
       "passed": 21,
       "failed": 0,
       "errors": 0,
-      "duration_seconds": 0.685,
+      "duration_seconds": 0.708,
       "success": true
     }
   ]
