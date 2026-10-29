@@ -212,9 +212,6 @@ impl NativeHost {
                 };
             }
         };
-        let port = parsed_url
-            .port_or_known_default()
-            .unwrap_or(if scheme == "https" { 443 } else { 80 });
 
         // 1. Google Safe Browsing v4 & Reputation Check
         if let Some(checker) = &self.url_reputation_checker {
@@ -323,73 +320,24 @@ impl NativeHost {
             };
         }
 
-        // 6. Authoritative DNS Resolution & SSRF Range Evaluation (DNS Pinning Gate)
-        let pinned_socket_addr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-            if is_ssrf_ip(ip) {
-                warn!("Host: SSRF BLOCKED IP literal '{}' in URL '{}'", ip, url);
+        // 6. Construct SSRF-Safe, DNS-Pinned HTTP Client (F04)
+        let (client, pinned_socket_addr) = match build_ssrf_safe_http_client(url).await {
+            Ok(pair) => pair,
+            Err(e) => {
+                warn!("Host: SSRF / DNS Pinning rejected URL '{}': {}", url, e);
                 self.audit.log(
                     "SSRF_BLOCKED",
                     serde_json::json!({
                         "url": url,
-                        "ip": ip.to_string(),
-                        "reason": "private or non-routable IP address",
+                        "host": host,
+                        "reason": e.to_string(),
                         "taint_labels": taint_labels,
                     }),
                 );
                 return HostResponse::Error {
-                    message: format!("SSRF Violation: access to IP '{}' is blocked", ip),
+                    message: e.to_string(),
                 };
             }
-            std::net::SocketAddr::new(ip, port)
-        } else {
-            // Resolve domain name via Tokio async DNS lookup
-            let addrs_res = tokio::net::lookup_host(format!("{}:{}", host, port)).await;
-            let addrs: Vec<std::net::SocketAddr> = match addrs_res {
-                Ok(iter) => iter.collect(),
-                Err(e) => {
-                    warn!("Host: DNS resolution failed for '{}:{}': {}", host, port, e);
-                    return HostResponse::Error {
-                        message: format!("DNS resolution failed for '{}': {}", host, e),
-                    };
-                }
-            };
-
-            if addrs.is_empty() {
-                return HostResponse::Error {
-                    message: format!("No DNS records found for host '{}'", host),
-                };
-            }
-
-            // Assert that EVERY resolved IP address passes the SSRF check
-            for addr in &addrs {
-                if is_ssrf_ip(addr.ip()) {
-                    warn!(
-                        "Host: SSRF DNS REBINDING BLOCKED! Host '{}' resolved to blocked IP '{}'",
-                        host,
-                        addr.ip()
-                    );
-                    self.audit.log(
-                        "SSRF_BLOCKED",
-                        serde_json::json!({
-                            "url": url,
-                            "host": host,
-                            "resolved_ip": addr.ip().to_string(),
-                            "reason": "resolved IP in private or non-routable SSRF range (DNS rebinding attempt)",
-                            "taint_labels": taint_labels,
-                        }),
-                    );
-                    return HostResponse::Error {
-                        message: format!(
-                            "SSRF Violation: host '{}' resolved to blocked IP '{}'",
-                            host,
-                            addr.ip()
-                        ),
-                    };
-                }
-            }
-
-            // Pin the first verified IP
-            addrs[0]
         };
 
         info!(
@@ -397,22 +345,7 @@ impl NativeHost {
             url, pinned_socket_addr
         );
 
-        // 7. Construct DNS-Pinned HTTP Client with Redirects Disabled
-        let client = match reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none()) // Prevent open redirect SSRF bypass
-            .resolve(&host, pinned_socket_addr) // Hard DNS Pinning
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return HostResponse::Error {
-                    message: format!("Failed to initialize HTTP client: {}", e),
-                };
-            }
-        };
-
-        // 8. Execute HTTP Fetch
+        // 7. Execute HTTP Fetch
         match client.get(url).send().await {
             Ok(resp) => {
                 let status = resp.status().as_u16();
@@ -799,4 +732,204 @@ pub fn validate_resolved_socket_addr(
     } else {
         Ok(())
     }
+}
+
+/// Builds an SSRF-safe, DNS-pinned `reqwest::Client` along with the pinned `SocketAddr`.
+///
+/// Defends against DNS rebinding and SSRF by:
+/// 1. Rejecting non-http/https URL schemes.
+/// 2. Mathematically evaluating IP literals and resolved DNS addresses against all restricted, private,
+///    link-local, cloud metadata, SIIT, 6to4, and NAT64 ranges.
+/// 3. Asserting that *every* returned DNS record is non-SSRF.
+/// 4. Hard-pinning the validated `SocketAddr` in the client's resolver configuration (`resolve(&host, pinned_socket_addr)`).
+/// 5. Disabling automatic HTTP redirects (`Policy::none()`) to prevent open redirect bypasses.
+pub async fn build_ssrf_safe_http_client(
+    target_url: &str,
+) -> Result<(reqwest::Client, std::net::SocketAddr), osoosi_types::OctopusSecurityError> {
+    let url_trimmed = target_url.trim();
+    if url_trimmed.is_empty() || url_trimmed.len() > 8192 {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(
+            "Invalid URL: empty or exceeds max length".to_string(),
+        ));
+    }
+    if !(url_trimmed.starts_with("https://") || url_trimmed.starts_with("http://")) {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(
+            "Invalid URL scheme: only http and https schemes are permitted".to_string(),
+        ));
+    }
+    let host = crate::security::extract_host_from_url(url_trimmed);
+    if host.is_empty() {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(
+            "Invalid URL: unable to extract host".to_string(),
+        ));
+    }
+    let blocked_hostnames = [
+        "localhost",
+        "metadata.google.internal",
+        "metadata.aws.internal",
+        "instance-data",
+    ];
+    if blocked_hostnames.contains(&host.as_str()) || host.ends_with(".localhost") {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+            "SSRF Violation: access to host '{}' is blocked",
+            host
+        )));
+    }
+
+    let parsed_url = reqwest::Url::parse(url_trimmed).map_err(|e| {
+        osoosi_types::OctopusSecurityError::SsrfBlocked(format!("Invalid URL: {}", e))
+    })?;
+    let port = parsed_url.port_or_known_default().unwrap_or(
+        if parsed_url.scheme() == "https" { 443 } else { 80 },
+    );
+
+    let pinned_socket_addr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_ssrf_ip(ip) {
+            return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                "SSRF Violation: access to IP '{}' is blocked",
+                ip
+            )));
+        }
+        std::net::SocketAddr::new(ip, port)
+    } else {
+        let addrs_res = tokio::net::lookup_host(format!("{}:{}", host, port)).await;
+        let addrs: Vec<std::net::SocketAddr> = match addrs_res {
+            Ok(iter) => iter.collect(),
+            Err(e) => {
+                return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                    "DNS resolution failed for '{}:{}': {}",
+                    host, port, e
+                )));
+            }
+        };
+
+        if addrs.is_empty() {
+            return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                "No DNS records found for host '{}'",
+                host
+            )));
+        }
+
+        for addr in &addrs {
+            if is_ssrf_ip(addr.ip()) {
+                return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                    "SSRF DNS REBINDING BLOCKED: host '{}' resolved to blocked IP '{}'",
+                    host,
+                    addr.ip()
+                )));
+            }
+        }
+
+        addrs[0]
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve(&host, pinned_socket_addr)
+        .build()
+        .map_err(|e| {
+            osoosi_types::OctopusSecurityError::IsolationViolation(format!(
+                "Failed to build HTTP client: {}",
+                e
+            ))
+        })?;
+
+    Ok((client, pinned_socket_addr))
+}
+
+/// Synchronous counterpart to [`build_ssrf_safe_http_client`].
+pub fn build_ssrf_safe_http_client_sync(
+    target_url: &str,
+) -> Result<(reqwest::Client, std::net::SocketAddr), osoosi_types::OctopusSecurityError> {
+    use std::net::ToSocketAddrs;
+    let url_trimmed = target_url.trim();
+    if url_trimmed.is_empty() || url_trimmed.len() > 8192 {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(
+            "Invalid URL: empty or exceeds max length".to_string(),
+        ));
+    }
+    if !(url_trimmed.starts_with("https://") || url_trimmed.starts_with("http://")) {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(
+            "Invalid URL scheme: only http and https schemes are permitted".to_string(),
+        ));
+    }
+    let host = crate::security::extract_host_from_url(url_trimmed);
+    if host.is_empty() {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(
+            "Invalid URL: unable to extract host".to_string(),
+        ));
+    }
+    let blocked_hostnames = [
+        "localhost",
+        "metadata.google.internal",
+        "metadata.aws.internal",
+        "instance-data",
+    ];
+    if blocked_hostnames.contains(&host.as_str()) || host.ends_with(".localhost") {
+        return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+            "SSRF Violation: access to host '{}' is blocked",
+            host
+        )));
+    }
+
+    let parsed_url = reqwest::Url::parse(url_trimmed).map_err(|e| {
+        osoosi_types::OctopusSecurityError::SsrfBlocked(format!("Invalid URL: {}", e))
+    })?;
+    let port = parsed_url.port_or_known_default().unwrap_or(
+        if parsed_url.scheme() == "https" { 443 } else { 80 },
+    );
+
+    let pinned_socket_addr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        if is_ssrf_ip(ip) {
+            return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                "SSRF Violation: access to IP '{}' is blocked",
+                ip
+            )));
+        }
+        std::net::SocketAddr::new(ip, port)
+    } else {
+        let addrs: Vec<std::net::SocketAddr> = format!("{}:{}", host, port)
+            .to_socket_addrs()
+            .map_err(|e| {
+                osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                    "DNS resolution failed for '{}:{}': {}",
+                    host, port, e
+                ))
+            })?
+            .collect();
+
+        if addrs.is_empty() {
+            return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                "No DNS records found for host '{}'",
+                host
+            )));
+        }
+
+        for addr in &addrs {
+            if is_ssrf_ip(addr.ip()) {
+                return Err(osoosi_types::OctopusSecurityError::SsrfBlocked(format!(
+                    "SSRF DNS REBINDING BLOCKED: host '{}' resolved to blocked IP '{}'",
+                    host,
+                    addr.ip()
+                )));
+            }
+        }
+
+        addrs[0]
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve(&host, pinned_socket_addr)
+        .build()
+        .map_err(|e| {
+            osoosi_types::OctopusSecurityError::IsolationViolation(format!(
+                "Failed to build HTTP client: {}",
+                e
+            ))
+        })?;
+
+    Ok((client, pinned_socket_addr))
 }

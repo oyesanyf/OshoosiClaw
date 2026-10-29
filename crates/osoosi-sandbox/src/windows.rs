@@ -23,6 +23,10 @@ pub const JOB_OBJECT_LIMIT_ACTIVE_PROCESS: u32 = 0x0000_0008;
 /// Win32 Job Object UI restriction mask: block clipboard, desktop switch, display settings, and global atoms.
 pub const JOB_OBJECT_UILIMIT_ALL: u32 = 0x0000_00FF;
 
+/// Win32 ProcThreadAttribute: explicit handle allowlist for process creation (`0x00020002`).
+/// Prevents ambient handle inheritance leaks into AppContainers and restricted processes.
+pub const PROC_THREAD_ATTRIBUTE_HANDLE_LIST: usize = 0x00020002;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WindowsConfinementPolicy {
     pub creation_flags: u32,
@@ -664,17 +668,17 @@ pub fn execute_confined_windows_process(
         let _ = SetHandleInformation(h_out_read, 1, HANDLE_FLAGS(0));
         let _ = SetHandleInformation(h_err_read, 1, HANDLE_FLAGS(0));
 
-        // 5. Initialize PROC_THREAD_ATTRIBUTE_LIST with Security Capabilities (AppContainer SID)
+        // 5. Initialize PROC_THREAD_ATTRIBUTE_LIST with Security Capabilities and Handle Allowlist
         let mut attr_size = 0usize;
         let _ = InitializeProcThreadAttributeList(
             LPPROC_THREAD_ATTRIBUTE_LIST(std::ptr::null_mut()),
-            1,
+            2,
             0,
             &mut attr_size,
         );
         let mut attr_buf = vec![0u8; attr_size];
         let p_attr_list = LPPROC_THREAD_ATTRIBUTE_LIST(attr_buf.as_mut_ptr() as *mut _);
-        if let Err(e) = InitializeProcThreadAttributeList(p_attr_list, 1, 0, &mut attr_size) {
+        if let Err(e) = InitializeProcThreadAttributeList(p_attr_list, 2, 0, &mut attr_size) {
             let _ = CloseHandle(h_out_read);
             let _ = CloseHandle(h_out_write);
             let _ = CloseHandle(h_err_read);
@@ -709,6 +713,32 @@ pub fn execute_confined_windows_process(
             profile.rollback();
             return Err(format!(
                 "UpdateProcThreadAttribute(SECURITY_CAPABILITIES) failed: {:?}",
+                e
+            ));
+        }
+
+        // F01: Explicit Handle Allowlist (PROC_THREAD_ATTRIBUTE_HANDLE_LIST)
+        // Ensures only the dedicated stdout and stderr pipe write handles are inheritable by the AppContainer child,
+        // preventing ambient parent handle inheritance leaks when bInheritHandles = TRUE.
+        let mut inherit_handles = [h_out_write, h_err_write];
+        if let Err(e) = UpdateProcThreadAttribute(
+            p_attr_list,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            Some(inherit_handles.as_mut_ptr() as *mut _ as *const std::ffi::c_void),
+            inherit_handles.len() * std::mem::size_of::<HANDLE>(),
+            None,
+            None,
+        ) {
+            let _ = DeleteProcThreadAttributeList(p_attr_list);
+            let _ = CloseHandle(h_out_read);
+            let _ = CloseHandle(h_out_write);
+            let _ = CloseHandle(h_err_read);
+            let _ = CloseHandle(h_err_write);
+            let _ = CloseHandle(job);
+            profile.rollback();
+            return Err(format!(
+                "UpdateProcThreadAttribute(PROC_THREAD_ATTRIBUTE_HANDLE_LIST) failed: {:?}",
                 e
             ));
         }
