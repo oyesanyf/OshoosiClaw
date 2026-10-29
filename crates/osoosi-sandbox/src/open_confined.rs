@@ -17,6 +17,7 @@ use osoosi_types::OctopusSecurityError;
 use std::path::Path;
 
 /// Opens a relative path strictly inside `sandbox_root` with handle-level reparse-point,
+/// Opens a relative path strictly inside `sandbox_root` with handle-level reparse-point,
 /// hardlink (`nNumberOfLinks == 1`), and `GetFinalPathNameByHandleW` verification.
 pub fn open_confined(
     sandbox_root: &Path,
@@ -34,6 +35,67 @@ pub fn open_confined(
     #[cfg(not(windows))]
     {
         unix_confined::open_confined_unix(sandbox_root, relative_input, write)
+    }
+}
+
+/// Reads the entire contents of a file strictly inside `sandbox_root` using handle-based confinement.
+/// Guarantees that neither intermediate directories nor the leaf file are reparse points or symlinks.
+pub fn read_confined(
+    sandbox_root: &Path,
+    relative_input: &str,
+) -> Result<Vec<u8>, OctopusSecurityError> {
+    use std::io::Read;
+    let mut file = open_confined(sandbox_root, relative_input, false)?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).map_err(|e| {
+        OctopusSecurityError::IsolationViolation(format!(
+            "CONFINED_READ_FAILED: Failed to read from '{}': {}",
+            relative_input, e
+        ))
+    })?;
+    Ok(buf)
+}
+
+/// Writes data to a file strictly inside `sandbox_root` using handle-based confinement.
+/// Post-verification, truncates existing contents on the verified handle before writing.
+pub fn write_confined(
+    sandbox_root: &Path,
+    relative_input: &str,
+    data: &[u8],
+) -> Result<(), OctopusSecurityError> {
+    use std::io::Write;
+    let mut file = open_confined(sandbox_root, relative_input, true)?;
+    file.write_all(data).map_err(|e| {
+        OctopusSecurityError::IsolationViolation(format!(
+            "CONFINED_WRITE_FAILED: Failed to write to '{}': {}",
+            relative_input, e
+        ))
+    })?;
+    file.flush().map_err(|e| {
+        OctopusSecurityError::IsolationViolation(format!(
+            "CONFINED_FLUSH_FAILED: Failed to flush '{}': {}",
+            relative_input, e
+        ))
+    })?;
+    Ok(())
+}
+
+/// Creates a directory hierarchy strictly within `sandbox_root` with handle-based reparse-point and canonical root confinement checks at every level.
+pub fn create_confined_dir_all(
+    sandbox_root: &Path,
+    relative_input: &str,
+) -> Result<(), OctopusSecurityError> {
+    let _ = crate::validate_sandbox_relative_path(sandbox_root, relative_input)
+        .map_err(OctopusSecurityError::IsolationViolation)?;
+
+    #[cfg(windows)]
+    {
+        win_confined::create_confined_dir_all_windows(sandbox_root, relative_input)
+    }
+
+    #[cfg(not(windows))]
+    {
+        unix_confined::create_confined_dir_all_unix(sandbox_root, relative_input)
     }
 }
 
@@ -333,6 +395,92 @@ mod win_confined {
 
         Ok(leaf_file)
     }
+
+    pub fn create_confined_dir_all_windows(
+        sandbox_root: &Path,
+        relative_input: &str,
+    ) -> Result<(), OctopusSecurityError> {
+        let root_file = open_raw(
+            sandbox_root,
+            GENERIC_READ,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        )?;
+        let root_h = root_file.as_raw_handle() as HANDLE;
+        let root_info = handle_info(root_h)?;
+        if root_info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "CONFINED_DIR_REPARSE_ROOT_BLOCKED: Sandbox root '{}' is a reparse point",
+                sandbox_root.display()
+            )));
+        }
+        if root_info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "CONFINED_DIR_ROOT_NOT_DIR: Sandbox root '{}' is not a directory",
+                sandbox_root.display()
+            )));
+        }
+        let canonical_root = final_path_of_handle(root_h)?;
+
+        let comps: Vec<String> = Path::new(relative_input.trim())
+            .components()
+            .filter_map(|c| match c {
+                Component::Normal(o) => Some(o.to_string_lossy().into_owned()),
+                _ => None,
+            })
+            .collect();
+        if comps.is_empty() {
+            return Ok(());
+        }
+
+        let mut cursor = PathBuf::from(&canonical_root);
+        let mut _held_dirs: Vec<std::fs::File> = vec![root_file];
+
+        for comp in &comps {
+            cursor.push(comp);
+            if !cursor.exists() {
+                std::fs::create_dir(&cursor).map_err(|e| {
+                    OctopusSecurityError::IsolationViolation(format!(
+                        "CONFINED_CREATE_DIR_FAILED: Failed to create '{}' (OS Error {})",
+                        cursor.display(),
+                        e
+                    ))
+                })?;
+            }
+
+            let dir_file = open_raw(
+                &cursor,
+                GENERIC_READ,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            )?;
+            let dh = dir_file.as_raw_handle() as HANDLE;
+            let dinfo = handle_info(dh)?;
+            if dinfo.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                return Err(OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_DIR_REPARSE_BLOCKED: Component '{}' is a junction or symlink",
+                    comp
+                )));
+            }
+            if dinfo.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+                return Err(OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_DIR_NOT_DIR: Component '{}' exists but is not a directory",
+                    comp
+                )));
+            }
+            let dir_final = final_path_of_handle(dh)?;
+            if !is_strictly_inside_or_equal(&dir_final, &canonical_root) {
+                return Err(OctopusSecurityError::IsolationViolation(format!(
+                    "CONFINED_DIR_ESCAPED_ROOT: Component '{}' resolved to '{}' outside canonical root '{}'",
+                    comp, dir_final, canonical_root
+                )));
+            }
+            cursor = PathBuf::from(dir_final);
+            _held_dirs.push(dir_file);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(not(windows))]
@@ -556,5 +704,60 @@ mod unix_confined {
         }
 
         Ok(leaf_file)
+    }
+
+    pub fn create_confined_dir_all_unix(
+        sandbox_root: &Path,
+        relative_input: &str,
+    ) -> Result<(), OctopusSecurityError> {
+        let root_meta = std::fs::symlink_metadata(sandbox_root).map_err(|e| {
+            OctopusSecurityError::IsolationViolation(format!("CONFINED_DIR_ROOT_FAILED: {}", e))
+        })?;
+        if root_meta.file_type().is_symlink() || !root_meta.is_dir() {
+            return Err(OctopusSecurityError::IsolationViolation(
+                "CONFINED_DIR_ROOT_INVALID: Sandbox root must be a directory".to_string(),
+            ));
+        }
+        let canonical_root = std::fs::canonicalize(sandbox_root).map_err(|e| {
+            OctopusSecurityError::IsolationViolation(format!("CONFINED_DIR_CANON_FAILED: {}", e))
+        })?;
+
+        let mut cursor = canonical_root.clone();
+        for comp in Path::new(relative_input.trim()).components() {
+            if let Component::Normal(seg) = comp {
+                cursor.push(seg);
+                if !cursor.exists() {
+                    std::fs::create_dir(&cursor).map_err(|e| {
+                        OctopusSecurityError::IsolationViolation(format!(
+                            "CONFINED_DIR_CREATE_FAILED: {}",
+                            e
+                        ))
+                    })?;
+                }
+                let meta = std::fs::symlink_metadata(&cursor).map_err(|e| {
+                    OctopusSecurityError::IsolationViolation(format!(
+                        "CONFINED_DIR_META_FAILED: {}",
+                        e
+                    ))
+                })?;
+                if meta.file_type().is_symlink() {
+                    return Err(OctopusSecurityError::IsolationViolation(
+                        "CONFINED_DIR_SYMLINK_BLOCKED".to_string(),
+                    ));
+                }
+                let canon = std::fs::canonicalize(&cursor).map_err(|e| {
+                    OctopusSecurityError::IsolationViolation(format!(
+                        "CONFINED_DIR_CANON_FAILED: {}",
+                        e
+                    ))
+                })?;
+                if !canon.starts_with(&canonical_root) {
+                    return Err(OctopusSecurityError::IsolationViolation(
+                        "CONFINED_DIR_ESCAPE_DETECTED".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 }

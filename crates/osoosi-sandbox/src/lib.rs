@@ -52,8 +52,11 @@ pub use hidden_process_ledger::{
     list_hidden_spawns, output_hidden, record_hidden_spawn, spawn_hidden, spawn_hidden_tokio,
     status_hidden, HiddenSpawnRecord, LedgeredCommandExt,
 };
-pub use native_host::{is_ssrf_ip, is_ssrf_ipv4, is_ssrf_url, validate_resolved_socket_addr};
-pub use open_confined::open_confined;
+pub use native_host::{
+    build_ssrf_safe_http_client, build_ssrf_safe_http_client_sync, is_ssrf_ip, is_ssrf_ipv4,
+    is_ssrf_url, validate_resolved_socket_addr,
+};
+pub use open_confined::{create_confined_dir_all, open_confined, read_confined, write_confined};
 pub use security::SandboxSecurityConfig;
 pub use tiered_executor::{
     rollback_appcontainer_profile, AppContainerTokenVerification, ExecutionTier,

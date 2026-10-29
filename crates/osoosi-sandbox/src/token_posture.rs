@@ -389,6 +389,7 @@ mod sys {
 }
 
 /// RAII Windows Job Object for Tier 2 child confinement and I/O accounting.
+#[derive(Debug)]
 pub struct SandboxJobObject {
     pub name: String,
     pub max_active_processes: u32,
@@ -819,6 +820,7 @@ pub struct DeelevatedChild {
     pub posture: TokenPosture,
     pub is_in_job: bool,
     process: sys::HANDLE,
+    _owned_job: Option<SandboxJobObject>,
 }
 
 #[cfg(windows)]
@@ -846,22 +848,27 @@ impl Drop for DeelevatedChild {
     }
 }
 
-/// Spawns `command_line` under [`create_deelevated_token`] without a custom job handle.
+/// Spawns `command_line` under [`create_deelevated_token`] bound to an auto-created, confined [`SandboxJobObject`].
 #[cfg(windows)]
 pub fn spawn_deelevated(
     command_line: &str,
     hide_window: bool,
 ) -> Result<DeelevatedChild, OctopusSecurityError> {
-    spawn_deelevated_in_job(command_line, hide_window, None)
+    let job = SandboxJobObject::create("osoosi-deelevated-auto-job", 1, 512 * 1024 * 1024)?;
+    let mut child = spawn_deelevated_in_job(command_line, hide_window, Some(&job))?;
+    child._owned_job = Some(job);
+    Ok(child)
 }
 
-/// Spawns `command_line` under [`create_deelevated_token`] and optionally binds it to a [`SandboxJobObject`].
+/// Spawns `command_line` under [`create_deelevated_token`] strictly bound to a mandatory [`SandboxJobObject`].
 ///
 /// FAIL-CLOSED (`RULE[windows_containment_invariants.md]`):
 /// 1. Created with `CREATE_SUSPENDED`.
 /// 2. Its primary token is inspected via `OpenProcessToken`, and [`TokenPosture::verify_agent_safe`] must pass.
-/// 3. If `job` is provided, `AssignProcessToJobObject` and `IsProcessInJob == TRUE` must both succeed.
-/// 4. If any check fails, `TerminateProcess` is called immediately before `ResumeThread`.
+/// 3. Mandatory `job` binding: `job == None` is disallowed and triggers immediate fail-closed termination.
+/// 4. Bound with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS`.
+/// 5. `AssignProcessToJobObject` and `IsProcessInJob == TRUE` must both succeed before `ResumeThread`.
+/// 6. If any check fails, `TerminateProcess` is called immediately before `ResumeThread`.
 #[cfg(windows)]
 pub fn spawn_deelevated_in_job(
     command_line: &str,
@@ -929,25 +936,33 @@ pub fn spawn_deelevated_in_job(
         )));
     }
 
-    let mut is_in_job = false;
-    if let Some(job_obj) = job {
-        let assigned = unsafe { sys::AssignProcessToJobObject(job_obj.handle, pi.hProcess) };
-        if assigned == 0 {
-            let code = unsafe { sys::GetLastError() };
-            return Err(terminate(format!(
-                "FAIL-CLOSED: AssignProcessToJobObject failed (OS Error {}) before ResumeThread",
-                code
-            )));
-        }
-        let mut in_job_flag: sys::BOOL = 0;
-        let queried = unsafe { sys::IsProcessInJob(pi.hProcess, job_obj.handle, &mut in_job_flag) };
-        if queried == 0 || in_job_flag == 0 {
+    // F02: Mandatory active Job Object binding before ResumeThread
+    // Disallow job == None to eliminate uncontained background execution
+    let job_obj = match job {
+        Some(j) => j,
+        None => {
             return Err(terminate(
-                "FAIL-CLOSED: IsProcessInJob != TRUE before ResumeThread".to_string(),
+                "FAIL-CLOSED: Active SandboxJobObject is mandatory for de-elevated child process execution (job == None is forbidden by RULE[windows_containment_invariants.md])".to_string(),
             ));
         }
-        is_in_job = true;
+    };
+
+    let assigned = unsafe { sys::AssignProcessToJobObject(job_obj.handle, pi.hProcess) };
+    if assigned == 0 {
+        let code = unsafe { sys::GetLastError() };
+        return Err(terminate(format!(
+            "FAIL-CLOSED: AssignProcessToJobObject failed (OS Error {}) before ResumeThread",
+            code
+        )));
     }
+    let mut in_job_flag: sys::BOOL = 0;
+    let queried = unsafe { sys::IsProcessInJob(pi.hProcess, job_obj.handle, &mut in_job_flag) };
+    if queried == 0 || in_job_flag == 0 {
+        return Err(terminate(
+            "FAIL-CLOSED: IsProcessInJob != TRUE before ResumeThread".to_string(),
+        ));
+    }
+    let is_in_job = true;
 
     if unsafe { sys::ResumeThread(pi.hThread) } == u32::MAX {
         return Err(terminate(
@@ -961,5 +976,6 @@ pub fn spawn_deelevated_in_job(
         posture,
         is_in_job,
         process: pi.hProcess,
+        _owned_job: None,
     })
 }
