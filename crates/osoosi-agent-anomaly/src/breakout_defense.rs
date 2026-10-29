@@ -1729,10 +1729,12 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
                 };
 
                 let ev_base = normalize_base_arxiv_id(&evicted_rule.arxiv_id);
-                let ev_sql = "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR base_arxiv_id = ?2;";
+                let ev_sql =
+                    "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR base_arxiv_id = ?2;";
                 for db_path in RESEARCH_DB_PATHS {
                     if let Ok(conn) = rusqlite::Connection::open(db_path) {
-                        let _ = conn.execute(ev_sql, rusqlite::params![evicted_rule.rule_id, ev_base]);
+                        let _ =
+                            conn.execute(ev_sql, rusqlite::params![evicted_rule.rule_id, ev_base]);
                     }
                 }
             }
@@ -1742,13 +1744,11 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
         // Sort dynamic rules (index >= 4) so code-backed rules rank ahead
         if guard.len() > 4 {
             guard[4..].sort_by(|a, b| {
-                b.has_code_repo
-                    .cmp(&a.has_code_repo)
-                    .then_with(|| {
-                        b.relevance_score
-                            .partial_cmp(&a.relevance_score)
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
+                b.has_code_repo.cmp(&a.has_code_repo).then_with(|| {
+                    b.relevance_score
+                        .partial_cmp(&a.relevance_score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
             });
         }
         guard.clone()
@@ -2960,7 +2960,11 @@ mod tests {
         let seeded = list_ingested_research_rules();
         assert_eq!(seeded.len(), 4);
         for r in &seeded {
-            assert!(r.has_code_repo, "Seeded rule {} must be code-backed", r.rule_id);
+            assert!(
+                r.has_code_repo,
+                "Seeded rule {} must be code-backed",
+                r.rule_id
+            );
             assert!(
                 r.code_repo_url.starts_with("https://github.com/"),
                 "Seeded rule {} repo url must be GitHub",
@@ -3018,10 +3022,14 @@ mod tests {
         assert_eq!(final_rules.len(), MAX_ACTIVE_RESEARCH_RULES);
 
         // Verify the code-backed paper is present and sorted ahead of theoretical dynamic papers
-        assert!(final_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2699.77777"));
+        assert!(final_rules
+            .iter()
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2699.77777"));
         // The lowest relevance theoretical rule (relevance 50.0, arXiv:2688.00000) must have been evicted
         assert!(
-            !final_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2688.00000"),
+            !final_rules
+                .iter()
+                .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2688.00000"),
             "Lowest relevance theoretical rule must be evicted by code-backed tie breaker"
         );
 
