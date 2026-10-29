@@ -360,6 +360,9 @@ function renderHarTrafficTable() {
                 </td>
                 <td style="padding: 8px 12px; white-space: nowrap;">
                     ${srcBadge}
+                    <div style="font-size: 10px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">
+                        <i data-lucide="cpu" style="width:10px; height:10px; vertical-align:middle; margin-right:2px;"></i>${escapeHtml(e.process_name || 'osoosi.exe')}${e.pid ? ' (' + escapeHtml(String(e.pid)) + ')' : ''}
+                    </div>
                 </td>
                 <td style="padding: 8px 12px;">
                     <span style="font-weight: 700; font-size: 11px; color: ${methodColor}; font-family: monospace;">${escapeHtml(method)}</span>
@@ -449,6 +452,20 @@ function inspectHarEntryRow(idx) {
         const reaClass = entry.rea_artifact_class || 'http_transaction';
         const reaSeal = entry.rea_seal_blake3 || hash;
         grid.innerHTML = `
+            <div style="grid-column: 1 / -1; padding: 10px 14px; background: rgba(14, 165, 233, 0.08); border-left: 3px solid var(--accent-blue); border-radius: 6px; margin-bottom: 4px;">
+                <strong style="color: var(--accent-blue); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">What Is This Network Traffic?</strong>
+                <div style="margin-top: 3px; font-size: 12px; line-height: 1.4; color: #fff;">
+                    ${escapeHtml(entry.what_is_this || `L7 HTTP/HTTPS network transaction captured by EDR sensor. Request to [${entry.host || 'remote endpoint'}] over ${entry.method || 'GET'} with status ${entry.status || 200}. Validated against Google Safe Browsing, OpenJEV DLP, and REA heuristic voters.`)}
+                </div>
+            </div>
+            <div>
+                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Originating Process &amp; PID</strong>
+                <div style="font-weight: 600; color: var(--accent-blue);"><i data-lucide="cpu" style="width:12px; height:12px; vertical-align:middle; margin-right:4px;"></i>${escapeHtml(entry.process_name || 'osoosi.exe')}${entry.pid ? ' (PID ' + escapeHtml(String(entry.pid)) + ')' : ''}</div>
+            </div>
+            <div>
+                <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Source File Artifact &amp; Path</strong>
+                <div style="font-family: monospace; font-size: 11.5px; word-break: break-all;"><i data-lucide="file" style="width:12px; height:12px; vertical-align:middle; margin-right:4px;"></i>${escapeHtml(entry.file_path || entry.source_file || 'logs/live_web_traffic.har')}</div>
+            </div>
             <div>
                 <strong style="color: var(--text-muted); display: block; font-size: 11px; text-transform: uppercase;">Host / Domain</strong>
                 <div style="font-weight: 600; color: var(--accent-blue);">${escapeHtml(entry.host || '-')}</div>

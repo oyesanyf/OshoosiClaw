@@ -581,12 +581,7 @@ async fn test_behavioral_process_lineage_voter_suspicious_lineage_and_taint() ->
     let classifier = Arc::new(DynamicAgentClassifier::new());
     let adaptive = Arc::new(TelemetryController::new());
 
-    let voter = BehavioralProcessLineageVoter::new(
-        analyzer,
-        classifier,
-        graph.clone(),
-        adaptive,
-    );
+    let voter = BehavioralProcessLineageVoter::new(analyzer, classifier, graph.clone(), adaptive);
 
     assert_eq!(voter.name(), "Behavioral-Process-Lineage");
 
@@ -606,9 +601,16 @@ async fn test_behavioral_process_lineage_voter_suspicious_lineage_and_taint() ->
         causal_parent: None,
     };
 
-    let vote1 = voter.vote(&ev_office_shell).await.expect("Must vote on Office spawning PowerShell");
+    let vote1 = voter
+        .vote(&ev_office_shell)
+        .await
+        .expect("Must vote on Office spawning PowerShell");
     assert_eq!(vote1.weight, 1.85, "Lineage voter must assign 1.85 weight");
-    assert!(vote1.confidence >= 0.70, "Confidence must be >= 0.70, got {}", vote1.confidence);
+    assert!(
+        vote1.confidence >= 0.70,
+        "Confidence must be >= 0.70, got {}",
+        vote1.confidence
+    );
     assert!(
         vote1.reason.contains("Suspicious MITRE execution tree"),
         "Reason must state suspicious MITRE tree: {}",
@@ -643,7 +645,10 @@ async fn test_behavioral_process_lineage_voter_suspicious_lineage_and_taint() ->
         causal_parent: None,
     };
 
-    let vote2 = voter.vote(&ev_tainted_proc).await.expect("Must vote on tainted process");
+    let vote2 = voter
+        .vote(&ev_tainted_proc)
+        .await
+        .expect("Must vote on tainted process");
     assert_eq!(vote2.weight, 1.85);
     assert!(vote2.confidence >= 0.70);
     assert!(
@@ -669,7 +674,10 @@ async fn test_behavioral_process_lineage_voter_suspicious_lineage_and_taint() ->
     };
 
     let vote3 = voter.vote(&ev_benign).await;
-    assert!(vote3.is_none(), "Benign notepad execution must not trigger lineage vote");
+    assert!(
+        vote3.is_none(),
+        "Benign notepad execution must not trigger lineage vote"
+    );
 
     Ok(())
 }
@@ -681,9 +689,9 @@ async fn test_behavioral_process_lineage_voter_suspicious_lineage_and_taint() ->
 #[tokio::test]
 async fn test_clef_decision_voter_malicious_and_benign_veto() -> Result<()> {
     use osoosi_behavioral::decision_model::ClefDecisionEngine;
-    use osoosi_types::DecisionModelConfig;
     use osoosi_core::adaptive::TelemetryController;
     use osoosi_core::voters::ClefDecisionVoter;
+    use osoosi_types::DecisionModelConfig;
     use std::sync::Arc;
 
     let temp_model_dir = std::env::temp_dir().join(format!("clef_test_{}", uuid::Uuid::new_v4()));
@@ -715,11 +723,22 @@ async fn test_clef_decision_voter_malicious_and_benign_veto() -> Result<()> {
         causal_parent: None,
     };
 
-    let vote1 = voter.vote(&ev_malicious).await.expect("Clef must vote on mimikatz attack");
-    assert_eq!(vote1.weight, 1.85, "Malicious Clef verdict must have 1.85 weight");
-    assert!(vote1.confidence >= 0.70, "Confidence must be >= 0.70, got {}", vote1.confidence);
+    let vote1 = voter
+        .vote(&ev_malicious)
+        .await
+        .expect("Clef must vote on mimikatz attack");
+    assert_eq!(
+        vote1.weight, 1.85,
+        "Malicious Clef verdict must have 1.85 weight"
+    );
     assert!(
-        vote1.reason.contains("Clef-Decision-Model: malicious") || vote1.reason.contains("Clef-Decision-Model"),
+        vote1.confidence >= 0.70,
+        "Confidence must be >= 0.70, got {}",
+        vote1.confidence
+    );
+    assert!(
+        vote1.reason.contains("Clef-Decision-Model: malicious")
+            || vote1.reason.contains("Clef-Decision-Model"),
         "Reason must state Clef-Decision-Model verdict: {}",
         vote1.reason
     );
@@ -742,8 +761,14 @@ async fn test_clef_decision_voter_malicious_and_benign_veto() -> Result<()> {
         causal_parent: None,
     };
 
-    let vote2 = voter.vote(&ev_benign).await.expect("Clef must evaluate benign svchost");
-    assert_eq!(vote2.weight, -1.25, "Benign Clef verdict must cast certified benign veto (-1.25)");
+    let vote2 = voter
+        .vote(&ev_benign)
+        .await
+        .expect("Clef must evaluate benign svchost");
+    assert_eq!(
+        vote2.weight, -1.25,
+        "Benign Clef verdict must cast certified benign veto (-1.25)"
+    );
     assert!(
         vote2.reason.contains("Benign Veto"),
         "Reason must state Benign Veto: {}",
@@ -780,4 +805,3 @@ async fn test_clef_decision_voter_malicious_and_benign_veto() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_model_dir);
     Ok(())
 }
-

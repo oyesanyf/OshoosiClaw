@@ -34,9 +34,9 @@ auto_approve_reputation_threshold = 1.00
 # Auto-quarantine detected malware files
 auto_quarantine_malware = false
 # Minimum confidence (0.0–1.0) to quarantine
-quarantine_confidence_threshold = 1.00
+quarantine_confidence_threshold = 0.95
 # Minimum confidence for active response (Tarpit, Deception)
-action_confidence_threshold = 1.00
+action_confidence_threshold = 0.90
 # Try to replace compromised binaries with clean versions
 auto_replace_malware_binaries = false
 # Quarantine directory

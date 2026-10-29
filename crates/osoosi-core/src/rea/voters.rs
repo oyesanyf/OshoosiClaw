@@ -433,7 +433,11 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             || event.data.get("CanaryAlert").is_some();
         if canary_tripped || has_active_lotl_or_exploit_indicators(&combined_context) {
             let engine = global_rea_engine();
-            let target_lbl = if !image.is_empty() { image } else { "host_event" };
+            let target_lbl = if !image.is_empty() {
+                image
+            } else {
+                "host_event"
+            };
             let vote = engine.cast_consensus_vote(
                 target_lbl,
                 "Consensus/HostSecurityEvent",

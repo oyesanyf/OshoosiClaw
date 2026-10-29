@@ -101,7 +101,7 @@ jobs:
             --key .witness/witness-ci-private.pem `
             --materials "Cargo.lock,Cargo.toml" `
             --products "target/release/osoosi.exe" `
-            -- pwsh -Command "cargo build --release -p osoosi-cli; New-Item -ItemType Directory -Force target/release; Copy-Item target/release/osoosi.exe target/release/osoosi.exe -Force"
+            -- pwsh -Command "cargo build --release -p osoosi-cli; if (Test-Path target/x86_64-pc-windows-msvc/release/osoosi.exe) { New-Item -ItemType Directory -Force target/release; Copy-Item target/x86_64-pc-windows-msvc/release/osoosi.exe target/release/osoosi.exe -Force }; if (-not (Test-Path target/release/osoosi.exe)) { throw 'target/release/osoosi.exe missing after build' }"
 
       - name: Stage 4 - Attested WiX MSI Sign & Packaging
         shell: pwsh

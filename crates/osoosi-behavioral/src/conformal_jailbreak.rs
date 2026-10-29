@@ -372,11 +372,7 @@ impl MultiSourceCalibration {
     }
 
     /// Helper that computes the $C_t^{\text{fam}}$ trajectory over a stream of representations.
-    pub fn compute_c_fam_trajectory(
-        &self,
-        stream: &[Array1<f64>],
-        window_size: usize,
-    ) -> Vec<f64> {
+    pub fn compute_c_fam_trajectory(&self, stream: &[Array1<f64>], window_size: usize) -> Vec<f64> {
         let k = self.sources.len();
         let mut windows: Vec<VecDeque<f64>> = (0..k)
             .map(|_| VecDeque::with_capacity(window_size))
@@ -396,10 +392,7 @@ impl MultiSourceCalibration {
                 sums[idx] += z_k;
             }
             let m_t = windows[0].len() as f64;
-            let c_fam = sums
-                .iter()
-                .map(|&s| s / m_t)
-                .fold(f64::INFINITY, f64::min);
+            let c_fam = sums.iter().map(|&s| s / m_t).fold(f64::INFINITY, f64::min);
             out.push(c_fam);
         }
         out
@@ -543,8 +536,7 @@ impl PersistDetector {
         let new_k = self
             .calibration
             .enroll_detected_source(name, raw_train, raw_calibration);
-        self.windows
-            .push(VecDeque::with_capacity(self.window_size));
+        self.windows.push(VecDeque::with_capacity(self.window_size));
         self.window_sums.push(0.0);
         new_k
     }
@@ -656,8 +648,8 @@ impl PersistDetector {
             self.consecutive_exceedances = 0;
         }
 
-        let d_t = t >= self.persistence_length
-            && self.consecutive_exceedances >= self.persistence_length;
+        let d_t =
+            t >= self.persistence_length && self.consecutive_exceedances >= self.persistence_length;
 
         if d_t && self.alarm_time.is_none() {
             self.alarm_time = Some(t);
@@ -802,7 +794,8 @@ impl SrDetector {
 /// coordinates ($d \in [22, 64)$) for novel/unseen adversarial jailbreak structures.
 pub fn embed_prompt_representation_64d(prompt: &str) -> Vec<f64> {
     let lower = prompt.to_ascii_lowercase();
-    let matched_known_idx = if lower.contains("gcg") || lower.contains("describing.\\ + similarly") {
+    let matched_known_idx = if lower.contains("gcg") || lower.contains("describing.\\ + similarly")
+    {
         Some(0)
     } else if lower.contains("adc") || lower.contains("dense-to-sparse") {
         Some(1)
@@ -1200,8 +1193,8 @@ pub mod bounds {
         if delta_star <= 0.0 {
             return 1.0;
         }
-        let single_miss = (1.0 - nearest_source_power_bound(w, l, k_sources, delta_star, b_max))
-            .clamp(0.0, 1.0);
+        let single_miss =
+            (1.0 - nearest_source_power_bound(w, l, k_sources, delta_star, b_max)).clamp(0.0, 1.0);
         single_miss.powi(m_blocks as i32)
     }
 }
@@ -1290,7 +1283,9 @@ fn fit_shared_pca(pooled: &ArrayView2<f64>, target_dim: usize) -> (Array1<f64>, 
 
     let mut components = Array2::<f64>::zeros((d_raw, target_dim));
     for (col_idx, &eig_idx) in order.iter().take(target_dim).enumerate() {
-        components.column_mut(col_idx).assign(&eigvecs.column(eig_idx));
+        components
+            .column_mut(col_idx)
+            .assign(&eigvecs.column(eig_idx));
     }
 
     (mean, components)
@@ -1370,11 +1365,7 @@ fn moore_penrose_pseudoinverse_spd(mat: &Array2<f64>, rcond: f64) -> Array2<f64>
         return Array2::zeros((0, 0));
     }
     let (eigvals, eigvecs) = jacobi_eigen_symmetric(mat, 60);
-    let max_eig = eigvals
-        .iter()
-        .copied()
-        .fold(0.0_f64, f64::max)
-        .max(1e-12);
+    let max_eig = eigvals.iter().copied().fold(0.0_f64, f64::max).max(1e-12);
     let cutoff = max_eig * rcond;
 
     let mut pinv = Array2::<f64>::zeros((d, d));
@@ -1518,12 +1509,7 @@ mod tests {
             Array2::eye(2),
             scores.clone(),
         );
-        let src2 = CalibratedSource::new(
-            "Source2_PAIR",
-            array![6.0, 6.0],
-            Array2::eye(2),
-            scores,
-        );
+        let src2 = CalibratedSource::new("Source2_PAIR", array![6.0, 6.0], Array2::eye(2), scores);
 
         MultiSourceCalibration {
             pca_mean: array![0.0, 0.0],
@@ -1646,8 +1632,7 @@ mod tests {
         let w_req = bounds::required_window_size(3, 10, 1.5, 101.0_f64.ln(), 0.05);
         assert!(w_req >= 10);
 
-        let delay_bound =
-            bounds::post_switch_delay_upper_bound(30, 3, 2, 2.2, 101.0_f64.ln(), 3);
+        let delay_bound = bounds::post_switch_delay_upper_bound(30, 3, 2, 2.2, 101.0_f64.ln(), 3);
         assert!(delay_bound < 1.0);
 
         // Layered Guardrail escalation persistence (Section 3.6)

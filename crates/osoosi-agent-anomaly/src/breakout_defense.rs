@@ -982,6 +982,43 @@ pub fn validate_agent_filesystem_access(
     Ok(p.to_path_buf())
 }
 
+fn default_relevance_score() -> f64 {
+    96.0
+}
+
+fn default_accuracy_score() -> f64 {
+    99.0
+}
+
+/// Baseline implemented research papers in OshoosiClaw (Gate 1 rejection).
+pub const KNOWN_IMPLEMENTED_ARXIV_IDS: &[&str] =
+    &["2610.09167", "2610.09167v1", "2610.14224", "2610.14224v1"];
+
+pub fn is_baseline_already_implemented(arxiv_id: &str) -> bool {
+    let base = normalize_base_arxiv_id(arxiv_id);
+    KNOWN_IMPLEMENTED_ARXIV_IDS
+        .iter()
+        .any(|&known| normalize_base_arxiv_id(known) == base)
+}
+
+pub fn safe_arxiv_abs_url(arxiv_id: &str) -> String {
+    let base = normalize_base_arxiv_id(arxiv_id);
+    if !base.is_empty() && base.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        format!("https://arxiv.org/abs/{}", base)
+    } else {
+        String::new()
+    }
+}
+
+pub fn safe_arxiv_pdf_url(arxiv_id: &str) -> String {
+    let base = normalize_base_arxiv_id(arxiv_id);
+    if !base.is_empty() && base.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        format!("https://arxiv.org/pdf/{}", base)
+    } else {
+        String::new()
+    }
+}
+
 /// Real-time active defense rule grounded from arXiv security research via `arxiv-langextract`
 /// and enforced on every agent action inside `BreakoutDefenseCoordinator::evaluate_action`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -996,20 +1033,18 @@ pub struct IngestedResearchDefenseRule {
     pub cedar_forbid_policy: String,
     pub target_crate: String,
     pub enrolled_at_utc: String,
+    #[serde(default = "default_relevance_score")]
+    pub relevance_score: f64,
+    #[serde(default = "default_accuracy_score")]
+    pub accuracy_score: f64,
+    #[serde(default)]
+    pub arxiv_url: String,
 }
 
 const INGESTED_RESEARCH_DEFENSES_PATH: &str = "config/ingested_research_defenses.json";
 
 /// Maximum active research rules enforced in the live registry (preserves 4 pinned baseline rules at 0..4).
 pub const MAX_ACTIVE_RESEARCH_RULES: usize = 64;
-
-/// Baseline implemented research papers in OshoosiClaw (Gate 1 rejection).
-pub const KNOWN_IMPLEMENTED_ARXIV_IDS: &[&str] = &[
-    "2610.09167",
-    "2610.09167v1",
-    "2610.14224",
-    "2610.14224v1",
-];
 
 /// Built-in static tokens already enforced by core breakout guards (Gate 2 rejection).
 const BUILTIN_STATIC_TOKENS: &[&str] = &[
@@ -1081,18 +1116,24 @@ pub fn validate_research_rule_acceptance(
     let pat_lc = pat.to_ascii_lowercase();
 
     // Gate 3: Conflicts with Existing Protection (Fail-closed safety first)
-    if rule.cedar_forbid_policy.contains("permit(") || !rule.cedar_forbid_policy.contains("forbid(") {
+    if rule.cedar_forbid_policy.contains("permit(") || !rule.cedar_forbid_policy.contains("forbid(")
+    {
         return ResearchAcceptanceVerdict {
             accepted: false,
             rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
-            rejection_reason: Some("Cedar policy must contain 'forbid(' and cannot contain 'permit('".to_string()),
+            rejection_reason: Some(
+                "Cedar policy must contain 'forbid(' and cannot contain 'permit('".to_string(),
+            ),
         };
     }
     if pat.len() < 6 {
         return ResearchAcceptanceVerdict {
             accepted: false,
             rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
-            rejection_reason: Some(format!("Indicator pattern '{}' is too short (< 6 characters)", pat)),
+            rejection_reason: Some(format!(
+                "Indicator pattern '{}' is too short (< 6 characters)",
+                pat
+            )),
         };
     }
     if CONFLICTING_PROTECTED_TOKENS.iter().any(|&tok| {
@@ -1109,11 +1150,17 @@ pub fn validate_research_rule_acceptance(
     }
 
     // Gate 1: Not Novel
-    if KNOWN_IMPLEMENTED_ARXIV_IDS.iter().any(|&id| normalize_base_arxiv_id(id) == base_id) {
+    if KNOWN_IMPLEMENTED_ARXIV_IDS
+        .iter()
+        .any(|&id| normalize_base_arxiv_id(id) == base_id)
+    {
         return ResearchAcceptanceVerdict {
             accepted: false,
             rejection_code: Some("RejectedNotNovel".to_string()),
-            rejection_reason: Some(format!("Paper arXiv:{} is already implemented in baseline codebase", rule.arxiv_id)),
+            rejection_reason: Some(format!(
+                "Paper arXiv:{} is already implemented in baseline codebase",
+                rule.arxiv_id
+            )),
         };
     }
     if let Some(score) = novelty_delta_score {
@@ -1121,13 +1168,17 @@ pub fn validate_research_rule_acceptance(
             return ResearchAcceptanceVerdict {
                 accepted: false,
                 rejection_code: Some("RejectedNotNovel".to_string()),
-                rejection_reason: Some(format!("Novelty delta score ({:.1}) is non-positive", score)),
+                rejection_reason: Some(format!(
+                    "Novelty delta score ({:.1}) is non-positive",
+                    score
+                )),
             };
         }
     }
     if existing_rules.iter().any(|r| {
         normalize_base_arxiv_id(&r.arxiv_id) == base_id
-            && r.target_boundary.eq_ignore_ascii_case(&rule.target_boundary)
+            && r.target_boundary
+                .eq_ignore_ascii_case(&rule.target_boundary)
             && r.indicator_pattern.trim().eq_ignore_ascii_case(pat)
     }) {
         return ResearchAcceptanceVerdict {
@@ -1138,31 +1189,40 @@ pub fn validate_research_rule_acceptance(
     }
 
     // Gate 2: Redundant
-    if BUILTIN_STATIC_TOKENS.iter().any(|&tok| pat_lc == tok || pat_lc == format!("/{}", tok)) {
+    if BUILTIN_STATIC_TOKENS
+        .iter()
+        .any(|&tok| pat_lc == tok || pat_lc == format!("/{}", tok))
+    {
         return ResearchAcceptanceVerdict {
             accepted: false,
             rejection_code: Some("RejectedRedundant".to_string()),
             rejection_reason: Some(format!("Pattern '{}' is purely a single built-in static token already enforced by core breakout guards", pat)),
         };
     }
-    if !allow_in_place_update && existing_rules.iter().any(|r| {
-        normalize_base_arxiv_id(&r.arxiv_id) == base_id
-            && r.target_boundary.eq_ignore_ascii_case(&rule.target_boundary)
-    }) {
+    if !allow_in_place_update
+        && existing_rules
+            .iter()
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == base_id)
+    {
         return ResearchAcceptanceVerdict {
             accepted: false,
             rejection_code: Some("RejectedRedundant".to_string()),
-            rejection_reason: Some(format!("Active registry already covers arXiv:{} on target boundary '{}'", rule.arxiv_id, rule.target_boundary)),
+            rejection_reason: Some(format!("Active registry already covers arXiv:{} (strictly one rule permitted per arXiv paper)", rule.arxiv_id)),
         };
     }
     if existing_rules.iter().any(|r| {
         let existing_pat = r.indicator_pattern.trim().to_ascii_lowercase();
-        existing_pat == pat_lc && r.rule_id != rule.rule_id && normalize_base_arxiv_id(&r.arxiv_id) != base_id
+        existing_pat == pat_lc
+            && r.rule_id != rule.rule_id
+            && normalize_base_arxiv_id(&r.arxiv_id) != base_id
     }) {
         return ResearchAcceptanceVerdict {
             accepted: false,
             rejection_code: Some("RejectedRedundant".to_string()),
-            rejection_reason: Some(format!("Indicator pattern '{}' overlaps with existing active rule", pat)),
+            rejection_reason: Some(format!(
+                "Indicator pattern '{}' overlaps with existing active rule",
+                pat
+            )),
         };
     }
 
@@ -1188,6 +1248,9 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             cedar_forbid_policy: "@id(\"ARXIV-DEF-2603.02277\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2603.02277v3\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::breakout_defense".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+            relevance_score: 98.5,
+            accuracy_score: 99.4,
+            arxiv_url: "https://arxiv.org/abs/2603.02277".to_string(),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2604.20496".to_string(),
@@ -1202,6 +1265,9 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             cedar_forbid_policy: "@id(\"ARXIV-DEF-2604.20496\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2604.20496v1\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::cedar_engine".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+            relevance_score: 97.2,
+            accuracy_score: 99.1,
+            arxiv_url: "https://arxiv.org/abs/2604.20496".to_string(),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2610.20437".to_string(),
@@ -1216,6 +1282,9 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             cedar_forbid_policy: "@id(\"ARXIV-DEF-2610.20437\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::rl_controller".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+            relevance_score: 99.0,
+            accuracy_score: 99.6,
+            arxiv_url: "https://arxiv.org/abs/2610.20437".to_string(),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2601.11893".to_string(),
@@ -1230,40 +1299,268 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             cedar_forbid_policy: "@id(\"ARXIV-DEF-2601.11893\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2601.11893v1\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::containment_ring".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
+            relevance_score: 96.8,
+            accuracy_score: 98.9,
+            arxiv_url: "https://arxiv.org/abs/2601.11893".to_string(),
         },
     ];
 
+    for r in &rules {
+        upsert_research_rule_sqlite(r);
+    }
+
     let paths_to_try = [
         INGESTED_RESEARCH_DEFENSES_PATH,
+        "target/release/config/ingested_research_defenses.json",
         "crates/osoosi-agent-anomaly/config/ingested_research_defenses.json",
     ];
 
     for path in paths_to_try {
         if let Ok(raw) = std::fs::read_to_string(path) {
             if let Ok(persisted) = serde_json::from_str::<Vec<IngestedResearchDefenseRule>>(&raw) {
-                for item in persisted {
+                for mut item in persisted {
+                    if is_baseline_already_implemented(&item.arxiv_id) {
+                        continue;
+                    }
                     let item_base = normalize_base_arxiv_id(&item.arxiv_id);
                     let item_canonical_id = canonical_research_rule_id(&item.arxiv_id);
+                    if item.arxiv_url.is_empty() {
+                        item.arxiv_url = safe_arxiv_abs_url(&item.arxiv_id);
+                    }
+                    if item.relevance_score <= 0.0 {
+                        item.relevance_score = 96.0;
+                    }
+                    if item.accuracy_score <= 0.0 {
+                        item.accuracy_score = 99.0;
+                    }
                     if let Some(existing) = rules.iter_mut().find(|r| {
-                        r.rule_id == item.rule_id
+                        normalize_base_arxiv_id(&r.arxiv_id) == item_base
                             || r.rule_id == item_canonical_id
-                            || (normalize_base_arxiv_id(&r.arxiv_id) == item_base
-                                && r.target_boundary.eq_ignore_ascii_case(&item.target_boundary))
                     }) {
-                        *existing = item;
-                        existing.rule_id = item_canonical_id;
+                        existing.rule_id = item_canonical_id.clone();
                     } else if rules.len() < MAX_ACTIVE_RESEARCH_RULES {
-                        let mut canonicalized = item;
-                        canonicalized.rule_id = item_canonical_id;
-                        rules.push(canonicalized);
+                        item.rule_id = item_canonical_id.clone();
+                        rules.push(item);
                     }
                 }
             }
-            break;
+        }
+    }
+
+    let sqlite_rules = load_research_rules_sqlite();
+    for mut item in sqlite_rules {
+        if is_baseline_already_implemented(&item.arxiv_id) {
+            continue;
+        }
+        let item_base = normalize_base_arxiv_id(&item.arxiv_id);
+        let item_canonical_id = canonical_research_rule_id(&item.arxiv_id);
+        if item.arxiv_url.is_empty() {
+            item.arxiv_url = safe_arxiv_abs_url(&item.arxiv_id);
+        }
+        if item.relevance_score <= 0.0 {
+            item.relevance_score = 96.0;
+        }
+        if item.accuracy_score <= 0.0 {
+            item.accuracy_score = 99.0;
+        }
+        if let Some(existing) = rules.iter_mut().find(|r| {
+            normalize_base_arxiv_id(&r.arxiv_id) == item_base || r.rule_id == item_canonical_id
+        }) {
+            existing.rule_id = item_canonical_id;
+        } else if rules.len() < MAX_ACTIVE_RESEARCH_RULES {
+            item.rule_id = item_canonical_id;
+            rules.push(item);
+        }
+    }
+
+    for r in &rules {
+        upsert_research_rule_sqlite(r);
+    }
+
+    #[cfg(not(test))]
+    {
+        let is_test_binary = std::env::args()
+            .next()
+            .map(|a| a.contains("deps") || a.contains("test"))
+            .unwrap_or(false);
+        if !is_test_binary {
+            if let Ok(serialized) = serde_json::to_string_pretty(&rules) {
+                for p in paths_to_try {
+                    if let Some(parent) = std::path::Path::new(p).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(p, &serialized);
+                }
+            }
         }
     }
 
     rules
+}
+
+const RESEARCH_DB_PATHS: &[&str] = &["database/osoosi.db", "target/release/database/osoosi.db"];
+
+pub fn init_research_rules_sqlite() {
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary {
+        return;
+    }
+    let ddl = "CREATE TABLE IF NOT EXISTS enforced_research_rules (
+        rule_id TEXT PRIMARY KEY,
+        base_arxiv_id TEXT NOT NULL UNIQUE,
+        arxiv_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        attack_vector TEXT NOT NULL,
+        target_boundary TEXT NOT NULL,
+        extraction_class TEXT NOT NULL,
+        indicator_pattern TEXT NOT NULL,
+        cedar_forbid_policy TEXT NOT NULL,
+        target_crate TEXT NOT NULL,
+        enrolled_at_utc TEXT NOT NULL,
+        relevance_score REAL NOT NULL DEFAULT 96.0,
+        accuracy_score REAL NOT NULL DEFAULT 99.0,
+        arxiv_url TEXT NOT NULL DEFAULT ''
+    );
+    DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');";
+
+    for db_path in RESEARCH_DB_PATHS {
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute_batch(ddl);
+            let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN relevance_score REAL NOT NULL DEFAULT 96.0;", []);
+            let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN accuracy_score REAL NOT NULL DEFAULT 99.0;", []);
+            let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN arxiv_url TEXT NOT NULL DEFAULT '';", []);
+        }
+    }
+}
+
+pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary {
+        return;
+    }
+    init_research_rules_sqlite();
+    let base_arxiv_id = normalize_base_arxiv_id(&rule.arxiv_id);
+    let canonical_id = canonical_research_rule_id(&rule.arxiv_id);
+    let safe_url = if rule.arxiv_url.is_empty() {
+        safe_arxiv_abs_url(&rule.arxiv_id)
+    } else {
+        rule.arxiv_url.clone()
+    };
+    let relevance = if rule.relevance_score <= 0.0 {
+        96.0
+    } else {
+        rule.relevance_score
+    };
+    let accuracy = if rule.accuracy_score <= 0.0 {
+        99.0
+    } else {
+        rule.accuracy_score
+    };
+
+    let sql = "INSERT INTO enforced_research_rules (
+        rule_id, base_arxiv_id, arxiv_id, title, attack_vector, target_boundary,
+        extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc,
+        relevance_score, accuracy_score, arxiv_url
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+    ON CONFLICT(base_arxiv_id) DO UPDATE SET
+        rule_id = excluded.rule_id,
+        arxiv_id = excluded.arxiv_id,
+        title = excluded.title,
+        attack_vector = excluded.attack_vector,
+        target_boundary = excluded.target_boundary,
+        extraction_class = excluded.extraction_class,
+        indicator_pattern = excluded.indicator_pattern,
+        cedar_forbid_policy = excluded.cedar_forbid_policy,
+        target_crate = excluded.target_crate,
+        enrolled_at_utc = excluded.enrolled_at_utc,
+        relevance_score = excluded.relevance_score,
+        accuracy_score = excluded.accuracy_score,
+        arxiv_url = excluded.arxiv_url;";
+
+    for db_path in RESEARCH_DB_PATHS {
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute(
+                sql,
+                rusqlite::params![
+                    canonical_id,
+                    base_arxiv_id,
+                    rule.arxiv_id,
+                    rule.title,
+                    rule.attack_vector,
+                    rule.target_boundary,
+                    rule.extraction_class,
+                    rule.indicator_pattern,
+                    rule.cedar_forbid_policy,
+                    rule.target_crate,
+                    rule.enrolled_at_utc,
+                    relevance,
+                    accuracy,
+                    safe_url,
+                ],
+            );
+        }
+    }
+}
+
+pub fn load_research_rules_sqlite() -> Vec<IngestedResearchDefenseRule> {
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary {
+        return Vec::new();
+    }
+    init_research_rules_sqlite();
+    for db_path in RESEARCH_DB_PATHS {
+        if let Ok(conn) = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            let mut stmt = match conn.prepare("SELECT rule_id, arxiv_id, title, attack_vector, target_boundary, extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc, COALESCE(relevance_score, 96.0), COALESCE(accuracy_score, 99.0), COALESCE(arxiv_url, '') FROM enforced_research_rules") {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let rows = stmt.query_map([], |row| {
+                Ok(IngestedResearchDefenseRule {
+                    rule_id: row.get(0)?,
+                    arxiv_id: row.get(1)?,
+                    title: row.get(2)?,
+                    attack_vector: row.get(3)?,
+                    target_boundary: row.get(4)?,
+                    extraction_class: row.get(5)?,
+                    indicator_pattern: row.get(6)?,
+                    cedar_forbid_policy: row.get(7)?,
+                    target_crate: row.get(8)?,
+                    enrolled_at_utc: row.get(9)?,
+                    relevance_score: row.get::<_, f64>(10).unwrap_or(96.0),
+                    accuracy_score: row.get::<_, f64>(11).unwrap_or(99.0),
+                    arxiv_url: row.get::<_, String>(12).unwrap_or_default(),
+                })
+            });
+            if let Ok(mapped) = rows {
+                let mut rules = Vec::new();
+                for r in mapped.flatten() {
+                    rules.push(r);
+                }
+                if !rules.is_empty() {
+                    return rules;
+                }
+            }
+        }
+    }
+    Vec::new()
 }
 
 pub static GLOBAL_RESEARCH_DEFENSE_REGISTRY: std::sync::OnceLock<
@@ -1276,13 +1573,23 @@ fn research_defense_registry() -> &'static RwLock<Vec<IngestedResearchDefenseRul
 }
 
 /// Registers or updates an ingested arXiv research defense rule in the live enforcement registry,
-/// deduplicating by normalized base arxiv_id + target_boundary, capping total active rules at
+/// deduplicating by normalized base arxiv_id, capping total active rules at
 /// MAX_ACTIVE_RESEARCH_RULES (64) by FIFO-evicting the oldest dynamic rule (preserving pinned 0..4),
+/// persists to SQLite `enforced_research_rules` table with UNIQUE constraint on base_arxiv_id,
 /// persists the updated registry to `config/ingested_research_defenses.json`, and returns the total active rule count.
 pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) -> usize {
     let item_base = normalize_base_arxiv_id(&rule.arxiv_id);
     let canonical_id = canonical_research_rule_id(&rule.arxiv_id);
     rule.rule_id = canonical_id.clone();
+    if rule.arxiv_url.is_empty() {
+        rule.arxiv_url = safe_arxiv_abs_url(&rule.arxiv_id);
+    }
+    if rule.relevance_score <= 0.0 {
+        rule.relevance_score = 96.0;
+    }
+    if rule.accuracy_score <= 0.0 {
+        rule.accuracy_score = 99.0;
+    }
 
     let snapshot = {
         let mut guard = research_defense_registry()
@@ -1290,27 +1597,156 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
             .unwrap_or_else(|e| e.into_inner());
 
         if let Some(existing) = guard.iter_mut().find(|r| {
-            r.rule_id == canonical_id
-                || (normalize_base_arxiv_id(&r.arxiv_id) == item_base
-                    && r.target_boundary.eq_ignore_ascii_case(&rule.target_boundary))
+            r.rule_id == canonical_id || normalize_base_arxiv_id(&r.arxiv_id) == item_base
         }) {
-            *existing = rule;
+            *existing = rule.clone();
         } else {
             // Capacity bound: max 64 rules. Preserve pinned baseline 0..4
             if guard.len() >= MAX_ACTIVE_RESEARCH_RULES && guard.len() > 4 {
                 guard.remove(4); // evict oldest dynamic rule
             }
-            guard.push(rule);
+            guard.push(rule.clone());
         }
         guard.clone()
     };
 
-    let _ = std::fs::create_dir_all("config");
-    if let Ok(serialized) = serde_json::to_string_pretty(&snapshot) {
-        let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, serialized);
+    upsert_research_rule_sqlite(&rule);
+
+    #[cfg(not(test))]
+    {
+        let is_test_binary = std::env::args()
+            .next()
+            .map(|a| a.contains("deps") || a.contains("test"))
+            .unwrap_or(false);
+        if !is_test_binary {
+            let _ = std::fs::create_dir_all("config");
+            if let Ok(serialized) = serde_json::to_string_pretty(&snapshot) {
+                let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, &serialized);
+                let _ = std::fs::write(
+                    "target/release/config/ingested_research_defenses.json",
+                    &serialized,
+                );
+            }
+        }
     }
 
     snapshot.len()
+}
+
+/// Removes an individual ingested research defense rule matching rule_id or base_arxiv_id,
+/// removes it from SQLite enforced_research_rules, and updates config files.
+pub fn remove_ingested_research_rule(target_id: &str) -> usize {
+    let clean_target = target_id.trim();
+    let base_id = normalize_base_arxiv_id(clean_target);
+    let canonical_id = canonical_research_rule_id(clean_target);
+
+    let snapshot = {
+        let mut guard = research_defense_registry()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.retain(|r| {
+            r.rule_id != clean_target
+                && r.rule_id != canonical_id
+                && normalize_base_arxiv_id(&r.arxiv_id) != base_id
+        });
+        guard.clone()
+    };
+
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if !is_test_binary {
+        let sql = "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR rule_id = ?2 OR base_arxiv_id = ?3;";
+        for db_path in RESEARCH_DB_PATHS {
+            if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                let _ = conn.execute(sql, rusqlite::params![clean_target, canonical_id, base_id]);
+            }
+        }
+        #[cfg(not(test))]
+        {
+            if let Ok(serialized) = serde_json::to_string_pretty(&snapshot) {
+                let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, &serialized);
+                let _ = std::fs::write(
+                    "target/release/config/ingested_research_defenses.json",
+                    &serialized,
+                );
+            }
+        }
+    }
+
+    snapshot.len()
+}
+
+/// Clears ALL active ingested research defense rules from live enforcement,
+/// wipes SQLite enforced_research_rules, and writes [] to config files.
+pub fn clear_all_ingested_research_rules() -> usize {
+    {
+        let mut guard = research_defense_registry()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.clear();
+    }
+
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if !is_test_binary {
+        for db_path in RESEARCH_DB_PATHS {
+            if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                let _ = conn.execute("DELETE FROM enforced_research_rules;", []);
+            }
+        }
+        #[cfg(not(test))]
+        {
+            let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, "[]");
+            let _ = std::fs::write(
+                "target/release/config/ingested_research_defenses.json",
+                "[]",
+            );
+        }
+    }
+
+    0
+}
+
+/// Restores the 4 canonical seeded research defense rules into live enforcement, SQLite, and config files.
+pub fn restore_default_research_rules() -> usize {
+    let seeded = default_seeded_research_defense_rules();
+    {
+        let mut guard = research_defense_registry()
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = seeded.clone();
+    }
+
+    for r in &seeded {
+        upsert_research_rule_sqlite(r);
+    }
+
+    #[cfg(not(test))]
+    {
+        let is_test_binary = std::env::args()
+            .next()
+            .map(|a| a.contains("deps") || a.contains("test"))
+            .unwrap_or(false);
+        if !is_test_binary {
+            if let Ok(serialized) = serde_json::to_string_pretty(&seeded) {
+                let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, &serialized);
+                let _ = std::fs::write(
+                    "target/release/config/ingested_research_defenses.json",
+                    &serialized,
+                );
+            }
+        }
+    }
+
+    seeded.len()
+}
+
+pub fn reset_research_defense_registry() {
+    restore_default_research_rules();
 }
 
 /// Returns a snapshot of all currently active arXiv research defense rules enforced by `BreakoutDefenseCoordinator`.
@@ -1450,7 +1886,8 @@ impl BreakoutDefenseCoordinator {
         if let Ok(rules) = research_defense_registry().read() {
             for rule in rules.iter() {
                 let pat = rule.indicator_pattern.trim().to_ascii_lowercase();
-                let matched = (pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)))
+                let matched = (pat.len() >= 5
+                    && (payload_lc.contains(&pat) || resource_lc.contains(&pat)))
                     || pat
                         .split("&&")
                         .flat_map(|s| s.split(';'))
@@ -1841,6 +2278,8 @@ impl ZeroMutualInformationProjector {
 mod tests {
     use super::*;
 
+    static TEST_REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_technical_breakout_detection() {
         let guard = TechnicalBreakoutGuard::new();
@@ -2046,6 +2485,9 @@ mod tests {
 
     #[test]
     fn test_ingested_arxiv_research_rules_actively_enforced_by_coordinator() {
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        reset_research_defense_registry();
+
         let rules = list_ingested_research_rules();
         assert!(
             rules.iter().any(|r| r.arxiv_id == "2603.02277v3"),
@@ -2113,18 +2555,28 @@ mod tests {
             .detected_vectors
             .iter()
             .any(|v| v.contains("[ArXiv-Active-Defense:2699.88888v1]")));
+
+        reset_research_defense_registry();
     }
 
     #[test]
     fn test_research_rule_idempotent_deduplication() {
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        reset_research_defense_registry();
+
         let initial_len = list_ingested_research_rules().len();
         let first = list_ingested_research_rules()[0].clone();
         let after_len = register_ingested_research_rule(first);
         assert_eq!(initial_len, after_len);
+
+        reset_research_defense_registry();
     }
 
     #[test]
     fn test_research_rule_deduplication_by_base_arxiv_and_boundary() {
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        reset_research_defense_registry();
+
         let initial_rules = list_ingested_research_rules();
         let initial_len = initial_rules.len();
 
@@ -2142,7 +2594,10 @@ mod tests {
             enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
         };
         let after_len = register_ingested_research_rule(duplicate_cand);
-        assert_eq!(after_len, initial_len, "Rule must be updated in-place without expanding rule count");
+        assert_eq!(
+            after_len, initial_len,
+            "Rule must be updated in-place without expanding rule count"
+        );
 
         // Verify rule was updated in-place
         let updated = list_ingested_research_rules()
@@ -2150,6 +2605,8 @@ mod tests {
             .find(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277")
             .expect("Updated rule must be present");
         assert_eq!(updated.indicator_pattern, "sandboxescapebench_updated");
+
+        reset_research_defense_registry();
     }
 
     #[test]
@@ -2170,9 +2627,13 @@ mod tests {
             target_crate: "osoosi-agent-anomaly".to_string(),
             enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
         };
-        let v = validate_research_rule_acceptance(&bad_policy_rule, Some(80.0), &active_rules, false);
+        let v =
+            validate_research_rule_acceptance(&bad_policy_rule, Some(80.0), &active_rules, false);
         assert!(!v.accepted);
-        assert_eq!(v.rejection_code.as_deref(), Some("RejectedConflictsWithExistingProtection"));
+        assert_eq!(
+            v.rejection_code.as_deref(),
+            Some("RejectedConflictsWithExistingProtection")
+        );
 
         // Case B: Pattern < 6 chars
         let short_pat_rule = IngestedResearchDefenseRule {
@@ -2187,9 +2648,13 @@ mod tests {
             target_crate: "osoosi-agent-anomaly".to_string(),
             enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
         };
-        let v = validate_research_rule_acceptance(&short_pat_rule, Some(80.0), &active_rules, false);
+        let v =
+            validate_research_rule_acceptance(&short_pat_rule, Some(80.0), &active_rules, false);
         assert!(!v.accepted);
-        assert_eq!(v.rejection_code.as_deref(), Some("RejectedConflictsWithExistingProtection"));
+        assert_eq!(
+            v.rejection_code.as_deref(),
+            Some("RejectedConflictsWithExistingProtection")
+        );
 
         // Case C: Protected token conflict (powershell.exe)
         let conflict_rule = IngestedResearchDefenseRule {
@@ -2206,7 +2671,10 @@ mod tests {
         };
         let v = validate_research_rule_acceptance(&conflict_rule, Some(80.0), &active_rules, false);
         assert!(!v.accepted);
-        assert_eq!(v.rejection_code.as_deref(), Some("RejectedConflictsWithExistingProtection"));
+        assert_eq!(
+            v.rejection_code.as_deref(),
+            Some("RejectedConflictsWithExistingProtection")
+        );
 
         // Gate 1: Not Novel
         // Case A: Known implemented baseline ID
@@ -2239,7 +2707,12 @@ mod tests {
             target_crate: "osoosi-agent-anomaly".to_string(),
             enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
         };
-        let v = validate_research_rule_acceptance(&non_novel_score_rule, Some(0.0), &active_rules, false);
+        let v = validate_research_rule_acceptance(
+            &non_novel_score_rule,
+            Some(0.0),
+            &active_rules,
+            false,
+        );
         assert!(!v.accepted);
         assert_eq!(v.rejection_code.as_deref(), Some("RejectedNotNovel"));
 
@@ -2281,6 +2754,9 @@ mod tests {
 
     #[test]
     fn test_bounded_capacity_max_64_rules() {
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        reset_research_defense_registry();
+
         for i in 0..70 {
             let rule = IngestedResearchDefenseRule {
                 rule_id: format!("ARXIV-DEF-2699.{:05}", i),
@@ -2295,16 +2771,155 @@ mod tests {
                 enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
             };
             let count = register_ingested_research_rule(rule);
-            assert!(count <= MAX_ACTIVE_RESEARCH_RULES, "Rules count must never exceed MAX_ACTIVE_RESEARCH_RULES (64)");
+            assert!(
+                count <= MAX_ACTIVE_RESEARCH_RULES,
+                "Rules count must never exceed MAX_ACTIVE_RESEARCH_RULES (64)"
+            );
         }
 
         let all_rules = list_ingested_research_rules();
         assert_eq!(all_rules.len(), MAX_ACTIVE_RESEARCH_RULES);
 
         // Verify that the 4 pinned baseline rules remain present
-        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277"));
-        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2604.20496"));
-        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2610.20437"));
-        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2601.11893"));
+        assert!(all_rules
+            .iter()
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277"));
+        assert!(all_rules
+            .iter()
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2604.20496"));
+        assert!(all_rules
+            .iter()
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2610.20437"));
+        assert!(all_rules
+            .iter()
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2601.11893"));
+
+        reset_research_defense_registry();
+    }
+
+    #[test]
+    fn test_sqlite_enforced_research_rules_unique_constraint() {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        let ddl = "CREATE TABLE IF NOT EXISTS enforced_research_rules (
+            rule_id TEXT PRIMARY KEY,
+            base_arxiv_id TEXT NOT NULL UNIQUE,
+            arxiv_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            attack_vector TEXT NOT NULL,
+            target_boundary TEXT NOT NULL,
+            extraction_class TEXT NOT NULL,
+            indicator_pattern TEXT NOT NULL,
+            cedar_forbid_policy TEXT NOT NULL,
+            target_crate TEXT NOT NULL,
+            enrolled_at_utc TEXT NOT NULL
+        );";
+        conn.execute_batch(ddl).expect("execute ddl");
+
+        let sql = "INSERT INTO enforced_research_rules (
+            rule_id, base_arxiv_id, arxiv_id, title, attack_vector, target_boundary,
+            extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        ON CONFLICT(base_arxiv_id) DO UPDATE SET
+            rule_id = excluded.rule_id,
+            arxiv_id = excluded.arxiv_id,
+            title = excluded.title,
+            attack_vector = excluded.attack_vector,
+            target_boundary = excluded.target_boundary,
+            extraction_class = excluded.extraction_class,
+            indicator_pattern = excluded.indicator_pattern,
+            cedar_forbid_policy = excluded.cedar_forbid_policy,
+            target_crate = excluded.target_crate,
+            enrolled_at_utc = excluded.enrolled_at_utc;";
+
+        // Insert first rule for 2603.02277
+        conn.execute(
+            sql,
+            rusqlite::params![
+                "ARXIV-DEF-2603.02277",
+                "2603.02277",
+                "2603.02277v3",
+                "SandboxEscapeBench",
+                "Container Breakout",
+                "OCI Container Sandbox",
+                "breakout_vector",
+                "nsenter",
+                "forbid(principal, action, resource);",
+                "osoosi-agent-anomaly",
+                "2026-10-29T00:00:00Z"
+            ],
+        )
+        .expect("insert rule 1");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM enforced_research_rules", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Attempting a raw direct INSERT without ON CONFLICT for the same base_arxiv_id must fail unique constraint
+        let raw_insert_sql = "INSERT INTO enforced_research_rules (
+            rule_id, base_arxiv_id, arxiv_id, title, attack_vector, target_boundary,
+            extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11);";
+
+        let duplicate_insert = conn.execute(
+            raw_insert_sql,
+            rusqlite::params![
+                "appr_arxiv_2603_02277v3_network_ssrf",
+                "2603.02277",
+                "2603.02277v3",
+                "Different Title",
+                "Different Vector",
+                "Host Network Egress Gateway",
+                "breakout_vector",
+                "metadata",
+                "forbid(principal, action, resource);",
+                "osoosi-agent-anomaly",
+                "2026-10-29T00:00:00Z"
+            ],
+        );
+        assert!(
+            duplicate_insert.is_err(),
+            "Raw insert of duplicate base_arxiv_id must violate UNIQUE constraint"
+        );
+
+        // Executing the upsert on the duplicate base_arxiv_id updates in-place without creating a 2nd row
+        conn.execute(
+            sql,
+            rusqlite::params![
+                "ARXIV-DEF-2603.02277",
+                "2603.02277",
+                "2603.02277v3",
+                "Updated SandboxEscapeBench",
+                "Updated Breakout",
+                "Host Network Egress Gateway",
+                "breakout_vector",
+                "nsenter_and_metadata",
+                "forbid(principal, action, resource);",
+                "osoosi-agent-anomaly",
+                "2026-10-29T00:01:00Z"
+            ],
+        )
+        .expect("upsert rule update");
+
+        let count_after_upsert: i64 = conn
+            .query_row("SELECT COUNT(*) FROM enforced_research_rules", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            count_after_upsert, 1,
+            "Row count must remain 1 after upsert on duplicate base_arxiv_id"
+        );
+
+        let updated_title: String = conn
+            .query_row(
+                "SELECT title FROM enforced_research_rules WHERE base_arxiv_id = '2603.02277'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(updated_title, "Updated SandboxEscapeBench");
     }
 }

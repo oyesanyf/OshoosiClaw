@@ -4355,7 +4355,6 @@ impl MartingaleZeroDriftDetector {
     }
 }
 
-
 /// Verdict emitted by the Multi-Source Conformal Unseen Jailbreak Detector (`Persist-3` + `SR-DKW`,
 /// Qian et al., `arXiv:2610.09167v1`, October 2026).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

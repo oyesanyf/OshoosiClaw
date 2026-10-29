@@ -3215,11 +3215,11 @@
                                     <th style="padding: 12px 16px; width: 140px;">Timestamp</th>
                                     <th style="padding: 12px 16px; width: 130px;">Event Type</th>
                                     <th style="padding: 12px 16px; width: 100px;">Category</th>
-                                    <th style="padding: 12px 16px; width: 150px;">Process / Actor</th>
-                                    <th style="padding: 12px 16px; width: 160px;">MITRE Technique</th>
-                                    <th style="padding: 12px 16px; width: 100px;">Severity</th>
-                                    <th style="padding: 12px 16px; width: 110px;">Status</th>
-                                    <th style="padding: 12px 16px;">Summary</th>
+                                    <th style="padding: 12px 16px; width: 180px;">Process &amp; File Artifact</th>
+                                    <th style="padding: 12px 16px; width: 150px;">MITRE Technique</th>
+                                    <th style="padding: 12px 16px; width: 90px;">Severity</th>
+                                    <th style="padding: 12px 16px; width: 100px;">Status</th>
+                                    <th style="padding: 12px 16px;">What Is This / Forensic Details</th>
                                     <th style="padding: 12px 16px; width: 80px; text-align: right;">Actions</th>
                                 </tr>
                             </thead>
@@ -3618,9 +3618,9 @@
                                     <th style="padding: 8px 12px;">Timestamp</th>
                                     <th style="padding: 8px 12px;">Action</th>
                                     <th style="padding: 8px 12px;">Operator</th>
-                                    <th style="padding: 8px 12px;">Reason</th>
-                                    <th style="padding: 8px 12px;">Event Hash</th>
-                                    <th style="padding: 8px 12px; text-align: right;">Integrity</th>
+                                    <th style="padding: 8px 12px;">Target Process &amp; File Artifact</th>
+                                    <th style="padding: 8px 12px;">What Is This Containment?</th>
+                                    <th style="padding: 8px 12px; text-align: right;">Merkle Proof</th>
                                 </tr>
                             </thead>
                             <tbody id="killchain-history-tbody">
@@ -4705,12 +4705,12 @@
                             <thead>
                                 <tr style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--glass-border); color: var(--text-muted);">
                                     <th style="padding: 9px 10px; text-align: left; width: 130px;">Time (UTC)</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 120px;">Actor Process</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 140px;">Process &amp; File Artifact</th>
                                     <th style="padding: 9px 10px; text-align: left; width: 190px;">Destination Sink &amp; Channel</th>
                                     <th style="padding: 9px 10px; text-align: center; width: 110px;">Verdict</th>
                                     <th style="padding: 9px 10px; text-align: center; width: 100px;">Sensitivity (φ)</th>
                                     <th style="padding: 9px 10px; text-align: left; width: 170px;">Detected Categories</th>
-                                    <th style="padding: 9px 10px; text-align: left;">Zero-PII Scrubbed Output (&lt;ZK_PII&gt;)</th>
+                                    <th style="padding: 9px 10px; text-align: left;">What Is This? / Scrubbed Output (&lt;ZK_PII&gt;)</th>
                                     <th style="padding: 9px 10px; text-align: left; width: 190px;">ZK-BFT Commitment &amp; PQC Sig</th>
                                 </tr>
                             </thead>
@@ -5245,20 +5245,29 @@
                                 Every rule below is actively evaluated inside <code>BreakoutDefenseCoordinator::evaluate_action</code> on live agent tool calls, shell commands, and network egress.
                             </div>
                         </div>
-                        <span id="research-active-rules-badge" class="badge green" style="font-size: 10.5px;">4 ACTIVE RULES ENFORCED</span>
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <button type="button" id="btn-clear-all-research" class="btn" onclick="clearAllResearchAndSynthesizedCode()" style="padding: 5px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; background: rgba(239,68,68,0.18); border: 1px solid #ef4444; color: #fca5a5;">
+                                🗑️ Clear All Research &amp; Synthesized Code
+                            </button>
+                            <button type="button" id="btn-restore-default-research" class="btn" onclick="restoreDefaultResearchRules()" style="padding: 5px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; background: rgba(56,189,248,0.15); border: 1px solid #0284c7; color: #7dd3fc;">
+                                🔄 Reset Defaults
+                            </button>
+                            <span id="research-active-rules-badge" class="badge green" style="font-size: 10.5px;">4 ACTIVE RULES ENFORCED</span>
+                        </div>
                     </div>
                     <div style="overflow-x: auto; border: 1px solid var(--glass-border); border-radius: 8px;">
                         <table class="data-table" style="width: 100%; font-size: 12px; border-collapse: collapse;">
                             <thead>
                                 <tr style="background: rgba(255,255,255,0.04); border-bottom: 1px solid var(--glass-border); color: var(--text-muted);">
-                                    <th style="padding: 9px 10px; text-align: left; width: 13%;">Rule ID</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 10%;">arXiv ID</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 19%;">Title</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 15%;">Attack Vector</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 13%;">Target Boundary</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 14%;">Indicator Pattern</th>
-                                    <th style="padding: 9px 10px; text-align: left; width: 8%;">Target Crate</th>
-                                    <th style="padding: 9px 10px; text-align: center; width: 8%;">Enforcement Status</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 11%;">Rule ID</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 10%;">arXiv Paper &amp; Link</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 18%;">Title &amp; What Is This Defense</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 12%;">Attack Vector</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 10%;">Target Boundary</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 11%;">Indicator Pattern</th>
+                                    <th style="padding: 9px 10px; text-align: center; width: 11%;">Relevance &amp; Accuracy</th>
+                                    <th style="padding: 9px 10px; text-align: left; width: 9%;">Target Crate</th>
+                                    <th style="padding: 9px 10px; text-align: center; width: 8%;">Actions</th>
                                 </tr>
                             </thead>
                             <tbody id="research-active-rules-tbody">
