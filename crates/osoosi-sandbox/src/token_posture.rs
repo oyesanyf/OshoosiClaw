@@ -154,6 +154,7 @@ mod sys {
     pub const TOKEN_PRIVILEGES_CLASS: u32 = 3;
     pub const TOKEN_ELEVATION_CLASS: u32 = 20;
     pub const TOKEN_INTEGRITY_LEVEL_CLASS: u32 = 25;
+    pub const TOKEN_IS_APP_CONTAINER_CLASS: u32 = 29;
 
     pub const SE_GROUP_ENABLED: u32 = 0x0000_0004;
     pub const SE_GROUP_USE_FOR_DENY_ONLY: u32 = 0x0000_0010;
@@ -629,7 +630,7 @@ impl TokenPosture {
     /// Inspects an open token handle (requires `TOKEN_QUERY`).
     pub fn of_token(token: sys::HANDLE) -> Result<Self, OctopusSecurityError> {
         let elev = query_token_buffer(token, sys::TOKEN_ELEVATION_CLASS)?;
-        let elevated = (elev[0] as u32) != 0;
+        let mut elevated = (elev[0] as u32) != 0;
 
         let il = query_token_buffer(token, sys::TOKEN_INTEGRITY_LEVEL_CLASS)?;
         let label = unsafe { &*(il.as_ptr() as *const sys::TOKEN_MANDATORY_LABEL) };
@@ -653,6 +654,17 @@ impl TokenPosture {
                     admins_enabled = true;
                 }
             }
+        }
+
+        let is_appcontainer = query_token_buffer(token, sys::TOKEN_IS_APP_CONTAINER_CLASS)
+            .map(|buf| !buf.is_empty() && buf[0] != 0)
+            .unwrap_or(false);
+        if is_appcontainer && integrity_rid <= INTEGRITY_LOW {
+            elevated = false;
+            admins_enabled = false;
+            admins_deny_only = true;
+        } else if admins_deny_only && !admins_enabled && integrity_rid <= INTEGRITY_MEDIUM {
+            elevated = false;
         }
 
         let privs = query_token_buffer(token, sys::TOKEN_PRIVILEGES_CLASS)?;

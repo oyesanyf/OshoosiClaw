@@ -731,6 +731,17 @@ static GLOBAL_WORKFLOW_GUARD: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 fn load_or_init_state() -> WorkflowGuardState {
+    if let Some(sql_val) = crate::load_ui_setting_sqlite("workflow_guard_state") {
+        if let Ok(parsed) = serde_json::from_value::<WorkflowGuardState>(sql_val) {
+            if parsed.state_schema_version == 2
+                && parsed.workflow_modes.len() == 3
+                && parsed.supply_chain_protections.len() == 6
+                && parsed.breakout_vectors.len() == 8
+            {
+                return parsed;
+            }
+        }
+    }
     if let Ok(raw) = std::fs::read_to_string(WORKFLOW_GUARD_STATE_PATH) {
         if let Ok(parsed) = serde_json::from_str::<WorkflowGuardState>(&raw) {
             if parsed.state_schema_version == 2
@@ -749,6 +760,9 @@ fn load_or_init_state() -> WorkflowGuardState {
 }
 
 fn persist_state(state: &WorkflowGuardState) {
+    if let Ok(val) = serde_json::to_value(state) {
+        crate::save_ui_setting_sqlite("workflow_guard_state", &val);
+    }
     if let Some(parent) = Path::new(WORKFLOW_GUARD_STATE_PATH).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -2448,6 +2462,24 @@ mod tests {
         for p in &state.supply_chain_protections {
             assert_eq!(p.status, "ENFORCED");
         }
+    }
+
+    #[test]
+    #[test]
+    fn test_ui_settings_and_unsettings_persist_to_sqlite() {
+        std::env::set_var("OSOOSI_TEST_UI_SQLITE", "1");
+        let test_key = "oshoosi_test_toggle_persistence_v1";
+        crate::save_ui_setting_sqlite(test_key, &json!(true));
+        assert_eq!(crate::load_ui_setting_sqlite(test_key), Some(json!(true)));
+
+        // Unset by setting to false -> must persist false in SQLite
+        crate::save_ui_setting_sqlite(test_key, &json!(false));
+        assert_eq!(crate::load_ui_setting_sqlite(test_key), Some(json!(false)));
+
+        // Unset by deleting key -> must be removed from SQLite
+        crate::delete_ui_setting_sqlite(test_key);
+        assert_eq!(crate::load_ui_setting_sqlite(test_key), None);
+        std::env::remove_var("OSOOSI_TEST_UI_SQLITE");
     }
 
     #[test]

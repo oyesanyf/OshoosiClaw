@@ -1396,6 +1396,45 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
         return rules;
     }
 
+    let (cleared_all, removed_ids) = load_research_registry_meta_sqlite();
+    if cleared_all {
+        let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, "[]");
+        let _ = std::fs::write(
+            "target/release/config/ingested_research_defenses.json",
+            "[]",
+        );
+        let _ = std::fs::write(
+            "crates/osoosi-agent-anomaly/config/ingested_research_defenses.json",
+            "[]",
+        );
+        for db_path in RESEARCH_DB_PATHS {
+            if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                let _ = conn.execute("DELETE FROM enforced_research_rules;", []);
+            }
+        }
+        save_research_registry_meta_sqlite(
+            true,
+            &[
+                "ARXIV-DEF-2603.02277".to_string(),
+                "2603.02277".to_string(),
+                "ARXIV-DEF-2604.20496".to_string(),
+                "2604.20496".to_string(),
+                "ARXIV-DEF-2610.20437".to_string(),
+                "2610.20437".to_string(),
+                "ARXIV-DEF-2601.11893".to_string(),
+                "2601.11893".to_string(),
+            ],
+        );
+        for db_path in RESEARCH_DB_PATHS {
+            if let Ok(_conn) = rusqlite::Connection::open(db_path) {}
+        }
+        return Vec::new();
+    }
+    rules.retain(|r| {
+        let base = normalize_base_arxiv_id(&r.arxiv_id);
+        !removed_ids.contains(&r.rule_id) && !removed_ids.contains(&base)
+    });
+
     let paths_to_try = [
         INGESTED_RESEARCH_DEFENSES_PATH,
         "target/release/config/ingested_research_defenses.json",
@@ -1411,6 +1450,10 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
                     }
                     let item_base = normalize_base_arxiv_id(&item.arxiv_id);
                     let item_canonical_id = canonical_research_rule_id(&item.arxiv_id);
+                    if removed_ids.contains(&item_canonical_id) || removed_ids.contains(&item_base)
+                    {
+                        continue;
+                    }
                     if item.arxiv_url.is_empty() {
                         item.arxiv_url = safe_arxiv_abs_url(&item.arxiv_id);
                     }
@@ -1441,6 +1484,9 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
         }
         let item_base = normalize_base_arxiv_id(&item.arxiv_id);
         let item_canonical_id = canonical_research_rule_id(&item.arxiv_id);
+        if removed_ids.contains(&item_canonical_id) || removed_ids.contains(&item_base) {
+            continue;
+        }
         if item.arxiv_url.is_empty() {
             item.arxiv_url = safe_arxiv_abs_url(&item.arxiv_id);
         }
@@ -1513,7 +1559,14 @@ pub fn init_research_rules_sqlite() {
         has_code_repo INTEGER NOT NULL DEFAULT 0,
         code_repo_url TEXT NOT NULL DEFAULT ''
     );
-    DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');";
+        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');
+        CREATE TABLE IF NOT EXISTS research_registry_meta (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            cleared_all INTEGER NOT NULL DEFAULT 0,
+            removed_rule_ids_json TEXT NOT NULL DEFAULT '[]',
+            updated_at_utc TEXT NOT NULL DEFAULT ''
+        );
+        INSERT OR IGNORE INTO research_registry_meta (id, cleared_all, removed_rule_ids_json, updated_at_utc) VALUES (1, 0, '[]', '');";
 
     for db_path in RESEARCH_DB_PATHS {
         if let Some(parent) = std::path::Path::new(db_path).parent() {
@@ -1526,6 +1579,63 @@ pub fn init_research_rules_sqlite() {
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN arxiv_url TEXT NOT NULL DEFAULT '';", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN has_code_repo INTEGER NOT NULL DEFAULT 0;", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN code_repo_url TEXT NOT NULL DEFAULT '';", []);
+        }
+    }
+}
+
+pub fn load_research_registry_meta_sqlite() -> (bool, Vec<String>) {
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary {
+        return (false, Vec::new());
+    }
+    init_research_rules_sqlite();
+    for db_path in RESEARCH_DB_PATHS {
+        if let Ok(conn) = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            if let Ok((cleared_int, removed_json)) = conn.query_row(
+                "SELECT cleared_all, removed_rule_ids_json FROM research_registry_meta WHERE id = 1",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            ) {
+                let removed: Vec<String> = serde_json::from_str(&removed_json).unwrap_or_default();
+                return (cleared_int != 0, removed);
+            }
+        }
+    }
+    (false, Vec::new())
+}
+
+pub fn save_research_registry_meta_sqlite(cleared_all: bool, removed_ids: &[String]) {
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary {
+        return;
+    }
+    init_research_rules_sqlite();
+    let removed_json = serde_json::to_string(removed_ids).unwrap_or_else(|_| "[]".to_string());
+    let now_utc = chrono::Utc::now().to_rfc3339();
+    let sql = "INSERT INTO research_registry_meta (id, cleared_all, removed_rule_ids_json, updated_at_utc)
+               VALUES (1, ?1, ?2, ?3)
+               ON CONFLICT(id) DO UPDATE SET
+                   cleared_all = excluded.cleared_all,
+                   removed_rule_ids_json = excluded.removed_rule_ids_json,
+                   updated_at_utc = excluded.updated_at_utc;";
+    for db_path in RESEARCH_DB_PATHS {
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute(
+                sql,
+                rusqlite::params![if cleared_all { 1 } else { 0 }, removed_json, now_utc],
+            );
         }
     }
 }
@@ -1755,6 +1865,11 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
     };
 
     upsert_research_rule_sqlite(&rule);
+    {
+        let (_cleared_all, mut removed_ids) = load_research_registry_meta_sqlite();
+        removed_ids.retain(|id| id != &canonical_id && id != &item_base);
+        save_research_registry_meta_sqlite(false, &removed_ids);
+    }
 
     #[cfg(not(test))]
     {
@@ -1802,6 +1917,14 @@ pub fn remove_ingested_research_rule(target_id: &str) -> usize {
         .unwrap_or(false);
     if !is_test_binary {
         let sql = "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR rule_id = ?2 OR base_arxiv_id = ?3;";
+        let (cleared_all, mut removed_ids) = load_research_registry_meta_sqlite();
+        if !removed_ids.contains(&canonical_id) {
+            removed_ids.push(canonical_id.clone());
+        }
+        if !removed_ids.contains(&base_id) {
+            removed_ids.push(base_id.clone());
+        }
+        save_research_registry_meta_sqlite(cleared_all, &removed_ids);
         for db_path in RESEARCH_DB_PATHS {
             if let Ok(conn) = rusqlite::Connection::open(db_path) {
                 let _ = conn.execute(sql, rusqlite::params![clean_target, canonical_id, base_id]);
@@ -1842,9 +1965,29 @@ pub fn clear_all_ingested_research_rules() -> usize {
                 let _ = conn.execute("DELETE FROM enforced_research_rules;", []);
             }
         }
+        save_research_registry_meta_sqlite(
+            true,
+            &[
+                "ARXIV-DEF-2603.02277".to_string(),
+                "2603.02277".to_string(),
+                "ARXIV-DEF-2604.20496".to_string(),
+                "2604.20496".to_string(),
+                "ARXIV-DEF-2610.20437".to_string(),
+                "2610.20437".to_string(),
+                "ARXIV-DEF-2601.11893".to_string(),
+                "2601.11893".to_string(),
+            ],
+        );
+        for db_path in RESEARCH_DB_PATHS {
+            if let Ok(_conn) = rusqlite::Connection::open(db_path) {}
+        }
         #[cfg(not(test))]
         {
             let _ = std::fs::write(INGESTED_RESEARCH_DEFENSES_PATH, "[]");
+            let _ = std::fs::write(
+                "crates/osoosi-agent-anomaly/config/ingested_research_defenses.json",
+                "[]",
+            );
             let _ = std::fs::write(
                 "target/release/config/ingested_research_defenses.json",
                 "[]",
@@ -1857,6 +2000,7 @@ pub fn clear_all_ingested_research_rules() -> usize {
 
 /// Restores the 4 canonical seeded research defense rules into live enforcement, SQLite, and config files.
 pub fn restore_default_research_rules() -> usize {
+    save_research_registry_meta_sqlite(false, &[]);
     let seeded = default_seeded_research_defense_rules();
     {
         let mut guard = research_defense_registry()

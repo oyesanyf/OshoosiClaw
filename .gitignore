@@ -182,3 +182,7 @@ crates/osoosi-model/models/
 rules/ai_threat_feeds/runtime_feeds/
 .witness/
 .pytest_cache/
+/dist/*
+!/dist/browser-extension/
+!/dist/browser-extension/*
+config/awesome_list_submissions_state.json

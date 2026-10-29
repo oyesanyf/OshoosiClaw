@@ -637,6 +637,24 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             get(get_autonomy_settings).post(post_autonomy_settings),
         )
         .route(
+            "/api/settings/ui",
+            get(get_ui_settings)
+                .post(post_ui_settings)
+                .delete(delete_ui_settings),
+        )
+        .route(
+            "/settings/ui",
+            get(get_ui_settings)
+                .post(post_ui_settings)
+                .delete(delete_ui_settings),
+        )
+        .route("/api/settings/ui/:key", delete(delete_ui_setting_by_key))
+        .route("/settings/ui/:key", delete(delete_ui_setting_by_key))
+        .route(
+            "/api/settings/autonomy-legacy",
+            get(get_autonomy_settings).post(post_autonomy_settings),
+        )
+        .route(
             "/api/blocking/rules",
             get(get_blocking_rules).post(post_blocking_rule),
         )
@@ -4509,8 +4527,271 @@ pub struct AutonomySettingsPayload {
     pub auto_replace_malware_binaries: Option<bool>,
 }
 
+pub const UI_SETTINGS_DB_PATHS: &[&str] =
+    &["database/osoosi.db", "target/release/database/osoosi.db"];
+
+pub fn init_ui_settings_sqlite() {
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary && std::env::var("OSOOSI_TEST_UI_SQLITE").is_err() {
+        return;
+    }
+    let ddl = "CREATE TABLE IF NOT EXISTS ui_settings_kv (
+        setting_key TEXT PRIMARY KEY,
+        setting_json TEXT NOT NULL,
+        updated_at_utc TEXT NOT NULL
+    );";
+    for db_path in UI_SETTINGS_DB_PATHS {
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute_batch(ddl);
+        }
+    }
+}
+
+pub fn save_ui_setting_sqlite(key: &str, val: &Value) {
+    let clean_key = key.trim();
+    if clean_key.is_empty() {
+        return;
+    }
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary && std::env::var("OSOOSI_TEST_UI_SQLITE").is_err() {
+        return;
+    }
+    init_ui_settings_sqlite();
+    let json_str = serde_json::to_string(val).unwrap_or_else(|_| "null".to_string());
+    let now_utc = chrono::Utc::now().to_rfc3339();
+    let sql = "INSERT INTO ui_settings_kv (setting_key, setting_json, updated_at_utc)
+               VALUES (?1, ?2, ?3)
+               ON CONFLICT(setting_key) DO UPDATE SET
+                   setting_json = excluded.setting_json,
+                   updated_at_utc = excluded.updated_at_utc;";
+    for db_path in UI_SETTINGS_DB_PATHS {
+        if let Some(parent) = std::path::Path::new(db_path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute(sql, rusqlite::params![clean_key, json_str, now_utc]);
+        }
+    }
+}
+
+pub fn delete_ui_setting_sqlite(key: &str) {
+    let clean_key = key.trim();
+    if clean_key.is_empty() {
+        return;
+    }
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary && std::env::var("OSOOSI_TEST_UI_SQLITE").is_err() {
+        return;
+    }
+    init_ui_settings_sqlite();
+    let sql = "DELETE FROM ui_settings_kv WHERE setting_key = ?1;";
+    for db_path in UI_SETTINGS_DB_PATHS {
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            let _ = conn.execute(sql, rusqlite::params![clean_key]);
+        }
+    }
+}
+
+pub fn load_ui_setting_sqlite(key: &str) -> Option<Value> {
+    let clean_key = key.trim();
+    if clean_key.is_empty() {
+        return None;
+    }
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary && std::env::var("OSOOSI_TEST_UI_SQLITE").is_err() {
+        return None;
+    }
+    init_ui_settings_sqlite();
+    for db_path in UI_SETTINGS_DB_PATHS {
+        if let Ok(conn) = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            if let Ok(raw) = conn.query_row(
+                "SELECT setting_json FROM ui_settings_kv WHERE setting_key = ?1",
+                rusqlite::params![clean_key],
+                |row| row.get::<_, String>(0),
+            ) {
+                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    None
+}
+
+pub fn load_all_ui_settings_sqlite() -> serde_json::Map<String, Value> {
+    let mut map = serde_json::Map::new();
+    let is_test_binary = std::env::args()
+        .next()
+        .map(|a| a.contains("deps") || a.contains("test"))
+        .unwrap_or(false);
+    if is_test_binary && std::env::var("OSOOSI_TEST_UI_SQLITE").is_err() {
+        return map;
+    }
+    init_ui_settings_sqlite();
+    for db_path in UI_SETTINGS_DB_PATHS {
+        if let Ok(conn) = rusqlite::Connection::open_with_flags(
+            db_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        ) {
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT setting_key, setting_json FROM ui_settings_kv ORDER BY setting_key ASC",
+            ) {
+                if let Ok(rows) =
+                    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+                {
+                    for (k, raw) in rows.flatten() {
+                        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                            map.insert(k, val);
+                        }
+                    }
+                    if !map.is_empty() {
+                        return map;
+                    }
+                }
+            }
+        }
+    }
+    map
+}
+
+async fn get_ui_settings() -> Json<Value> {
+    let settings = load_all_ui_settings_sqlite();
+    Json(json!({
+        "ok": true,
+        "count": settings.len(),
+        "settings": settings,
+    }))
+}
+
+async fn post_ui_settings(Json(body): Json<Value>) -> Json<Value> {
+    if let Some(obj) = body.as_object() {
+        if let Some(key) = obj.get("key").and_then(|v| v.as_str()) {
+            let is_unset = obj.get("unset").and_then(|v| v.as_bool()).unwrap_or(false);
+            if is_unset {
+                delete_ui_setting_sqlite(key);
+            } else if let Some(val) = obj.get("value") {
+                if val.is_null() {
+                    delete_ui_setting_sqlite(key);
+                } else {
+                    save_ui_setting_sqlite(key, val);
+                }
+            }
+        }
+        if let Some(settings_obj) = obj.get("settings").and_then(|v| v.as_object()) {
+            for (k, v) in settings_obj {
+                if v.is_null() {
+                    delete_ui_setting_sqlite(k);
+                } else {
+                    save_ui_setting_sqlite(k, v);
+                }
+            }
+        } else if obj.get("key").is_none() {
+            for (k, v) in obj {
+                if v.is_null() {
+                    delete_ui_setting_sqlite(k);
+                } else {
+                    save_ui_setting_sqlite(k, v);
+                }
+            }
+        }
+    }
+    let settings = load_all_ui_settings_sqlite();
+    Json(json!({
+        "ok": true,
+        "count": settings.len(),
+        "settings": settings,
+    }))
+}
+
+async fn delete_ui_settings(Json(body): Json<Value>) -> Json<Value> {
+    if let Some(key) = body.get("key").and_then(|v| v.as_str()) {
+        delete_ui_setting_sqlite(key);
+    }
+    if let Some(keys) = body.get("keys").and_then(|v| v.as_array()) {
+        for k in keys.iter().filter_map(|v| v.as_str()) {
+            delete_ui_setting_sqlite(k);
+        }
+    }
+    let settings = load_all_ui_settings_sqlite();
+    Json(json!({
+        "ok": true,
+        "count": settings.len(),
+        "settings": settings,
+    }))
+}
+
+async fn delete_ui_setting_by_key(
+    axum::extract::Path(key): axum::extract::Path<String>,
+) -> Json<Value> {
+    delete_ui_setting_sqlite(&key);
+    let settings = load_all_ui_settings_sqlite();
+    Json(json!({
+        "ok": true,
+        "deleted_key": key,
+        "count": settings.len(),
+        "settings": settings,
+    }))
+}
+
 async fn get_autonomy_settings(State(_state): State<DashboardState>) -> Json<Value> {
-    let cfg = osoosi_types::load_autonomy_config();
+    let mut cfg = osoosi_types::load_autonomy_config();
+    if std::env::var("OSOOSI_CONFIG").is_err() {
+        if let Some(saved) = load_ui_setting_sqlite("autonomy_settings") {
+            if let Some(m) = saved.get("mode").and_then(|v| v.as_str()) {
+                cfg.apply_preset(m);
+            }
+            if let Some(v) = saved
+                .get("auto_quarantine_malware")
+                .and_then(|v| v.as_bool())
+            {
+                cfg.auto_quarantine_malware = v;
+            }
+            if let Some(v) = saved
+                .get("action_confidence_threshold")
+                .and_then(|v| v.as_f64())
+            {
+                cfg.action_confidence_threshold = (v as f32).clamp(0.0, 1.0);
+            }
+            if let Some(v) = saved
+                .get("quarantine_confidence_threshold")
+                .and_then(|v| v.as_f64())
+            {
+                cfg.quarantine_confidence_threshold = (v as f32).clamp(0.0, 1.0);
+            }
+            if let Some(v) = saved
+                .get("auto_approve_reputation_threshold")
+                .and_then(|v| v.as_f64())
+            {
+                cfg.auto_approve_reputation_threshold = (v as f32).clamp(0.0, 1.0);
+            }
+            if let Some(v) = saved
+                .get("auto_replace_malware_binaries")
+                .and_then(|v| v.as_bool())
+            {
+                cfg.auto_replace_malware_binaries = v;
+            }
+        }
+    }
+    let _unused_cfg = osoosi_types::load_autonomy_config();
+    let _ = &cfg;
     let mode = cfg.current_mode();
     Json(json!({
         "mode": mode.as_str(),
@@ -4586,6 +4867,20 @@ async fn post_autonomy_settings(
 
     let mode = cfg.current_mode();
     let mode_str = mode.as_str();
+    if std::env::var("OSOOSI_CONFIG").is_err() {
+        save_ui_setting_sqlite(
+            "autonomy_settings",
+            &json!({
+                "mode": mode_str,
+                "auto_quarantine_malware": cfg.auto_quarantine_malware,
+                "action_confidence_threshold": cfg.action_confidence_threshold,
+                "quarantine_confidence_threshold": cfg.quarantine_confidence_threshold,
+                "auto_approve_reputation_threshold": cfg.auto_approve_reputation_threshold,
+                "auto_replace_malware_binaries": cfg.auto_replace_malware_binaries,
+                "quarantine_path": cfg.quarantine_path,
+            }),
+        );
+    }
     osoosi_types::set_strict_lockdown_override(
         cfg.auto_quarantine_malware && cfg.action_confidence_threshold <= 0.40,
     );
