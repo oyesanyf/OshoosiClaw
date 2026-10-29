@@ -440,18 +440,28 @@ impl EdrOrchestrator {
         // --- MILITARY-GRADE TACTICAL ANALYSIS ---
         // Skip heavy tactical reasoning in Silent mode to preserve system responsiveness
         if !is_high_pressure {
-            if let Some(mut sig) = self.military.analyze_event(&event).await {
-                warn!(
-                    "MILITARY-GUARD: Tactical threat detected! {}",
-                    sig.reason.as_deref().unwrap_or("Unknown")
-                );
-                self.privacy.protect_signature(&mut sig);
+            if let Some(raw_sig) = self.military.analyze_event(&event).await {
+                let img_opt = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .map(std::path::Path::new);
+                if let Some(mut sig) = self
+                    .adjudicate_threat_signature_with_rea_and_voters(img_opt, raw_sig, Some(&event))
+                    .await
+                {
+                    warn!(
+                        "MILITARY-GUARD: Tactical threat detected! {}",
+                        sig.reason.as_deref().unwrap_or("Unknown")
+                    );
+                    self.privacy.protect_signature(&mut sig);
 
-                self.broadcast_threat_to_mesh(sig.clone()).await;
+                    self.broadcast_threat_to_mesh(sig.clone()).await;
 
-                if sig.recommended_action == ResponseAction::Isolate {
-                    if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
-                        let _ = self.blocking_manager.block_by_pid(pid as u32).await;
+                    if sig.recommended_action == ResponseAction::Isolate {
+                        if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
+                            let _ = self.blocking_manager.block_by_pid(pid as u32).await;
+                        }
                     }
                 }
             }
@@ -803,22 +813,141 @@ impl EdrOrchestrator {
         };
 
         if let Some(mut signature) = signature {
+            let p_name = signature
+                .process_name
+                .clone()
+                .or_else(|| {
+                    for field in &[
+                        "Image",
+                        "NewProcessName",
+                        "ProcessName",
+                        "ImagePath",
+                        "SourceImage",
+                        "TargetImage",
+                        "Application",
+                    ] {
+                        if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+                            if let Some(n) = std::path::Path::new(val)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                            {
+                                if !n.trim().is_empty() && n != "unknown" {
+                                    return Some(n.to_string());
+                                }
+                            }
+                        }
+                    }
+                    for field in &["CommandLine", "command_line", "cmdline", "Command"] {
+                        if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
+                            let trimmed = cmd.trim();
+                            if !trimmed.is_empty() {
+                                let first_tok = if trimmed.starts_with('"') {
+                                    trimmed[1..].split('"').next().unwrap_or(trimmed)
+                                } else if trimmed.starts_with('\'') {
+                                    trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                                } else {
+                                    trimmed.split_whitespace().next().unwrap_or(trimmed)
+                                };
+                                let fname = std::path::Path::new(first_tok)
+                                    .file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or(first_tok);
+                                if !fname.trim().is_empty() && fname != "unknown" {
+                                    return Some(fname.to_string());
+                                }
+                            }
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let f_path = event
+                .data
+                .get("Image")
+                .or_else(|| event.data.get("NewProcessName"))
+                .or_else(|| event.data.get("ImagePath"))
+                .or_else(|| event.data.get("TargetFilename"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let cmd_line = event
+                .data
+                .get("CommandLine")
+                .or_else(|| event.data.get("command_line"))
+                .or_else(|| event.data.get("cmdline"))
+                .or_else(|| event.data.get("ParentCommandLine"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let hash_val = signature
+                .hash_blake3
+                .clone()
+                .or_else(|| {
+                    event
+                        .data
+                        .get("Hashes")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| {
+                    if !f_path.is_empty() {
+                        std::fs::read(&f_path)
+                            .map(|b| blake3::hash(&b).to_hex().to_string())
+                            .unwrap_or_else(|_| {
+                                if !cmd_line.is_empty() {
+                                    blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                                } else {
+                                    blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                                }
+                            })
+                    } else if !cmd_line.is_empty() {
+                        blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                    } else {
+                        blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                    }
+                });
+
+            signature.process_name = Some(p_name.clone());
+            signature.hash_blake3 = Some(hash_val.clone());
+
+            let f_path_opt = if !f_path.is_empty() {
+                Some(std::path::Path::new(f_path.as_str()))
+            } else {
+                None
+            };
+            let Some(mut signature) = self
+                .adjudicate_threat_signature_with_rea_and_voters(
+                    f_path_opt,
+                    signature,
+                    Some(&event),
+                )
+                .await
+            else {
+                return Ok(());
+            };
+
             let det_pipeline = match event.event_id {
                 3 | 22 => "HAR/Network",
                 7 | 8 | 10 | 25 => "Malware/YARA",
                 _ => "Process/ETW/CLI",
             };
-            let target_proc = signature
-                .process_name
-                .as_deref()
-                .or_else(|| event.data.get("Image").and_then(|v| v.as_str()))
-                .unwrap_or("unknown");
+            let target_proc = if !f_path.is_empty() {
+                f_path.as_str()
+            } else {
+                p_name.as_str()
+            };
             let rea_eval = crate::rea::global_rea_engine().evaluate_detector_candidate(
                 det_pipeline,
                 target_proc,
                 signature.reason.as_deref().unwrap_or(""),
                 signature.confidence as f64,
             );
+            if rea_eval.benign_veto {
+                return Ok(());
+            }
             if rea_eval.masquerade_escalated || rea_eval.prompt_injection_escalated {
                 signature.confidence = signature.confidence.max(rea_eval.adjusted_score as f32);
                 signature.add_reason(rea_eval.explanation);
@@ -894,105 +1023,6 @@ impl EdrOrchestrator {
                     let _ = self.yara_manager.hot_load_rule(&rule, &signature.id);
                 }
             }
-
-            let p_name = signature
-                .process_name
-                .clone()
-                .or_else(|| {
-                    for field in &[
-                        "Image",
-                        "NewProcessName",
-                        "ProcessName",
-                        "ImagePath",
-                        "SourceImage",
-                        "TargetImage",
-                        "Application",
-                    ] {
-                        if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
-                            if let Some(n) = std::path::Path::new(val)
-                                .file_name()
-                                .and_then(|n| n.to_str())
-                            {
-                                if !n.trim().is_empty() && n != "unknown" {
-                                    return Some(n.to_string());
-                                }
-                            }
-                        }
-                    }
-                    for field in &["CommandLine", "command_line", "cmdline", "Command"] {
-                        if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
-                            let trimmed = cmd.trim();
-                            if !trimmed.is_empty() {
-                                let first_tok = if trimmed.starts_with('"') {
-                                    trimmed[1..].split('"').next().unwrap_or(trimmed)
-                                } else if trimmed.starts_with('\'') {
-                                    trimmed[1..].split('\'').next().unwrap_or(trimmed)
-                                } else {
-                                    trimmed.split_whitespace().next().unwrap_or(trimmed)
-                                };
-                                let fname = std::path::Path::new(first_tok)
-                                    .file_name()
-                                    .and_then(|n| n.to_str())
-                                    .unwrap_or(first_tok);
-                                if !fname.trim().is_empty() && fname != "unknown" {
-                                    return Some(fname.to_string());
-                                }
-                            }
-                        }
-                    }
-                    None
-                })
-                .unwrap_or_else(|| "unknown".to_string());
-
-            let f_path = event
-                .data
-                .get("Image")
-                .or_else(|| event.data.get("NewProcessName"))
-                .or_else(|| event.data.get("ImagePath"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let cmd_line = event
-                .data
-                .get("CommandLine")
-                .or_else(|| event.data.get("command_line"))
-                .or_else(|| event.data.get("cmdline"))
-                .or_else(|| event.data.get("ParentCommandLine"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let hash_val = signature
-                .hash_blake3
-                .clone()
-                .or_else(|| {
-                    event
-                        .data
-                        .get("Hashes")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_else(|| {
-                    if !f_path.is_empty() {
-                        std::fs::read(&f_path)
-                            .map(|b| blake3::hash(&b).to_hex().to_string())
-                            .unwrap_or_else(|_| {
-                                if !cmd_line.is_empty() {
-                                    blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
-                                } else {
-                                    blake3::hash(signature.id.as_bytes()).to_hex().to_string()
-                                }
-                            })
-                    } else if !cmd_line.is_empty() {
-                        blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
-                    } else {
-                        blake3::hash(signature.id.as_bytes()).to_hex().to_string()
-                    }
-                });
-
-            signature.process_name = Some(p_name.clone());
-            signature.hash_blake3 = Some(hash_val.clone());
 
             // 2. Autonomous Remediation Logic (Lockdown Mode and Active Response)
             let autonomy = osoosi_types::load_autonomy_config();

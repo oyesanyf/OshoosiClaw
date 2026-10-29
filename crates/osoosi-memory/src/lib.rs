@@ -177,12 +177,19 @@ impl MemoryStore {
                 OR reason LIKE '%YaraX: THREAT detected - escalate_priv%'
                 OR reason LIKE '%YaraX: THREAT detected - screenshot%'
                 OR reason LIKE '%YaraX: THREAT detected - create_service%'
+                OR reason LIKE '%YaraX: THREAT detected - CRC32%'
+                OR reason LIKE '%YaraX: THREAT detected - ThreadControl__%'
+                OR reason LIKE '%YaraX: THREAT detected - Debugger%'
+                OR reason LIKE '%EDR-VEC-23-UNSIGNED-ELEVATED-CONHOST%'
+                OR reason LIKE '%Sponge Attack Warning%'
+                OR (reason LIKE '%Process Start From Suspicious Folder%' AND reason LIKE '%Call stack spoofing detected%' AND reason NOT LIKE '%Direct Syscall%')
                 OR (LOWER(COALESCE(file_path, '')) NOT LIKE '%\\temp\\%' AND reason LIKE '%independent=1%' AND (
                     reason LIKE '%Behavioral Threat Model: High-risk pattern detected%'
                     OR reason LIKE '%Chaotic phase-space trajectory breakout%'
                     OR reason LIKE '%diverged from benign limit cycle%'
                     OR reason LIKE '%Agentic trajectory escape threshold exceeded%'
                     OR reason LIKE '%Denial of ML Service & Sponge Attack%'
+                    OR reason LIKE '%ThreadControl__Context%'
                 ))
                 OR (reason LIKE '%matches KEV product%' AND reason NOT LIKE '%verified_version=%')
                 OR process_name = '<unknown process>'
@@ -1663,6 +1670,16 @@ impl MemoryStore {
              AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - escalate_priv%'
              AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - screenshot%'
              AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - create_service%'
+             AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - CRC32%'
+             AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - ThreadControl__%'
+             AND COALESCE(t.reason, '') NOT LIKE '%YaraX: THREAT detected - Debugger%'
+             AND COALESCE(t.reason, '') NOT LIKE '%EDR-VEC-23-UNSIGNED-ELEVATED-CONHOST%'
+             AND COALESCE(t.reason, '') NOT LIKE '%Sponge Attack Warning%'
+             AND NOT (
+                 COALESCE(t.reason, '') LIKE '%Process Start From Suspicious Folder%'
+                 AND COALESCE(t.reason, '') LIKE '%Call stack spoofing detected%'
+                 AND COALESCE(t.reason, '') NOT LIKE '%Direct Syscall%'
+             )
              AND NOT (
                  LOWER(COALESCE(t.file_path, '')) NOT LIKE '%\\temp\\%'
                  AND COALESCE(t.reason, '') LIKE '%independent=1%'
@@ -1672,6 +1689,7 @@ impl MemoryStore {
                      OR COALESCE(t.reason, '') LIKE '%diverged from benign limit cycle%'
                      OR COALESCE(t.reason, '') LIKE '%Agentic trajectory escape threshold exceeded%'
                      OR COALESCE(t.reason, '') LIKE '%Denial of ML Service & Sponge Attack%'
+                     OR COALESCE(t.reason, '') LIKE '%ThreadControl__Context%'
                  )
              )
              AND COALESCE(t.process_name, '') != '<unknown process>'
@@ -1737,6 +1755,20 @@ impl MemoryStore {
         drop(conn);
         *self.recent_threats_cache.write() = Some((std::time::Instant::now(), out.clone()));
         Ok(out.into_iter().take(limit).collect())
+    }
+
+    /// Persist REA + All-Voter Consensus enrichment on an existing threat row.
+    pub fn update_threat_reason(&self, threat_id: &str, new_reason: &str) -> anyhow::Result<()> {
+        let Some(conn) = self.conn.try_lock_for(std::time::Duration::from_millis(40)) else {
+            return Ok(());
+        };
+        let _ = conn.execute(
+            "UPDATE threats SET reason = ?1 WHERE id = ?2",
+            params![new_reason, threat_id],
+        );
+        drop(conn);
+        self.invalidate_recent_threats_cache();
+        Ok(())
     }
 
     /// Mark a threat as false positive (federated learning: pattern shared).

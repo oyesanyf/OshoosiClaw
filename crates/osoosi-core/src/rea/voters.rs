@@ -424,8 +424,7 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             });
         }
 
-        // 4. Do NOT issue a static binary veto if the event carries active LOTL/behavioral indicators
-        // or if CanaryTrapTripped is set on the event!
+        // 4. Escalate if the event carries active LOTL/behavioral indicators or CanaryTrapTripped!
         let canary_tripped = event
             .data
             .get("CanaryTrapTripped")
@@ -433,27 +432,70 @@ impl osoosi_policy::engine::ThreatVoter for ReaVoter {
             .unwrap_or(false)
             || event.data.get("CanaryAlert").is_some();
         if canary_tripped || has_active_lotl_or_exploit_indicators(&combined_context) {
-            return None;
+            let engine = global_rea_engine();
+            let target_lbl = if !image.is_empty() { image } else { "host_event" };
+            let vote = engine.cast_consensus_vote(
+                target_lbl,
+                "Consensus/HostSecurityEvent",
+                &combined_context,
+                0.95,
+            );
+            return Some(osoosi_policy::engine::VoteResult {
+                confidence: vote.confidence.max(0.95) as f32,
+                weight: 1.85,
+                reason: vote.reason,
+            });
         }
 
         // 5. Canonical trusted OS/developer binary veto
         // Strict Invariant: NEVER grant benign veto if:
         // (a) An unsigned, non-allowlisted DLL/module was loaded into the process, or
         // (b) The session carries untrusted_taint == true or positive taint level.
+        let static_reason = event
+            .data
+            .get("StaticReason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if !is_tainted_session && !is_unsigned_or_untrusted_dynamic_load && !image.is_empty() {
-            let reason_context = if is_image_load_event {
+            let reason_context = if !static_reason.is_empty() {
+                static_reason
+            } else if is_image_load_event {
                 "image_load"
             } else {
                 cmdline
             };
             if is_rea_benign_system_or_dev_process(image, Some(reason_context)) {
                 let engine = global_rea_engine();
-                let vote =
-                    engine.cast_consensus_vote(image, "Consensus/HostSecurityEvent", cmdline, 0.05);
+                let vote = engine.cast_consensus_vote(
+                    image,
+                    "Consensus/HostSecurityEvent",
+                    reason_context,
+                    0.05,
+                );
                 if vote.benign_veto {
                     return Some(osoosi_policy::engine::VoteResult {
                         confidence: vote.confidence as f32,
                         weight: -1.50,
+                        reason: vote.reason,
+                    });
+                }
+            } else if !static_reason.is_empty() {
+                let engine = global_rea_engine();
+                let raw_conf = event
+                    .data
+                    .get("StaticConfidence")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.85);
+                let vote = engine.cast_consensus_vote(
+                    image,
+                    "Consensus/HostSecurityEvent",
+                    static_reason,
+                    raw_conf,
+                );
+                if !vote.benign_veto {
+                    return Some(osoosi_policy::engine::VoteResult {
+                        confidence: vote.confidence.clamp(0.75, 0.99) as f32,
+                        weight: 1.50,
                         reason: vote.reason,
                     });
                 }
@@ -523,6 +565,7 @@ impl osoosi_policy::engine::ThreatVoter for OpenJevVoter {
             "RequestBody",
             "Details",
             "Url",
+            "StaticReason",
         ] {
             if let Some(s) = event.data.get(key).and_then(|v| v.as_str()) {
                 if !s.trim().is_empty() {

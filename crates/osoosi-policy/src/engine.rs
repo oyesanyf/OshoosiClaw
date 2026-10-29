@@ -328,10 +328,16 @@ fn classify_vote(
         "Injection-Telemetry" => (EvidenceClass::Memory, 0.95, true),
         "DNS-Shield" | "Sysmon-DNS-Voter" => (EvidenceClass::LiveNetwork, 0.90, true),
         "CredentialGuard-Memory" | "ProcessInjection-Memory" => (EvidenceClass::Memory, 0.96, true),
-        "YaraX-Signatures"
-        | "YaraX-Memory"
-        | "HollowsHunter-Memory"
-        | "MemoryInspection-Native" => (EvidenceClass::Memory, 1.0, true),
+        "YaraX-Signatures" => {
+            if is_dev_or_signed {
+                (EvidenceClass::StaticArtifact, 0.30, false)
+            } else {
+                (EvidenceClass::StaticArtifact, 0.90, true)
+            }
+        }
+        "YaraX-Memory" | "HollowsHunter-Memory" | "MemoryInspection-Native" => {
+            (EvidenceClass::Memory, 1.0, true)
+        }
         "SemanticIntent" | "LLM-Reasoning" | "BehavioralAI-Cortex" => {
             if is_dev_or_signed {
                 (EvidenceClass::Behavior, 0.35, false)
@@ -1193,12 +1199,25 @@ impl PolicyEngine {
         // override NSRL/Trusted-Vendor/Merkle/REA static known-good, whereas uncorroborated statistical heuristics alone do not.
         let is_statistical_only_vote = |reason: &str| -> bool {
             let rl = reason.to_ascii_lowercase();
+            let has_active_lotl = rl.contains("-enc")
+                || rl.contains("downloadstring")
+                || rl.contains("invoke-expression")
+                || rl.contains("iex(")
+                || rl.contains("frombase64string")
+                || rl.contains("sekurlsa")
+                || rl.contains("comsvcs")
+                || rl.contains("minidump")
+                || rl.contains("lsass")
+                || rl.contains("keymgr");
             rl.contains("behavioral threat model: high-risk pattern detected")
                 || rl.contains("chaotic phase-space trajectory breakout")
                 || rl.contains("diverged from benign limit cycle")
                 || rl.contains("agentic trajectory escape threshold exceeded")
                 || rl.contains("denial of ml service & sponge attack")
                 || rl.contains("sponge attack warning")
+                || (!has_active_lotl
+                    && (rl.contains("non interactive powershell process spawned")
+                        || rl.contains("usage of web request commands")))
         };
         let non_statistical_attack_votes = evidence_votes
             .iter()

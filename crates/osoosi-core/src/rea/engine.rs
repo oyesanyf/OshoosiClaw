@@ -159,10 +159,15 @@ fn get_dynamic_host_binary_index() -> &'static dashmap::DashMap<String, PathBuf>
             }
         }
 
-        // 5. Workspace Cargo target directories
-        let ws_target = osoosi_types::resolve_base_dir().join("target");
+        // 5. Workspace Cargo target directories & sibling developer toolchains
+        let base_dir = osoosi_types::resolve_base_dir();
+        let ws_target = base_dir.join("target");
         scan_dir_bounded_for_binaries(&map, &ws_target.join("release"), 2, &mut budget);
         scan_dir_bounded_for_binaries(&map, &ws_target.join("debug"), 2, &mut budget);
+        if let Some(ws_parent) = base_dir.parent() {
+            let mut sibling_budget = 600usize;
+            scan_dir_bounded_for_binaries(&map, ws_parent, 6, &mut sibling_budget);
+        }
 
         map
     })
@@ -483,13 +488,21 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
         }
     }
     let is_single_voter_statistical_heuristic = !is_untrusted_writable_or_temp_path(reason_lower)
-        && reason_lower.contains("independent=1")
+        && (reason_lower.contains("independent=1")
+            || !reason_lower.contains("evidenceorchestrator:"))
         && (reason_lower.contains("behavioral threat model: high-risk pattern detected")
             || reason_lower.contains("chaotic phase-space trajectory breakout")
             || reason_lower.contains("diverged from benign limit cycle")
             || reason_lower.contains("agentic trajectory escape threshold exceeded")
             || reason_lower.contains("denial of ml service & sponge attack"));
     if is_single_voter_statistical_heuristic {
+        return true;
+    }
+    let is_uncorroborated_suspicious_folder_installer =
+        reason_lower.contains("process start from suspicious folder")
+            && reason_lower.contains("call stack spoofing detected")
+            && !reason_lower.contains("direct syscall");
+    if is_uncorroborated_suspicious_folder_installer {
         return true;
     }
     reason_lower.contains("veto")
@@ -515,9 +528,10 @@ pub fn is_uncalibrated_single_voter_false_positive(reason_lower: &str) -> bool {
 /// is a legitimate operating system binary, developer toolchain binary, or voter-vetoed detection.
 ///
 /// Strictly zero hardcoded process lists:
-/// 1. Rejects any path in `%TEMP%`, `\Downloads\`, `\Users\Public\`, `/tmp/`, or failing `detect_binary_masquerade_spoof`.
+/// 1. Rejects any path failing `detect_binary_masquerade_spoof`.
 /// 2. Vetoes uncalibrated single-voter false-positive signals (`OpenJEV` empty categories `[]`, unversioned CVE/KEV, chaff counters).
-/// 3. Dynamically resolves the binary on disk via `resolve_candidate_binary_path` and verifies its cryptographic
+/// 3. Rejects any remaining path in `%TEMP%`, `\Downloads\`, `\Users\Public\`, `/tmp/`.
+/// 4. Dynamically resolves the binary on disk via `resolve_candidate_binary_path` and verifies its cryptographic
 ///    Authenticode / Windows Security Catalog signature, PE `VS_VERSIONINFO`, `.dep-v0` `cargo-auditable` manifest,
 ///    or `ProtectedLocalBinaryHashInventory` BLAKE3 digest.
 pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&str>) -> bool {
@@ -541,11 +555,6 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
         return false;
     }
 
-    // Protection Layer 1: Never grant benign status to any path in %TEMP%, Downloads, Public, etc.,
-    // or any path flagged for binary masquerading!
-    if is_untrusted_writable_or_temp_path(raw) {
-        return false;
-    }
     if detect_binary_masquerade_spoof(raw, Some(Path::new(raw)), None).is_some() {
         return false;
     }
@@ -553,6 +562,11 @@ pub fn is_rea_benign_system_or_dev_process(proc_or_path: &str, reason: Option<&s
     // Root-cause voter calibration gate (zero hardcoded process names)
     if is_uncalibrated_single_voter_false_positive(&reason_lower) {
         return true;
+    }
+
+    // Protection Layer 1: Never grant benign status to any path in %TEMP%, Downloads, Public, etc.
+    if is_untrusted_writable_or_temp_path(raw) {
+        return false;
     }
 
     let has_taint_or_unsigned = reason_lower.contains("untrusted_taint")
