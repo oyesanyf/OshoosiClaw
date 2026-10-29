@@ -828,6 +828,35 @@ impl CausalSecurityGraph {
         Ok(row)
     }
 
+    /// Checks if a process or its parent process has active taint or Crown-Jewel taint in the causal graph.
+    pub fn is_process_or_parent_tainted(&self, pid: u32, ppid: Option<u32>) -> bool {
+        // 1. Check in-memory node cache
+        for item in self.node_cache.iter() {
+            let state = item.value();
+            if state.is_process && (state.taint_level > 0 || state.has_crown_jewel) {
+                if let Ok(Some(proc)) = self.get_process_instance(&state.node_id) {
+                    if proc.pid == pid || ppid.is_some_and(|p| p == proc.pid) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2. Check SQLite causal_process_instances table
+        let lock = self.conn.lock();
+        let query = if ppid.is_some() {
+            "SELECT COUNT(1) FROM causal_process_instances WHERE (pid = ?1 OR pid = ?2) AND (taint_level > 0 OR has_crown_jewel_taint > 0)"
+        } else {
+            "SELECT COUNT(1) FROM causal_process_instances WHERE pid = ?1 AND (taint_level > 0 OR has_crown_jewel_taint > 0)"
+        };
+        let count: i64 = if let Some(parent_pid) = ppid {
+            lock.query_row(query, params![pid, parent_pid], |r| r.get(0)).unwrap_or(0)
+        } else {
+            lock.query_row(query, params![pid], |r| r.get(0)).unwrap_or(0)
+        };
+        count > 0
+    }
+
     // -------------------------------------------------------------------------
     // File Artifact Management
     // -------------------------------------------------------------------------
@@ -2203,3 +2232,19 @@ mod tests {
         Ok(())
     }
 }
+
+static GLOBAL_CAUSAL_GRAPH: std::sync::LazyLock<Arc<CausalSecurityGraph>> =
+    std::sync::LazyLock::new(|| {
+        let db_path = "database/osoosi.db";
+        let graph = CausalSecurityGraph::open(db_path).unwrap_or_else(|_| {
+            CausalSecurityGraph::in_memory()
+                .expect("in-memory fallback for persistent causal graph")
+        });
+        Arc::new(graph)
+    });
+
+/// Returns a shared thread-safe handle to the global persistent Causal Security Graph.
+pub fn global_causal_security_graph() -> Arc<CausalSecurityGraph> {
+    GLOBAL_CAUSAL_GRAPH.clone()
+}
+

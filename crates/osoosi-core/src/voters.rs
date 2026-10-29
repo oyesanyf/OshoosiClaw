@@ -746,6 +746,328 @@ impl ThreatVoter for BehavioralClassifierVoter {
     }
 }
 
+/// Identifies high-confidence MITRE ATT&CK suspicious process lineage pairs.
+pub fn is_suspicious_lineage(parent: &str, child: &str, cmdline: &str) -> (bool, &'static str) {
+    let p_lower = parent.to_ascii_lowercase();
+    let c_lower = child.to_ascii_lowercase();
+    let cmd_lower = cmdline.to_ascii_lowercase();
+
+    let p_base = std::path::Path::new(&p_lower)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(&p_lower);
+    let c_base = std::path::Path::new(&c_lower)
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(&c_lower);
+
+    // 1. Office applications spawning command shells / script interpreters (T1204 / T1059)
+    let office_apps = [
+        "winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe",
+        "msaccess.exe", "mspub.exe", "acrord32.exe", "acrobat.exe",
+    ];
+    let script_shells = [
+        "cmd.exe", "powershell.exe", "pwsh.exe", "wscript.exe",
+        "cscript.exe", "mshta.exe", "certutil.exe", "bitsadmin.exe",
+        "bash.exe", "wsl.exe", "rundll32.exe",
+    ];
+    if office_apps.contains(&p_base) && script_shells.contains(&c_base) {
+        return (true, "Office/Productivity application spawned command or script interpreter (MITRE T1204/T1059)");
+    }
+
+    // 2. Web servers spawning shells (T1505.003 - Web Shell)
+    let web_servers = ["w3wp.exe", "httpd.exe", "nginx.exe", "tomcat.exe", "php-cgi.exe"];
+    if web_servers.contains(&p_base) && (c_base == "cmd.exe" || c_base == "powershell.exe" || c_base == "sh" || c_base == "bash") {
+        return (true, "Web server spawned interactive shell (MITRE T1505.003 Web Shell)");
+    }
+
+    // 3. Spawning ransomware / shadow copy deletion tools (T1490 - Inhibit System Recovery)
+    let shadow_deleters = ["vssadmin.exe", "wbadmin.exe", "bcdedit.exe"];
+    if shadow_deleters.contains(&c_base) && (cmd_lower.contains("delete shadows") || cmd_lower.contains("resize shadowstorage") || cmd_lower.contains("recoveryenabled no")) {
+        return (true, "Suspicious lineage invoking system recovery inhibition tool (MITRE T1490)");
+    }
+
+    // 4. LSASS credential dumping / injection tools (T1003.001)
+    if c_base.contains("mimikatz") || c_base.contains("procdump") || cmd_lower.contains("sekurlsa") || cmd_lower.contains("minidump") {
+        return (true, "Credential dumping tool lineage (MITRE T1003.001)");
+    }
+
+    (false, "")
+}
+
+/// Behavioral Process Lineage Voter
+///
+/// Combines Candle 128d ProcessTreeEmbedder, CoLogFilter, DynamicAgentClassifier,
+/// and CausalSecurityGraph lineage taint to detect anomalous and malicious execution paths.
+pub struct BehavioralProcessLineageVoter {
+    pub analyzer: Arc<osoosi_behavioral::BehavioralAnalyzer>,
+    pub classifier: Arc<osoosi_agent_anomaly::classifier::DynamicAgentClassifier>,
+    pub causal_graph: Arc<crate::causal_graph::CausalSecurityGraph>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
+}
+
+impl BehavioralProcessLineageVoter {
+    pub fn new(
+        analyzer: Arc<osoosi_behavioral::BehavioralAnalyzer>,
+        classifier: Arc<osoosi_agent_anomaly::classifier::DynamicAgentClassifier>,
+        causal_graph: Arc<crate::causal_graph::CausalSecurityGraph>,
+        adaptive: Arc<crate::adaptive::TelemetryController>,
+    ) -> Self {
+        Self {
+            analyzer,
+            classifier,
+            causal_graph,
+            adaptive,
+        }
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for BehavioralProcessLineageVoter {
+    fn name(&self) -> String {
+        "Behavioral-Process-Lineage".to_string()
+    }
+
+    fn is_heavy(&self) -> bool {
+        true
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let pid = event
+            .data
+            .get("ProcessId")
+            .or_else(|| event.data.get("process_id"))
+            .or_else(|| event.data.get("pid"))
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .map(|n| n as u32)
+            .unwrap_or(0);
+
+        let ppid = event
+            .data
+            .get("ParentProcessId")
+            .or_else(|| event.data.get("parent_process_id"))
+            .or_else(|| event.data.get("ppid"))
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+            .map(|n| n as u32);
+
+        let parent_image = event
+            .data
+            .get("ParentImage")
+            .or_else(|| event.data.get("parent_image"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("image"))
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ProcessName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let cmdline = event
+            .data
+            .get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if image.is_empty() && cmdline.is_empty() {
+            return None;
+        }
+
+        let ppid_str = ppid.map(|p| p.to_string());
+        let agent_rec = self.classifier.inspect_command_and_context(
+            &pid.to_string(),
+            ppid_str.as_deref(),
+            cmdline,
+            None,
+        );
+
+        let (is_suspicious_tree, lineage_reason) = is_suspicious_lineage(parent_image, image, cmdline);
+        let is_tainted = (pid > 0 || ppid.is_some()) && self.causal_graph.is_process_or_parent_tainted(pid, ppid);
+
+        let log_ev: osoosi_behavioral::LogEvent = event.into();
+        let colog_score = self.analyzer.autonomous_check(log_ev).await;
+        let has_lotl = crate::rea::has_active_lotl_or_exploit_indicators(cmdline);
+
+        if is_suspicious_tree {
+            Some(VoteResult {
+                confidence: 0.94,
+                reason: format!(
+                    "Behavioral-Process-Lineage: Suspicious MITRE execution tree [{}] - Parent: {}, Child: {}, Cmd: {}",
+                    lineage_reason, parent_image, image, cmdline
+                ),
+                weight: 1.85,
+            })
+        } else if is_tainted {
+            Some(VoteResult {
+                confidence: 0.95,
+                reason: format!(
+                    "Behavioral-Process-Lineage: Process or parent (PID {}, PPID {:?}) is tainted in CausalSecurityGraph - {}",
+                    pid, ppid, cmdline
+                ),
+                weight: 1.85,
+            })
+        } else if colog_score >= 0.70 {
+            Some(VoteResult {
+                confidence: colog_score.clamp(0.70, 0.99),
+                reason: format!(
+                    "Behavioral-Process-Lineage: High CoLog / ProcessTree anomaly score ({:.2}) - {}",
+                    colog_score, cmdline
+                ),
+                weight: 1.85,
+            })
+        } else if agent_rec.is_verified_agent && (has_lotl || colog_score >= 0.55) {
+            Some(VoteResult {
+                confidence: 0.94,
+                reason: format!(
+                    "Behavioral-Process-Lineage: Verified AI Agent (PID {}, Role: {}) executing anomalous tool/LOTL actions - {}",
+                    pid, agent_rec.agent_role, cmdline
+                ),
+                weight: 1.85,
+            })
+        } else if has_lotl && (colog_score >= 0.50 || !trusted_identity_signal(event, image)) {
+            Some(VoteResult {
+                confidence: 0.88,
+                reason: format!(
+                    "Behavioral-Process-Lineage: Untrusted process executing LOTL exploitation commands - {}",
+                    cmdline
+                ),
+                weight: 1.85,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// Clef Decision Engine Threat Voter
+///
+/// Wraps the multi-tier Clef Decision Engine (OpenJEV System One, Strands Decider 2B SLM,
+/// Cloudflare edge, and local Brier fallback). Returns high-weight malicious votes (+1.85)
+/// or certified benign vetoes (-1.25), strictly suppressing vetoes when active LOTL or exploit
+/// indicators are present.
+pub struct ClefDecisionVoter {
+    pub engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
+}
+
+impl ClefDecisionVoter {
+    pub fn new(
+        engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>,
+        adaptive: Arc<crate::adaptive::TelemetryController>,
+    ) -> Self {
+        Self { engine, adaptive }
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for ClefDecisionVoter {
+    fn name(&self) -> String {
+        "Clef-Decision-Model".to_string()
+    }
+
+    fn is_heavy(&self) -> bool {
+        true
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        if !self.engine.is_enabled() {
+            return None;
+        }
+
+        let image = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("TargetImage"))
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ProcessName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let parent = event
+            .data
+            .get("ParentImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cmdline = event
+            .data
+            .get("CommandLine")
+            .or_else(|| event.data.get("Payload"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if image.is_empty() && cmdline.is_empty() {
+            return None;
+        }
+
+        let is_signed = trusted_identity_signal(event, image);
+        let invariants_nominal = event
+            .data
+            .get("Invariants")
+            .and_then(|v| v.as_str())
+            .map(|s| s.eq_ignore_ascii_case("nominal"))
+            .unwrap_or(true);
+        let state_text = if invariants_nominal {
+            format!(
+                "Process Image: {} | Parent: {} | CommandLine: {} | IsSigned: {} | Invariants: Nominal",
+                image, parent, cmdline, is_signed
+            )
+        } else {
+            format!(
+                "Process Image: {} | Parent: {} | CommandLine: {} | IsSigned: {}",
+                image, parent, cmdline, is_signed
+            )
+        };
+
+        let engine = self.engine.clone();
+        let adaptive = self.adaptive.clone();
+        let has_lotl = crate::rea::has_active_lotl_or_exploit_indicators(&state_text);
+
+        let decision = adaptive
+            .run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                engine.evaluate_security_incident(&state_text).await.ok()
+            })
+            .await
+            .ok()
+            .flatten()?;
+
+        if decision.verdict == "malicious" || decision.verdict == "critical_emergency" {
+            let conf = (decision.verdict_probability as f32).clamp(0.70, 0.99);
+            Some(VoteResult {
+                confidence: conf,
+                reason: format!(
+                    "Clef-Decision-Model: {} (action={}, prob={:.3}, provider={})",
+                    decision.verdict,
+                    decision.containment_action,
+                    decision.verdict_probability,
+                    decision.provider_used
+                ),
+                weight: 1.85,
+            })
+        } else if decision.verdict == "benign"
+            && decision.verdict_probability >= 0.85
+            && !has_lotl
+        {
+            let conf = (decision.verdict_probability as f32).clamp(0.70, 0.99);
+            Some(VoteResult {
+                confidence: conf,
+                reason: format!(
+                    "Clef-Decision-Model: Benign Veto (prob={:.3}, action={}, provider={})",
+                    decision.verdict_probability,
+                    decision.containment_action,
+                    decision.provider_used
+                ),
+                weight: -1.25,
+            })
+        } else {
+            None
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

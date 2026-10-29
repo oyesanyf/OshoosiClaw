@@ -2849,7 +2849,16 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             reason_str,
                         );
                         let mut final_reason = reason_str.to_string();
-                        if !final_reason.contains("[REA-Voter]") {
+                        if !final_reason.contains("[REA-Voter]")
+                            || final_reason.contains("No candidate binary located for REA adjudication")
+                        {
+                            let base_reason = final_reason
+                                .split("; [REA-Voter]")
+                                .next()
+                                .unwrap_or(&final_reason)
+                                .trim()
+                                .to_string();
+                            final_reason = base_reason;
                             if !final_reason.is_empty() {
                                 final_reason.push_str("; ");
                             }

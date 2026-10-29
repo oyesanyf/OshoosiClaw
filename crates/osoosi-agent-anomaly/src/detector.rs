@@ -190,16 +190,6 @@ impl AgentAnomalyDetector {
                     .fetch_add(1, Ordering::Relaxed);
             }
 
-            // Engage surgical autotomy: sever capability epoch
-            let new_epoch = self
-                .containment_ring
-                .sever_rogue_agent_branch(
-                    &telemetry.agent_id,
-                    &breakout_eval.composite_verdict,
-                    None,
-                )
-                .await;
-
             // Broadcast P2P Mesh Watch-Out
             self.containment_ring
                 .record_mesh_watchout(
@@ -225,8 +215,8 @@ impl AgentAnomalyDetector {
                 severity: AlertSeverity::Critical,
                 confidence_score: 0.99,
                 rationale: format!(
-                    "Autonomous agent breakout intercepted: {}. Autotomy advanced epoch to Gen {}.",
-                    breakout_eval.composite_verdict, new_epoch
+                    "Autonomous agent breakout intercepted: {}.",
+                    breakout_eval.composite_verdict
                 ),
                 recommended_mitigation:
                     "Sever rogue agent branch, invalidate generation epoch, and isolate session"
@@ -246,11 +236,6 @@ impl AgentAnomalyDetector {
 
         let mut aj_finding = None;
         if !aj_verdict.is_allowed {
-            let new_epoch = self
-                .containment_ring
-                .sever_rogue_agent_branch(&telemetry.agent_id, &aj_verdict.reason, None)
-                .await;
-
             self.containment_ring
                 .record_mesh_watchout(
                     &telemetry.agent_id,
@@ -274,10 +259,7 @@ impl AgentAnomalyDetector {
                 risk_category: OwaspAgenticRisk::ToolMisuseASI02,
                 severity: AlertSeverity::Critical,
                 confidence_score: 0.95,
-                rationale: format!(
-                    "{}. Autotomy advanced epoch to Gen {}.",
-                    aj_verdict.reason, new_epoch
-                ),
+                rationale: aj_verdict.reason.clone(),
                 recommended_mitigation: "Sever capability epoch and require supervisor consensus"
                     .to_string(),
                 flagged_at: Utc::now(),
@@ -301,11 +283,6 @@ impl AgentAnomalyDetector {
 
         let mut spider_finding = None;
         if !spider_verdict.allowed || spider_verdict.session_terminated {
-            let new_epoch = self
-                .containment_ring
-                .sever_rogue_agent_branch(&telemetry.agent_id, &spider_verdict.rationale, None)
-                .await;
-
             self.containment_ring
                 .record_mesh_watchout(
                     &telemetry.agent_id,
@@ -323,10 +300,9 @@ impl AgentAnomalyDetector {
                 severity: AlertSeverity::Critical,
                 confidence_score: 0.99,
                 rationale: format!(
-                    "Spider-Web Sacrificial Fracture ({}): {}. Autotomy advanced epoch to Gen {}.",
+                    "Spider-Web Sacrificial Fracture ({}): {}.",
                     spider_verdict.regime.label(),
-                    spider_verdict.rationale,
-                    new_epoch
+                    spider_verdict.rationale
                 ),
                 recommended_mitigation: "Sever compromised session, revoke ephemeral credentials, and initiate EDR host sweep".to_string(),
                 flagged_at: Utc::now(),
@@ -374,10 +350,6 @@ impl AgentAnomalyDetector {
                 .evaluate_alignment_check(&align_req)
                 .await;
             if !align_verdict.allowed {
-                let new_epoch = self
-                    .containment_ring
-                    .sever_rogue_agent_branch(&telemetry.agent_id, &align_verdict.rationale, None)
-                    .await;
                 self.containment_ring
                     .record_mesh_watchout(
                         &telemetry.agent_id,
@@ -401,10 +373,7 @@ impl AgentAnomalyDetector {
                     risk_category: OwaspAgenticRisk::PromptInjectionASI01,
                     severity: AlertSeverity::Critical,
                     confidence_score: conf as f32,
-                    rationale: format!(
-                        "{}. Autotomy advanced epoch to Gen {}.",
-                        align_verdict.rationale, new_epoch
-                    ),
+                    rationale: align_verdict.rationale.clone(),
                     recommended_mitigation:
                         "Quarantine hijacked agent session, block unaligned tool invocation, and rotate capability epoch"
                             .to_string(),

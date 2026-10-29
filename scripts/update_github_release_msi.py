@@ -308,35 +308,35 @@ def sync_legacy_release_v011(gpg_path: str, key_fingerprint: str, headers: dict,
     print("       [+] Legacy release v0.1.1 updated with verified GPG signatures & DSSE provenance.")
 
 
-def sign_and_prepare_linux_artifacts(repo_root: str, gpg_path: str) -> list:
+def sign_and_prepare_platform_artifacts(repo_root: str, gpg_path: str, platform_subdir: str) -> list:
     """
-    Inspects deploy/linux for compiled packages and binaries, generates SHA256 checksums,
+    Inspects deploy/<platform_subdir> for compiled packages and binaries, generates SHA256 checksums,
     produces genuine OpenPGP detached signatures (.asc, .sig), signs SHA256SUMS.txt,
     and returns a list of tuples (filename, data_bytes, mime_type) for upload.
     """
-    deploy_linux_dir = os.path.join(repo_root, "deploy", "linux")
-    if not os.path.isdir(deploy_linux_dir):
+    deploy_dir = os.path.join(repo_root, "deploy", platform_subdir)
+    if not os.path.isdir(deploy_dir):
         return []
 
-    items = sorted(os.listdir(deploy_linux_dir))
+    items = sorted(os.listdir(deploy_dir))
     raw_packages = []
     for f in items:
-        if f.endswith(".asc") or f.endswith(".sig") or f.endswith(".jsonl") or f == "SHA256SUMS.txt":
+        if f.endswith(".asc") or f.endswith(".sig") or f.endswith(".jsonl") or f.startswith("SHA256SUMS"):
             continue
-        full = os.path.join(deploy_linux_dir, f)
+        full = os.path.join(deploy_dir, f)
         if os.path.isfile(full):
             raw_packages.append(f)
 
     if not raw_packages:
         return []
 
-    print(f"[*] Processing {len(raw_packages)} Linux release artifacts in {deploy_linux_dir}...")
+    print(f"[*] Processing {len(raw_packages)} {platform_subdir} release artifacts in {deploy_dir}...")
 
     checksum_lines = []
     artifacts_to_upload = []
 
     for pkg in raw_packages:
-        pkg_path = os.path.join(deploy_linux_dir, pkg)
+        pkg_path = os.path.join(deploy_dir, pkg)
         with open(pkg_path, "rb") as pf:
             data = pf.read()
 
@@ -347,6 +347,8 @@ def sign_and_prepare_linux_artifacts(repo_root: str, gpg_path: str) -> list:
             mime = "application/vnd.debian.binary-package"
         elif pkg.endswith(".rpm"):
             mime = "application/x-rpm"
+        elif pkg.endswith(".pkg"):
+            mime = "application/x-newton-compatible-pkg"
         elif pkg.endswith(".tar.gz") or pkg.endswith(".tgz"):
             mime = "application/gzip"
         else:
@@ -372,22 +374,31 @@ def sign_and_prepare_linux_artifacts(repo_root: str, gpg_path: str) -> list:
         artifacts_to_upload.append((pkg + ".sig", sig_bytes, "application/octet-stream"))
 
     # Write and sign SHA256SUMS.txt
+    sha_name = "SHA256SUMS.txt" if platform_subdir == "linux" else f"SHA256SUMS-{platform_subdir}.txt"
     sha_content = "\n".join(checksum_lines) + "\n"
     sha_bytes = sha_content.encode("utf-8")
-    sha_path = os.path.join(deploy_linux_dir, "SHA256SUMS.txt")
+    sha_path = os.path.join(deploy_dir, "SHA256SUMS.txt")
     with open(sha_path, "wb") as sf:
         sf.write(sha_bytes)
 
     sha_asc_bytes = gpg_sign_detached(gpg_path, sha_bytes, armored=True)
-    sha_asc_path = os.path.join(deploy_linux_dir, "SHA256SUMS.txt.asc")
+    sha_asc_path = os.path.join(deploy_dir, "SHA256SUMS.txt.asc")
     with open(sha_asc_path, "wb") as saf:
         saf.write(sha_asc_bytes)
 
-    print(f"    [+] Generated SHA256SUMS.txt and signed SHA256SUMS.txt.asc with GPG.")
-    artifacts_to_upload.append(("SHA256SUMS.txt", sha_bytes, "text/plain"))
-    artifacts_to_upload.append(("SHA256SUMS.txt.asc", sha_asc_bytes, "text/plain"))
+    print(f"    [+] Generated {sha_name} and signed {sha_name}.asc with GPG.")
+    artifacts_to_upload.append((sha_name, sha_bytes, "text/plain"))
+    artifacts_to_upload.append((sha_name + ".asc", sha_asc_bytes, "text/plain"))
 
     return artifacts_to_upload
+
+
+def sign_and_prepare_linux_artifacts(repo_root: str, gpg_path: str) -> list:
+    return sign_and_prepare_platform_artifacts(repo_root, gpg_path, "linux")
+
+
+def sign_and_prepare_macos_artifacts(repo_root: str, gpg_path: str) -> list:
+    return sign_and_prepare_platform_artifacts(repo_root, gpg_path, "macos")
 
 
 def main():
@@ -427,15 +438,16 @@ def main():
             with open(os.path.join(dest_dir, f"{base_name}.sig"), "wb") as f:
                 f.write(sig_bytes)
 
-    # Discover and prepare Linux artifacts from deploy/linux
+    # Discover and prepare Linux and macOS artifacts from deploy/linux and deploy/macos
     linux_artifacts = sign_and_prepare_linux_artifacts(repo_root, gpg_path)
+    macos_artifacts = sign_and_prepare_macos_artifacts(repo_root, gpg_path)
 
     # Collect subjects for DSSE provenance
     subjects = [
         {"name": f"OshoosiClaw-{ver}.msi", "digest": {"sha256": sha256_hex}},
         {"name": "OshoosiClaw.msi", "digest": {"sha256": sha256_hex}},
     ]
-    for name, data, _ in linux_artifacts:
+    for name, data, _ in linux_artifacts + macos_artifacts:
         if not (name.endswith(".asc") or name.endswith(".sig") or name.endswith(".jsonl")):
             subjects.append({"name": name, "digest": {"sha256": hashlib.sha256(data).hexdigest()}})
 
@@ -462,6 +474,10 @@ def main():
                 f.write(dsse_intoto_bytes)
     with open(os.path.join(repo_root, "deploy", "linux", "provenance.intoto.jsonl"), "wb") as f:
         f.write(dsse_intoto_bytes)
+    macos_deploy_dir = os.path.join(repo_root, "deploy", "macos")
+    if os.path.isdir(macos_deploy_dir):
+        with open(os.path.join(macos_deploy_dir, "provenance.intoto.jsonl"), "wb") as f:
+            f.write(dsse_intoto_bytes)
 
     # Generate and verify multi-step Witness SDLC Attestation Bundle
     witness_bundle_bytes = None
@@ -565,6 +581,7 @@ def main():
     if witness_bundle_bytes:
         assets_to_upload.append(("witness-sdlc-bundle.intoto.jsonl", witness_bundle_bytes, "application/json"))
     assets_to_upload.extend(linux_artifacts)
+    assets_to_upload.extend(macos_artifacts)
 
     existing_assets = {a["name"]: a["id"] for a in rel.get("assets", [])}
     print(f"[*] Uploading assets to {tag} release...")

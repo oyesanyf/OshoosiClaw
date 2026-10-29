@@ -387,6 +387,9 @@ fn classify_vote(
             }
         }
         "OpenJEV-Voter" => (EvidenceClass::Behavior, 0.96, true),
+        "Behavioral-Process-Lineage" | "Clef-Decision-Model" => {
+            (EvidenceClass::Behavior, 0.95, true)
+        }
         "Sigma-Engine" => (EvidenceClass::Behavior, 0.96, true),
         "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
         name if name.contains("MalConv") || name.contains("ML") => {
