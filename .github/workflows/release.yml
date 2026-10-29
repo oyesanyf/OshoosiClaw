@@ -80,7 +80,6 @@ jobs:
           try { wix extension add -g WixToolset.Util.wixext/5.0.2 } catch {}
           if (Test-Path wix\OshoosiClaw.wxs) {
             wix build wix\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi
-            Copy-Item OshoosiClaw.msi OshoosiClaw-1.2.0.msi -Force
           }
 
       - name: Upload Windows Artifacts
@@ -88,9 +87,7 @@ jobs:
         with:
           name: osoosi-windows-x64
           path: |
-            target/x86_64-pc-windows-msvc/release/osoosi.exe
             OshoosiClaw.msi
-            OshoosiClaw-1.2.0.msi
           if-no-files-found: warn
 
   # ── Linux x86_64 Native Build & Multi-Format Packaging ──────────────────────
@@ -262,12 +259,13 @@ jobs:
         with:
           subject-path: 'dist/**/osoosi*'
 
-      - name: Stage Release Assets
+      - name: Stage Canonical Single-Artifact-Per-OS Release Assets
         run: |
           mkdir -p release_assets
-          find dist/ -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.rpm" -o -name "*.pkg" -o -name "*.exe" -o -name "*.msi" -o -name "osoosi*" \) -exec cp {} release_assets/ \;
-          cp packaging/linux/osoosi-edr.service release_assets/
-          if [ -f packaging/macos/dev.oshoosiclaw.edr.plist ]; then cp packaging/macos/dev.oshoosiclaw.edr.plist release_assets/; fi
+          for pkg in oshoosiclaw_1.2.0_amd64.deb oshoosiclaw-1.2.0-1.x86_64.rpm oshoosiclaw-1.2.0-linux-x86_64.tar.gz oshoosiclaw-1.2.0-macos-universal.tar.gz; do
+            found=$(find dist/ -type f -name "$pkg" | head -n 1 || true)
+            if [ -n "$found" ]; then cp "$found" release_assets/; fi
+          done
           if [ -f PUBLIC_KEY.asc ]; then cp PUBLIC_KEY.asc release_assets/; fi
           ls -la release_assets/
 
@@ -276,57 +274,22 @@ jobs:
           GPG_KEY: ${{ secrets.GPG_RELEASE_SIGNING_KEY }}
           GIT_SHA: ${{ github.sha }}
         run: |
-          echo "$GPG_KEY" | gpg --batch --import
-          FPR=$(gpg --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10; exit}')
-          echo "Imported GPG Key: $FPR"
-          gpg --armor --export "$FPR" > release_assets/PUBLIC_KEY.asc
+          if [ -n "$GPG_KEY" ]; then
+            echo "$GPG_KEY" | gpg --batch --import
+            FPR=$(gpg --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10; exit}')
+            echo "Imported GPG Key: $FPR"
+            gpg --armor --export "$FPR" > release_assets/PUBLIC_KEY.asc
 
-          cd release_assets
-          for f in *.msi *.exe *.deb *.rpm *.pkg *.tar.gz; do
-            [ -f "$f" ] || continue
-            echo "Signing $f..."
-            gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"
-            gpg --batch --yes --detach-sign --output "${f}.sig" "$f"
-            sha256sum "$f" > "${f}.sha256"
-            gpg --verify "${f}.asc" "$f"
-
-            SHA=$(sha256sum "$f" | awk '{print $1}')
-            python3 - "$f" "$SHA" "$FPR" "$GIT_SHA" << 'PYEOF'
-          import sys, json, base64, subprocess
-          f, sha, fpr, git_sha = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
-          stmt = {
-              "_type": "https://in-toto.io/Statement/v0.1",
-              "predicateType": "https://slsa.dev/provenance/v0.2",
-              "subject": [{"name": f, "digest": {"sha256": sha}}],
-              "predicate": {
-                  "builder": {"id": "https://github.com/oyesanyf/OshoosiClaw/.github/workflows/release-slsa.yml"},
-                  "buildType": "https://github.com/slsa-framework/slsa-github-generator/generic@v1",
-                  "invocation": {
-                      "configSource": {
-                          "uri": "git+https://github.com/oyesanyf/OshoosiClaw",
-                          "digest": {"sha1": git_sha},
-                          "entryPoint": ".github/workflows/release-slsa.yml"
-                      }
-                  }
-              }
-          }
-          stmt_bytes = json.dumps(stmt, separators=(",", ":")).encode("utf-8")
-          ptype = "application/vnd.in-toto+json"
-          pb64 = base64.b64encode(stmt_bytes).decode("ascii")
-          pae = f"DSSEv1 {len(ptype)} {ptype} {len(stmt_bytes)} ".encode("utf-8") + stmt_bytes
-          p = subprocess.Popen(["gpg", "--batch", "--yes", "--detach-sign"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-          raw_sig, _ = p.communicate(pae)
-          sig_b64 = base64.b64encode(raw_sig).decode("ascii")
-          envelope = {
-              "payload": pb64,
-              "payloadType": ptype,
-              "signatures": [{"keyid": fpr, "sig": sig_b64}]
-          }
-          with open(f + ".intoto.jsonl", "w") as out:
-              out.write(json.dumps(envelope) + "\n")
-          PYEOF
-          done
-          cd ..
+            cd release_assets
+            for f in *.deb *.rpm *.tar.gz; do
+              [ -f "$f" ] || continue
+              echo "Signing $f..."
+              gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"
+              gpg --batch --yes --detach-sign --output "${f}.sig" "$f"
+              gpg --verify "${f}.asc" "$f"
+            done
+            cd ..
+          fi
           ls -la release_assets/
 
       - name: Generate Multi-Step Witness SDLC Attestation Bundle

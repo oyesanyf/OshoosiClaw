@@ -79,66 +79,6 @@ rm -f "${DEPLOY_MACOS}/${PACKAGE_NAME}-${VERSION}-darwin-${MACOS_ARCH}.tar.gz"* 
       "${DEPLOY_MACOS}/osoosi-edr-${VERSION}-macos-${MACOS_ARCH}.tar.gz"* 2>/dev/null || true
 cp -f "${TAR_OUT}" "${DEPLOY_MACOS}/${PACKAGE_NAME}-${VERSION}-macos-${MACOS_ARCH}.tar.gz"
 
-# 2. macOS Application Bundle (OshoosiClaw.app.tar.gz)
-APP_STAGING="$(mktemp -d)"
-APP_BUNDLE="${APP_STAGING}/OshoosiClaw.app/Contents"
-mkdir -p "${APP_BUNDLE}/MacOS" "${APP_BUNDLE}/Resources"
-install -m 755 "${BINARY_PATH}" "${APP_BUNDLE}/MacOS/osoosi"
-if [ -f "${CONFIG_FILE}" ]; then
-    install -m 640 "${CONFIG_FILE}" "${APP_BUNDLE}/Resources/osoosi.toml"
-fi
-cat <<EOF > "${APP_BUNDLE}/Info.plist"
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>osoosi</string>
-    <key>CFBundleIdentifier</key>
-    <string>dev.oshoosiclaw.edr</string>
-    <key>CFBundleName</key>
-    <string>OshoosiClaw</string>
-    <key>CFBundleDisplayName</key>
-    <string>OshoosiClaw Autonomous EDR</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-</dict>
-</plist>
-EOF
-
-APP_OUT="${DIST_DIR}/OshoosiClaw-${VERSION}-macos-${MACOS_ARCH}.app.tar.gz"
-tar -czf "${APP_OUT}" -C "${APP_STAGING}" "OshoosiClaw.app"
-echo "[+] Created: ${APP_OUT}"
-
-# 3. macOS Installer Package (.pkg) if pkgbuild is available, or portable xar/cpio fallback
-PKG_OUT="${DIST_DIR}/OshoosiClaw-${VERSION}-macos-${MACOS_ARCH}.pkg"
-if command -v pkgbuild >/dev/null 2>&1; then
-    PKG_ROOT="$(mktemp -d)/pkgroot"
-    mkdir -p "${PKG_ROOT}/usr/local/bin" "${PKG_ROOT}/etc/osoosi" "${PKG_ROOT}/Library/LaunchDaemons"
-    install -m 755 "${BINARY_PATH}" "${PKG_ROOT}/usr/local/bin/osoosi"
-    if [ -f "${CONFIG_FILE}" ]; then
-        install -m 640 "${CONFIG_FILE}" "${PKG_ROOT}/etc/osoosi/osoosi.toml"
-    fi
-    if [ -f "${PLIST_COM_FILE}" ]; then
-        install -m 644 "${PLIST_COM_FILE}" "${PKG_ROOT}/Library/LaunchDaemons/com.oshoosiclaw.edr.plist"
-    elif [ -f "${PLIST_DEV_FILE}" ]; then
-        install -m 644 "${PLIST_DEV_FILE}" "${PKG_ROOT}/Library/LaunchDaemons/dev.oshoosiclaw.edr.plist"
-    fi
-    pkgbuild --root "${PKG_ROOT}" \
-        --identifier "dev.oshoosiclaw.edr" \
-        --version "${VERSION}" \
-        --install-location "/" \
-        "${PKG_OUT}"
-    rm -rf "$(dirname "${PKG_ROOT}")"
-    echo "[+] Created: ${PKG_OUT} (via pkgbuild)"
-fi
-
-rm -rf "$(dirname "${TAR_STAGING}")" "${APP_STAGING}"
+rm -rf "$(dirname "${TAR_STAGING}")"
 echo "[+] macOS packaging complete (single canonical artifact per format). Artifacts in ${DIST_DIR}:"
 ls -la "${DIST_DIR}"
