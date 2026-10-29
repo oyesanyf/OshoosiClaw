@@ -45,6 +45,9 @@ SERVICE_FILE="${SCRIPT_DIR}/osoosi-edr.service"
 CONFIG_FILE="${ROOT_DIR}/osoosi.toml"
 PUBLIC_KEY_FILE="${ROOT_DIR}/PUBLIC_KEY.asc"
 EBPF_PROBE_FILE="${ROOT_DIR}/ebpf/osoosi_probe.bpf.o"
+if [ ! -f "${EBPF_PROBE_FILE}" ] && [ -f "${ROOT_DIR}/ebpf/bin/osoosi-ebpf.o" ]; then
+    EBPF_PROBE_FILE="${ROOT_DIR}/ebpf/bin/osoosi-ebpf.o"
+fi
 
 # ---------------------------------------------------------
 # 1. Portable Tarball (.tar.gz)
@@ -194,6 +197,10 @@ if [ -f "${CONFIG_FILE}" ]; then
 fi
 if [ -f "${EBPF_PROBE_FILE}" ]; then
     install -m 644 ${EBPF_PROBE_FILE} %{buildroot}/usr/lib/osoosi/osoosi-ebpf.o
+elif [ -f "${ROOT_DIR}/ebpf/bin/osoosi-ebpf.o" ]; then
+    install -m 644 ${ROOT_DIR}/ebpf/bin/osoosi-ebpf.o %{buildroot}/usr/lib/osoosi/osoosi-ebpf.o
+else
+    touch %{buildroot}/usr/lib/osoosi/osoosi-ebpf.o
 fi
 
 %post
