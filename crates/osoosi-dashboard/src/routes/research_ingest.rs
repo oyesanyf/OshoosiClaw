@@ -3042,10 +3042,17 @@ pub fn routes() -> Router<DashboardState> {
 mod tests {
     use super::*;
 
-    static TEST_CONFORMAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(crate) static TEST_RESEARCH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn ensure_seed_rules_loaded() {
+        osoosi_agent_anomaly::breakout_defense::restore_default_research_rules();
+    }
 
     #[test]
     fn test_live_regression_probes_all_categories_block() {
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let probe_items = [
             // 1. Container / OCI / Sandbox / Privilege
             ResearchExtractionItem {
@@ -3197,6 +3204,9 @@ mod tests {
 
     #[test]
     fn test_novelty_filter_distinguishes_implemented_vs_novel_papers() {
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert!(is_already_implemented("2610.09167"));
         assert!(is_already_implemented("2610.09167v1"));
         assert!(is_already_implemented("arXiv:2610.09167v2"));
@@ -3286,7 +3296,9 @@ mod tests {
 
     #[test]
     fn test_langgraph_4_arm_swarm_end_to_end_and_stopping_conditions() {
-        let _lock = TEST_CONFORMAL_LOCK.lock().unwrap();
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         osoosi_agent_anomaly::breakout_defense::reset_research_defense_registry();
         if let Ok(mut mon) = GLOBAL_CONFORMAL_MONITOR.write() {
             *mon = osoosi_behavioral::PersistDetector::default_persist_3();
@@ -3492,6 +3504,10 @@ mod tests {
 
     #[test]
     fn test_search_and_stage_deduplication_does_not_restage_active_papers() {
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        ensure_seed_rules_loaded();
         let resp = search_and_stage_research_for_approval(ResearchSearchRequest {
             query: Some("LLM agent container sandbox escape".to_string()),
             arxiv_id: None,
@@ -3508,7 +3524,9 @@ mod tests {
 
     #[test]
     fn test_approve_pending_research_canonicalizes_rule_id_and_deduplicates() {
-        let _lock = TEST_CONFORMAL_LOCK.lock().unwrap();
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let test_aid = "2609.99888";
         let canonical_id = format!("ARXIV-DEF-{}", test_aid);
 
@@ -3639,7 +3657,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn test_clear_all_research_rules_and_synthesized_policies() {
-        let _lock = TEST_CONFORMAL_LOCK
+        let _guard = TEST_RESEARCH_MUTEX
             .lock()
             .unwrap_or_else(|e| e.into_inner());
 
@@ -3691,7 +3709,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_autonomous_research_scheduler_defaults_and_updates() {
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 1. Initial schedule state must default to weekly (604800s)
         let initial = get_research_schedule().await;
         assert!(initial.success);
@@ -3761,7 +3783,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_novelty_check_recency_gate() {
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let req = axum::extract::Json(ResearchNoveltyCheckRequest {
             arxiv_ids: vec!["2403.02277v1".to_string(), "2603.99991".to_string()],
             extractions: vec![],
@@ -3788,6 +3814,9 @@ mod tests {
 
     #[test]
     fn test_code_backed_priority_boost_and_queue_tie_breaker() {
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 1. detect_verified_code_repo
         let item_gh = ResearchExtractionItem {
             arxiv_id: Some("2603.02277v3".to_string()),

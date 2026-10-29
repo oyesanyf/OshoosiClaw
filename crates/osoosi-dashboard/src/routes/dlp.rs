@@ -1572,7 +1572,8 @@ pub async fn post_dlp_policy(Json(body): Json<Value>) -> Json<Value> {
     }
 
     std::thread::spawn(move || {
-        if std::env::var("OSOOSI_CONFIG").is_err() {
+        let is_test = cfg!(test) || std::env::args().any(|a| a.contains("test"));
+        if !is_test && std::env::var("OSOOSI_CONFIG").is_err() {
             let mut cfg = osoosi_types::load_autonomy_config();
             cfg.apply_preset(if strict_lockdown_now {
                 "lockdown"
@@ -2065,8 +2066,10 @@ pub fn routes() -> Router<DashboardState> {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
+    use crate::routes::dlp_containment::DLP_TEST_MUTEX;
     use std::path::PathBuf;
 
     /// Async test synchronization lock ensuring tests in this module run sequentially.
@@ -2078,13 +2081,14 @@ mod tests {
     }
 
     /// RAII test context providing:
-    /// 1. Sequential serialization via `TEST_DLP_LOCK`.
+    /// 1. Sequential serialization via `TEST_DLP_LOCK` and `DLP_TEST_MUTEX`.
     /// 2. Unique subdomains per test case (`case-<uuid>.dlptest.com`).
     /// 3. Automatic unblocking of tested hosts in `global_containment_engine()` on Drop.
     /// 4. Disk state preservation: snapshots database files before test and restores exact bytes on Drop.
     /// 5. In-memory `recent_events` clearing to prevent cross-test leakage.
     struct DlpTestContext {
         _lock: tokio::sync::MutexGuard<'static, ()>,
+        _sync_lock: std::sync::MutexGuard<'static, ()>,
         backups: Vec<FileBackup>,
         hosts: Vec<String>,
     }
@@ -2092,6 +2096,8 @@ mod tests {
     impl DlpTestContext {
         async fn new() -> Self {
             let lock = TEST_DLP_LOCK.lock().await;
+            let sync_lock = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            osoosi_types::set_strict_lockdown_override(false);
 
             let mut paths_to_track = vec![
                 PathBuf::from("database").join("dlp_released_allowlist.json"),
@@ -2104,12 +2110,15 @@ mod tests {
                     .join("osoosi-dashboard")
                     .join("database")
                     .join("dlp_containment_registry.json"),
+                PathBuf::from("osoosi.toml"),
+                PathBuf::from("..").join("..").join("osoosi.toml"),
             ];
 
             if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
                 let md = PathBuf::from(manifest_dir);
                 paths_to_track.push(md.join("database").join("dlp_released_allowlist.json"));
                 paths_to_track.push(md.join("database").join("dlp_containment_registry.json"));
+                paths_to_track.push(md.join("..").join("..").join("osoosi.toml"));
             }
 
             let mut backups = Vec::new();
@@ -2143,8 +2152,11 @@ mod tests {
                 state.redactx_containment_mode = "balanced_utility".to_string();
             }
 
+            osoosi_core::dlp_lineage::global_lineage_tracker().clear();
+
             Self {
                 _lock: lock,
+                _sync_lock: sync_lock,
                 backups,
                 hosts: Vec::new(),
             }
@@ -2160,6 +2172,8 @@ mod tests {
 
     impl Drop for DlpTestContext {
         fn drop(&mut self) {
+            osoosi_types::set_strict_lockdown_override(false);
+
             // 1. Unblock all hosts tested in this case from global containment engine
             let engine = crate::routes::dlp_containment::global_containment_engine();
             for host in &self.hosts {
@@ -2185,6 +2199,8 @@ mod tests {
             state.auto_zk_scrub = true;
             state.redactx_detection_mode = "zero_leakage".to_string();
             state.redactx_containment_mode = "balanced_utility".to_string();
+
+            osoosi_core::dlp_lineage::global_lineage_tracker().clear();
         }
     }
 

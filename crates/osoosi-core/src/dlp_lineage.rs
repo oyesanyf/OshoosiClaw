@@ -1133,6 +1133,16 @@ impl DlpLineageTracker {
         }
     }
 
+    /// Clears all tracked processes, artifacts, content digests, and lineage event buffers.
+    pub fn clear(&self) {
+        self.active_processes.clear();
+        self.active_artifacts.clear();
+        self.content_catalog.clear();
+        self.openlineage_events.write().clear();
+        self.otel_log_records.write().clear();
+        self.blocked_child_spans.write().clear();
+    }
+
     /// Helper: Checks whether a binary is classified as a long-lived host.
     pub fn is_long_lived(&self, executable_name: &str) -> bool {
         let normalized = executable_name.trim().to_lowercase();

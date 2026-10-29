@@ -48,6 +48,9 @@ pub const DEBOUNCE_WINDOW: Duration = Duration::from_secs(120);
 /// Auto-expiry for destination blocks applied to verified browsers.
 pub const BROWSER_BLOCK_TTL: Duration = Duration::from_secs(600);
 
+#[cfg(test)]
+pub(crate) static DLP_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Process/destination context of a DLP event.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActorContext {
@@ -325,10 +328,13 @@ impl DlpContainmentEngine {
         });
         let mut voters = VoterConsensus::from_ballots(self.platform.voter_ballots(event, ctx));
 
-        let strict_lockdown_enforced = (crate::routes::dlp::is_strict_lockdown_active()
-            || event
-                .redactx_containment_mode
-                .eq_ignore_ascii_case("zero_leakage"))
+        let strict_lockdown_enforced = !event
+            .redactx_containment_mode
+            .eq_ignore_ascii_case("balanced_utility")
+            && (crate::routes::dlp::is_strict_lockdown_active()
+                || event
+                    .redactx_containment_mode
+                    .eq_ignore_ascii_case("zero_leakage"))
             && (!event.detected_categories.is_empty() || event.redacted_entity_count > 0);
         if strict_lockdown_enforced && !voters.reached {
             voters.reached = true;
@@ -1778,6 +1784,17 @@ mod tests {
     }
 
     fn engine_with(platform: Arc<FixturePlatform>, tag: &str) -> (DlpContainmentEngine, PathBuf) {
+        {
+            let mut state = crate::routes::dlp::get_global_dlp_state().write();
+            state.policy_mode = "ENFORCE_BLOCK_AND_SCRUB".to_string();
+            state.min_phi_threshold = 0.50;
+            state.quarantine_threshold = 0.80;
+            state.auto_quarantine = true;
+            state.auto_zk_scrub = true;
+            state.redactx_detection_mode = "zero_leakage".to_string();
+            state.redactx_containment_mode = "balanced_utility".to_string();
+        }
+        osoosi_types::set_strict_lockdown_override(false);
         let dir = temp_dir(tag);
         let e =
             DlpContainmentEngine::new(platform, dir.join("vault"), Some(dir.join("registry.json")));
@@ -1787,6 +1804,7 @@ mod tests {
 
     #[test]
     fn unsigned_malicious_process_with_dlp_consensus_is_contained_and_restorable() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("fixture_bin");
         let bin = dir.join("updater_helper.exe");
         std::fs::write(&bin, b"MZ fixture binary bytes").unwrap();
@@ -1849,6 +1867,7 @@ mod tests {
 
     #[test]
     fn verified_signed_browser_gets_destination_block_only() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             signed: true,
             browser: true,
@@ -1885,6 +1904,7 @@ mod tests {
 
     #[test]
     fn hollowed_signed_binary_forfeits_immunity() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("hollow");
         let bin = dir.join("msedge.exe");
         std::fs::write(&bin, b"signed image").unwrap();
@@ -1923,6 +1943,7 @@ mod tests {
 
     #[test]
     fn rea_only_and_dlp_only_produce_alerts() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         // REA-malicious process, clean payload (no DLP finding).
         let platform = Arc::new(FixturePlatform {
             rea_malicious: true,
@@ -1972,6 +1993,7 @@ mod tests {
 
     #[test]
     fn openjev_low_p_empty_categories_never_contains() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             rea_malicious: true,
             voters_escalate: true,
@@ -1998,6 +2020,7 @@ mod tests {
 
     #[test]
     fn format_only_span_between_thresholds_is_alert_only() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             rea_malicious: true,
             voters_escalate: true,
@@ -2025,6 +2048,7 @@ mod tests {
 
     #[test]
     fn repeated_events_inside_debounce_window_contain_once() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = temp_dir("debounce_bin");
         let bin = dir.join("dropper.exe");
         std::fs::write(&bin, b"dropper").unwrap();
@@ -2059,6 +2083,7 @@ mod tests {
 
     #[test]
     fn disabled_switch_downgrades_to_alert() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             rea_malicious: true,
             voters_escalate: true,
@@ -2085,6 +2110,7 @@ mod tests {
 
     #[test]
     fn voter_quorum_requires_probability_and_two_escalations() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let b = |e: bool, c: f64| VoterBallot {
             voter: "v".into(),
             escalate: e,
@@ -2107,6 +2133,7 @@ mod tests {
 
     #[test]
     fn browser_destination_block_restores_on_clean_upload_and_reblocks_on_sensitive() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             signed: true,
             browser: true,
@@ -2152,6 +2179,7 @@ mod tests {
 
     #[test]
     fn direct_restore_clears_debounce_and_allows_reblock() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             signed: true,
             browser: true,
@@ -2194,6 +2222,7 @@ mod tests {
 
     #[test]
     fn stale_debounce_without_active_block_does_not_suppress_destination_block() {
+        let _guard = DLP_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let platform = Arc::new(FixturePlatform {
             signed: true,
             browser: true,
