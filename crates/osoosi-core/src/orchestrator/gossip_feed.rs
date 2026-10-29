@@ -1146,15 +1146,22 @@ impl EdrOrchestrator {
                     "ThreatIntelligence",
                     &reason,
                 );
-                if !reason.contains("[REA-Voter]") {
+                let needs_rea_refresh = !reason.contains("[REA-Voter]")
+                    || reason.contains("No candidate binary located for REA adjudication");
+                if needs_rea_refresh {
+                    let base_reason = reason
+                        .split("; [REA-Voter]")
+                        .next()
+                        .unwrap_or(&reason)
+                        .trim();
                     let mut enriched = format!(
                         "{}; {} (verdict={}, seal={})",
-                        reason,
+                        base_reason,
                         rea_eval.explanation,
                         rea_eval.verdict,
                         &rea_eval.rea_seal_blake3[..rea_eval.rea_seal_blake3.len().min(16)]
                     );
-                    if !reason.contains("[OpenJEV-Voter]") && !ojev_vote.benign_veto {
+                    if !enriched.contains("[OpenJEV-Voter]") && !ojev_vote.benign_veto {
                         enriched.push_str("; ");
                         enriched.push_str(&ojev_vote.reason);
                     }

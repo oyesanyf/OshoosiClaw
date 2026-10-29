@@ -1356,16 +1356,44 @@ impl EdrOrchestrator {
             file_path_str.as_deref(),
             Some(&reason_str),
         );
+        let det_source = if sig.id.starts_with("aad-") || sig.mitre_technique.as_deref() == Some("AML.T0043") {
+            "Agent/Alignment"
+        } else if sig.id.starts_with("dlp_") {
+            "DLP"
+        } else if sig.id.starts_with("cve_") || sig.id.starts_with("kev_") || sig.id.starts_with("nvd_") {
+            "CVE/SCA"
+        } else if sig.id.starts_with("sysmon_10")
+            || sig.id.starts_with("sigma_9995")
+            || sig.id.contains("hollowing")
+            || sig.id.contains("shield")
+            || sig.id.contains("siquery")
+        {
+            "Siquery / Hollowing / Memory / Shield"
+        } else if sig.id.starts_with("mesh_") || sig.id.starts_with("nostr_") || sig.id.starts_with("gossip_") {
+            "P2P / Nostr Mesh"
+        } else if sig.id.starts_with("har_") || sig.id.starts_with("network_") {
+            "HAR/Network"
+        } else if sig.id.starts_with("yara_") || sig.id.starts_with("malware_") || sig.id.starts_with("malconv_") {
+            "Malware/YARA"
+        } else {
+            "Process/ETW/CLI"
+        };
         let rea_eval = rea.evaluate_detector_candidate(
-            "ThreatIntelligence",
+            det_source,
             target_label,
             &reason_str,
             sig.confidence as f64,
         );
         let ojev_vote = crate::rea::evaluate_openjev_consensus_vote(
             target_label,
-            "ThreatIntelligence",
+            det_source,
             &reason_str,
+        );
+        let _rea_vote = rea.cast_consensus_vote(
+            target_label,
+            det_source,
+            &reason_str,
+            sig.confidence as f64,
         );
 
         let hash_key = rea_hash
@@ -1436,8 +1464,6 @@ impl EdrOrchestrator {
         // 2. If candidate came from a single static/composition detector without PolicyEngine multi-voter evaluation,
         // route through `self.policy.scan_event` so ALL voters + REA check it before it enters Threat Intelligence.
         let already_multi_voter = reason_str.contains("EvidenceOrchestrator:")
-            || sig.id.starts_with("dlp_")
-            || sig.id.starts_with("aad-")
             || reason_str.contains("[Heuristic] Unsigned process in temp/user dir");
 
         if !already_multi_voter

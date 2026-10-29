@@ -13055,7 +13055,25 @@ window._researchSwarmState = {
 
 function renderResearchSwarmUI() {
     const st = window._researchSwarmState;
-    const rules = Array.isArray(st.active_enforced_research_rules) ? st.active_enforced_research_rules : [];
+    // Deduplicate active enforced research rules by normalized base arxiv_id + target_boundary
+    const rawRules = Array.isArray(st.active_enforced_research_rules) ? st.active_enforced_research_rules : [];
+    const dedupedRules = [];
+    const seenRuleKeys = new Set();
+    for (const r of rawRules) {
+        const baseArxiv = String(r.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+        const boundary = String(r.target_boundary || '').trim().toLowerCase();
+        const key = baseArxiv ? `${baseArxiv}::${boundary}` : String(r.rule_id || '');
+        if (!seenRuleKeys.has(key)) {
+            seenRuleKeys.add(key);
+            if (baseArxiv && (!r.rule_id || !r.rule_id.startsWith('ARXIV-DEF-'))) {
+                r.rule_id = `ARXIV-DEF-${baseArxiv}`;
+            }
+            dedupedRules.push(r);
+        }
+    }
+    st.active_enforced_research_rules = dedupedRules;
+    st.active_rules_count = dedupedRules.length;
+    const rules = dedupedRules;
     const pending = Array.isArray(st.pending_approvals) ? st.pending_approvals : [];
 
     // Summary stats
@@ -13339,8 +13357,16 @@ window.searchArxivAndStageForApproval = async function() {
         // Stage matching frontier papers into Pending Operator Approval Queue
         const st = window._researchSwarmState;
         const existingIds = new Set((st.pending_approvals || []).map(p => p.arxiv_id));
+        const activeKeys = new Set((st.active_enforced_research_rules || []).map(r => {
+            const b = String(r.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+            const bound = String(r.target_boundary || '').trim().toLowerCase();
+            return `${b}::${bound}`;
+        }));
         Object.values(RESEARCH_PAPER_PRESETS).forEach((p, idx) => {
-            if (p.breakout_score >= minScore && !existingIds.has(p.arxiv_id)) {
+            const pBase = String(p.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+            const pBound = String(p.target_boundary || '').trim().toLowerCase();
+            const isAlreadyActive = activeKeys.has(`${pBase}::${pBound}`);
+            if (p.breakout_score >= minScore && !existingIds.has(p.arxiv_id) && !isAlreadyActive) {
                 st.pending_approvals.push({
                     approval_id: `APPROVAL-${p.arxiv_id.replace(/[^0-9.]/g, '')}-${idx + 1}`,
                     rule_id: `ARXIV-DEF-${p.arxiv_id.replace(/v\d+$/, '')}`,
@@ -13549,21 +13575,31 @@ window.approveResearchItem = async function(approvalId) {
         st.pending_approvals = st.pending_approvals.filter(
             item => item.approval_id !== approvalId && item.rule_id !== approvalId && item.arxiv_id !== approvalId
         );
-        const ruleId = approvedItem.rule_id || `ARXIV-DEF-${String(approvedItem.arxiv_id || '').replace(/v\d+$/, '')}`;
-        const exists = st.active_enforced_research_rules.some(
-            r => r.rule_id === ruleId && r.indicator_pattern === approvedItem.indicator_pattern
-        );
-        if (!exists) {
-            st.active_enforced_research_rules.unshift({
-                rule_id: ruleId,
-                arxiv_id: approvedItem.arxiv_id,
-                title: approvedItem.title,
-                attack_vector: approvedItem.attack_vector,
-                target_boundary: approvedItem.target_boundary,
-                indicator_pattern: approvedItem.indicator_pattern,
-                target_crate: approvedItem.target_crate || 'osoosi-agent-anomaly',
-                status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
-            });
+        const baseArxiv = String(approvedItem.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '');
+        const ruleId = `ARXIV-DEF-${baseArxiv}`;
+        const targetBoundary = String(approvedItem.target_boundary || '').trim().toLowerCase();
+
+        const existingIdx = st.active_enforced_research_rules.findIndex(r => {
+            const rBase = String(r.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+            const rBound = String(r.target_boundary || '').trim().toLowerCase();
+            return (rBase === baseArxiv.toLowerCase() && rBound === targetBoundary) || r.rule_id === ruleId;
+        });
+
+        const newRule = {
+            rule_id: ruleId,
+            arxiv_id: approvedItem.arxiv_id,
+            title: approvedItem.title,
+            attack_vector: approvedItem.attack_vector,
+            target_boundary: approvedItem.target_boundary,
+            indicator_pattern: approvedItem.indicator_pattern,
+            target_crate: approvedItem.target_crate || 'osoosi-agent-anomaly',
+            status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
+        };
+
+        if (existingIdx >= 0) {
+            st.active_enforced_research_rules[existingIdx] = newRule;
+        } else {
+            st.active_enforced_research_rules.unshift(newRule);
             st.conformal_sources_k = Number(st.conformal_sources_k || 11) + 1;
             st.total_ingested = Number(st.total_ingested || 4) + 1;
         }
@@ -13613,21 +13649,31 @@ window.approveAllResearchItems = async function() {
     } catch (_) {}
 
     for (const item of toApprove) {
-        const ruleId = item.rule_id || `ARXIV-DEF-${String(item.arxiv_id || '').replace(/v\d+$/, '')}`;
-        const exists = st.active_enforced_research_rules.some(
-            r => r.rule_id === ruleId && r.indicator_pattern === item.indicator_pattern
-        );
-        if (!exists) {
-            st.active_enforced_research_rules.unshift({
-                rule_id: ruleId,
-                arxiv_id: item.arxiv_id,
-                title: item.title,
-                attack_vector: item.attack_vector,
-                target_boundary: item.target_boundary,
-                indicator_pattern: item.indicator_pattern,
-                target_crate: item.target_crate || 'osoosi-agent-anomaly',
-                status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
-            });
+        const baseArxiv = String(item.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '');
+        const ruleId = `ARXIV-DEF-${baseArxiv}`;
+        const targetBoundary = String(item.target_boundary || '').trim().toLowerCase();
+
+        const existingIdx = st.active_enforced_research_rules.findIndex(r => {
+            const rBase = String(r.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+            const rBound = String(r.target_boundary || '').trim().toLowerCase();
+            return (rBase === baseArxiv.toLowerCase() && rBound === targetBoundary) || r.rule_id === ruleId;
+        });
+
+        const newRule = {
+            rule_id: ruleId,
+            arxiv_id: item.arxiv_id,
+            title: item.title,
+            attack_vector: item.attack_vector,
+            target_boundary: item.target_boundary,
+            indicator_pattern: item.indicator_pattern,
+            target_crate: item.target_crate || 'osoosi-agent-anomaly',
+            status: 'ENFORCED IN BREAKOUT COORDINATOR (OPERATOR APPROVED)'
+        };
+
+        if (existingIdx >= 0) {
+            st.active_enforced_research_rules[existingIdx] = newRule;
+        } else {
+            st.active_enforced_research_rules.unshift(newRule);
             st.conformal_sources_k = Number(st.conformal_sources_k || 11) + 1;
             st.total_ingested = Number(st.total_ingested || 4) + 1;
         }

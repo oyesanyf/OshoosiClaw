@@ -240,17 +240,33 @@ impl EdrOrchestrator {
                 Some("Process Injection / 5-Sigma Memory Anomaly".to_string());
             sig.mitre_tactic = Some("Defense Evasion".to_string());
             sig.recommended_action = ResponseAction::Isolate;
-            sig.action_state = osoosi_types::ActionState::Executed;
+            sig.action_state = osoosi_types::ActionState::Pending;
             if !payload_sha256.is_empty() {
                 sig.hash_blake3 = Some(payload_sha256.to_string());
-                self.memory.mark_hash_known_malicious(payload_sha256);
             }
             sig.add_reason(format!(
                 "Dual-Stage 5-Sigma Kernel Quarantine + Cgroup v2 Freeze (PID={}, comm={}, RIP={}, z={:.2}σ, sha256={})",
                 snap_pid, comm, rip_hex, sigma_score, payload_sha256
             ));
-            self.privacy.protect_signature(&mut sig);
-            let _ = self.memory.log_threat(&sig);
+
+            let f_path_opt = event.data.get("Image").and_then(|v| v.as_str()).map(std::path::Path::new);
+            let Some(mut signature) = self
+                .adjudicate_threat_signature_with_rea_and_voters(
+                    f_path_opt,
+                    sig,
+                    Some(&event),
+                )
+                .await
+            else {
+                return Ok(());
+            };
+
+            if !payload_sha256.is_empty() {
+                self.memory.mark_hash_known_malicious(payload_sha256);
+            }
+            signature.action_state = osoosi_types::ActionState::Executed;
+            self.privacy.protect_signature(&mut signature);
+            let _ = self.memory.log_threat(&signature);
             self.audit.log(
                 "FIVE_SIGMA_FORENSIC_SNAPSHOT",
                 serde_json::json!({
@@ -260,9 +276,10 @@ impl EdrOrchestrator {
                     "payload_sha256": payload_sha256,
                     "sigma_score": sigma_score,
                     "yara_synthesized": synthesized_yara.is_some(),
+                    "threat_id": signature.id,
                 }),
             );
-            self.broadcast_threat_to_mesh(sig).await;
+            self.broadcast_threat_to_mesh(signature).await;
             return Ok(());
         }
 
@@ -485,27 +502,61 @@ impl EdrOrchestrator {
                             target_pid as u32,
                             mask,
                         ) {
-                            warn!("Shield violation detected! Blocking access from PID {} to target PID {}.", source_pid, target_pid);
+                            warn!("Shield violation detected! Candidate process access violation from PID {} to target PID {}.", source_pid, target_pid);
 
-                            // Log to local memory store
+                            // Log candidate event to local memory store
                             let _ = self.memory.log_threat_event(
                                 "SHIELD_ACCESS_VIOLATION",
                                 source_pid as u32,
                                 target_pid as u32,
                             );
 
-                            // BROADCAST TO MESH: Create a high-confidence signature and send to peers
-                            let mut sig = osoosi_types::ThreatSignature::new("local".to_string());
-                            sig.confidence = 1.0;
-                            sig.reason = Some(format!("Shield Self-Defense: Blocked process access violation from PID {} (Mask: {})", source_pid, access_mask_str));
+                            let source_image = event
+                                .data
+                                .get("SourceImage")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+
+                            let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                            sig.confidence = 0.95;
+                            sig.process_name = if !source_image.is_empty() {
+                                Some(source_image.to_string())
+                            } else {
+                                None
+                            };
+                            sig.mitre_technique = Some("T1003".to_string());
+                            sig.mitre_technique_name = Some("OS Credential Dumping / Process Access Violation".to_string());
+                            sig.mitre_tactic = Some("Credential Access".to_string());
                             sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                            sig.action_state = osoosi_types::ActionState::Pending;
+                            sig.add_reason(format!(
+                                "Shield Process Access Guard: unauthorized process access violation from PID {} to target PID {} (Mask: {})",
+                                source_pid, target_pid, access_mask_str
+                            ));
 
-                            // Apply Merkle Proof and Differential Privacy noise
-                            self.privacy.protect_signature(&mut sig);
+                            let f_path_opt = if !source_image.is_empty() {
+                                Some(std::path::Path::new(source_image))
+                            } else {
+                                None
+                            };
 
-                            self.broadcast_threat_to_mesh(sig).await;
+                            let Some(mut signature) = self
+                                .adjudicate_threat_signature_with_rea_and_voters(
+                                    f_path_opt,
+                                    sig,
+                                    Some(&event),
+                                )
+                                .await
+                            else {
+                                return Ok(());
+                            };
 
-                            // Neutralize locally
+                            signature.action_state = osoosi_types::ActionState::Executed;
+                            self.privacy.protect_signature(&mut signature);
+                            let _ = self.memory.log_threat(&signature);
+                            self.broadcast_threat_to_mesh(signature).await;
+
+                            // Neutralize locally upon verified consensus
                             let _ = self.blocking_manager.block_by_pid(source_pid as u32).await;
                             return Ok(());
                         }
@@ -752,21 +803,6 @@ impl EdrOrchestrator {
                     "Behavioral CoLog Anomaly: score {:.2}",
                     colog_score
                 ));
-            } else {
-                let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
-                sig.confidence = colog_score;
-                sig.process_name = event
-                    .data
-                    .get("Image")
-                    .and_then(|i| i.as_str())
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .and_then(|n| n.to_str())
-                    .map(String::from);
-                sig.add_reason(format!(
-                    "Behavioral Pipeline: CoLog sequence deviation (score {:.2})",
-                    colog_score
-                ));
-                signature = Some(sig);
             }
         }
 

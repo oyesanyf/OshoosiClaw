@@ -1000,10 +1000,183 @@ pub struct IngestedResearchDefenseRule {
 
 const INGESTED_RESEARCH_DEFENSES_PATH: &str = "config/ingested_research_defenses.json";
 
+/// Maximum active research rules enforced in the live registry (preserves 4 pinned baseline rules at 0..4).
+pub const MAX_ACTIVE_RESEARCH_RULES: usize = 64;
+
+/// Baseline implemented research papers in OshoosiClaw (Gate 1 rejection).
+pub const KNOWN_IMPLEMENTED_ARXIV_IDS: &[&str] = &[
+    "2610.09167",
+    "2610.09167v1",
+    "2610.14224",
+    "2610.14224v1",
+];
+
+/// Built-in static tokens already enforced by core breakout guards (Gate 2 rejection).
+const BUILTIN_STATIC_TOKENS: &[&str] = &[
+    "/var/run/docker.sock",
+    "docker.sock",
+    "containerd.sock",
+    "wasm_table_overflow",
+    "mimikatz",
+    "procdump",
+    "sekurlsa::logonpasswords",
+];
+
+/// Core protected system binaries or endpoints that must never be blocked by research rules (Gate 3 rejection).
+const CONFLICTING_PROTECTED_TOKENS: &[&str] = &[
+    "osoosi",
+    "127.0.0.1:11434",
+    "localhost:11434",
+    "powershell.exe",
+    "cmd.exe",
+    "cargo.exe",
+    "python.exe",
+];
+
+/// Structured verdict returned by the deterministic 3-Gate Research Acceptance Validator.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResearchAcceptanceVerdict {
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<String>,
+}
+
+/// Normalizes an arXiv ID to its base form by stripping case-insensitive "arxiv:" prefix and "v\d+" version suffix.
+pub fn normalize_base_arxiv_id(raw: &str) -> String {
+    let mut s = raw.trim();
+    if s.len() >= 6 && s[..6].eq_ignore_ascii_case("arxiv:") {
+        s = &s[6..];
+    }
+    let s = s.trim();
+    let s = s.strip_prefix("abs/").unwrap_or(s).trim();
+    if let Some((base, ver)) = s.rsplit_once('v') {
+        if !ver.is_empty() && ver.chars().all(|c| c.is_ascii_digit()) {
+            return base.trim().to_ascii_lowercase();
+        }
+    }
+    s.to_ascii_lowercase()
+}
+
+/// Generates the canonical research defense rule ID: `ARXIV-DEF-<base_arxiv_id>`.
+pub fn canonical_research_rule_id(arxiv_id: &str) -> String {
+    let base = normalize_base_arxiv_id(arxiv_id);
+    format!("ARXIV-DEF-{}", base)
+}
+
+/// Deterministic 3-Gate Research Acceptance Validator.
+/// Evaluates whether an ingested research rule is acceptable into live EDR enforcement:
+/// - Gate 1: Not Novel (`RejectedNotNovel`): checks known implemented baseline papers, non-positive novelty delta score, or already enrolled identical rules.
+/// - Gate 2: Redundant (`RejectedRedundant`): checks coverage of (arxiv_id, target_boundary), overlapping indicator patterns, or single built-in static tokens.
+/// - Gate 3: Conflicts with Existing Protection (`RejectedConflictsWithExistingProtection`): verifies Cedar forbid policy and ensures pattern is >= 6 chars and does not conflict with core system binaries or Ollama allowlist.
+pub fn validate_research_rule_acceptance(
+    rule: &IngestedResearchDefenseRule,
+    novelty_delta_score: Option<f64>,
+    existing_rules: &[IngestedResearchDefenseRule],
+    allow_in_place_update: bool,
+) -> ResearchAcceptanceVerdict {
+    let base_id = normalize_base_arxiv_id(&rule.arxiv_id);
+    let pat = rule.indicator_pattern.trim();
+    let pat_lc = pat.to_ascii_lowercase();
+
+    // Gate 3: Conflicts with Existing Protection (Fail-closed safety first)
+    if rule.cedar_forbid_policy.contains("permit(") || !rule.cedar_forbid_policy.contains("forbid(") {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
+            rejection_reason: Some("Cedar policy must contain 'forbid(' and cannot contain 'permit('".to_string()),
+        };
+    }
+    if pat.len() < 6 {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
+            rejection_reason: Some(format!("Indicator pattern '{}' is too short (< 6 characters)", pat)),
+        };
+    }
+    if CONFLICTING_PROTECTED_TOKENS.iter().any(|&tok| {
+        pat_lc == tok
+            || pat_lc == format!("/{}", tok)
+            || pat_lc == format!("\\{}", tok)
+            || pat_lc.split_whitespace().any(|w| w == tok)
+    }) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
+            rejection_reason: Some(format!("Indicator pattern '{}' conflicts with core protected system binary or service allowlist", pat)),
+        };
+    }
+
+    // Gate 1: Not Novel
+    if KNOWN_IMPLEMENTED_ARXIV_IDS.iter().any(|&id| normalize_base_arxiv_id(id) == base_id) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedNotNovel".to_string()),
+            rejection_reason: Some(format!("Paper arXiv:{} is already implemented in baseline codebase", rule.arxiv_id)),
+        };
+    }
+    if let Some(score) = novelty_delta_score {
+        if score <= 0.0 {
+            return ResearchAcceptanceVerdict {
+                accepted: false,
+                rejection_code: Some("RejectedNotNovel".to_string()),
+                rejection_reason: Some(format!("Novelty delta score ({:.1}) is non-positive", score)),
+            };
+        }
+    }
+    if existing_rules.iter().any(|r| {
+        normalize_base_arxiv_id(&r.arxiv_id) == base_id
+            && r.target_boundary.eq_ignore_ascii_case(&rule.target_boundary)
+            && r.indicator_pattern.trim().eq_ignore_ascii_case(pat)
+    }) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedNotNovel".to_string()),
+            rejection_reason: Some(format!("Research rule for arXiv:{} on boundary '{}' with identical pattern is already enrolled", rule.arxiv_id, rule.target_boundary)),
+        };
+    }
+
+    // Gate 2: Redundant
+    if BUILTIN_STATIC_TOKENS.iter().any(|&tok| pat_lc == tok || pat_lc == format!("/{}", tok)) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedRedundant".to_string()),
+            rejection_reason: Some(format!("Pattern '{}' is purely a single built-in static token already enforced by core breakout guards", pat)),
+        };
+    }
+    if !allow_in_place_update && existing_rules.iter().any(|r| {
+        normalize_base_arxiv_id(&r.arxiv_id) == base_id
+            && r.target_boundary.eq_ignore_ascii_case(&rule.target_boundary)
+    }) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedRedundant".to_string()),
+            rejection_reason: Some(format!("Active registry already covers arXiv:{} on target boundary '{}'", rule.arxiv_id, rule.target_boundary)),
+        };
+    }
+    if existing_rules.iter().any(|r| {
+        let existing_pat = r.indicator_pattern.trim().to_ascii_lowercase();
+        existing_pat == pat_lc && r.rule_id != rule.rule_id && normalize_base_arxiv_id(&r.arxiv_id) != base_id
+    }) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedRedundant".to_string()),
+            rejection_reason: Some(format!("Indicator pattern '{}' overlaps with existing active rule", pat)),
+        };
+    }
+
+    ResearchAcceptanceVerdict {
+        accepted: true,
+        rejection_code: None,
+        rejection_reason: None,
+    }
+}
+
 fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
     let mut rules = vec![
         IngestedResearchDefenseRule {
-            rule_id: "arxiv_2603_02277v3_sandbox_escape_bench".to_string(),
+            rule_id: "ARXIV-DEF-2603.02277".to_string(),
             arxiv_id: "2603.02277v3".to_string(),
             title: "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)"
                 .to_string(),
@@ -1012,12 +1185,12 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             target_boundary: "container_runtime_privilege".to_string(),
             extraction_class: "breakout_vector".to_string(),
             indicator_pattern: "sandboxescapebench".to_string(),
-            cedar_forbid_policy: "@id(\"arxiv_2603_02277v3\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2603.02277v3\" };".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2603.02277\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2603.02277v3\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::breakout_defense".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
         },
         IngestedResearchDefenseRule {
-            rule_id: "arxiv_2604_20496v1_mythos_z3_cage".to_string(),
+            rule_id: "ARXIV-DEF-2604.20496".to_string(),
             arxiv_id: "2604.20496v1".to_string(),
             title: "What Holds Acquisition Back? Formal Z3 Sandbox Verification vs. Mythos-Class Breakouts"
                 .to_string(),
@@ -1026,12 +1199,12 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             target_boundary: "cedar_smt_sandbox_verification".to_string(),
             extraction_class: "defense_countermeasure".to_string(),
             indicator_pattern: "mythos_unverified_cage_bypass".to_string(),
-            cedar_forbid_policy: "@id(\"arxiv_2604_20496v1\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2604.20496v1\" };".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2604.20496\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2604.20496v1\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::cedar_engine".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
         },
         IngestedResearchDefenseRule {
-            rule_id: "arxiv_2610_20437v1_cve_2026_65616".to_string(),
+            rule_id: "ARXIV-DEF-2610.20437".to_string(),
             arxiv_id: "2610.20437v1".to_string(),
             title: "Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)"
                 .to_string(),
@@ -1039,26 +1212,13 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
                 .to_string(),
             target_boundary: "rl_controller_privilege_boundary".to_string(),
             extraction_class: "breakout_vector".to_string(),
-            indicator_pattern: "cve-2026-65616".to_string(),
-            cedar_forbid_policy: "@id(\"arxiv_2610_20437v1_cve\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };".to_string(),
+            indicator_pattern: "cve-2026-65616 | rlhf_privilege_escalation".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2610.20437\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::rl_controller".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
         },
         IngestedResearchDefenseRule {
-            rule_id: "arxiv_2610_20437v1_rlhf_priv_esc".to_string(),
-            arxiv_id: "2610.20437v1".to_string(),
-            title: "Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)"
-                .to_string(),
-            attack_vector: "RLHF reward-hacking privilege escalation trajectory".to_string(),
-            target_boundary: "rl_controller_privilege_boundary".to_string(),
-            extraction_class: "breakout_vector".to_string(),
-            indicator_pattern: "rlhf_privilege_escalation".to_string(),
-            cedar_forbid_policy: "@id(\"arxiv_2610_20437v1_rlhf\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2610.20437v1\" };".to_string(),
-            target_crate: "osoosi-agent-anomaly::rl_controller".to_string(),
-            enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
-        },
-        IngestedResearchDefenseRule {
-            rule_id: "arxiv_2601_11893v1_mac_priv_esc".to_string(),
+            rule_id: "ARXIV-DEF-2601.11893".to_string(),
             arxiv_id: "2601.11893v1".to_string(),
             title: "Mandatory Access Control for Autonomous AI Agents Against Privilege Escalation"
                 .to_string(),
@@ -1067,24 +1227,39 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             target_boundary: "mac_authority_lattice".to_string(),
             extraction_class: "defense_countermeasure".to_string(),
             indicator_pattern: "mac_privilege_escalation_bypass".to_string(),
-            cedar_forbid_policy: "@id(\"arxiv_2601_11893v1\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2601.11893v1\" };".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2601.11893\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2601.11893v1\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::containment_ring".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
         },
     ];
 
-    if let Ok(raw) = std::fs::read_to_string(INGESTED_RESEARCH_DEFENSES_PATH) {
-        if let Ok(persisted) = serde_json::from_str::<Vec<IngestedResearchDefenseRule>>(&raw) {
-            for item in persisted {
-                if let Some(existing) = rules.iter_mut().find(|r| {
-                    r.rule_id == item.rule_id
-                        || (r.arxiv_id == item.arxiv_id && r.attack_vector == item.attack_vector)
-                }) {
-                    *existing = item;
-                } else {
-                    rules.push(item);
+    let paths_to_try = [
+        INGESTED_RESEARCH_DEFENSES_PATH,
+        "crates/osoosi-agent-anomaly/config/ingested_research_defenses.json",
+    ];
+
+    for path in paths_to_try {
+        if let Ok(raw) = std::fs::read_to_string(path) {
+            if let Ok(persisted) = serde_json::from_str::<Vec<IngestedResearchDefenseRule>>(&raw) {
+                for item in persisted {
+                    let item_base = normalize_base_arxiv_id(&item.arxiv_id);
+                    let item_canonical_id = canonical_research_rule_id(&item.arxiv_id);
+                    if let Some(existing) = rules.iter_mut().find(|r| {
+                        r.rule_id == item.rule_id
+                            || r.rule_id == item_canonical_id
+                            || (normalize_base_arxiv_id(&r.arxiv_id) == item_base
+                                && r.target_boundary.eq_ignore_ascii_case(&item.target_boundary))
+                    }) {
+                        *existing = item;
+                        existing.rule_id = item_canonical_id;
+                    } else if rules.len() < MAX_ACTIVE_RESEARCH_RULES {
+                        let mut canonicalized = item;
+                        canonicalized.rule_id = item_canonical_id;
+                        rules.push(canonicalized);
+                    }
                 }
             }
+            break;
         }
     }
 
@@ -1101,18 +1276,30 @@ fn research_defense_registry() -> &'static RwLock<Vec<IngestedResearchDefenseRul
 }
 
 /// Registers or updates an ingested arXiv research defense rule in the live enforcement registry,
+/// deduplicating by normalized base arxiv_id + target_boundary, capping total active rules at
+/// MAX_ACTIVE_RESEARCH_RULES (64) by FIFO-evicting the oldest dynamic rule (preserving pinned 0..4),
 /// persists the updated registry to `config/ingested_research_defenses.json`, and returns the total active rule count.
-pub fn register_ingested_research_rule(rule: IngestedResearchDefenseRule) -> usize {
+pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) -> usize {
+    let item_base = normalize_base_arxiv_id(&rule.arxiv_id);
+    let canonical_id = canonical_research_rule_id(&rule.arxiv_id);
+    rule.rule_id = canonical_id.clone();
+
     let snapshot = {
         let mut guard = research_defense_registry()
             .write()
             .unwrap_or_else(|e| e.into_inner());
+
         if let Some(existing) = guard.iter_mut().find(|r| {
-            r.rule_id == rule.rule_id
-                || (r.arxiv_id == rule.arxiv_id && r.attack_vector == rule.attack_vector)
+            r.rule_id == canonical_id
+                || (normalize_base_arxiv_id(&r.arxiv_id) == item_base
+                    && r.target_boundary.eq_ignore_ascii_case(&rule.target_boundary))
         }) {
             *existing = rule;
         } else {
+            // Capacity bound: max 64 rules. Preserve pinned baseline 0..4
+            if guard.len() >= MAX_ACTIVE_RESEARCH_RULES && guard.len() > 4 {
+                guard.remove(4); // evict oldest dynamic rule
+            }
             guard.push(rule);
         }
         guard.clone()
@@ -1258,23 +1445,27 @@ impl BreakoutDefenseCoordinator {
         }
 
         // 4. Enforce live ingested arXiv security research defense rules (arxiv-langextract + LangGraph Arm 4)
+        // Zero-clone evaluation: inspect research_defense_registry().read() directly by reference without vector clone
         let resource_lc = resource.to_ascii_lowercase();
-        for rule in list_ingested_research_rules() {
-            let pat = rule.indicator_pattern.trim().to_ascii_lowercase();
-            let matched = (pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)))
-                || pat
-                    .split("&&")
-                    .flat_map(|s| s.split(';'))
-                    .map(|s| s.trim())
-                    .filter(|s| s.len() >= 5)
-                    .any(|sub| payload_lc.contains(sub) || resource_lc.contains(sub));
-            if matched {
-                tech_res.is_clean = false;
-                tech_res.sandbox_quarantine_required = true;
-                tech_res.detected_vectors.push(format!(
-                    "[ArXiv-Active-Defense:{}]: Blocked by ingested research rule '{}' ({})",
-                    rule.arxiv_id, rule.rule_id, rule.attack_vector
-                ));
+        if let Ok(rules) = research_defense_registry().read() {
+            for rule in rules.iter() {
+                let pat = rule.indicator_pattern.trim().to_ascii_lowercase();
+                let matched = (pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)))
+                    || pat
+                        .split("&&")
+                        .flat_map(|s| s.split(';'))
+                        .flat_map(|s| s.split('|'))
+                        .map(|s| s.trim())
+                        .filter(|s| s.len() >= 5)
+                        .any(|sub| payload_lc.contains(sub) || resource_lc.contains(sub));
+                if matched {
+                    tech_res.is_clean = false;
+                    tech_res.sandbox_quarantine_required = true;
+                    tech_res.detected_vectors.push(format!(
+                        "[ArXiv-Active-Defense:{}]: Blocked by ingested research rule '{}' ({})",
+                        rule.arxiv_id, rule.rule_id, rule.attack_vector
+                    ));
+                }
             }
         }
 
@@ -1904,7 +2095,7 @@ mod tests {
             enrolled_at_utc: "2026-10-28T22:40:00Z".to_string(),
         };
         let count_after = register_ingested_research_rule(custom_rule);
-        assert!(count_after >= 6);
+        assert!(count_after >= 5);
 
         let dyn_eval = coord.evaluate_action(
             "agent_worker",
@@ -1930,5 +2121,190 @@ mod tests {
         let first = list_ingested_research_rules()[0].clone();
         let after_len = register_ingested_research_rule(first);
         assert_eq!(initial_len, after_len);
+    }
+
+    #[test]
+    fn test_research_rule_deduplication_by_base_arxiv_and_boundary() {
+        let initial_rules = list_ingested_research_rules();
+        let initial_len = initial_rules.len();
+
+        // 1. Updating with versioned vs non-versioned ID on existing boundary must update in-place
+        let duplicate_cand = IngestedResearchDefenseRule {
+            rule_id: "ARXIV-DEF-2603.02277".to_string(),
+            arxiv_id: "arXiv:2603.02277v5".to_string(),
+            title: "Updated Title for SandboxEscapeBench".to_string(),
+            attack_vector: "Updated Docker socket breakout".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "sandboxescapebench_updated".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly::breakout_defense".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let after_len = register_ingested_research_rule(duplicate_cand);
+        assert_eq!(after_len, initial_len, "Rule must be updated in-place without expanding rule count");
+
+        // Verify rule was updated in-place
+        let updated = list_ingested_research_rules()
+            .into_iter()
+            .find(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277")
+            .expect("Updated rule must be present");
+        assert_eq!(updated.indicator_pattern, "sandboxescapebench_updated");
+    }
+
+    #[test]
+    fn test_validate_research_rule_acceptance_three_gates() {
+        let active_rules = list_ingested_research_rules();
+
+        // Gate 3: Conflicts with existing protection
+        // Case A: Missing forbid
+        let bad_policy_rule = IngestedResearchDefenseRule {
+            rule_id: "test_bad_pol".to_string(),
+            arxiv_id: "2699.11111".to_string(),
+            title: "Bad Policy".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "test_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "safe_pattern_123".to_string(),
+            cedar_forbid_policy: "permit(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&bad_policy_rule, Some(80.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedConflictsWithExistingProtection"));
+
+        // Case B: Pattern < 6 chars
+        let short_pat_rule = IngestedResearchDefenseRule {
+            rule_id: "test_short".to_string(),
+            arxiv_id: "2699.22222".to_string(),
+            title: "Short".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "test_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "tiny".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&short_pat_rule, Some(80.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedConflictsWithExistingProtection"));
+
+        // Case C: Protected token conflict (powershell.exe)
+        let conflict_rule = IngestedResearchDefenseRule {
+            rule_id: "test_conflict".to_string(),
+            arxiv_id: "2699.33333".to_string(),
+            title: "Conflict".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "test_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "powershell.exe".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&conflict_rule, Some(80.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedConflictsWithExistingProtection"));
+
+        // Gate 1: Not Novel
+        // Case A: Known implemented baseline ID
+        let known_rule = IngestedResearchDefenseRule {
+            rule_id: "test_known".to_string(),
+            arxiv_id: "arXiv:2610.09167v1".to_string(),
+            title: "Known Paper".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "novel_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "novel_indicator_pattern_xyz".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&known_rule, Some(90.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedNotNovel"));
+
+        // Case B: Non-positive novelty score
+        let non_novel_score_rule = IngestedResearchDefenseRule {
+            rule_id: "test_score".to_string(),
+            arxiv_id: "2699.44444".to_string(),
+            title: "Score".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "novel_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "novel_indicator_pattern_abc".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&non_novel_score_rule, Some(0.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedNotNovel"));
+
+        // Gate 2: Redundant
+        // Case A: Built-in static token
+        let builtin_rule = IngestedResearchDefenseRule {
+            rule_id: "test_builtin".to_string(),
+            arxiv_id: "2699.55555".to_string(),
+            title: "Builtin".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "novel_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "docker.sock".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&builtin_rule, Some(85.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedRedundant"));
+
+        // Case B: Overlapping boundary without allow_in_place_update
+        let covered_rule = IngestedResearchDefenseRule {
+            rule_id: "test_cov".to_string(),
+            arxiv_id: "2604.20496v1".to_string(),
+            title: "Already Covered".to_string(),
+            attack_vector: "Vector".to_string(),
+            target_boundary: "cedar_smt_sandbox_verification".to_string(),
+            extraction_class: "defense_countermeasure".to_string(),
+            indicator_pattern: "brand_new_pattern_123".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+        };
+        let v = validate_research_rule_acceptance(&covered_rule, Some(85.0), &active_rules, false);
+        assert!(!v.accepted);
+        assert_eq!(v.rejection_code.as_deref(), Some("RejectedRedundant"));
+    }
+
+    #[test]
+    fn test_bounded_capacity_max_64_rules() {
+        for i in 0..70 {
+            let rule = IngestedResearchDefenseRule {
+                rule_id: format!("ARXIV-DEF-2699.{:05}", i),
+                arxiv_id: format!("2699.{:05}v1", i),
+                title: format!("Dynamic Capacity Test Rule {}", i),
+                attack_vector: format!("Vector {}", i),
+                target_boundary: format!("boundary_{}", i),
+                extraction_class: "breakout_vector".to_string(),
+                indicator_pattern: format!("dynamic_test_pattern_{:05}", i),
+                cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+                target_crate: "osoosi-agent-anomaly".to_string(),
+                enrolled_at_utc: "2026-10-29T00:00:00Z".to_string(),
+            };
+            let count = register_ingested_research_rule(rule);
+            assert!(count <= MAX_ACTIVE_RESEARCH_RULES, "Rules count must never exceed MAX_ACTIVE_RESEARCH_RULES (64)");
+        }
+
+        let all_rules = list_ingested_research_rules();
+        assert_eq!(all_rules.len(), MAX_ACTIVE_RESEARCH_RULES);
+
+        // Verify that the 4 pinned baseline rules remain present
+        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277"));
+        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2604.20496"));
+        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2610.20437"));
+        assert!(all_rules.iter().any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2601.11893"));
     }
 }

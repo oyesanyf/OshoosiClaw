@@ -48,6 +48,29 @@ pub static DYNAMIC_ENROLLED_ARXIV_IDS: Lazy<RwLock<Vec<String>>> =
 pub static SYNTHESIZED_CEDAR_POLICIES: Lazy<RwLock<Vec<String>>> =
     Lazy::new(|| RwLock::new(Vec::new()));
 
+/// Maximum active conformal sources enrolled in Persist-3 (Section 3.6 cap).
+pub const MAX_CONFORMAL_SOURCES_K: usize = 32;
+
+/// Maximum candidate research rules staged in the operator approval queue.
+pub const MAX_PENDING_APPROVAL_QUEUE: usize = 50;
+
+/// Maximum dynamically synthesized Cedar forbid policies.
+pub const MAX_SYNTHESIZED_CEDAR_POLICIES: usize = 64;
+
+/// Maximum dynamically enrolled novel arXiv IDs.
+pub const MAX_DYNAMIC_ENROLLED_ARXIV_IDS: usize = 64;
+
+/// Trims the pending research approvals queue by pruning decided items first, then FIFO evicting oldest.
+pub fn trim_pending_research_queue(q: &mut Vec<PendingResearchApprovalItem>) {
+    if q.len() <= MAX_PENDING_APPROVAL_QUEUE {
+        return;
+    }
+    q.retain(|item| item.status == "pending_approval");
+    while q.len() > MAX_PENDING_APPROVAL_QUEUE {
+        q.remove(0);
+    }
+}
+
 /// Human-in-the-Loop (HITL) operator approval queue for discovered arXiv research rules & conformal calibrations.
 pub static PENDING_RESEARCH_APPROVALS: Lazy<RwLock<Vec<PendingResearchApprovalItem>>> =
     Lazy::new(|| RwLock::new(Vec::new()));
@@ -68,6 +91,10 @@ pub struct PendingResearchApprovalItem {
     pub status: String,
     pub created_at_utc: String,
     pub decided_at_utc: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rejection_reason: Option<String>,
 }
 
 /// Request to search arXiv / LangExtract and stage novel findings for operator approval.
@@ -118,6 +145,8 @@ pub struct ResearchApprovalDecisionResponse {
     pub conformal_sources_enrolled_k: usize,
     pub updated_items: Vec<PendingResearchApprovalItem>,
     pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_verdict: Option<osoosi_agent_anomaly::breakout_defense::ResearchAcceptanceVerdict>,
 }
 
 /// Individual extraction item extracted from research papers.
@@ -734,11 +763,7 @@ pub fn build_ingested_research_rule(
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| default_arxiv_id.to_string());
     let category = classify_probe_category(item);
-    let clean_id = normalize_arxiv_id(&arxiv_id)
-        .replace('.', "_")
-        .replace('-', "_")
-        .replace('/', "_");
-    let rule_id = format!("arxiv_{}_{}", clean_id, category.as_str());
+    let rule_id = osoosi_agent_anomaly::breakout_defense::canonical_research_rule_id(&arxiv_id);
     let indicator = item
         .source_quote
         .as_deref()
@@ -1401,6 +1426,14 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                     for item in &grounded_extractions {
                         let probe_res = execute_live_regression_probe(item);
                         let built = build_ingested_research_rule(item, &fallback_id, None);
+                        let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
+                        let verdict = osoosi_agent_anomaly::breakout_defense::validate_research_rule_acceptance(
+                            &built,
+                            item.novelty_delta_score,
+                            &active_rules,
+                            false,
+                        );
+
                         let approval_item = PendingResearchApprovalItem {
                             approval_id: format!("appr_{}_{}", built.rule_id, uuid::Uuid::new_v4().simple()),
                             arxiv_id: built.arxiv_id.clone(),
@@ -1412,16 +1445,32 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                             cedar_forbid_policy: built.cedar_forbid_policy.clone(),
                             target_crate: built.target_crate.clone(),
                             live_probe_result: probe_res,
-                            status: "pending_approval".to_string(),
+                            status: if verdict.accepted {
+                                "pending_approval".to_string()
+                            } else {
+                                "rejected".to_string()
+                            },
                             created_at_utc: chrono::Utc::now().to_rfc3339(),
-                            decided_at_utc: None,
+                            decided_at_utc: if !verdict.accepted {
+                                Some(chrono::Utc::now().to_rfc3339())
+                            } else {
+                                None
+                            },
+                            rejection_code: verdict.rejection_code,
+                            rejection_reason: verdict.rejection_reason,
                         };
                         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
-                            if let Some(existing) = q.iter_mut().find(|p| p.arxiv_id == approval_item.arxiv_id && p.attack_vector == approval_item.attack_vector && p.status == "pending_approval") {
+                            let item_base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&approval_item.arxiv_id);
+                            if let Some(existing) = q.iter_mut().find(|p| {
+                                osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&p.arxiv_id) == item_base
+                                    && p.target_boundary.eq_ignore_ascii_case(&approval_item.target_boundary)
+                                    && p.status == "pending_approval"
+                            }) {
                                 *existing = approval_item.clone();
                             } else {
                                 q.push(approval_item.clone());
                             }
+                            trim_pending_research_queue(&mut q);
                         }
                         pending_approvals_staged.push(approval_item);
                     }
@@ -1831,9 +1880,17 @@ pub fn search_and_stage_research_for_approval(req: ResearchSearchRequest) -> Res
         .clone()
         .unwrap_or_else(|| "LLM agent container sandbox escape prompt injection".to_string());
     let mut candidate_items = Vec::new();
+    let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
+    let is_already_active = |aid: &str, boundary: &str| -> bool {
+        let base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(aid);
+        active_rules.iter().any(|r| {
+            osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == base
+                && r.target_boundary.eq_ignore_ascii_case(boundary)
+        })
+    };
 
     if let Some(ref aid) = req.arxiv_id {
-        if !is_already_implemented(aid) {
+        if !is_already_implemented(aid) && !is_already_active(aid, "container_runtime_privilege") {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some(aid.clone()),
                 title: Some(format!("Discovered arXiv Security Research {}", aid)),
@@ -1848,30 +1905,46 @@ pub fn search_and_stage_research_for_approval(req: ResearchSearchRequest) -> Res
             });
         }
     } else {
-        candidate_items.push(ResearchExtractionItem {
-            arxiv_id: Some("2603.02277v3".to_string()),
-            title: Some("SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)".to_string()),
-            extraction_class: Some("breakout_vector".to_string()),
-            attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)".to_string(),
-            target_boundary: "container_runtime_privilege".to_string(),
-            source_char_start: Some(12),
-            source_char_end: Some(84),
-            source_quote: Some("sandboxescapebench_container_escape_probe".to_string()),
-            novelty_delta_score: Some(92.5),
-            ..Default::default()
-        });
-        candidate_items.push(ResearchExtractionItem {
-            arxiv_id: Some("2610.20437v1".to_string()),
-            title: Some("Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)".to_string()),
-            extraction_class: Some("breakout_vector".to_string()),
-            attack_vector: "CVE-2026-65616 RLHF replay buffer poisoning and privilege escalation".to_string(),
-            target_boundary: "rl_controller_privilege_boundary".to_string(),
-            source_char_start: Some(24),
-            source_char_end: Some(96),
-            source_quote: Some("cve-2026-65616_rlhf_privilege_escalation".to_string()),
-            novelty_delta_score: Some(94.0),
-            ..Default::default()
-        });
+        if !is_already_active("2603.02277v3", "container_runtime_privilege") {
+            candidate_items.push(ResearchExtractionItem {
+                arxiv_id: Some("2603.02277v3".to_string()),
+                title: Some("SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)".to_string()),
+                extraction_class: Some("breakout_vector".to_string()),
+                attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)".to_string(),
+                target_boundary: "container_runtime_privilege".to_string(),
+                source_char_start: Some(12),
+                source_char_end: Some(84),
+                source_quote: Some("sandboxescapebench_container_escape_probe".to_string()),
+                novelty_delta_score: Some(92.5),
+                ..Default::default()
+            });
+        }
+        if !is_already_active("2610.20437v1", "rl_controller_privilege_boundary") {
+            candidate_items.push(ResearchExtractionItem {
+                arxiv_id: Some("2610.20437v1".to_string()),
+                title: Some("Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)".to_string()),
+                extraction_class: Some("breakout_vector".to_string()),
+                attack_vector: "CVE-2026-65616 RLHF replay buffer poisoning and privilege escalation".to_string(),
+                target_boundary: "rl_controller_privilege_boundary".to_string(),
+                source_char_start: Some(24),
+                source_char_end: Some(96),
+                source_quote: Some("cve-2026-65616_rlhf_privilege_escalation".to_string()),
+                novelty_delta_score: Some(94.0),
+                ..Default::default()
+            });
+        }
+    }
+
+    if candidate_items.is_empty() {
+        return ResearchSearchResponse {
+            success: true,
+            query,
+            discovered_count: 0,
+            staged_for_approval_count: 0,
+            pending_approvals: list_pending_research_approvals(),
+            message: "All discovered arXiv security research papers are already actively enforced in BreakoutDefenseCoordinator with matching target boundaries (0 duplicates staged).".to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        };
     }
 
     let swarm_resp = execute_langgraph_research_swarm(LangGraphSwarmRequest {
@@ -1919,22 +1992,28 @@ pub fn approve_pending_research_item(
     let target_id = req.approval_id.as_deref().unwrap_or("");
     let now_str = chrono::Utc::now().to_rfc3339();
     let mut updated_items = Vec::new();
+    let mut last_verdict = None;
 
     if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
         for item in q.iter_mut() {
-            if item.status == "pending_approval"
-                && (approve_all || item.approval_id == target_id || item.arxiv_id == target_id)
-            {
+            let item_base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&item.arxiv_id);
+            let target_base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(target_id);
+            let id_match = item.approval_id == target_id
+                || item.arxiv_id == target_id
+                || (!target_base.is_empty() && item_base == target_base);
+            if item.status == "pending_approval" && (approve_all || id_match) {
                 item.status = "approved_and_enforced".to_string();
                 item.decided_at_utc = Some(now_str.clone());
                 updated_items.push(item.clone());
             }
         }
+        trim_pending_research_queue(&mut q);
     }
 
     for approved in &updated_items {
+        let canonical_id = osoosi_agent_anomaly::breakout_defense::canonical_research_rule_id(&approved.arxiv_id);
         let rule = osoosi_agent_anomaly::IngestedResearchDefenseRule {
-            rule_id: approved.approval_id.clone(),
+            rule_id: canonical_id,
             arxiv_id: approved.arxiv_id.clone(),
             title: approved.title.clone(),
             attack_vector: approved.attack_vector.clone(),
@@ -1945,10 +2024,31 @@ pub fn approve_pending_research_item(
             target_crate: approved.target_crate.clone(),
             enrolled_at_utc: now_str.clone(),
         };
+
+        let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
+        let verdict = osoosi_agent_anomaly::breakout_defense::validate_research_rule_acceptance(
+            &rule,
+            Some(88.0),
+            &active_rules,
+            true, // Allow updating existing canonical rule in-place
+        );
+        last_verdict = Some(verdict.clone());
+
+        if !verdict.accepted {
+            tracing::warn!(
+                "Approval rejected by 3-gate validator for arXiv:{} (code: {:?}, reason: {:?})",
+                approved.arxiv_id, verdict.rejection_code, verdict.rejection_reason
+            );
+            continue;
+        }
+
         osoosi_agent_anomaly::register_ingested_research_rule(rule);
 
         if let Ok(mut global_policies) = SYNTHESIZED_CEDAR_POLICIES.write() {
             if !global_policies.contains(&approved.cedar_forbid_policy) {
+                if global_policies.len() >= MAX_SYNTHESIZED_CEDAR_POLICIES {
+                    global_policies.remove(0);
+                }
                 global_policies.push(approved.cedar_forbid_policy.clone());
             }
         }
@@ -1969,6 +2069,13 @@ pub fn approve_pending_research_item(
                 .iter()
                 .any(|s| s.name.contains(&clean_arxiv_id))
             {
+                // Bounded capacity: cap at MAX_CONFORMAL_SOURCES_K (32), evict index 11 (oldest dynamic)
+                if mon.calibration.sources.len() >= MAX_CONFORMAL_SOURCES_K && mon.calibration.sources.len() > 11 {
+                    let mut cal = mon.calibration.clone();
+                    cal.sources.remove(11);
+                    let tau = mon.tau;
+                    *mon = osoosi_behavioral::PersistDetector::persist_3(cal, tau);
+                }
                 let next_k = mon.calibration.sources.len() + 1;
                 let src_name = format!("Source_{}_arXiv_{}", next_k, clean_arxiv_id);
                 let _ = mon.enroll_detected_source_vecs(&src_name, &train_rows, &cal_rows);
@@ -1978,6 +2085,9 @@ pub fn approve_pending_research_item(
         if let Ok(mut enrolled_ids) = DYNAMIC_ENROLLED_ARXIV_IDS.write() {
             let norm_id = normalize_arxiv_id(&approved.arxiv_id);
             if !enrolled_ids.contains(&norm_id) {
+                if enrolled_ids.len() >= MAX_DYNAMIC_ENROLLED_ARXIV_IDS {
+                    enrolled_ids.remove(0);
+                }
                 enrolled_ids.push(norm_id);
             }
         }
@@ -1997,6 +2107,7 @@ pub fn approve_pending_research_item(
         conformal_sources_enrolled_k: conformal_k,
         updated_items,
         timestamp: now_str,
+        acceptance_verdict: last_verdict,
     }
 }
 
@@ -2019,6 +2130,7 @@ pub fn reject_pending_research_item(
                 updated_items.push(item.clone());
             }
         }
+        trim_pending_research_queue(&mut q);
     }
 
     let conformal_k = GLOBAL_CONFORMAL_MONITOR
@@ -2035,7 +2147,32 @@ pub fn reject_pending_research_item(
         conformal_sources_enrolled_k: conformal_k,
         updated_items,
         timestamp: now_str,
+        acceptance_verdict: None,
     }
+}
+
+/// Request to validate an arXiv research defense rule against the 3-gate validator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchValidateRequest {
+    pub rule: osoosi_agent_anomaly::IngestedResearchDefenseRule,
+    #[serde(default)]
+    pub novelty_delta_score: Option<f64>,
+    #[serde(default)]
+    pub allow_in_place_update: Option<bool>,
+}
+
+/// POST /api/research/validate and /research/validate
+pub async fn post_research_validate(
+    Json(payload): Json<ResearchValidateRequest>,
+) -> Json<osoosi_agent_anomaly::breakout_defense::ResearchAcceptanceVerdict> {
+    let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
+    let verdict = osoosi_agent_anomaly::breakout_defense::validate_research_rule_acceptance(
+        &payload.rule,
+        payload.novelty_delta_score,
+        &active_rules,
+        payload.allow_in_place_update.unwrap_or(false),
+    );
+    Json(verdict)
 }
 
 /// POST /api/research/search and /research/search
@@ -2084,6 +2221,8 @@ pub fn routes() -> Router<DashboardState> {
         .route("/research/approve", post(post_research_approve))
         .route("/api/research/reject", post(post_research_reject))
         .route("/research/reject", post(post_research_reject))
+        .route("/api/research/validate", post(post_research_validate))
+        .route("/research/validate", post(post_research_validate))
         .route("/research/status", get(get_research_status))
         .route("/api/research/ingest", post(post_research_ingest))
         .route("/research/ingest", post(post_research_ingest))
@@ -2532,5 +2671,110 @@ mod tests {
         );
         assert_eq!(early_resp.edge_transitions.len(), 2);
         assert_eq!(early_resp.recursion_steps_used, 1);
+    }
+
+    #[test]
+    fn test_search_and_stage_deduplication_does_not_restage_active_papers() {
+        let resp = search_and_stage_research_for_approval(ResearchSearchRequest {
+            query: Some("LLM agent container sandbox escape".to_string()),
+            arxiv_id: None,
+            max_results: Some(5),
+            min_score: Some(60.0),
+            require_user_approval: Some(true),
+        });
+        assert!(resp.success);
+        assert_eq!(resp.staged_for_approval_count, 0, "Already active papers must not be re-staged as duplicates");
+    }
+
+    #[test]
+    fn test_approve_pending_research_canonicalizes_rule_id_and_deduplicates() {
+        let test_aid = "2609.99888";
+        let canonical_id = format!("ARXIV-DEF-{}", test_aid);
+
+        let staged = PendingResearchApprovalItem {
+            approval_id: "appr_custom_id_12345".to_string(),
+            arxiv_id: format!("{}v2", test_aid),
+            title: "Test Novel Escape Bench".to_string(),
+            attack_vector: "Container breakout vector".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "novel_custom_indicator_marker_99888".to_string(),
+            cedar_forbid_policy: format!("@id(\"{}\")\nforbid(principal, action, resource);", canonical_id),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            live_probe_result: LiveRegressionProbeResult {
+                probe_id: "test".to_string(),
+                probe_category: "container".to_string(),
+                synthetic_attack_input: "test".to_string(),
+                live_probe_executed: true,
+                live_probe_blocked: true,
+                gate_verdict: "blocked".to_string(),
+                execution_latency_us: 10,
+            },
+            status: "pending_approval".to_string(),
+            created_at_utc: chrono::Utc::now().to_rfc3339(),
+            decided_at_utc: None,
+            rejection_code: None,
+            rejection_reason: None,
+        };
+
+        if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+            q.push(staged.clone());
+        }
+
+        let resp = approve_pending_research_item(ResearchApprovalDecisionRequest {
+            approval_id: Some(staged.approval_id.clone()),
+            approve_all: Some(false),
+            reject_all: Some(false),
+        });
+        assert!(resp.success);
+
+        // Check active rules: rule_id must be canonicalized to ARXIV-DEF-2609.99888
+        let active = osoosi_agent_anomaly::list_ingested_research_rules();
+        let rule = active.iter().find(|r| osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == test_aid);
+        assert!(rule.is_some(), "Approved rule must be in active rules");
+        assert_eq!(rule.unwrap().rule_id, canonical_id, "Rule ID must be canonicalized to ARXIV-DEF-<base_arxiv_id>");
+
+        // Approving again with a different approval_id or version must update in-place, NOT duplicate
+        let staged_again = PendingResearchApprovalItem {
+            approval_id: "appr_different_id_67890".to_string(),
+            arxiv_id: format!("{}v3", test_aid),
+            title: "Updated Title for Escape Bench".to_string(),
+            attack_vector: "Updated breakout vector".to_string(),
+            target_boundary: "container_runtime_privilege".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "novel_custom_indicator_marker_99888_v3".to_string(),
+            cedar_forbid_policy: format!("@id(\"{}\")\nforbid(principal, action, resource);", canonical_id),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            live_probe_result: LiveRegressionProbeResult {
+                probe_id: "test2".to_string(),
+                probe_category: "container".to_string(),
+                synthetic_attack_input: "test".to_string(),
+                live_probe_executed: true,
+                live_probe_blocked: true,
+                gate_verdict: "blocked".to_string(),
+                execution_latency_us: 10,
+            },
+            status: "pending_approval".to_string(),
+            created_at_utc: chrono::Utc::now().to_rfc3339(),
+            decided_at_utc: None,
+            rejection_code: None,
+            rejection_reason: None,
+        };
+
+        if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
+            q.push(staged_again.clone());
+        }
+
+        let resp2 = approve_pending_research_item(ResearchApprovalDecisionRequest {
+            approval_id: Some(staged_again.approval_id.clone()),
+            approve_all: Some(false),
+            reject_all: Some(false),
+        });
+        assert!(resp2.success);
+
+        // Count of matching rules must be exactly 1!
+        let active2 = osoosi_agent_anomaly::list_ingested_research_rules();
+        let matching_count = active2.iter().filter(|r| osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(&r.arxiv_id) == test_aid).count();
+        assert_eq!(matching_count, 1, "There must be exactly 1 canonical rule in active registry, zero duplicate rows");
     }
 }

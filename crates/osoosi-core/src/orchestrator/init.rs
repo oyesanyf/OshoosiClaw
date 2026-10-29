@@ -1118,9 +1118,23 @@ impl EdrOrchestrator {
         self.policy
             .add_voter(Box::new(crate::rea::OpenJevVoter::new()))
             .await;
+        self.policy
+            .add_voter(Box::new(crate::voters::BehavioralProcessLineageVoter::new(
+                self.behavioral_analyzer.clone(),
+                self.agent_anomaly_detector.classifier.clone(),
+                crate::causal_graph::global_causal_security_graph(),
+                self.adaptive.clone(),
+            )))
+            .await;
+        self.policy
+            .add_voter(Box::new(crate::voters::ClefDecisionVoter::new(
+                self.decision_engine.clone(),
+                self.adaptive.clone(),
+            )))
+            .await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
-            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter + PhaseLockAttractorVoter + DualChannelDiscriminationVoter + REA-Voter + OpenJEV-Voter)"
+            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter + PhaseLockAttractorVoter + DualChannelDiscriminationVoter + REA-Voter + OpenJEV-Voter + Behavioral-Process-Lineage + Clef-Decision-Model)"
         );
     }
 
@@ -1338,6 +1352,13 @@ impl EdrOrchestrator {
                     else {
                         continue;
                     };
+
+                    // Execute autotomy severance after multi-voter consensus confirms threat
+                    aad_orch
+                        .agent_anomaly_detector
+                        .containment_ring
+                        .sever_rogue_agent_branch(&finding.agent_id, &finding.rationale, None)
+                        .await;
 
                     let _ = aad_orch.memory.log_threat(&threat_sig);
                     aad_orch.record_gossip_threat(&threat_sig, "AGENT_BREAKOUT_ISOLATED");

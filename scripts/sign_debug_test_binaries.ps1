@@ -14,15 +14,10 @@ if (-not (Test-Path $signtool)) {
 Write-Host "[WDAC] Fast Signing unsigned test binaries and dependencies..."
 
 $targets = @()
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_wire-*.exe" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_core-*.exe" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_policy-*.exe" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_agent_anomaly-*.exe" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "osoosi_dashboard-*.exe" -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\deps" -Filter "*.dll" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "dlp_lineage_*.exe" -ErrorAction SilentlyContinue
-$targets += Get-ChildItem -Path "target\debug\deps" -Filter "m3_*.exe" -ErrorAction SilentlyContinue
 $targets += Get-ChildItem -Path "target\debug\build" -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue
+$targets += Get-ChildItem -Path "target\debug\build" -Filter "*.dll" -Recurse -ErrorAction SilentlyContinue
 
 $signedCount = 0
 foreach ($f in $targets) {

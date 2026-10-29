@@ -190,11 +190,57 @@ jobs:
           path: dist-linux-arm64/*
           if-no-files-found: warn
 
+  # ── macOS Native Build & Multi-Format Packaging (.pkg, .app.tar.gz, .tar.gz) ──
+  build-macos:
+    name: macOS Apple Silicon & Universal Packages
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
+        with:
+          key: macos-universal
+
+      - name: Build release (osoosi-cli macOS arm64 & x86_64)
+        run: |
+          cargo build --release -p osoosi-cli --target aarch64-apple-darwin
+          cargo build --release -p osoosi-cli --target x86_64-apple-darwin || true
+          mkdir -p target/release
+          if [ -f target/x86_64-apple-darwin/release/osoosi ]; then
+            lipo -create -output target/release/osoosi target/aarch64-apple-darwin/release/osoosi target/x86_64-apple-darwin/release/osoosi
+          else
+            cp target/aarch64-apple-darwin/release/osoosi target/release/osoosi
+          fi
+
+      - name: Package macOS artifacts (.pkg, .app.tar.gz, .tar.gz)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then VERSION="1.2.0"; fi
+          bash packaging/macos/build_packages.sh target/release/osoosi "${VERSION}" universal dist-macos
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: osoosi-macos-packages
+          path: dist-macos/*
+          if-no-files-found: error
+
   # ── SLSA Provenance Attestation & Cryptographic GitHub Release ───────────────
   release:
     name: Generate SLSA Build Provenance, GPG Sign & GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-windows, build-linux-x64]
+    needs: [build-windows, build-linux-x64, build-macos]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -219,8 +265,9 @@ jobs:
       - name: Stage Release Assets
         run: |
           mkdir -p release_assets
-          find dist/ -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.rpm" -o -name "*.exe" -o -name "*.msi" -o -name "osoosi" \) -exec cp {} release_assets/ \;
+          find dist/ -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.rpm" -o -name "*.pkg" -o -name "*.exe" -o -name "*.msi" -o -name "osoosi*" \) -exec cp {} release_assets/ \;
           cp packaging/linux/osoosi-edr.service release_assets/
+          if [ -f packaging/macos/dev.oshoosiclaw.edr.plist ]; then cp packaging/macos/dev.oshoosiclaw.edr.plist release_assets/; fi
           if [ -f PUBLIC_KEY.asc ]; then cp PUBLIC_KEY.asc release_assets/; fi
           ls -la release_assets/
 
@@ -235,7 +282,7 @@ jobs:
           gpg --armor --export "$FPR" > release_assets/PUBLIC_KEY.asc
 
           cd release_assets
-          for f in *.msi *.exe *.deb *.rpm *.tar.gz; do
+          for f in *.msi *.exe *.deb *.rpm *.pkg *.tar.gz; do
             [ -f "$f" ] || continue
             echo "Signing $f..."
             gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"

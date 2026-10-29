@@ -1,129 +1,129 @@
-# Project: OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) — Real-Time DLP Data Lineage & Causal Taint Tracking
+# Project: OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) — EDR Voter Consensus Routing, RAPTOR Pentest, Security Remediation & Multi-Platform Packaging
 
 ## Architecture
-OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) implements end-to-end, real-time DLP Data Lineage & Causal Taint Tracking by bridging instrumented AI agents / microservices with uninstrumented native OS processes (`7z.exe`, `tar`, `powershell.exe`, `cmd.exe`, browsers) across 5 architectural pillars:
+OpenỌ̀ṣọ́ọ̀sì (`OshoosiClaw`) combines a 7-Ring Continuous Cedar Reference Monitor, Universal REA (Reverse Engineer Anything) voting across all 8 detectors, multi-voter Bayesian consensus pipeline, RAPTOR autonomous penetration testing, GitHub Actions CI health, and automated multi-platform release packaging.
 
-1. **Synthetic OpenTelemetry Producer & Lock-Free In-Memory Taint State Machine (`DashMap`)**:
-   - `crates/osoosi-core/src/dlp_lineage.rs`: High-performance lock-free state machine using `DashMap` with strict lock hygiene (never hold guards across iteration or queries).
-   - Collision-immune process keys `(pid: u32, process_start_time: u64)` and path-independent artifact keys `(device_id: u64, inode_or_file_id: u64)`.
-   - Out-of-process synthetic `SpanContext` generation (`TraceId`, `SpanId`, `SpanFlags::SAMPLED`), custom kernel timestamps, and W3C `Baggage` (`dlp.classification`, `dlp.source_sha256`, `dlp.policy`, `dlp.tainted`).
-   - Strict Lattice Dominance on multi-file merges: Bounded meet-semilattices where strictest classification (`CROWN_JEWEL` > `CONFIDENTIAL` > `INTERNAL` > `PUBLIC`) and policy (`QUARANTINE` > `BLOCK` > `MONITOR`) always win. First tainted file provides the parent `SpanContext`; files 2..N are linked via `Vec<Link>` (`SpanLinks`).
-   - Boundary 1 Mitigation: Anti-"Taint Creep" in long-lived processes (`explorer.exe`, IDEs) with active handle descriptor checks (`osquery` `process_open_files`), TTL decay, and content/fuzzy-hash corroboration on benign log writes.
-   - Boundary 2 Mitigation: Re-encoding, encryption, or screen-capture transforms (`openssl enc`, `7z.exe`, `.png`) propagating causal taint even with 0% hash/ssdeep similarity.
-   - Boundary 3 Mitigation: Out-of-band / cross-host round-trips without headers (new filename & new inode) rehydrated via `SHA-256` and `ssdeep` fuzzy similarity index catalog.
-
-2. **Uninstrumented OS Process/File Correlation via `osquery` (`siquery-rs`) + HAR + Kernel Telemetry**:
-   - In-process `siquery-rs` (`crates/osoosi-agent-anomaly/src/siquery.rs`) 103-table engine with live queries on `processes`, `process_open_files`, `process_open_sockets`, `listening_ports`, and `file_events`.
-   - Continuous kernel telemetry via Windows ETW (`crates/osoosi-telemetry/src/native.rs`: Process, File, Net, DNS providers) and Linux eBPF (`crates/osoosi-telemetry/src/linux_ebpf.rs`: `bprm_check`, `file_open`, `socket_connect`).
-   - Browser sensor & W3C HAR 1.2 traffic inspection (`browser-extension/lib/har-capture.js` and `crates/osoosi-dashboard/src/routes/har_dlp.rs`).
-   - Standardized OTel Resource & Span Attributes storing cryptographic digests (`SHA-256`, `ssdeep`) with ZERO raw PII.
-
-3. **Synchronous Inline Egress Blocking & OpenLineage `RunEvent` LogRecord Export**:
-   - Nanosecond synchronous inline query on `DashMap` taint table on network egress, HAR upload, or clipboard copy. Immediate block before any byte hits the wire if tainted.
-   - Synthetic blocked child span with status `ERROR` and `dlp.action=BLOCKED`.
-   - 100% tail-based sampling for tainted traces, anchored into SQLite and Merkle audit trees.
-   - Structured OpenLineage `RunEvent` (`InputDataset` -> `Job` -> `OutputDataset`) formatted as JSON and attached to correlated OTel `LogRecord` body.
-   - Sub-5ms Axum REST endpoints: `GET /api/dlp/lineage` and `POST /api/dlp/lineage/ingest` in `crates/osoosi-dashboard/src/routes/dlp.rs`.
-
-4. **Clean, Non-Busy Collapsible Data Lineage Section in DLP WebUI (`#dlp`)**:
-   - `dashboard/src/index.html` and `dashboard/src/views/dlp.js`, maintaining byte-for-byte `0 diff` parity with `dashboard/dist/`.
-   - Collapsed-by-default `<details id="dlp-lineage-details">` with a compact 1-line KPI summary bar.
-   - Responsive 3-column expanded view (`InputDataset → Job → OutputDataset/Sink`) with real-time `SpanLinks`, W3C baggage badges, and OpenLineage JSON log preview.
-
-5. **Cross-Repository Synchronization & Documentation**:
-   - Architecture updates and Mermaid diagram in `README.md` verified via `python scripts/validate_readme.py`.
-   - Synchronization to `D:\harfile\AgentOctopus`.
-   - Authenticode signing via native Windows SDK `signtool.exe`, WDSI submission, and zero-wait commits via `scripts/solo_pr_ship.ps1`.
+```
+Candidate Telemetry Across All 8 Detectors
+[Process/ETW, Malware/YARA, HAR/Net, DLP, Agent/Align, CVE/SCA, Memory/Shield, P2P/Mesh]
+                                    │
+                                    ▼
+       [ Universal REA Voter: global_rea_engine().cast_consensus_vote(...) ]
+       (BLAKE3 seal, binary/evidence deconstruction, universal_coverage_snapshot)
+                                    │
+                                    ▼
+   ┌──────────────────────────────────────────────────────────────┐
+   │         Multi-Voter Decision Consensus Pipeline             │
+   │  ┌─────────────────────────┐  ┌───────────────────────────┐  │
+   │  │   ReaVoter / OpenJev    │  │ Clef Decision Model Voter │  │
+   │  │    (Structural/PE/DLP)  │  │  (SystemOne, Strands SLM) │  │
+   │  └─────────────────────────┘  └───────────────────────────┘  │
+   │  ┌─────────────────────────┐  ┌───────────────────────────┐  │
+   │  │ Behavioral Process      │  │ Threat Voters (Static,    │  │
+   │  │ Lineage Voter           │  │  Entropy, Heuristic,      │  │
+   │  │ (ProcessTreeEmbedder,   │  │  AMSI, ETW, Memory)       │  │
+   │  │ CoLog, CausalGraph)     │  │                           │  │
+   │  └─────────────────────────┘  └───────────────────────────┘  │
+   └──────────────────────────────┬───────────────────────────────┘
+                                  │ Consensus Adjudication
+                                  ▼
+               ┌──────────────────────────────────────┐
+               │ Ring 7 Cedar Capability/Effect Gate  │
+               └──────────────────┬───────────────────┘
+                                  │
+                   ┌──────────────┴──────────────┐
+                   ▼                             ▼
+         [ Automated Containment ]        [ Audit & Mesh ]
+         (Process Kill, WFP Block,        (OpenLineage, SQLite,
+          AppContainer Severing)           Nostr/GossipSub Broadcast)
+```
 
 ---
 
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source |
 |---|---------|-------------|-----------|--------|
-| 1 | Lock-Free In-Memory Taint State Machine | `(pid, start_time)` and `(device_id, inode_or_id)` `DashMap` state machine with lock hygiene | M1 | R1, Survey 1 |
-| 2 | Synthetic OpenTelemetry SpanContext Producer | Construct out-of-process spans (`TraceId`, `SpanId`), parent context, and W3C Baggage | M1 | R1, Survey 1 |
-| 3 | Multi-File Merge & Strict Lattice Dominance | First file = parent, files 2..N = `SpanLinks` (`Vec<Link>`), join dominance for classification/policy | M1 | R1, Survey 1 |
-| 4 | Boundary 1 Mitigation (Anti-Taint Creep) | Active descriptor check + TTL decay + content/token corroboration on long-lived process log writes | M1 | Addendum, Survey 1 |
-| 5 | Boundary 2 Mitigation (Encrypted/Encoded Transforms) | Causal taint propagation across zero-similarity transforms (`openssl`, `7z`, `.png`) | M1 | Addendum, Survey 1 |
-| 6 | Boundary 3 Mitigation (Cross-Host Inode Rehydration) | Dual indexing by inode + content digests (SHA-256 + ssdeep) to rehydrate unknown inodes | M1 | Addendum, Survey 1 |
-| 7 | `siquery-rs` Open Files & File Events Correlation | Correlate `process_open_files` and `file_events` with taint state machine | M2 | R2, Survey 2 |
-| 8 | Kernel Telemetry (ETW / eBPF) Ingestion | Wire ProcessCreate, FileRead, FileWrite, and NetworkConnect events into lineage tracker | M2 | R2, Survey 2 |
-| 9 | HAR Web Traffic & Browser DLP Correlation | Correlate multipart uploads, staging files, and URL egress with active taint state | M2 | R2, Survey 2 |
-| 10 | Standardized Zero-PII OTel Attributes | Semantic attributes with cryptographic digests (`SHA-256`, `ssdeep`) and zero raw PII | M2 | R2, Survey 2 |
-| 11 | Synchronous Nanosecond Inline Egress Blocking | Direct `DashMap` check in egress proxy / network interceptor to block unauthorized sinks | M3 | R3, Survey 2 |
-| 12 | Synthetic Blocked Child Span & Tail Sampling | Emit `ERROR` span (`dlp.action=BLOCKED`), retain 100% of tainted traces in SQLite & Merkle tree | M3 | R3, Survey 1 |
-| 13 | OpenLineage `RunEvent` to OTel `LogRecord` | Structured JSON payload in `LogRecord.body` correlated with `TraceId` and `SpanId` | M3 | R3, Survey 3 |
-| 14 | Sub-5ms Lineage REST Endpoints | `GET /api/dlp/lineage` and `POST /api/dlp/lineage/ingest` in `crates/osoosi-dashboard` | M3 | R3, Survey 3 |
-| 15 | Collapsible Data Lineage Section in `#dlp` | Non-busy `<details>` tag with 1-line KPI summary bar and 3-column expanded view | M4 | R4, Survey 3 |
-| 16 | WebUI Zero-Diff Parity Enforcement | Byte-for-byte SHA-256 equality between `dashboard/src/` and `dashboard/dist/` | M4 | R4, Survey 3 |
-| 17 | README.md Mermaid Architecture Diagram | Comprehensive Mermaid diagram compliant with `scripts/validate_readme.py` | M5 | R5, Survey 3 |
-| 18 | Cross-Repo Synchronization to AgentOctopus | Sync containment rings, taint tracking, and lattice dominance to `D:\harfile\AgentOctopus` | M5 | R5, Survey 3 |
-| 19 | Full Test Suite & E2E Verification | Pass all unit/integration tests and verify live endpoints on `http://127.0.0.1:3030` | Final | Acceptance Criteria |
+| 1 | Event 9995 5-Sigma Voter Routing | Route frozen forensic snapshot events through REA and voter consensus before containment | M1 | Survey 1, R2 |
+| 2 | Sysmon Event 10 Shield Routing | Route process access violations through REA and voter consensus instead of immediate block | M1 | Survey 1, R2 |
+| 3 | Behavioral Anomaly Autotomy Routing | Route `AgentAnomalyDetector` findings through voter consensus before branch severing | M1 | Survey 1, R2 |
+| 4 | `already_multi_voter` String Check Fix | Eliminate `aad-` and `dlp_` bypasses in `query.rs:1438` to enforce full voter quorum | M1 | Survey 1, R2 |
+| 5 | `BehavioralProcessLineageVoter` Implementation | Unified `ThreatVoter` combining `ProcessTreeEmbedder` (Candle 128d), `CoLogFilter`, `DynamicAgentClassifier`, and `CausalSecurityGraph` | M1 | Survey 1, R2 |
+| 6 | `ClefDecisionVoter` Implementation | Active `ThreatVoter` wrapping `ClefDecisionEngine` (SystemOne OpenJEV, Strands Decider, Cloudflare, local fallback) | M1 | Survey 1, R2 |
+| 7 | Universal REA Voting Across 8 Detectors | `[REA-Voter]` actively votes across Process/ETW, Malware/YARA, HAR/Net, DLP, Agent/Align, CVE/SCA, Memory/Shield, P2P/Mesh; verify `universal_coverage_snapshot()` | M1 | User Mandate, R2 |
+| 8 | Voter Registration & Classification | Register new voters in `post_init_voters` and map in `classify_vote` with `EvidenceClass::Behavior` | M1 | Survey 1, R2 |
+| 9 | Voter Routing & Consensus Tests | Verify voter consensus routing, active behavioral voting, and 8-detector REA coverage via unit/integration tests and `edr_tester.py` | M1 | Survey 1, R2 |
+| 10 | RAPTOR Scan Execution | Run RAPTOR penetration test (`raptor_scan_project` / `Invoke-RaptorScan.ps1`) with Ollama `foundation-sec-8b` | M2 | Survey 2, R3 |
+| 11 | Security Audit Validation Engine | Apply 5-phase validation protocol (TP vs FP) across Critical, High, Medium, Low, Informational tiers | M2 | Survey 2, R3 |
+| 12 | Findings Ledger & Schema Validation | Record findings in `findings.json` and validate with `validate-findings.cjs` and `validate-coverage-ledger.cjs` | M2 | Survey 2, R3 |
+| 13 | Critical & High Severity Remediation | Surgical fixes at trusted decision points for confirmed RCE, containment defeat, or auth bypass | M3 | Survey 2, R4 |
+| 14 | Medium & Low Severity Remediation | Refactor unhandled panics (`?`/defensive match), constant-time comparisons, and parameterized commands | M3 | Survey 2, R4 |
+| 15 | Informational Remediation & Hygiene | Structured prompt envelopes, sanitized error logging, and defense-in-depth annotations | M3 | Survey 2, R4 |
+| 16 | GitHub Actions Workflow Remediation | Inspect `gh run view 40791535914` and `40791492405`, fix failing workflows in `.github/workflows/` ensuring 100% green CI | M3 | User Directive, R4 |
+| 17 | Full-Stack Regression Verification | Run cargo check, clippy, cargo test, WebUI parity, and `verify_port_3030_e2e.py` | M3 | Survey 2, R4 |
+| 18 | Cross-Repository Synchronization | Synchronize security controls, containment logic, and rules to `D:\harfile\AgentOctopus` | M3 | Survey 2, R4 |
+| 19 | Windows MSI Build, Signing & WDSI Submission | WiX v5 MSI with permanent append-only PATH, native SDK `signtool.exe` signing, and WDSI submission | M4 | Survey 3, R5 |
+| 20 | Linux Packaging & Provenance | Verify `.deb`, `.rpm`, `.tar.gz`, stripped ELF, OpenPGP signatures, and DSSE provenance in `deploy/linux/` | M4 | Survey 3, R5 |
+| 21 | macOS Universal Release Archive | Package `oshoosiclaw-1.2.0-darwin-universal.tar.gz` with `launchd` plist, `install.sh`, and GPG/DSSE attestations in `deploy/macos/` | M4 | Survey 3, R5 |
 
 ---
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Synthetic OTel Producer & Taint State Machine | Features 1–6: `crates/osoosi-core/src/dlp_lineage.rs`, PID/inode keys, lattice dominance, Boundaries 1–3 & unit tests | none | DONE |
-| M2 | osquery, HAR & Kernel Telemetry Correlation | Features 7–10: `siquery-rs` `process_open_files`/`file_events`, ETW/eBPF events, HAR correlation, zero-PII attributes | M1 | DONE |
-| M3 | Inline Egress Blocking & OpenLineage REST API | Features 11–14: Nanosecond blocking in `egress_proxy`, OpenLineage `RunEvent` log records, sub-5ms REST endpoints | M1, M2 | DONE |
-| M4 | Collapsible Data Lineage Section in DLP WebUI | Features 15–16: `<details>` in `dashboard/src/index.html` & `views/dlp.js`, 0-diff parity with `dist/` | M3 | DONE |
-
-| M5 | Cross-Repo Sync & Documentation | Features 17–18: `README.md` Mermaid diagram, `AgentOctopus` lockstep sync, `validate_readme.py` | M1–M4 | PLANNED |
-| M-Final | Full Test Suite & Automated Release Sync | Feature 19: All cargo tests passing, live HTTP verification, Authenticode signing, WDSI submission, PR ship | M1–M5 | PLANNED |
+| M1 | REA & Decision Voter Consensus Routing with Behavioral Engine Voter | Features 1–9: Bypass elimination, `BehavioralProcessLineageVoter`, `ClefDecisionVoter`, universal 8-detector REA voting, `universal_coverage_snapshot()`, `query.rs` refactor, consensus integration tests | none | IN_PROGRESS |
+| M2 | RAPTOR Penetration Testing & Security Audit Validation | Features 10–12: Pre-flight checks, RAPTOR scan across 39 crates, 5-phase audit validation, `findings.json` ledger | M1 | PLANNED |
+| M3 | Comprehensive Vulnerability Remediation, CI Workflow Fix & Code Commit | Features 13–18: 100% remediation of confirmed findings across all severity levels, fix failing GitHub Actions workflows in `.github/workflows/`, zero regressions, AgentOctopus sync, PR ship | M2 | PLANNED |
+| M4 | Multi-Platform Release Artifact Packaging | Features 19–21: Windows MSI signing/WDSI submission, Linux package verification, macOS universal archive & launchd daemon, release sync | M3 | PLANNED |
 
 ---
 
 ## Interface Contracts
 
-### `DlpLineageTracker` (in `crates/osoosi-core/src/dlp_lineage.rs`)
+### `ThreatVoter` Trait (`crates/osoosi-policy/src/engine.rs`)
 ```rust
-pub struct ProcessInstanceKey {
-    pub pid: u32,
-    pub start_time_100ns: u64,
+#[async_trait::async_trait]
+pub trait ThreatVoter: Send + Sync {
+    fn name(&self) -> String;
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult>;
 }
 
-pub struct ArtifactKey {
-    pub device_id: u64,
-    pub inode_or_file_id: u64,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum ClassificationLattice {
-    Public = 0,
-    Internal = 1,
-    Confidential = 2,
-    CrownJewel = 3,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum PolicyLattice {
-    Monitor = 0,
-    Block = 1,
-    Quarantine = 2,
-}
-
-pub struct DlpLineageTracker {
-    pub active_processes: DashMap<ProcessInstanceKey, ProcessTaintRecord>,
-    pub active_artifacts: DashMap<ArtifactKey, ArtifactTaintRecord>,
-    pub content_catalog: DashMap<String, ArtifactTaintRecord>, // keyed by sha256 and ssdeep
-    // ...
+pub struct VoteResult {
+    pub confidence: f32,
+    pub reason: String,
+    pub weight: f32, // Positive = malicious, Negative = certified benign veto
 }
 ```
 
-### REST API Endpoints (in `crates/osoosi-dashboard/src/routes/dlp.rs`)
-- `GET /api/dlp/lineage`: Returns JSON summary of active tainted traces, input datasets, jobs, and output datasets in `< 5ms`.
-- `POST /api/dlp/lineage/ingest`: Accepts OpenLineage `RunEvent` or synthetic taint event JSON, updates state machine, and evaluates synchronous policy.
+### Universal 8-Detector REA Voting Contract
+```rust
+// Casts recorded vote with BLAKE3 seal across all 8 detectors:
+// 1. Process/ETW/CLI
+// 2. Malware/YARA
+// 3. HAR/Network
+// 4. DLP
+// 5. Agent/Alignment
+// 6. CVE/SCA
+// 7. Siquery / Memory / Shield
+// 8. P2P / Nostr Mesh
+pub fn cast_consensus_vote(...) -> Option<VoteResult>;
+pub fn universal_coverage_snapshot() -> CoverageSnapshot; // All 8 detectors > 0
+```
 
 ---
 
 ## Code Layout
-- `crates/osoosi-core/src/dlp_lineage.rs`: Core taint state machine, synthetic OTel producer, lattice dominance, boundary mitigations.
-- `crates/osoosi-core/src/lib.rs`: Re-export `dlp_lineage`.
-- `crates/osoosi-agent-anomaly/src/siquery.rs`: `file_events` schema and `process_open_files` enrichment.
-- `crates/osoosi-dashboard/src/routes/dlp.rs`: `GET /api/dlp/lineage` and `POST /api/dlp/lineage/ingest` routes.
-- `dashboard/src/index.html` & `dashboard/dist/index.html`: Collapsed `<details id="dlp-lineage-details">` section.
-- `dashboard/src/views/dlp.js` & `dashboard/dist/views/dlp.js`: Lineage rendering and polling logic.
-- `README.md`: Architecture diagrams and documentation.
-- `D:\harfile\AgentOctopus`: Cross-repository synchronized security controls.
+- `crates/osoosi-core/src/voters.rs` (or `rea/voters.rs`): `BehavioralProcessLineageVoter`, `ClefDecisionVoter`, `ReaVoter`, `OpenJevVoter`.
+- `crates/osoosi-core/src/rea/`: `global_rea_engine().cast_consensus_vote(...)` across all 8 detectors.
+- `crates/osoosi-core/src/orchestrator/event_pipeline.rs`: Telemetry ingestion, containment gating, consensus adjudication.
+- `crates/osoosi-core/src/orchestrator/query.rs`: `adjudicate_threat_signature_with_rea_and_voters` and multi-voter routing.
+- `crates/osoosi-core/src/orchestrator/init.rs`: `post_init_voters` registration into `PolicyEngine`.
+- `crates/osoosi-agent-anomaly/src/detector.rs`: Anomaly detection and non-premature autotomy emission.
+- `crates/osoosi-policy/src/engine.rs`: `PolicyEngine`, `classify_vote`, consensus aggregation.
+- `scripts/Invoke-RaptorScan.ps1`: Automated RAPTOR pentest execution script.
+- `~/.security-audit-skill/OshoosiClaw/run-4/`: Security audit findings ledger and coverage matrix.
+- `.github/workflows/*.yml`: CI and release workflows.
+- `scripts/build_and_submit.ps1`: Windows release build, WiX v5 packaging, SDK `signtool.exe` signing, and WDSI submission.
+- `packaging/linux/build_packages.sh`: Linux `.deb`, `.rpm`, `.tar.gz`, and standalone ELF build.
+- `packaging/macos/build_packages.sh`: macOS portable archive packaging script.
+- `deploy/windows/`, `deploy/linux/`, `deploy/macos/`: Distribution directories with GPG signatures and DSSE in-toto provenance.
+- `D:\harfile\AgentOctopus`: Cross-repository synchronized codebase.
