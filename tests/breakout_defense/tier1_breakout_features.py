@@ -532,6 +532,122 @@ class TestTier1BreakoutFeatures(unittest.TestCase):
         self.assertFalse(tampered_ok)
         self.assertIn("zeroed", msg)
 
+    def test_r4_tc07_hvci_vbs_hardware_posture_verification_f25(self):
+        """R4.7 / F25: Verify hardware HVCI/VBS verification and automatic Ring 7 sandboxing tightening when KMCI is inactive."""
+        # HVCI active: KMCI enabled, standard confinement
+        ci_on, kmci_on, ium_on, tightened = oracles.evaluate_hvci_vbs_posture_oracle(
+            oracles.CODEINTEGRITY_OPTION_ENABLED
+            | oracles.CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED
+            | oracles.CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED
+        )
+        self.assertTrue(ci_on)
+        self.assertTrue(kmci_on)
+        self.assertTrue(ium_on)
+        self.assertFalse(tightened)
+
+        # HVCI inactive: KMCI disabled -> automatically tighten Ring 7 isolation
+        ci_on2, kmci_on2, _, tightened2 = oracles.evaluate_hvci_vbs_posture_oracle(
+            oracles.CODEINTEGRITY_OPTION_ENABLED
+        )
+        self.assertTrue(ci_on2)
+        self.assertFalse(kmci_on2)
+        self.assertTrue(tightened2)
+
+    def test_r4_tc08_cross_view_dkom_discrepancy_detection_f26(self):
+        """R4.8 / F26: Verify cross-view DKOM differential unmasks rootkit processes unlinked from ActiveProcessLinks."""
+        # Clean matched views
+        active_links = [4, 100, 200, 500]
+        handles = [0, 4, 100, 200, 500]
+        detected_clean, hidden_clean, _ = oracles.detect_cross_view_dkom_discrepancy_oracle(active_links, handles)
+        self.assertFalse(detected_clean)
+        self.assertEqual(len(hidden_clean), 0)
+
+        # Rootkit unlinks malicious process (PID 31337) from ActiveProcessLinks
+        rootkit_handles = [0, 4, 100, 200, 500, 31337]
+        detected_rootkit, hidden_pids, reason = oracles.detect_cross_view_dkom_discrepancy_oracle(active_links, rootkit_handles)
+        self.assertTrue(detected_rootkit)
+        self.assertEqual(hidden_pids, [31337])
+        self.assertIn("DKOM_HIDDEN_PROCESS_DETECTED", reason)
+
+    def test_r4_tc09_wald_sprt_kernel_callback_sensor_blinding_detection_f26(self):
+        """R4.9 / F26: Verify constant-time O(1) Wald SPRT sensor detects callback starvation and rootkit blinding."""
+        monitor = oracles.KernelSprtCallbackMonitorOracle(
+            expected_interval_ms=50.0,
+            anomaly_interval_ms=500.0,
+            alpha=0.001,
+            beta=0.01,
+        )
+
+        # Nominal 45ms inter-arrival times: stay nominal
+        for _ in range(5):
+            st = monitor.observe_interval_ms(45.0)
+            self.assertNotEqual(st, "CallbackBlindingOrRootkitDetected")
+
+        # Callback starvation: rootkit unlinks or suppresses callbacks -> 800ms intervals
+        blinding_detected = False
+        for _ in range(8):
+            if monitor.observe_interval_ms(800.0) == "CallbackBlindingOrRootkitDetected":
+                blinding_detected = True
+                break
+
+        self.assertTrue(blinding_detected, "SPRT must flag callback starvation within bounded samples")
+
+    def test_r4_tc10_tpm_pcr_ratchet_and_dead_mans_switch_f32(self):
+        """R4.10 / F32: Verify TPM 2.0 PCR-bound heartbeat ratcheting and P2P mesh dead-man's switch absence quarantine."""
+        now = 1700000000
+        initial_pcr = hashlib.sha256(b"GENESIS_PCR").digest()
+        genesis = oracles.TpmPcrHeartbeatRatchetOracle(epoch=1, pcr_digest=initial_pcr, timestamp_utc=now)
+
+        # Advance ratchet to epoch 2
+        step2 = genesis.advance(nonce=b"nonce_1", state_digest=hashlib.sha256(b"state_1").digest(), timestamp_utc=now + 1)
+        self.assertEqual(step2.epoch, 2)
+        self.assertNotEqual(step2.pcr_digest, initial_pcr)
+
+        # Peer dead-man's switch
+        switch = oracles.P2pMeshDeadMansSwitchOracle(heartbeat_interval_ms=1000, max_tolerance_intervals=3)
+        res1 = switch.ingest_heartbeat(genesis, now)
+        self.assertEqual(res1, "Nominal")
+        self.assertEqual(switch.evaluate_dead_man_switch(now), "Nominal")
+
+        # Stale replay attempt (epoch not monotonic) -> CryptographicRatchetTamperDetected
+        res_tamper = switch.ingest_heartbeat(genesis, now + 1)
+        self.assertEqual(res_tamper, "CryptographicRatchetTamperDetected")
+
+        # Valid step2
+        res2 = switch.ingest_heartbeat(step2, now + 1)
+        self.assertEqual(res2, "Nominal")
+
+        # Heartbeat silence: advance time beyond 3 intervals (3000ms = 3s)
+        quarantine_status = switch.evaluate_dead_man_switch(now + 6)
+        self.assertEqual(quarantine_status, "AbsenceQuarantineDeadManTriggered")
+
+    def test_r4_tc11_preload_static_driver_analysis_and_ioctl_sink_detection_f32(self):
+        """R4.11 / F32: Verify pre-load static driver analysis detects arbitrary read/write IOCTL sinks and WRMSR instructions."""
+        # 1. Clean driver PE
+        clean_pe = b"MZ" + b"\x00" * 0x3A + b"\x80\x00\x00\x00" + b"\x00" * 0x40 + b"PE\x00\x00" + b"CleanDriverContent"
+        verdict, is_vuln, _ = oracles.analyze_driver_pe_oracle(clean_pe, "C:\\drivers\\safe.sys")
+        self.assertEqual(verdict, "Permit")
+        self.assertFalse(is_vuln)
+
+        # 2. Driver importing arbitrary physical memory mapping (MmMapIoSpace)
+        vuln_pe = clean_pe + b"Imports: MmMapIoSpace\x00"
+        verdict_vuln, is_vuln2, reasons2 = oracles.analyze_driver_pe_oracle(vuln_pe, "C:\\drivers\\untrusted.sys")
+        self.assertEqual(verdict_vuln, "QuarantineBlockByovd")
+        self.assertTrue(is_vuln2)
+        self.assertTrue(any("MmMapIoSpace" in r for r in reasons2))
+
+        # 3. Driver containing direct WRMSR instruction (0x0F 0x30)
+        msr_pe = clean_pe + b"\x90\x0f\x30\xc3"
+        verdict_msr, is_vuln3, reasons3 = oracles.analyze_driver_pe_oracle(msr_pe, "C:\\drivers\\msr_driver.sys")
+        self.assertEqual(verdict_msr, "QuarantineBlockByovd")
+        self.assertTrue(is_vuln3)
+        self.assertTrue(any("WRMSR" in r for r in reasons3))
+
+        # 4. Known BYOVD driver hash/name (e.g. capcom.sys)
+        verdict_byovd, is_vuln4, _ = oracles.analyze_driver_pe_oracle(clean_pe, "C:\\drivers\\capcom.sys")
+        self.assertEqual(verdict_byovd, "QuarantineBlockByovd")
+        self.assertTrue(is_vuln4)
+
     # =========================================================================
     # Requirement 5: Local Control Plane & SQLite Storage Hardening
     # =========================================================================

@@ -415,11 +415,14 @@ impl Service<Request<Body>> for SafeServeDir {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         let asset_dir = self.asset_dir.clone();
         let index_html = self.index_html.clone();
 
         Box::pin(async move {
+            req.headers_mut()
+                .remove(axum::http::header::IF_MODIFIED_SINCE);
+            req.headers_mut().remove(axum::http::header::IF_NONE_MATCH);
             let path = req.uri().path().to_string();
             let lower_path = path.to_ascii_lowercase();
 

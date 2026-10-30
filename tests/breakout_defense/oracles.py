@@ -647,6 +647,13 @@ KNOWN_VULNERABLE_DRIVER_HASHES = {
     "3626A6917A00F77B0F3F2F1253457A0F7E0A2BF6FB5DB8F9A5576211EB71616F".lower(): "GDRV.SYS (Gigabyte Elevation of Privilege)",
     "F497E6A901BE9C8FFDE0F9B464DB3E2916F4F5EBDD708CE94C2B4DA1EE01F529".lower(): "RTCore64.SYS (Micro-Star MSI Afterburner Exploit)",
     "D2E689EB05AF6C035C2B2956794695D5C6DE65F6FB1E5B6B8640C4B82725FF05".lower(): "DBUtil_2_3.SYS (Dell Firmware Driver Privilege Escalation)",
+    "2364D9D682404B7914BB5344415FA9D1E37FA0AB9CAE142E05F03DD28B8CFEB5".lower(): "procexp152.sys (Process Explorer Driver)",
+    "74CA70A1A8E97426E25F7717BE54E7AA1BC9C470EEBE6042DB643A65492D4B00".lower(): "iqvw64e.sys (Intel Network Adapter Diagnostic Driver)",
+    "C1D5CFBA19DDE9E4A1B9442F23E202C578434732C5F8B77B15D9F6A35F019F12".lower(): "capcom.sys (Capcom Rootkit Driver)",
+    "1CB47A32DD58ADAB7252DA3F6EEAA4BA0E0BF90F111E8FF5F3AE77762A45D045".lower(): "asio64.sys (ASUSTeK Motherboard Utility Driver)",
+    "0466E92BF6136063BB9545F0F8051FFB562F43D5B98D41E79217623430043852".lower(): "mhyprot2.sys (miHoYo Anti-Cheat Exploit Driver)",
+    "CB3B44B63309A4EB392F4460EC0E7E1784F479865CCB80105CCFC73AE2862D55".lower(): "kprocesshacker.sys (Process Hacker Kernel Driver)",
+    "05E1C0D45300B9DB8D7D9E48F76FA7CCF0E53A7A972F4E4E94B2931122A6136F".lower(): "winring0x64.sys (OpenLibSys Hardware Access Driver)",
 }
 
 
@@ -694,6 +701,143 @@ def verify_kernel_callback_integrity_oracle(
     if current_ptr != original_ptr:
         return False, f"KERNEL_INTEGRITY_TAMPER: Callback pointer modified ({hex(original_ptr)} -> {hex(current_ptr)})"
     return True, "INTEGRITY_VERIFIED"
+
+
+# =============================================================================
+# F25, F26 & F32 Oracles: Ring 0 Attestation, Posture, DKOM & SPRT Sensor
+# =============================================================================
+
+CODEINTEGRITY_OPTION_ENABLED = 0x00000001
+CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED = 0x00000400
+CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED = 0x00000800
+
+
+def evaluate_hvci_vbs_posture_oracle(bitmask: int) -> Tuple[bool, bool, bool, bool]:
+    """Authoritative oracle mirroring evaluate_code_integrity_options_bitmask (F25)."""
+    ci_enabled = (bitmask & CODEINTEGRITY_OPTION_ENABLED) != 0
+    kmci_enabled = (bitmask & CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED) != 0
+    ium_enabled = (bitmask & CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED) != 0
+    requires_tightened = not kmci_enabled
+    return ci_enabled, kmci_enabled, ium_enabled, requires_tightened
+
+
+def detect_cross_view_dkom_discrepancy_oracle(
+    active_process_links: List[int],
+    handle_table_pids: List[int],
+) -> Tuple[bool, List[int], str]:
+    """Authoritative oracle mirroring detect_cross_view_dkom_discrepancy (F26)."""
+    active_set = set(active_process_links)
+    hidden = [pid for pid in handle_table_pids if pid not in active_set and pid > 4]
+    if hidden:
+        return True, hidden, f"DKOM_HIDDEN_PROCESS_DETECTED: PIDs {hidden} unlinked from ActiveProcessLinks"
+    return False, [], "NOMINAL_CROSS_VIEW"
+
+
+class KernelSprtCallbackMonitorOracle:
+    """Authoritative oracle mirroring KernelSprtCallbackMonitor (F26 / arXiv:2503.02402)."""
+    def __init__(self, expected_interval_ms: float = 50.0, anomaly_interval_ms: float = 500.0, alpha: float = 0.001, beta: float = 0.01):
+        import math
+        self.expected_interval_ms = max(1.0, expected_interval_ms)
+        self.anomaly_interval_ms = max(self.expected_interval_ms + 1.0, anomaly_interval_ms)
+        self.lower_threshold_a = math.log(beta / (1.0 - alpha))
+        self.upper_threshold_b = math.log((1.0 - beta) / alpha)
+        self.log_likelihood_ratio = 0.0
+
+    def observe_interval_ms(self, observed_dt_ms: float) -> str:
+        import math
+        dt = max(0.1, observed_dt_ms)
+        lambda_0 = 1.0 / self.expected_interval_ms
+        lambda_1 = 1.0 / self.anomaly_interval_ms
+        step_llr = math.log(lambda_1 / lambda_0) + (lambda_0 - lambda_1) * dt
+        self.log_likelihood_ratio += step_llr
+
+        if self.log_likelihood_ratio >= self.upper_threshold_b:
+            return "CallbackBlindingOrRootkitDetected"
+        elif self.log_likelihood_ratio <= self.lower_threshold_a:
+            self.log_likelihood_ratio = 0.0
+            return "Nominal"
+        else:
+            return "Monitoring"
+
+
+class TpmPcrHeartbeatRatchetOracle:
+    """Authoritative oracle mirroring TpmPcrHeartbeatRatchet (F32)."""
+    def __init__(self, epoch: int, pcr_digest: bytes, timestamp_utc: int):
+        self.epoch = epoch
+        self.pcr_digest = pcr_digest
+        self.timestamp_utc = timestamp_utc
+
+    def advance(self, nonce: bytes, state_digest: bytes, timestamp_utc: int) -> 'TpmPcrHeartbeatRatchetOracle':
+        if timestamp_utc < self.timestamp_utc:
+            raise ValueError("Timestamp skew exceeded")
+        h = hashlib.sha256()
+        h.update(self.pcr_digest)
+        h.update(nonce)
+        h.update(timestamp_utc.to_bytes(8, 'big'))
+        h.update(state_digest)
+        new_pcr = h.digest()
+        return TpmPcrHeartbeatRatchetOracle(self.epoch + 1, new_pcr, timestamp_utc)
+
+
+class P2pMeshDeadMansSwitchOracle:
+    """Authoritative oracle mirroring P2pMeshDeadMansSwitch (F32)."""
+    def __init__(self, heartbeat_interval_ms: int = 1000, max_tolerance_intervals: int = 3):
+        self.heartbeat_interval_ms = heartbeat_interval_ms
+        self.max_tolerance_intervals = max_tolerance_intervals
+        self.last_seen_utc = 0
+        self.last_ratchet = None
+
+    def ingest_heartbeat(self, ratchet: TpmPcrHeartbeatRatchetOracle, current_time_utc: int) -> str:
+        if self.last_ratchet is not None and ratchet.epoch != self.last_ratchet.epoch + 1:
+            return "CryptographicRatchetTamperDetected"
+        self.last_ratchet = ratchet
+        self.last_seen_utc = current_time_utc
+        return "Nominal"
+
+    def evaluate_dead_man_switch(self, current_time_utc: int) -> str:
+        if self.last_seen_utc == 0:
+            return "Nominal"
+        elapsed_ms = (current_time_utc - self.last_seen_utc) * 1000
+        timeout_ms = self.heartbeat_interval_ms * self.max_tolerance_intervals
+        if elapsed_ms > timeout_ms:
+            return "AbsenceQuarantineDeadManTriggered"
+        elif elapsed_ms > self.heartbeat_interval_ms:
+            return "WarningStaleHeartbeat"
+        return "Nominal"
+
+
+def analyze_driver_pe_oracle(driver_bytes: bytes, filename: Optional[str] = None) -> Tuple[str, bool, List[str]]:
+    """Authoritative oracle mirroring analyze_driver_pe_bytes (F32)."""
+    sha256_hex = hashlib.sha256(driver_bytes).hexdigest().lower()
+    dangerous_imports = []
+    reasons = []
+    arbitrary_rw = False
+
+    name_lower = (filename or "").lower()
+    known_names = ["rtcore64.sys", "dbutil_2_3.sys", "gdrv.sys", "procexp152.sys", "iqvw64e.sys", "capcom.sys", "asio64.sys", "mhyprot2.sys", "kprocesshacker.sys", "winring0x64.sys"]
+    if any(k in name_lower for k in known_names):
+        arbitrary_rw = True
+        reasons.append("Known BYOVD filename")
+
+    if sha256_hex in KNOWN_VULNERABLE_DRIVER_HASHES:
+        arbitrary_rw = True
+        reasons.append("Known BYOVD hash match")
+
+    for imp in [b"MmMapIoSpace", b"MmMapLockedPages", b"ZwMapViewOfSection", b"__writemsr"]:
+        if imp in driver_bytes:
+            dangerous_imports.append(imp.decode("ascii", errors="ignore"))
+            arbitrary_rw = True
+            reasons.append(f"Imports {imp.decode('ascii', errors='ignore')}")
+
+    if b"\x0f\x30" in driver_bytes:
+        arbitrary_rw = True
+        reasons.append("WRMSR instruction detected")
+
+    if arbitrary_rw:
+        return "QuarantineBlockByovd", True, reasons
+    elif dangerous_imports:
+        return "FuzzingRequired", False, reasons
+    return "Permit", False, reasons
 
 
 # =============================================================================
