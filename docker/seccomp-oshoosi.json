@@ -53,7 +53,7 @@
         "swapon",
         "swapoff",
         "sysfs",
-        "/_sysctl",
+        "_sysctl",
         "umount",
         "umount2",
         "unshare",

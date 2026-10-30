@@ -3149,7 +3149,7 @@ mod tests {
         );
 
         // Verify Process A retains its isolated taint record without cross-contamination
-        let rec_a = tracker.active_processes.get(&proc_a_key).unwrap();
+        let rec_a = tracker.active_processes.get(&proc_a_key).unwrap().clone();
         assert!(rec_a.tainted);
         assert_eq!(rec_a.classification, ClassificationLattice::CrownJewel);
 
@@ -3374,7 +3374,11 @@ mod tests {
         );
 
         // Parent must be tainted
-        let parent_rec = tracker.active_processes.get(&parent_proc_key).unwrap();
+        let parent_rec = tracker
+            .active_processes
+            .get(&parent_proc_key)
+            .unwrap()
+            .clone();
         assert!(parent_rec.tainted);
         assert_eq!(parent_rec.classification, ClassificationLattice::CrownJewel);
 

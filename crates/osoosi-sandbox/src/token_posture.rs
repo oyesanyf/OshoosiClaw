@@ -879,31 +879,31 @@ pub fn create_deelevated_token() -> Result<OwnedToken, OctopusSecurityError> {
                         let _ = sys::AddAccessAllowedAce(
                             acl_ptr,
                             sys::ACL_REVISION,
-                            sys::GENERIC_ALL,
+                            sys::GENERIC_ALL | 0x001F_FFFF,
                             user_sid,
                         );
                         let _ = sys::AddAccessAllowedAce(
                             acl_ptr,
                             sys::ACL_REVISION,
-                            sys::GENERIC_ALL,
+                            sys::GENERIC_ALL | 0x001F_FFFF,
                             sys_sid.0,
                         );
                         let _ = sys::AddAccessAllowedAce(
                             acl_ptr,
                             sys::ACL_REVISION,
-                            sys::GENERIC_ALL,
+                            sys::GENERIC_ALL | 0x001F_FFFF,
                             admins.0,
                         );
                         let _ = sys::AddAccessAllowedAce(
                             acl_ptr,
                             sys::ACL_REVISION,
-                            sys::GENERIC_ALL,
+                            sys::GENERIC_ALL | 0x001F_FFFF,
                             auth_sid.0,
                         );
                         let _ = sys::AddAccessAllowedAce(
                             acl_ptr,
                             sys::ACL_REVISION,
-                            sys::GENERIC_ALL,
+                            sys::GENERIC_ALL | 0x001F_FFFF,
                             world_sid.0,
                         );
                         let dacl_info = sys::TOKEN_DEFAULT_DACL {
@@ -950,11 +950,36 @@ fn allow_deelevated_token_on_current_winsta_and_desktop(token: sys::HANDLE) {
         if sys::InitializeAcl(acl_ptr, acl_len, sys::ACL_REVISION) == 0 {
             return;
         }
-        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, user_sid);
-        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, sys_sid.0);
-        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, admins.0);
-        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, auth_sid.0);
-        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, world_sid.0);
+        let _ = sys::AddAccessAllowedAce(
+            acl_ptr,
+            sys::ACL_REVISION,
+            sys::GENERIC_ALL | 0x001F_FFFF,
+            user_sid,
+        );
+        let _ = sys::AddAccessAllowedAce(
+            acl_ptr,
+            sys::ACL_REVISION,
+            sys::GENERIC_ALL | 0x001F_FFFF,
+            sys_sid.0,
+        );
+        let _ = sys::AddAccessAllowedAce(
+            acl_ptr,
+            sys::ACL_REVISION,
+            sys::GENERIC_ALL | 0x001F_FFFF,
+            admins.0,
+        );
+        let _ = sys::AddAccessAllowedAce(
+            acl_ptr,
+            sys::ACL_REVISION,
+            sys::GENERIC_ALL | 0x001F_FFFF,
+            auth_sid.0,
+        );
+        let _ = sys::AddAccessAllowedAce(
+            acl_ptr,
+            sys::ACL_REVISION,
+            sys::GENERIC_ALL | 0x001F_FFFF,
+            world_sid.0,
+        );
 
         let user32 = sys::LoadLibraryA(b"user32.dll\0".as_ptr());
         if user32.is_null() {
@@ -1017,7 +1042,14 @@ unsafe impl Send for DeelevatedChild {}
 impl DeelevatedChild {
     /// Blocks until the child exits and returns its exit code.
     pub fn wait(&self) -> Result<u32, OctopusSecurityError> {
-        unsafe { sys::WaitForSingleObject(self.process, sys::INFINITE) };
+        let rc = unsafe { sys::WaitForSingleObject(self.process, 30_000) };
+        if rc != 0 {
+            unsafe { sys::TerminateProcess(self.process, 1) };
+            return Err(OctopusSecurityError::IsolationViolation(format!(
+                "FAIL-CLOSED: WaitForSingleObject on de-elevated child (PID {}) timed out or failed (rc={})",
+                self.pid, rc
+            )));
+        }
         let mut code: u32 = 0;
         if unsafe { sys::GetExitCodeProcess(self.process, &mut code) } == 0 {
             return Err(last_err("GetExitCodeProcess"));
