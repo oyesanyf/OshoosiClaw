@@ -274,4 +274,6 @@ pub struct EdrOrchestrator {
     pub ai_feed_collector: Arc<ai_feeds::AutonomousAiFeedCollector>,
     /// RL Adaptive Controller (SkyRL-aligned multi-technique containment & voter weight optimization)
     pub rl_controller: Arc<parking_lot::RwLock<osoosi_agent_anomaly::RLAdaptiveController>>,
+    /// REA Voter Environment Gateway for out-of-band credential substitution and quorum freezing
+    pub env_gateway: Arc<crate::rea_voter_env_gateway::ReaVoterEnvGateway>,
 }

@@ -2093,6 +2093,9 @@ pub struct PolicyConfig {
     /// Dynamic list of trusted executable stems (e.g. "git.exe").
     #[serde(default = "default_trusted_stems")]
     pub trusted_stems: Vec<String>,
+    /// Enforce 100% voter quorum participation on all security/gateway evaluations.
+    #[serde(default)]
+    pub enforce_all_voters_participate: bool,
 }
 
 fn default_trusted_paths() -> Vec<String> {
@@ -2139,6 +2142,7 @@ impl Default for PolicyConfig {
             alert_suppression_secs: 600,
             trusted_paths: default_trusted_paths(),
             trusted_stems: default_trusted_stems(),
+            enforce_all_voters_participate: false,
         }
     }
 }

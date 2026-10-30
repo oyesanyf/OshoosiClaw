@@ -334,7 +334,20 @@ impl EdrOrchestrator {
         }
         let policy_config = osoosi_types::load_policy_config();
         info!("EdrOrchestrator: Initializing policy engine...");
-        let mut policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
+        let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
+
+        // Initialize ReaVoterEnvGateway and wire voter quorum alert sink
+        let default_vault_path = std::path::PathBuf::from("database/protected_env_backup.vault");
+        let env_gateway = Arc::new(crate::rea_voter_env_gateway::ReaVoterEnvGateway::with_vault(
+            Duration::from_secs(300),
+            default_vault_path,
+        ));
+        let gw_sink = env_gateway.clone();
+        policy
+            .set_voter_quorum_sink(Arc::new(move |alert| {
+                gw_sink.ingest_voter_quorum(alert);
+            }))
+            .await;
 
         info!("EdrOrchestrator: Initializing mesh network...");
         let mesh_config = osoosi_types::load_mesh_listen_config();
@@ -1069,6 +1082,7 @@ impl EdrOrchestrator {
             mitre_synchronizer,
             ai_feed_collector,
             rl_controller,
+            env_gateway,
         };
 
         // Start background log retention loop (hourly rotation and pruning)

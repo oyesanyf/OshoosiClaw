@@ -533,6 +533,68 @@ pub struct ConsensusFinding {
     pub evaluated_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Composite process key `(pid, start_time_ticks)` preventing PID-reuse collisions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ProcessInstanceKey {
+    pub pid: u32,
+    pub start_time_ticks: u64,
+}
+
+impl ProcessInstanceKey {
+    #[inline]
+    pub fn new(pid: u32, start_time_ticks: u64) -> Self {
+        Self {
+            pid,
+            start_time_ticks,
+        }
+    }
+
+    #[inline]
+    pub fn start_time_100ns(&self) -> u64 {
+        self.start_time_ticks
+    }
+
+    #[inline]
+    pub fn as_tuple(&self) -> (u32, u64) {
+        (self.pid, self.start_time_ticks)
+    }
+}
+
+impl std::fmt::Display for ProcessInstanceKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "PID:{}:{}", self.pid, self.start_time_ticks)
+    }
+}
+
+impl From<(u32, u64)> for ProcessInstanceKey {
+    fn from((pid, start_time_ticks): (u32, u64)) -> Self {
+        Self::new(pid, start_time_ticks)
+    }
+}
+
+/// Alert emitted by consensus voters when a process reaches quarantine threshold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VoterQuorumAlert {
+    pub target: ProcessInstanceKey,
+    pub voter_confidence_bp: u16, // e.g. 6667 = 66.67% BFT quorum (0..=10000 basis points)
+    pub trigger_reason: String,
+}
+
+impl VoterQuorumAlert {
+    #[inline]
+    pub fn new(
+        target: ProcessInstanceKey,
+        voter_confidence_bp: u16,
+        trigger_reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            target,
+            voter_confidence_bp,
+            trigger_reason: trigger_reason.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
