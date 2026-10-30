@@ -68,6 +68,7 @@ chrono = { workspace = true }
 reqwest = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+subtle = { workspace = true }
 hmac = { workspace = true }
 hostname = { workspace = true }
 rayon = { workspace = true }

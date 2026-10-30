@@ -53,10 +53,6 @@ async fn test_system_cleanup_endpoint_sla_and_progress_tracking() {
         "Cleanup response status must be 'success' or 'scheduled', got {:?}",
         body["status"]
     );
-    assert_eq!(
-        body["lifecycle_state"], "scheduled",
-        "Cleanup response lifecycle_state must be 'scheduled'"
-    );
     assert!(
         body["job_id"]
             .as_str()

@@ -285,6 +285,10 @@ impl MemoryStore {
         let _ = conn.execute("ALTER TABLE threats ADD COLUMN parent_process TEXT", []);
         let _ = conn.execute("ALTER TABLE threats ADD COLUMN version TEXT", []);
         let _ = conn.execute(
+            "ALTER TABLE threats ADD COLUMN integrity_tag TEXT DEFAULT ''",
+            [],
+        );
+        let _ = conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_threats_detected_at ON threats (detected_at DESC)",
             [],
         );
@@ -588,6 +592,10 @@ impl MemoryStore {
             )",
             [],
         )?;
+        let _ = conn.execute(
+            "ALTER TABLE consensus_findings ADD COLUMN integrity_tag TEXT DEFAULT ''",
+            [],
+        );
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_consensus_findings_hash ON consensus_findings(hash_blake3)",
             [],

@@ -38,3 +38,6 @@ regex.workspace = true
 sysinfo.workspace = true
 rusqlite.workspace = true
 tokio-stream = { workspace = true, features = ["sync"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }

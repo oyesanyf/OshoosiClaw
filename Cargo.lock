@@ -5892,6 +5892,7 @@ dependencies = [
  "sha2 0.10.9",
  "silicon-shield",
  "smoltcp",
+ "subtle",
  "sysinfo",
  "tempfile",
  "tfhe",
@@ -5954,6 +5955,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "uuid",
+ "winreg",
 ]
 
 [[package]]
