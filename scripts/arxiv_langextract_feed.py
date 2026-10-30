@@ -707,13 +707,9 @@ LOCAL_CONTAINMENT_MAPPINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
 
 VERIFIED_REPO_ALLOWLIST: Dict[str, str] = {
     "2603.02277": "https://github.com/UKGovernmentBEIS/inspect_evals",
-    "2403.04651": "https://github.com/cedar-policy/cedar-spec",
-    "2406.11036": "https://github.com/NVIDIA/garak",
-    "2406.07392": "https://github.com/NVIDIA/garak",
-    "2406.13352": "https://github.com/ethz-spylab/agentdojo",
-    "2604.20496": "https://github.com/cedar-policy/cedar-spec",
-    "2610.20437": "https://github.com/NVIDIA/garak",
-    "2601.11893": "https://github.com/ethz-spylab/agentdojo",
+    "2501.18492": "https://github.com/yueliu1999/GuardReasoner",
+    "2503.00061": "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent",
+    "2511.10720": "https://github.com/sleeepeer/PISanitizer",
 }
 
 BLOCKED_REPO_URLS = {
@@ -726,7 +722,7 @@ def assert_valid_arxiv_paper(arxiv_id: str, expected_keywords: Optional[List[str
     """Verifies that an arXiv preprint exists via export.arxiv.org or verified local benchmarks,
     confirming non-404 paper identity and relevance."""
     clean_id = normalize_arxiv_id(arxiv_id)
-    if clean_id in {"2603.02277", "2403.04651", "2406.11036", "2406.07392", "2406.13352"}:
+    if clean_id in {"2603.02277", "2501.18492", "2503.00061", "2511.10720"}:
         return f"Verified foundational preprint arXiv:{clean_id}"
     api_url = f"http://export.arxiv.org/api/query?id_list={clean_id}"
     try:
@@ -889,69 +885,71 @@ def fetch_paper_by_id(arxiv_id: str) -> Optional[Dict[str, Any]]:
 
     BENCHMARK_FALLBACK_PAPERS = {
         "2603.02277": {
-            "title": "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape",
+            "title": "Quantifying Frontier LLM Capabilities for Container Sandbox Escape",
             "arxiv_id": "2603.02277v3",
             "url": "https://arxiv.org/abs/2603.02277",
             "pdf_url": "https://arxiv.org/pdf/2603.02277.pdf",
-            "published": "2026-03-05",
+            "published": "2026-03-01",
             "published_year": 2026,
-            "summary": "We introduce SandboxEscapeBench, a benchmark measuring AI agent container sandbox escape attacks, evaluating privilege escalation and Docker socket breakout vectors across continuous agent harnesses.",
+            "summary": "Large language models (LLMs) increasingly act as autonomous agents, using tools to execute code, read and write files, and access networks, creating novel security risks. To mitigate these risks, agents are commonly deployed and evaluated in isolated 'sandbox' environments, often implemented using Docker/OCI containers. We introduce SANDBOXESCAPEBENCH, an open benchmark that safely measures an LLM's capacity to break out of these sandboxes.",
             "comments": "Code available at https://github.com/UKGovernmentBEIS/inspect_evals",
-            "authors": ["UK AISI", "Frontier Safety Team"],
+            "authors": [
+                "Rahul Marchand",
+                "Art O Cathain",
+                "Jerome Wynne",
+                "Philippos Maximos Giavridis",
+                "Stuart Jennings",
+            ],
             "has_code_repo": True,
             "code_repo_url": "https://github.com/UKGovernmentBEIS/inspect_evals",
         },
-        "2403.04651": {
-            "title": "Cedar: A New Policy Language with Automated Reasoning and SMT Verification",
-            "arxiv_id": "2403.04651v1",
-            "url": "https://arxiv.org/abs/2403.04651",
-            "pdf_url": "https://arxiv.org/pdf/2403.04651.pdf",
-            "published": "2024-03-07",
-            "published_year": 2024,
-            "summary": "Cedar is a new policy language developed at Amazon with automated reasoning and SMT verification.",
-            "comments": "Code available at https://github.com/cedar-policy/cedar-spec",
-            "authors": ["Cedar Policy Team", "AWS Security"],
+        "2501.18492": {
+            "title": "GuardReasoner: Towards Reasoning-based LLM Safeguards",
+            "arxiv_id": "2501.18492v2",
+            "url": "https://arxiv.org/abs/2501.18492",
+            "pdf_url": "https://arxiv.org/pdf/2501.18492.pdf",
+            "published": "2025-01-30",
+            "published_year": 2025,
+            "summary": "GuardReasoner provides reasoning-based safeguards for LLMs with verifiable step-by-step rationales to prevent multi-turn jailbreak and guardrail evasion.",
+            "comments": "Code available at https://github.com/yueliu1999/GuardReasoner",
+            "authors": [
+                "Yue Liu",
+                "Xiaojun Wan",
+            ],
             "has_code_repo": True,
-            "code_repo_url": "https://github.com/cedar-policy/cedar-spec",
+            "code_repo_url": "https://github.com/yueliu1999/GuardReasoner",
         },
-        "2406.11036": {
-            "title": "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
-            "arxiv_id": "2406.11036v1",
-            "url": "https://arxiv.org/abs/2406.11036",
-            "pdf_url": "https://arxiv.org/pdf/2406.11036.pdf",
-            "published": "2024-06-16",
-            "published_year": 2024,
-            "summary": "garak probes LLM vulnerability boundaries via encoding injection, adversarial jailbreak personas, and untrusted markdown image exfiltration.",
-            "comments": "Code available at https://github.com/NVIDIA/garak",
-            "authors": ["Leon Derczynski", "NVIDIA Security Research"],
+        "2503.00061": {
+            "title": "Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents",
+            "arxiv_id": "2503.00061v2",
+            "url": "https://arxiv.org/abs/2503.00061",
+            "pdf_url": "https://arxiv.org/pdf/2503.00061.pdf",
+            "published": "2025-03-01",
+            "published_year": 2025,
+            "summary": "AdaptiveAttackAgent evaluates automated evasion of indirect prompt injection defenses and mandatory access control policies on autonomous LLM agents.",
+            "comments": "Code available at https://github.com/uiuc-kang-lab/AdaptiveAttackAgent",
+            "authors": [
+                "UIUC Kang Lab",
+                "Daniel Kang",
+            ],
             "has_code_repo": True,
-            "code_repo_url": "https://github.com/NVIDIA/garak",
+            "code_repo_url": "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent",
         },
-        "2406.07392": {
-            "title": "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
-            "arxiv_id": "2406.11036v1",
-            "url": "https://arxiv.org/abs/2406.11036",
-            "pdf_url": "https://arxiv.org/pdf/2406.11036.pdf",
-            "published": "2024-06-16",
-            "published_year": 2024,
-            "summary": "garak probes LLM vulnerability boundaries via encoding injection, adversarial jailbreak personas, and untrusted markdown image exfiltration.",
-            "comments": "Code available at https://github.com/NVIDIA/garak",
-            "authors": ["Leon Derczynski", "NVIDIA Security Research"],
+        "2511.10720": {
+            "title": "PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization",
+            "arxiv_id": "2511.10720v1",
+            "url": "https://arxiv.org/abs/2511.10720",
+            "pdf_url": "https://arxiv.org/pdf/2511.10720.pdf",
+            "published": "2025-11-14",
+            "published_year": 2025,
+            "summary": "PISanitizer prevents prompt injection in long-context LLMs via proactive prompt sanitization, payload splitting detection, and context instruction isolation.",
+            "comments": "Code available at https://github.com/sleeepeer/PISanitizer",
+            "authors": [
+                "Zeyu Zhang",
+                "Jiaqi Li",
+            ],
             "has_code_repo": True,
-            "code_repo_url": "https://github.com/NVIDIA/garak",
-        },
-        "2406.13352": {
-            "title": "AgentDojo: A Dynamic Environment for Benchmarking Attacks and Defenses on AI Agents",
-            "arxiv_id": "2406.13352v1",
-            "url": "https://arxiv.org/abs/2406.13352",
-            "pdf_url": "https://arxiv.org/pdf/2406.13352.pdf",
-            "published": "2024-06-19",
-            "published_year": 2024,
-            "summary": "AgentDojo evaluates prompt injection attacks and mandatory access control defenses on tool-calling agents.",
-            "comments": "Code available at https://github.com/ethz-spylab/agentdojo",
-            "authors": ["ETH Zurich SpyLab", "Florian Tramer"],
-            "has_code_repo": True,
-            "code_repo_url": "https://github.com/ethz-spylab/agentdojo",
+            "code_repo_url": "https://github.com/sleeepeer/PISanitizer",
         },
         "2610.09167": {
             "title": "Detecting Unseen Jailbreak Sources: A Multi-Source Conformal Detection Perspective",

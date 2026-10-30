@@ -64,9 +64,9 @@ fn challenge_70_rules_capacity_clamp_and_pinned_immunity() {
 
     let baseline_ids = [
         "ARXIV-DEF-2603.02277",
-        "ARXIV-DEF-2604.20496",
-        "ARXIV-DEF-2610.20437",
-        "ARXIV-DEF-2601.11893",
+        "ARXIV-DEF-2501.18492",
+        "ARXIV-DEF-2503.00061",
+        "ARXIV-DEF-2511.10720",
     ];
 
     // Verify all baseline rules are initially pinned

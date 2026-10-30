@@ -658,14 +658,14 @@ describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37
                     assert.ok(rule.generated_code_snippet && rule.generated_code_snippet.length > 20, `Rule ${rule.rule_id} must have populated generated_code_snippet`);
                 }
 
-                // Verify specific live replacements
-                const garakRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2406.11036') || r.rule_id.includes('2610.20437'));
-                assert.ok(garakRule, 'Garak rule must exist');
-                assert.strictEqual(garakRule.code_repo_url, 'https://github.com/NVIDIA/garak');
+                // Verify specific live replacements (strict 1-year recency 2025-2026)
+                const guardReasonerRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2501.18492'));
+                assert.ok(guardReasonerRule, 'GuardReasoner rule must exist');
+                assert.strictEqual(guardReasonerRule.code_repo_url, 'https://github.com/yueliu1999/GuardReasoner');
 
-                const dojoRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2601.11893'));
-                assert.ok(dojoRule, 'Rule 2601.11893 must exist');
-                assert.strictEqual(dojoRule.code_repo_url, 'https://github.com/ethz-spylab/agentdojo');
+                const adaptiveRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2503.00061'));
+                assert.ok(adaptiveRule, 'Adaptive Attacks rule must exist');
+                assert.strictEqual(adaptiveRule.code_repo_url, 'https://github.com/uiuc-kang-lab/AdaptiveAttackAgent');
             });
 
             it('should verify encodeCodeIntoImage and decodeCodeFromImage round-trip bit fidelity across RGB channels', async () => {
@@ -773,7 +773,7 @@ describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37
                 assert.ok(activeTbody.innerHTML.includes('rust-guard-code'), 'HTML must contain rust-guard-code');
                 assert.ok(activeTbody.innerHTML.includes('btn-stego-render'), 'HTML must contain btn-stego-render');
                 assert.ok(activeTbody.innerHTML.includes('stego-canvas-'), 'HTML must contain stego-canvas elements');
-                assert.ok(activeTbody.innerHTML.includes('2024 (FOUNDATIONAL)'), 'HTML must contain 2024 (FOUNDATIONAL) badge for foundational papers');
+                assert.ok(activeTbody.innerHTML.includes('2025 (VERIFIED)'), 'HTML must contain 2025 (VERIFIED) badge for verified 2025 papers');
                 assert.ok(activeTbody.innerHTML.includes('2026+ (CURRENT)'), 'HTML must contain 2026+ (CURRENT) badge for frontier papers');
             });
         });

@@ -26,65 +26,66 @@ if let Ok(rules) = research_defense_registry().read() {
     }
 }"""
 
-SNIPPET_2403 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2403.04651v1
-// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: Permissive wildcard action/resource sandbox policy bypass
+SNIPPET_2501 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2501.18492v2
+// Enforced in: osoosi-agent-anomaly::cedar_engine (Zero-Execution AST)
+// Threat Vector: Reasoning-based guardrail bypass and multi-turn jailbreak evasion
 if let Ok(rules) = research_defense_registry().read() {
     const INDICATORS: &[&str] = &[
-        "permit(principal, action, resource)",
-        "action in [action::\\"*\\"]",
-        "resource == *",
+        "guard_reasoning_step",
+        "bypass_guardrail",
+        "reasoning_drift",
+        "unverified_rationale",
     ];
     for &pat in INDICATORS {
         if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
             tech_res.is_clean = false;
             tech_res.sandbox_quarantine_required = true;
             tech_res.detected_vectors.push(
-                format!("[ArXiv-Active-Defense:2403.04651v1]: Blocked by rule 'ARXIV-DEF-2403.04651'")
+                format!("[ArXiv-Active-Defense:2501.18492v2]: Blocked by rule 'ARXIV-DEF-2501.18492'")
             );
             break;
         }
     }
 }"""
 
-SNIPPET_2406_GARAK = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.11036v1
-// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)
+SNIPPET_2503 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2503.00061v2
+// Enforced in: osoosi-agent-anomaly::containment_ring (Zero-Execution AST)
+// Threat Vector: Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)
 if let Ok(rules) = research_defense_registry().read() {
     const INDICATORS: &[&str] = &[
-        "garak.probes",
-        "inject_base64",
-        "dan_11_0",
-        "markdown_image_exfil",
+        "adaptive_prompt_injection",
+        "tool_hijack",
+        "indirect_context_override",
+        "unauthorized_tool_call",
     ];
     for &pat in INDICATORS {
         if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
             tech_res.is_clean = false;
             tech_res.sandbox_quarantine_required = true;
             tech_res.detected_vectors.push(
-                format!("[ArXiv-Active-Defense:2406.11036v1]: Blocked by rule 'ARXIV-DEF-2406.11036'")
+                format!("[ArXiv-Active-Defense:2503.00061v2]: Blocked by rule 'ARXIV-DEF-2503.00061'")
             );
             break;
         }
     }
 }"""
 
-SNIPPET_2406_DOJO = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.13352v1
-// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: Prompt injection tool call hijack and mandatory access control bypass
+SNIPPET_2511 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2511.10720v1
+// Enforced in: osoosi-agent-anomaly::cognitive_redteam (Zero-Execution AST)
+// Threat Vector: Long-context prompt injection payload hiding and instruction override
 if let Ok(rules) = research_defense_registry().read() {
     const INDICATORS: &[&str] = &[
-        "important_instructions",
-        "<tool_call>",
-        "sudo chmod +s",
-        "/etc/sudoers",
+        "prompt_sanitizer_bypass",
+        "long_context_injection",
+        "payload_splitter",
+        "context_hiding",
     ];
     for &pat in INDICATORS {
         if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
             tech_res.is_clean = false;
             tech_res.sandbox_quarantine_required = true;
             tech_res.detected_vectors.push(
-                format!("[ArXiv-Active-Defense:2406.13352v1]: Blocked by rule 'ARXIV-DEF-2406.13352'")
+                format!("[ArXiv-Active-Defense:2511.10720v1]: Blocked by rule 'ARXIV-DEF-2511.10720'")
             );
             break;
         }
@@ -96,7 +97,7 @@ RULES = [
         "ARXIV-DEF-2603.02277",
         "2603.02277",
         "2603.02277v3",
-        "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)",
+        "Quantifying Frontier LLM Capabilities for Container Sandbox Escape",
         "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)",
         "container_runtime_privilege",
         "breakout_vector",
@@ -112,61 +113,61 @@ RULES = [
         SNIPPET_2603,
     ),
     (
-        "ARXIV-DEF-2403.04651",
-        "2403.04651",
-        "2403.04651v1",
-        "Cedar: A New Policy Language with Automated Reasoning and SMT Verification",
-        "Permissive wildcard action/resource sandbox policy bypass",
-        "cedar_smt_sandbox_verification",
+        "ARXIV-DEF-2501.18492",
+        "2501.18492",
+        "2501.18492v2",
+        "GuardReasoner: Towards Reasoning-based LLM Safeguards",
+        "Reasoning-based guardrail bypass and multi-turn jailbreak evasion",
+        "guardrail_reasoning_boundary",
         "defense_countermeasure",
-        'permit(principal, action, resource) | action in [action::"*"] | resource == *',
-        '@id("ARXIV-DEF-2403.04651")\nforbid(principal, action, resource) when { context.arxiv_source == "2403.04651v1" };',
+        "guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale",
+        '@id("ARXIV-DEF-2501.18492")\nforbid(principal, action, resource) when { context.arxiv_source == "2501.18492v2" };',
         "osoosi-agent-anomaly::cedar_engine",
         "2026-10-28T00:00:00Z",
         97.2,
         99.1,
-        "https://arxiv.org/abs/2403.04651",
+        "https://arxiv.org/abs/2501.18492",
         1,
-        "https://github.com/cedar-policy/cedar-spec",
-        SNIPPET_2403,
+        "https://github.com/yueliu1999/GuardReasoner",
+        SNIPPET_2501,
     ),
     (
-        "ARXIV-DEF-2406.11036",
-        "2406.11036",
-        "2406.11036v1",
-        "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
-        "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)",
-        "llm_probe_redteam_boundary",
+        "ARXIV-DEF-2503.00061",
+        "2503.00061",
+        "2503.00061v2",
+        "Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents",
+        "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)",
+        "mac_authority_lattice",
         "breakout_vector",
-        "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil",
-        '@id("ARXIV-DEF-2406.11036")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.11036v1" };',
-        "osoosi-agent-anomaly::cognitive_redteam",
+        "adaptive_prompt_injection | tool_hijack | indirect_context_override | unauthorized_tool_call",
+        '@id("ARXIV-DEF-2503.00061")\nforbid(principal, action, resource) when { context.arxiv_source == "2503.00061v2" };',
+        "osoosi-agent-anomaly::containment_ring",
         "2026-10-28T00:00:00Z",
         99.0,
         99.6,
-        "https://arxiv.org/abs/2406.11036",
+        "https://arxiv.org/abs/2503.00061",
         1,
-        "https://github.com/NVIDIA/garak",
-        SNIPPET_2406_GARAK,
+        "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent",
+        SNIPPET_2503,
     ),
     (
-        "ARXIV-DEF-2406.13352",
-        "2406.13352",
-        "2406.13352v1",
-        "AgentDojo: A Dynamic Environment for Benchmarking Attacks and Defenses on AI Agents",
-        "Prompt injection tool call hijack and mandatory access control bypass",
-        "mac_authority_lattice",
+        "ARXIV-DEF-2511.10720",
+        "2511.10720",
+        "2511.10720v1",
+        "PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization",
+        "Long-context prompt injection payload hiding and instruction override",
+        "llm_probe_redteam_boundary",
         "defense_countermeasure",
-        "important_instructions | <tool_call> | sudo chmod +s | /etc/sudoers",
-        '@id("ARXIV-DEF-2406.13352")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.13352v1" };',
-        "osoosi-agent-anomaly::containment_ring",
+        "prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding",
+        '@id("ARXIV-DEF-2511.10720")\nforbid(principal, action, resource) when { context.arxiv_source == "2511.10720v1" };',
+        "osoosi-agent-anomaly::cognitive_redteam",
         "2026-10-28T00:00:00Z",
         96.8,
         98.9,
-        "https://arxiv.org/abs/2406.13352",
+        "https://arxiv.org/abs/2511.10720",
         1,
-        "https://github.com/ethz-spylab/agentdojo",
-        SNIPPET_2406_DOJO,
+        "https://github.com/sleeepeer/PISanitizer",
+        SNIPPET_2511,
     ),
 ]
 
@@ -212,11 +213,12 @@ for db in dbs:
             except Exception:
                 pass
 
+        # Clean all legacy 2024 and older rules
+        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id LIKE '24%' OR CAST(SUBSTR(base_arxiv_id, 1, 2) AS INTEGER) < 25;")
+
         for rule in RULES:
             cur.execute(UPSERT_SQL, rule)
 
-        # Clean legacy synthetic rules
-        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id IN ('2406.07392', '2604.20496', '2610.20437', '2601.11893', '2610.09167', '2610.14224');")
         conn.commit()
 
         cur.execute('SELECT rule_id, base_arxiv_id, has_code_repo, code_repo_url, length(generated_code_snippet) FROM enforced_research_rules')
