@@ -1182,7 +1182,7 @@ pub fn validate_csrf_origin_and_fetch_site(
             return Err(api_error(
                 StatusCode::FORBIDDEN,
                 "CSRF_ORIGIN_MISMATCH",
-                &format!(
+                format!(
                     "Cross-origin request from '{}' rejected by Origin guard",
                     origin
                 ),
@@ -14376,7 +14376,7 @@ pub fn derive_pcr_bound_envelope_key(measurements: &TpmPcrBootMeasurements) -> [
     let base_key = sqlite_row_hmac_key();
     let mut hasher = Sha256::new();
     hasher.update(b"OSHOOSI_TPM2_PCR_0_2_4_7_ENVELOPE_KDF_V1:");
-    hasher.update(&base_key);
+    hasher.update(base_key);
     hasher.update(b"|PCR0=");
     hasher.update(
         measurements

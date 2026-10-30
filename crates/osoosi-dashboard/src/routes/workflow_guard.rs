@@ -2465,7 +2465,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_ui_settings_and_unsettings_persist_to_sqlite() {
         std::env::set_var("OSOOSI_TEST_UI_SQLITE", "1");
         let test_key = "oshoosi_test_toggle_persistence_v1";
