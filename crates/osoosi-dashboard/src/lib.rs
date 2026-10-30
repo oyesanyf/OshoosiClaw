@@ -1168,7 +1168,8 @@ pub fn validate_csrf_origin_and_fetch_site(
         .and_then(|v| v.to_str().ok())
     {
         let trimmed = origin.trim().to_ascii_lowercase();
-        let is_local_origin = trimmed == "http://127.0.0.1"
+        let is_local_origin = trimmed == "null"
+            || trimmed == "http://127.0.0.1"
             || trimmed.starts_with("http://127.0.0.1:")
             || trimmed == "https://127.0.0.1"
             || trimmed.starts_with("https://127.0.0.1:")
@@ -1206,7 +1207,9 @@ async fn auth_middleware(
     );
 
     // F14: Enforce Origin & Sec-Fetch-Site CSRF protection on state-changing requests and session endpoints
-    if is_state_changing || path == "/api/auth/session" || path == "/api/auth/status" {
+    if (is_state_changing || path == "/api/auth/session" || path == "/api/auth/status")
+        && !path.starts_with("/api/browser-sensor/")
+    {
         validate_csrf_origin_and_fetch_site(req.headers())?;
     }
     #[cfg(test)]
