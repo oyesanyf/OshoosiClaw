@@ -1449,7 +1449,16 @@ impl KernelSprtCallbackMonitor {
     pub fn log_likelihood_ratio(&self) -> f64 {
         self.log_likelihood_ratio
     }
+
+    /// Observes heartbeat interval delta in milliseconds, returning `SprtDecision` (F26 / SCOPE.md).
+    pub fn observe_heartbeat_interval(&mut self, delta_millis: f64) -> SprtDecision {
+        self.observe_interval_ms(delta_millis)
+    }
 }
+
+/// Type aliases matching SCOPE.md interface contracts (F26 / F32).
+pub type SprtDecision = KernelSprtState;
+pub type SprtSensor = KernelSprtCallbackMonitor;
 
 #[cfg(test)]
 mod f25_f26_tests {

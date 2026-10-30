@@ -584,6 +584,14 @@ pub fn verify_critical_invariants() -> Vec<EvasionDetectionEvent> {
     detections
 }
 
+/// Spawns a background worker thread that periodically executes `verify_critical_invariants` (F09).
+pub fn start_in_memory_watchdog(interval_ms: u64) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        let _ = verify_critical_invariants();
+    });
+}
+
 // --- 4. DLL Entry Point ---
 
 #[no_mangle]
@@ -601,6 +609,7 @@ pub extern "system" fn DllMain(
                 // eprintln!("Hook init failed: {}", e);
             }
         }
+        start_in_memory_watchdog(2000);
     }
     BOOL(1)
 }

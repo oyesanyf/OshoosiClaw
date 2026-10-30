@@ -1261,6 +1261,111 @@ impl KernelDriverClient {
     }
 }
 
+/// Analyzes driver PE image bytes to detect arbitrary read/write IOCTL primitives and known BYOVD threats (F32).
+pub fn analyze_driver_pe_bytes(
+    driver_bytes: &[u8],
+    path: Option<&str>,
+) -> PreLoadDriverAnalysisReport {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(driver_bytes);
+    let sha256: [u8; 32] = hasher.finalize().into();
+    let sha256_hex = hex::encode(sha256).to_ascii_lowercase();
+
+    let driver_path = path.unwrap_or("unknown_driver.sys").to_string();
+    let mut dangerous_imports = Vec::new();
+    let mut reasons = Vec::new();
+    let mut arbitrary_rw = false;
+
+    // 1. Check known BYOVD file name or known hash
+    if is_known_byovd_driver(&driver_path) {
+        arbitrary_rw = true;
+        reasons.push(format!(
+            "Known BYOVD vulnerable driver filename: {}",
+            driver_path
+        ));
+    }
+    if KNOWN_BYOVD_SHA256_HASHES.contains(&sha256_hex.as_str()) {
+        arbitrary_rw = true;
+        reasons.push(format!(
+            "Known BYOVD Authenticode SHA-256 hash match: {}",
+            sha256_hex
+        ));
+    }
+
+    // 2. Parse PE bytes and search for dangerous imports / IOCTL sinks
+    if driver_bytes.len() >= 0x40 && &driver_bytes[0..2] == b"MZ" {
+        let e_lfanew = u32::from_le_bytes([
+            driver_bytes[0x3C],
+            driver_bytes[0x3D],
+            driver_bytes[0x3E],
+            driver_bytes[0x3F],
+        ]) as usize;
+
+        if e_lfanew + 4 <= driver_bytes.len() && &driver_bytes[e_lfanew..e_lfanew + 4] == b"PE\0\0"
+        {
+            // Scan binary strings for dangerous kernel API imports
+            for &imp in DANGEROUS_KERNEL_IMPORTS {
+                let needle = imp.as_bytes();
+                if driver_bytes.windows(needle.len()).any(|w| w == needle) {
+                    dangerous_imports.push(imp.to_string());
+                }
+            }
+
+            // Detect dangerous instruction sequences in code sections:
+            // WRMSR: 0x0F, 0x30
+            // RDMSR: 0x0F, 0x32
+            let has_wrmsr = driver_bytes.windows(2).any(|w| w == [0x0F, 0x30]);
+            let has_rdmsr = driver_bytes.windows(2).any(|w| w == [0x0F, 0x32]);
+
+            if has_wrmsr {
+                reasons.push(
+                    "Direct WRMSR instruction (0x0F 0x30) detected in driver executable image"
+                        .to_string(),
+                );
+                arbitrary_rw = true;
+            }
+            if has_rdmsr {
+                reasons.push(
+                    "Direct RDMSR instruction (0x0F 0x32) detected in driver executable image"
+                        .to_string(),
+                );
+            }
+
+            // If driver imports physical memory mapping (MmMapIoSpace) or ZwMapViewOfSection or __writemsr,
+            // flag arbitrary physical/virtual memory read/write primitive
+            if dangerous_imports
+                .iter()
+                .any(|i| i == "MmMapIoSpace" || i == "ZwMapViewOfSection" || i == "__writemsr")
+            {
+                arbitrary_rw = true;
+                reasons.push(format!(
+                    "Arbitrary physical/virtual memory R/W sink detected: imports {:?}",
+                    dangerous_imports
+                ));
+            }
+        }
+    }
+
+    let verdict = if arbitrary_rw {
+        PreLoadDriverVerdict::QuarantineBlockByovd
+    } else if !dangerous_imports.is_empty() {
+        PreLoadDriverVerdict::FuzzingRequired
+    } else {
+        PreLoadDriverVerdict::Permit
+    };
+
+    PreLoadDriverAnalysisReport {
+        driver_path,
+        sha256,
+        sha256_hex,
+        verdict,
+        dangerous_imports,
+        arbitrary_rw_primitives_found: arbitrary_rw,
+        reasons,
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
@@ -1495,6 +1600,57 @@ mod tests {
         // while kernel_dacl_self_defense_active is true.
         assert!(ppl_report.kernel_dacl_self_defense_active);
         assert!(!ppl_report.trust_boundary_summary.is_empty());
+    }
+
+    #[test]
+    fn test_f32_pre_load_static_driver_analysis_primitives() {
+        // 1. Synthesize minimal clean PE
+        let mut clean_pe = vec![0u8; 512];
+        clean_pe[0] = b'M';
+        clean_pe[1] = b'Z';
+        clean_pe[0x3C] = 0x80; // e_lfanew
+        clean_pe[0x80..0x84].copy_from_slice(b"PE\0\0");
+        let rep_clean = analyze_driver_pe_bytes(&clean_pe, Some("C:\\drivers\\safe_filter.sys"));
+        assert_eq!(rep_clean.verdict, PreLoadDriverVerdict::Permit);
+        assert!(!rep_clean.arbitrary_rw_primitives_found);
+
+        // 2. Synthesize PE with dangerous MmMapIoSpace import
+        let mut vuln_pe = clean_pe.clone();
+        vuln_pe.extend_from_slice(b"Import: MmMapIoSpace\0");
+        let rep_vuln = analyze_driver_pe_bytes(&vuln_pe, Some("C:\\drivers\\new_untrusted.sys"));
+        assert_eq!(rep_vuln.verdict, PreLoadDriverVerdict::QuarantineBlockByovd);
+        assert!(rep_vuln.arbitrary_rw_primitives_found);
+        assert!(rep_vuln
+            .dangerous_imports
+            .iter()
+            .any(|i| i == "MmMapIoSpace"));
+
+        // 3. Synthesize PE with raw WRMSR opcode (0x0F 0x30)
+        let mut msr_pe = clean_pe.clone();
+        msr_pe.extend_from_slice(&[0x90, 0x0F, 0x30, 0xC3]);
+        let rep_msr = analyze_driver_pe_bytes(&msr_pe, Some("C:\\drivers\\msr_exploit.sys"));
+        assert_eq!(rep_msr.verdict, PreLoadDriverVerdict::QuarantineBlockByovd);
+        assert!(rep_msr.arbitrary_rw_primitives_found);
+
+        // 4. Known BYOVD name match
+        let rep_known = analyze_driver_pe_bytes(&clean_pe, Some("C:\\drivers\\gdrv.sys"));
+        assert_eq!(
+            rep_known.verdict,
+            PreLoadDriverVerdict::QuarantineBlockByovd
+        );
+        assert!(rep_known.arbitrary_rw_primitives_found);
+
+        // 5. Test inspect_and_quarantine_driver auto-wiring into KernelDriverClient
+        let client = KernelDriverClient::open_or_fallback();
+        let rep_quarantine = client
+            .inspect_and_quarantine_driver("C:\\drivers\\exploit_driver.sys", &vuln_pe)
+            .expect("inspect_and_quarantine_driver must succeed");
+        assert_eq!(
+            rep_quarantine.verdict,
+            PreLoadDriverVerdict::QuarantineBlockByovd
+        );
+        let rules = client.state.byovd_rules.read().unwrap();
+        assert!(rules.contains(&"exploit_driver.sys".to_string()));
     }
 }
 

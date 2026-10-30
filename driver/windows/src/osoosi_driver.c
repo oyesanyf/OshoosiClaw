@@ -91,6 +91,9 @@ typedef struct _OSOOSI_GLOBAL_STATE {
     BOOLEAN ObCallbacksRegistered;
     BOOLEAN MinifilterActive;
     BOOLEAN ElamActive;
+
+    // Periodic kernel callback self-integrity verification timestamp (F12)
+    LARGE_INTEGER LastIntegrityCheckTime;
 } OSOOSI_GLOBAL_STATE, *POSOOSI_GLOBAL_STATE;
 
 static OSOOSI_GLOBAL_STATE g_State;
@@ -197,6 +200,55 @@ static const UCHAR g_KnownByovdHashes[][OSOOSI_HASH_SIZE] = {
         0x5C, 0x2B, 0x29, 0x56, 0x79, 0x46, 0x95, 0xD5,
         0xC6, 0xDE, 0x65, 0xF6, 0xFB, 0x1E, 0x5B, 0x6B,
         0x86, 0x40, 0xC4, 0xB8, 0x27, 0x25, 0xFF, 0x05
+    },
+    // procexp152.sys: 2364D9D682404B7914BB5344415FA9D1E37FA0AB9CAE142E05F03DD28B8CFEB5
+    {
+        0x23, 0x64, 0xD9, 0xD6, 0x82, 0x40, 0x4B, 0x79,
+        0x14, 0xBB, 0x53, 0x44, 0x41, 0x5F, 0xA9, 0xD1,
+        0xE3, 0x7F, 0xA0, 0xAB, 0x9C, 0xAE, 0x14, 0x2E,
+        0x05, 0xF0, 0x3D, 0xD2, 0x8B, 0x8C, 0xFE, 0xB5
+    },
+    // iqvw64e.sys: 74CA70A1A8E97426E25F7717BE54E7AA1BC9C470EEBE6042DB643A65492D4B00
+    {
+        0x74, 0xCA, 0x70, 0xA1, 0xA8, 0xE9, 0x74, 0x26,
+        0xE2, 0x5F, 0x77, 0x17, 0xBE, 0x54, 0xE7, 0xAA,
+        0x1B, 0xC9, 0xC4, 0x70, 0xEE, 0xBE, 0x60, 0x42,
+        0xDB, 0x64, 0x3A, 0x65, 0x49, 0x2D, 0x4B, 0x00
+    },
+    // capcom.sys: C1D5CFBA19DDE9E4A1B9442F23E202C578434732C5F8B77B15D9F6A35F019F12
+    {
+        0xC1, 0xD5, 0xCF, 0xBA, 0x19, 0xDD, 0xE9, 0xE4,
+        0xA1, 0xB9, 0x44, 0x2F, 0x23, 0xE2, 0x02, 0xC5,
+        0x78, 0x43, 0x47, 0x32, 0xC5, 0xF8, 0xB7, 0x7B,
+        0x15, 0xD9, 0xF6, 0xA3, 0x5F, 0x01, 0x9F, 0x12
+    },
+    // asio64.sys: 1CB47A32DD58ADAB7252DA3F6EEAA4BA0E0BF90F111E8FF5F3AE77762A45D045
+    {
+        0x1C, 0xB4, 0x7A, 0x32, 0xDD, 0x58, 0xAD, 0xAB,
+        0x72, 0x52, 0xDA, 0x3F, 0x6E, 0xEA, 0xA4, 0xBA,
+        0x0E, 0x0B, 0xF9, 0x0F, 0x11, 0x1E, 0x8F, 0xF5,
+        0xF3, 0xAE, 0x77, 0x76, 0x2A, 0x45, 0xD0, 0x45
+    },
+    // mhyprot2.sys: 0466E92BF6136063BB9545F0F8051FFB562F43D5B98D41E79217623430043852
+    {
+        0x04, 0x66, 0xE9, 0x2B, 0xF6, 0x13, 0x60, 0x63,
+        0xBB, 0x95, 0x45, 0xF0, 0xF8, 0x05, 0x1F, 0xFB,
+        0x56, 0x2F, 0x43, 0xD5, 0xB9, 0x8D, 0x41, 0xE7,
+        0x92, 0x17, 0x62, 0x34, 0x30, 0x04, 0x38, 0x52
+    },
+    // kprocesshacker.sys: CB3B44B63309A4EB392F4460EC0E7E1784F479865CCB80105CCFC73AE2862D55
+    {
+        0xCB, 0x3B, 0x44, 0xB6, 0x33, 0x09, 0xA4, 0xEB,
+        0x39, 0x2F, 0x44, 0x60, 0xEC, 0x0E, 0x7E, 0x17,
+        0x84, 0xF4, 0x79, 0x86, 0x5C, 0xCB, 0x80, 0x10,
+        0x5C, 0xCF, 0xC7, 0x3A, 0xE2, 0x86, 0x2D, 0x55
+    },
+    // winring0x64.sys: 05E1C0D45300B9DB8D7D9E48F76FA7CCF0E53A7A972F4E4E94B2931122A6136F
+    {
+        0x05, 0xE1, 0xC0, 0xD4, 0x53, 0x00, 0xB9, 0xDB,
+        0x8D, 0x7D, 0x9E, 0x48, 0xF7, 0x6F, 0xA7, 0xCC,
+        0xF0, 0xE5, 0x3A, 0x7A, 0x97, 0x2F, 0x4E, 0x4E,
+        0x94, 0xB2, 0x93, 0x11, 0x22, 0xA6, 0x13, 0x6F
     }
 };
 
@@ -260,6 +312,8 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName);
 static BOOLEAN OsoosiIsPathBlockedLocked(_In_ PCUNICODE_STRING ImageFileName);
 static BOOLEAN OsoosiIsByovdDriverLocked(_In_ PCUNICODE_STRING ImageFileName);
 static BOOLEAN OsoosiIsSelfDefenseProtectedAsset(_In_ PCUNICODE_STRING FileName);
+static BOOLEAN OsoosiVerifyCallbackSelfIntegrityLocked(VOID);
+static BOOLEAN OsoosiPeriodicCallbackIntegrityCheckLocked(VOID);
 static VOID OsoosiEnqueueInterceptEventLocked(
     _In_ ULONG pid,
     _In_ ULONG parentPid,
@@ -391,6 +445,9 @@ NTSTATUS NTAPI DriverEntry(
         g_State.ImageNotifyRegistered = TRUE;
     }
 
+    // 5. Initialize timestamp for periodic kernel callback self-integrity verification (F12)
+    KeQuerySystemTime(&g_State.LastIntegrityCheckTime);
+
     KdPrint(("OsoosiDriver: Ring-0 Minifilter (PreAcquireForSectionSync) + ObRegisterCallbacks + BYOVD Driver loaded (v1.2.0).\n"));
     return STATUS_SUCCESS;
 }
@@ -500,6 +557,7 @@ NTSTATUS NTAPI OsoosiDeviceControl(
 
         POSOOSI_DRIVER_STATUS pStatus = (POSOOSI_DRIVER_STATUS)buffer;
         KeAcquireInStackQueuedSpinLock(&g_State.Lock, &lockHandle);
+        (VOID)OsoosiPeriodicCallbackIntegrityCheckLocked();
         pStatus->version = g_State.Version;
         pStatus->mode = g_State.Mode;
         pStatus->blocked_count = g_State.BlockedCount;
@@ -518,6 +576,7 @@ NTSTATUS NTAPI OsoosiDeviceControl(
 
         POSOOSI_EXTENDED_DRIVER_STATUS pExt = (POSOOSI_EXTENDED_DRIVER_STATUS)buffer;
         KeAcquireInStackQueuedSpinLock(&g_State.Lock, &lockHandle);
+        (VOID)OsoosiPeriodicCallbackIntegrityCheckLocked();
         pExt->version = g_State.Version;
         pExt->mode = g_State.Mode;
         pExt->blocked_count = g_State.BlockedCount;
@@ -991,6 +1050,18 @@ static BOOLEAN OsoosiVerifyCallbackSelfIntegrityLocked(VOID) {
             NULL
         );
         return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOLEAN OsoosiPeriodicCallbackIntegrityCheckLocked(VOID) {
+    LARGE_INTEGER now;
+    KeQuerySystemTime(&now);
+    // Periodically assert kernel callback registrations remain intact every 5 seconds (50,000,000 x 100ns units) (F12)
+    if (now.QuadPart - g_State.LastIntegrityCheckTime.QuadPart >= 50000000LL ||
+        g_State.LastIntegrityCheckTime.QuadPart == 0) {
+        g_State.LastIntegrityCheckTime = now;
+        return OsoosiVerifyCallbackSelfIntegrityLocked();
     }
     return TRUE;
 }

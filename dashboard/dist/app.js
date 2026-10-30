@@ -1817,6 +1817,9 @@ async function updateDashboard() {
             if (state.current_view === 'agent-anomalies') {
                 renderAgentAnomaliesView();
             }
+            if (state.current_view === 'utilities' && typeof loadDynamicDiskStatus === 'function') {
+                loadDynamicDiskStatus();
+            }
             if (state.current_view === 'history') {
                 const histViewEl = document.getElementById('history-view');
                 if (threatsChanged || (histViewEl && histViewEl.querySelector('.oshoosi-view-fallback-card'))) {
