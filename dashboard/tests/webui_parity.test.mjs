@@ -79,17 +79,18 @@ describe('WebUI 0-Diff Parity Invariant (Feature 16)', () => {
 });
 
 // ============================================================================
-// Suite 2: WebUI Modular Views Runtime Evaluation & Window Export Integrity
+// Shared Browser Environment Mock for Evaluation
 // ============================================================================
-describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () => {
-    function createBrowserEnvironment() {
-        const domListeners = {};
-        const windowListeners = {};
+function createBrowserEnvironment() {
+    const domListeners = {};
+    const windowListeners = {};
 
-        const mockElement = (id = '') => {
+        const mockElement = (id = '', tag = 'DIV') => {
             const el = {
                 id,
-                tagName: 'DIV',
+                tagName: String(tag).toUpperCase(),
+                width: 64,
+                height: 64,
                 style: {},
                 classList: {
                     contains: () => false,
@@ -131,8 +132,45 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
                 removeEventListener: () => {},
                 focus: () => {},
                 click: () => {},
-                setAttribute: () => {},
-                getAttribute: () => null
+                setAttribute(k, v) { this[k] = v; },
+                getAttribute(k) { return this[k] ?? null; },
+                getContext(type) {
+                    if (type === '2d') {
+                        if (!this._ctx2d) {
+                            this._ctx2d = {
+                                createImageData(w, h) {
+                                    return {
+                                        width: w,
+                                        height: h,
+                                        data: new Uint8ClampedArray(w * h * 4)
+                                    };
+                                },
+                                getImageData(sx, sy, sw, sh) {
+                                    if (!this._imgData || this._imgData.width !== sw || this._imgData.height !== sh) {
+                                        this._imgData = {
+                                            width: sw,
+                                            height: sh,
+                                            data: new Uint8ClampedArray(sw * sh * 4)
+                                        };
+                                    }
+                                    return this._imgData;
+                                },
+                                putImageData(imgData, dx, dy) {
+                                    this._imgData = imgData;
+                                },
+                                clearRect(x, y, w, h) {
+                                    if (this._imgData && this._imgData.data) {
+                                        this._imgData.data.fill(0);
+                                    }
+                                },
+                                fillRect() {},
+                                drawImage() {}
+                            };
+                        }
+                        return this._ctx2d;
+                    }
+                    return null;
+                }
             };
             return el;
         };
@@ -143,26 +181,28 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
             body: mockElement('body'),
             getElementById(id) {
                 if (!elementRegistry[id]) {
-                    elementRegistry[id] = mockElement(id);
+                    const isCanvas = id && id.includes('canvas');
+                    elementRegistry[id] = mockElement(id, isCanvas ? 'CANVAS' : 'DIV');
                 }
                 return elementRegistry[id];
             },
             querySelector(sel) {
                 if (sel && sel.startsWith('#')) {
                     const id = sel.slice(1);
-                    if (!elementRegistry[id]) {
-                        elementRegistry[id] = mockElement(id);
-                    }
-                    return elementRegistry[id];
+                    return this.getElementById(id);
                 }
                 return mockElement(sel);
             },
-            querySelectorAll() {
+            querySelectorAll(sel) {
+                if (sel && sel.includes('canvas')) {
+                    return Object.values(elementRegistry).filter(el =>
+                        el.tagName === 'CANVAS' || (el.id && el.id.startsWith('stego-canvas'))
+                    );
+                }
                 return [];
             },
             createElement(tag) {
-                const el = mockElement(tag);
-                el.tagName = String(tag).toUpperCase();
+                const el = mockElement('', tag);
                 return el;
             },
             addEventListener(event, callback) {
@@ -236,13 +276,20 @@ describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () 
             Event: class Event { constructor(t) { this.type = t; } },
             Blob: class Blob { constructor(p) { this.parts = p; } },
             URL: { createObjectURL: () => 'blob:mock', revokeObjectURL: () => {} },
+            crypto: globalThis.crypto || crypto,
+            TextEncoder: globalThis.TextEncoder,
+            TextDecoder: globalThis.TextDecoder,
             console
         };
 
-        mockWindow.window = mockWindow;
-        return { mockWindow, mockDocument, domListeners, windowListeners };
-    }
+    mockWindow.window = mockWindow;
+    return { mockWindow, mockDocument, domListeners, windowListeners };
+}
 
+// ============================================================================
+// Suite 2: WebUI Modular Views Runtime Evaluation & Window Export Integrity
+// ============================================================================
+describe('WebUI Modular Views Runtime Evaluation & Window Export Integrity', () => {
     const scriptOrder = [
         'app.js',
         'views/mesh.js',
@@ -553,6 +600,172 @@ describe('MITRE ATT&CK Matrix Layout Containment & Collapsible UI Verification',
                 assert.ok(appContent.includes('updateMitreCollapseControlsUI'), 'Must include updateMitreCollapseControlsUI');
                 assert.ok(appContent.includes('COLLAPSIBLE_PANELS'), 'Must include COLLAPSIBLE_PANELS');
                 assert.ok(appContent.includes('toggleCollapsiblePanel'), 'Must include toggleCollapsiblePanel');
+            });
+        });
+    }
+});
+
+// ============================================================================
+// Suite 4: Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37)
+// ============================================================================
+describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37)', () => {
+    for (const targetDirName of ['src', 'dist']) {
+        describe(`Target: dashboard/${targetDirName}`, () => {
+            const targetDir = path.resolve(`dashboard/${targetDirName}`);
+
+            it('should verify buildSafeRepoUrl blocks 404 fake repos and allows verified live repos', () => {
+                const env = createBrowserEnvironment();
+                const appCode = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+                const script = new vm.Script(appCode, { filename: 'app.js' });
+                const context = vm.createContext(env.mockWindow);
+                script.runInContext(context);
+
+                const buildSafeRepoUrl = env.mockWindow.buildSafeRepoUrl;
+                assert.strictEqual(typeof buildSafeRepoUrl, 'function', 'buildSafeRepoUrl must be exported to window');
+
+                // 404 repos must be blocked (return empty string)
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/AlignmentResearch/rlhf-poisoning-benchmark'), '', 'Must block rlhf-poisoning-benchmark');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/oshoosiclaw/mac-agent-bench'), '', 'Must block mac-agent-bench');
+
+                // Live verified repos must be accepted
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/NVIDIA/garak'), 'https://github.com/NVIDIA/garak', 'Must accept NVIDIA/garak');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/ethz-spylab/agentdojo'), 'https://github.com/ethz-spylab/agentdojo', 'Must accept ethz-spylab/agentdojo');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/UKGovernmentBEIS/inspect_evals'), 'https://github.com/UKGovernmentBEIS/inspect_evals', 'Must accept inspect_evals');
+            });
+
+            it('should verify window._researchSwarmState has zero fake URLs and all rules have generated_code_snippet', () => {
+                const env = createBrowserEnvironment();
+                const appCode = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+                const script = new vm.Script(appCode, { filename: 'app.js' });
+                const context = vm.createContext(env.mockWindow);
+                script.runInContext(context);
+
+                const st = env.mockWindow._researchSwarmState;
+                assert.ok(st, '_researchSwarmState must exist on window');
+                assert.ok(Array.isArray(st.active_enforced_research_rules), 'active_enforced_research_rules must be an array');
+                assert.strictEqual(st.active_enforced_research_rules.length, 4, 'Must contain 4 baseline rules');
+
+                for (const rule of st.active_enforced_research_rules) {
+                    assert.ok(!rule.code_repo_url.includes('rlhf-poisoning-benchmark'), `Rule ${rule.rule_id} must not contain rlhf-poisoning-benchmark`);
+                    assert.ok(!rule.code_repo_url.includes('mac-agent-bench'), `Rule ${rule.rule_id} must not contain mac-agent-bench`);
+                    assert.ok(rule.generated_code_snippet && rule.generated_code_snippet.length > 20, `Rule ${rule.rule_id} must have populated generated_code_snippet`);
+                }
+
+                // Verify specific live replacements
+                const garakRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2610.20437'));
+                assert.ok(garakRule, 'Rule 2610.20437 must exist');
+                assert.strictEqual(garakRule.code_repo_url, 'https://github.com/NVIDIA/garak');
+
+                const dojoRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2601.11893'));
+                assert.ok(dojoRule, 'Rule 2601.11893 must exist');
+                assert.strictEqual(dojoRule.code_repo_url, 'https://github.com/ethz-spylab/agentdojo');
+            });
+
+            it('should verify encodeCodeIntoImage and decodeCodeFromImage round-trip bit fidelity across RGB channels', async () => {
+                const env = createBrowserEnvironment();
+                const appCode = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+                const script = new vm.Script(appCode, { filename: 'app.js' });
+                const context = vm.createContext(env.mockWindow);
+                script.runInContext(context);
+
+                const encode = env.mockWindow.encodeCodeIntoImage;
+                const decode = env.mockWindow.decodeCodeFromImage;
+                assert.strictEqual(typeof encode, 'function', 'encodeCodeIntoImage must be exported');
+                assert.strictEqual(typeof decode, 'function', 'decodeCodeFromImage must be exported');
+
+                const secretPayload = new TextEncoder().encode('pub fn verify_defense_carrier() -> bool { true }');
+                const imgData = await encode(secretPayload, 64, 64, null);
+
+                assert.strictEqual(imgData.width, 64);
+                assert.strictEqual(imgData.height, 64);
+                assert.strictEqual(imgData.data.length, 64 * 64 * 4);
+
+                // Verify all alpha channels remain 255 (skip alpha)
+                for (let p = 0; p < 64 * 64; p++) {
+                    assert.strictEqual(imgData.data[p * 4 + 3], 255, `Pixel ${p} alpha must remain 255`);
+                }
+
+                const decoded = await decode(imgData, null);
+                const decodedText = new TextDecoder().decode(decoded);
+                assert.strictEqual(decodedText, 'pub fn verify_defense_carrier() -> bool { true }', 'Decoded text must match original payload exactly');
+            });
+
+            it('should verify encodeCodeIntoImage and decodeCodeFromImage with Web Crypto AES-GCM encryption/decryption', async () => {
+                const env = createBrowserEnvironment();
+                const appCode = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+                const script = new vm.Script(appCode, { filename: 'app.js' });
+                const context = vm.createContext(env.mockWindow);
+                script.runInContext(context);
+
+                const encode = env.mockWindow.encodeCodeIntoImage;
+                const decode = env.mockWindow.decodeCodeFromImage;
+
+                const key = await env.mockWindow.crypto.subtle.generateKey(
+                    { name: 'AES-GCM', length: 256 },
+                    true,
+                    ['encrypt', 'decrypt']
+                );
+
+                const secretPayload = new TextEncoder().encode('pub fn verify_crypto_guard() -> bool { true }');
+                const imgData = await encode(secretPayload, 64, 64, key);
+                const decrypted = await decode(imgData, key);
+                const decryptedText = new TextDecoder().decode(decrypted);
+                assert.strictEqual(decryptedText, 'pub fn verify_crypto_guard() -> bool { true }', 'AES-GCM decrypted payload must match original');
+            });
+
+            it('should verify renderEphemeralCodeToCanvas and scrubEphemeralCanvas memory zeroing lifecycle', async () => {
+                const env = createBrowserEnvironment();
+                const appCode = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+                const script = new vm.Script(appCode, { filename: 'app.js' });
+                const context = vm.createContext(env.mockWindow);
+                script.runInContext(context);
+
+                const render = env.mockWindow.renderEphemeralCodeToCanvas;
+                const scrub = env.mockWindow.scrubEphemeralCanvas;
+                const scrubAll = env.mockWindow.scrubAllEphemeralCanvases;
+
+                assert.strictEqual(typeof render, 'function', 'renderEphemeralCodeToCanvas must be exported');
+                assert.strictEqual(typeof scrub, 'function', 'scrubEphemeralCanvas must be exported');
+                assert.strictEqual(typeof scrubAll, 'function', 'scrubAllEphemeralCanvases must be exported');
+
+                const canvasId = 'stego-canvas-test-rule-1';
+                const canvas = env.mockDocument.getElementById(canvasId);
+                assert.ok(canvas, 'Canvas element must be created in document');
+
+                const secretText = 'forbid(principal, action, resource) when { context.test == true };';
+                const success = await render(canvasId, secretText);
+                assert.ok(success, 'renderEphemeralCodeToCanvas must return true');
+
+                // Inspect rendered pixel data
+                const ctx = canvas.getContext('2d');
+                assert.ok(ctx._imgData, 'Canvas 2d context must have image data');
+                const nonZeroRendered = ctx._imgData.data.some(b => b > 0);
+                assert.ok(nonZeroRendered, 'Rendered canvas must have non-zero pixel data');
+
+                // Scrub the canvas
+                scrub(canvasId);
+                const allZeroAfterScrub = ctx._imgData.data.every(b => b === 0);
+                assert.ok(allZeroAfterScrub, 'Canvas pixels must be zeroed after scrubEphemeralCanvas');
+            });
+
+            it('should verify renderResearchSwarmUI generates collapsible defense-code-accordion', () => {
+                const env = createBrowserEnvironment();
+                const appCode = fs.readFileSync(path.join(targetDir, 'app.js'), 'utf8');
+                const script = new vm.Script(appCode, { filename: 'app.js' });
+                const context = vm.createContext(env.mockWindow);
+                script.runInContext(context);
+
+                // Call renderResearchSwarmUI
+                assert.strictEqual(typeof env.mockWindow.renderResearchSwarmUI, 'function', 'renderResearchSwarmUI must be function');
+                env.mockWindow.renderResearchSwarmUI();
+
+                const activeTbody = env.mockDocument.getElementById('research-active-rules-tbody');
+                assert.ok(activeTbody, 'research-active-rules-tbody must exist');
+                assert.ok(activeTbody.innerHTML.includes('defense-code-accordion'), 'HTML must contain defense-code-accordion');
+                assert.ok(activeTbody.innerHTML.includes('cedar-policy-code'), 'HTML must contain cedar-policy-code');
+                assert.ok(activeTbody.innerHTML.includes('rust-guard-code'), 'HTML must contain rust-guard-code');
+                assert.ok(activeTbody.innerHTML.includes('btn-stego-render'), 'HTML must contain btn-stego-render');
+                assert.ok(activeTbody.innerHTML.includes('stego-canvas-'), 'HTML must contain stego-canvas elements');
             });
         });
     }

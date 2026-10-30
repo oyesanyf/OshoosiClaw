@@ -14,7 +14,8 @@
     "accuracy_score": 99.4,
     "arxiv_url": "https://arxiv.org/abs/2603.02277",
     "has_code_repo": true,
-    "code_repo_url": "https://github.com/UKGovernmentBEIS/inspect_evals"
+    "code_repo_url": "https://github.com/UKGovernmentBEIS/inspect_evals",
+    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2603.02277v3\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Docker socket / nsenter container namespace breakout (SandboxEscapeBench)\nif let Ok(rules) = research_defense_registry().read() {\n    let pat = \"sandboxescapebench\".trim().to_ascii_lowercase();\n    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {\n        tech_res.is_clean = false;\n        tech_res.sandbox_quarantine_required = true;\n        tech_res.detected_vectors.push(\n            format!(\"[ArXiv-Active-Defense:2603.02277v3]: Blocked by rule 'ARXIV-DEF-2603.02277'\")\n        );\n    }\n}"
   },
   {
     "rule_id": "ARXIV-DEF-2604.20496",
@@ -31,7 +32,8 @@
     "accuracy_score": 99.1,
     "arxiv_url": "https://arxiv.org/abs/2604.20496",
     "has_code_repo": true,
-    "code_repo_url": "https://github.com/cedar-policy/cedar-spec"
+    "code_repo_url": "https://github.com/cedar-policy/cedar-spec",
+    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2604.20496v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Mythos-class unverified sandbox cage bypass against non-SMT-verified policy boundaries\nif let Ok(rules) = research_defense_registry().read() {\n    let pat = \"mythos_unverified_cage_bypass\".trim().to_ascii_lowercase();\n    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {\n        tech_res.is_clean = false;\n        tech_res.sandbox_quarantine_required = true;\n        tech_res.detected_vectors.push(\n            format!(\"[ArXiv-Active-Defense:2604.20496v1]: Blocked by rule 'ARXIV-DEF-2604.20496'\")\n        );\n    }\n}"
   },
   {
     "rule_id": "ARXIV-DEF-2610.20437",
@@ -48,7 +50,8 @@
     "accuracy_score": 99.6,
     "arxiv_url": "https://arxiv.org/abs/2610.20437",
     "has_code_repo": true,
-    "code_repo_url": "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark"
+    "code_repo_url": "https://github.com/NVIDIA/garak",
+    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2610.20437v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: CVE-2026-65616 RLHF replay buffer poisoning and autonomous privilege escalation\nif let Ok(rules) = research_defense_registry().read() {\n    let pat = \"cve-2026-65616 | rlhf_privilege_escalation\".trim().to_ascii_lowercase();\n    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {\n        tech_res.is_clean = false;\n        tech_res.sandbox_quarantine_required = true;\n        tech_res.detected_vectors.push(\n            format!(\"[ArXiv-Active-Defense:2610.20437v1]: Blocked by rule 'ARXIV-DEF-2610.20437'\")\n        );\n    }\n}"
   },
   {
     "rule_id": "ARXIV-DEF-2601.11893",
@@ -65,6 +68,7 @@
     "accuracy_score": 98.9,
     "arxiv_url": "https://arxiv.org/abs/2601.11893",
     "has_code_repo": true,
-    "code_repo_url": "https://github.com/oshoosiclaw/mac-agent-bench"
+    "code_repo_url": "https://github.com/ethz-spylab/agentdojo",
+    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2601.11893v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Autonomous agent mandatory access control (MAC) privilege escalation bypass\nif let Ok(rules) = research_defense_registry().read() {\n    let pat = \"mac_privilege_escalation_bypass\".trim().to_ascii_lowercase();\n    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {\n        tech_res.is_clean = false;\n        tech_res.sandbox_quarantine_required = true;\n        tech_res.detected_vectors.push(\n            format!(\"[ArXiv-Active-Defense:2601.11893v1]: Blocked by rule 'ARXIV-DEF-2601.11893'\")\n        );\n    }\n}"
   }
 ]

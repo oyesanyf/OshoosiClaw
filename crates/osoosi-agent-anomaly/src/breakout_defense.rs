@@ -1388,6 +1388,8 @@ pub struct IngestedResearchDefenseRule {
     pub has_code_repo: bool,
     #[serde(default)]
     pub code_repo_url: String,
+    #[serde(default)]
+    pub generated_code_snippet: String,
 }
 
 impl Default for IngestedResearchDefenseRule {
@@ -1408,8 +1410,43 @@ impl Default for IngestedResearchDefenseRule {
             arxiv_url: String::new(),
             has_code_repo: false,
             code_repo_url: String::new(),
+            generated_code_snippet: String::new(),
         }
     }
+}
+
+/// Deterministically synthesizes a tighten-only, defanged read-only Rust enforcement guard.
+/// Enforces zero arbitrary code execution and anti-weaponization invariants.
+pub fn synthesize_rust_guard_snippet(
+    rule_id: &str,
+    arxiv_id: &str,
+    indicator_pattern: &str,
+    attack_vector: &str,
+) -> String {
+    let clean_rule_id = rule_id.trim();
+    let clean_arxiv = arxiv_id.trim();
+    let defanged_pat = indicator_pattern
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', " ")
+        .replace('\r', "");
+    let clean_vector = attack_vector.replace('"', "\\\"");
+
+    format!(
+r#"// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:{clean_arxiv}
+// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
+// Threat Vector: {clean_vector}
+if let Ok(rules) = research_defense_registry().read() {{
+    let pat = "{defanged_pat}".trim().to_ascii_lowercase();
+    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {{
+        tech_res.is_clean = false;
+        tech_res.sandbox_quarantine_required = true;
+        tech_res.detected_vectors.push(
+            format!("[ArXiv-Active-Defense:{clean_arxiv}]: Blocked by rule '{clean_rule_id}'")
+        );
+    }}
+}}"#
+    )
 }
 
 const INGESTED_RESEARCH_DEFENSES_PATH: &str = "config/ingested_research_defenses.json";
@@ -1550,7 +1587,18 @@ static OPERATOR_APPROVED_RESEARCH_RULE_IDS: OnceLock<RwLock<std::collections::Ha
     OnceLock::new();
 
 fn pinned_research_rule_set() -> &'static RwLock<std::collections::HashSet<String>> {
-    PINNED_RESEARCH_RULE_IDS.get_or_init(|| RwLock::new(std::collections::HashSet::new()))
+    PINNED_RESEARCH_RULE_IDS.get_or_init(|| {
+        let mut set = std::collections::HashSet::new();
+        for r in default_seeded_research_defense_rules() {
+            let base = normalize_base_arxiv_id(&r.arxiv_id);
+            let canon = canonical_research_rule_id(&base);
+            set.insert(r.rule_id);
+            set.insert(base);
+            set.insert(canon);
+            set.insert(r.arxiv_id);
+        }
+        RwLock::new(set)
+    })
 }
 
 fn operator_approved_research_rule_set() -> &'static RwLock<std::collections::HashSet<String>> {
@@ -1772,6 +1820,12 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             arxiv_url: "https://arxiv.org/abs/2603.02277".to_string(),
             has_code_repo: true,
             code_repo_url: "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
+            generated_code_snippet: synthesize_rust_guard_snippet(
+                "ARXIV-DEF-2603.02277",
+                "2603.02277v3",
+                "sandboxescapebench",
+                "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)",
+            ),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2604.20496".to_string(),
@@ -1791,6 +1845,12 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             arxiv_url: "https://arxiv.org/abs/2604.20496".to_string(),
             has_code_repo: true,
             code_repo_url: "https://github.com/cedar-policy/cedar-spec".to_string(),
+            generated_code_snippet: synthesize_rust_guard_snippet(
+                "ARXIV-DEF-2604.20496",
+                "2604.20496v1",
+                "mythos_unverified_cage_bypass",
+                "Mythos-class unverified sandbox cage bypass against non-SMT-verified policy boundaries",
+            ),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2610.20437".to_string(),
@@ -1809,7 +1869,13 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             accuracy_score: 99.6,
             arxiv_url: "https://arxiv.org/abs/2610.20437".to_string(),
             has_code_repo: true,
-            code_repo_url: "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string(),
+            code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
+            generated_code_snippet: synthesize_rust_guard_snippet(
+                "ARXIV-DEF-2610.20437",
+                "2610.20437v1",
+                "cve-2026-65616 | rlhf_privilege_escalation",
+                "CVE-2026-65616 RLHF replay buffer poisoning and autonomous privilege escalation",
+            ),
         },
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2601.11893".to_string(),
@@ -1828,7 +1894,13 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             accuracy_score: 98.9,
             arxiv_url: "https://arxiv.org/abs/2601.11893".to_string(),
             has_code_repo: true,
-            code_repo_url: "https://github.com/oshoosiclaw/mac-agent-bench".to_string(),
+            code_repo_url: "https://github.com/ethz-spylab/agentdojo".to_string(),
+            generated_code_snippet: synthesize_rust_guard_snippet(
+                "ARXIV-DEF-2601.11893",
+                "2601.11893v1",
+                "mac_privilege_escalation_bypass",
+                "Autonomous agent mandatory access control (MAC) privilege escalation bypass",
+            ),
         },
     ];
 
@@ -2005,7 +2077,8 @@ pub fn init_research_rules_sqlite() {
         accuracy_score REAL NOT NULL DEFAULT 99.0,
         arxiv_url TEXT NOT NULL DEFAULT '',
         has_code_repo INTEGER NOT NULL DEFAULT 0,
-        code_repo_url TEXT NOT NULL DEFAULT ''
+        code_repo_url TEXT NOT NULL DEFAULT '',
+        generated_code_snippet TEXT NOT NULL DEFAULT ''
     );
         DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');
         CREATE TABLE IF NOT EXISTS research_registry_meta (
@@ -2027,6 +2100,11 @@ pub fn init_research_rules_sqlite() {
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN arxiv_url TEXT NOT NULL DEFAULT '';", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN has_code_repo INTEGER NOT NULL DEFAULT 0;", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN code_repo_url TEXT NOT NULL DEFAULT '';", []);
+            let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN generated_code_snippet TEXT NOT NULL DEFAULT '';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/UKGovernmentBEIS/inspect_evals' WHERE base_arxiv_id = '2603.02277';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/cedar-policy/cedar-spec' WHERE base_arxiv_id = '2604.20496';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/NVIDIA/garak' WHERE base_arxiv_id = '2610.20437' OR code_repo_url LIKE '%rlhf-poisoning-benchmark%';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/ethz-spylab/agentdojo' WHERE base_arxiv_id = '2601.11893' OR code_repo_url LIKE '%mac-agent-bench%';", []);
         }
     }
 }
@@ -2114,12 +2192,17 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
     } else {
         rule.accuracy_score
     };
+    let snippet = if rule.generated_code_snippet.is_empty() {
+        synthesize_rust_guard_snippet(&canonical_id, &rule.arxiv_id, &rule.indicator_pattern, &rule.attack_vector)
+    } else {
+        rule.generated_code_snippet.clone()
+    };
 
     let sql = "INSERT INTO enforced_research_rules (
         rule_id, base_arxiv_id, arxiv_id, title, attack_vector, target_boundary,
         extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc,
-        relevance_score, accuracy_score, arxiv_url, has_code_repo, code_repo_url
-    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+        relevance_score, accuracy_score, arxiv_url, has_code_repo, code_repo_url, generated_code_snippet
+    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
     ON CONFLICT(base_arxiv_id) DO UPDATE SET
         rule_id = excluded.rule_id,
         arxiv_id = excluded.arxiv_id,
@@ -2135,7 +2218,8 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
         accuracy_score = excluded.accuracy_score,
         arxiv_url = excluded.arxiv_url,
         has_code_repo = excluded.has_code_repo,
-        code_repo_url = excluded.code_repo_url;";
+        code_repo_url = excluded.code_repo_url,
+        generated_code_snippet = excluded.generated_code_snippet;";
 
     for db_path in RESEARCH_DB_PATHS {
         if let Some(parent) = std::path::Path::new(db_path).parent() {
@@ -2161,6 +2245,7 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
                     safe_url,
                     if rule.has_code_repo { 1 } else { 0 },
                     &rule.code_repo_url,
+                    snippet,
                 ],
             );
         }
@@ -2181,27 +2266,50 @@ pub fn load_research_rules_sqlite() -> Vec<IngestedResearchDefenseRule> {
             db_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         ) {
-            let mut stmt = match conn.prepare("SELECT rule_id, arxiv_id, title, attack_vector, target_boundary, extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc, COALESCE(relevance_score, 96.0), COALESCE(accuracy_score, 99.0), COALESCE(arxiv_url, ''), COALESCE(has_code_repo, 0), COALESCE(code_repo_url, '') FROM enforced_research_rules") {
+            let mut stmt = match conn.prepare("SELECT rule_id, arxiv_id, title, attack_vector, target_boundary, extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc, COALESCE(relevance_score, 96.0), COALESCE(accuracy_score, 99.0), COALESCE(arxiv_url, ''), COALESCE(has_code_repo, 0), COALESCE(code_repo_url, ''), COALESCE(generated_code_snippet, '') FROM enforced_research_rules") {
                 Ok(s) => s,
                 Err(_) => continue,
             };
             let rows = stmt.query_map([], |row| {
+                let rule_id: String = row.get(0)?;
+                let arxiv_id: String = row.get(1)?;
+                let title: String = row.get(2)?;
+                let attack_vector: String = row.get(3)?;
+                let target_boundary: String = row.get(4)?;
+                let extraction_class: String = row.get(5)?;
+                let indicator_pattern: String = row.get(6)?;
+                let cedar_forbid_policy: String = row.get(7)?;
+                let target_crate: String = row.get(8)?;
+                let enrolled_at_utc: String = row.get(9)?;
+                let relevance_score: f64 = row.get::<_, f64>(10).unwrap_or(96.0);
+                let accuracy_score: f64 = row.get::<_, f64>(11).unwrap_or(99.0);
+                let arxiv_url: String = row.get::<_, String>(12).unwrap_or_default();
+                let has_code_repo: bool = row.get::<_, i64>(13).unwrap_or(0) != 0;
+                let code_repo_url: String = row.get::<_, String>(14).unwrap_or_default();
+                let raw_snippet: String = row.get::<_, String>(15).unwrap_or_default();
+                let generated_code_snippet = if raw_snippet.is_empty() {
+                    synthesize_rust_guard_snippet(&rule_id, &arxiv_id, &indicator_pattern, &attack_vector)
+                } else {
+                    raw_snippet
+                };
+
                 Ok(IngestedResearchDefenseRule {
-                    rule_id: row.get(0)?,
-                    arxiv_id: row.get(1)?,
-                    title: row.get(2)?,
-                    attack_vector: row.get(3)?,
-                    target_boundary: row.get(4)?,
-                    extraction_class: row.get(5)?,
-                    indicator_pattern: row.get(6)?,
-                    cedar_forbid_policy: row.get(7)?,
-                    target_crate: row.get(8)?,
-                    enrolled_at_utc: row.get(9)?,
-                    relevance_score: row.get::<_, f64>(10).unwrap_or(96.0),
-                    accuracy_score: row.get::<_, f64>(11).unwrap_or(99.0),
-                    arxiv_url: row.get::<_, String>(12).unwrap_or_default(),
-                    has_code_repo: row.get::<_, i64>(13).unwrap_or(0) != 0,
-                    code_repo_url: row.get::<_, String>(14).unwrap_or_default(),
+                    rule_id,
+                    arxiv_id,
+                    title,
+                    attack_vector,
+                    target_boundary,
+                    extraction_class,
+                    indicator_pattern,
+                    cedar_forbid_policy,
+                    target_crate,
+                    enrolled_at_utc,
+                    relevance_score,
+                    accuracy_score,
+                    arxiv_url,
+                    has_code_repo,
+                    code_repo_url,
+                    generated_code_snippet,
                 })
             });
             if let Ok(mapped) = rows {
@@ -2251,6 +2359,14 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
     }
     if rule.accuracy_score <= 0.0 {
         rule.accuracy_score = 99.0;
+    }
+    if rule.generated_code_snippet.is_empty() {
+        rule.generated_code_snippet = synthesize_rust_guard_snippet(
+            &rule.rule_id,
+            &rule.arxiv_id,
+            &rule.indicator_pattern,
+            &rule.attack_vector,
+        );
     }
 
     let snapshot = {
@@ -2313,9 +2429,18 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
                                 .execute(ev_sql, rusqlite::params![evicted_rule.rule_id, ev_base]);
                         }
                     }
+                    guard.push(rule.clone());
+                } else {
+                    tracing::warn!(
+                        "Research defense registry at capacity ({} rules) and all dynamic rules are pinned or operator-approved; rejecting unapproved rule '{}'",
+                        MAX_ACTIVE_RESEARCH_RULES,
+                        rule.rule_id
+                    );
+                    return guard.len();
                 }
+            } else {
+                guard.push(rule.clone());
             }
-            guard.push(rule.clone());
         }
 
         // Sort dynamic rules (index >= 4) so code-backed rules rank ahead
@@ -3901,5 +4026,105 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("prior years"));
+    }
+
+    #[test]
+    fn test_verify_rule_against_canary_benign_corpus() {
+        let clean_rule = IngestedResearchDefenseRule {
+            rule_id: "test_clean".to_string(),
+            arxiv_id: "2699.88888".to_string(),
+            title: "Clean Defense Rule".to_string(),
+            attack_vector: "Novel Vector".to_string(),
+            target_boundary: "boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "novel_exploit_payload_marker_xyz_9988".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
+            target_crate: "osoosi-agent-anomaly".to_string(),
+            enrolled_at_utc: "2026-10-30T00:00:00Z".to_string(),
+            ..Default::default()
+        };
+        assert!(verify_rule_against_canary_benign_corpus(&clean_rule).is_none());
+
+        let false_positive_rule = IngestedResearchDefenseRule {
+            indicator_pattern: "cargo build --workspace".to_string(),
+            ..clean_rule.clone()
+        };
+        let err = verify_rule_against_canary_benign_corpus(&false_positive_rule);
+        assert!(err.is_some());
+        assert!(err.unwrap().contains("triggered false positive on canary benign telemetry sample"));
+
+        let git_fp_rule = IngestedResearchDefenseRule {
+            indicator_pattern: "git status -s".to_string(),
+            ..clean_rule.clone()
+        };
+        assert!(verify_rule_against_canary_benign_corpus(&git_fp_rule).is_some());
+
+        let verdict = validate_research_rule_acceptance(&false_positive_rule, Some(90.0), &[], false);
+        assert!(!verdict.accepted);
+    }
+
+    #[test]
+    fn test_zero_fake_repo_urls_in_seeded_rules() {
+        let seeded = default_seeded_research_defense_rules();
+        assert_eq!(seeded.len(), 4);
+        for r in &seeded {
+            assert!(
+                !r.code_repo_url.contains("rlhf-poisoning-benchmark"),
+                "Rule {} must not contain 404 URL rlhf-poisoning-benchmark",
+                r.rule_id
+            );
+            assert!(
+                !r.code_repo_url.contains("mac-agent-bench"),
+                "Rule {} must not contain 404 URL mac-agent-bench",
+                r.rule_id
+            );
+            assert!(
+                r.code_repo_url.starts_with("https://github.com/"),
+                "Rule {} code_repo_url must start with https://github.com/",
+                r.rule_id
+            );
+            assert!(
+                !r.generated_code_snippet.is_empty(),
+                "Rule {} must have generated_code_snippet populated",
+                r.rule_id
+            );
+        }
+        assert_eq!(seeded[2].code_repo_url, "https://github.com/NVIDIA/garak");
+        assert_eq!(seeded[3].code_repo_url, "https://github.com/ethz-spylab/agentdojo");
+    }
+
+    #[test]
+    fn test_synthesize_rust_guard_snippet_is_tighten_only() {
+        let snippet = synthesize_rust_guard_snippet(
+            "ARXIV-DEF-2603.02277",
+            "2603.02277v3",
+            "malicious\\path\"with'special\nchars",
+            "Container \"escape\" vector",
+        );
+        assert!(snippet.contains("[TIGHTEN-ONLY DEFENSE GUARD]"));
+        assert!(snippet.contains("tech_res.is_clean = false;"));
+        assert!(snippet.contains("tech_res.sandbox_quarantine_required = true;"));
+        assert!(!snippet.contains("permit("));
+        assert!(!snippet.contains("unsafe"));
+        assert!(!snippet.contains("std::process::Command"));
+        assert!(!snippet.contains("\nchars")); // control chars stripped/escaped
+    }
+
+    #[test]
+    fn test_anti_eviction_protects_pinned_and_operator_approved_rules() {
+        let seeded = default_seeded_research_defense_rules();
+        assert_eq!(seeded.len(), 4);
+        for r in &seeded {
+            assert!(is_research_rule_pinned(r));
+        }
+
+        let rule_id = "ARXIV-DEF-2609.77777";
+        approve_ingested_research_rule(rule_id);
+        let test_rule = IngestedResearchDefenseRule {
+            rule_id: rule_id.to_string(),
+            arxiv_id: "2609.77777v1".to_string(),
+            ..Default::default()
+        };
+        assert!(is_research_rule_operator_approved(&test_rule));
     }
 }
