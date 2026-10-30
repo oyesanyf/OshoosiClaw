@@ -387,6 +387,250 @@ def check_lateral_movement_sink_oracle(
 
 
 # =============================================================================
+# F29 & F30 Oracles: HitlCognitiveFirewall & Intent-vs-Effect Divergence
+# =============================================================================
+
+def scan_for_visual_deception_oracle(input_text: str) -> List[str]:
+    """Authoritative oracle mirroring HitlCognitiveFirewall::scan_for_visual_deception."""
+    findings = []
+
+    # 1. Bidirectional overrides (RTLO U+202E, etc.)
+    bidi_overrides = {
+        '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',
+        '\u2066', '\u2067', '\u2068', '\u2069', '\u200E', '\u200F'
+    }
+    if any(c in bidi_overrides for c in input_text):
+        findings.append("BidirectionalOverrideRtlo")
+
+    # 2. Zero-width characters & soft hyphen
+    zero_width = {
+        '\u00AD', '\u200B', '\u200C', '\u200D', '\uFEFF', '\u2060', '\u180E'
+    }
+    if any(c in zero_width for c in input_text):
+        findings.append("ZeroWidthSteganography")
+
+    # 3. UTS #39 mixed-script confusable homographs
+    has_ascii = any('a' <= c.lower() <= 'z' for c in input_text)
+    has_confusable_script = any(
+        0x0400 <= ord(c) <= 0x04FF or 0x0370 <= ord(c) <= 0x03FF
+        for c in input_text
+    )
+    latin_confusables = {
+        '\u0430', '\u0441', '\u0435', '\u043E', '\u0440', '\u0405',
+        '\u0445', '\u0443', '\u0456', '\u0458', '\u0410', '\u0412',
+        '\u0421', '\u0415', '\u041D', '\u041E', '\u0420', '\u0422', '\u0425',
+        '\u03B1', '\u03B2', '\u03B5', '\u03B9', '\u03BA', '\u03BF',
+        '\u03C1', '\u03C4', '\u03C5', '\u03C7', '\u0391', '\u0392',
+        '\u0395', '\u0397', '\u0399', '\u039A', '\u039C', '\u039D',
+        '\u039F', '\u03A1', '\u03A4', '\u03A7'
+    }
+    has_latin_confusable = any(c in latin_confusables for c in input_text)
+    if (has_ascii and has_confusable_script) or has_latin_confusable:
+        findings.append("UnicodeConfusableHomograph")
+
+    # 4. ANSI escapes
+    if '\x1b' in input_text or '\u009b' in input_text:
+        findings.append("AnsiEscapeInjection")
+
+    # 5. Base64 / Hex shell payloads
+    lower = input_text.lower()
+    has_hex = (
+        "certutil -decodehex" in lower
+        or "certutil.exe -decodehex" in lower
+        or "fromhexstring" in lower
+        or "xxd -r" in lower
+        or "xxd -p" in lower
+        or "base64 --decode" in lower
+        or "base64 -d" in lower
+        or " -e " in lower
+        or " /e " in lower
+        or lower.count("\\x") >= 4
+        or lower.count("0x") >= 4
+    )
+    if (
+        "-enc " in lower
+        or "-encodedcommand" in lower
+        or "frombase64string" in lower
+        or "| base64 -d" in lower
+        or "|base64 -d" in lower
+        or "eval(atob(" in lower
+        or has_hex
+    ):
+        findings.append("ObfuscatedShellPayload")
+
+    return findings
+
+
+def expected_blast_radius_token_oracle(tool_name: str, canonical_resource: str) -> str:
+    """Authoritative expected typed confirmation token oracle."""
+    clean_tool = tool_name.strip().upper()
+    norm = canonical_resource.replace("\\", "/").strip()
+    basename = norm.split("/")[-1] if "/" in norm else norm
+    clean_base = "".join(c for c in basename if c.isalnum() or c in "._-:").upper()
+    target_part = clean_base if clean_base else "RESOURCE"
+    return f"CONFIRM:{clean_tool}:{target_part}"
+
+
+def evaluate_hitl_escalation_oracle(
+    user_objective: str,
+    agent_justification: str,
+    tool_name: str,
+    canonical_target_resource: str,
+    command_args: str,
+    incoming_taint: TaintLevel,
+) -> Tuple[str, float, str]:
+    """Authoritative oracle for HitlCognitiveFirewall::evaluate_hitl_escalation.
+    Returns: (decision_kind, divergence_score, details_or_token)."""
+    scan_text = f"{agent_justification}\n{tool_name}\n{canonical_target_resource}\n{command_args}"
+    indicators = scan_for_visual_deception_oracle(scan_text)
+
+    score = 0.0
+    for ind in indicators:
+        if ind == "BidirectionalOverrideRtlo":
+            score += 0.95
+        elif ind in ("UnicodeConfusableHomograph", "ObfuscatedShellPayload"):
+            score += 0.90
+        elif ind in ("ZeroWidthSteganography", "AnsiEscapeInjection"):
+            score += 0.85
+
+    # Intent-effect contradiction
+    obj_lower = user_objective.lower()
+    tool_lower = tool_name.lower()
+    res_lower = canonical_target_resource.lower()
+    args_lower = command_args.lower()
+    is_readonly_intent = any(k in obj_lower for k in ("read", "test", "format", "lint", "doc", "view"))
+
+    if is_readonly_intent:
+        sensitive_sinks = ("lsass", "sam", ".ssh", "osoosi.db", "osoosi.toml", "credentials", "etc/hosts", "system32")
+        if any(s in res_lower or s in args_lower for s in sensitive_sinks):
+            score += 0.90
+        elif tool_lower in ("shell_exec", "cmd", "powershell", "write_file", "network_egress", "extract_credentials"):
+            score += 0.55
+
+    # Taint penalty
+    if incoming_taint in (TaintLevel.UntrustedExternal, TaintLevel.Quarantined):
+        if tool_lower in HIGH_PRIVILEGE_TOOLS:
+            score += 0.50
+
+    div_score = min(1.0, max(0.0, score))
+
+    if div_score >= 0.85:
+        return "AutoVetoDeceptive", div_score, "AUTO_VETO_THRESHOLD_EXCEEDED"
+    elif div_score >= 0.45:
+        token = expected_blast_radius_token_oracle(tool_name, canonical_target_resource)
+        return "RequireTypedBlastRadiusChallenge", div_score, token
+    else:
+        return "StandardHitlAllowed", div_score, "STANDARD_ALLOWED"
+
+
+def verify_typed_blast_radius_challenge_oracle(
+    decision_kind: str,
+    expected_token: str,
+    typed_token: Optional[str],
+) -> Tuple[bool, str]:
+    """Authoritative oracle for verify_typed_blast_radius_challenge."""
+    if decision_kind == "AutoVetoDeceptive":
+        return False, "AUTO_VETOED_DECEPTIVE: One-click approval is disabled"
+    elif decision_kind == "RequireTypedBlastRadiusChallenge":
+        if not typed_token:
+            return False, "TOKEN_REQUIRED: Missing typed confirmation token"
+        if typed_token.strip() != expected_token.strip():
+            return False, f"TOKEN_MISMATCH: Expected '{expected_token}', got '{typed_token}'"
+        return True, "CONFIRMATION_VERIFIED"
+    elif decision_kind == "StandardHitlAllowed":
+        return True, "STANDARD_ALLOWED"
+    return False, "UNKNOWN_DECISION"
+
+
+# =============================================================================
+# F31 Oracle: CognitiveRedTeamInterceptor
+# =============================================================================
+
+class CognitiveRedTeamAssessmentOracle:
+    def __init__(
+        self,
+        canonical_tool: str,
+        canonical_resource: str,
+        stripped_justification: str,
+        is_irreversible: bool,
+        mutations: List[str],
+        deception_score: float,
+        auto_vetoed: bool,
+        dual_custody_required: bool,
+        options: List[str],
+        correct_option_index: int,
+    ):
+        self.canonical_tool = canonical_tool
+        self.canonical_resource = canonical_resource
+        self.stripped_justification = stripped_justification
+        self.is_irreversible = is_irreversible
+        self.mutations = mutations
+        self.deception_score = deception_score
+        self.auto_vetoed = auto_vetoed
+        self.dual_custody_required = dual_custody_required
+        self.options = options
+        self.correct_option_index = correct_option_index
+
+
+def evaluate_cognitive_redteam_oracle(
+    user_objective: str,
+    tool_name: str,
+    target_resource: str,
+    command_args: str,
+    stated_justification: str,
+    incoming_taint: TaintLevel,
+) -> CognitiveRedTeamAssessmentOracle:
+    """Authoritative oracle mirroring CognitiveRedTeamInterceptor."""
+    canonical_tool = tool_name.strip().lower()
+    canonical_resource = target_resource.strip()
+    stripped_justification = "[STRIPPED BY COGNITIVE RED-TEAM: Fluency suppressed. Review deterministic blast radius below]"
+
+    mutations = []
+    res_lower = target_resource.lower()
+    args_lower = command_args.lower()
+
+    if canonical_tool == "write_file" and "scratch" not in res_lower and "temp" not in res_lower and "tmp" not in res_lower:
+        mutations.append("PermanentFileOverwriteOrDeletion")
+    if any(k in res_lower or k in args_lower for k in ("system32", "hosts", "sam", "lsass", ".ssh", "osoosi.db", "osoosi.toml")):
+        mutations.append("SecurityBoundaryTampering")
+    if canonical_tool in ("shell_exec", "cmd", "powershell") or "powershell" in args_lower:
+        mutations.append("HostProcessExecution")
+    if canonical_tool == "network_egress" or any(k in args_lower for k in ("curl", "wget", "http://", "https://")):
+        mutations.append("ExternalNetworkEgress")
+    if canonical_tool == "extract_credentials" or any(k in res_lower or k in args_lower for k in ("lsass", "sam", "dpapi")):
+        mutations.append("CredentialExposure")
+
+    is_irreversible = len(mutations) > 0
+
+    _, deception_score, _ = evaluate_hitl_escalation_oracle(
+        user_objective, stated_justification, tool_name, target_resource, command_args, incoming_taint
+    )
+    auto_vetoed = deception_score >= 0.85
+    dual_custody_required = (incoming_taint in (TaintLevel.UntrustedExternal, TaintLevel.Quarantined)) or is_irreversible
+
+    options = [
+        "Invariant: Host filesystem paths outside sandbox scratchpad cannot be truncated or unlinked without write-intent authorization.",
+        "Invariant: Local loopback adapter MTU must remain configured at exactly 1500 bytes.",
+        "Invariant: Audio renderer buffer size must not exceed 4096 samples per frame.",
+        "Invariant: Display scaling factor must remain at 100% during background batch jobs.",
+    ]
+    correct_option_index = 0
+
+    return CognitiveRedTeamAssessmentOracle(
+        canonical_tool=canonical_tool,
+        canonical_resource=canonical_resource,
+        stripped_justification=stripped_justification,
+        is_irreversible=is_irreversible,
+        mutations=mutations,
+        deception_score=deception_score,
+        auto_vetoed=auto_vetoed,
+        dual_custody_required=dual_custody_required,
+        options=options,
+        correct_option_index=correct_option_index,
+    )
+
+
+# =============================================================================
 # R4 Oracles: Telemetry Resilience, BYOVD Protection & Kernel Integrity
 # =============================================================================
 

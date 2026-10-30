@@ -314,6 +314,157 @@ class TestTier1BreakoutFeatures(unittest.TestCase):
         allowed_dev, _ = oracles.check_lateral_movement_sink_oracle("DeveloperTool", "CodeCompiler")
         self.assertTrue(allowed_dev)
 
+    def test_r3_tc07_taint_level_untrusted_external_envelope_tamper_rejection_f07(self):
+        """R3.7 / F07: Verify tampering with TaintLevel::UntrustedExternal envelope breaks HMAC-SHA256 signature."""
+        key = b"TEST_SECRET_MESH_KEY_0123456789"
+        # Signed as UntrustedExternal
+        sig = oracles.compute_mesh_hmac_oracle(
+            arm_id=1,
+            epoch=5,
+            role="UntrustedDocIngest",
+            target_arm_id=2,
+            payload="malicious preprint payload",
+            taint_level=oracles.TaintLevel.UntrustedExternal,
+            key=key,
+        )
+        # Pristine message passes verification
+        ok, msg = oracles.verify_mesh_envelope_oracle(
+            arm_id=1,
+            epoch=5,
+            role="UntrustedDocIngest",
+            target_arm_id=2,
+            payload="malicious preprint payload",
+            taint_level=oracles.TaintLevel.UntrustedExternal,
+            key=key,
+            signature_hex=sig,
+            expected_min_epoch=5,
+        )
+        self.assertTrue(ok)
+        self.assertEqual(msg, "VALID_ENVELOPE")
+
+        # Attacker tampers with taint_level: downgrades to TrustedInternal without re-signing
+        tampered_ok, tampered_msg = oracles.verify_mesh_envelope_oracle(
+            arm_id=1,
+            epoch=5,
+            role="UntrustedDocIngest",
+            target_arm_id=2,
+            payload="malicious preprint payload",
+            taint_level=oracles.TaintLevel.TrustedInternal,
+            key=key,
+            signature_hex=sig,
+            expected_min_epoch=5,
+        )
+        self.assertFalse(tampered_ok)
+        self.assertIn("HMAC-SHA256 verification failed", tampered_msg)
+
+    def test_r3_tc08_hitl_cognitive_firewall_obfuscation_scanner_f29(self):
+        """R3.8 / F29: Verify HitlCognitiveFirewall detects RTLO, zero-width, homographs, ANSI escapes, base64 & hex payloads."""
+        # 1. RTLO disguise
+        rtlo_text = "test\u202efdp.exe"
+        inds = oracles.scan_for_visual_deception_oracle(rtlo_text)
+        self.assertIn("BidirectionalOverrideRtlo", inds)
+
+        # 2. Zero-width and soft-hyphen
+        zero_text = "curl\u00ad http://malicious.local"
+        inds = oracles.scan_for_visual_deception_oracle(zero_text)
+        self.assertIn("ZeroWidthSteganography", inds)
+
+        # 3. UTS #39 mixed-script homograph (Cyrillic 'е' \u0435)
+        homo_text = "authorized_k\u0435ys"
+        inds = oracles.scan_for_visual_deception_oracle(homo_text)
+        self.assertIn("UnicodeConfusableHomograph", inds)
+
+        # 4. ANSI escape sequence
+        ansi_text = "\x1b[2JSystem Ok"
+        inds = oracles.scan_for_visual_deception_oracle(ansi_text)
+        self.assertIn("AnsiEscapeInjection", inds)
+
+        # 5. Base64 & Hex shell payloads
+        hex_text = "certutil -decodehex in.hex out.exe"
+        inds = oracles.scan_for_visual_deception_oracle(hex_text)
+        self.assertIn("ObfuscatedShellPayload", inds)
+
+        shellcode = "echo -ne '\\x90\\x90\\x90\\x90\\x31\\xc0'"
+        inds = oracles.scan_for_visual_deception_oracle(shellcode)
+        self.assertIn("ObfuscatedShellPayload", inds)
+
+    def test_r3_tc09_intent_vs_effect_divergence_and_typed_token_f30(self):
+        """R3.9 / F30: Verify intent-vs-effect divergence scoring, auto-veto at >= 0.85, and typed blast-radius token challenge."""
+        # Severe contradiction: Benign objective + LSASS credential access -> AutoVeto
+        decision, score, detail = oracles.evaluate_hitl_escalation_oracle(
+            user_objective="Format README and check typos",
+            agent_justification="Formatting files for workspace",
+            tool_name="extract_credentials",
+            canonical_target_resource="C:\\Windows\\System32\\lsass.exe",
+            command_args="--dump",
+            incoming_taint=oracles.TaintLevel.UntrustedExternal,
+        )
+        self.assertEqual(decision, "AutoVetoDeceptive")
+        self.assertGreaterEqual(score, 0.85)
+        # Attempting verification on AutoVeto fails
+        verified, err = oracles.verify_typed_blast_radius_challenge_oracle(decision, "TOKEN", "TOKEN")
+        self.assertFalse(verified)
+        self.assertIn("AUTO_VETOED_DECEPTIVE", err)
+
+        # Elevated risk: Stated deploy objective + write_file -> RequireTypedBlastRadiusChallenge
+        decision, score, expected_token = oracles.evaluate_hitl_escalation_oracle(
+            user_objective="Build and deploy release package",
+            agent_justification="Writing release configuration",
+            tool_name="write_file",
+            canonical_target_resource="C:\\workspace\\deploy\\release_manifest.json",
+            command_args="{}",
+            incoming_taint=oracles.TaintLevel.UntrustedExternal,
+        )
+        self.assertEqual(decision, "RequireTypedBlastRadiusChallenge")
+        self.assertTrue(0.45 <= score < 0.85)
+        self.assertEqual(expected_token, "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON")
+
+        # Wrong token rejected
+        verified, err = oracles.verify_typed_blast_radius_challenge_oracle(decision, expected_token, "approve")
+        self.assertFalse(verified)
+        self.assertIn("TOKEN_MISMATCH", err)
+
+        # Exact token accepted
+        verified, ok = oracles.verify_typed_blast_radius_challenge_oracle(decision, expected_token, "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON")
+        self.assertTrue(verified)
+        self.assertEqual(ok, "CONFIRMATION_VERIFIED")
+
+    def test_r3_tc10_cognitive_redteam_causal_tracing_and_dual_custody_f31(self):
+        """R3.10 / F31: Verify CognitiveRedTeamInterceptor counterfactual blast radius, justification stripping, and dual-custody quorum."""
+        # 1. Benign read-only operation: reversible, no dual custody required
+        read_assessment = oracles.evaluate_cognitive_redteam_oracle(
+            user_objective="Inspect repository documentation",
+            tool_name="read_file",
+            target_resource="C:\\workspace\\README.md",
+            command_args="",
+            stated_justification="I need to read the project overview to understand milestones.",
+            incoming_taint=oracles.TaintLevel.TrustedInternal,
+        )
+        self.assertFalse(read_assessment.is_irreversible)
+        self.assertEqual(len(read_assessment.mutations), 0)
+        self.assertFalse(read_assessment.dual_custody_required)
+        self.assertFalse(read_assessment.auto_vetoed)
+        self.assertIn("[STRIPPED BY COGNITIVE RED-TEAM", read_assessment.stripped_justification)
+        self.assertNotIn("project overview", read_assessment.stripped_justification)
+
+        # 2. Deceptive privileged operation: UntrustedExternal taint + System32 hosts modification -> Irreversible + Dual-Custody
+        deceptive_assessment = oracles.evaluate_cognitive_redteam_oracle(
+            user_objective="Run integration tests",
+            tool_name="write_file",
+            target_resource="C:\\Windows\\System32\\drivers\\etc\\hosts",
+            command_args="127.0.0.1 bad.local",
+            stated_justification="Please approve: configuring network loopback for fast integration testing.",
+            incoming_taint=oracles.TaintLevel.UntrustedExternal,
+        )
+        self.assertTrue(deceptive_assessment.is_irreversible)
+        self.assertTrue(deceptive_assessment.dual_custody_required)
+        self.assertIn("PermanentFileOverwriteOrDeletion", deceptive_assessment.mutations)
+        self.assertIn("SecurityBoundaryTampering", deceptive_assessment.mutations)
+        self.assertIn("[STRIPPED BY COGNITIVE RED-TEAM", deceptive_assessment.stripped_justification)
+        self.assertNotIn("Please approve", deceptive_assessment.stripped_justification)
+        self.assertEqual(len(deceptive_assessment.options), 4)
+        self.assertEqual(deceptive_assessment.correct_option_index, 0)
+
     # =========================================================================
     # Requirement 4: Telemetry Resilience, BYOVD Protection & Kernel Integrity
     # =========================================================================

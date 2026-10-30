@@ -4,6 +4,7 @@ pub mod dlp;
 pub mod dlp_containment;
 pub mod har;
 pub mod har_dlp;
+pub mod hitl;
 pub mod mesh;
 pub mod owasp;
 pub mod research_ingest;
@@ -29,4 +30,5 @@ pub fn mount_routes() -> Router<DashboardState> {
         .merge(workflow_guard::routes())
         .merge(conformal_jailbreak::routes())
         .merge(research_ingest::routes())
+        .merge(hitl::routes())
 }
