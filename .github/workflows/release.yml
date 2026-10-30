@@ -17,7 +17,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # ── Windows native MSVC & WiX MSI Packaging ──────────────────────────────────
+  # â”€â”€ Windows native MSVC & WiX MSI Packaging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   build-windows:
     name: Windows x64 (MSVC & MSI)
     runs-on: windows-latest
@@ -90,7 +90,7 @@ jobs:
             OshoosiClaw.msi
           if-no-files-found: warn
 
-  # ── Linux x86_64 Native Build & Multi-Format Packaging ──────────────────────
+  # â”€â”€ Linux x86_64 Native Build & Multi-Format Packaging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   build-linux-x64:
     name: Linux x64 (Native GCC, eBPF & Packages)
     runs-on: ubuntu-latest
@@ -143,7 +143,7 @@ jobs:
           path: dist-linux-x64/*
           if-no-files-found: error
 
-  # ── Optional Multi-Platform Targets (non-blocking for release) ───────────────
+  # â”€â”€ Optional Multi-Platform Targets (non-blocking for release) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   build-linux-arm64:
     name: Linux ARM64 (musl static)
     runs-on: ubuntu-latest
@@ -187,7 +187,7 @@ jobs:
           path: dist-linux-arm64/*
           if-no-files-found: warn
 
-  # ── macOS Native Build & Multi-Format Packaging (.pkg, .app.tar.gz, .tar.gz) ──
+  # â”€â”€ macOS Native Build & Multi-Format Packaging (.pkg, .app.tar.gz, .tar.gz) â”€â”€
   build-macos:
     name: macOS Apple Silicon & Universal Packages
     runs-on: macos-latest
@@ -233,7 +233,7 @@ jobs:
           path: dist-macos/*
           if-no-files-found: error
 
-  # ── SLSA Provenance Attestation & Cryptographic GitHub Release ───────────────
+  # â”€â”€ SLSA Provenance Attestation & Cryptographic GitHub Release â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   release:
     name: Generate SLSA Build Provenance, GPG Sign & GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
@@ -311,7 +311,7 @@ jobs:
           draft: false
           prerelease: false
 
-  # ── Container Packaging to GHCR ──────────────────────────────────────────────
+  # â”€â”€ Container Packaging to GHCR â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   package-container:
     name: Package & Publish Container (GHCR)
     if: startsWith(github.ref, 'refs/tags/')
@@ -348,4 +348,4 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          tags: ghcr.io/oyesanyf/oshoosiclaw:${{ github.ref_name }}
