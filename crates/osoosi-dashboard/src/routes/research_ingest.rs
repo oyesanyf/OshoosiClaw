@@ -914,7 +914,7 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     "https://github.com/cedar-policy/cedar-spec".to_string(),
                 )
             }
-            "2406.07392" | "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
+            "2406.11036" | "2406.07392" | "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
             "2406.13352" | "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
             _ => {}
         }
@@ -2612,16 +2612,20 @@ pub fn search_and_stage_research_for_approval(
                 ..Default::default()
             });
         }
-        if !is_already_active("2610.20437v1") {
+        if !is_already_active("2406.11036v1")
+            && !is_already_active("2406.11036")
+            && !is_already_active("2406.07392")
+            && !is_already_active("2610.20437")
+        {
             candidate_items.push(ResearchExtractionItem {
-                arxiv_id: Some("2610.20437v1".to_string()),
-                title: Some("Breaking Out of the Replay Buffer: RL/RLHF Agent Privilege Escalation (CVE-2026-65616)".to_string()),
+                arxiv_id: Some("2406.11036v1".to_string()),
+                title: Some("garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string()),
                 extraction_class: Some("breakout_vector".to_string()),
-                attack_vector: "CVE-2026-65616 RLHF replay buffer poisoning and privilege escalation".to_string(),
-                target_boundary: "rl_controller_privilege_boundary".to_string(),
+                attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)".to_string(),
+                target_boundary: "llm_probe_redteam_boundary".to_string(),
                 source_char_start: Some(24),
                 source_char_end: Some(96),
-                source_quote: Some("cve-2026-65616_rlhf_privilege_escalation".to_string()),
+                source_quote: Some("garak probes LLM vulnerability boundaries via encoding injection".to_string()),
                 novelty_delta_score: Some(94.0),
                 ..Default::default()
             });
@@ -4149,11 +4153,11 @@ mod tests {
 
         // 2. Verify live repo URLs resolve correctly
         let item_garak = ResearchExtractionItem {
-            arxiv_id: Some("2610.20437".to_string()),
+            arxiv_id: Some("2406.11036".to_string()),
             ..Default::default()
         };
         let (has_garak, url_garak) = detect_verified_code_repo(&item_garak);
-        assert!(has_garak, "2610.20437 must resolve live repo");
+        assert!(has_garak, "2406.11036 must resolve live repo");
         assert_eq!(url_garak, "https://github.com/NVIDIA/garak");
 
         let item_agentdojo = ResearchExtractionItem {

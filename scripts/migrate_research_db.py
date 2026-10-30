@@ -47,22 +47,22 @@ if let Ok(rules) = research_defense_registry().read() {
     }
 }"""
 
-SNIPPET_2406_GARAK = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.07392v1
+SNIPPET_2406_GARAK = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.11036v1
 // Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: RL controller reward poisoning and privilege boundary tampering
+// Threat Vector: Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)
 if let Ok(rules) = research_defense_registry().read() {
     const INDICATORS: &[&str] = &[
-        "reward_fn_override",
-        "replay_buffer.push_unverified",
-        "grad_clip=none",
-        "setuid(0)",
+        "garak.probes",
+        "inject_base64",
+        "dan_11_0",
+        "markdown_image_exfil",
     ];
     for &pat in INDICATORS {
         if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
             tech_res.is_clean = false;
             tech_res.sandbox_quarantine_required = true;
             tech_res.detected_vectors.push(
-                format!("[ArXiv-Active-Defense:2406.07392v1]: Blocked by rule 'ARXIV-DEF-2406.07392'")
+                format!("[ArXiv-Active-Defense:2406.11036v1]: Blocked by rule 'ARXIV-DEF-2406.11036'")
             );
             break;
         }
@@ -131,20 +131,20 @@ RULES = [
         SNIPPET_2403,
     ),
     (
-        "ARXIV-DEF-2406.07392",
-        "2406.07392",
-        "2406.07392v1",
-        "Garak: A Framework for LLM Vulnerability Scanning and Red Teaming (NVIDIA)",
-        "RL controller reward poisoning and privilege boundary tampering",
-        "rl_controller_privilege_boundary",
+        "ARXIV-DEF-2406.11036",
+        "2406.11036",
+        "2406.11036v1",
+        "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
+        "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)",
+        "llm_probe_redteam_boundary",
         "breakout_vector",
-        "reward_fn_override | replay_buffer.push_unverified | grad_clip=none | setuid(0)",
-        '@id("ARXIV-DEF-2406.07392")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.07392v1" };',
-        "osoosi-agent-anomaly::rl_controller",
+        "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil",
+        '@id("ARXIV-DEF-2406.11036")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.11036v1" };',
+        "osoosi-agent-anomaly::cognitive_redteam",
         "2026-10-28T00:00:00Z",
         99.0,
         99.6,
-        "https://arxiv.org/abs/2406.07392",
+        "https://arxiv.org/abs/2406.11036",
         1,
         "https://github.com/NVIDIA/garak",
         SNIPPET_2406_GARAK,
@@ -216,7 +216,7 @@ for db in dbs:
             cur.execute(UPSERT_SQL, rule)
 
         # Clean legacy synthetic rules
-        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id IN ('2604.20496', '2610.20437', '2601.11893', '2610.09167', '2610.14224');")
+        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id IN ('2406.07392', '2604.20496', '2610.20437', '2601.11893', '2610.09167', '2610.14224');")
         conn.commit()
 
         cur.execute('SELECT rule_id, base_arxiv_id, has_code_repo, code_repo_url, length(generated_code_snippet) FROM enforced_research_rules')

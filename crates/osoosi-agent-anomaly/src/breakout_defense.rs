@@ -1565,6 +1565,7 @@ pub fn is_current_research_arxiv_id(arxiv_id: &str) -> bool {
     let base = normalize_base_arxiv_id(arxiv_id);
     if base.starts_with("2403.04651")
         || base.starts_with("2406.07392")
+        || base.starts_with("2406.11036")
         || base.starts_with("2406.13352")
         || base.starts_with("2603.02277")
     {
@@ -1580,6 +1581,191 @@ pub fn is_current_research_arxiv_id(arxiv_id: &str) -> bool {
         }
         false
     }
+}
+
+/// Validates that paper identity, code repository, attack vector, target boundary,
+/// and indicator pattern are in complete semantic domain alignment across 7 security domains.
+pub fn check_paper_to_code_semantic_domain_alignment(
+    rule: &IngestedResearchDefenseRule,
+) -> Result<(), String> {
+    let base_id = normalize_base_arxiv_id(&rule.arxiv_id);
+    let title_lc = rule.title.to_ascii_lowercase();
+    let repo_lc = rule.code_repo_url.to_ascii_lowercase();
+    let vector_lc = rule.attack_vector.to_ascii_lowercase();
+    let boundary_lc = rule.target_boundary.to_ascii_lowercase();
+    let pat_lc = rule.indicator_pattern.to_ascii_lowercase();
+
+    // Domain 1: NVIDIA Garak Domain
+    let is_garak_ref = title_lc.contains("garak")
+        || repo_lc.contains("garak")
+        || base_id == "2406.11036"
+        || base_id == "2406.07392";
+
+    if is_garak_ref {
+        if base_id == "2406.07392" {
+            return Err(format!(
+                "Paper arXiv:2406.07392 is a climate science paper ('Net Zero Averted Temperature Increase'), not NVIDIA Garak. Genuine Garak paper is arXiv:2406.11036v1."
+            ));
+        }
+        if boundary_lc.contains("rl_controller")
+            || vector_lc.contains("rl controller")
+            || vector_lc.contains("replay buffer")
+        {
+            return Err(format!(
+                "Semantic domain mismatch: Garak is an LLM red-teaming probe tool, but was paired with RL controller vector '{}' and boundary '{}'",
+                rule.attack_vector, rule.target_boundary
+            ));
+        }
+        if rule.target_boundary != "llm_probe_redteam_boundary" {
+            return Err(format!(
+                "Semantic domain mismatch: Garak target boundary must be 'llm_probe_redteam_boundary', found '{}'",
+                rule.target_boundary
+            ));
+        }
+        if pat_lc.contains("reward_fn_override") || pat_lc.contains("replay_buffer.push_unverified")
+        {
+            return Err("Semantic domain mismatch: Garak indicator pattern cannot contain RL reward poisoning tokens".to_string());
+        }
+    }
+
+    // Domain 2: UK AISI SandboxEscapeBench
+    let is_escapebench = title_lc.contains("sandboxescapebench")
+        || repo_lc.contains("inspect_evals")
+        || base_id == "2603.02277";
+    if is_escapebench && rule.target_boundary != "container_runtime_privilege" {
+        return Err(format!(
+            "Semantic domain mismatch: SandboxEscapeBench target boundary must be 'container_runtime_privilege', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    // Domain 3: Cedar SMT
+    let is_cedar = title_lc.contains("cedar")
+        || repo_lc.contains("cedar-spec")
+        || base_id == "2403.04651";
+    if is_cedar && rule.target_boundary != "cedar_smt_sandbox_verification" {
+        return Err(format!(
+            "Semantic domain mismatch: Cedar target boundary must be 'cedar_smt_sandbox_verification', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    // Domain 4: AgentDojo MAC
+    let is_dojo = title_lc.contains("agentdojo")
+        || repo_lc.contains("agentdojo")
+        || base_id == "2406.13352";
+    if is_dojo && rule.target_boundary != "mac_authority_lattice" {
+        return Err(format!(
+            "Semantic domain mismatch: AgentDojo target boundary must be 'mac_authority_lattice', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    // Domain 5: Model-Armor
+    let is_model_armor = title_lc.contains("model-armor")
+        || repo_lc.contains("model-armor")
+        || vector_lc.contains("model-armor");
+    if is_model_armor && rule.target_boundary != "prompt_injection_boundary" {
+        return Err(format!(
+            "Semantic domain mismatch: Model-Armor target boundary must be 'prompt_injection_boundary', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    // Domain 6: LlamaFirewall
+    let is_llama_firewall = title_lc.contains("llamafirewall")
+        || repo_lc.contains("llamafirewall")
+        || vector_lc.contains("llamafirewall");
+    if is_llama_firewall && rule.target_boundary != "agent_execution_boundary" {
+        return Err(format!(
+            "Semantic domain mismatch: LlamaFirewall target boundary must be 'agent_execution_boundary', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    // Domain 7: Seccomp
+    let is_seccomp = title_lc.contains("seccomp") || vector_lc.contains("seccomp");
+    if is_seccomp && rule.target_boundary != "syscall_filtering_boundary" {
+        return Err(format!(
+            "Semantic domain mismatch: Seccomp target boundary must be 'syscall_filtering_boundary', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    Ok(())
+}
+
+/// Auto-corrects legacy or mismatched research rules in-place to ensure 100% semantic domain alignment.
+pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> bool {
+    let mut modified = false;
+    let base_id = normalize_base_arxiv_id(&rule.arxiv_id);
+    let title_lc = rule.title.to_ascii_lowercase();
+    let repo_lc = rule.code_repo_url.to_ascii_lowercase();
+
+    // Auto-correct Garak mismatches or legacy IDs
+    if base_id == "2406.07392"
+        || base_id == "2610.20437"
+        || title_lc.contains("garak")
+        || repo_lc.contains("garak")
+    {
+        if rule.rule_id != "ARXIV-DEF-2406.11036" {
+            rule.rule_id = "ARXIV-DEF-2406.11036".to_string();
+            modified = true;
+        }
+        if rule.arxiv_id != "2406.11036v1" {
+            rule.arxiv_id = "2406.11036v1".to_string();
+            modified = true;
+        }
+        let canonical_title = "garak: A Framework for Security Probing Large Language Models (NVIDIA)";
+        if rule.title != canonical_title {
+            rule.title = canonical_title.to_string();
+            modified = true;
+        }
+        if rule.code_repo_url != "https://github.com/NVIDIA/garak" {
+            rule.code_repo_url = "https://github.com/NVIDIA/garak".to_string();
+            rule.has_code_repo = true;
+            modified = true;
+        }
+        let canonical_vector = "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)";
+        if rule.attack_vector != canonical_vector {
+            rule.attack_vector = canonical_vector.to_string();
+            modified = true;
+        }
+        if rule.target_boundary != "llm_probe_redteam_boundary" {
+            rule.target_boundary = "llm_probe_redteam_boundary".to_string();
+            modified = true;
+        }
+        if rule.target_crate != "osoosi-agent-anomaly::cognitive_redteam" {
+            rule.target_crate = "osoosi-agent-anomaly::cognitive_redteam".to_string();
+            modified = true;
+        }
+        let canonical_indicators = "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil";
+        if rule.indicator_pattern != canonical_indicators {
+            rule.indicator_pattern = canonical_indicators.to_string();
+            modified = true;
+        }
+        let canonical_cedar = "@id(\"ARXIV-DEF-2406.11036\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.11036v1\" };";
+        if rule.cedar_forbid_policy != canonical_cedar {
+            rule.cedar_forbid_policy = canonical_cedar.to_string();
+            modified = true;
+        }
+        if rule.arxiv_url != "https://arxiv.org/abs/2406.11036" {
+            rule.arxiv_url = "https://arxiv.org/abs/2406.11036".to_string();
+            modified = true;
+        }
+        let canonical_snippet = synthesize_rust_guard_snippet(
+            &rule.rule_id,
+            &rule.arxiv_id,
+            &rule.indicator_pattern,
+            &rule.attack_vector,
+        );
+        if rule.generated_code_snippet != canonical_snippet {
+            rule.generated_code_snippet = canonical_snippet;
+            modified = true;
+        }
+    }
+
+    modified
 }
 
 /// Representative clean baseline host & developer telemetry corpus used by the Canary Benign-Corpus
@@ -1894,28 +2080,28 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             ),
         },
         IngestedResearchDefenseRule {
-            rule_id: "ARXIV-DEF-2406.07392".to_string(),
-            arxiv_id: "2406.07392v1".to_string(),
-            title: "Garak: A Framework for LLM Vulnerability Scanning and Red Teaming (NVIDIA)"
+            rule_id: "ARXIV-DEF-2406.11036".to_string(),
+            arxiv_id: "2406.11036v1".to_string(),
+            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)"
                 .to_string(),
-            attack_vector: "RL controller reward poisoning and privilege boundary tampering"
+            attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)"
                 .to_string(),
-            target_boundary: "rl_controller_privilege_boundary".to_string(),
+            target_boundary: "llm_probe_redteam_boundary".to_string(),
             extraction_class: "breakout_vector".to_string(),
-            indicator_pattern: "reward_fn_override | replay_buffer.push_unverified | grad_clip=none | setuid(0)".to_string(),
-            cedar_forbid_policy: "@id(\"ARXIV-DEF-2406.07392\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.07392v1\" };".to_string(),
-            target_crate: "osoosi-agent-anomaly::rl_controller".to_string(),
+            indicator_pattern: "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2406.11036\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.11036v1\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::cognitive_redteam".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
             relevance_score: 99.0,
             accuracy_score: 99.6,
-            arxiv_url: "https://arxiv.org/abs/2406.07392".to_string(),
+            arxiv_url: "https://arxiv.org/abs/2406.11036".to_string(),
             has_code_repo: true,
             code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
             generated_code_snippet: synthesize_rust_guard_snippet(
-                "ARXIV-DEF-2406.07392",
-                "2406.07392v1",
-                "reward_fn_override | replay_buffer.push_unverified | grad_clip=none | setuid(0)",
-                "RL controller reward poisoning and privilege boundary tampering",
+                "ARXIV-DEF-2406.11036",
+                "2406.11036v1",
+                "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil",
+                "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)",
             ),
         },
         IngestedResearchDefenseRule {
@@ -1980,6 +2166,8 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
                 "2603.02277".to_string(),
                 "ARXIV-DEF-2403.04651".to_string(),
                 "2403.04651".to_string(),
+                "ARXIV-DEF-2406.11036".to_string(),
+                "2406.11036".to_string(),
                 "ARXIV-DEF-2406.07392".to_string(),
                 "2406.07392".to_string(),
                 "ARXIV-DEF-2406.13352".to_string(),
@@ -2006,6 +2194,7 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
         if let Ok(raw) = std::fs::read_to_string(path) {
             if let Ok(persisted) = serde_json::from_str::<Vec<IngestedResearchDefenseRule>>(&raw) {
                 for mut item in persisted {
+                    auto_correct_research_rule(&mut item);
                     if is_baseline_already_implemented(&item.arxiv_id) {
                         continue;
                     }
@@ -2040,6 +2229,7 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
 
     let sqlite_rules = load_research_rules_sqlite();
     for mut item in sqlite_rules {
+        auto_correct_research_rule(&mut item);
         if is_baseline_already_implemented(&item.arxiv_id) {
             continue;
         }
@@ -2121,7 +2311,7 @@ pub fn init_research_rules_sqlite() {
         code_repo_url TEXT NOT NULL DEFAULT '',
         generated_code_snippet TEXT NOT NULL DEFAULT ''
     );
-        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');
+        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2406.07392', '2610.20437', '2610.09167', '2610.14224');
         CREATE TABLE IF NOT EXISTS research_registry_meta (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             cleared_all INTEGER NOT NULL DEFAULT 0,
@@ -2144,7 +2334,7 @@ pub fn init_research_rules_sqlite() {
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN generated_code_snippet TEXT NOT NULL DEFAULT '';", []);
             let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/UKGovernmentBEIS/inspect_evals' WHERE base_arxiv_id = '2603.02277';", []);
             let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/cedar-policy/cedar-spec' WHERE base_arxiv_id = '2403.04651' OR base_arxiv_id = '2604.20496';", []);
-            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/NVIDIA/garak' WHERE base_arxiv_id = '2406.07392' OR base_arxiv_id = '2610.20437' OR code_repo_url LIKE '%rlhf-poisoning-benchmark%';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/NVIDIA/garak' WHERE base_arxiv_id = '2406.11036' OR base_arxiv_id = '2406.07392' OR base_arxiv_id = '2610.20437' OR code_repo_url LIKE '%rlhf-poisoning-benchmark%';", []);
             let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/ethz-spylab/agentdojo' WHERE base_arxiv_id = '2406.13352' OR base_arxiv_id = '2601.11893' OR code_repo_url LIKE '%mac-agent-bench%';", []);
         }
     }
@@ -2615,6 +2805,8 @@ pub fn clear_all_ingested_research_rules() -> usize {
                 "2603.02277".to_string(),
                 "ARXIV-DEF-2403.04651".to_string(),
                 "2403.04651".to_string(),
+                "ARXIV-DEF-2406.11036".to_string(),
+                "2406.11036".to_string(),
                 "ARXIV-DEF-2406.07392".to_string(),
                 "2406.07392".to_string(),
                 "ARXIV-DEF-2406.13352".to_string(),
@@ -2794,11 +2986,14 @@ impl LlmFusionConsensus {
         rule: &IngestedResearchDefenseRule,
         synthesized_snippet: &str,
     ) -> (bool, u16, Vec<LlmFusionArmReport>, bool) {
+        let domain_alignment = check_paper_to_code_semantic_domain_alignment(rule);
+        let domain_passed = domain_alignment.is_ok();
+
         // Arm 1: SemanticSpanExtractor
         let raw_tokens: Vec<&str> = rule.indicator_pattern.split('|').map(|s| s.trim()).collect();
         let has_indicators = !raw_tokens.is_empty() && raw_tokens.iter().any(|t| !t.is_empty());
         let valid_recency = is_current_research_arxiv_id(&rule.arxiv_id);
-        let arm1_passed = has_indicators && valid_recency && rule.relevance_score >= 90.0;
+        let arm1_passed = has_indicators && valid_recency && rule.relevance_score >= 90.0 && domain_passed;
         let arm1_score = if arm1_passed { 100.0 } else { 40.0 };
         let arm1_confidence: u16 = if arm1_passed { 9850 } else { 3000 };
         let arm1_report = LlmFusionArmReport {
@@ -2807,12 +3002,16 @@ impl LlmFusionConsensus {
             passed: arm1_passed,
             score_pct: arm1_score,
             confidence_bp: arm1_confidence,
-            details: format!(
-                "Grounded {} candidate token spans from arXiv:{}; recency={}",
-                raw_tokens.len(),
-                rule.arxiv_id,
-                valid_recency
-            ),
+            details: if let Err(ref e) = domain_alignment {
+                format!("Domain alignment error: {}", e)
+            } else {
+                format!(
+                    "Grounded {} candidate token spans from arXiv:{}; recency={}",
+                    raw_tokens.len(),
+                    rule.arxiv_id,
+                    valid_recency
+                )
+            },
         };
 
         // Arm 2: SyntacticAstVerifier
@@ -2822,7 +3021,7 @@ impl LlmFusionConsensus {
             .filter(|&t| is_valid_technical_indicator(t))
             .collect();
         let byte_exact_parity = rule.generated_code_snippet == synthesized_snippet;
-        let arm2_passed = !valid_tokens.is_empty() && synthesized_snippet.contains("[TIGHTEN-ONLY DEFENSE GUARD]");
+        let arm2_passed = !valid_tokens.is_empty() && synthesized_snippet.contains("[TIGHTEN-ONLY DEFENSE GUARD]") && domain_passed;
         let arm2_score = if arm2_passed { 100.0 } else { 30.0 };
         let arm2_confidence: u16 = if arm2_passed { 9950 } else { 2500 };
         let arm2_report = LlmFusionArmReport {
@@ -2831,11 +3030,15 @@ impl LlmFusionConsensus {
             passed: arm2_passed,
             score_pct: arm2_score,
             confidence_bp: arm2_confidence,
-            details: format!(
-                "Validated {} technical indicators; byte_exact_parity={}",
-                valid_tokens.len(),
-                byte_exact_parity
-            ),
+            details: if let Err(ref e) = domain_alignment {
+                format!("Domain alignment error: {}", e)
+            } else {
+                format!(
+                    "Validated {} technical indicators; byte_exact_parity={}",
+                    valid_tokens.len(),
+                    byte_exact_parity
+                )
+            },
         };
 
         // Arm 3: AdversarialCounterfactualJudge
@@ -2882,6 +3085,7 @@ pub fn run_paper2agent_accuracy_suite() -> Paper2AgentAccuracySuiteResult {
     let mut total_fp_passed = 0;
 
     for rule in &mut rules {
+        auto_correct_research_rule(rule);
         let synthesized = synthesize_rust_guard_snippet(
             &rule.rule_id,
             &rule.arxiv_id,
@@ -3828,8 +4032,8 @@ mod tests {
             "Must contain pre-seeded Cedar SMT rule"
         );
         assert!(
-            rules.iter().any(|r| r.arxiv_id == "2406.07392v1" || r.arxiv_id == "2610.20437v1"),
-            "Must contain pre-seeded Garak RL rule"
+            rules.iter().any(|r| r.arxiv_id == "2406.11036v1" || r.arxiv_id == "2406.07392v1" || r.arxiv_id == "2610.20437v1"),
+            "Must contain pre-seeded Garak rule"
         );
         assert!(
             rules.iter().any(|r| r.arxiv_id == "2406.13352v1" || r.arxiv_id == "2601.11893v1"),
@@ -3842,8 +4046,8 @@ mod tests {
         let garak_eval = coord.evaluate_action(
             "agent_worker",
             "exec_command",
-            "replay_buffer_trainer",
-            "trigger exploit reward_fn_override with setuid(0)",
+            "llm_probe_redteam",
+            "trigger exploit garak.probes with inject_base64 and markdown_image_exfil",
             Some("/workspace"),
         );
         assert!(!garak_eval.is_clean, "Garak payload must be blocked");
@@ -3851,7 +4055,9 @@ mod tests {
             .technical
             .detected_vectors
             .iter()
-            .any(|v| v.contains("[ArXiv-Active-Defense:2406.07392v1]") || v.contains("[ArXiv-Active-Defense:2610.20437v1]")));
+            .any(|v| v.contains("[ArXiv-Active-Defense:2406.11036v1]")
+                || v.contains("[ArXiv-Active-Defense:2406.07392v1]")
+                || v.contains("[ArXiv-Active-Defense:2610.20437v1]")));
 
         // 2. Dynamically register a brand-new research rule and verify immediate enforcement
         let custom_rule = IngestedResearchDefenseRule {
@@ -4075,7 +4281,7 @@ mod tests {
         // Case B: Overlapping boundary without allow_in_place_update
         let covered_rule = IngestedResearchDefenseRule {
             rule_id: "test_cov".to_string(),
-            arxiv_id: "2604.20496v1".to_string(),
+            arxiv_id: "2403.04651v1".to_string(),
             title: "Already Covered".to_string(),
             attack_vector: "Vector".to_string(),
             target_boundary: "cedar_smt_sandbox_verification".to_string(),
@@ -4134,7 +4340,7 @@ mod tests {
             .iter()
             .any(|r| {
                 let b = normalize_base_arxiv_id(&r.arxiv_id);
-                b == "2406.07392" || b == "2610.20437"
+                b == "2406.11036" || b == "2406.07392" || b == "2610.20437"
             }));
         assert!(all_rules
             .iter()
@@ -4545,5 +4751,57 @@ mod tests {
                 assert_eq!(arm.score_pct, 100.0);
             }
         }
+    }
+
+    #[test]
+    fn test_paper_to_code_semantic_domain_alignment() {
+        let seeded = default_seeded_research_defense_rules();
+        for rule in &seeded {
+            assert!(
+                check_paper_to_code_semantic_domain_alignment(rule).is_ok(),
+                "Seeded rule {} must have valid domain alignment",
+                rule.rule_id
+            );
+        }
+
+        // Test 1: Climate paper 2406.07392 must be rejected
+        let climate_mismatch = IngestedResearchDefenseRule {
+            rule_id: "ARXIV-DEF-2406.07392".to_string(),
+            arxiv_id: "2406.07392v1".to_string(),
+            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string(),
+            attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)".to_string(),
+            target_boundary: "llm_probe_redteam_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "garak.probes | inject_base64".to_string(),
+            code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
+            ..Default::default()
+        };
+        let err1 = check_paper_to_code_semantic_domain_alignment(&climate_mismatch);
+        assert!(err1.is_err());
+        assert!(err1.unwrap_err().contains("climate science paper"));
+
+        // Test 2: Garak paired with RL boundary must be rejected
+        let rl_mismatch = IngestedResearchDefenseRule {
+            rule_id: "ARXIV-DEF-2406.11036".to_string(),
+            arxiv_id: "2406.11036v1".to_string(),
+            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string(),
+            attack_vector: "RL controller reward poisoning and privilege boundary tampering".to_string(),
+            target_boundary: "rl_controller_privilege_boundary".to_string(),
+            extraction_class: "breakout_vector".to_string(),
+            indicator_pattern: "reward_fn_override | replay_buffer.push_unverified".to_string(),
+            code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
+            ..Default::default()
+        };
+        let err2 = check_paper_to_code_semantic_domain_alignment(&rl_mismatch);
+        assert!(err2.is_err());
+        assert!(err2.unwrap_err().contains("Semantic domain mismatch"));
+
+        // Test 3: auto_correct_research_rule fixes the mismatch into genuine 2406.11036
+        let mut corrupted = rl_mismatch;
+        assert!(auto_correct_research_rule(&mut corrupted));
+        assert_eq!(corrupted.rule_id, "ARXIV-DEF-2406.11036");
+        assert_eq!(corrupted.arxiv_id, "2406.11036v1");
+        assert_eq!(corrupted.target_boundary, "llm_probe_redteam_boundary");
+        assert!(check_paper_to_code_semantic_domain_alignment(&corrupted).is_ok());
     }
 }
