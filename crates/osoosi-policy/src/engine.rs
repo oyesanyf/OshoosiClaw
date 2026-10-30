@@ -39,7 +39,7 @@ pub trait ThreatVoter: Send + Sync {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum EvidenceClass {
+pub enum EvidenceClass {
     LiveNetwork,
     Behavior,
     Memory,
@@ -49,19 +49,19 @@ enum EvidenceClass {
 }
 
 #[derive(Debug, Clone)]
-struct EvidenceVote {
-    result: VoteResult,
-    class: EvidenceClass,
-    reliability: f32,
-    strong_action: bool,
+pub struct EvidenceVote {
+    pub result: VoteResult,
+    pub class: EvidenceClass,
+    pub reliability: f32,
+    pub strong_action: bool,
 }
 
 #[derive(Debug)]
-struct EvidenceDecision {
-    confidence: f32,
-    action: osoosi_types::ResponseAction,
-    require_approval: bool,
-    summary: String,
+pub struct EvidenceDecision {
+    pub confidence: f32,
+    pub action: osoosi_types::ResponseAction,
+    pub require_approval: bool,
+    pub summary: String,
 }
 
 fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
@@ -2482,5 +2482,313 @@ ruletype: Sigma
             "Expected composite confidence >= 0.85, got: {}",
             sig.confidence
         );
+    }
+}
+
+#[cfg(test)]
+mod tests_m7_asymmetric_veto {
+    use super::*;
+    use chrono::Utc;
+    use osoosi_types::{HostEventSource, HostSecurityEvent, ResponseAction};
+    use serde_json::json;
+    use std::sync::Arc;
+
+    fn make_test_event(image: &str, cmdline: &str) -> HostSecurityEvent {
+        HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "Image": image,
+                "CommandLine": cmdline,
+                "ProcessId": 4412,
+            }),
+            causal_parent: None,
+        }
+    }
+
+    /// Mock benign ML voter reporting very low confidence (0.05) with normal weight
+    struct BenignMlVoter;
+    #[async_trait::async_trait]
+    impl ThreatVoter for BenignMlVoter {
+        fn name(&self) -> String {
+            "MalConv-ML".to_string()
+        }
+        async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
+            Some(VoteResult {
+                confidence: 0.05,
+                reason: "MalConv: Model predicts benign executable (score=0.05)".to_string(),
+                weight: 1.0,
+            })
+        }
+    }
+
+    /// R7. Tier 1: test_r7_tc01 (Deterministic guard commands ResponseAction::Isolate)
+    #[tokio::test]
+    async fn test_r7_tc01_deterministic_guard_commands_isolate() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        let mut event = make_test_event("C:\\Windows\\System32\\cmd.exe", "cmd.exe");
+        event.data["CanaryTrapTripped"] = json!(true);
+
+        let sig = engine
+            .scan_event(&event)
+            .await
+            .expect("Expected threat signature");
+        assert_eq!(sig.recommended_action, ResponseAction::Isolate);
+        assert_eq!(sig.confidence, 1.0f32);
+        assert!(!sig.require_approval);
+    }
+
+    /// R7. Tier 1: test_r7_tc02 (Asymmetric veto overrides static PE ML dilution)
+    #[tokio::test]
+    async fn test_r7_tc02_asymmetric_veto_overrides_static_pe_ml() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        // Register Benign ML voter which would otherwise dilute base = support / mass
+        engine.add_voter(Box::new(BenignMlVoter)).await;
+
+        let mut event = make_test_event(
+            "C:\\Windows\\System32\\rundll32.exe",
+            "rundll32.exe keymgr,KRShowKeyMgr",
+        );
+        event.data["PrivilegeEscalationDetected"] = json!(true);
+        engine
+            .add_voter(Box::new(crate::voters::CredentialGuardVoter))
+            .await;
+
+        let sig = engine
+            .scan_event(&event)
+            .await
+            .expect("Expected threat signature");
+        // ML voter cannot dilute deterministic invariant violation
+        assert_eq!(sig.recommended_action, ResponseAction::Isolate);
+        assert_eq!(sig.confidence, 1.0f32);
+        assert!(!sig.require_approval);
+    }
+
+    /// R7. Tier 1: test_r7_tc03 (Asymmetric veto overrides NSRL whitelist)
+    #[tokio::test]
+    async fn test_r7_tc03_asymmetric_veto_overrides_nsrl_whitelist() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        // Trusted-Vendor voter returns weight -1.0 attempting to veto
+        engine
+            .add_voter(Box::new(crate::voters::TrustedVendorVoter))
+            .await;
+
+        let mut event = make_test_event(
+            "C:\\Windows\\System32\\svchost.exe",
+            "svchost.exe -k netsvcs",
+        );
+        event.data["KernelTamperDetected"] = json!(true);
+        event.event_id = 10; // ProcessAccess
+
+        let sig = engine
+            .scan_event(&event)
+            .await
+            .expect("NSRL whitelist must be overridden");
+        assert_eq!(sig.recommended_action, ResponseAction::Isolate);
+        assert_eq!(sig.confidence, 1.0f32);
+    }
+
+    /// R7. Tier 1: test_r7_tc04 (Benign workload retains normal consensus)
+    #[tokio::test]
+    async fn test_r7_tc04_benign_workload_retains_normal_consensus() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        engine.add_voter(Box::new(BenignMlVoter)).await;
+        let event = make_test_event(
+            "C:\\Program Files\\Notepad++\\notepad++.exe",
+            "notepad++.exe",
+        );
+
+        let sig_opt = engine.scan_event(&event).await;
+        assert!(
+            sig_opt.is_none(),
+            "Benign executable should retain zero false positives"
+        );
+    }
+
+    /// R7. Tier 1: test_r7_tc05 (Voter weight clamping [0.50, 2.50])
+    #[tokio::test]
+    async fn test_r7_tc05_voter_weight_clamping() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        let c1 = engine.set_voter_weight("VoterLow", 0.10);
+        assert_eq!(c1, 0.50);
+
+        let c2 = engine.set_voter_weight("VoterHigh", 5.00);
+        assert_eq!(c2, 2.50);
+    }
+
+    /// R7. Tier 1: test_r7_tc06 (Contention-free concurrency lock hygiene)
+    #[tokio::test]
+    async fn test_r7_tc06_contention_free_concurrency_lock_hygiene() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = Arc::new(PolicyEngine::new(memory, config));
+
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let eng = engine.clone();
+            handles.push(tokio::spawn(async move {
+                let event = make_test_event(
+                    "C:\\Windows\\System32\\cmd.exe",
+                    &format!("cmd.exe /c echo {}", i),
+                );
+                let _ = eng.scan_event(&event).await;
+                eng.set_voter_weight(&format!("Voter_{}", i), 1.25);
+            }));
+        }
+
+        for h in handles {
+            h.await.expect("Task must complete without deadlock");
+        }
+    }
+
+    /// R7. Tier 2: test_r7_b01 (Negative infinity voter weights clamped to 0.50)
+    #[tokio::test]
+    async fn test_r7_b01_negative_infinity_voter_weights_clamped() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        let c = engine.set_voter_weight("BadVoter", -f32::INFINITY);
+        assert_eq!(c, 0.50);
+
+        let c2 = engine.set_voter_weight("BadVoter2", -999.0);
+        assert_eq!(c2, 0.50);
+    }
+
+    /// R7. Tier 2: test_r7_b02 (Positive infinity voter weights clamped to 2.50)
+    #[tokio::test]
+    async fn test_r7_b02_positive_infinity_voter_weights_clamped() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        let c = engine.set_voter_weight("HighVoter", f32::INFINITY);
+        assert_eq!(c, 2.50);
+
+        let c2 = engine.set_voter_weight("HighVoter2", 999.0);
+        assert_eq!(c2, 2.50);
+    }
+
+    /// R7. Tier 2: test_r7_b03 (Empty voter list handling)
+    #[tokio::test]
+    async fn test_r7_b03_empty_voter_list_handling() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        // Empty voter list does not panic
+        let event = make_test_event("C:\\Windows\\System32\\calc.exe", "calc.exe");
+        let sig = engine.scan_event(&event).await;
+        assert!(sig.is_none());
+    }
+
+    /// R7. Tier 2: test_r7_b04 (Deterministic guard with both ML and NSRL veto)
+    #[tokio::test]
+    async fn test_r7_b04_deterministic_guard_with_both_ml_and_nsrl_veto() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        engine
+            .add_voter(Box::new(crate::voters::TrustedVendorVoter))
+            .await;
+        engine.add_voter(Box::new(BenignMlVoter)).await;
+
+        let mut event = make_test_event(
+            "C:\\Windows\\System32\\rundll32.exe",
+            "rundll32.exe comsvcs.dll, #24 672 C:\\temp\\lsass.dmp full",
+        );
+        event.data["TokenElevationViolation"] = json!(true);
+        engine
+            .add_voter(Box::new(crate::voters::CredentialGuardVoter))
+            .await;
+
+        let sig = engine
+            .scan_event(&event)
+            .await
+            .expect("Both NSRL and ML must be overridden by asymmetric veto");
+        assert_eq!(sig.recommended_action, ResponseAction::Isolate);
+        assert_eq!(sig.confidence, 1.0f32);
+        assert!(!sig.require_approval);
+    }
+
+    /// R7. Tier 2: test_r7_b05 (Threshold boundary 0.8499 vs 0.8500)
+    #[test]
+    fn test_r7_b05_threshold_boundary_08499_vs_08500() {
+        let config = osoosi_types::PolicyConfig::default();
+        let event = make_test_event("C:\\Temp\\heuristic.exe", "heuristic.exe");
+
+        // Below 0.85 (0.8499) -> Alert
+        let votes_low = vec![EvidenceVote {
+            result: VoteResult {
+                confidence: 0.8499,
+                reason: "Statistical anomaly".to_string(),
+                weight: 1.0,
+            },
+            class: EvidenceClass::Behavior,
+            reliability: 1.0,
+            strong_action: false,
+        }];
+        let d_low = orchestrate_evidence(&votes_low, &event, &config);
+        assert_eq!(d_low.action, ResponseAction::Alert);
+
+        // At 0.8500 with Sigma/Lolbin guard -> Isolate
+        let votes_high = vec![EvidenceVote {
+            result: VoteResult {
+                confidence: 0.8500,
+                reason: "Sigma Match: Suspicious Child Payload Spawn".to_string(),
+                weight: 1.0,
+            },
+            class: EvidenceClass::Behavior,
+            reliability: 1.0,
+            strong_action: true,
+        }];
+        let d_high = orchestrate_evidence(&votes_high, &event, &config);
+        assert_eq!(d_high.action, ResponseAction::Isolate);
+    }
+
+    /// R7. Tier 2: test_r7_b06 (Zero confidence benign consensus)
+    #[tokio::test]
+    async fn test_r7_b06_zero_confidence_benign_consensus() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        struct ZeroVoter;
+        #[async_trait::async_trait]
+        impl ThreatVoter for ZeroVoter {
+            fn name(&self) -> String {
+                "ZeroVoter".to_string()
+            }
+            async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
+                Some(VoteResult {
+                    confidence: 0.0,
+                    reason: "Zero confidence".to_string(),
+                    weight: 1.0,
+                })
+            }
+        }
+        engine.add_voter(Box::new(ZeroVoter)).await;
+
+        let event = make_test_event("C:\\Windows\\System32\\cmd.exe", "cmd.exe");
+        let sig = engine.scan_event(&event).await;
+        assert!(sig.is_none());
     }
 }

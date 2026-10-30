@@ -910,6 +910,59 @@ flowchart TD
 
 ---
 
+## 🏰 Multi-Ring Agent Containment & Residual Threat Hardening (Milestones M3–M7)
+
+To defend against advanced breakout techniques, supply-chain attacks, hypervisor escapes, and adversarial AI model poisoning, OshoosiClaw incorporates 3 Residual Threat Boundaries, an Autonomous Research Swarm Ingestion Pipeline, and the Consensus Engine Asymmetric Veto:
+
+```mermaid
+flowchart TD
+    subgraph BOUNDARY1["Residual Threat Boundary 1: Ring 0 Zero-Days & Hypervisor Escapes (M4)"]
+        H1["Hardware HVCI / VBS Verifier<br/>(NtQuerySystemInformation 0x67)"] --> H2["Cross-View DKOM Differential<br/>& O(1) Wald SPRT Heartbeat Sensor"]
+        H2 --> H3["Pre-Load Driver Disassembly<br/>& Boundary IOCTL Fuzzer"]
+        H3 --> H4["TPM 2.0 PCR Heartbeat Ratchet<br/>& P2P Mesh Attestation Dead-Man's Switch"]
+        H4 --> H5["Watchdog: EtwEventWrite & AmsiScanBuffer Hook Guard"]
+    end
+
+    subgraph BOUNDARY2["Residual Threat Boundary 2: Physical & Offline Micro-Perimeters at Rest (M5)"]
+        P1["Shamir t-of-n Secret Sharing GF(2^8)<br/>(256-bit AEAD Master Key)"]
+        P1 --> P2["Share 1: Sealed in TPM 2.0<br/>PCR [0, 2, 4, 7] Bound"]
+        P1 --> P3["Shares 2..n: Distributed Volatile RAM<br/>Across Trusted P2P Mesh Nodes"]
+        P2 & P3 --> P4["Multi-Party Attestation Reconstitution<br/>(Anti-YellowKey & SPI Bus Sniffing)"]
+        P4 --> P5["Audit-First Monotonic Epoch Anti-Rollback<br/>Chained BLAKE3/SHA-256 Merkle Root"]
+        P5 --> P6["Protected Win32 NTFS DACLs<br/>& TPM 2.0 NCrypt Row Integrity Tags"]
+    end
+
+    subgraph BOUNDARY3["Residual Threat Boundary 3: HITL Semantic Social Engineering (M3)"]
+        S1["ArmRingMeshMessage<br/>TaintLevel::UntrustedExternal"] --> S2["MeshCapabilityGovernor<br/>(Dynamic Capability Stripping)"]
+        S2 --> S3["HitlCognitiveFirewall<br/>(UTS #39 Homograph, RTLO U+202E, Zero-Width)"]
+        S3 --> S4["Semantic Divergence Score D_hitl<br/>(D >= 0.85 Auto-Veto; Typed Blast-Radius Token)"]
+        S4 --> S5["CognitiveRedTeamInterceptor<br/>(Causal Tracing S_exec \\ S_deny, SAELens Deception)"]
+    end
+
+    subgraph SWARM_M6["Autonomous Research Swarm & Ingestion Defenses (M6)"]
+        R1["Paper2Agent Feed Discovery<br/>(+20pt Rank Bonus for has_code_repo = true)"] --> R2["Declarative In-Memory Probe<br/>(0 Untrusted Host Execution)"]
+        R2 --> R3["Canary Benign-Corpus Evaluation<br/>(0 False Positives + Anti-Eviction Gating)"]
+        R3 --> R4["WebUI Defense Code Accordion<br/>& HTML5 Canvas LSB Steganography Carrier"]
+    end
+
+    subgraph DECISION_M7["Consensus Engine Asymmetric Veto & Full Packaging (M7)"]
+        V1["Deterministic Invariant Violation<br/>(Canary, Memory, Kernel, Crypto, Sigma/LOLBin)"] --> V2["Consensus Engine Asymmetric Veto<br/>ResponseAction::Isolate (Confidence = 1.0)"]
+        V2 --> V3["Unified Packaging & Full Lifecycle Deliverables<br/>• Windows MSI: Authenticode (signtool SDK) + DigiCert RFC 3161 + WDSI + GitHub Sync<br/>• Linux Packages: .deb, .rpm, .tar.gz + GPG .asc/.sig + DSSE in-toto<br/>• Docker Hardened: UID 65532:65532, --read-only, seccomp-oshoosi.json<br/>• Community Traction: 4-Vertical Awesome Lists PR Submissions"]
+    end
+
+    H5 & P6 & S5 & R4 --> V1
+```
+
+### Architectural Subsystem Matrix (M3–M7)
+
+| Milestone & Subsystem | Core Threat Mitigated | Technical Mechanism | Guarantee & Invariant Enforced |
+|---|---|---|---|
+| **M3: HITL Cognitive Firewall & Mesh Taint** | Semantic Social Engineering, Homoglyph Spoofing, & Prompt Injection Exfiltration | `HitlCognitiveFirewall` (`crates/osoosi-agent-anomaly/src/hitl_firewall.rs`), `MeshCapabilityGovernor` (`crates/osoosi-runtime/src/mesh_governor.rs`) | Dynamic capability stripping on `TaintLevel::UntrustedExternal`; UTS #39 Unicode confusable normalization, RTLO (`U+202E`) stripping, zero-width token elimination; Semantic Divergence Score $D_{\text{hitl}} \ge 0.85$ triggers fail-closed auto-veto; SAELens deception detection. |
+| **M4: Kernel Ring 0 Tamper & Watchdog Defense** | BYOVD Exploits, DKOM Rootkits, & User-Mode Hook Unhooking / Evasion | Hardware HVCI/VBS Verifier (`NtQuerySystemInformation 0x67`), Cross-View DKOM Differential (`crates/osoosi-core/src/dkom.rs`), O(1) Wald SPRT Heartbeat Sensor | Direct syscall and hook integrity monitoring (`EtwEventWrite`, `AmsiScanBuffer`); Pre-load driver boundary IOCTL fuzzer; Silicon TPM 2.0 PCR watchdog ratchet and P2P mesh dead-man switch ensuring host isolation if supervisor heartbeat halts. |
+| **M5: Physical Rest Micro-Perimeters & Anti-Rollback** | Offline Cold-Boot Attacks, Bus Sniffing (SPI/LPC), & Downgrade Replay | Shamir $t$-of-$n$ Secret Sharing in $\text{GF}(2^8)$ (`crates/osoosi-telemetry/src/shamir.rs`), Monotonic Audit Ledger | Master 256-bit AEAD key split across TPM 2.0 PCR-bound nvram (Share 1) and volatile RAM of trusted mesh peers (Shares $2..n$); BLAKE3 chained Merkle audit root; NTFS SDDL security descriptors (`D:P(A;;GA;;;SY)(A;;GA;;;BA)`) and TPM NCrypt row MACs. |
+| **M6: Research Swarm Ingestion & Stego Channels** | Malicious arXiv Prompt Injections, Model Sponge Attacks, & Covert Data Exfil | Paper2Agent ranking bonus (+20pt for repositories with verified source code), HTML5 Canvas LSB Steganography (`dashboard/dist/app.js`) | Zero-untrusted host execution during paper ingestion; benign-corpus canary regression evaluation; WebUI collapsible code accordion for zero-DOM freeze; reversible 2-bit LSB steganography carrier with AES-GCM Web Crypto and zero-memory wiping. |
+| **M7: Consensus Engine Asymmetric Veto & Deliverables** | Advisory ML Score Dilution, Living-off-the-Land Allowlist Abuse, & NSRL Bypass | 5-Family Deterministic Asymmetric Veto (`crates/osoosi-policy/src/engine.rs`), Multi-Target Packaging Pipeline | Mathematical Authority Lattice L1–L5: deterministic invariant breaches (Cedar forbid, Ring 0 tamper, token elevation, crypto mismatch, lateral escape) unconditionally command `ResponseAction::Isolate` ($c = 1.0$, `require_approval = false`), overriding all benign ML votes and NSRL allowlists; zero-touch system `PATH` preservation across WiX MSI and Linux packages. |
+
 ---
 
 ## 📸 Interactive WebUI Visual Gallery
