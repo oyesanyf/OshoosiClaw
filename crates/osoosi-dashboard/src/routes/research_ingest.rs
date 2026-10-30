@@ -908,14 +908,14 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
                 )
             }
-            "2604.20496" => {
+            "2403.04651" | "2604.20496" => {
                 return (
                     true,
                     "https://github.com/cedar-policy/cedar-spec".to_string(),
                 )
             }
-            "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
-            "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
+            "2406.07392" | "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
+            "2406.13352" | "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
             _ => {}
         }
     }
@@ -3145,6 +3145,25 @@ pub fn routes() -> Router<DashboardState> {
             post(post_research_novelty_check),
         )
         .route("/research/novelty-check", post(post_research_novelty_check))
+        .route(
+            "/api/v1/research/verify-accuracy",
+            post(post_research_verify_accuracy),
+        )
+        .route(
+            "/api/research/verify-accuracy",
+            post(post_research_verify_accuracy),
+        )
+        .route(
+            "/research/verify-accuracy",
+            post(post_research_verify_accuracy),
+        )
+}
+
+/// POST /api/v1/research/verify-accuracy, /api/research/verify-accuracy, and /research/verify-accuracy
+pub async fn post_research_verify_accuracy(
+) -> Json<osoosi_agent_anomaly::breakout_defense::Paper2AgentAccuracySuiteResult> {
+    let result = osoosi_agent_anomaly::breakout_defense::run_paper2agent_accuracy_suite();
+    Json(result)
 }
 
 #[cfg(test)]
@@ -3152,6 +3171,22 @@ mod tests {
     use super::*;
 
     pub(crate) static TEST_RESEARCH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[tokio::test]
+    async fn test_verify_accuracy_endpoint_llm_fusion() {
+        let _guard = TEST_RESEARCH_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let res = post_research_verify_accuracy().await;
+        assert_eq!(res.status, "verified");
+        assert_eq!(res.overall_accuracy_pct, 100.0);
+        assert_eq!(res.true_positive_rate_pct, 100.0);
+        assert_eq!(res.false_positive_rate_pct, 0.0);
+        assert!(res.byte_exact_parity);
+        assert!(res.llm_fusion_enabled);
+        assert!(res.llm_fusion_consensus_passed);
+        assert_eq!(res.llm_fusion_accuracy_pct, 100.0);
+        assert!(res.llm_fusion_confidence_bp >= 9000);
+        assert_eq!(res.total_rules_tested, 4);
+    }
 
     fn ensure_seed_rules_loaded() {
         osoosi_agent_anomaly::breakout_defense::restore_default_research_rules();

@@ -838,6 +838,14 @@ pub fn global_cognitive_redteam() -> &'static CognitiveRedTeamInterceptor {
     })
 }
 
+pub use osoosi_runtime::mesh_guard::HitlCardEvaluation;
+
+/// Evaluates a HITL approval card by inspecting BOTH summary and raw_command for
+/// Unicode zero-width characters, RTLO, ANSI escapes, and confusable homographs.
+pub fn evaluate_hitl_card(summary: &str, raw_command: &str) -> HitlCardEvaluation {
+    osoosi_runtime::mesh_guard::HitlCognitiveFirewall::evaluate_hitl_card(summary, raw_command)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,5 +1044,37 @@ mod tests {
             }
             other => panic!("Expected QuorumApproved, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_evaluate_hitl_card_inspects_both_summary_and_raw_command() {
+        // 1. Clean card
+        let clean = evaluate_hitl_card("Format workspace code", "cargo fmt --all");
+        assert!(!clean.is_deceptive);
+        assert_eq!(clean.recommended_action, "PERMIT_REVIEW");
+
+        // 2. Zero-width character in summary
+        let zero_in_summary = evaluate_hitl_card("Format\u{200B} code", "cargo fmt --all");
+        assert!(zero_in_summary.is_deceptive);
+        assert!(zero_in_summary.has_zero_width);
+        assert_eq!(zero_in_summary.recommended_action, "AUTO_VETO_BLOCK");
+
+        // 3. Zero-width character in raw_command
+        let zero_in_cmd = evaluate_hitl_card("Format code", "cargo\u{FEFF} fmt --all");
+        assert!(zero_in_cmd.is_deceptive);
+        assert!(zero_in_cmd.has_zero_width);
+        assert_eq!(zero_in_cmd.recommended_action, "AUTO_VETO_BLOCK");
+
+        // 4. RTLO in summary
+        let rtlo_in_summary = evaluate_hitl_card("Read doc\u{202E}txt.sh", "cat doc.txt");
+        assert!(rtlo_in_summary.is_deceptive);
+        assert!(rtlo_in_summary.has_rtlo);
+        assert_eq!(rtlo_in_summary.recommended_action, "AUTO_VETO_BLOCK");
+
+        // 5. ANSI escape in raw_command
+        let ansi_in_cmd = evaluate_hitl_card("Inspect logs", "cat \x1b[31mlog.txt");
+        assert!(ansi_in_cmd.is_deceptive);
+        assert!(ansi_in_cmd.has_ansi_escape);
+        assert_eq!(ansi_in_cmd.recommended_action, "AUTO_VETO_BLOCK");
     }
 }

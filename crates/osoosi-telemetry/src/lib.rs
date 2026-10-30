@@ -25,7 +25,7 @@ pub use injector::*;
 pub use native::{
     detect_cross_view_dkom_discrepancy, enumerate_loaded_kernel_drivers,
     verify_hardware_hvci_vbs_posture, CrossViewDkomFinding, HvciVbsPostureReport,
-    KernelSprtCallbackMonitor, KernelSprtState, LoadedDriverInfo,
+    KernelSprtCallbackMonitor, KernelSprtState, LoadedDriverInfo, SprtVerdict,
 };
 pub use provisioning::*;
 pub use timing_shear::*;

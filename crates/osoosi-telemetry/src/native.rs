@@ -1255,9 +1255,9 @@ fn enumerate_loaded_kernel_drivers_linux() -> Vec<LoadedDriverInfo> {
 
 // ============================================================================
 // F25 & F26: Zero-Day Kernel & Hypervisor Integrity Innovations
-// - F25: Hardware HVCI / VBS / VTL1 Posture Verifier (arXiv:2409.07508 SafeBPF)
+// - F25: Hardware HVCI / VBS / VTL1 Posture Verifier (Microsoft Device Guard & Code Integrity)
 // - F26: Cross-View DKOM Process Differential & O(1) Temporal SPRT Sensor
-//        (arXiv:2503.02402 Trace of the Times)
+//        (Abraham Wald, 1945 Sequential Analysis)
 // ============================================================================
 
 pub const CODEINTEGRITY_OPTION_ENABLED: u32 = 0x0000_0001;
@@ -1265,7 +1265,7 @@ pub const CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED: u32 = 0x0000_0400;
 pub const CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED: u32 = 0x0000_0800;
 
 /// Hardware-backed Virtualization-Based Security (VBS) & Hypervisor-Protected Code Integrity
-/// (HVCI / VTL1) posture report (`F25`, `arXiv:2409.07508`).
+/// (HVCI / VTL1) posture report (`F25`, Microsoft Device Guard Architecture).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct HvciVbsPostureReport {
     pub raw_code_integrity_options: u32,
@@ -1351,7 +1351,7 @@ pub struct CrossViewDkomFinding {
 
 /// Compares standard `ActiveProcessLinks` PID enumeration (`view_a_active_links`) against
 /// kernel handle/scheduler thread PID tables (`view_b_handle_or_scheduler_pids`) to detect
-/// 0-day DKOM rootkits that unlink `EPROCESS` structures (`F26`, `arXiv:2503.02402`).
+/// 0-day DKOM rootkits that unlink `EPROCESS` structures (`F26`, Cross-View DKOM Integrity).
 pub fn detect_cross_view_dkom_discrepancy(
     view_a_active_links: &[u32],
     view_b_handle_or_scheduler_pids: &[u32],
@@ -1397,30 +1397,50 @@ pub enum KernelSprtState {
     CallbackBlindingOrRootkitDetected,
 }
 
+/// SprtVerdict decision enum for windowed callback observation (`F26`, Wald, 1945).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum SprtVerdict {
+    SensorBlindedAlert { llr: f64 },
+    HealthySensor { llr: f64 },
+    IndeterminateContinue { llr: f64 },
+}
+
 /// Constant-time $O(1)$ Sequential Probability Ratio Test (`SPRT`) monitor over kernel callback
-/// inter-arrival intervals (`F26`, `arXiv:2503.02402` *Trace of the Times*).
+/// inter-arrival intervals (Abraham Wald, 1945; 'Sequential Analysis', John Wiley & Sons).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KernelSprtCallbackMonitor {
-    expected_interval_ms: f64,
-    anomaly_interval_ms: f64,
-    log_likelihood_ratio: f64,
-    upper_threshold_b: f64,
-    lower_threshold_a: f64,
-    samples_observed: u64,
+    pub expected_interval_ms: f64,
+    pub anomaly_interval_ms: f64,
+    pub log_likelihood_ratio: f64,
+    pub upper_threshold_b: f64,
+    pub lower_threshold_a: f64,
+    pub samples_observed: u64,
+    pub lambda0: f64,
+    pub lambda1: f64,
+    pub alpha: f64,
+    pub beta: f64,
 }
 
 impl KernelSprtCallbackMonitor {
     /// Creates an $O(1)$ Wald SPRT monitor with false-positive bound $\alpha$ and false-negative bound $\beta$.
     pub fn new(expected_interval_ms: f64, anomaly_interval_ms: f64, alpha: f64, beta: f64) -> Self {
-        let a = (beta / (1.0 - alpha)).ln();
-        let b = ((1.0 - beta) / alpha).ln();
+        let e_ms = expected_interval_ms.max(1.0);
+        let a_ms = anomaly_interval_ms.max(e_ms + 1.0);
+        let clamped_alpha = alpha.clamp(1e-9, 0.49);
+        let clamped_beta = beta.clamp(1e-9, 0.49);
+        let a = (clamped_beta / (1.0 - clamped_alpha)).ln();
+        let b = ((1.0 - clamped_beta) / clamped_alpha).ln();
         Self {
-            expected_interval_ms: expected_interval_ms.max(1.0),
-            anomaly_interval_ms: anomaly_interval_ms.max(expected_interval_ms + 1.0),
+            expected_interval_ms: e_ms,
+            anomaly_interval_ms: a_ms,
             log_likelihood_ratio: 0.0,
             upper_threshold_b: b,
             lower_threshold_a: a,
             samples_observed: 0,
+            lambda0: 1.0 / e_ms,
+            lambda1: 1.0 / a_ms,
+            alpha: clamped_alpha,
+            beta: clamped_beta,
         }
     }
 
@@ -1443,6 +1463,36 @@ impl KernelSprtCallbackMonitor {
             KernelSprtState::Nominal
         } else {
             KernelSprtState::Monitoring
+        }
+    }
+
+    /// Observes a callback window count, updating the log-likelihood ratio with parameter clamping (Wald, 1945).
+    pub fn observe_window(&mut self, observed_callbacks: u64) -> SprtVerdict {
+        // Enforce mathematical preconditions: lambda0 > lambda1 > 0
+        let l0 = self.lambda0.max(1e-6);
+        let l1 = self.lambda1.clamp(1e-6, l0 * 0.99);
+
+        let k = observed_callbacks as f64;
+        let step_llr = k * (l1 / l0).ln() - (l1 - l0);
+        self.log_likelihood_ratio = (self.log_likelihood_ratio + step_llr).clamp(-50.0, 50.0);
+        self.samples_observed += 1;
+
+        let alpha = self.alpha.clamp(1e-9, 0.49);
+        let beta = self.beta.clamp(1e-9, 0.49);
+        let upper_threshold_b = ((1.0 - beta) / alpha).ln();
+        let lower_threshold_a = (beta / (1.0 - alpha)).ln();
+
+        if self.log_likelihood_ratio >= upper_threshold_b {
+            SprtVerdict::SensorBlindedAlert {
+                llr: self.log_likelihood_ratio,
+            }
+        } else if self.log_likelihood_ratio <= lower_threshold_a {
+            self.log_likelihood_ratio = 0.0;
+            SprtVerdict::HealthySensor { llr: 0.0 }
+        } else {
+            SprtVerdict::IndeterminateContinue {
+                llr: self.log_likelihood_ratio,
+            }
         }
     }
 
