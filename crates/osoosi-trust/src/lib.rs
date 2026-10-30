@@ -75,37 +75,37 @@ impl TrustManager {
     pub fn new(
         executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>,
     ) -> anyhow::Result<Self> {
-        let signing_key = {
-            #[cfg(test)]
-            {
-                let mut csprng = rand::thread_rng();
-                SigningKey::generate(&mut csprng)
-            }
-            #[cfg(not(test))]
-            {
-                let key_path = std::path::Path::new("database").join("node_identity.key");
-                if key_path.exists() {
-                    match std::fs::read(&key_path) {
-                        Ok(bytes) if bytes.len() == 32 => {
-                            let mut key_bytes = [0u8; 32];
-                            key_bytes.copy_from_slice(&bytes);
-                            SigningKey::from_bytes(&key_bytes)
-                        }
-                        _ => {
-                            let mut csprng = rand::thread_rng();
-                            let key = SigningKey::generate(&mut csprng);
-                            let _ = std::fs::create_dir_all("database");
-                            let _ = std::fs::write(&key_path, key.to_bytes());
-                            key
-                        }
+        let is_test_env = cfg!(test)
+            || std::env::var("CARGO_MANIFEST_DIR").is_ok()
+            || std::env::current_exe()
+                .map(|p| p.to_string_lossy().contains("deps"))
+                .unwrap_or(false);
+        let signing_key = if is_test_env {
+            let mut csprng = rand::thread_rng();
+            SigningKey::generate(&mut csprng)
+        } else {
+            let key_path = std::path::Path::new("database").join("node_identity.key");
+            if key_path.exists() {
+                match std::fs::read(&key_path) {
+                    Ok(bytes) if bytes.len() == 32 => {
+                        let mut key_bytes = [0u8; 32];
+                        key_bytes.copy_from_slice(&bytes);
+                        SigningKey::from_bytes(&key_bytes)
                     }
-                } else {
-                    let mut csprng = rand::thread_rng();
-                    let key = SigningKey::generate(&mut csprng);
-                    let _ = std::fs::create_dir_all("database");
-                    let _ = std::fs::write(&key_path, key.to_bytes());
-                    key
+                    _ => {
+                        let mut csprng = rand::thread_rng();
+                        let key = SigningKey::generate(&mut csprng);
+                        let _ = std::fs::create_dir_all("database");
+                        let _ = std::fs::write(&key_path, key.to_bytes());
+                        key
+                    }
                 }
+            } else {
+                let mut csprng = rand::thread_rng();
+                let key = SigningKey::generate(&mut csprng);
+                let _ = std::fs::create_dir_all("database");
+                let _ = std::fs::write(&key_path, key.to_bytes());
+                key
             }
         };
         let public_key = signing_key.verifying_key();

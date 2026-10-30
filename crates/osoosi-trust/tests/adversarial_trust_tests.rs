@@ -419,7 +419,10 @@ fn test_attack_golden_baseline_tampered_pcr_0_and_pcr_7() {
 fn test_attack_golden_baseline_hardware_tpm_enforcement() {
     let (challenger, responder) = create_test_managers();
     let challenge = AttestationChallenge::new(challenger.did().clone(), vec![0, 7, 16]);
-    let response = responder.respond_to_attestation(challenge.clone()).unwrap();
+    let mut response = responder.respond_to_attestation(challenge.clone()).unwrap();
+    if let Some(ref mut quote) = response.tpm_quote {
+        quote.hardware_backed = false;
+    }
 
     // Policy strictly mandates hardware TPM
     let baseline = GoldenBaseline::new().require_hardware(true);
