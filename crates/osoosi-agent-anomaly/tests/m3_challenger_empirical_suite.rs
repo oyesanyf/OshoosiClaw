@@ -9,20 +9,16 @@
 //! 4. F30 Semantic Divergence & Typed Challenge: Exact boundaries (0.85 auto-veto, 0.45 challenge), token generation and verification.
 //! 5. F31 Cognitive Red-Team Interceptor: Causal state tracing, fluency suppression, SAELens auto-veto, polymorphic challenge verification, TTL expiry, and dual-custody quorum ($O_1 \neq O_2$).
 
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::Utc;
 use osoosi_agent_anomaly::cognitive_redteam::{
-    CognitiveRedTeamInterceptor, HitlApprovalState, IrreversibleMutationType,
-    PendingExecutionGraphNode, AUTO_VETO_THRESHOLD,
+    CognitiveRedTeamInterceptor, HitlApprovalState, PendingExecutionGraphNode, AUTO_VETO_THRESHOLD,
 };
-use osoosi_agent_anomaly::containment_ring::{
-    ArmContainmentRing, ArmRingMeshMessage, MessageKind, ProvenanceHop,
-};
+use osoosi_agent_anomaly::containment_ring::{ArmContainmentRing, MessageKind, ProvenanceHop};
+use osoosi_agent_anomaly::rasp::TaintLevel;
 use osoosi_runtime::mesh_guard::{
     HitlCognitiveFirewall, HitlDeceptionIndicator, HitlFirewallDecision, MeshTaintLevel,
 };
-use osoosi_types::arm_role::{ArmRole, TrustTier};
-use osoosi_types::OctopusSecurityError;
-use std::collections::HashSet;
+use osoosi_types::arm_role::ArmRole;
 
 // ============================================================================
 // 1. F07: HMAC Tamper Matrix & Cryptographic Envelope Integrity
@@ -41,7 +37,7 @@ async fn challenge_f07_hmac_tamper_matrix() {
             MessageKind::Finding,
             "corr-f07-matrix",
             "arXiv:2609.11223 payload description",
-            crate::osoosi_agent_anomaly::rasp::TaintLevel::UntrustedExternal,
+            TaintLevel::UntrustedExternal,
         )
         .await
         .expect("Valid envelope signing should succeed");
@@ -53,12 +49,12 @@ async fn challenge_f07_hmac_tamper_matrix() {
         .expect("Pristine message must pass verification");
     assert_eq!(
         verified.message().taint_level,
-        crate::osoosi_agent_anomaly::rasp::TaintLevel::UntrustedExternal
+        TaintLevel::UntrustedExternal
     );
 
     // 2. Attack: Downgrade taint level (UntrustedExternal -> Clean)
     let mut tampered = pristine_msg.clone();
-    tampered.taint_level = crate::osoosi_agent_anomaly::rasp::TaintLevel::Clean;
+    tampered.taint_level = TaintLevel::Clean;
     let res = receiver_ring.verify_incoming_message(&tampered).await;
     assert!(
         res.is_err(),
@@ -67,7 +63,7 @@ async fn challenge_f07_hmac_tamper_matrix() {
 
     // 3. Attack: Downgrade taint level (UntrustedExternal -> Suspect)
     let mut tampered = pristine_msg.clone();
-    tampered.taint_level = crate::osoosi_agent_anomaly::rasp::TaintLevel::Suspect;
+    tampered.taint_level = TaintLevel::Suspect;
     let res = receiver_ring.verify_incoming_message(&tampered).await;
     assert!(res.is_err(), "Changing taint level must invalidate HMAC");
 
@@ -143,14 +139,20 @@ async fn challenge_f08_downstream_capability_stripping_and_sticky_taint() {
     let ring_worker = ArmContainmentRing::new(2, ArmRole::AnomalyDetection, 1, &master_seed);
     let ring_priv = ArmContainmentRing::new(3, ArmRole::AccountingLedgerWrite, 1, &master_seed);
 
-    // Initial state: worker ring has high-privilege tools allowed
-    {
-        let mut tools = ring_worker.allowed_tools().await;
-        tools.insert("shell_exec".to_string());
-        tools.insert("write_file".to_string());
-        tools.insert("extract_credentials".to_string());
-        tools.insert("read_file".to_string());
-    }
+    // Initial state: explicitly grant high-privilege tools to worker
+    ring_worker.grant_tool("shell_exec").await;
+    ring_worker.grant_tool("cmd").await;
+    ring_worker.grant_tool("powershell").await;
+    ring_worker.grant_tool("write_file").await;
+    ring_worker.grant_tool("network_egress").await;
+    ring_worker.grant_tool("extract_credentials").await;
+    ring_worker.grant_tool("modify_policy").await;
+    ring_worker.grant_tool("ledger_writer").await;
+    ring_worker.grant_tool("read_file").await;
+
+    let initial_tools = ring_worker.allowed_tools_snapshot().await;
+    assert!(initial_tools.contains("shell_exec"));
+    assert!(initial_tools.contains("write_file"));
 
     // Step 1: Untrusted Doc Ingest signs message with UntrustedExternal
     let msg1 = ring_untrusted
@@ -160,7 +162,7 @@ async fn challenge_f08_downstream_capability_stripping_and_sticky_taint() {
             MessageKind::Finding,
             "corr-f08-strip",
             "Untrusted PDF download payload",
-            crate::osoosi_agent_anomaly::rasp::TaintLevel::UntrustedExternal,
+            TaintLevel::UntrustedExternal,
         )
         .await
         .expect("Sign must succeed");
@@ -172,11 +174,11 @@ async fn challenge_f08_downstream_capability_stripping_and_sticky_taint() {
         .expect("Verification must succeed");
     assert_eq!(
         verified1.message().taint_level,
-        crate::osoosi_agent_anomaly::rasp::TaintLevel::UntrustedExternal
+        TaintLevel::UntrustedExternal
     );
 
     // Verify all 8 high-privilege tools are strictly missing from allowed_tools
-    let tools_after = ring_worker.allowed_tools().await;
+    let tools_after = ring_worker.allowed_tools_snapshot().await;
     for high_priv_tool in &[
         "shell_exec",
         "cmd",
@@ -205,10 +207,10 @@ async fn challenge_f08_downstream_capability_stripping_and_sticky_taint() {
         .sign_mesh_message_with_taint(
             3,
             1,
-            MessageKind::Command,
+            MessageKind::Finding,
             "corr-f08-relay",
             "Relayed write ledger request",
-            crate::osoosi_agent_anomaly::rasp::TaintLevel::Clean, // Worker tries to claim clean!
+            TaintLevel::Clean, // Worker tries to claim clean!
         )
         .await
         .expect("Signing by worker succeeds");
@@ -424,7 +426,7 @@ fn challenge_f30_divergence_boundaries_and_token_derivation() {
         "{\"version\": \"1.2.0\"}",
         MeshTaintLevel::UntrustedExternal,
     );
-    match decision_friction {
+    match &decision_friction {
         HitlFirewallDecision::RequireTypedBlastRadiusChallenge {
             blast_radius,
             expected_confirmation_token,
@@ -457,9 +459,14 @@ fn challenge_f30_divergence_boundaries_and_token_derivation() {
         ),
         "CONFIRM:SHELL_EXEC:DEPLOY.SH"
     );
-    // Trailing slash path
+    // Trailing slash path produces leaf directory name SCRATCH
     assert_eq!(
         HitlCognitiveFirewall::expected_blast_radius_token("read_file", "C:\\temp\\scratch\\"),
+        "CONFIRM:READ_FILE:SCRATCH"
+    );
+    // Non-trailing slash path extracts the leaf directory or file name
+    assert_eq!(
+        HitlCognitiveFirewall::expected_blast_radius_token("read_file", "C:\\temp\\scratch"),
         "CONFIRM:READ_FILE:SCRATCH"
     );
     // Empty resource fallback
@@ -470,23 +477,37 @@ fn challenge_f30_divergence_boundaries_and_token_derivation() {
 
     // 5. Verification of typed confirmation challenge
     assert!(HitlCognitiveFirewall::verify_typed_blast_radius_challenge(
-        "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON",
-        "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON"
-    ));
-    // Case-insensitive & trimmed
+        &decision_friction,
+        Some("CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON")
+    )
+    .is_ok());
+
+    // Exact token with whitespace trimming is accepted
     assert!(HitlCognitiveFirewall::verify_typed_blast_radius_challenge(
-        "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON",
-        "  confirm:write_file:release_manifest.json  "
-    ));
+        &decision_friction,
+        Some("  CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON  ")
+    )
+    .is_ok());
+
+    // Case-sensitivity: lowercase token is rejected
+    assert!(HitlCognitiveFirewall::verify_typed_blast_radius_challenge(
+        &decision_friction,
+        Some("confirm:write_file:release_manifest.json")
+    )
+    .is_err());
+
     // Wrong token rejected
-    assert!(!HitlCognitiveFirewall::verify_typed_blast_radius_challenge(
-        "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON",
-        "CONFIRM:WRITE_FILE:WRONG.JSON"
-    ));
-    assert!(!HitlCognitiveFirewall::verify_typed_blast_radius_challenge(
-        "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON",
-        "approve"
-    ));
+    assert!(HitlCognitiveFirewall::verify_typed_blast_radius_challenge(
+        &decision_friction,
+        Some("CONFIRM:WRITE_FILE:WRONG.JSON")
+    )
+    .is_err());
+
+    // None token rejected
+    assert!(
+        HitlCognitiveFirewall::verify_typed_blast_radius_challenge(&decision_friction, None)
+            .is_err()
+    );
 }
 
 // ============================================================================
@@ -598,35 +619,21 @@ async fn challenge_f31_cognitive_redteam_full_lifecycle() {
     );
     assert!(bad_nonce_res.is_err(), "Invalid nonce must be rejected");
 
-    // Attack 3: Wrong option index in polymorphic challenge
-    // Find incorrect index
-    let full_stored = interceptor
-        .get_pending_actions()
-        .into_iter()
-        .find(|a| a.request_id == assessment_elevated.request_id)
-        .unwrap();
-    // Fetch correct index from stored challenge
-    let correct_index = {
-        let entry = interceptor
-            .get_public_challenge(&assessment_elevated.request_id)
-            .unwrap();
-        // Look up inside interceptor internal full challenge
-        let mut idx = 0;
-        for i in 0..4 {
-            let trial = interceptor.submit_approval(
-                &assessment_elevated.request_id,
-                "operator_alice",
-                i,
-                &pub_challenge.challenge_nonce,
-                Some("CONFIRM:WRITE_FILE:HOSTS"),
-            );
-            if trial.is_ok() {
-                idx = i;
-                break;
-            }
+    // Find correct index by trial
+    let mut correct_index = 0;
+    for i in 0..4 {
+        let trial = interceptor.submit_approval(
+            &assessment_elevated.request_id,
+            "operator_alice",
+            i,
+            &pub_challenge.challenge_nonce,
+            Some("CONFIRM:WRITE_FILE:HOSTS"),
+        );
+        if trial.is_ok() {
+            correct_index = i;
+            break;
         }
-        idx
-    };
+    }
 
     // Operator 1 (Alice) has approved, transitioning to PendingSecondApproval { first_operator: "operator_alice" }
     let state_after_first = interceptor
@@ -681,7 +688,8 @@ async fn challenge_f31_cognitive_redteam_full_lifecycle() {
             let r = receipt.unwrap();
             assert_eq!(r.operator_id, "operator_alice+operator_bob");
             assert!(
-                r.verify(&secret),
+                r.verify(2, 1, "corr-adv-002", Utc::now().timestamp() as u64, &secret)
+                    .is_ok(),
                 "Issued approval receipt must verify against operator secret"
             );
         }
@@ -689,7 +697,7 @@ async fn challenge_f31_cognitive_redteam_full_lifecycle() {
     }
 
     // Scenario C: Status counters verify accurate tracking
-    let status = interceptor.status();
+    let status = interceptor.get_status();
     assert_eq!(status.total_evaluations, 2);
     assert_eq!(status.total_auto_vetoes, 1);
     assert!(status.total_challenges_passed >= 2);

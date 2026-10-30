@@ -298,6 +298,7 @@ def inspect_execution_environment_hijacking_oracle(
 
 class TaintLevel(Enum):
     TrustedInternal = "TrustedInternal"
+    Suspect = "Suspect"
     UntrustedExternal = "UntrustedExternal"
     Quarantined = "Quarantined"
 
@@ -309,6 +310,8 @@ HIGH_PRIVILEGE_TOOLS = {
     "write_file",
     "network_egress",
     "extract_credentials",
+    "modify_policy",
+    "ledger_writer",
 }
 
 
@@ -498,13 +501,18 @@ def evaluate_hitl_escalation_oracle(
     tool_lower = tool_name.lower()
     res_lower = canonical_target_resource.lower()
     args_lower = command_args.lower()
-    is_readonly_intent = any(k in obj_lower for k in ("read", "test", "format", "lint", "doc", "view"))
+    is_readonly_intent = any(k in obj_lower for k in ("read", "test", "format", "lint", "doc", "view", "summarize", "typo", "check"))
 
     if is_readonly_intent:
-        sensitive_sinks = ("lsass", "sam", ".ssh", "osoosi.db", "osoosi.toml", "credentials", "etc/hosts", "system32")
-        if any(s in res_lower or s in args_lower for s in sensitive_sinks):
+        sensitive_sinks = (
+            "lsass", "sam", ".ssh", "id_rsa", "osoosi.db", "osoosi.toml",
+            "credentials", "etc/hosts", "system32", "authorized_keys",
+            "modify_policy", "ledger_writer", "extract_credentials",
+            "curl", "invoke-webrequest", "nc -e"
+        )
+        if tool_lower in ("extract_credentials", "modify_policy", "ledger_writer") or any(s in res_lower or s in args_lower for s in sensitive_sinks):
             score += 0.90
-        elif tool_lower in ("shell_exec", "cmd", "powershell", "write_file", "network_egress", "extract_credentials"):
+        elif tool_lower in HIGH_PRIVILEGE_TOOLS:
             score += 0.55
 
     # Taint penalty
