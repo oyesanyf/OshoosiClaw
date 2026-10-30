@@ -18,6 +18,7 @@ pub mod breakout_defense;
 pub mod breakout_prevention;
 pub mod cedar_engine;
 pub mod classifier;
+pub mod cognitive_redteam;
 pub mod command_line;
 pub mod containment_ring;
 pub mod detector;
@@ -62,6 +63,13 @@ pub use cedar_engine::{
 pub use classifier::{
     AgentClassificationRecord, AgentEvidenceSignal, DynamicAgentClassifier, OsqueryAgentDetector,
     SiqueryAgentDetector,
+};
+pub use cognitive_redteam::{
+    global_cognitive_redteam, BlastRadiusDiff, CognitiveRedTeamAssessment,
+    CognitiveRedTeamInterceptor, CognitiveRedTeamStatus, HitlApprovalState,
+    IrreversibleMutationType, IrreversibleStateChange, PendingExecutionGraphNode,
+    PolymorphicChallenge, PolymorphicChallengePublic, StoredPendingHitlAction, AUTO_VETO_THRESHOLD,
+    CHALLENGE_TTL_SECONDS,
 };
 pub use command_line::*;
 pub use containment_ring::{
