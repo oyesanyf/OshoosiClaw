@@ -340,7 +340,7 @@ fn test_challenger2_open_confined_reparse_junction_ads_and_bounds() {
         let junction_path = scratch_dir.join("junction_esc");
         // Create an NTFS junction pointing to outside_dir: mklink /J <junction> <target>
         let mklink_status = std::process::Command::new("cmd.exe")
-            .args(&[
+            .args([
                 "/c",
                 "mklink",
                 "/J",
@@ -393,7 +393,7 @@ fn test_challenger2_open_confined_reparse_junction_ads_and_bounds() {
 
                 // Clean up the junction link using rmdir
                 let _ = std::process::Command::new("cmd.exe")
-                    .args(&["/c", "rmdir", &junction_path.to_string_lossy()])
+                    .args(["/c", "rmdir", &junction_path.to_string_lossy()])
                     .output();
             }
         }
@@ -407,7 +407,7 @@ fn test_challenger2_open_confined_reparse_junction_ads_and_bounds() {
         let hardlink_file = scratch_dir.join("hardlink_file.txt");
 
         let mklink_h = std::process::Command::new("cmd.exe")
-            .args(&[
+            .args([
                 "/c",
                 "mklink",
                 "/H",

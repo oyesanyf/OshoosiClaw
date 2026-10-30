@@ -315,10 +315,12 @@ fn test_challenger_ring7_authorizer_temporal_forbid_and_declassification() {
     };
 
     // Case 1: Taint flags set in CedarContext -> Cedar MUST emit forbid
-    let mut tainted_context = CedarContext::default();
-    tainted_context.has_untrusted_web_input = true;
-    tainted_context.has_scratch_file_write = true;
-    tainted_context.subprocess_env_or_arg_tainted = true;
+    let tainted_context = CedarContext {
+        has_untrusted_web_input: true,
+        has_scratch_file_write: true,
+        subprocess_env_or_arg_tainted: true,
+        ..Default::default()
+    };
 
     let decision_tainted = authorizer.evaluate_cedar_request(
         &principal,
@@ -341,11 +343,13 @@ fn test_challenger_ring7_authorizer_temporal_forbid_and_declassification() {
     );
 
     // Case 2: Cryptographic supervisor declassification present in context -> Forbid cleared
-    let mut declassified_context = CedarContext::default();
-    declassified_context.has_untrusted_web_input = true;
-    declassified_context.has_scratch_file_write = true;
-    declassified_context.subprocess_env_or_arg_tainted = true;
-    declassified_context.has_cryptographic_declassification = true;
+    let declassified_context = CedarContext {
+        has_untrusted_web_input: true,
+        has_scratch_file_write: true,
+        subprocess_env_or_arg_tainted: true,
+        has_cryptographic_declassification: true,
+        ..Default::default()
+    };
 
     let decision_declass = authorizer.evaluate_cedar_request(
         &principal,

@@ -4662,10 +4662,12 @@ mod tests {
             service_operation: None,
         };
 
-        let mut context = CedarContext::default();
-        context.has_untrusted_web_input = true;
-        context.has_scratch_file_write = true;
-        context.subprocess_env_or_arg_tainted = true;
+        let context = CedarContext {
+            has_untrusted_web_input: true,
+            has_scratch_file_write: true,
+            subprocess_env_or_arg_tainted: true,
+            ..Default::default()
+        };
 
         let decision = authorizer.evaluate_cedar_request(
             &principal,
