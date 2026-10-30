@@ -708,6 +708,7 @@ LOCAL_CONTAINMENT_MAPPINGS: Dict[str, Dict[str, Dict[str, Any]]] = {
 VERIFIED_REPO_ALLOWLIST: Dict[str, str] = {
     "2603.02277": "https://github.com/UKGovernmentBEIS/inspect_evals",
     "2403.04651": "https://github.com/cedar-policy/cedar-spec",
+    "2406.11036": "https://github.com/NVIDIA/garak",
     "2406.07392": "https://github.com/NVIDIA/garak",
     "2406.13352": "https://github.com/ethz-spylab/agentdojo",
     "2604.20496": "https://github.com/cedar-policy/cedar-spec",
@@ -725,7 +726,7 @@ def assert_valid_arxiv_paper(arxiv_id: str, expected_keywords: Optional[List[str
     """Verifies that an arXiv preprint exists via export.arxiv.org or verified local benchmarks,
     confirming non-404 paper identity and relevance."""
     clean_id = normalize_arxiv_id(arxiv_id)
-    if clean_id in {"2603.02277", "2403.04651", "2406.07392", "2406.13352"}:
+    if clean_id in {"2603.02277", "2403.04651", "2406.11036", "2406.07392", "2406.13352"}:
         return f"Verified foundational preprint arXiv:{clean_id}"
     api_url = f"http://export.arxiv.org/api/query?id_list={clean_id}"
     try:
@@ -913,14 +914,27 @@ def fetch_paper_by_id(arxiv_id: str) -> Optional[Dict[str, Any]]:
             "has_code_repo": True,
             "code_repo_url": "https://github.com/cedar-policy/cedar-spec",
         },
-        "2406.07392": {
-            "title": "Garak: A Framework for LLM Vulnerability Scanning and Red Teaming",
-            "arxiv_id": "2406.07392v1",
-            "url": "https://arxiv.org/abs/2406.07392",
-            "pdf_url": "https://arxiv.org/pdf/2406.07392.pdf",
-            "published": "2024-06-11",
+        "2406.11036": {
+            "title": "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
+            "arxiv_id": "2406.11036v1",
+            "url": "https://arxiv.org/abs/2406.11036",
+            "pdf_url": "https://arxiv.org/pdf/2406.11036.pdf",
+            "published": "2024-06-16",
             "published_year": 2024,
-            "summary": "Garak is an LLM vulnerability scanner developed by NVIDIA for probing LLM safety boundaries.",
+            "summary": "garak probes LLM vulnerability boundaries via encoding injection, adversarial jailbreak personas, and untrusted markdown image exfiltration.",
+            "comments": "Code available at https://github.com/NVIDIA/garak",
+            "authors": ["Leon Derczynski", "NVIDIA Security Research"],
+            "has_code_repo": True,
+            "code_repo_url": "https://github.com/NVIDIA/garak",
+        },
+        "2406.07392": {
+            "title": "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
+            "arxiv_id": "2406.11036v1",
+            "url": "https://arxiv.org/abs/2406.11036",
+            "pdf_url": "https://arxiv.org/pdf/2406.11036.pdf",
+            "published": "2024-06-16",
+            "published_year": 2024,
+            "summary": "garak probes LLM vulnerability boundaries via encoding injection, adversarial jailbreak personas, and untrusted markdown image exfiltration.",
             "comments": "Code available at https://github.com/NVIDIA/garak",
             "authors": ["Leon Derczynski", "NVIDIA Security Research"],
             "has_code_repo": True,

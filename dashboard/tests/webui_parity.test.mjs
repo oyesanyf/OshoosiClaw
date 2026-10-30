@@ -659,8 +659,8 @@ describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37
                 }
 
                 // Verify specific live replacements
-                const garakRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2610.20437'));
-                assert.ok(garakRule, 'Rule 2610.20437 must exist');
+                const garakRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2406.11036') || r.rule_id.includes('2610.20437'));
+                assert.ok(garakRule, 'Garak rule must exist');
                 assert.strictEqual(garakRule.code_repo_url, 'https://github.com/NVIDIA/garak');
 
                 const dojoRule = st.active_enforced_research_rules.find(r => r.rule_id.includes('2601.11893'));
@@ -773,6 +773,8 @@ describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37
                 assert.ok(activeTbody.innerHTML.includes('rust-guard-code'), 'HTML must contain rust-guard-code');
                 assert.ok(activeTbody.innerHTML.includes('btn-stego-render'), 'HTML must contain btn-stego-render');
                 assert.ok(activeTbody.innerHTML.includes('stego-canvas-'), 'HTML must contain stego-canvas elements');
+                assert.ok(activeTbody.innerHTML.includes('2024 (FOUNDATIONAL)'), 'HTML must contain 2024 (FOUNDATIONAL) badge for foundational papers');
+                assert.ok(activeTbody.innerHTML.includes('2026+ (CURRENT)'), 'HTML must contain 2026+ (CURRENT) badge for frontier papers');
             });
         });
     }

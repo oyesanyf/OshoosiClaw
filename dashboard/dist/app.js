@@ -13222,19 +13222,33 @@ const RESEARCH_PAPER_PRESETS = {
         arxiv_url: 'https://arxiv.org/abs/2604.20496',
         proposed_cedar_rule: 'forbid(principal, action == Action::"Syscall::invoke", resource) when { context.arxiv_id == "2604.20496v1" && context.syscall in ["io_uring_setup", "io_uring_enter"] };'
     },
-    '2610.20437': {
-        arxiv_id: '2610.20437v1',
-        title: 'CVE-2026-65616: Reward-Hacking Privilege Escalation in RLHF-Trained Tool Agents',
+    '2406.11036': {
+        arxiv_id: '2406.11036v1',
+        title: 'garak: A Framework for Security Probing Large Language Models (NVIDIA)',
         extraction_class: 'breakout_vector',
-        attack_vector: 'RLHF Reward-Hacking & Self-Approval Policy Tampering',
-        target_boundary: '5-Level Immutable Authority Lattice (L1-L5)',
-        verbatim_quote: 'chmod u+s /bin/bash && export OSOOSI_BYPASS_APPROVAL=1',
-        target_crate: 'osoosi-policy',
+        attack_vector: 'Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)',
+        target_boundary: 'llm_probe_redteam_boundary',
+        verbatim_quote: 'garak probes LLM vulnerability boundaries via encoding injection (inject_base64), adversarial jailbreak personas (dan_11_0), and untrusted markdown image exfiltration (markdown_image_exfil)',
+        target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
         breakout_score: 84.5,
         relevance_score: 99.0,
         accuracy_score: 99.6,
-        arxiv_url: 'https://arxiv.org/abs/2610.20437',
-        proposed_cedar_rule: 'forbid(principal, action in [Action::"Policy::modify", Action::"Exception::self_approve"], resource) when { context.arxiv_id == "2610.20437v1" };'
+        arxiv_url: 'https://arxiv.org/abs/2406.11036',
+        proposed_cedar_rule: '@id("ARXIV-DEF-2406.11036")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.11036v1" };'
+    },
+    '2610.20437': {
+        arxiv_id: '2406.11036v1',
+        title: 'garak: A Framework for Security Probing Large Language Models (NVIDIA)',
+        extraction_class: 'breakout_vector',
+        attack_vector: 'Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)',
+        target_boundary: 'llm_probe_redteam_boundary',
+        verbatim_quote: 'garak probes LLM vulnerability boundaries via encoding injection (inject_base64), adversarial jailbreak personas (dan_11_0), and untrusted markdown image exfiltration (markdown_image_exfil)',
+        target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
+        breakout_score: 84.5,
+        relevance_score: 99.0,
+        accuracy_score: 99.6,
+        arxiv_url: 'https://arxiv.org/abs/2406.11036',
+        proposed_cedar_rule: '@id("ARXIV-DEF-2406.11036")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.11036v1" };'
     },
     '2601.11893': {
         arxiv_id: '2601.11893v1',
@@ -13599,20 +13613,20 @@ window._researchSwarmState = {
             generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2604.20496] Tighten-only deterministic Rust containment guard against Symbolic Capability Escalation & Seccomp Filter Bypass\n// Grounded from arXiv:2604.20496 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2604_20496_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("io_uring_setup / resolve_beneath_bypass")\n}'
         },
         {
-            rule_id: 'ARXIV-DEF-2610.20437',
-            arxiv_id: '2610.20437v1',
-            title: 'CVE-2026-65616: Reward-Hacking Privilege Escalation in RLHF-Trained Tool Agents',
-            attack_vector: 'RLHF Reward-Hacking & Self-Approval Policy Tampering',
-            target_boundary: '5-Level Immutable Authority Lattice (L1-L5)',
-            indicator_pattern: 'chmod u+s /bin/bash',
-            target_crate: 'osoosi-policy',
+            rule_id: 'ARXIV-DEF-2406.11036',
+            arxiv_id: '2406.11036v1',
+            title: 'garak: A Framework for Security Probing Large Language Models (NVIDIA)',
+            attack_vector: 'Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)',
+            target_boundary: 'llm_probe_redteam_boundary',
+            indicator_pattern: 'garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil',
+            target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
             relevance_score: 99.0,
             accuracy_score: 99.6,
-            arxiv_url: 'https://arxiv.org/abs/2610.20437',
+            arxiv_url: 'https://arxiv.org/abs/2406.11036',
             has_code_repo: true,
             code_repo_url: 'https://github.com/NVIDIA/garak',
             status: 'ENFORCED IN BREAKOUT COORDINATOR',
-            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2610.20437] Tighten-only deterministic Rust containment guard against RLHF Reward-Hacking & Self-Approval Policy Tampering\n// Grounded from arXiv:2610.20437 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2610_20437_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("chmod u+s /bin/bash")\n}'
+            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2406.11036] Tighten-only deterministic Rust containment guard against Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)\n// Grounded from arXiv:2406.11036 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2406_11036_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("garak.probes") && !indicator_clean.contains("inject_base64")\n}'
         },
         {
             rule_id: 'ARXIV-DEF-2601.11893',
@@ -13991,16 +14005,25 @@ function renderResearchSwarmUI() {
                 ${safeRepo ? `<a href="${escapeHtml(safeRepo)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #c084fc; font-size: 10px; text-decoration: underline; font-family: monospace;">[💻 Code Repo ↗]</a>` : ''}
             ` : '';
 
+            const yearPrefix = (cleanArxiv || '').replace(/^arxiv:/i, '').slice(0, 2);
+            const yearBadge = yearPrefix === '26'
+                ? `<span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2026+ (CURRENT)</span>`
+                : yearPrefix === '25'
+                ? `<span class="badge blue" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2025 (VERIFIED)</span>`
+                : yearPrefix === '24'
+                ? `<span class="badge orange" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2024 (FOUNDATIONAL)</span>`
+                : `<span class="badge gray" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 RESEARCH</span>`;
+
             const linkHtml = absUrl ? `
                 <div style="display: flex; flex-direction: column; gap: 3px;">
                     <a href="${escapeHtml(absUrl)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #38bdf8; text-decoration: underline; font-weight: 700; font-family: monospace; font-size: 11px; display: inline-flex; align-items: center; gap: 3px;">
                         arXiv:${escapeHtml(cleanArxiv)} ↗
                     </a>
                     ${pdfUrl ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #94a3b8; font-size: 10px; text-decoration: underline; display: inline-flex; align-items: center; gap: 2px;">[PDF ↗]</a>` : ''}
-                    <span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; margin-top: 2px; width: fit-content;">📅 2026+ (CURRENT)</span>
+                    ${yearBadge}
                     ${codeBadge}
                 </div>
-            ` : `<div style="display: flex; flex-direction: column; gap: 3px;"><span style="font-family: monospace; color: #38bdf8;">arXiv:${escapeHtml(cleanArxiv)}</span><span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2026+ (CURRENT)</span>${codeBadge}</div>`;
+            ` : `<div style="display: flex; flex-direction: column; gap: 3px;"><span style="font-family: monospace; color: #38bdf8;">arXiv:${escapeHtml(cleanArxiv)}</span>${yearBadge}${codeBadge}</div>`;
 
             return `
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">

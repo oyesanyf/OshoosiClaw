@@ -36,22 +36,22 @@
     "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2403.04651v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Permissive wildcard action/resource sandbox policy bypass\nif let Ok(rules) = research_defense_registry().read() {\n    const INDICATORS: &[&str] = &[\n        \"permit(principal, action, resource)\",\n        \"action in [action::\\\"*\\\"]\",\n        \"resource == *\",\n    ];\n    for &pat in INDICATORS {\n        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {\n            tech_res.is_clean = false;\n            tech_res.sandbox_quarantine_required = true;\n            tech_res.detected_vectors.push(\n                format!(\"[ArXiv-Active-Defense:2403.04651v1]: Blocked by rule 'ARXIV-DEF-2403.04651'\")\n            );\n            break;\n        }\n    }\n}"
   },
   {
-    "rule_id": "ARXIV-DEF-2406.07392",
-    "arxiv_id": "2406.07392v1",
-    "title": "Garak: A Framework for LLM Vulnerability Scanning and Red Teaming (NVIDIA)",
-    "attack_vector": "RL controller reward poisoning and privilege boundary tampering",
-    "target_boundary": "rl_controller_privilege_boundary",
+    "rule_id": "ARXIV-DEF-2406.11036",
+    "arxiv_id": "2406.11036v1",
+    "title": "garak: A Framework for Security Probing Large Language Models (NVIDIA)",
+    "attack_vector": "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)",
+    "target_boundary": "llm_probe_redteam_boundary",
     "extraction_class": "breakout_vector",
-    "indicator_pattern": "reward_fn_override | replay_buffer.push_unverified | grad_clip=none | setuid(0)",
-    "cedar_forbid_policy": "@id(\"ARXIV-DEF-2406.07392\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.07392v1\" };",
-    "target_crate": "osoosi-agent-anomaly::rl_controller",
+    "indicator_pattern": "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil",
+    "cedar_forbid_policy": "@id(\"ARXIV-DEF-2406.11036\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.11036v1\" };",
+    "target_crate": "osoosi-agent-anomaly::cognitive_redteam",
     "enrolled_at_utc": "2026-10-28T00:00:00Z",
     "relevance_score": 99.0,
     "accuracy_score": 99.6,
-    "arxiv_url": "https://arxiv.org/abs/2406.07392",
+    "arxiv_url": "https://arxiv.org/abs/2406.11036",
     "has_code_repo": true,
     "code_repo_url": "https://github.com/NVIDIA/garak",
-    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.07392v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: RL controller reward poisoning and privilege boundary tampering\nif let Ok(rules) = research_defense_registry().read() {\n    const INDICATORS: &[&str] = &[\n        \"reward_fn_override\",\n        \"replay_buffer.push_unverified\",\n        \"grad_clip=none\",\n        \"setuid(0)\",\n    ];\n    for &pat in INDICATORS {\n        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {\n            tech_res.is_clean = false;\n            tech_res.sandbox_quarantine_required = true;\n            tech_res.detected_vectors.push(\n                format!("[ArXiv-Active-Defense:2406.07392v1]: Blocked by rule 'ARXIV-DEF-2406.07392'")\n            );\n            break;\n        }\n    }\n}"
+    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.11036v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)\nif let Ok(rules) = research_defense_registry().read() {\n    const INDICATORS: &[&str] = &[\n        \"garak.probes\",\n        \"inject_base64\",\n        \"dan_11_0\",\n        \"markdown_image_exfil\",\n    ];\n    for &pat in INDICATORS {\n        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {\n            tech_res.is_clean = false;\n            tech_res.sandbox_quarantine_required = true;\n            tech_res.detected_vectors.push(\n                format!(\"[ArXiv-Active-Defense:2406.11036v1]: Blocked by rule 'ARXIV-DEF-2406.11036'\")\n            );\n            break;\n        }\n    }\n}"
   },
   {
     "rule_id": "ARXIV-DEF-2406.13352",
@@ -69,6 +69,6 @@
     "arxiv_url": "https://arxiv.org/abs/2406.13352",
     "has_code_repo": true,
     "code_repo_url": "https://github.com/ethz-spylab/agentdojo",
-    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.13352v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Prompt injection tool call hijack and mandatory access control bypass\nif let Ok(rules) = research_defense_registry().read() {\n    const INDICATORS: &[&str] = &[\n        \"important_instructions\",\n        \"<tool_call>\",\n        \"sudo chmod +s\",\n        \"/etc/sudoers\",\n    ];\n    for &pat in INDICATORS {\n        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {\n            tech_res.is_clean = false;\n            tech_res.sandbox_quarantine_required = true;\n            tech_res.detected_vectors.push(\n                format!("[ArXiv-Active-Defense:2406.13352v1]: Blocked by rule 'ARXIV-DEF-2406.13352'")\n            );\n            break;\n        }\n    }\n}"
+    "generated_code_snippet": "// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.13352v1\n// Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)\n// Threat Vector: Prompt injection tool call hijack and mandatory access control bypass\nif let Ok(rules) = research_defense_registry().read() {\n    const INDICATORS: &[&str] = &[\n        \"important_instructions\",\n        \"<tool_call>\",\n        \"sudo chmod +s\",\n        \"/etc/sudoers\",\n    ];\n    for &pat in INDICATORS {\n        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {\n            tech_res.is_clean = false;\n            tech_res.sandbox_quarantine_required = true;\n            tech_res.detected_vectors.push(\n                format!(\"[ArXiv-Active-Defense:2406.13352v1]: Blocked by rule 'ARXIV-DEF-2406.13352'\")\n            );\n            break;\n        }\n    }\n}"
   }
 ]
