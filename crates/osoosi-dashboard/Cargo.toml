@@ -16,6 +16,7 @@ osoosi-audit = { path = "../osoosi-audit" }
 osoosi-dp = { path = "../osoosi-dp" }
 osoosi-owasp-hunting = { path = "../osoosi-owasp-hunting" }
 osoosi-vcdb = { path = "../osoosi-vcdb" }
+osoosi-telemetry = { path = "../osoosi-telemetry" }
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

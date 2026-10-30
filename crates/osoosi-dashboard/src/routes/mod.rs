@@ -2,6 +2,7 @@ pub mod browser_sensor;
 pub mod conformal_jailbreak;
 pub mod dlp;
 pub mod dlp_containment;
+pub mod genai_monitor;
 pub mod har;
 pub mod har_dlp;
 pub mod hitl;
@@ -29,6 +30,7 @@ pub fn mount_routes() -> Router<DashboardState> {
         .merge(skyrl::routes())
         .merge(workflow_guard::routes())
         .merge(conformal_jailbreak::routes())
+        .merge(genai_monitor::routes())
         .merge(research_ingest::routes())
         .merge(hitl::routes())
 }
