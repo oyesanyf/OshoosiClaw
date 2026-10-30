@@ -82,6 +82,8 @@ flate2 = "1"
 
 uuid = { workspace = true, features = ["v4", "serde"] }
 dirs = { workspace = true }
+zeroize = { workspace = true }
+chacha20poly1305 = "0.10.1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
@@ -96,6 +98,8 @@ windows = { workspace = true, features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Memory",
     "Win32_NetworkManagement_NetManagement",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
 ] }
 wmi = "0.13"
 wintun = { workspace = true }
