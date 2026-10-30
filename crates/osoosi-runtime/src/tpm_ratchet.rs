@@ -115,9 +115,9 @@ impl TpmPcrHeartbeatRatchet {
 
         // Compute TPM2_PCR_Extend(PCR_{old}, data)
         let mut hasher = Sha256::new();
-        hasher.update(&self.pcr_digest);
+        hasher.update(self.pcr_digest);
         hasher.update(nonce);
-        hasher.update(&timestamp_utc.to_be_bytes());
+        hasher.update(timestamp_utc.to_be_bytes());
         hasher.update(state_digest);
         let new_pcr: [u8; 32] = hasher.finalize().into();
 
@@ -168,9 +168,9 @@ impl TpmPcrHeartbeatRatchet {
 
         // 3. Expected PCR extension recomputation
         let mut hasher = Sha256::new();
-        hasher.update(&previous.pcr_digest);
+        hasher.update(previous.pcr_digest);
         hasher.update(nonce);
-        hasher.update(&self.timestamp_utc.to_be_bytes());
+        hasher.update(self.timestamp_utc.to_be_bytes());
         hasher.update(state_digest);
         let expected_pcr: [u8; 32] = hasher.finalize().into();
 

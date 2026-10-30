@@ -662,21 +662,77 @@ def audit_watchdog_patches_oracle(
     amsi_bytes: bytes,
     detour_bytes: bytes,
 ) -> Tuple[bool, List[str]]:
-    """Audits in-memory bytes for user-mode hook, ETW, and AMSI patching."""
+    """Audits in-memory bytes for user-mode hook, ETW, and AMSI patching, exactly mirroring crates/osoosi-inject/src/windows.rs."""
     detections = []
-    # ETW Patching: common patches are 'ret' (0xC3) or 'xor eax, eax; ret' (0x31, 0xC0, 0xC3) or 'mov eax, 0; ret'
-    if etw_bytes.startswith(b"\xc3") or etw_bytes.startswith(b"\x31\xc0\xc3") or etw_bytes.startswith(b"\xb8\x00\x00\x00\x00\xc3"):
+    # ETW Patching:
+    # 0xC3 (ret), 0xC2 (ret imm16), xor eax,eax; ret (33 C0 C3 / 31 C0 C3), xor rax,rax; ret (48 33 C0 C3 / 48 31 C0 C3), mov eax, 0; ret
+    if (
+        etw_bytes.startswith(b"\xc3")
+        or etw_bytes.startswith(b"\xc2")
+        or (len(etw_bytes) >= 3 and etw_bytes[0] in (0x33, 0x31) and etw_bytes[1:3] == b"\xc0\xc3")
+        or (len(etw_bytes) >= 4 and etw_bytes[0] == 0x48 and etw_bytes[1] in (0x33, 0x31) and etw_bytes[2:4] == b"\xc0\xc3")
+        or etw_bytes.startswith(b"\xb8\x00\x00\x00\x00\xc3")
+    ):
         detections.append("EtwEventWrite unhooking/bypass patch detected")
 
-    # AMSI Patching: common patch is 'mov eax, 0x80070057; ret' (0xB8, 0x57, 0x00, 0x07, 0x80, 0xC3)
-    if etw_bytes.startswith(b"\xb8\x57\x00\x07\x80\xc3") or amsi_bytes.startswith(b"\xb8\x57\x00\x07\x80\xc3") or amsi_bytes.startswith(b"\xc3"):
+    # AMSI Patching:
+    # 0xC3 (ret), mov eax, 0x80070057 (B8 57 00 07 80), xor eax,eax; ret (31 C0 C3 / 33 C0 C3)
+    if (
+        etw_bytes.startswith(b"\xb8\x57\x00\x07\x80")
+        or amsi_bytes.startswith(b"\xc3")
+        or amsi_bytes.startswith(b"\xb8\x57\x00\x07\x80")
+        or (len(amsi_bytes) >= 3 and amsi_bytes[0] in (0x31, 0x33) and amsi_bytes[1:3] == b"\xc0\xc3")
+    ):
         detections.append("AmsiScanBuffer bypass patch detected")
 
-    # Detour unhooking: original prologue replaced with direct jmp to target instead of hook trampoline
-    if detour_bytes.startswith(b"\x90\x90\x90\x90\x90"):
+    # Detour unhooking:
+    # NOP sled (90 90 90 90 90) or INT3 breakpoint wipe (CC CC CC CC CC)
+    if detour_bytes.startswith(b"\x90\x90\x90\x90\x90") or detour_bytes.startswith(b"\xcc\xcc\xcc\xcc\xcc"):
         detections.append("Inline hook NOP-sled unhooking detected")
 
     return len(detections) > 0, detections
+
+
+def is_critical_telemetry_event_oracle(event_id: int, data: Dict[str, Any]) -> bool:
+    """Authoritative oracle mirroring is_critical_telemetry_event in crates/osoosi-telemetry/src/native.rs."""
+    if event_id in (1, 6, 8, 10, 4688, 7045):
+        return True
+    if data.get("CriticalPriority") is True:
+        return True
+    hook = data.get("Hook")
+    if hook in ("TelemetryTamperingDetected", "NtAllocateVirtualMemory", "NtProtectVirtualMemory", "CreateProcessW"):
+        return True
+    return False
+
+
+def dispatch_prioritized_telemetry_oracle(
+    events: List[Dict[str, Any]],
+    critical_capacity: int = 100,
+    bulk_capacity: int = 500,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+    """Authoritative oracle mirroring NativeTelemetryEngine::dispatch_prioritized and TELEMETRY_EVENTS_LOST."""
+    tx_critical = []
+    tx_bulk = []
+    events_lost = 0
+
+    for ev in events:
+        event_id = ev.get("event_id", 0)
+        data = ev.get("data", {})
+        is_crit = is_critical_telemetry_event_oracle(event_id, data)
+
+        dispatched = False
+        if is_crit:
+            if len(tx_critical) < critical_capacity:
+                tx_critical.append(ev)
+                dispatched = True
+        if not dispatched:
+            if len(tx_bulk) < bulk_capacity:
+                tx_bulk.append(ev)
+                dispatched = True
+            else:
+                events_lost += 1
+
+    return tx_critical, tx_bulk, events_lost
 
 
 def check_byovd_driver_blocklist_oracle(
