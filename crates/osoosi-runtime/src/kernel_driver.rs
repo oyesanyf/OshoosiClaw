@@ -961,7 +961,7 @@ impl KernelDriverClient {
         let report = analyze_driver_pe_bytes(driver_bytes, Some(driver_path));
         if report.verdict == PreLoadDriverVerdict::QuarantineBlockByovd {
             let basename = driver_path
-                .rsplit(&['/', '\\'][..])
+                .rsplit(['/', '\\'])
                 .next()
                 .unwrap_or(driver_path);
             self.add_byovd_rule(basename, Some(&report.sha256))?;
