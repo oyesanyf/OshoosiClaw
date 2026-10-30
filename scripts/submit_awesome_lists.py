@@ -354,7 +354,7 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         vertical_name="Rust & eBPF Systems Directories",
         wave=3,
         category_focus="Rust Security & Defensive Infrastructure",
-        target_sections=["Tools", "Security", "Network", "System", "Forensics"],
+        target_sections=["Malware and Threat Detection", "Binary Analysis & Reversing", "Tools"],
         entry_markdown=(
             "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Cross-platform Rust Endpoint Detection "
             "& Response (EDR) and zero-trust capability sandbox with eBPF/ETW probes and YARA-X."
