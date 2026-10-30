@@ -402,6 +402,17 @@ fn classify_vote(
                 (EvidenceClass::StaticArtifact, 0.78, true)
             }
         }
+        name if name.contains("Infiltration")
+            || name.contains("Detector")
+            || name.contains("Breakout")
+            || name.contains("Quorum")
+            || reason_lc.contains("breakout")
+            || reason_lc.contains("infiltration")
+            || reason_lc.contains("invariant")
+            || reason_lc.contains("rootkit") =>
+        {
+            (EvidenceClass::Behavior, 0.95, true)
+        }
         _ => (EvidenceClass::Reputation, 0.65, false),
     }
 }
@@ -702,7 +713,10 @@ pub fn orchestrate_evidence(
             && v.result.confidence >= 0.85
             && (v.result.reason.contains("Sigma Match:")
                 || v.result.reason.contains("[Sigma-Engine]")
-                || v.result.reason.contains("Suspicious Child Payload Spawn"))
+                || v.result.reason.contains("Suspicious Child Payload Spawn")
+                || v.result.reason.contains("Invariant Breakout")
+                || v.result.reason.contains("Breakout Analysis")
+                || v.result.reason.contains("Suspicious Rootkit Hook"))
     });
 
     let has_deterministic_guard = asymmetric_veto.is_violated
@@ -937,6 +951,12 @@ impl PolicyEngine {
         *guard = Some(sink);
     }
 
+    /// Detaches and clears the voter quorum alert sink upon service shutdown or subsystem reload.
+    pub async fn clear_voter_quorum_sink(&self) {
+        let mut guard = self.voter_quorum_sink.write().await;
+        *guard = None;
+    }
+
     pub fn set_enforce_all_voters_participate(&self, enforce: bool) {
         self.enforce_all_voters_participate.store(enforce, Ordering::SeqCst);
     }
@@ -1014,8 +1034,26 @@ impl PolicyEngine {
             || event.data.get("UpstreamHost").is_some()
             || event.data.get("DestinationHost").is_some();
 
-        if matches!(event.event_id, 1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688)
-            && (has_invariant_flags || has_gateway_context)
+        // Invariant flags or gateway context enforce 100% participation regardless of event_id
+        // (supporting Windows, Linux eBPF, auditd, and synthetic agent events)
+        if has_invariant_flags || has_gateway_context {
+            return true;
+        }
+
+        // Also explicitly include security & telemetry events across Windows and Linux:
+        // Sysmon: 1 (ProcessCreate), 3 (NetworkConnect), 7 (ImageLoaded), 8 (CreateRemoteThread),
+        // 10 (ProcessAccess), 11 (FileCreate), 12/13/14 (RegistryEvent), 15 (CreateRemoteThread / Stream),
+        // 17/18 (PipeEvent), 19/20/21 (WmiEvent), 22 (DnsQuery), 23 (FileDelete), 25 (ProcessTampering),
+        // 26 (FileDeleteDetected), and Windows Security 4688 (ProcessCreation).
+        if matches!(
+            event.event_id,
+            1 | 3 | 7 | 8 | 10 | 11 | 12 | 13 | 14 | 15 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 25 | 26 | 4688
+        ) && (check_flag("SecurityEvent")
+            || check_flag("ThreatEvent")
+            || event.data.get("TargetFilename").is_some()
+            || event.data.get("PipeName").is_some()
+            || event.data.get("QueryName").is_some()
+            || event.data.get("DestinationIp").is_some())
         {
             return true;
         }
@@ -1816,6 +1854,7 @@ impl PolicyEngine {
         signature.add_reason(decision.summary);
 
         if !is_asymmetric_veto
+            && !is_sec_or_gw
             && signature.confidence < 0.20
             && is_trusted_operational_tool(event, &self.config)
         {
@@ -2060,37 +2099,120 @@ impl PolicyEngine {
             })
             .unwrap_or(0);
 
-        let start_time_ticks: u64 = event
-            .data
-            .get("ProcessStartTime")
-            .or_else(|| event.data.get("process_start_time"))
-            .or_else(|| event.data.get("ProcessStartTimeTicks"))
-            .or_else(|| event.data.get("StartTime"))
-            .or_else(|| event.data.get("start_time_ticks"))
-            .and_then(|v| {
-                v.as_u64()
-                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-            })
-            .unwrap_or_else(|| {
-                (event.timestamp.timestamp_nanos_opt().unwrap_or(0) / 100) as u64
-            });
+        // Never emit VoterQuorumAlert if pid == 0
+        if pid > 0 {
+            let start_time_ticks: u64 = event
+                .data
+                .get("ProcessStartTime")
+                .or_else(|| event.data.get("process_start_time"))
+                .or_else(|| event.data.get("ProcessStartTimeTicks"))
+                .or_else(|| event.data.get("StartTime"))
+                .or_else(|| event.data.get("start_time_ticks"))
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                })
+                .or_else(|| {
+                    resolve_process_instance_key(pid).ok().map(|k| k.start_time_ticks)
+                })
+                .unwrap_or_else(|| {
+                    (event.timestamp.timestamp_nanos_opt().unwrap_or(0) / 100) as u64
+                });
 
-        let target = ProcessInstanceKey::new(pid, start_time_ticks);
-        let trigger_reason = signature
-            .reason
-            .clone()
-            .or_else(|| signature.process_name.clone())
-            .unwrap_or_else(|| "Consensus Quorum Alert".to_string());
+            let target = ProcessInstanceKey::new(pid, start_time_ticks);
+            let trigger_reason = signature
+                .reason
+                .clone()
+                .or_else(|| signature.process_name.clone())
+                .unwrap_or_else(|| "Consensus Quorum Alert".to_string());
 
-        let alert = VoterQuorumAlert::new(target, voter_confidence_bp, trigger_reason);
+            let alert = VoterQuorumAlert::new(target, voter_confidence_bp, trigger_reason);
 
-        if let Some(ref sink) = *self.voter_quorum_sink.read().await {
-            sink(alert);
+            if let Some(ref sink) = *self.voter_quorum_sink.read().await {
+                sink(alert);
+            }
         }
 
         self.consensus_cache
             .insert(cache_key, (signature.clone(), std::time::Instant::now()));
         Some(signature)
+    }
+}
+
+/// Resolves the process instance key `(pid, start_time_ticks)` to prevent PID-reuse collisions.
+///
+/// On Windows: Queries `GetProcessTimes` using `PROCESS_QUERY_LIMITED_INFORMATION` to extract
+/// the true 64-bit creation timestamp ticks `((dwHighDateTime << 32) | dwLowDateTime)`.
+///
+/// On Unix: Reads `/proc/{pid}/stat` field 22 (`starttime`).
+pub fn resolve_process_instance_key(pid: u32) -> Result<ProcessInstanceKey, &'static str> {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            GetCurrentProcess, GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        let handle = if pid == std::process::id() {
+            unsafe { GetCurrentProcess() }
+        } else {
+            let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) };
+            match h {
+                Ok(open_h) if !open_h.is_invalid() => open_h,
+                _ => return Err("Cannot open target process for time query"),
+            }
+        };
+
+        let mut creation = windows::Win32::Foundation::FILETIME::default();
+        let mut exit = windows::Win32::Foundation::FILETIME::default();
+        let mut kernel = windows::Win32::Foundation::FILETIME::default();
+        let mut user = windows::Win32::Foundation::FILETIME::default();
+
+        let ok = unsafe {
+            GetProcessTimes(
+                handle,
+                &mut creation,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+        };
+
+        if pid != std::process::id() {
+            let _ = unsafe { CloseHandle(handle) };
+        }
+
+        if ok.is_err() {
+            return Err("GetProcessTimes query failed");
+        }
+
+        let start_time_ticks =
+            ((creation.dwHighDateTime as u64) << 32) | (creation.dwLowDateTime as u64);
+
+        if start_time_ticks == 0 {
+            return Err("Process creation time reported as zero");
+        }
+
+        Ok(ProcessInstanceKey::new(pid, start_time_ticks))
+    }
+
+    #[cfg(unix)]
+    {
+        let stat = std::fs::read_to_string(format!("/proc/{}/stat", pid))
+            .map_err(|_| "Cannot read /proc/pid/stat")?;
+        let after_comm = stat.rfind(')').ok_or("Malformed /proc/pid/stat")?;
+        let fields: Vec<&str> = stat[after_comm + 1..].split_whitespace().collect();
+        // Field 22 in /proc/pid/stat (index 19 after comm) is starttime in clock ticks
+        let start_time_ticks = fields
+            .get(19)
+            .and_then(|s| s.parse::<u64>().ok())
+            .ok_or("Cannot parse process start_time_ticks")?;
+        Ok(ProcessInstanceKey::new(pid, start_time_ticks))
+    }
+
+    #[cfg(not(any(windows, unix)))]
+    {
+        Ok(ProcessInstanceKey::new(pid, 1))
     }
 }
 
@@ -3124,7 +3246,7 @@ mod tests_m7_asymmetric_veto {
             async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
                 Some(VoteResult {
                     confidence: 0.85,
-                    reason: "Asymmetric Invariant Breakout Vector Detected".to_string(),
+                    reason: "CEDAR-FORBID: Asymmetric Invariant Breakout Vector Detected".to_string(),
                     weight: 2.0,
                 })
             }
@@ -3173,5 +3295,105 @@ mod tests_m7_asymmetric_veto {
         assert_eq!(alert.voter_confidence_bp, expected_bp);
         assert!(alert.voter_confidence_bp >= 6667);
         assert!(alert.trigger_reason.contains("Asymmetric Invariant Breakout Vector Detected"));
+    }
+
+    #[tokio::test]
+    async fn test_m6_pid_0_never_emits_quorum_alert() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        struct ConfidentVoter;
+        #[async_trait::async_trait]
+        impl ThreatVoter for ConfidentVoter {
+            fn name(&self) -> String {
+                "ConfidentVoter".to_string()
+            }
+            async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
+                Some(VoteResult {
+                    confidence: 0.95,
+                    reason: "Suspicious Rootkit Hook".to_string(),
+                    weight: 2.0,
+                })
+            }
+        }
+        engine.add_voter(Box::new(ConfidentVoter)).await;
+
+        let alerts_received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let sink_collector = alerts_received.clone();
+        engine
+            .set_voter_quorum_sink(Arc::new(move |alert| {
+                let col = sink_collector.clone();
+                tokio::spawn(async move {
+                    col.lock().await.push(alert);
+                });
+            }))
+            .await;
+
+        let event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "test-workstation".to_string(),
+            data: serde_json::json!({
+                "Image": "System",
+                "ProcessId": 0,
+                "GatewayEvaluation": true,
+            }),
+            causal_parent: None,
+        };
+
+        let _ = engine.scan_event(&event).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let alerts = alerts_received.lock().await;
+        assert_eq!(alerts.len(), 0, "PID 0 must not emit voter quorum alert");
+    }
+
+    #[tokio::test]
+    async fn test_m6_clear_voter_quorum_sink() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        let sink = Arc::new(|_alert: VoterQuorumAlert| {});
+        engine.set_voter_quorum_sink(sink).await;
+        assert!(engine.voter_quorum_sink.read().await.is_some());
+
+        engine.clear_voter_quorum_sink().await;
+        assert!(engine.voter_quorum_sink.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_m6_sysmon_file_and_pipe_event_participate_in_silent_mode() {
+        for event_id in [11u32, 17u32, 23u32] {
+            let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+            let config = osoosi_types::PolicyConfig::default();
+            let mut engine = PolicyEngine::new(memory, config);
+            engine.telemetry_controller = Some(Arc::new(MockSilentController));
+
+            let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let heavy_voter = Box::new(MockCountingHeavyVoter {
+                name: format!("HeavyDecompiler-{}", event_id),
+                invocations: counter.clone(),
+            });
+            engine.add_voter(heavy_voter).await;
+
+            let file_event = osoosi_types::HostSecurityEvent {
+                source: osoosi_types::HostEventSource::WindowsEventLog,
+                event_id,
+                timestamp: Utc::now(),
+                computer: "test-workstation".to_string(),
+                data: serde_json::json!({
+                    "TargetFilename": "C:\\Windows\\System32\\drivers\\etc\\hosts",
+                    "ProcessId": 1234,
+                    "EnforceCedarGate": true,
+                }),
+                causal_parent: None,
+            };
+
+            let _ = engine.scan_event(&file_event).await;
+            assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
     }
 }
