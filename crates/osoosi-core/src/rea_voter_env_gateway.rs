@@ -228,7 +228,15 @@ impl ReaVoterEnvGateway {
         if let Some(hold) = q_pids.get(target) {
             Instant::now() < hold.expires_at
         } else {
-            false
+            // Check if quarantined_pids contains a key with the same PID and unexpired TTL
+            q_pids.iter().any(|(k, hold)| {
+                k.pid == target.pid
+                    && (k.start_time_ticks == target.start_time_ticks
+                        || k.start_time_ticks == 0
+                        || target.start_time_ticks == 0
+                        || Instant::now() < hold.expires_at)
+                    && Instant::now() < hold.expires_at
+            })
         }
     }
 
@@ -270,7 +278,9 @@ impl ReaVoterEnvGateway {
                 bad_hosts.insert(normalize_host(&domain));
             }
         } else {
-            Self::write_lock(&self.quarantined_pids).remove(&verdict.target);
+            let mut q_pids = Self::write_lock(&self.quarantined_pids);
+            q_pids.remove(&verdict.target);
+            q_pids.retain(|k, _| k.pid != verdict.target.pid);
         }
     }
 
@@ -313,6 +323,19 @@ impl ReaVoterEnvGateway {
                 } else {
                     // REA analysis timed out: fail closed for this request and evict expired hold
                     q_pids.remove(&caller_key);
+                    return Err("Blocked: REA inspection TTL expired (fail-closed)");
+                }
+            } else if let Some((matching_key, is_active)) = q_pids.iter().find_map(|(k, hold)| {
+                if k.pid == caller_pid {
+                    Some((*k, Instant::now() < hold.expires_at))
+                } else {
+                    None
+                }
+            }) {
+                if is_active {
+                    return Err("Blocked: Caller PID quarantined by consensus voters pending REA verdict");
+                } else {
+                    q_pids.remove(&matching_key);
                     return Err("Blocked: REA inspection TTL expired (fail-closed)");
                 }
             }

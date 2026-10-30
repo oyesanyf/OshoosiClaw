@@ -334,7 +334,7 @@ impl EdrOrchestrator {
         }
         let policy_config = osoosi_types::load_policy_config();
         info!("EdrOrchestrator: Initializing policy engine...");
-        let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
+        let mut policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
 
         // Initialize ReaVoterEnvGateway and wire voter quorum alert sink
         let default_vault_path = std::path::PathBuf::from("database/protected_env_backup.vault");

@@ -223,3 +223,157 @@ async fn test_100pct_voter_participation_under_silent_mode_on_all_security_flags
         );
     }
 }
+
+#[tokio::test]
+async fn test_pid_0_never_emits_voter_quorum_alert() {
+    let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+    let config = PolicyConfig::default();
+    let engine = PolicyEngine::new(memory, config);
+
+    let voter = Box::new(MockInstrumentedVoter {
+        name: "HighConfidenceDetector".to_string(),
+        confidence: 0.95,
+        weight: 3.0,
+        heavy: false,
+        invocations: Arc::new(AtomicUsize::new(0)),
+    });
+    engine.add_voter(voter).await;
+
+    let alerts_received = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink_sink = alerts_received.clone();
+    engine
+        .set_voter_quorum_sink(Arc::new(move |alert| {
+            sink_sink.lock().unwrap().push(alert);
+        }))
+        .await;
+
+    // Event with PID 0
+    let event = create_security_event(0, 100020003000, "GatewayEvaluation");
+    let sig = engine.scan_event(&event).await;
+    assert!(sig.is_some());
+
+    // Zero alerts must be emitted for PID 0
+    let alerts = alerts_received.lock().unwrap();
+    assert_eq!(alerts.len(), 0, "PID 0 must never emit VoterQuorumAlert");
+}
+
+#[tokio::test]
+async fn test_sysmon_file_and_pipe_events_participate_100pct_under_silent_mode() {
+    // Sysmon 11 (FileCreate) and 17 (PipeEvent)
+    for (event_id, field_name, field_val) in [
+        (11u32, "TargetFilename", "C:\\temp\\payload.dll"),
+        (17u32, "PipeName", "\\Device\\NamedPipe\\cmd_pipe"),
+    ] {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = PolicyConfig::default();
+        let mut engine = PolicyEngine::new(memory, config);
+        engine.telemetry_controller = Some(Arc::new(MockSilentController));
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let heavy_voter = Box::new(MockInstrumentedVoter {
+            name: format!("HeavyAnalyzer-Event{}", event_id),
+            confidence: 0.90,
+            weight: 2.0,
+            heavy: true,
+            invocations: counter.clone(),
+        });
+        engine.add_voter(heavy_voter).await;
+
+        let mut data = serde_json::json!({
+            "ProcessId": 5432,
+            "ProcessStartTime": 9988776655u64,
+            "GatewayEvaluation": true,
+        });
+        data[field_name] = serde_json::json!(field_val);
+
+        let event = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id,
+            timestamp: Utc::now(),
+            computer: "test-workstation".to_string(),
+            data,
+            causal_parent: None,
+        };
+
+        let _ = engine.scan_event(&event).await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "Sysmon event {} must run heavy voter under silent mode when gateway flag is set",
+            event_id
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_clear_voter_quorum_sink_detaches_listener() {
+    let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+    let config = PolicyConfig::default();
+    let engine = PolicyEngine::new(memory, config);
+
+    let voter = Box::new(MockInstrumentedVoter {
+        name: "HighConfidenceDetector".to_string(),
+        confidence: 0.95,
+        weight: 3.0,
+        heavy: false,
+        invocations: Arc::new(AtomicUsize::new(0)),
+    });
+    engine.add_voter(voter).await;
+
+    let alerts_received = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink_sink = alerts_received.clone();
+    engine
+        .set_voter_quorum_sink(Arc::new(move |alert| {
+            sink_sink.lock().unwrap().push(alert);
+        }))
+        .await;
+
+    let event = create_security_event(8111, 100020003000, "GatewayEvaluation");
+    let _ = engine.scan_event(&event).await;
+    assert_eq!(alerts_received.lock().unwrap().len(), 1);
+
+    // Clear sink
+    engine.clear_voter_quorum_sink().await;
+
+    let event2 = create_security_event(8222, 100020004000, "GatewayEvaluation");
+    let _ = engine.scan_event(&event2).await;
+
+    // Alerts count must remain 1 because sink is detached
+    assert_eq!(
+        alerts_received.lock().unwrap().len(),
+        1,
+        "Detached sink must not receive new alerts"
+    );
+}
+
+#[test]
+fn test_timestamp_desync_quarantine_matching_by_pid_and_ttl() {
+    let gw = ReaVoterEnvGateway::new(Duration::from_secs(30));
+    let registered_target = ProcessInstanceKey::new(9900, 111122223333);
+
+    // Consensus voters quarantine PID 9900 with alert
+    let alert = VoterQuorumAlert::new(registered_target, 8500, "consensus voter quorum");
+    gw.ingest_voter_quorum(alert);
+
+    // Caller attempts to check quarantine using a different start_time (e.g. from event timestamp fallback)
+    let desynced_target = ProcessInstanceKey::new(9900, 444455556666);
+    assert!(
+        gw.is_quarantined(&desynced_target),
+        "Gateway must recognize quarantine hold for matching PID with unexpired TTL even if ticks differ"
+    );
+
+    // Benign REA verdict unfreezes by PID
+    gw.ingest_rea_verdict(ReaForensicVerdict {
+        target: desynced_target,
+        binary_path: PathBuf::from("C:\\Windows\\System32\\notepad.exe"),
+        script_or_module_path: None,
+        extracted_c2_domains: Vec::new(),
+        injected_module_hashes: Vec::new(),
+        confirmed_malicious: false,
+    });
+
+    assert!(
+        !gw.is_quarantined(&desynced_target),
+        "Unfreeze must clear hold by PID"
+    );
+}
