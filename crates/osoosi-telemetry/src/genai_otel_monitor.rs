@@ -583,8 +583,15 @@ impl PrivacyPreservingOutputEvaluator {
         let factual_support_score = self.compute_factual_support(raw_text, retrieved_documents);
         let instruction_compliance_score = self.compute_instruction_compliance(raw_text);
 
-        let preview = if scrubbed.len() > 1024 {
-            format!("{}...", &scrubbed[..1024])
+        let max_len = 1024;
+        let preview = if scrubbed.len() > max_len {
+            let end = scrubbed
+                .char_indices()
+                .map(|(i, _)| i)
+                .take_while(|&i| i <= max_len)
+                .last()
+                .unwrap_or(0);
+            format!("{}...", &scrubbed[..end])
         } else {
             scrubbed
         };
@@ -640,7 +647,20 @@ impl PrivacyPreservingOutputEvaluator {
 
         (1.0f32 - penalties).clamp(0.0, 1.0)
     }
+
+    /// Scrubs sensitive strings and truncates safely at a valid UTF-8 character boundary (max 1024 bytes).
+    pub fn scrub_sensitive_strings(&self, raw_text: &str) -> String {
+        let report = self.evaluate_output(raw_text, &[]);
+        report.scrubbed_preview
+    }
 }
+
+/// Helper that scrubs sensitive tokens and truncates safely at a valid UTF-8 character boundary (max 1024 bytes).
+pub fn scrub_sensitive_strings(raw_text: &str) -> String {
+    let evaluator = PrivacyPreservingOutputEvaluator::default();
+    evaluator.scrub_sensitive_strings(raw_text)
+}
+
 
 // ============================================================================
 // Layer 5: Cross-Version Model & Prompt Behavior Drift Monitor
@@ -880,7 +900,12 @@ impl CohortBehaviorDriftMonitor {
         }
 
         if let Some(ref alert) = alert_to_emit {
-            self.alerts.write().unwrap().push(alert.clone());
+            let mut alerts_guard = self.alerts.write().unwrap();
+            alerts_guard.push(alert.clone());
+            if alerts_guard.len() > 1000 {
+                let overflow = alerts_guard.len() - 1000;
+                alerts_guard.drain(0..overflow);
+            }
         }
 
         alert_to_emit
@@ -1629,5 +1654,140 @@ mod tests {
             }
             _ => panic!("Expected LlmFusionEnsembleAnomaly block"),
         }
+    }
+
+    #[test]
+    fn test_char_boundary_safe_truncation_multibyte_utf8() {
+        let evaluator = PrivacyPreservingOutputEvaluator::default();
+
+        // Construct a text containing multi-byte UTF-8 characters across byte 1024
+        // '🦀' is 4 bytes (F0 9F A6 80)
+        // '中' is 3 bytes (E4 B8 AD)
+        // 'é' is 2 bytes (C3 A9)
+        let prefix = "A".repeat(1022); // 1022 ASCII bytes
+        let multi_byte_tail = "🦀中é--some trailing text with API key sk-live-12345678901234567890";
+        let raw_text = format!("{}{}", prefix, multi_byte_tail);
+
+        let report = evaluator.evaluate_output(&raw_text, &[]);
+        assert!(report.scrubbed_preview.ends_with("..."));
+        // Ensure character boundary integrity: string must be valid UTF-8 and under max_len + 3
+        let preview_without_ellipsis = report.scrubbed_preview.strip_suffix("...").unwrap();
+        assert!(preview_without_ellipsis.len() <= 1024);
+        assert_eq!(preview_without_ellipsis.len(), 1022); // Did not split the 4-byte crab emoji!
+
+        // Also verify the standalone helper function
+        let standalone_scrubbed = scrub_sensitive_strings(&raw_text);
+        assert_eq!(standalone_scrubbed, report.scrubbed_preview);
+    }
+
+    #[test]
+    fn test_cohort_behavior_drift_monitor_alerts_bounded_1000() {
+        let monitor = GenAiBehavioralMonitor::default();
+        let model = "claude-3-5-sonnet";
+        let prompt_ver = "v2.0";
+        let cohort = ModelPromptCohort::new(model, prompt_ver);
+
+        monitor.drift_monitor.set_baseline(&cohort, 0.01, 0.99, 0.99);
+
+        // Emit 1050 alerts to exceed the 1,000 alert ceiling
+        for _ in 0..1050 {
+            monitor.record_model_call_metrics(
+                model,
+                prompt_ver,
+                200,
+                false,
+                0.20,
+                0.30,
+                Some("bash_exec"),
+                Some("InternalDocToUnapprovedUpload"),
+            );
+        }
+
+        let alerts = monitor.drift_monitor.get_alerts();
+        assert_eq!(alerts.len(), 1000, "Alerts list must strictly be capped at 1,000 entries");
+    }
+
+    #[test]
+    fn test_scrub_sensitive_strings_empty_and_short() {
+        assert_eq!(scrub_sensitive_strings(""), "");
+        assert_eq!(scrub_sensitive_strings("benign output"), "benign output");
+
+        let text_with_creds = "Contact admin@corp.org or call +1 (555) 019-2834 with bearer Bearer secret_token_1234567890";
+        let scrubbed = scrub_sensitive_strings(text_with_creds);
+        assert!(scrubbed.contains("[REDACTED_EMAIL]"));
+        assert!(scrubbed.contains("[REDACTED_PHONE]"));
+        assert!(scrubbed.contains("Bearer [REDACTED_BEARER_TOKEN]"));
+        assert!(!scrubbed.ends_with("...")); // Short text must not be truncated
+    }
+
+    #[test]
+    fn test_cohort_behavior_drift_monitor_drain_boundary() {
+        let drift = CohortBehaviorDriftMonitor::default();
+        let cohort = ModelPromptCohort::new("test-model", "v1");
+        drift.set_baseline(&cohort, 0.05, 0.95, 0.95);
+
+        // Record 1020 calls causing alerts to exceed 1000
+        for _ in 0..1020 {
+            drift.record_evaluation(
+                &cohort,
+                100,
+                false,
+                0.1,
+                0.1,
+                Some("test_tool"),
+                Some("Violation"),
+            );
+        }
+
+        let alerts = drift.get_alerts();
+        assert_eq!(alerts.len(), 1000);
+    }
+
+    #[test]
+    fn test_session_behavior_rule_engine_clean() {
+        let monitor = GenAiBehavioralMonitor::default();
+        let proc_key = ProcessInstanceKey::new(1234, 5678);
+        let session_id = "sess_clean_run";
+        monitor.start_session(session_id, sample_identity(proc_key));
+
+        let pending = PendingToolExecution {
+            tool_name: "read_doc".to_string(),
+            tool_call_id: "c1".to_string(),
+            arguments_json: serde_json::json!({"file": "readme.md"}),
+            destination_host: None,
+            destination_port: None,
+            required_capability: CapabilityLevel::L2LocalWorkspaceFs,
+            is_egress_upload: false,
+            target_path: Some("readme.md".to_string()),
+        };
+
+        let v = monitor.evaluate_tool_pre_execution(session_id, &pending);
+        assert!(v.is_allowed());
+    }
+
+    #[test]
+    fn test_capability_level_ordering_and_defaults() {
+        assert!(CapabilityLevel::L1ReadOnlySandbox < CapabilityLevel::L2LocalWorkspaceFs);
+        assert!(CapabilityLevel::L2LocalWorkspaceFs < CapabilityLevel::L3LoopbackIntranet);
+        assert!(CapabilityLevel::L3LoopbackIntranet < CapabilityLevel::L4OutboundInternetAllowlisted);
+        assert!(CapabilityLevel::L4OutboundInternetAllowlisted < CapabilityLevel::L5HostAdminPrivileged);
+        assert_eq!(SensitivityTier::default(), SensitivityTier::Public);
+    }
+
+    #[test]
+    fn test_genai_session_trace_id_uniqueness() {
+        let monitor = GenAiBehavioralMonitor::default();
+        let proc1 = ProcessInstanceKey::new(1001, 2001);
+        let proc2 = ProcessInstanceKey::new(1002, 2002);
+
+        monitor.start_session("s1", sample_identity(proc1));
+        monitor.start_session("s2", sample_identity(proc2));
+
+        let sess1 = monitor.get_session("s1").unwrap();
+        let sess2 = monitor.get_session("s2").unwrap();
+
+        assert_eq!(sess1.identity.acting_service_identity.process_key, proc1);
+        assert_eq!(sess2.identity.acting_service_identity.process_key, proc2);
+        assert_ne!(sess1.session_id, sess2.session_id);
     }
 }
