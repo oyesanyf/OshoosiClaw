@@ -242,11 +242,7 @@ impl JoinGate {
             }
         }
         let rep = self.memory.get_reputation(&peer_id_str)?;
-        let default_initial_score = if self.min_reputation_auto_approve < 1.0 {
-            self.min_reputation_auto_approve.max(0.75)
-        } else {
-            0.5
-        };
+        let default_initial_score = 0.5;
         let (score, alerts_verified, false_positives) = rep
             .as_ref()
             .map(|r| (r.score, r.alerts_verified, r.false_positives))
@@ -343,6 +339,30 @@ impl JoinGate {
                 "Peer {} is quarantined and cannot be approved",
                 peer_id
             ));
+        }
+        if self.peer_rules.require_tpm_attestation && !self.is_attestation_verified(peer_id) {
+            return Err(anyhow::anyhow!(
+                "Peer {} cannot join: TPM 2.0 remote attestation required but not verified",
+                peer_id
+            ));
+        }
+        if let Some(status) = self.memory.get_peer_status(peer_id)? {
+            let fails = (self.peer_rules.require_patched && !status.is_patched)
+                || (self.peer_rules.require_supported_os && !status.os_supported);
+            if fails {
+                let reason = if !status.is_patched {
+                    "has pending security patches"
+                } else {
+                    "runs out-of-support OS"
+                };
+                return Err(anyhow::anyhow!(
+                    "Peer {} cannot join: {} (require_patched={}, require_supported_os={})",
+                    peer_id,
+                    reason,
+                    self.peer_rules.require_patched,
+                    self.peer_rules.require_supported_os
+                ));
+            }
         }
 
         let pid = peer_id

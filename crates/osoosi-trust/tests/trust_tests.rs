@@ -263,6 +263,9 @@ fn test_hardware_tpm_required_rejection() {
     let mut response = responder_tm
         .respond_to_attestation(challenge.clone())
         .unwrap();
+    if let Some(ref mut quote) = response.tpm_quote {
+        quote.hardware_backed = false;
+    }
 
     let policy = osoosi_types::GoldenBaseline::new().require_hardware(true);
 
