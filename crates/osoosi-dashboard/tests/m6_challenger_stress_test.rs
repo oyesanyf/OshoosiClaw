@@ -71,7 +71,10 @@ fn challenge_detect_verified_code_repo_ssrf_and_fake_repo_rejection() {
 #[test]
 fn challenge_detect_verified_code_repo_baseline_and_valid_repos_acceptance() {
     let valid_cases = [
-        ("2603.02277", "https://github.com/UKGovernmentBEIS/inspect_evals"),
+        (
+            "2603.02277",
+            "https://github.com/UKGovernmentBEIS/inspect_evals",
+        ),
         ("2604.20496", "https://github.com/cedar-policy/cedar-spec"),
         ("2610.20437", "https://github.com/NVIDIA/garak"),
         ("2601.11893", "https://github.com/ethz-spylab/agentdojo"),
@@ -103,7 +106,9 @@ fn challenge_detect_verified_code_repo_baseline_and_valid_repos_acceptance() {
     let item_text_clean = ResearchExtractionItem {
         arxiv_id: Some("2609.55555".to_string()),
         title: Some("Novel Container Defense".to_string()),
-        source_quote: Some("Code available at https://github.com/oyesanyf/OshoosiClaw in repo".to_string()),
+        source_quote: Some(
+            "Code available at https://github.com/oyesanyf/OshoosiClaw in repo".to_string(),
+        ),
         ..Default::default()
     };
 
@@ -120,13 +125,18 @@ fn challenge_detect_verified_code_repo_trailing_punctuation_leak() {
     let item_punct = ResearchExtractionItem {
         arxiv_id: Some("2609.55556".to_string()),
         title: Some("Novel Container Defense".to_string()),
-        source_quote: Some("Code available at (https://github.com/oyesanyf/OshoosiClaw).".to_string()),
+        source_quote: Some(
+            "Code available at (https://github.com/oyesanyf/OshoosiClaw).".to_string(),
+        ),
         ..Default::default()
     };
 
     let (has_repo, resolved_url) = detect_verified_code_repo(&item_punct);
     // Observe exact behavior for challenger report
-    println!("Trailing punctuation extraction result: has_repo={}, resolved_url='{}'", has_repo, resolved_url);
+    println!(
+        "Trailing punctuation extraction result: has_repo={}, resolved_url='{}'",
+        has_repo, resolved_url
+    );
     if has_repo {
         assert!(
             !resolved_url.ends_with('.') && !resolved_url.ends_with(')'),
@@ -135,4 +145,3 @@ fn challenge_detect_verified_code_repo_trailing_punctuation_leak() {
         );
     }
 }
-

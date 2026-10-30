@@ -16,11 +16,10 @@
 //!    - Assert synthesized Rust guards and Cedar policies are strictly tighten-only (no permit, no unsafe, no std::process).
 
 use osoosi_agent_anomaly::breakout_defense::{
-    approve_ingested_research_rule,
-    is_research_rule_operator_approved, is_research_rule_pinned, list_ingested_research_rules,
-    pin_ingested_research_rule, register_ingested_research_rule, restore_default_research_rules,
-    verify_rule_against_canary_benign_corpus, IngestedResearchDefenseRule,
-    CANARY_BENIGN_TELEMETRY_CORPUS,
+    approve_ingested_research_rule, is_research_rule_operator_approved, is_research_rule_pinned,
+    list_ingested_research_rules, pin_ingested_research_rule, register_ingested_research_rule,
+    restore_default_research_rules, verify_rule_against_canary_benign_corpus,
+    IngestedResearchDefenseRule, CANARY_BENIGN_TELEMETRY_CORPUS,
 };
 
 fn create_test_rule(arxiv_id: &str, has_code: bool, rel_score: f64) -> IngestedResearchDefenseRule {
