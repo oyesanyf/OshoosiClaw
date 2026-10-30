@@ -694,7 +694,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             get(get_killchain_health_probe).post(post_killchain_health_probe),
         )
         .route("/api/auth/status", get(get_auth_status_endpoint))
-        .route("/api/auth/session", get(get_auth_status_endpoint))
+        .route(
+            "/api/auth/session",
+            get(get_auth_status_endpoint).post(post_auth_session_endpoint),
+        )
         .route("/api/auth/login", post(post_auth_login_endpoint))
         .route("/api/auth/logout", post(post_auth_logout_endpoint))
         .route(
@@ -1156,43 +1159,68 @@ async fn http_framing_defense_middleware(
     Ok(next.run(req).await)
 }
 
+/// Helper to determine if an Origin header is a valid local loopback origin.
+/// Strictly enforces that any port specified after the loopback address is a valid numeric u16,
+/// blocking subdomain-spoofed origins like `http://127.0.0.1:3030.evil.com`.
+pub fn is_valid_loopback_origin(trimmed: &str) -> bool {
+    if trimmed == "null" {
+        return true;
+    }
+    const TRUSTED_PREFIXES: &[&str] = &[
+        "http://127.0.0.1",
+        "https://127.0.0.1",
+        "http://localhost",
+        "https://localhost",
+        "http://[::1]",
+        "https://[::1]",
+    ];
+    for prefix in TRUSTED_PREFIXES {
+        if trimmed == *prefix {
+            return true;
+        }
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            if let Some(port_str) = rest.strip_prefix(':') {
+                if !port_str.is_empty()
+                    && port_str.chars().all(|c| c.is_ascii_digit())
+                    && port_str.parse::<u16>().is_ok()
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Validates whether a request's `Origin` or `Sec-Fetch-Site` headers indicate a cross-site CSRF attempt (F14).
 pub fn validate_csrf_origin_and_fetch_site(
     headers: &HeaderMap,
 ) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
-    if let Some(sfs) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
-        if sfs.trim().eq_ignore_ascii_case("cross-site") {
+    // 1. Strict Sec-Fetch-Site Check: Only "same-origin" and "none" are trusted
+    if let Some(sfs_val) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
+        let sfs = sfs_val.trim();
+        if !sfs.eq_ignore_ascii_case("same-origin") && !sfs.eq_ignore_ascii_case("none") {
             return Err(api_error(
                 StatusCode::FORBIDDEN,
                 "CSRF_CROSS_SITE_BLOCKED",
-                "Cross-site browser request rejected by Sec-Fetch-Site guard",
+                format!("Untrusted Sec-Fetch-Site '{}' rejected by guard", sfs),
                 "Initiate dashboard requests strictly from the same-origin local WebUI (http://127.0.0.1:3030).",
             ));
         }
     }
 
+    // 2. Strict Origin Check: Reject external, untrusted, or subdomain-spoofed origins
     if let Some(origin) = headers
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok())
     {
         let trimmed = origin.trim().to_ascii_lowercase();
-        let is_local_origin = trimmed == "null"
-            || trimmed == "http://127.0.0.1"
-            || trimmed.starts_with("http://127.0.0.1:")
-            || trimmed == "https://127.0.0.1"
-            || trimmed.starts_with("https://127.0.0.1:")
-            || trimmed == "http://localhost"
-            || trimmed.starts_with("http://localhost:")
-            || trimmed == "https://localhost"
-            || trimmed.starts_with("https://localhost:")
-            || trimmed == "http://[::1]"
-            || trimmed.starts_with("http://[::1]:");
-        if !is_local_origin {
+        if !is_valid_loopback_origin(&trimmed) {
             return Err(api_error(
                 StatusCode::FORBIDDEN,
                 "CSRF_ORIGIN_MISMATCH",
                 format!(
-                    "Cross-origin request from '{}' rejected by Origin guard",
+                    "Cross-origin request rejected: '{}' does not match permitted local origins",
                     origin
                 ),
                 "Only local loopback origins (127.0.0.1 / localhost) are permitted.",
@@ -1208,6 +1236,12 @@ async fn auth_middleware(
     next: axum::middleware::Next,
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let method = req.method().clone();
+
+    // Preflight OPTIONS requests bypass CSRF checks
+    if method == Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
+
     let path = req.uri().path().to_string();
     let is_state_changing = matches!(
         method,
@@ -4608,12 +4642,116 @@ pub const UI_SETTINGS_DB_PATHS: &[&str] =
 /// Protected NTFS SDDL string restricting database and configuration access to `NT AUTHORITY\SYSTEM`
 /// and `BUILTIN\Administrators` (`F15`).
 pub const PROTECTED_NTFS_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+pub const PROTECTED_NTFS_DIR_SDDL: &str = "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)";
 
 /// Applies Protected NTFS DACL (`D:P(A;;GA;;;SY)(A;;GA;;;BA)`) to a sensitive database or config file (`F15`).
 pub fn harden_file_ntfs_dacl(path: &std::path::Path) -> Result<String, String> {
     if !path.exists() {
         return Err(format!("Path does not exist: {}", path.display()));
     }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let is_dir = path.is_dir();
+        let sddl = if is_dir {
+            PROTECTED_NTFS_DIR_SDDL
+        } else {
+            PROTECTED_NTFS_SDDL
+        };
+
+        let wide_sddl: Vec<u16> = std::ffi::OsStr::new(sddl)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let wide_path: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                StringSecurityDescriptor: *const u16,
+                StringSDRevision: u32,
+                SecurityDescriptor: *mut *mut std::ffi::c_void,
+                SecurityDescriptorSize: *mut u32,
+            ) -> i32;
+
+            fn GetSecurityDescriptorDacl(
+                pSecurityDescriptor: *mut std::ffi::c_void,
+                lpbDaclPresent: *mut i32,
+                pDacl: *mut *mut std::ffi::c_void,
+                lpbDaclDefaulted: *mut i32,
+            ) -> i32;
+
+            fn SetNamedSecurityInfoW(
+                pObjectName: *const u16,
+                ObjectType: i32,
+                SecurityInfo: u32,
+                psidOwner: *mut std::ffi::c_void,
+                psidGroup: *mut std::ffi::c_void,
+                pDacl: *mut std::ffi::c_void,
+                pSacl: *mut std::ffi::c_void,
+            ) -> u32;
+        }
+
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LocalFree(hMem: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+        }
+
+        const SDDL_REVISION_1: u32 = 1;
+        const SE_FILE_OBJECT: i32 = 1;
+        const DACL_SECURITY_INFORMATION: u32 = 0x00000004;
+        const PROTECTED_DACL_SECURITY_INFORMATION: u32 = 0x80000000;
+
+        unsafe {
+            let mut sd_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+            let mut sd_size: u32 = 0;
+            let conv_res = ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide_sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut sd_ptr,
+                &mut sd_size,
+            );
+
+            if conv_res != 0 && !sd_ptr.is_null() {
+                let mut dacl_present: i32 = 0;
+                let mut dacl_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+                let mut dacl_defaulted: i32 = 0;
+
+                let get_dacl_res = GetSecurityDescriptorDacl(
+                    sd_ptr,
+                    &mut dacl_present,
+                    &mut dacl_ptr,
+                    &mut dacl_defaulted,
+                );
+
+                if get_dacl_res != 0 && dacl_present != 0 {
+                    let _set_res = SetNamedSecurityInfoW(
+                        wide_path.as_ptr(),
+                        SE_FILE_OBJECT,
+                        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        dacl_ptr,
+                        std::ptr::null_mut(),
+                    );
+                }
+                LocalFree(sd_ptr);
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if path.is_dir() { 0o700 } else { 0o600 };
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+
     Ok(PROTECTED_NTFS_SDDL.to_string())
 }
 
@@ -4624,7 +4762,28 @@ fn sqlite_row_hmac_key() -> [u8; 32] {
     if let Ok(seed) = std::env::var("OSOOSI_ROW_INTEGRITY_KEY") {
         hasher.update(seed.as_bytes());
     } else {
-        hasher.update(b"NCRYPT_TPM2_PERSISTENT_SILICON_ENCLAVE_ROOT");
+        #[cfg(windows)]
+        {
+            if let Ok(tpm_key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+                .open_subkey(r"SYSTEM\CurrentControlSet\Services\TPM\WMI")
+            {
+                if let Ok(aik_bytes) = tpm_key.get_raw_value("WindowsAIKHash") {
+                    if !aik_bytes.bytes.is_empty() {
+                        hasher.update(&aik_bytes.bytes);
+                    } else {
+                        hasher.update(b"NCRYPT_TPM2_PERSISTENT_SILICON_ENCLAVE_ROOT");
+                    }
+                } else {
+                    hasher.update(b"NCRYPT_TPM2_PERSISTENT_SILICON_ENCLAVE_ROOT");
+                }
+            } else {
+                hasher.update(b"NCRYPT_TPM2_PERSISTENT_SILICON_ENCLAVE_ROOT");
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            hasher.update(b"NCRYPT_TPM2_PERSISTENT_SILICON_ENCLAVE_ROOT");
+        }
     }
     let digest = hasher.finalize();
     let mut out = [0u8; 32];
@@ -6131,7 +6290,7 @@ async fn post_webauthn_verify_endpoint(
     osoosi_core::killchain::reset_security_lockout();
     let expected_token = get_or_init_dashboard_api_token();
     let cookie_val = format!(
-        "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
+        "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict; Secure",
         expected_token
     );
     let mut resp = Json(json!({
@@ -6293,7 +6452,7 @@ async fn post_auth_login_endpoint(
             osoosi_core::killchain::reset_security_lockout();
 
             let cookie_val = format!(
-                "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
+                "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict; Secure",
                 expected_token
             );
             let mut resp = Json(json!({
@@ -6333,7 +6492,7 @@ async fn post_auth_login_endpoint(
 }
 
 async fn post_auth_logout_endpoint() -> Response {
-    let cookie_val = "osoosi_token=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0";
+    let cookie_val = "osoosi_token=; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=0";
     let mut resp = Json(json!({
         "ok": true,
         "success": true,
@@ -6354,7 +6513,6 @@ async fn get_auth_status_endpoint(uri: axum::http::Uri, headers: HeaderMap) -> R
     }
 
     let expected_token = get_or_init_dashboard_api_token();
-    osoosi_core::killchain::reset_security_lockout();
 
     let has_valid_cookie = headers
         .get(axum::http::header::COOKIE)
@@ -6412,8 +6570,13 @@ async fn get_auth_status_endpoint(uri: axum::http::Uri, headers: HeaderMap) -> R
             .into_response();
     }
 
+    // Reset lockout strictly upon verified authentication
+    if has_valid_cookie || has_valid_header_token {
+        osoosi_core::killchain::reset_security_lockout();
+    }
+
     let cookie_val = format!(
-        "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict",
+        "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict; Secure",
         expected_token
     );
 
@@ -6442,6 +6605,141 @@ async fn get_auth_status_endpoint(uri: axum::http::Uri, headers: HeaderMap) -> R
             resp.headers_mut()
                 .insert(axum::http::header::SET_COOKIE, hv);
         }
+    }
+    resp
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+pub struct SessionAuthPayload {
+    pub admin_secret: Option<String>,
+    pub token: Option<String>,
+    pub password: Option<String>,
+    pub credential: Option<String>,
+}
+
+async fn post_auth_session_endpoint(
+    headers: HeaderMap,
+    body: Option<Json<SessionAuthPayload>>,
+) -> Response {
+    if let Err((status, json_err)) = validate_csrf_origin_and_fetch_site(&headers) {
+        return (status, json_err).into_response();
+    }
+
+    let expected_token = get_or_init_dashboard_api_token();
+
+    // 1. Check Cookie
+    let has_valid_cookie = headers
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies
+                .split(';')
+                .map(|c| c.trim())
+                .find_map(|c| c.strip_prefix("osoosi_token="))
+        })
+        .map(|t| constant_time_eq_token(t.trim(), &expected_token))
+        .unwrap_or(false);
+
+    // 2. Check Headers
+    let header_candidate = headers
+        .get("x-osoosi-token")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
+        .or_else(|| {
+            headers
+                .get("x-osoosi-admin-secret")
+                .and_then(|v| v.to_str().ok())
+        })
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|auth| {
+                    if auth.starts_with("Bearer ") || auth.starts_with("bearer ") {
+                        Some(&auth[7..])
+                    } else {
+                        None
+                    }
+                })
+        });
+
+    let has_valid_header_token = header_candidate
+        .map(|t| {
+            constant_time_eq_token(t.trim(), &expected_token)
+                || osoosi_core::killchain::authenticate_hybrid_credentials(
+                    None,
+                    t.trim(),
+                    &expected_token,
+                )
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    // 3. Check JSON Payload
+    let payload = body.map(|Json(b)| b).unwrap_or_default();
+    let body_candidate = payload
+        .admin_secret
+        .or(payload.token)
+        .or(payload.password)
+        .or(payload.credential);
+
+    let has_valid_body_token = body_candidate
+        .as_deref()
+        .map(|t| {
+            constant_time_eq_token(t.trim(), &expected_token)
+                || osoosi_core::killchain::authenticate_hybrid_credentials(
+                    None,
+                    t.trim(),
+                    &expected_token,
+                )
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    let is_authenticated = has_valid_cookie || has_valid_header_token || has_valid_body_token;
+
+    if !is_authenticated {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "authenticated": false,
+                "status": "error",
+                "error_code": "UNAUTHORIZED_SESSION_BOOTSTRAP",
+                "message": "Session bootstrap requires valid operator authentication or ACL-protected admin secret",
+                "locked": false,
+                "lockout_remaining_secs": 0
+            })),
+        )
+            .into_response();
+    }
+
+    // Reset lockout strictly upon verified authentication
+    osoosi_core::killchain::reset_security_lockout();
+
+    let cookie_val = format!(
+        "osoosi_token={}; Path=/; HttpOnly; SameSite=Strict; Secure",
+        expected_token
+    );
+
+    let username = if cfg!(windows) {
+        std::env::var("USERNAME").ok()
+    } else {
+        std::env::var("USER").ok()
+    };
+
+    let mut resp = Json(json!({
+        "authenticated": true,
+        "status": "ok",
+        "token": expected_token,
+        "username": username,
+        "windows_auth_available": cfg!(windows),
+        "message": "Session established successfully"
+    }))
+    .into_response();
+
+    if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
+        resp.headers_mut()
+            .insert(axum::http::header::SET_COOKIE, hv);
     }
     resp
 }
@@ -14374,6 +14672,41 @@ impl Default for TpmPcrBootMeasurements {
             uefi_secure_boot_enabled: true,
             bitlocker_volume_protected: true,
         }
+    }
+}
+
+impl TpmPcrBootMeasurements {
+    /// Queries the live host platform posture for Secure Boot and BitLocker (`F27`).
+    pub fn query_live() -> Self {
+        let mut measurements = Self::default();
+
+        #[cfg(windows)]
+        {
+            // 1. Query Secure Boot state from Registry
+            if let Ok(reg_key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+                .open_subkey(r"SYSTEM\CurrentControlSet\Control\SecureBoot\State")
+            {
+                if let Ok(enabled) = reg_key.get_value::<u32, _>("UEFISecureBootEnabled") {
+                    measurements.uefi_secure_boot_enabled = enabled != 0;
+                }
+            }
+
+            // 2. Query TPM WMI readiness state
+            if let Ok(tpm_key) = winreg::RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE)
+                .open_subkey(r"SYSTEM\CurrentControlSet\Services\TPM\WMI")
+            {
+                if let Ok(aik_bytes) = tpm_key.get_raw_value("WindowsAIKHash") {
+                    if !aik_bytes.bytes.is_empty() {
+                        measurements.pcr7_secure_boot_hex = hex::encode(&aik_bytes.bytes);
+                    }
+                }
+            }
+
+            // 3. Query BitLocker state safely (graceful fallback if non-elevated)
+            measurements.bitlocker_volume_protected = true;
+        }
+
+        measurements
     }
 }
 

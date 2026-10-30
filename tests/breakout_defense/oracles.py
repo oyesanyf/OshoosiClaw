@@ -908,8 +908,28 @@ def control_plane_session_auth_oracle(
 ) -> Tuple[int, str]:
     """Authoritative oracle for dashboard control plane endpoint security."""
     # 1. Origin check
-    if origin_header and origin_header != "http://127.0.0.1:3030" and origin_header != "http://localhost:3030":
-        return 403, "FORBIDDEN: Cross-origin request rejected"
+    if origin_header is not None:
+        trimmed = origin_header.strip().lower()
+        if trimmed != "null":
+            valid = False
+            for prefix in (
+                "http://127.0.0.1",
+                "https://127.0.0.1",
+                "http://localhost",
+                "https://localhost",
+                "http://[::1]",
+                "https://[::1]",
+            ):
+                if trimmed == prefix:
+                    valid = True
+                    break
+                if trimmed.startswith(prefix + ":"):
+                    port_str = trimmed[len(prefix) + 1:]
+                    if port_str.isdigit() and 1 <= int(port_str) <= 65535:
+                        valid = True
+                        break
+            if not valid:
+                return 403, "FORBIDDEN: Cross-origin request rejected"
 
     # 2. Sec-Fetch-Site check
     if sec_fetch_site_header and sec_fetch_site_header not in ("same-origin", "none"):
@@ -922,6 +942,65 @@ def control_plane_session_auth_oracle(
         return 401, "UNAUTHORIZED: Invalid session token"
 
     return 200, "SESSION_AUTHORIZED"
+
+
+def gf256_mul_oracle(a: int, b: int) -> int:
+    """Russian Peasant multiplication in GF(2^8) mod 0x11B."""
+    p = 0
+    for _ in range(8):
+        if b & 1:
+            p ^= a
+        hi = a & 0x80
+        a = (a << 1) & 0xFF
+        if hi:
+            a ^= 0x1B
+        b >>= 1
+    return p
+
+
+def gf256_inv_oracle(a: int) -> int:
+    """Multiplicative inverse in GF(2^8) via Fermat's Little Theorem (a^254)."""
+    if a == 0:
+        raise ZeroDivisionError("Field inversion by zero in GF(2^8)")
+    res, base, exp = 1, a, 254
+    while exp > 0:
+        if exp & 1:
+            res = gf256_mul_oracle(res, base)
+        base = gf256_mul_oracle(base, base)
+        exp >>= 1
+    return res
+
+
+def shamir_reconstruct_secret_oracle(shares: List[Tuple[int, bytes]], threshold: int) -> bytes:
+    """Reconstructs master secret from t shares using Lagrange interpolation at x=0 over GF(2^8)."""
+    if len(shares) < threshold:
+        raise ValueError(f"Insufficient shares: got {len(shares)}, required {threshold}")
+    quorum = shares[:threshold]
+    xs = [s[0] for s in quorum]
+    if len(set(xs)) != len(xs):
+        raise ValueError("Duplicate share indices in quorum")
+    if any(x == 0 for x in xs):
+        raise ValueError("Zero coordinate not allowed")
+
+    secret_len = len(quorum[0][1])
+    # Compute Lagrange weights at x = 0: L_j(0) = Prod_{m != j} (x_m / (x_j ^ x_m))
+    weights = []
+    for j in range(threshold):
+        num, den = 1, 1
+        for m in range(threshold):
+            if m == j:
+                continue
+            num = gf256_mul_oracle(num, xs[m])
+            den = gf256_mul_oracle(den, xs[j] ^ xs[m])
+        weights.append(gf256_mul_oracle(num, gf256_inv_oracle(den)))
+
+    out = bytearray(secret_len)
+    for k in range(secret_len):
+        s = 0
+        for j in range(threshold):
+            s ^= gf256_mul_oracle(quorum[j][1][k], weights[j])
+        out[k] = s
+    return bytes(out)
 
 
 def compute_tpm_row_integrity_tag_oracle(

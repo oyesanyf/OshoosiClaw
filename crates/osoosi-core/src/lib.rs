@@ -86,6 +86,7 @@ pub mod software_replacement;
 pub mod static_analyzer;
 pub mod supervisor;
 pub mod system_check;
+pub mod threshold_secret;
 pub mod tool_paths;
 pub mod triage;
 pub mod version_utils;

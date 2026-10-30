@@ -727,6 +727,28 @@ class TestTier1BreakoutFeatures(unittest.TestCase):
         verified = oracles.verify_tpm_row_integrity_oracle("ui_settings_kv", "setting_001", tampered_payload, tag, tpm_key)
         self.assertFalse(verified)
 
+    def test_r5_tc07_shamir_threshold_micro_perimeter_reconstruction(self):
+        """R5.7: Verify Shamir's t-of-n secret sharing over GF(2^8) reconstructs master AEAD key (F33)."""
+        secret = os.urandom(32)
+        # Shamir 2-of-3 split over GF(2^8)
+        coeffs = [[s, os.urandom(1)[0]] for s in secret]
+        shares = [
+            (x, bytes([c[0] ^ oracles.gf256_mul_oracle(c[1], x) for c in coeffs]))
+            for x in (1, 2, 3)
+        ]
+        # Any quorum of 2 reconstructs secret
+        r12 = oracles.shamir_reconstruct_secret_oracle([shares[0], shares[1]], 2)
+        self.assertEqual(r12, secret)
+        r23 = oracles.shamir_reconstruct_secret_oracle([shares[1], shares[2]], 2)
+        self.assertEqual(r23, secret)
+        r13 = oracles.shamir_reconstruct_secret_oracle([shares[0], shares[2]], 2)
+        self.assertEqual(r13, secret)
+
+        # Single share fails threshold
+        with self.assertRaises(ValueError):
+            oracles.shamir_reconstruct_secret_oracle([shares[0]], 2)
+
+
     # =========================================================================
     # Requirement 6: Autonomous Research Swarm Poisoning Defenses
     # =========================================================================
