@@ -1593,6 +1593,15 @@ pub fn is_current_research_arxiv_id(arxiv_id: &str) -> bool {
     }
 }
 
+/// Returns true if an arXiv paper is one of the 4 canonical M12 frontier research preprints (2025–2026).
+pub fn is_canonical_m12_research_arxiv_id(arxiv_id: &str) -> bool {
+    let base = normalize_base_arxiv_id(arxiv_id);
+    matches!(
+        base.as_str(),
+        "2603.02277" | "2501.18492" | "2503.00061" | "2511.10720"
+    )
+}
+
 /// Validates that paper identity, code repository, attack vector, target boundary,
 /// and indicator pattern are in complete semantic domain alignment across security domains.
 pub fn check_paper_to_code_semantic_domain_alignment(
@@ -2367,7 +2376,10 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             if let Ok(persisted) = serde_json::from_str::<Vec<IngestedResearchDefenseRule>>(&raw) {
                 for mut item in persisted {
                     auto_correct_research_rule(&mut item);
-                    if is_baseline_already_implemented(&item.arxiv_id) {
+                    if is_baseline_already_implemented(&item.arxiv_id)
+                        || !is_current_research_arxiv_id(&item.arxiv_id)
+                        || !is_canonical_m12_research_arxiv_id(&item.arxiv_id)
+                    {
                         continue;
                     }
                     let item_base = normalize_base_arxiv_id(&item.arxiv_id);
@@ -2402,7 +2414,10 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
     let sqlite_rules = load_research_rules_sqlite();
     for mut item in sqlite_rules {
         auto_correct_research_rule(&mut item);
-        if is_baseline_already_implemented(&item.arxiv_id) {
+        if is_baseline_already_implemented(&item.arxiv_id)
+            || !is_current_research_arxiv_id(&item.arxiv_id)
+            || !is_canonical_m12_research_arxiv_id(&item.arxiv_id)
+        {
             continue;
         }
         let item_base = normalize_base_arxiv_id(&item.arxiv_id);
@@ -2483,7 +2498,7 @@ pub fn init_research_rules_sqlite() {
         code_repo_url TEXT NOT NULL DEFAULT '',
         generated_code_snippet TEXT NOT NULL DEFAULT ''
     );
-        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id LIKE '24%' OR base_arxiv_id LIKE '23%' OR base_arxiv_id LIKE '22%' OR base_arxiv_id LIKE '21%' OR base_arxiv_id LIKE '20%' OR base_arxiv_id LIKE '1%';
+        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id LIKE '24%' OR base_arxiv_id LIKE '23%' OR base_arxiv_id LIKE '22%' OR base_arxiv_id LIKE '21%' OR base_arxiv_id LIKE '20%' OR base_arxiv_id LIKE '1%' OR base_arxiv_id NOT IN ('2603.02277', '2501.18492', '2503.00061', '2511.10720');
         CREATE TABLE IF NOT EXISTS research_registry_meta (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             cleared_all INTEGER NOT NULL DEFAULT 0,

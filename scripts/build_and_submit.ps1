@@ -19,7 +19,7 @@ param(
     [switch]$SkipSigning = $false,
     [switch]$SkipSubmit = $false,
     [switch]$NoLaunch = $true,
-    [string]$PrTitle = "feat(m2e): full-lifecycle build, signing, port 3030 E2E verification, and docs sync"
+    [string]$PrTitle = "release(m12): 2025-2026 1-year recency research defenses, wix v5 msi, and wdsi submission"
 )
 
 $ErrorActionPreference = "Stop"
@@ -635,6 +635,10 @@ if (Test-Path $ReleaseSyncScript) {
 Write-Host "`n>>> [7/8] Verifying OsoosiEDR Windows Service Health..." -ForegroundColor Yellow
 $svc = Get-Service OsoosiEDR -ErrorAction SilentlyContinue
 if ($svc) {
+    Write-Host "       Restarting OsoosiEDR service with newly compiled release binary..." -ForegroundColor Cyan
+    Restart-Service OsoosiEDR -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $svc = Get-Service OsoosiEDR -ErrorAction SilentlyContinue
     Write-Host "       OsoosiEDR service status: $($svc.Status)" -ForegroundColor Green
     if ($svc.Status -ne "Running") {
         Write-Host "       Starting OsoosiEDR service..." -ForegroundColor Cyan
@@ -647,10 +651,18 @@ if ($svc) {
 # Wait for service port 3030 to be active and run E2E verification
 $VerifyScript = Join-Path $ProjectRoot "scripts\verify_port_3030_e2e.py"
 if (Test-Path $VerifyScript) {
-    Write-Host "       Waiting for Port 3030 to be active..." -ForegroundColor Cyan
-    for ($waitAttempt = 1; $waitAttempt -le 15; $waitAttempt++) {
-        $tcp = Test-NetConnection -ComputerName 127.0.0.1 -Port 3030 -WarningAction SilentlyContinue
-        if ($tcp.TcpTestSucceeded) { break }
+    Write-Host "       Waiting for Port 3030 to be active and healthy..." -ForegroundColor Cyan
+    for ($waitAttempt = 1; $waitAttempt -le 35; $waitAttempt++) {
+        try {
+            $resp = Invoke-WebRequest -Uri "http://127.0.0.1:3030/api/health" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+            if ($resp.StatusCode -eq 200) {
+                Write-Host "       Port 3030 HTTP /api/health returned 200 OK. Allowing 5s daemon warm-up..." -ForegroundColor Cyan
+                Start-Sleep -Seconds 5
+                break
+            }
+        } catch {
+            # Still booting or port resetting
+        }
         Start-Sleep -Seconds 1
     }
     # Synchronize adversarial audit log across all log directories
