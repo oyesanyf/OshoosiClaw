@@ -73,9 +73,11 @@ pub mod pe_inspector;
 pub mod pii;
 pub mod privacy;
 pub mod privilege;
+pub mod protected_env_backup;
 pub mod quarantine;
 pub mod rate_limit_backoff;
 pub mod rea;
+pub mod rea_voter_env_gateway;
 pub mod relativistic;
 pub mod remediation;
 pub mod safe_browsing;
@@ -141,5 +143,15 @@ pub use memory_watchdog::{
     MemoryWatchdogDebouncer,
 };
 pub use orchestrator::*;
+pub use protected_env_backup::{
+    apply_protected_ntfs_dacl, unlock_protected_ntfs_dacl, ProtectedEnvBackupVault, VaultError,
+    VaultStatus,
+};
 pub use rate_limit_backoff::*;
 pub use rea::*;
+pub use rea_voter_env_gateway::{
+    compute_composite_identity, find_subslice, hash_file_sha256_nofollow, normalize_host,
+    resolve_pid_exe, resolve_pid_script_hash, resolve_process_instance_key,
+    verify_clean_process_env, HardenedSealedGrant, ReaForensicVerdict, ReaVoterEnvGateway,
+    ZeroizingLockedSecret,
+};

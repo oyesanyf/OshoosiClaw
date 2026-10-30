@@ -7,7 +7,8 @@ use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::semantic::SemanticEngine;
 use dashmap::DashMap;
 use osoosi_memory::MemoryStore;
-use osoosi_types::{HostSecurityEvent, ThreatSignature};
+use osoosi_types::{HostSecurityEvent, ProcessInstanceKey, ThreatSignature, VoterQuorumAlert};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -858,6 +859,11 @@ pub struct PolicyEngine {
     pub cve_cache: Option<Arc<tokio::sync::Mutex<crate::cve_cache::CveCache>>>,
     /// Optional resource controller to skip heavy tasks during load
     pub telemetry_controller: Option<Arc<dyn osoosi_types::TelemetryControllerInterface>>,
+    /// Optional voter quorum alert sink (e.g. ReaVoterEnvGateway::ingest_voter_quorum)
+    pub voter_quorum_sink:
+        Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>>>>,
+    /// Runtime override flag to strictly enforce 100% voter quorum participation
+    pub enforce_all_voters_participate: AtomicBool,
 }
 
 impl PolicyEngine {
@@ -868,6 +874,7 @@ impl PolicyEngine {
                 voter_weight_multipliers.insert(voter_name, weight.clamp(0.50, 2.5));
             }
         }
+        let enforce_all = config.enforce_all_voters_participate;
         Self {
             memory,
             _semantic: SemanticEngine::new(),
@@ -905,6 +912,8 @@ impl PolicyEngine {
                 }
             },
             telemetry_controller: None,
+            voter_quorum_sink: Arc::new(tokio::sync::RwLock::new(None)),
+            enforce_all_voters_participate: AtomicBool::new(enforce_all),
         }
     }
 
@@ -918,6 +927,100 @@ impl PolicyEngine {
     ) {
         let mut guard = self.intel_broadcaster.write().await;
         *guard = Some(broadcaster);
+    }
+
+    pub async fn set_voter_quorum_sink(
+        &self,
+        sink: Arc<dyn Fn(VoterQuorumAlert) + Send + Sync>,
+    ) {
+        let mut guard = self.voter_quorum_sink.write().await;
+        *guard = Some(sink);
+    }
+
+    pub fn set_enforce_all_voters_participate(&self, enforce: bool) {
+        self.enforce_all_voters_participate.store(enforce, Ordering::SeqCst);
+    }
+
+    pub fn is_enforce_all_voters_participate(&self) -> bool {
+        self.config.enforce_all_voters_participate
+            || self.enforce_all_voters_participate.load(Ordering::Relaxed)
+    }
+
+    /// Evaluates whether the event requires 100% voter quorum participation
+    /// (no heavy voter skipping during silent mode).
+    #[inline]
+    pub fn is_security_or_gateway_eval(&self, event: &HostSecurityEvent) -> bool {
+        if self.is_enforce_all_voters_participate() {
+            return true;
+        }
+
+        let check_flag = |key: &str| -> bool {
+            if let Some(val) = event.data.get(key) {
+                if val.as_bool() == Some(true) {
+                    return true;
+                }
+                if let Some(s) = val.as_str() {
+                    if s.eq_ignore_ascii_case("true") || s == "1" {
+                        return true;
+                    }
+                }
+                if let Some(n) = val.as_i64() {
+                    if n == 1 {
+                        return true;
+                    }
+                }
+            }
+            false
+        };
+
+        // 1. Checks if event data contains explicit gateway/security enforcement flags
+        if check_flag("EnforceCedarGate")
+            || check_flag("GatewayEvaluation")
+            || check_flag("SecurityEvaluation")
+            || check_flag("RequireAllVoters")
+            || check_flag("EnforceSecurityGateway")
+        {
+            return true;
+        }
+
+        // 2. Checks if session tracking is active (autonomous agent / gateway session)
+        if event.data.get("SessionId").is_some()
+            || event.data.get("session_id").is_some()
+            || event.data.get("AgentSessionId").is_some()
+            || event.data.get("origin_session_id").is_some()
+        {
+            return true;
+        }
+
+        // 3. Checks if behavioral / runtime event matches with invariant flags or gateway context
+        let has_invariant_flags = check_flag("InvariantCheck")
+            || check_flag("SelfProtection")
+            || check_flag("MemoryScan")
+            || check_flag("TaintViolation")
+            || check_flag("BreakoutAttempt")
+            || check_flag("AsymmetricVeto")
+            || event.data.get("invariant").is_some()
+            || event.data.get("invariants").is_some()
+            || event.data.get("invariant_flags").is_some();
+
+        let has_gateway_context = event.data.get("gateway").is_some()
+            || event.data.get("Gateway").is_some()
+            || event.data.get("SecurityGateway").is_some()
+            || event.data.get("ReaGateway").is_some()
+            || event.data.get("ReaVoter").is_some()
+            || event.data.get("standin_token").is_some()
+            || event.data.get("StandinToken").is_some()
+            || event.data.get("TargetUrl").is_some()
+            || event.data.get("UpstreamHost").is_some()
+            || event.data.get("DestinationHost").is_some();
+
+        if matches!(event.event_id, 1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688)
+            && (has_invariant_flags || has_gateway_context)
+        {
+            return true;
+        }
+
+        false
     }
 
     pub async fn add_voter(&self, voter: Box<dyn ThreatVoter + Send + Sync>) {
@@ -1312,6 +1415,9 @@ impl PolicyEngine {
         let mut evidence_votes: Vec<EvidenceVote> = Vec::new();
         const OTX_VOTER: &str = "OTX-C2";
 
+        // Check if this evaluation is a security or gateway evaluation requiring 100% voter participation
+        let is_sec_or_gw = self.is_security_or_gateway_eval(event);
+
         // ADAPTIVE THREADING: Run all voters concurrently with per-voter timeouts.
         // Each voter gets a strict 30-second SLA (increased for LLM inference on CPU).
         const VOTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
@@ -1323,8 +1429,9 @@ impl PolicyEngine {
                 let name = voter.name();
 
                 // DRASTIC OPTIMIZATION: Skip heavy voters (LLM, Decompile) during resource pressure (Silent Mode)
+                // BUT: On security and gateway evaluations, strictly enforce 100% voter quorum participation!
                 if let Some(ref controller) = self.telemetry_controller {
-                    if voter.is_heavy() && controller.is_silent_mode() {
+                    if !is_sec_or_gw && voter.is_heavy() && controller.is_silent_mode() {
                         debug!(
                             target: CONSENSUS_LOG_TARGET,
                             voter = %name,
@@ -1860,7 +1967,9 @@ impl PolicyEngine {
 
         // Zero-"Unknown Process" Alert Invariant & Noise Gate:
         // Never emit an alert for an unknown process, non-existing file heuristic artifacts, or confidence below floor.
-        let min_confidence_floor = if is_lockdown_mode {
+        let min_confidence_floor = if is_sec_or_gw {
+            0.0
+        } else if is_lockdown_mode {
             autonomy.action_confidence_threshold.min(0.35)
         } else {
             0.50
@@ -1874,6 +1983,13 @@ impl PolicyEngine {
         {
             // Guarantee process name for invariant isolation to prevent dropping
             signature.process_name = Some("[Deterministic-Containment-Veto]".to_string());
+        } else if (proc_clean.is_empty()
+            || proc_clean.eq_ignore_ascii_case("unknown")
+            || proc_clean.eq_ignore_ascii_case("unknown process"))
+            && is_sec_or_gw
+        {
+            // Guarantee process name for security/gateway evaluation to prevent dropping
+            signature.process_name = Some("[Security-Gateway-Evaluation]".to_string());
         } else if proc_clean.is_empty()
             || proc_clean.eq_ignore_ascii_case("unknown")
             || proc_clean.eq_ignore_ascii_case("unknown process")
@@ -1916,6 +2032,61 @@ impl PolicyEngine {
             evaluated_at: chrono::Utc::now(),
         };
         let _ = self.memory.record_consensus_finding(&finding);
+
+        // Compute voter confidence in basis points (0..=10000 bp)
+        let voter_confidence_bp =
+            (signature.confidence * 10_000.0).round().clamp(0.0, 10_000.0) as u16;
+
+        let pid: u32 = event
+            .data
+            .get("ProcessId")
+            .or_else(|| event.data.get("process_id"))
+            .or_else(|| event.data.get("pid"))
+            .or_else(|| event.data.get("PID"))
+            .or_else(|| event.data.get("NewProcessId"))
+            .or_else(|| event.data.get("TargetProcessId"))
+            .and_then(|v| {
+                v.as_u64()
+                    .map(|n| n as u32)
+                    .or_else(|| {
+                        v.as_str().and_then(|s| {
+                            if s.starts_with("0x") || s.starts_with("0X") {
+                                u32::from_str_radix(&s[2..], 16).ok()
+                            } else {
+                                s.parse::<u32>().ok()
+                            }
+                        })
+                    })
+            })
+            .unwrap_or(0);
+
+        let start_time_ticks: u64 = event
+            .data
+            .get("ProcessStartTime")
+            .or_else(|| event.data.get("process_start_time"))
+            .or_else(|| event.data.get("ProcessStartTimeTicks"))
+            .or_else(|| event.data.get("StartTime"))
+            .or_else(|| event.data.get("start_time_ticks"))
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })
+            .unwrap_or_else(|| {
+                (event.timestamp.timestamp_nanos_opt().unwrap_or(0) / 100) as u64
+            });
+
+        let target = ProcessInstanceKey::new(pid, start_time_ticks);
+        let trigger_reason = signature
+            .reason
+            .clone()
+            .or_else(|| signature.process_name.clone())
+            .unwrap_or_else(|| "Consensus Quorum Alert".to_string());
+
+        let alert = VoterQuorumAlert::new(target, voter_confidence_bp, trigger_reason);
+
+        if let Some(ref sink) = *self.voter_quorum_sink.read().await {
+            sink(alert);
+        }
 
         self.consensus_cache
             .insert(cache_key, (signature.clone(), std::time::Instant::now()));
@@ -2790,5 +2961,217 @@ mod tests_m7_asymmetric_veto {
         let event = make_test_event("C:\\Windows\\System32\\cmd.exe", "cmd.exe");
         let sig = engine.scan_event(&event).await;
         assert!(sig.is_none());
+    }
+
+    struct MockSilentController;
+    impl osoosi_types::TelemetryControllerInterface for MockSilentController {
+        fn spawn_adaptive(
+            &self,
+            _cat: osoosi_types::ResourceCategory,
+            _prio: osoosi_types::Priority,
+            _task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
+        ) {}
+        fn report_event(&self) {}
+        fn is_burst_mode(&self) -> bool {
+            false
+        }
+        fn is_silent_mode(&self) -> bool {
+            true
+        }
+        fn is_socket_exhaustion(&self) -> bool {
+            false
+        }
+        fn set_socket_exhaustion(&self, _v: bool) {}
+        fn get_concurrency_limit(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = usize> + Send + '_>> {
+            Box::pin(async { 4 })
+        }
+    }
+
+    struct MockCountingHeavyVoter {
+        name: String,
+        invocations: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl ThreatVoter for MockCountingHeavyVoter {
+        fn name(&self) -> String {
+            self.name.clone()
+        }
+        fn is_heavy(&self) -> bool {
+            true
+        }
+        async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
+            self.invocations
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Some(VoteResult {
+                confidence: 0.95,
+                reason: "Heavy voter detected high-risk activity".to_string(),
+                weight: 2.0,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_m6_silent_mode_skips_heavy_voters_on_routine_noise() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let mut engine = PolicyEngine::new(memory, config);
+        engine.telemetry_controller = Some(Arc::new(MockSilentController));
+
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let heavy_voter = Box::new(MockCountingHeavyVoter {
+            name: "MockHeavyLLM".to_string(),
+            invocations: counter.clone(),
+        });
+        engine.add_voter(heavy_voter).await;
+
+        // Routine event with no security/gateway flags
+        let routine_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "test-workstation".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+                "CommandLine": "whoami.exe /groups",
+                "ProcessId": 1234,
+            }),
+            causal_parent: None,
+        };
+
+        let verdict = engine.scan_event(&routine_event).await;
+        // In silent mode on routine noise, heavy voter is skipped
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(verdict.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_m6_silent_mode_executes_100pct_voters_on_security_gateway_eval() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let mut engine = PolicyEngine::new(memory, config);
+        engine.telemetry_controller = Some(Arc::new(MockSilentController));
+
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let heavy_voter = Box::new(MockCountingHeavyVoter {
+            name: "MockHeavyDecompiler".to_string(),
+            invocations: counter.clone(),
+        });
+        engine.add_voter(heavy_voter).await;
+
+        // Security/Gateway evaluation event with EnforceCedarGate
+        let gateway_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "test-workstation".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Windows\\System32\\cmd.exe",
+                "CommandLine": "cmd.exe /c curl https://malicious.c2",
+                "ProcessId": 5678,
+                "ProcessStartTime": 12345678901234u64,
+                "EnforceCedarGate": true,
+            }),
+            causal_parent: None,
+        };
+
+        let verdict = engine.scan_event(&gateway_event).await;
+        // Heavy voter MUST participate (100% quorum participation)
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(verdict.is_some());
+
+        // Also verify engine.set_enforce_all_voters_participate(true) enforces 100% participation
+        let counter2 = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let heavy_voter2 = Box::new(MockCountingHeavyVoter {
+            name: "MockHeavyLLM2".to_string(),
+            invocations: counter2.clone(),
+        });
+        let mut engine2 = PolicyEngine::new(Arc::new(MemoryStore::new(":memory:").unwrap()), osoosi_types::PolicyConfig::default());
+        engine2.telemetry_controller = Some(Arc::new(MockSilentController));
+        engine2.set_enforce_all_voters_participate(true);
+        engine2.add_voter(heavy_voter2).await;
+
+        let plain_event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "test-workstation".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+                "CommandLine": "whoami.exe",
+                "ProcessId": 9999,
+            }),
+            causal_parent: None,
+        };
+        let _ = engine2.scan_event(&plain_event).await;
+        assert_eq!(counter2.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_m6_voter_quorum_alert_emitted_with_exact_basis_points() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        struct HighConfidenceVoter;
+        #[async_trait::async_trait]
+        impl ThreatVoter for HighConfidenceVoter {
+            fn name(&self) -> String {
+                "HighConfidenceDetector".to_string()
+            }
+            async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
+                Some(VoteResult {
+                    confidence: 0.85,
+                    reason: "Asymmetric Invariant Breakout Vector Detected".to_string(),
+                    weight: 2.0,
+                })
+            }
+        }
+        engine.add_voter(Box::new(HighConfidenceVoter)).await;
+
+        let alerts_received = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let sink_collector = alerts_received.clone();
+        engine
+            .set_voter_quorum_sink(Arc::new(move |alert| {
+                let col = sink_collector.clone();
+                tokio::spawn(async move {
+                    col.lock().await.push(alert);
+                });
+            }))
+            .await;
+
+        let event = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "test-workstation".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Program Files\\Malware\\dropper.exe",
+                "CommandLine": "dropper.exe --stage2",
+                "ProcessId": 8812,
+                "ProcessStartTime": 9876543210u64,
+                "GatewayEvaluation": true,
+            }),
+            causal_parent: None,
+        };
+
+        let verdict = engine.scan_event(&event).await;
+        assert!(verdict.is_some());
+        let sig = verdict.unwrap();
+
+        // Give async spawn small tick to flush sink
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        let alerts = alerts_received.lock().await;
+        assert_eq!(alerts.len(), 1);
+        let alert = &alerts[0];
+        assert_eq!(alert.target.pid, 8812);
+        assert_eq!(alert.target.start_time_ticks, 9876543210);
+        let expected_bp = (sig.confidence * 10_000.0).round() as u16;
+        assert_eq!(alert.voter_confidence_bp, expected_bp);
+        assert!(alert.voter_confidence_bp >= 6667);
+        assert!(alert.trigger_reason.contains("Asymmetric Invariant Breakout Vector Detected"));
     }
 }

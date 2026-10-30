@@ -28,6 +28,7 @@ pub mod sigma;
 
 pub use breakout_gate::*;
 pub use mitre_kb::*;
+pub use osoosi_types::{ProcessInstanceKey, VoterQuorumAlert};
 
 pub use crate::admin::*;
 pub use agent_egress::*;
