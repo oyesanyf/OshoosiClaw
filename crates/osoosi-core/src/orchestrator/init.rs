@@ -340,7 +340,7 @@ impl EdrOrchestrator {
         let default_vault_path = std::path::PathBuf::from("database/protected_env_backup.vault");
         let env_gateway = Arc::new(crate::rea_voter_env_gateway::ReaVoterEnvGateway::with_vault(
             Duration::from_secs(300),
-            default_vault_path,
+            default_vault_path.clone(),
         ));
         let gw_sink = env_gateway.clone();
         policy
@@ -348,6 +348,24 @@ impl EdrOrchestrator {
                 gw_sink.ingest_voter_quorum(alert);
             }))
             .await;
+
+        // Auto-seal sensitive API keys into protected vault on startup
+        info!("EdrOrchestrator: Auto-sealing sensitive API keys into protected vault...");
+        match crate::protected_env_backup::ProtectedEnvBackupVault::seal_and_register_with_gateway(
+            std::path::Path::new(".env"),
+            &default_vault_path,
+            &env_gateway,
+        ) {
+            Ok(res) => {
+                info!(
+                    "EdrOrchestrator: Auto-sealed {} API keys into vault ({} safe vars preserved).",
+                    res.total_selected, res.total_vetoed
+                );
+            }
+            Err(e) => {
+                warn!("EdrOrchestrator: Auto-seal failed on startup: {}", e);
+            }
+        }
 
         info!("EdrOrchestrator: Initializing mesh network...");
         let mesh_config = osoosi_types::load_mesh_listen_config();

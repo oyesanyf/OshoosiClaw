@@ -2896,8 +2896,83 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             }
                             println!("DACL Protected:     {}", if status.dacl_protected { "✅ Active (SE_DACL_PROTECTED)" } else { "No" });
                             println!("Sealed Variables:   {:?}", status.sealed_variables);
+                            if !status.standin_mappings.is_empty() {
+                                println!("Active Stand-in Tokens:");
+                                for (k, standin) in &status.standin_mappings {
+                                    println!("  - {:<20} -> {}", k, standin);
+                                }
+                            }
+                            if let Some(ref sha) = status.original_sha256 {
+                                println!("Original SHA-256:   {}", sha);
+                            }
                             println!("Payload Size:       {} bytes", status.payload_size);
                             println!("============================================================");
+
+                            // Jointly enumerate .env + std::env::vars() to show discovery status
+                            let target_path = status
+                                .target_path
+                                .as_deref()
+                                .unwrap_or_else(|| std::path::Path::new(".env"));
+                            let mut pairs = Vec::new();
+                            let mut seen_keys = std::collections::HashSet::new();
+                            if target_path.exists() {
+                                if let Ok(content) = std::fs::read_to_string(target_path) {
+                                    for line in content.lines() {
+                                        let trimmed = line.trim();
+                                        if !trimmed.starts_with('#') && trimmed.contains('=') {
+                                            let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+                                            let k = parts[0].trim().to_string();
+                                            seen_keys.insert(k.clone());
+                                            pairs.push((k, parts[1].trim().to_string()));
+                                        }
+                                    }
+                                }
+                            }
+                            for (k, v) in std::env::vars() {
+                                if !seen_keys.contains(&k) {
+                                    seen_keys.insert(k.clone());
+                                    pairs.push((k, v));
+                                }
+                            }
+
+                            let enum_res = osoosi_core::protected_env_backup::LlmFusionApiKeyEnumerator::enumerate_from_pairs(&pairs);
+                            println!();
+                            println!("=========================================================================================");
+                            println!("  Active 3-Arm LLM Fusion API Key Discovery & Zero-Touch Protection State");
+                            println!("=========================================================================================");
+                            println!("Total Scanned:      {}", enum_res.total_scanned);
+                            println!("Sealed Secrets:     {}", enum_res.total_selected);
+                            println!("Vetoed Safe Vars:   {}", enum_res.total_vetoed);
+                            println!("-----------------------------------------------------------------------------------------");
+                            println!("{:<24} | {:<10} | {:<15} | {:<30}", "Variable Name", "Status", "Confidence", "Analysis / Replacement Token");
+                            println!("-----------------------------------------------------------------------------------------");
+                            for c in &enum_res.candidates {
+                                let is_important_veto = c.vetoed_by_safety_guard && (
+                                    c.key.eq_ignore_ascii_case("path")
+                                        || c.key.eq_ignore_ascii_case("java_home")
+                                        || c.key.eq_ignore_ascii_case("onedrive")
+                                        || c.key.eq_ignore_ascii_case("temp")
+                                        || c.key.starts_with("ANTIGRAVITY_")
+                                        || c.key.starts_with("VSCODE_")
+                                        || c.key.starts_with("CARGO_")
+                                        || c.key.starts_with("RUST_")
+                                );
+                                if c.selected || is_important_veto {
+                                    let status_str = if c.selected { "✅ SEALED" } else { "🛡️ VETOED" };
+                                    let conf_str = format!("{} bp", c.fusion_confidence_bp);
+                                    let detail_str = if c.selected {
+                                        if let Some(ref standin) = c.standin_token {
+                                            format!("-> {}", standin)
+                                        } else {
+                                            "LLM Fusion Consensus Confirmed".to_string()
+                                        }
+                                    } else {
+                                        c.veto_reason.clone().unwrap_or_else(|| "Low secret confidence".to_string())
+                                    };
+                                    println!("{:<24} | {:<10} | {:<15} | {:<30}", c.key, status_str, conf_str, detail_str);
+                                }
+                            }
+                            println!("=========================================================================================");
                         }
                         Err(e) => {
                             eprintln!("[-] Failed to query vault status: {}", e);
@@ -2919,17 +2994,33 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             println!("Sealed Secrets:     {} (Protected in DACL Vault)", enum_res.total_selected);
                             println!("Vetoed Safe Vars:   {} (PATH & System Variables Preserved)", enum_res.total_vetoed);
                             println!("-----------------------------------------------------------------------------------------");
-                            println!("{:<24} | {:<10} | {:<15} | {:<30}", "Variable Name", "Status", "Confidence", "Analysis / Safety Reason");
+                            println!("{:<24} | {:<10} | {:<15} | {:<30}", "Variable Name", "Status", "Confidence", "Analysis / Replacement Token");
                             println!("-----------------------------------------------------------------------------------------");
                             for c in &enum_res.candidates {
-                                let status_str = if c.selected { "✅ SEALED" } else { "🛡️ VETOED" };
-                                let conf_str = format!("{} bp", c.fusion_confidence_bp);
-                                let reason_str = if c.selected {
-                                    "LLM Fusion Consensus Confirmed".to_string()
-                                } else {
-                                    c.veto_reason.clone().unwrap_or_else(|| "Low secret confidence".to_string())
-                                };
-                                println!("{:<24} | {:<10} | {:<15} | {:<30}", c.key, status_str, conf_str, reason_str);
+                                let is_important_veto = c.vetoed_by_safety_guard && (
+                                    c.key.eq_ignore_ascii_case("path")
+                                        || c.key.eq_ignore_ascii_case("java_home")
+                                        || c.key.eq_ignore_ascii_case("onedrive")
+                                        || c.key.eq_ignore_ascii_case("temp")
+                                        || c.key.starts_with("ANTIGRAVITY_")
+                                        || c.key.starts_with("VSCODE_")
+                                        || c.key.starts_with("CARGO_")
+                                        || c.key.starts_with("RUST_")
+                                );
+                                if c.selected || is_important_veto {
+                                    let status_str = if c.selected { "✅ SEALED" } else { "🛡️ VETOED" };
+                                    let conf_str = format!("{} bp", c.fusion_confidence_bp);
+                                    let reason_str = if c.selected {
+                                        if let Some(ref standin) = c.standin_token {
+                                            format!("-> {}", standin)
+                                        } else {
+                                            "LLM Fusion Consensus Confirmed".to_string()
+                                        }
+                                    } else {
+                                        c.veto_reason.clone().unwrap_or_else(|| "Low secret confidence".to_string())
+                                    };
+                                    println!("{:<24} | {:<10} | {:<15} | {:<30}", c.key, status_str, conf_str, reason_str);
+                                }
                             }
                             println!("=========================================================================================");
                             println!("✅ Successfully sealed {} variables into DACL-protected vault.", enum_res.total_selected);
