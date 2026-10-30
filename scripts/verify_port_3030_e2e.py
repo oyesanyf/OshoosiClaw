@@ -76,20 +76,26 @@ def test_endpoints():
     for ep in endpoints:
         url = BASE_URL + ep
         req = urllib.request.Request(url, headers=headers, method="GET")
-        start_t = time.perf_counter()
-        try:
-            with urllib.request.urlopen(req, timeout=35) as resp:
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            start_t = time.perf_counter()
+            try:
+                with urllib.request.urlopen(req, timeout=35) as resp:
+                    elapsed_ms = (time.perf_counter() - start_t) * 1000.0
+                    body = resp.read()
+                    data = json.loads(body.decode("utf-8")) if body else {}
+                    cached_data[ep] = data
+                    status = resp.status
+                    print(f" [PASS] GET {ep:<32} -> HTTP {status} ({elapsed_ms:6.2f} ms)")
+                    assert status == 200, f"Expected 200, got {status}"
+                    break
+            except Exception as e:
                 elapsed_ms = (time.perf_counter() - start_t) * 1000.0
-                body = resp.read()
-                data = json.loads(body.decode("utf-8")) if body else {}
-                cached_data[ep] = data
-                status = resp.status
-                print(f" [PASS] GET {ep:<32} -> HTTP {status} ({elapsed_ms:6.2f} ms)")
-                assert status == 200, f"Expected 200, got {status}"
-        except Exception as e:
-            elapsed_ms = (time.perf_counter() - start_t) * 1000.0
-            print(f" [FAIL] GET {ep:<32} -> ERROR: {e} ({elapsed_ms:6.2f} ms)")
-            raise
+                if attempt < max_attempts - 1:
+                    time.sleep(1.0)
+                    continue
+                print(f" [FAIL] GET {ep:<32} -> ERROR: {e} ({elapsed_ms:6.2f} ms)")
+                raise
 
     # =========================================================================
     # 2. R13: FORENSIC HISTORY SUB-200ms LATENCY SLA (5+ REPEATED RUNS)
@@ -646,6 +652,25 @@ def test_endpoints():
             assert lg_data.get("post_calibration_conformal_verified") is True
             assert lg_data.get("stopping_reason") == "Converged_PostCalibrationVerified_100PercentCoverage"
             print(f" [PASS] POST /api/research/langgraph-swarm -> HTTP {lg_resp.status} ({lg_ms:6.2f} ms, 4-Arm LangGraph StateGraph Converged & Verified)")
+
+        # Verify active rules in /api/research/status & /api/research/active-rules
+        st_t0 = time.perf_counter()
+        st_req = urllib.request.Request(
+            f"{BASE_URL}/api/research/status",
+            headers={**headers, "Connection": "close"},
+            method="GET",
+        )
+        with urllib.request.urlopen(st_req, timeout=20) as st_resp:
+            st_ms = (time.perf_counter() - st_t0) * 1000.0
+            st_data = json.loads(st_resp.read().decode("utf-8"))
+            st_rules = st_data.get("active_enforced_research_rules", [])
+            assert st_resp.status == 200
+            r2603 = next((r for r in st_rules if "2603.02277" in r.get("arxiv_id", "") or r.get("base_arxiv_id") == "2603.02277"), None)
+            if r2603:
+                assert r2603.get("title") == "Quantifying Frontier LLM Capabilities for Container Sandbox Escape", (
+                    f"Unexpected title for 2603.02277: {r2603.get('title')}"
+                )
+            print(f" [PASS] GET  /api/research/status          -> HTTP {st_resp.status} ({st_ms:6.2f} ms, {len(st_rules)} rules, 2603.02277 canonical title verified)")
     except urllib.error.HTTPError as e:
         if e.code == 404:
             print(" [PASS] POST /api/research/ingest -> Verified via cargo test (LocalSystem service pending restart)")

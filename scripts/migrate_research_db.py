@@ -213,8 +213,8 @@ for db in dbs:
             except Exception:
                 pass
 
-        # Clean all legacy 2024 and older rules
-        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id LIKE '24%' OR CAST(SUBSTR(base_arxiv_id, 1, 2) AS INTEGER) < 25;")
+        # Clean all legacy 2024 and older rules and any non-canonical rules
+        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id LIKE '24%' OR CAST(SUBSTR(base_arxiv_id, 1, 2) AS INTEGER) < 25 OR base_arxiv_id NOT IN ('2603.02277', '2501.18492', '2503.00061', '2511.10720');")
 
         for rule in RULES:
             cur.execute(UPSERT_SQL, rule)
