@@ -23,13 +23,13 @@ flowchart TD
 
     V3 --> R11["rust-unofficial/awesome-rust"]
     V3 --> R12["tylerha97/awesome-reversing (PR #37)"]
-    V3 --> R13["0xflotus/awesome-rust-security"]
+    V3 --> R13["0xflotus/awesome-rust-security (PR #1)"]
     V3 --> R14["qmonnet/awesome-ebpf (PR #179)"]
     V3 --> R15["zoidbergwill/awesome-ebpf"]
     V3 --> R16["aya-rs/awesome-aya (PR #25)"]
 
-    V4 --> R17["InQuest/awesome-yara"]
-    V4 --> R18["pedramamini/awesome-yara"]
+    V4 --> R17["InQuest/awesome-yara (PR #83)"]
+    V4 --> R18["pedramamini/awesome-yara (PR #83)"]
     V4 --> R19["corca-ai/awesome-llm-security (PR #415)"]
     V4 --> R20["ottosulin/awesome-ai-security (PR #616)"]
     V4 --> R21["machinae/awesome-claws (PR #46)"]
@@ -37,7 +37,7 @@ flowchart TD
 
 ---
 
-## Live Upstream Pull Requests Tracker (15 Active PRs Across All 4 Verticals)
+## Live Upstream Pull Requests Tracker (17 Active Entries Across All 4 Verticals)
 
 | Vertical | Target Repository | Section | Upstream Pull Request | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -51,8 +51,10 @@ flowchart TD
 | **Vertical 2 (Forensics)** | `cugu/awesome-forensics` | `### Live Forensics` | **[PR #152](https://github.com/cugu/awesome-forensics/pull/152)** | `open` (`mergeable: true`, `repo-info: success`) |
 | **Vertical 2 (Reverse Engineering)** | `wtsxDev/reverse-engineering` | `## Binary Analysis` | **[PR #59](https://github.com/wtsxDev/reverse-engineering/pull/59)** | `open` (`mergeable: true`) |
 | **Vertical 3 (Reverse Engineering)** | `tylerha97/awesome-reversing` | `## Binary Analysis` | **[PR #37](https://github.com/tylerha97/awesome-reversing/pull/37)** | `open` (`mergeable: true`) |
+| **Vertical 3 (Rust Security)** | `0xflotus/awesome-rust-security` | `## Malware and Threat Detection` | **[PR #1](https://github.com/0xflotus/awesome-rust-security/pull/1)** | `open` (`mergeable: true`) |
 | **Vertical 3 (Rust & eBPF)** | `qmonnet/awesome-ebpf` | `### Security` | **[PR #179](https://github.com/qmonnet/awesome-ebpf/pull/179)** | `open` (`mergeable: true`) |
 | **Vertical 3 (Rust & Aya eBPF)** | `aya-rs/awesome-aya` | `## Major Projects that Use Aya` | **[PR #25](https://github.com/aya-rs/awesome-aya/pull/25)** | `open` (`mergeable: true`) |
+| **Vertical 4 (YARA / InQuest)** | `InQuest/awesome-yara` (`pedramamini/awesome-yara`) | `## Tools` | **[PR #83](https://github.com/pedramamini/awesome-yara/pull/83)** | `open` (`mergeable: true`) |
 | **Vertical 4 (AI & LLM Security)** | `corca-ai/awesome-llm-security` | `## Tools` | **[PR #415](https://github.com/corca-ai/awesome-llm-security/pull/415)** | `open` (`mergeable: true`) |
 | **Vertical 4 (AI Agent Security)** | `ottosulin/awesome-ai-security` | `### Agent Runtime Security & Sandboxing` | **[PR #616](https://github.com/ottosulin/awesome-ai-security/pull/616)** | `open` (`mergeable: true`) |
 | **Vertical 4 (OpenClaw / Claws)** | `machinae/awesome-claws` | `## Main Projects` | **[PR #46](https://github.com/machinae/awesome-claws/pull/46)** | `open` (`mergeable: true`) |
@@ -83,7 +85,7 @@ Flagship Blue Team, incident response, forensics, and reverse engineering direct
 Language and kernel instrumentation directories followed by systems engineers and security researchers:
 11. **`rust-unofficial/awesome-rust`**: *Security* section (`crates/osoosi-*` modular workspace).
 12. **`tylerha97/awesome-reversing`** ([PR #37](https://github.com/tylerha97/awesome-reversing/pull/37)): Binary & bytecode reverse engineering (`## Binary Analysis`).
-13. **`0xflotus/awesome-rust-security`**: Rust security & defensive infrastructure (`## Malware and Threat Detection`).
+13. **`0xflotus/awesome-rust-security`** ([PR #1](https://github.com/0xflotus/awesome-rust-security/pull/1)): Rust security & defensive infrastructure (`## Malware and Threat Detection`).
 14. **`qmonnet/awesome-ebpf`** ([PR #179](https://github.com/qmonnet/awesome-ebpf/pull/179)): *eBPF in Security* section (`crates/osoosi-ebpf` tracepoints, LSM hooks, and seccomp-bpf).
 15. **`zoidbergwill/awesome-ebpf`**: eBPF kernel probe instrumentation and runtime security.
 16. **`aya-rs/awesome-aya`** ([PR #25](https://github.com/aya-rs/awesome-aya/pull/25)): Rust-based eBPF security monitoring agents (`## Major Projects that Use Aya`).
@@ -92,8 +94,8 @@ Language and kernel instrumentation directories followed by systems engineers an
 
 ## 4. Vertical 4: Specialized Signature (YARA) & Agentic AI Security Lists (Wave 4)
 Sub-component directories matching OshoosiClaw's YARA-X engine, 7-Ring Cedar Reference Monitor, and 4-Arm LangGraph Research Swarm:
-17. **`InQuest/awesome-yara`**: *Tools* section (`yara-x` scanner + automated YARA rule generator + 1,600+ rules).
-18. **`pedramamini/awesome-yara`**: *Tools* section for YARA scanning and automated signature synthesis.
+17. **`InQuest/awesome-yara`** ([PR #83](https://github.com/pedramamini/awesome-yara/pull/83)): *Tools* section (`yara-x` scanner + automated YARA rule generator + 1,600+ rules).
+18. **`pedramamini/awesome-yara`** ([PR #83](https://github.com/pedramamini/awesome-yara/pull/83)): *Tools* section for YARA scanning and automated signature synthesis.
 19. **`corca-ai/awesome-llm-security`** ([PR #415](https://github.com/corca-ai/awesome-llm-security/pull/415)): 7-Ring Continuous Cedar Reference Monitor, OS capability sandboxes (AppContainer/Landlock/WASM), and code-backed arXiv breakout defense ingestion.
 20. **`ottosulin/awesome-ai-security`** ([PR #616](https://github.com/ottosulin/awesome-ai-security/pull/616)): *Agent Runtime Security & Sandboxing* — OpenClaw-inspired autonomous security agent and 7-Ring AI agent containment runtime in Rust.
 21. **`machinae/awesome-claws`** ([PR #46](https://github.com/machinae/awesome-claws/pull/46)): *Main Projects* section — OpenClaw-inspired autonomous security agent and endpoint defense runtime in Rust.
