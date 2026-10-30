@@ -65,12 +65,23 @@ impl AgentSecuritySubject {
 }
 
 /// Dynamic semantic taint level tracking for inputs and context memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum TaintLevel {
+    #[default]
     Clean = 0,
     Suspect = 1,
     Tainted = 2,
-    Malicious = 3,
+    UntrustedExternal = 3,
+    Malicious = 4,
+}
+
+impl TaintLevel {
+    pub fn is_untrusted_or_worse(self) -> bool {
+        matches!(
+            self,
+            Self::Tainted | Self::UntrustedExternal | Self::Malicious
+        )
+    }
 }
 
 /// Taxonomy of agentic threat categories intercepted by RT-ASP.

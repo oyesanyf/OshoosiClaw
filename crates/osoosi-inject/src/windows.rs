@@ -457,6 +457,127 @@ unsafe fn init_hooks() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// --- 3.5 In-Memory Telemetry Tampering & Unhooking Watchdog (F09) ---
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvasionDetectionEvent {
+    pub target_symbol: &'static str,
+    pub reason: &'static str,
+    pub prologue_hex: String,
+}
+
+/// Pure byte-level inspection of a function prologue for user-mode ETW/AMSI patching or unhooking.
+pub fn inspect_prologue_for_evasion(
+    symbol: &'static str,
+    bytes: &[u8],
+) -> Option<EvasionDetectionEvent> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let hex_str = bytes
+        .iter()
+        .take(8)
+        .map(|b| format!("{:02X}", b))
+        .collect::<Vec<_>>()
+        .join("");
+
+    if symbol == "ntdll!EtwEventWrite" {
+        // ret (0xC3), ret imm16 (0xC2), xor eax,eax; ret (33 C0 C3 / 31 C0 C3), xor rax,rax; ret (48 33 C0 C3 / 48 31 C0 C3)
+        if bytes[0] == 0xC3
+            || bytes[0] == 0xC2
+            || (bytes.len() >= 3 && (bytes[0] == 0x33 || bytes[0] == 0x31) && bytes[1] == 0xC0 && bytes[2] == 0xC3)
+            || (bytes.len() >= 4
+                && bytes[0] == 0x48
+                && (bytes[1] == 0x33 || bytes[1] == 0x31)
+                && bytes[2] == 0xC0
+                && bytes[3] == 0xC3)
+        {
+            return Some(EvasionDetectionEvent {
+                target_symbol: symbol,
+                reason: "ETW_USERMODE_PATCH_DETECTED",
+                prologue_hex: hex_str,
+            });
+        }
+    } else if symbol == "amsi!AmsiScanBuffer" {
+        // mov eax, 0x80070057 (B8 57 00 07 80), ret (0xC3), xor eax,eax; ret (31 C0 C3 / 33 C0 C3)
+        if bytes[0] == 0xC3
+            || (bytes.len() >= 5
+                && bytes[0] == 0xB8
+                && bytes[1] == 0x57
+                && bytes[2] == 0x00
+                && bytes[3] == 0x07
+                && bytes[4] == 0x80)
+            || (bytes.len() >= 3 && (bytes[0] == 0x31 || bytes[0] == 0x33) && bytes[1] == 0xC0 && bytes[2] == 0xC3)
+        {
+            return Some(EvasionDetectionEvent {
+                target_symbol: symbol,
+                reason: "AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED",
+                prologue_hex: hex_str,
+            });
+        }
+    }
+    None
+}
+
+/// Verifies in-memory hook enablement and checks `ntdll!EtwEventWrite` and `amsi!AmsiScanBuffer`
+/// for inline patching or NTDLL unhooking. Emits high-priority telemetry on tampering.
+pub fn verify_critical_invariants() -> Vec<EvasionDetectionEvent> {
+    let mut detections = Vec::new();
+
+    if let Some(h) = HOOK_NTALLOCATEVIRTUALMEMORY.get() {
+        if !h.is_enabled() {
+            detections.push(EvasionDetectionEvent {
+                target_symbol: "ntdll!NtAllocateVirtualMemory",
+                reason: "NTDLL_DETOUR_UNHOOKED",
+                prologue_hex: "DISABLED".to_string(),
+            });
+        }
+    }
+    if let Some(h) = HOOK_NTPROTECTVIRTUALMEMORY.get() {
+        if !h.is_enabled() {
+            detections.push(EvasionDetectionEvent {
+                target_symbol: "ntdll!NtProtectVirtualMemory",
+                reason: "NTDLL_DETOUR_UNHOOKED",
+                prologue_hex: "DISABLED".to_string(),
+            });
+        }
+    }
+
+    unsafe {
+        if let Ok(addr) = get_module_symbol_address(s!("ntdll.dll"), s!("EtwEventWrite")) {
+            let slice = std::slice::from_raw_parts(addr as *const u8, 8);
+            if let Some(ev) = inspect_prologue_for_evasion("ntdll!EtwEventWrite", slice) {
+                detections.push(ev);
+            }
+        }
+        use windows::Win32::System::LibraryLoader::GetModuleHandleA;
+        if let Ok(hmod) = GetModuleHandleA(s!("amsi.dll")) {
+            if !hmod.is_invalid() {
+                if let Some(proc) = GetProcAddress(hmod, s!("AmsiScanBuffer")) {
+                    let slice = std::slice::from_raw_parts(proc as *const u8, 8);
+                    if let Some(ev) = inspect_prologue_for_evasion("amsi!AmsiScanBuffer", slice) {
+                        detections.push(ev);
+                    }
+                }
+            }
+        }
+    }
+
+    for det in &detections {
+        report_telemetry(
+            "TelemetryTamperingDetected",
+            json!({
+                "TargetSymbol": det.target_symbol,
+                "Reason": det.reason,
+                "PrologueHex": det.prologue_hex,
+                "CriticalPriority": true
+            }),
+        );
+    }
+
+    detections
+}
+
 // --- 4. DLL Entry Point ---
 
 #[no_mangle]

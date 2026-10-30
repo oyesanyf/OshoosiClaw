@@ -22,6 +22,24 @@ $targets += Get-ChildItem -Path "target\debug\build" -Filter "*.dll" -Recurse -E
 $signedCount = 0
 foreach ($f in $targets) {
     try {
+        if (-not (Test-Path $f.FullName)) { continue }
+        # Break any Cargo NTFS hardlink (e.g. build-script-build.exe <-> build_script_build-<hash>.exe)
+        # before running signtool so Windows 11 Smart App Control preserves the original link.exe inode EA.
+        $hlOut = & fsutil hardlink list $f.FullName 2>$null
+        if ($hlOut -and ($hlOut.Count -gt 1)) {
+            $targetFull = [System.IO.Path]::GetFullPath($f.FullName)
+            $driveRoot = [System.IO.Path]::GetPathRoot($targetFull).TrimEnd('\')
+            # Prefer preserving build-script-build.exe over build_script_build-<hash>.exe
+            if ($f.Name -like "build_script_build-*.exe") {
+                continue
+            }
+            foreach ($hlRel in $hlOut) {
+                $hlCandidate = "$driveRoot$hlRel"
+                if ([System.IO.Path]::GetFullPath($hlCandidate) -ne $targetFull) {
+                    Remove-Item -Path $hlCandidate -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
         $sig = Get-AuthenticodeSignature $f.FullName -ErrorAction SilentlyContinue
         if ((-not $sig) -or ($sig.SignerCertificate -eq $null)) {
             $signed = $false

@@ -101,17 +101,94 @@ pub fn populate_initial_active_processes(map: &DashMap<u32, ProcessMeta>) {
 
 pub type NativeTelemetry = NativeTelemetryEngine;
 
+/// Atomic counter tracking telemetry events dropped due to ring-buffer / channel saturation (F10).
+pub static TELEMETRY_EVENTS_LOST: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+pub fn telemetry_events_lost() -> u64 {
+    TELEMETRY_EVENTS_LOST.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn record_telemetry_event_lost() -> u64 {
+    TELEMETRY_EVENTS_LOST.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
+/// Classifies whether a `HostSecurityEvent` belongs to the high-priority critical queue (`tx_critical`)
+/// so noisy bulk file/stat floods cannot starve process creation, driver load, injection, or tampering telemetry.
+pub fn is_critical_telemetry_event(event: &HostSecurityEvent) -> bool {
+    matches!(event.event_id, 1 | 6 | 8 | 10 | 4688 | 7045)
+        || event
+            .data
+            .get("CriticalPriority")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || event
+            .data
+            .get("Hook")
+            .and_then(|v| v.as_str())
+            .map(|h| {
+                matches!(
+                    h,
+                    "TelemetryTamperingDetected"
+                        | "NtAllocateVirtualMemory"
+                        | "NtProtectVirtualMemory"
+                        | "CreateProcessW"
+                )
+            })
+            .unwrap_or(false)
+}
+
 pub struct NativeTelemetryEngine {
     tx: mpsc::Sender<HostSecurityEvent>,
+    tx_critical: Option<mpsc::Sender<HostSecurityEvent>>,
 }
 
 impl NativeTelemetryEngine {
     pub fn new(tx: mpsc::Sender<HostSecurityEvent>) -> Self {
-        Self { tx }
+        Self {
+            tx,
+            tx_critical: None,
+        }
+    }
+
+    pub fn new_prioritized(
+        tx_critical: mpsc::Sender<HostSecurityEvent>,
+        tx_bulk: mpsc::Sender<HostSecurityEvent>,
+    ) -> Self {
+        Self {
+            tx: tx_bulk,
+            tx_critical: Some(tx_critical),
+        }
+    }
+
+    /// Dispatches an event through the priority-tiered channel queues (`tx_critical` vs `tx_bulk`),
+    /// incrementing `TELEMETRY_EVENTS_LOST` on backpressure overflow.
+    pub fn dispatch_prioritized(
+        tx_critical: Option<&mpsc::Sender<HostSecurityEvent>>,
+        tx_bulk: &mpsc::Sender<HostSecurityEvent>,
+        event: HostSecurityEvent,
+    ) -> bool {
+        if is_critical_telemetry_event(&event) {
+            if let Some(crit) = tx_critical {
+                if crit.try_send(event.clone()).is_ok() {
+                    return true;
+                }
+            }
+        }
+        if tx_bulk.try_send(event).is_ok() {
+            true
+        } else {
+            record_telemetry_event_lost();
+            false
+        }
     }
 
     pub fn start(&self) {
         // Provided for compatibility with caller conventions
+    }
+
+    pub fn critical_sender(&self) -> Option<&mpsc::Sender<HostSecurityEvent>> {
+        self.tx_critical.as_ref()
     }
 
     /// Starts the native kernel monitoring trace.
@@ -1174,4 +1251,259 @@ fn enumerate_loaded_kernel_drivers_linux() -> Vec<LoadedDriverInfo> {
         }
     }
     results
+}
+
+
+// ============================================================================
+// F25 & F26: Zero-Day Kernel & Hypervisor Integrity Innovations
+// - F25: Hardware HVCI / VBS / VTL1 Posture Verifier (arXiv:2409.07508 SafeBPF)
+// - F26: Cross-View DKOM Process Differential & O(1) Temporal SPRT Sensor
+//        (arXiv:2503.02402 Trace of the Times)
+// ============================================================================
+
+pub const CODEINTEGRITY_OPTION_ENABLED: u32 = 0x0000_0001;
+pub const CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED: u32 = 0x0000_0400;
+pub const CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED: u32 = 0x0000_0800;
+
+/// Hardware-backed Virtualization-Based Security (VBS) & Hypervisor-Protected Code Integrity
+/// (HVCI / VTL1) posture report (`F25`, `arXiv:2409.07508`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct HvciVbsPostureReport {
+    pub raw_code_integrity_options: u32,
+    pub code_integrity_enabled: bool,
+    pub hvci_kmci_enabled: bool,
+    pub vbs_isolated_user_mode_enabled: bool,
+    /// When hardware HVCI is inactive, Ring 7 process confinement automatically tightens
+    /// because in-OS kernel callbacks are not backed by VTL1 hypervisor page protections.
+    pub requires_tightened_ring7_confinement: bool,
+}
+
+/// Evaluates raw `SYSTEM_CODEINTEGRITY_INFORMATION.CodeIntegrityOptions` bitmask (`F25`).
+pub fn evaluate_code_integrity_options_bitmask(options: u32) -> HvciVbsPostureReport {
+    let code_integrity_enabled = (options & CODEINTEGRITY_OPTION_ENABLED) != 0;
+    let hvci_kmci_enabled = (options & CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED) != 0;
+    let vbs_isolated_user_mode_enabled = (options & CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED) != 0;
+    HvciVbsPostureReport {
+        raw_code_integrity_options: options,
+        code_integrity_enabled,
+        hvci_kmci_enabled,
+        vbs_isolated_user_mode_enabled,
+        requires_tightened_ring7_confinement: !hvci_kmci_enabled,
+    }
+}
+
+/// Queries live Windows `NtQuerySystemInformation(SystemCodeIntegrityInformation = 0x67)`
+/// to verify hardware-backed HVCI/VBS/VTL1 code integrity posture (`F25`).
+pub fn verify_hardware_hvci_vbs_posture() -> HvciVbsPostureReport {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        #[repr(C)]
+        struct SystemCodeIntegrityInformation {
+            length: u32,
+            code_integrity_options: u32,
+        }
+        type NtQuerySystemInformationFn = unsafe extern "system" fn(
+            system_information_class: u32,
+            system_information: *mut std::ffi::c_void,
+            system_information_length: u32,
+            return_length: *mut u32,
+        ) -> i32;
+
+        let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleA(
+            windows::core::s!("ntdll.dll"),
+        );
+        if let Ok(hmod) = ntdll {
+            if !hmod.is_invalid() {
+                if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
+                    hmod,
+                    windows::core::s!("NtQuerySystemInformation"),
+                ) {
+                    let query_fn: NtQuerySystemInformationFn = std::mem::transmute(proc);
+                    let mut info = SystemCodeIntegrityInformation {
+                        length: std::mem::size_of::<SystemCodeIntegrityInformation>() as u32,
+                        code_integrity_options: 0,
+                    };
+                    let mut ret_len: u32 = 0;
+                    // SystemCodeIntegrityInformation = 0x67 (103)
+                    let status = query_fn(
+                        0x67,
+                        &mut info as *mut _ as *mut std::ffi::c_void,
+                        info.length,
+                        &mut ret_len,
+                    );
+                    if status == 0 {
+                        return evaluate_code_integrity_options_bitmask(
+                            info.code_integrity_options,
+                        );
+                    }
+                }
+            }
+        }
+    }
+    evaluate_code_integrity_options_bitmask(CODEINTEGRITY_OPTION_ENABLED)
+}
+
+/// Cross-View Direct Kernel Object Manipulation (DKOM) discrepancy finding (`F26`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CrossViewDkomFinding {
+    pub hidden_pids: Vec<u32>,
+    pub anomaly_detected: bool,
+    pub reason: String,
+}
+
+/// Compares standard `ActiveProcessLinks` PID enumeration (`view_a_active_links`) against
+/// kernel handle/scheduler thread PID tables (`view_b_handle_or_scheduler_pids`) to detect
+/// 0-day DKOM rootkits that unlink `EPROCESS` structures (`F26`, `arXiv:2503.02402`).
+pub fn detect_cross_view_dkom_discrepancy(
+    view_a_active_links: &[u32],
+    view_b_handle_or_scheduler_pids: &[u32],
+) -> CrossViewDkomFinding {
+    let active_set: std::collections::HashSet<u32> =
+        view_a_active_links.iter().copied().collect();
+    let mut hidden: Vec<u32> = view_b_handle_or_scheduler_pids
+        .iter()
+        .copied()
+        // Ignore Idle (0) and System (4) pseudo-PIDs
+        .filter(|&pid| pid != 0 && pid != 4 && !active_set.contains(&pid))
+        .collect();
+    hidden.sort_unstable();
+    hidden.dedup();
+
+    if hidden.is_empty() {
+        CrossViewDkomFinding {
+            hidden_pids: Vec::new(),
+            anomaly_detected: false,
+            reason: "Cross-view ActiveProcessLinks and handle/scheduler tables are consistent"
+                .to_string(),
+        }
+    } else {
+        CrossViewDkomFinding {
+            reason: format!(
+                "DKOM_HIDDEN_PROCESS_DETECTED: {} process(es) {:?} present in kernel handle/scheduler tables but unlinked from ActiveProcessLinks",
+                hidden.len(),
+                hidden
+            ),
+            hidden_pids: hidden,
+            anomaly_detected: true,
+        }
+    }
+}
+
+/// State of the $O(1)$ Sequential Probability Ratio Test (`SPRT`) over kernel callback heartbeats (`F26`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum KernelSprtState {
+    /// Null hypothesis $H_0$ holds: callback heartbeat cadence is nominal.
+    Nominal,
+    /// Indifference region: accumulating statistical evidence in $O(1)$ time.
+    Monitoring,
+    /// Alternative hypothesis $H_1$ accepted: kernel callback blinding or hypervisor VM-exit suppression detected.
+    CallbackBlindingOrRootkitDetected,
+}
+
+/// Constant-time $O(1)$ Sequential Probability Ratio Test (`SPRT`) monitor over kernel callback
+/// inter-arrival intervals (`F26`, `arXiv:2503.02402` *Trace of the Times*).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KernelSprtCallbackMonitor {
+    expected_interval_ms: f64,
+    anomaly_interval_ms: f64,
+    log_likelihood_ratio: f64,
+    upper_threshold_b: f64,
+    lower_threshold_a: f64,
+    samples_observed: u64,
+}
+
+impl KernelSprtCallbackMonitor {
+    /// Creates an $O(1)$ Wald SPRT monitor with false-positive bound $\alpha$ and false-negative bound $\beta$.
+    pub fn new(expected_interval_ms: f64, anomaly_interval_ms: f64, alpha: f64, beta: f64) -> Self {
+        let a = (beta / (1.0 - alpha)).ln();
+        let b = ((1.0 - beta) / alpha).ln();
+        Self {
+            expected_interval_ms: expected_interval_ms.max(1.0),
+            anomaly_interval_ms: anomaly_interval_ms.max(expected_interval_ms + 1.0),
+            log_likelihood_ratio: 0.0,
+            upper_threshold_b: b,
+            lower_threshold_a: a,
+            samples_observed: 0,
+        }
+    }
+
+    /// Updates the cumulative log-likelihood ratio $S_n = S_{n-1} + \ln\frac{f_1(\Delta t)}{f_0(\Delta t)}$
+    /// under exponential inter-arrival models in $O(1)$ time and returns the current `KernelSprtState`.
+    pub fn observe_interval_ms(&mut self, observed_dt_ms: f64) -> KernelSprtState {
+        let dt = observed_dt_ms.max(0.1);
+        let lambda_0 = 1.0 / self.expected_interval_ms;
+        let lambda_1 = 1.0 / self.anomaly_interval_ms;
+        // Log-likelihood ratio for Exponential(lambda_1) vs Exponential(lambda_0)
+        let step_llr = (lambda_1 / lambda_0).ln() + (lambda_0 - lambda_1) * dt;
+        self.log_likelihood_ratio =
+            (self.log_likelihood_ratio + step_llr).clamp(self.lower_threshold_a * 2.0, self.upper_threshold_b * 2.0);
+        self.samples_observed += 1;
+
+        if self.log_likelihood_ratio >= self.upper_threshold_b {
+            KernelSprtState::CallbackBlindingOrRootkitDetected
+        } else if self.log_likelihood_ratio <= self.lower_threshold_a {
+            self.log_likelihood_ratio = 0.0;
+            KernelSprtState::Nominal
+        } else {
+            KernelSprtState::Monitoring
+        }
+    }
+
+    pub fn log_likelihood_ratio(&self) -> f64 {
+        self.log_likelihood_ratio
+    }
+}
+
+#[cfg(test)]
+mod f25_f26_tests {
+    use super::*;
+
+    #[test]
+    fn test_f25_hvci_vbs_posture_bitmask_evaluation() {
+        let hvci_on = evaluate_code_integrity_options_bitmask(
+            CODEINTEGRITY_OPTION_ENABLED
+                | CODEINTEGRITY_OPTION_HVCI_KMCI_ENABLED
+                | CODEINTEGRITY_OPTION_HVCI_IUM_ENABLED,
+        );
+        assert!(hvci_on.code_integrity_enabled);
+        assert!(hvci_on.hvci_kmci_enabled);
+        assert!(hvci_on.vbs_isolated_user_mode_enabled);
+        assert!(!hvci_on.requires_tightened_ring7_confinement);
+
+        let hvci_off = evaluate_code_integrity_options_bitmask(CODEINTEGRITY_OPTION_ENABLED);
+        assert!(hvci_off.code_integrity_enabled);
+        assert!(!hvci_off.hvci_kmci_enabled);
+        assert!(hvci_off.requires_tightened_ring7_confinement);
+    }
+
+    #[test]
+    fn test_f26_cross_view_dkom_detects_unlinked_eprocess() {
+        let active_links = vec![4, 412, 880, 1024, 2048];
+        let handle_table = vec![0, 4, 412, 880, 1024, 2048, 31337];
+        let finding = detect_cross_view_dkom_discrepancy(&active_links, &handle_table);
+        assert!(finding.anomaly_detected);
+        assert_eq!(finding.hidden_pids, vec![31337]);
+        assert!(finding.reason.contains("DKOM_HIDDEN_PROCESS_DETECTED"));
+    }
+
+    #[test]
+    fn test_f26_kernel_sprt_callback_monitor_detects_blinding() {
+        let mut monitor = KernelSprtCallbackMonitor::new(50.0, 500.0, 0.001, 0.01);
+        // Nominal 40ms-55ms heartbeats stay Nominal/Monitoring
+        for _ in 0..5 {
+            let state = monitor.observe_interval_ms(45.0);
+            assert_ne!(state, KernelSprtState::CallbackBlindingOrRootkitDetected);
+        }
+        // Sudden callback starvation / hypervisor rootkit suppression (800ms intervals)
+        let mut detected = false;
+        for _ in 0..8 {
+            if monitor.observe_interval_ms(800.0)
+                == KernelSprtState::CallbackBlindingOrRootkitDetected
+            {
+                detected = true;
+                break;
+            }
+        }
+        assert!(detected, "SPRT must detect callback blinding within bounded samples");
+    }
 }

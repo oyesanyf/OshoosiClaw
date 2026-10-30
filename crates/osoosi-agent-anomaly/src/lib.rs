@@ -42,14 +42,17 @@ pub use alignment_scanner::{
     RuntimeTraceAlignmentScanner, Tier1StructuralResult, Tier2OllamaJudgeResult,
 };
 pub use breakout_defense::{
-    clear_all_ingested_research_rules, list_ingested_research_rules,
-    register_ingested_research_rule, remove_ingested_research_rule, restore_default_research_rules,
-    sanitize_and_validate_subprocess_env, validate_agent_egress_url,
-    validate_agent_filesystem_access, BehavioralBreakoutGuard, BehavioralBreakoutVerdict,
+    approve_ingested_research_rule, clear_all_ingested_research_rules,
+    is_research_rule_operator_approved, is_research_rule_pinned, list_ingested_research_rules,
+    pin_ingested_research_rule, register_ingested_research_rule, remove_ingested_research_rule,
+    restore_default_research_rules, sanitize_and_validate_subprocess_env,
+    validate_agent_egress_url, validate_agent_filesystem_access,
+    verify_rule_against_canary_benign_corpus, BehavioralBreakoutGuard, BehavioralBreakoutVerdict,
     BreakoutDefenseCoordinator, BreakoutDefenseError, EnvironmentInspectionResult,
     ExecutionEnvironmentGuard, IngestedResearchDefenseRule, TechnicalBreakoutGuard,
     TechnicalBreakoutVerdict, UnifiedBreakoutEvaluation, ZeroMiProjectionResult,
-    ZeroMutualInformationProjector, GLOBAL_RESEARCH_DEFENSE_REGISTRY,
+    ZeroMutualInformationProjector, CANARY_BENIGN_TELEMETRY_CORPUS,
+    GLOBAL_RESEARCH_DEFENSE_REGISTRY,
 };
 pub use breakout_prevention::*;
 pub use cedar_engine::{
@@ -62,12 +65,13 @@ pub use classifier::{
 };
 pub use command_line::*;
 pub use containment_ring::{
-    compute_ring_hmac, constant_time_eq_hex, mesh_signing_content, validate_resource_boundary,
-    AgentContainmentRing, ArmContainmentRing, ArmRingConfig, ArmRingMeshMessage, ArmRingRegistry,
-    ContainmentAuditEntry, DiracDeltaCapabilityTicket, IndependentTrustBoundaryVerifier,
-    MeshWatchOutSignal, MessageKind, MultiLayerGateVerdict, PinnedToolObjectBinding, ProvenanceHop,
-    ZeroCopyImmutableToolBuffer, MAX_RELAY_HOPS,
+    compute_ring_hmac, constant_time_eq_hex, mesh_signing_content, mesh_signing_content_with_taint,
+    validate_resource_boundary, AgentContainmentRing, ArmContainmentRing, ArmRingConfig,
+    ArmRingMeshMessage, ArmRingRegistry, ContainmentAuditEntry, DiracDeltaCapabilityTicket,
+    IndependentTrustBoundaryVerifier, MeshWatchOutSignal, MessageKind, MultiLayerGateVerdict,
+    PinnedToolObjectBinding, ProvenanceHop, ZeroCopyImmutableToolBuffer, MAX_RELAY_HOPS,
 };
+pub use rasp::TaintLevel;
 pub use detector::AgentAnomalyDetector;
 pub use egress_proxy::*;
 pub use file_lineage::{

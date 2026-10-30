@@ -54,6 +54,8 @@ pub struct ArmRingMeshMessage {
     pub payload: String,
     pub provenance: Vec<ProvenanceHop>,
     pub taint_floor: TrustTier,
+    #[serde(default)]
+    pub taint_level: crate::rasp::TaintLevel,
     pub signature_hex: String,
 }
 
@@ -109,6 +111,36 @@ pub fn mesh_signing_content(
         payload,
         prov,
         taint_floor
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn mesh_signing_content_with_taint(
+    sender_arm_id: usize,
+    sender_generation: u64,
+    target_arm_id: usize,
+    target_generation: u64,
+    kind: &MessageKind,
+    correlation_id: &str,
+    payload: &str,
+    provenance: &[ProvenanceHop],
+    taint_floor: TrustTier,
+    taint_level: crate::rasp::TaintLevel,
+) -> String {
+    format!(
+        "{}|taint_level={:?}",
+        mesh_signing_content(
+            sender_arm_id,
+            sender_generation,
+            target_arm_id,
+            target_generation,
+            kind,
+            correlation_id,
+            payload,
+            provenance,
+            taint_floor,
+        ),
+        taint_level
     )
 }
 
@@ -553,6 +585,36 @@ impl ArmContainmentRing {
         Ok(())
     }
 
+    pub async fn grant_tool(&self, tool: &str) {
+        let mut tools = self.allowed_tools.write().await;
+        tools.insert(tool.to_string());
+    }
+
+    pub async fn allowed_tools_snapshot(&self) -> HashSet<String> {
+        self.allowed_tools.read().await.clone()
+    }
+
+    pub async fn strip_high_privilege_tools(&self) -> Vec<String> {
+        const HIGH_PRIVILEGE_TOOLS: &[&str] = &[
+            "shell_exec",
+            "cmd",
+            "powershell",
+            "write_file",
+            "network_egress",
+            "extract_credentials",
+            "modify_policy",
+            "ledger_writer",
+        ];
+        let mut stripped = Vec::new();
+        let mut tools = self.allowed_tools.write().await;
+        for tool in HIGH_PRIVILEGE_TOOLS {
+            if tools.remove(*tool) {
+                stripped.push((*tool).to_string());
+            }
+        }
+        stripped
+    }
+
     pub async fn sign_mesh_message(
         &self,
         target_arm_id: usize,
@@ -561,17 +623,57 @@ impl ArmContainmentRing {
         correlation_id: &str,
         payload: &str,
     ) -> Result<ArmRingMeshMessage, OctopusSecurityError> {
-        let current_gen = self.current_generation();
-        self.validate_epoch(current_gen).await?;
-
-        let (taint_floor, provenance) = {
+        let (taint_floor, _) = {
             let taint = self.taint_state.read().await;
             let own = role_trust_tier(&self.role);
             (taint.0.min(own), taint.1.clone())
         };
+        let default_taint = if taint_floor == TrustTier::Untrusted {
+            crate::rasp::TaintLevel::UntrustedExternal
+        } else {
+            crate::rasp::TaintLevel::Clean
+        };
+        self.sign_mesh_message_with_taint(
+            target_arm_id,
+            target_generation,
+            kind,
+            correlation_id,
+            payload,
+            default_taint,
+        )
+        .await
+    }
+
+    pub async fn sign_mesh_message_with_taint(
+        &self,
+        target_arm_id: usize,
+        target_generation: u64,
+        kind: MessageKind,
+        correlation_id: &str,
+        payload: &str,
+        taint_level: crate::rasp::TaintLevel,
+    ) -> Result<ArmRingMeshMessage, OctopusSecurityError> {
+        let current_gen = self.current_generation();
+        self.validate_epoch(current_gen).await?;
+
+        let (mut taint_floor, provenance) = {
+            let taint = self.taint_state.read().await;
+            let own = role_trust_tier(&self.role);
+            (taint.0.min(own), taint.1.clone())
+        };
+        let effective_taint_level = if taint_floor == TrustTier::Untrusted
+            && !taint_level.is_untrusted_or_worse()
+        {
+            crate::rasp::TaintLevel::UntrustedExternal
+        } else {
+            taint_level
+        };
+        if effective_taint_level.is_untrusted_or_worse() {
+            taint_floor = TrustTier::Untrusted;
+        }
 
         let epoch_key = self.epoch_key(current_gen);
-        let data = mesh_signing_content(
+        let data = mesh_signing_content_with_taint(
             self.arm_id,
             current_gen,
             target_arm_id,
@@ -581,6 +683,7 @@ impl ArmContainmentRing {
             payload,
             &provenance,
             taint_floor,
+            effective_taint_level,
         );
         let sig = compute_ring_hmac(&epoch_key, data.as_bytes());
         let sig_hex = hex::encode(sig);
@@ -596,6 +699,7 @@ impl ArmContainmentRing {
             payload: payload.to_string(),
             provenance,
             taint_floor,
+            taint_level: effective_taint_level,
             signature_hex: sig_hex,
         })
     }
@@ -633,7 +737,7 @@ impl ArmContainmentRing {
 
         let sender_epoch_key =
             self.derive_arm_epoch_key(msg.sender_arm_id, msg.sender_generation, &msg.sender_role);
-        let expected_data = mesh_signing_content(
+        let expected_data = mesh_signing_content_with_taint(
             msg.sender_arm_id,
             msg.sender_generation,
             msg.target_arm_id,
@@ -643,6 +747,7 @@ impl ArmContainmentRing {
             &msg.payload,
             &msg.provenance,
             msg.taint_floor,
+            msg.taint_level,
         );
         let expected_sig = hex::encode(compute_ring_hmac(
             &sender_epoch_key,
@@ -666,11 +771,14 @@ impl ArmContainmentRing {
         let mut role_chain: Vec<ArmRole> = msg.provenance.iter().map(|h| h.role.clone()).collect();
         role_chain.push(msg.sender_role.clone());
         role_chain.push(self.role.clone());
-        let effective_floor = msg
+        let mut effective_floor = msg
             .provenance
             .iter()
             .map(|h| role_trust_tier(&h.role))
             .fold(msg.taint_floor.min(sender_tier), |a, b| a.min(b));
+        if msg.taint_level.is_untrusted_or_worse() {
+            effective_floor = TrustTier::Untrusted;
+        }
 
         let mut audit = HomologicalBoundaryAuditor::audit_role_chain(&role_chain);
         let recipient_tier = role_trust_tier(&self.role);
@@ -681,8 +789,8 @@ impl ArmContainmentRing {
             audit.allowed = false;
             audit.proxy_laundering_detected = true;
             audit.reason = format!(
-                "LAW1_STICKY_TAINT_VETO: sender carries untrusted taint floor into privileged sink {:?}",
-                self.role
+                "LAW1_STICKY_TAINT_VETO: sender carries untrusted taint floor/level ({:?}) into privileged sink {:?}",
+                msg.taint_level, self.role
             );
         }
         if !audit.allowed {
@@ -690,6 +798,10 @@ impl ArmContainmentRing {
                 "Ring Boundary Violation: Arm {} ({:?}) -> Sensitive Sink Arm {} ({:?}) rejected: {}",
                 msg.sender_arm_id, msg.sender_role, self.arm_id, self.role, audit.reason
             )));
+        }
+
+        if effective_floor == TrustTier::Untrusted || msg.taint_level.is_untrusted_or_worse() {
+            self.strip_high_privilege_tools().await;
         }
 
         {

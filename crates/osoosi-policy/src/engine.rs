@@ -480,11 +480,43 @@ fn orchestrate_evidence(
                 || v.result.reason.contains("Suspicious Child Payload Spawn"))
     });
 
+    let has_deterministic_cryptographic_guard = votes.iter().any(|v| {
+        v.result.reason.contains("Cryptographic mesh signature mismatch")
+            || v.result.reason.contains("IdentitySpoofingDetected")
+            || v.result.reason.contains("EpochSpoofing")
+            || v.result.reason.contains("MerkleIntegrityViolation")
+            || v.result.reason.contains("RowIntegrityViolation")
+            || v.result.reason.contains("LAW1_STICKY_TAINT_VETO")
+    });
+
+    let has_deterministic_kernel_behavioral_guard = matches!(event.event_id, 8 | 10 | 25)
+        || votes.iter().any(|v| {
+            v.result.reason.contains("BYOVD")
+                || v.result.reason.contains("ETW_USERMODE_PATCH_DETECTED")
+                || v.result.reason.contains("AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED")
+                || v.result.reason.contains("NTDLL_DETOUR_UNHOOKED")
+                || v.result.reason.contains("ProcessHollowing")
+                || v.result.reason.contains("LSASSMemoryDump")
+        });
+
+    let has_cedar_ring7_forbid_guard = votes.iter().any(|v| {
+        v.result.reason.contains("Cedar-Ring7-Forbid")
+            || v.result.reason.contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
+            || v.result.reason.contains("Self-Protection Violation")
+    });
+
     let has_deterministic_guard = has_deterministic_credential_or_memory_guard
         || has_deterministic_canary_guard
-        || has_sigma_or_lolbin_guard;
+        || has_sigma_or_lolbin_guard
+        || has_deterministic_cryptographic_guard
+        || has_deterministic_kernel_behavioral_guard
+        || has_cedar_ring7_forbid_guard;
 
-    let corroboration = if has_deterministic_canary_guard {
+    let corroboration = if has_deterministic_canary_guard
+        || has_deterministic_cryptographic_guard
+        || has_deterministic_kernel_behavioral_guard
+        || has_cedar_ring7_forbid_guard
+    {
         1.0f32
     } else if has_sigma_or_lolbin_guard {
         corroboration.max(0.96f32)
@@ -493,7 +525,11 @@ fn orchestrate_evidence(
     } else {
         corroboration
     };
-    let mut confidence = if has_deterministic_canary_guard {
+    let mut confidence = if has_deterministic_canary_guard
+        || has_deterministic_cryptographic_guard
+        || has_deterministic_kernel_behavioral_guard
+        || has_cedar_ring7_forbid_guard
+    {
         1.0f32
     } else {
         (base * corroboration + max_single.min(1.0) * 0.12).min(1.0)
@@ -1242,7 +1278,14 @@ impl PolicyEngine {
             || evidence_votes.iter().any(|v| {
                 let r = &v.result.reason;
                 r.contains("Cedar-Ring7-Forbid")
+                    || r.contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
                     || r.contains("Self-Protection Violation")
+                    || r.contains("Cryptographic mesh signature mismatch")
+                    || r.contains("IdentitySpoofingDetected")
+                    || r.contains("BYOVD")
+                    || r.contains("ETW_USERMODE_PATCH_DETECTED")
+                    || r.contains("AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED")
+                    || r.contains("NTDLL_DETOUR_UNHOOKED")
                     || r.contains("prompt_injection")
                     || r.contains("masquerade")
             });
