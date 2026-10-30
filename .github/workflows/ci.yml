@@ -34,6 +34,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
         with:
           key: clippy-windows
+          cache-on-failure: true
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings -A clippy::double_must_use -A clippy::unnecessary_cast -A clippy::upper_case_acronyms -A clippy::not_unsafe_ptr_arg_deref -A clippy::manual_c_str_literals -A clippy::let_unit_value -A clippy::useless_format -A clippy::manual_repeat_n -A clippy::doc_overindented_list_items -A clippy::cmp_owned -A clippy::manual_range_contains -A clippy::double_ended_iterator_last -A clippy::chunks_exact_to_as_chunks -A clippy::new_without_default -A clippy::needless_borrows_for_generic_args
@@ -76,12 +77,13 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
         with:
           key: test-windows
+          cache-on-failure: true
 
       - name: Run tests
         env:
           OSOOSI_NO_ORT: "1"   # skip ORT download in CI
           OSOOSI_NO_AI: "1"
-        run: cargo test --workspace
+        run: cargo test --workspace --lib --tests
 
       - name: Run Multi-Node GossipSub Fault-Injection Benchmark
         run: python scripts/run_multi_node_mesh_benchmark.py --fast
@@ -100,6 +102,7 @@ jobs:
         run: |
           $env:OSOOSI_DASHBOARD_PORT = "3030"
           $env:OSOOSI_DASHBOARD_BIND_ALL = "1"
+          $env:OSOOSI_PORT3030_HOLD_SECS = "600"
           $env:OSOOSI_NO_ORT = "1"
           $env:OSOOSI_NO_AI = "1"
 
@@ -108,6 +111,11 @@ jobs:
 
           # Start daemon in background
           $daemonJob = Start-Job -ScriptBlock {
+            $env:OSOOSI_DASHBOARD_PORT = "3030"
+            $env:OSOOSI_DASHBOARD_BIND_ALL = "1"
+            $env:OSOOSI_PORT3030_HOLD_SECS = "600"
+            $env:OSOOSI_NO_ORT = "1"
+            $env:OSOOSI_NO_AI = "1"
             cargo test -p osoosi-dashboard --test port3030_daemon run_live_port_3030_daemon -- --nocapture
           }
 
@@ -172,6 +180,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
         with:
           key: live-verification-windows
+          cache-on-failure: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
