@@ -25,15 +25,15 @@ fn test_adversarial_loopback_origin_spoofing_vectors() {
         "http://localhost:3000.spoof.net",
         "http://[::1]:8080.phishing.io",
         // 2. Port Parsing Boundary & Overflow Attacks
-        "http://127.0.0.1:999999",      // u16 overflow (> 65535)
-        "http://127.0.0.1:65536",       // 65535 + 1
+        "http://127.0.0.1:999999", // u16 overflow (> 65535)
+        "http://127.0.0.1:65536",  // 65535 + 1
         "http://127.0.0.1:100000",
-        "http://127.0.0.1:-1",          // negative port
-        "http://127.0.0.1:+3030",       // leading plus sign
-        "http://127.0.0.1: 3030",       // leading space
-        "http://127.0.0.1:3030 ",       // trailing space
-        "http://127.0.0.1:0x30",        // hex port
-        "http://127.0.0.1:",            // empty port after colon
+        "http://127.0.0.1:-1",    // negative port
+        "http://127.0.0.1:+3030", // leading plus sign
+        "http://127.0.0.1: 3030", // leading space
+        "http://127.0.0.1:3030 ", // trailing space
+        "http://127.0.0.1:0x30",  // hex port
+        "http://127.0.0.1:",      // empty port after colon
         // 3. Path / Query / Fragment Injections
         "http://127.0.0.1:3030/api",
         "http://localhost:3000?auth=1",
@@ -123,7 +123,13 @@ fn test_sec_fetch_site_csrf_matrix() {
     }
 
     // 2. Trusted Sec-Fetch-Site values must pass
-    let trusted_sfs = ["same-origin", "none", "SAME-ORIGIN", "None", " same-origin "];
+    let trusted_sfs = [
+        "same-origin",
+        "none",
+        "SAME-ORIGIN",
+        "None",
+        " same-origin ",
+    ];
 
     for sfs in &trusted_sfs {
         let mut headers = HeaderMap::new();
