@@ -71,7 +71,6 @@ pub use containment_ring::{
     IndependentTrustBoundaryVerifier, MeshWatchOutSignal, MessageKind, MultiLayerGateVerdict,
     PinnedToolObjectBinding, ProvenanceHop, ZeroCopyImmutableToolBuffer, MAX_RELAY_HOPS,
 };
-pub use rasp::TaintLevel;
 pub use detector::AgentAnomalyDetector;
 pub use egress_proxy::*;
 pub use file_lineage::{
@@ -87,6 +86,7 @@ pub use mesh_guard::{
     HomologicalAgentNode, HomologicalAuditReport, HomologicalBoundaryAuditor,
     HomologicalBoundaryVerdict, HomologicalMessageEdge, MeshGuard, VerifiedMeshMessage,
 };
+pub use rasp::TaintLevel;
 pub use reasoner::SemanticReasoningEngine;
 pub use rl_controller::{
     ConfidenceInterval95, CyberBattleBackendKind, DefenseAction, DefensePolicyMode,

@@ -129,8 +129,8 @@ fn test_challenger2_job_object_termination_on_job_close() {
     {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_SYNCHRONIZE,
+            GetExitCodeProcess, OpenProcess, WaitForSingleObject,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         };
 
         // Challenge 2.2: Launch a long-running process inside an explicit SandboxJobObject
@@ -138,8 +138,9 @@ fn test_challenger2_job_object_termination_on_job_close() {
             .expect("Create SandboxJobObject");
 
         // Use ping -n 30 127.0.0.1 > nul as a 30-second background process
-        let child = spawn_deelevated_in_job("cmd.exe /c ping -n 30 127.0.0.1 > nul", true, Some(&job))
-            .expect("spawn_deelevated_in_job with valid job must succeed");
+        let child =
+            spawn_deelevated_in_job("cmd.exe /c ping -n 30 127.0.0.1 > nul", true, Some(&job))
+                .expect("spawn_deelevated_in_job with valid job must succeed");
 
         assert!(
             child.is_in_job,
@@ -160,7 +161,10 @@ fn test_challenger2_job_object_termination_on_job_close() {
 
         let mut exit_code: u32 = 0;
         let ok = unsafe { GetExitCodeProcess(h_proc, &mut exit_code) };
-        assert!(ok.is_ok(), "GetExitCodeProcess must succeed on running child");
+        assert!(
+            ok.is_ok(),
+            "GetExitCodeProcess must succeed on running child"
+        );
         assert_eq!(
             exit_code, 259,
             "Child process must initially be running (STILL_ACTIVE = 259)"
@@ -196,8 +200,8 @@ fn test_challenger2_auto_job_termination_on_child_drop() {
     {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_SYNCHRONIZE,
+            GetExitCodeProcess, OpenProcess, WaitForSingleObject,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         };
 
         // Challenge 2.4: spawn_deelevated auto-creates an internal SandboxJobObject
@@ -507,7 +511,9 @@ fn test_challenger2_is_ssrf_ip_exhaustive_range_and_boundary_matrix() {
     // 9. IPv4-Mapped IPv6 (::ffff:0:0/96)
     assert!(is_ssrf_ip("::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
     assert!(is_ssrf_ip("::ffff:10.0.0.1".parse::<IpAddr>().unwrap()));
-    assert!(is_ssrf_ip("::ffff:169.254.169.254".parse::<IpAddr>().unwrap()));
+    assert!(is_ssrf_ip(
+        "::ffff:169.254.169.254".parse::<IpAddr>().unwrap()
+    ));
     // Mapped public IP
     assert!(!is_ssrf_ip("::ffff:1.1.1.1".parse::<IpAddr>().unwrap()));
 

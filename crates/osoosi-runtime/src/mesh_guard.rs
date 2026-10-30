@@ -29,7 +29,9 @@ pub const HIGH_PRIVILEGE_MESH_TOOLS: &[&str] = &[
 ];
 
 /// Taint classification for inter-arm mesh payloads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, Default,
+)]
 pub enum MeshTaintLevel {
     #[default]
     TrustedInternal = 0,
@@ -173,11 +175,7 @@ impl HitlApprovalReceipt {
         mac.update(canonical.as_bytes());
         let expected_hex = hex::encode(mac.finalize().into_bytes());
         if self.signature_hex.len() != expected_hex.len()
-            || !bool::from(
-                self.signature_hex
-                    .as_bytes()
-                    .ct_eq(expected_hex.as_bytes()),
-            )
+            || !bool::from(self.signature_hex.as_bytes().ct_eq(expected_hex.as_bytes()))
         {
             return Err(OctopusSecurityError::IdentitySpoofingDetected(
                 "Invalid HMAC-SHA256 signature on HitlApprovalReceipt".to_string(),
@@ -216,7 +214,8 @@ impl MeshCapabilityGovernor {
     }
 
     pub fn register_arm_tools(&self, arm_id: usize, initial_tools: HashSet<String>) {
-        self.arm_taint.insert(arm_id, MeshTaintLevel::TrustedInternal);
+        self.arm_taint
+            .insert(arm_id, MeshTaintLevel::TrustedInternal);
         self.arm_allowed_tools.insert(arm_id, initial_tools);
     }
 
@@ -366,9 +365,7 @@ pub struct DecompiledBlastRadius {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum HitlFirewallDecision {
     /// Low divergence ($D_{\text{hitl}} < 0.45$) and zero deception indicators: standard HITL approval allowed.
-    StandardHitlAllowed {
-        blast_radius: DecompiledBlastRadius,
-    },
+    StandardHitlAllowed { blast_radius: DecompiledBlastRadius },
     /// Elevated social-engineering risk ($0.45 \le D_{\text{hitl}} < 0.85$): one-click Approve is disabled;
     /// operator must type the exact `expected_confirmation_token` after reviewing the blast-radius diff.
     RequireTypedBlastRadiusChallenge {
@@ -515,8 +512,11 @@ impl HitlCognitiveFirewall {
 
         // Semantic Intent-vs-Effect divergence check
         let obj_lc = format!("{} {}", user_objective, agent_justification).to_ascii_lowercase();
-        let effect_lc = format!("{} {} {}", norm_tool, canonical_target_resource, command_args)
-            .to_ascii_lowercase();
+        let effect_lc = format!(
+            "{} {} {}",
+            norm_tool, canonical_target_resource, command_args
+        )
+        .to_ascii_lowercase();
 
         let claims_benign_readonly = obj_lc.contains("format")
             || obj_lc.contains("lint")
@@ -775,7 +775,9 @@ mod tests {
                 expected_confirmation_token,
                 blast_radius,
             } => {
-                assert!(blast_radius.divergence_score >= 0.45 && blast_radius.divergence_score < 0.85);
+                assert!(
+                    blast_radius.divergence_score >= 0.45 && blast_radius.divergence_score < 0.85
+                );
                 assert_eq!(
                     expected_confirmation_token,
                     "CONFIRM:WRITE_FILE:RELEASE_MANIFEST.JSON"

@@ -24,13 +24,13 @@
 
 use chrono::Utc;
 use osoosi_agent_anomaly::breakout_defense::{
-    BreakoutDefenseCoordinator, BreakoutDefenseError, ExecutionEnvironmentGuard,
-    sanitize_and_validate_subprocess_env,
+    sanitize_and_validate_subprocess_env, BreakoutDefenseCoordinator, BreakoutDefenseError,
+    ExecutionEnvironmentGuard,
 };
 use osoosi_policy::breakout_gate::{
-    AuthorityLevel, CedarAction, CedarContext, CedarPrincipal, CedarResource,
-    DataClassification, DogwoodTemporalPolicyEvaluator, EnforcementStage,
-    Ring7CapabilityEffectAuthorizer, TemporalEventType, TemporalTraceAtom,
+    AuthorityLevel, CedarAction, CedarContext, CedarPrincipal, CedarResource, DataClassification,
+    DogwoodTemporalPolicyEvaluator, EnforcementStage, Ring7CapabilityEffectAuthorizer,
+    TemporalEventType, TemporalTraceAtom,
 };
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -98,7 +98,8 @@ fn test_challenge_f05_sliding_window_boundary_7200s_vs_7201s() {
         resource_path: Some("/tmp/old_drop.sh".to_string()),
     });
 
-    let (forbid_expired, reason_expired) = evaluator.evaluate_taint_flow(session_expired, now, None);
+    let (forbid_expired, reason_expired) =
+        evaluator.evaluate_taint_flow(session_expired, now, None);
     assert!(
         !forbid_expired,
         "Chain at 7201s (outside window) must expire and NOT be forbidden"
@@ -205,7 +206,10 @@ fn test_challenge_f05_supervisor_declassification_horizon() {
     });
 
     let (forbid_ep1, _) = evaluator.evaluate_taint_flow(s, now - 350, None);
-    assert!(forbid_ep1, "Episode 1 must be forbidden before declassification");
+    assert!(
+        forbid_ep1,
+        "Episode 1 must be forbidden before declassification"
+    );
 
     // Supervisor reviews and declassifies at now - 300
     evaluator.record_atom(TemporalTraceAtom {
@@ -246,12 +250,10 @@ fn test_challenge_f05_supervisor_declassification_horizon() {
         forbid_ep2,
         "New attack sequence AFTER supervisor declassification MUST trigger forbid"
     );
-    assert!(
-        reason_ep2
-            .as_ref()
-            .unwrap()
-            .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
-    );
+    assert!(reason_ep2
+        .as_ref()
+        .unwrap()
+        .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"));
 }
 
 #[test]
@@ -316,7 +318,8 @@ fn test_challenge_f05_cedar_scratch_file_touch_integration() {
 #[test]
 fn test_challenge_f06_case_insensitive_and_mixed_case_hijacking_vars() {
     let guard = ExecutionEnvironmentGuard::new();
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_m2_case_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_m2_case_test_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     let mixed_case_vars = [
@@ -350,7 +353,8 @@ fn test_challenge_f06_case_insensitive_and_mixed_case_hijacking_vars() {
         env.insert(var.to_string(), "/tmp/payload.so".to_string());
         env.insert("PATH".to_string(), "C:\\Windows\\System32".to_string());
 
-        let (has_hijack, violations) = guard.inspect_execution_environment_hijacking(&env, "cargo test");
+        let (has_hijack, violations) =
+            guard.inspect_execution_environment_hijacking(&env, "cargo test");
         assert!(
             has_hijack,
             "Guard must detect mixed-case hijacking var: '{}'",
@@ -394,7 +398,10 @@ fn test_challenge_f06_env_pointing_to_forbidden_config_targets() {
         ("MY_TOOL_CONFIG", "/workspace/.cargo/config.toml"),
         ("LEGACY_CFG", "/workspace/.cargo/config"),
         ("CUSTOM_BUILDER", "C:\\projects\\app\\build.rs"),
-        ("SITE_PACKAGE_HOOK", "/usr/lib/python3.10/site-packages/evil.pth"),
+        (
+            "SITE_PACKAGE_HOOK",
+            "/usr/lib/python3.10/site-packages/evil.pth",
+        ),
     ];
 
     for (k, v) in sneaky_envs {
@@ -410,11 +417,15 @@ fn test_challenge_f06_env_pointing_to_forbidden_config_targets() {
         assert!(
             violations.iter().any(|viol| viol.contains(k)),
             "Violation must cite key '{}': {:?}",
-            k, violations
+            k,
+            violations
         );
 
         let res = sanitize_and_validate_subprocess_env(&env, &temp_dir, "run");
-        assert!(res.is_err(), "Must fail closed when env points to forbidden config");
+        assert!(
+            res.is_err(),
+            "Must fail closed when env points to forbidden config"
+        );
     }
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -438,12 +449,9 @@ fn test_challenge_f06_adversarial_inline_cli_overrides() {
     ];
 
     for cmd in adversarial_cmds {
-        let (has_hijack, violations) = guard.inspect_execution_environment_hijacking(&empty_env, cmd);
-        assert!(
-            has_hijack,
-            "Inline CLI override must be caught: '{}'",
-            cmd
-        );
+        let (has_hijack, violations) =
+            guard.inspect_execution_environment_hijacking(&empty_env, cmd);
+        assert!(has_hijack, "Inline CLI override must be caught: '{}'", cmd);
         assert!(
             !violations.is_empty(),
             "Violations must be populated for '{}'",
@@ -455,7 +463,8 @@ fn test_challenge_f06_adversarial_inline_cli_overrides() {
 #[test]
 fn test_challenge_f06_workspace_cargo_config_runner_hijacking() {
     let guard = ExecutionEnvironmentGuard::new();
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_m2_runner_test_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_m2_runner_test_{}", uuid::Uuid::new_v4()));
     let cargo_dir = temp_dir.join(".cargo");
     fs::create_dir_all(&cargo_dir).unwrap();
 
@@ -499,7 +508,10 @@ fn test_challenge_f06_breakout_defense_coordinator_integration() {
         hostile_payload_1,
         None,
     );
-    assert!(!eval_1.is_clean, "Coordinator must reject .pth reference in payload");
+    assert!(
+        !eval_1.is_clean,
+        "Coordinator must reject .pth reference in payload"
+    );
     assert!(!eval_1.operational.is_clean);
 
     // 2. Clean command passes
@@ -510,7 +522,10 @@ fn test_challenge_f06_breakout_defense_coordinator_integration() {
         "running unit tests for policy crate",
         None,
     );
-    assert!(eval_clean.is_clean, "Clean cargo test command must pass coordinator evaluation");
+    assert!(
+        eval_clean.is_clean,
+        "Clean cargo test command must pass coordinator evaluation"
+    );
 
     // 3. Hostile command in resource with inline NODE_OPTIONS (fails due to bug in coordinator)
     let eval_node = coordinator.evaluate_action(

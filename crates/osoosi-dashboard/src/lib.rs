@@ -1149,7 +1149,9 @@ async fn http_framing_defense_middleware(
 }
 
 /// Validates whether a request's `Origin` or `Sec-Fetch-Site` headers indicate a cross-site CSRF attempt (F14).
-pub fn validate_csrf_origin_and_fetch_site(headers: &HeaderMap) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+pub fn validate_csrf_origin_and_fetch_site(
+    headers: &HeaderMap,
+) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
     if let Some(sfs) = headers.get("sec-fetch-site").and_then(|v| v.to_str().ok()) {
         if sfs.trim().eq_ignore_ascii_case("cross-site") {
             return Err(api_error(
@@ -1161,7 +1163,10 @@ pub fn validate_csrf_origin_and_fetch_site(headers: &HeaderMap) -> Result<(), (S
         }
     }
 
-    if let Some(origin) = headers.get(axum::http::header::ORIGIN).and_then(|v| v.to_str().ok()) {
+    if let Some(origin) = headers
+        .get(axum::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
         let trimmed = origin.trim().to_ascii_lowercase();
         let is_local_origin = trimmed == "http://127.0.0.1"
             || trimmed.starts_with("http://127.0.0.1:")
@@ -1177,7 +1182,10 @@ pub fn validate_csrf_origin_and_fetch_site(headers: &HeaderMap) -> Result<(), (S
             return Err(api_error(
                 StatusCode::FORBIDDEN,
                 "CSRF_ORIGIN_MISMATCH",
-                &format!("Cross-origin request from '{}' rejected by Origin guard", origin),
+                &format!(
+                    "Cross-origin request from '{}' rejected by Origin guard",
+                    origin
+                ),
                 "Only local loopback origins (127.0.0.1 / localhost) are permitted.",
             ));
         }
@@ -4614,13 +4622,23 @@ fn sqlite_row_hmac_key() -> [u8; 32] {
 }
 
 /// Computes a hardware-keyed HMAC-SHA256 integrity tag over a SQLite row (`F16`).
-pub fn compute_row_integrity_tag(table_name: &str, primary_key: &str, json_payload: &str) -> String {
+pub fn compute_row_integrity_tag(
+    table_name: &str,
+    primary_key: &str,
+    json_payload: &str,
+) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     type HmacSha256 = Hmac<Sha256>;
     let key = sqlite_row_hmac_key();
     let mut mac = HmacSha256::new_from_slice(&key).expect("HMAC-SHA256 key size valid");
-    mac.update(format!("table={}|pk={}|payload={}", table_name, primary_key, json_payload).as_bytes());
+    mac.update(
+        format!(
+            "table={}|pk={}|payload={}",
+            table_name, primary_key, json_payload
+        )
+        .as_bytes(),
+    );
     hex::encode(mac.finalize().into_bytes())
 }
 
@@ -4680,7 +4698,8 @@ pub fn save_ui_setting_sqlite(key: &str, val: &Value) {
     let json_str = serde_json::to_string(val).unwrap_or_else(|_| "null".to_string());
     let now_utc = chrono::Utc::now().to_rfc3339();
     let integrity_tag = compute_row_integrity_tag("ui_settings_kv", clean_key, &json_str);
-    let sql = "INSERT INTO ui_settings_kv (setting_key, setting_json, updated_at_utc, integrity_tag)
+    let sql =
+        "INSERT INTO ui_settings_kv (setting_key, setting_json, updated_at_utc, integrity_tag)
                VALUES (?1, ?2, ?3, ?4)
                ON CONFLICT(setting_key) DO UPDATE SET
                    setting_json = excluded.setting_json,
@@ -6342,7 +6361,11 @@ async fn get_auth_status_endpoint(uri: axum::http::Uri, headers: HeaderMap) -> R
         .get("x-osoosi-token")
         .and_then(|v| v.to_str().ok())
         .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
-        .or_else(|| headers.get("x-osoosi-admin-secret").and_then(|v| v.to_str().ok()))
+        .or_else(|| {
+            headers
+                .get("x-osoosi-admin-secret")
+                .and_then(|v| v.to_str().ok())
+        })
         .or_else(|| {
             headers
                 .get(axum::http::header::AUTHORIZATION)
@@ -14303,7 +14326,6 @@ mod tests {
     }
 }
 
-
 // ============================================================================
 // F27 & F28: Physical / Offline Access & State Rollback Innovations
 // - F27: TPM 2.0 PCR[0,2,4,7]-Bound Envelope Key Derivation + SecureBoot Posture
@@ -14356,13 +14378,37 @@ pub fn derive_pcr_bound_envelope_key(measurements: &TpmPcrBootMeasurements) -> [
     hasher.update(b"OSHOOSI_TPM2_PCR_0_2_4_7_ENVELOPE_KDF_V1:");
     hasher.update(&base_key);
     hasher.update(b"|PCR0=");
-    hasher.update(measurements.pcr0_firmware_hex.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(
+        measurements
+            .pcr0_firmware_hex
+            .trim()
+            .to_ascii_lowercase()
+            .as_bytes(),
+    );
     hasher.update(b"|PCR2=");
-    hasher.update(measurements.pcr2_option_rom_hex.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(
+        measurements
+            .pcr2_option_rom_hex
+            .trim()
+            .to_ascii_lowercase()
+            .as_bytes(),
+    );
     hasher.update(b"|PCR4=");
-    hasher.update(measurements.pcr4_boot_manager_hex.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(
+        measurements
+            .pcr4_boot_manager_hex
+            .trim()
+            .to_ascii_lowercase()
+            .as_bytes(),
+    );
     hasher.update(b"|PCR7=");
-    hasher.update(measurements.pcr7_secure_boot_hex.trim().to_ascii_lowercase().as_bytes());
+    hasher.update(
+        measurements
+            .pcr7_secure_boot_hex
+            .trim()
+            .to_ascii_lowercase()
+            .as_bytes(),
+    );
     hasher.update(if measurements.uefi_secure_boot_enabled {
         b"|SB=1"
     } else {
@@ -14464,7 +14510,13 @@ impl AuditFirstStateRollbackGuard {
         let mut hasher = Sha256::new();
         hasher.update(b"OSHOOSI_AUDIT_FIRST_ANTI_ROLLBACK_V1:");
         hasher.update(self.current_anchor.chained_merkle_root_hex.as_bytes());
-        hasher.update(format!("|epoch={}|table={}|pk={}|tag={}", next_epoch, table_name, primary_key, row_integrity_tag).as_bytes());
+        hasher.update(
+            format!(
+                "|epoch={}|table={}|pk={}|tag={}",
+                next_epoch, table_name, primary_key, row_integrity_tag
+            )
+            .as_bytes(),
+        );
         let next_root = hex::encode(hasher.finalize());
 
         self.current_anchor = StateRootAnchor {
@@ -14551,7 +14603,10 @@ mod f27_f28_tests {
         assert_eq!(anchor_v2.commit_epoch, 2);
 
         // Current state matches hardware anchor v2
-        assert!(AuditFirstStateRollbackGuard::verify_anti_rollback_state(&anchor_v2, &anchor_v2).is_ok());
+        assert!(
+            AuditFirstStateRollbackGuard::verify_anti_rollback_state(&anchor_v2, &anchor_v2)
+                .is_ok()
+        );
 
         // Offline attacker restores older SQLite snapshot (anchor_v1) while TPM NV holds anchor_v2
         let rollback_err =

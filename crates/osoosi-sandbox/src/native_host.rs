@@ -779,9 +779,13 @@ pub async fn build_ssrf_safe_http_client(
     let parsed_url = reqwest::Url::parse(url_trimmed).map_err(|e| {
         osoosi_types::OctopusSecurityError::SsrfBlocked(format!("Invalid URL: {}", e))
     })?;
-    let port = parsed_url.port_or_known_default().unwrap_or(
-        if parsed_url.scheme() == "https" { 443 } else { 80 },
-    );
+    let port = parsed_url
+        .port_or_known_default()
+        .unwrap_or(if parsed_url.scheme() == "https" {
+            443
+        } else {
+            80
+        });
 
     let pinned_socket_addr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_ssrf_ip(ip) {
@@ -876,9 +880,13 @@ pub fn build_ssrf_safe_http_client_sync(
     let parsed_url = reqwest::Url::parse(url_trimmed).map_err(|e| {
         osoosi_types::OctopusSecurityError::SsrfBlocked(format!("Invalid URL: {}", e))
     })?;
-    let port = parsed_url.port_or_known_default().unwrap_or(
-        if parsed_url.scheme() == "https" { 443 } else { 80 },
-    );
+    let port = parsed_url
+        .port_or_known_default()
+        .unwrap_or(if parsed_url.scheme() == "https" {
+            443
+        } else {
+            80
+        });
 
     let pinned_socket_addr = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         if is_ssrf_ip(ip) {

@@ -770,14 +770,23 @@ impl DogwoodTemporalPolicyEvaluator {
     }
 
     pub fn record_atom(&self, atom: TemporalTraceAtom) {
-        let mut entry = self.trace_events.entry(atom.session_id.clone()).or_default();
-        let cutoff = atom.timestamp_utc.saturating_sub(self.default_window_seconds as i64);
+        let mut entry = self
+            .trace_events
+            .entry(atom.session_id.clone())
+            .or_default();
+        let cutoff = atom
+            .timestamp_utc
+            .saturating_sub(self.default_window_seconds as i64);
         entry.retain(|e| e.timestamp_utc >= cutoff);
         entry.push(atom);
     }
 
     pub fn record_declassification(&self, session_id: &str) {
-        self.record_event(session_id, TemporalEventType::SupervisorDeclassification, None);
+        self.record_event(
+            session_id,
+            TemporalEventType::SupervisorDeclassification,
+            None,
+        );
     }
 
     pub fn clear_session(&self, session_id: &str) {
@@ -897,7 +906,11 @@ impl DogwoodTemporalPolicyEvaluator {
             return (false, None);
         }
 
-        let earliest_web_input = web_inputs.iter().map(|e| e.timestamp_utc).min().unwrap_or(0);
+        let earliest_web_input = web_inputs
+            .iter()
+            .map(|e| e.timestamp_utc)
+            .min()
+            .unwrap_or(0);
         let writes_after_web: Vec<&TemporalTraceAtom> = scratch_writes
             .into_iter()
             .filter(|sw| sw.timestamp_utc >= earliest_web_input)
@@ -908,7 +921,11 @@ impl DogwoodTemporalPolicyEvaluator {
         }
 
         if let Some(dec_time) = last_declass_time {
-            let latest_write = writes_after_web.iter().map(|e| e.timestamp_utc).max().unwrap_or(0);
+            let latest_write = writes_after_web
+                .iter()
+                .map(|e| e.timestamp_utc)
+                .max()
+                .unwrap_or(0);
             if dec_time >= latest_write {
                 return (false, None);
             }
@@ -2823,8 +2840,7 @@ impl Ring7CapabilityEffectAuthorizer {
     }
 
     pub fn record_temporal_declassification(&self, session_id: &str) {
-        self.temporal_evaluator
-            .record_declassification(session_id);
+        self.temporal_evaluator.record_declassification(session_id);
     }
 
     pub fn register_crown_jewel_asset(&self, asset_id: &str, canonical_path: &str, content: &str) {
@@ -4517,7 +4533,8 @@ mod tests {
         );
 
         // Subprocess at this point is not yet fragmented
-        let (forbid, _) = evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
+        let (forbid, _) =
+            evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
         assert!(!forbid, "Should not forbid before scratch file write");
 
         // Step 2: ScratchFileWrite
@@ -4535,9 +4552,15 @@ mod tests {
         );
 
         // Evaluation must now trigger forbid
-        let (forbid, reason) = evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
-        assert!(forbid, "Dogwood MFOTL must forbid multi-turn temporal taint chain");
-        assert!(reason.unwrap().contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"));
+        let (forbid, reason) =
+            evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
+        assert!(
+            forbid,
+            "Dogwood MFOTL must forbid multi-turn temporal taint chain"
+        );
+        assert!(reason
+            .unwrap()
+            .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"));
     }
 
     #[test]
@@ -4573,8 +4596,12 @@ mod tests {
         evaluator.record_declassification(session);
 
         // After supervisor declassification, forbid is cleared
-        let (forbid_after, reason) = evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
-        assert!(!forbid_after, "Supervisor declassification must clear temporal taint forbid");
+        let (forbid_after, reason) =
+            evaluator.evaluate_taint_flow(session, chrono::Utc::now().timestamp(), None);
+        assert!(
+            !forbid_after,
+            "Supervisor declassification must clear temporal taint forbid"
+        );
         assert!(reason.is_none());
     }
 
@@ -4606,7 +4633,10 @@ mod tests {
 
         // Out-of-window web input should not trigger the temporal taint chain
         let (forbid, _) = evaluator.evaluate_taint_flow(session, now, None);
-        assert!(!forbid, "Events outside sliding window (2h) must expire and not trigger forbid");
+        assert!(
+            !forbid,
+            "Events outside sliding window (2h) must expire and not trigger forbid"
+        );
     }
 
     #[test]
@@ -4645,7 +4675,10 @@ mod tests {
             EnforcementStage::PreExecutionPrevented,
         );
 
-        assert!(!decision.allowed, "ChildProcessExec must be forbidden on temporal taint fragmentation");
+        assert!(
+            !decision.allowed,
+            "ChildProcessExec must be forbidden on temporal taint fragmentation"
+        );
         assert!(
             decision
                 .matched_forbid_policies
