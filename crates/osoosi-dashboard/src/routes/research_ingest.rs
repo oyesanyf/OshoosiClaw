@@ -794,10 +794,7 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
 }
 
 /// Detects a verified public code repository URL (GitHub/GitLab) from extraction fields or canonical mappings.
-const BLOCKED_FAKE_REPO_SUBSTRINGS: &[&str] = &[
-    "rlhf-poisoning-benchmark",
-    "mac-agent-bench",
-];
+const BLOCKED_FAKE_REPO_SUBSTRINGS: &[&str] = &["rlhf-poisoning-benchmark", "mac-agent-bench"];
 
 fn is_valid_verified_repo_url(url: &str) -> bool {
     let clean = url.trim();
@@ -836,18 +833,8 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     "https://github.com/cedar-policy/cedar-spec".to_string(),
                 )
             }
-            "2610.20437" => {
-                return (
-                    true,
-                    "https://github.com/NVIDIA/garak".to_string(),
-                )
-            }
-            "2601.11893" => {
-                return (
-                    true,
-                    "https://github.com/ethz-spylab/agentdojo".to_string(),
-                )
-            }
+            "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
+            "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
             _ => {}
         }
     }
@@ -935,12 +922,13 @@ pub fn build_ingested_research_rule(
     } else {
         96.0
     };
-    let generated_code_snippet = osoosi_agent_anomaly::breakout_defense::synthesize_rust_guard_snippet(
-        &rule_id,
-        &arxiv_id,
-        &indicator,
-        &item.attack_vector,
-    );
+    let generated_code_snippet =
+        osoosi_agent_anomaly::breakout_defense::synthesize_rust_guard_snippet(
+            &rule_id,
+            &arxiv_id,
+            &indicator,
+            &item.attack_vector,
+        );
     osoosi_agent_anomaly::IngestedResearchDefenseRule {
         rule_id,
         arxiv_id,
@@ -4026,12 +4014,18 @@ mod tests {
     #[test]
     fn test_detect_verified_code_repo_blocks_404_and_resolves_live_repos() {
         // 1. Verify 404 fake repo URLs are blocked
-        assert!(!is_valid_verified_repo_url("https://github.com/AlignmentResearch/rlhf-poisoning-benchmark"));
-        assert!(!is_valid_verified_repo_url("https://github.com/oshoosiclaw/mac-agent-bench"));
+        assert!(!is_valid_verified_repo_url(
+            "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark"
+        ));
+        assert!(!is_valid_verified_repo_url(
+            "https://github.com/oshoosiclaw/mac-agent-bench"
+        ));
 
         let item_fake1 = ResearchExtractionItem {
             arxiv_id: Some("2610.99999".to_string()),
-            code_repo_url: Some("https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string()),
+            code_repo_url: Some(
+                "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string(),
+            ),
             ..Default::default()
         };
         let (has1, _) = detect_verified_code_repo(&item_fake1);

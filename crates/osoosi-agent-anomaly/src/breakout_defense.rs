@@ -1433,7 +1433,7 @@ pub fn synthesize_rust_guard_snippet(
     let clean_vector = attack_vector.replace('"', "\\\"");
 
     format!(
-r#"// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:{clean_arxiv}
+        r#"// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:{clean_arxiv}
 // Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
 // Threat Vector: {clean_vector}
 if let Ok(rules) = research_defense_registry().read() {{
@@ -2193,7 +2193,12 @@ pub fn upsert_research_rule_sqlite(rule: &IngestedResearchDefenseRule) {
         rule.accuracy_score
     };
     let snippet = if rule.generated_code_snippet.is_empty() {
-        synthesize_rust_guard_snippet(&canonical_id, &rule.arxiv_id, &rule.indicator_pattern, &rule.attack_vector)
+        synthesize_rust_guard_snippet(
+            &canonical_id,
+            &rule.arxiv_id,
+            &rule.indicator_pattern,
+            &rule.attack_vector,
+        )
     } else {
         rule.generated_code_snippet.clone()
     };
@@ -2288,7 +2293,12 @@ pub fn load_research_rules_sqlite() -> Vec<IngestedResearchDefenseRule> {
                 let code_repo_url: String = row.get::<_, String>(14).unwrap_or_default();
                 let raw_snippet: String = row.get::<_, String>(15).unwrap_or_default();
                 let generated_code_snippet = if raw_snippet.is_empty() {
-                    synthesize_rust_guard_snippet(&rule_id, &arxiv_id, &indicator_pattern, &attack_vector)
+                    synthesize_rust_guard_snippet(
+                        &rule_id,
+                        &arxiv_id,
+                        &indicator_pattern,
+                        &attack_vector,
+                    )
                 } else {
                     raw_snippet
                 };
@@ -4051,7 +4061,9 @@ mod tests {
         };
         let err = verify_rule_against_canary_benign_corpus(&false_positive_rule);
         assert!(err.is_some());
-        assert!(err.unwrap().contains("triggered false positive on canary benign telemetry sample"));
+        assert!(err
+            .unwrap()
+            .contains("triggered false positive on canary benign telemetry sample"));
 
         let git_fp_rule = IngestedResearchDefenseRule {
             indicator_pattern: "git status -s".to_string(),
@@ -4059,7 +4071,8 @@ mod tests {
         };
         assert!(verify_rule_against_canary_benign_corpus(&git_fp_rule).is_some());
 
-        let verdict = validate_research_rule_acceptance(&false_positive_rule, Some(90.0), &[], false);
+        let verdict =
+            validate_research_rule_acceptance(&false_positive_rule, Some(90.0), &[], false);
         assert!(!verdict.accepted);
     }
 
@@ -4090,7 +4103,10 @@ mod tests {
             );
         }
         assert_eq!(seeded[2].code_repo_url, "https://github.com/NVIDIA/garak");
-        assert_eq!(seeded[3].code_repo_url, "https://github.com/ethz-spylab/agentdojo");
+        assert_eq!(
+            seeded[3].code_repo_url,
+            "https://github.com/ethz-spylab/agentdojo"
+        );
     }
 
     #[test]
