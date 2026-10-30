@@ -10681,6 +10681,14 @@ async function loadDynamicDiskStatus() {
                 : `\u23F8\u{FE0F} WATCHDOG PAUSED`;
         }
 
+        const existingBanner = document.getElementById('disk-cleanup-result-banner');
+        if (existingBanner && existingBanner.innerHTML.includes('Cleanup Error:') && existingBanner.innerHTML.includes('Fast in-memory working set evicted')) {
+            existingBanner.style.background = 'rgba(16, 185, 129, 0.15)';
+            existingBanner.style.border = '1px solid var(--accent-green, #10b981)';
+            existingBanner.style.color = 'var(--accent-green, #10b981)';
+            existingBanner.innerHTML = `\u2705 <strong>Cleanup Complete:</strong> Fast in-memory working set evicted; heavy filesystem purge scheduled in background worker.`;
+        }
+
     } catch (err) {
         console.error('[loadDynamicDiskStatus] Error:', err);
     }

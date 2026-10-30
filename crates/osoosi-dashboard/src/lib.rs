@@ -186,13 +186,18 @@ pub fn resolve_dashboard_asset_dir() -> PathBuf {
     .into_iter()
     .flatten()
     {
-        let mut dir = Some(start);
+        let mut dir = Some(start.clone());
         for _ in 0..10 {
             let Some(d) = dir else { break };
             let candidate_src = d.join("dashboard").join("src");
             if candidate_src.join("app.js").is_file() {
                 return candidate_src;
             }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+        let mut dir = Some(start);
+        for _ in 0..10 {
+            let Some(d) = dir else { break };
             let candidate_dist = d.join("dashboard").join("dist");
             if candidate_dist.join("app.js").is_file() {
                 return candidate_dist;
