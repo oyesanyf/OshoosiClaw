@@ -150,11 +150,19 @@ mod sys {
     pub const TOKEN_QUERY: u32 = 0x0008;
     pub const TOKEN_ADJUST_DEFAULT: u32 = 0x0080;
 
+    pub const TOKEN_USER_CLASS: u32 = 1;
     pub const TOKEN_GROUPS_CLASS: u32 = 2;
     pub const TOKEN_PRIVILEGES_CLASS: u32 = 3;
+    pub const TOKEN_OWNER_CLASS: u32 = 4;
+    pub const TOKEN_DEFAULT_DACL_CLASS: u32 = 6;
     pub const TOKEN_ELEVATION_CLASS: u32 = 20;
     pub const TOKEN_INTEGRITY_LEVEL_CLASS: u32 = 25;
     pub const TOKEN_IS_APP_CONTAINER_CLASS: u32 = 29;
+
+    pub const ACL_REVISION: u32 = 2;
+    pub const GENERIC_ALL: u32 = 0x1000_0000;
+    pub const SE_WINDOW_OBJECT: u32 = 7;
+    pub const DACL_SECURITY_INFORMATION: u32 = 0x0000_0004;
 
     pub const SE_GROUP_ENABLED: u32 = 0x0000_0004;
     pub const SE_GROUP_USE_FOR_DENY_ONLY: u32 = 0x0000_0010;
@@ -221,6 +229,18 @@ mod sys {
     #[allow(non_snake_case)]
     pub struct TOKEN_MANDATORY_LABEL {
         pub Label: SID_AND_ATTRIBUTES,
+    }
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    pub struct TOKEN_OWNER {
+        pub Owner: PSID,
+    }
+
+    #[repr(C)]
+    #[allow(non_snake_case)]
+    pub struct TOKEN_DEFAULT_DACL {
+        pub DefaultDacl: *mut u8,
     }
 
     #[repr(C)]
@@ -356,12 +376,31 @@ mod sys {
             lpStartupInfo: *const STARTUPINFOW,
             lpProcessInformation: *mut PROCESS_INFORMATION,
         ) -> BOOL;
+        pub fn InitializeAcl(pAcl: *mut u8, nAclLength: u32, dwAclRevision: u32) -> BOOL;
+        pub fn AddAccessAllowedAce(
+            pAcl: *mut u8,
+            dwAceRevision: u32,
+            AccessMask: u32,
+            pSid: PSID,
+        ) -> BOOL;
+        pub fn SetSecurityInfo(
+            handle: HANDLE,
+            ObjectType: u32,
+            SecurityInfo: u32,
+            psidOwner: PSID,
+            psidGroup: PSID,
+            pDacl: *const u8,
+            pSacl: *const u8,
+        ) -> u32;
     }
 
     #[allow(clashing_extern_declarations)]
     #[link(name = "kernel32")]
     extern "system" {
         pub fn GetCurrentProcess() -> HANDLE;
+        pub fn GetCurrentThreadId() -> u32;
+        pub fn LoadLibraryA(lpLibFileName: *const u8) -> HANDLE;
+        pub fn GetProcAddress(hModule: HANDLE, lpProcName: *const u8) -> *mut c_void;
         pub fn CloseHandle(hObject: HANDLE) -> BOOL;
         pub fn LocalFree(hMem: *mut c_void) -> *mut c_void;
         pub fn GetLastError() -> u32;
@@ -419,7 +458,7 @@ impl SandboxJobObject {
                 | sys::JOB_OBJECT_LIMIT_ACTIVE_PROCESS
                 | sys::JOB_OBJECT_LIMIT_PROCESS_MEMORY;
             ext.BasicLimitInformation.ActiveProcessLimit = max_active_processes.max(1);
-            ext.ProcessMemoryLimit = max_memory_bytes.max(16 * 1024 * 1024);
+            ext.ProcessMemoryLimit = max_memory_bytes.max(256 * 1024 * 1024);
 
             let ok = unsafe {
                 sys::SetInformationJobObject(
@@ -809,7 +848,155 @@ pub fn create_deelevated_token() -> Result<OwnedToken, OctopusSecurityError> {
             reasons.join("; ")
         )));
     }
+
+    // When derived from an elevated token (e.g., Windows Service or CI runneradmin),
+    // TokenOwner is BUILTIN\Administrators (which is now deny-only) and TokenDefaultDacl
+    // only grants access to Administrators and SYSTEM (excluding TokenUser).
+    // Reset TokenOwner to TokenUser and include TokenUser + Everyone in TokenDefaultDacl
+    // so the de-elevated child process is not denied access to its own kernel objects during LdrpInitializeProcess (0xC0000142).
+    if let Ok(user_buf) = query_token_buffer(restricted.raw(), sys::TOKEN_USER_CLASS) {
+        let user_sid = unsafe { (*(user_buf.as_ptr() as *const sys::SID_AND_ATTRIBUTES)).Sid };
+        if !user_sid.is_null() {
+            let owner_info = sys::TOKEN_OWNER { Owner: user_sid };
+            let _ = unsafe {
+                sys::SetTokenInformation(
+                    restricted.raw(),
+                    sys::TOKEN_OWNER_CLASS,
+                    &owner_info as *const _ as *const std::ffi::c_void,
+                    std::mem::size_of::<sys::TOKEN_OWNER>() as u32,
+                )
+            };
+            if let (Ok(sys_sid), Ok(world_sid), Ok(auth_sid)) = (
+                LocalSid::from_str("S-1-5-18"),
+                LocalSid::from_str("S-1-1-0"),
+                LocalSid::from_str("S-1-5-11"),
+            ) {
+                let mut acl_buf = vec![0u64; 64];
+                let acl_ptr = acl_buf.as_mut_ptr() as *mut u8;
+                let acl_len = (acl_buf.len() * std::mem::size_of::<u64>()) as u32;
+                unsafe {
+                    if sys::InitializeAcl(acl_ptr, acl_len, sys::ACL_REVISION) != 0 {
+                        let _ = sys::AddAccessAllowedAce(
+                            acl_ptr,
+                            sys::ACL_REVISION,
+                            sys::GENERIC_ALL,
+                            user_sid,
+                        );
+                        let _ = sys::AddAccessAllowedAce(
+                            acl_ptr,
+                            sys::ACL_REVISION,
+                            sys::GENERIC_ALL,
+                            sys_sid.0,
+                        );
+                        let _ = sys::AddAccessAllowedAce(
+                            acl_ptr,
+                            sys::ACL_REVISION,
+                            sys::GENERIC_ALL,
+                            admins.0,
+                        );
+                        let _ = sys::AddAccessAllowedAce(
+                            acl_ptr,
+                            sys::ACL_REVISION,
+                            sys::GENERIC_ALL,
+                            auth_sid.0,
+                        );
+                        let _ = sys::AddAccessAllowedAce(
+                            acl_ptr,
+                            sys::ACL_REVISION,
+                            sys::GENERIC_ALL,
+                            world_sid.0,
+                        );
+                        let dacl_info = sys::TOKEN_DEFAULT_DACL {
+                            DefaultDacl: acl_ptr,
+                        };
+                        let _ = sys::SetTokenInformation(
+                            restricted.raw(),
+                            sys::TOKEN_DEFAULT_DACL_CLASS,
+                            &dacl_info as *const _ as *const std::ffi::c_void,
+                            std::mem::size_of::<sys::TOKEN_DEFAULT_DACL>() as u32,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     Ok(restricted)
+}
+
+#[cfg(windows)]
+fn allow_deelevated_token_on_current_winsta_and_desktop(token: sys::HANDLE) {
+    let user_buf = match query_token_buffer(token, sys::TOKEN_USER_CLASS) {
+        Ok(b) => b,
+        Err(_) => return,
+    };
+    let user_sid = unsafe { (*(user_buf.as_ptr() as *const sys::SID_AND_ATTRIBUTES)).Sid };
+    if user_sid.is_null() {
+        return;
+    }
+    let (Ok(admins), Ok(sys_sid), Ok(world_sid), Ok(auth_sid)) = (
+        LocalSid::from_str("S-1-5-32-544"),
+        LocalSid::from_str("S-1-5-18"),
+        LocalSid::from_str("S-1-1-0"),
+        LocalSid::from_str("S-1-5-11"),
+    ) else {
+        return;
+    };
+
+    let mut acl_buf = vec![0u64; 64];
+    let acl_ptr = acl_buf.as_mut_ptr() as *mut u8;
+    let acl_len = (acl_buf.len() * std::mem::size_of::<u64>()) as u32;
+    unsafe {
+        if sys::InitializeAcl(acl_ptr, acl_len, sys::ACL_REVISION) == 0 {
+            return;
+        }
+        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, user_sid);
+        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, sys_sid.0);
+        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, admins.0);
+        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, auth_sid.0);
+        let _ = sys::AddAccessAllowedAce(acl_ptr, sys::ACL_REVISION, sys::GENERIC_ALL, world_sid.0);
+
+        let user32 = sys::LoadLibraryA(b"user32.dll\0".as_ptr());
+        if user32.is_null() {
+            return;
+        }
+        type FnGetProcessWindowStation = unsafe extern "system" fn() -> sys::HANDLE;
+        type FnGetThreadDesktop = unsafe extern "system" fn(u32) -> sys::HANDLE;
+
+        let get_winsta_addr = sys::GetProcAddress(user32, b"GetProcessWindowStation\0".as_ptr());
+        if !get_winsta_addr.is_null() {
+            let get_winsta: FnGetProcessWindowStation = std::mem::transmute(get_winsta_addr);
+            let h_winsta = get_winsta();
+            if !h_winsta.is_null() {
+                let _ = sys::SetSecurityInfo(
+                    h_winsta,
+                    sys::SE_WINDOW_OBJECT,
+                    sys::DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    acl_ptr,
+                    std::ptr::null(),
+                );
+            }
+        }
+
+        let get_desk_addr = sys::GetProcAddress(user32, b"GetThreadDesktop\0".as_ptr());
+        if !get_desk_addr.is_null() {
+            let get_desk: FnGetThreadDesktop = std::mem::transmute(get_desk_addr);
+            let h_desk = get_desk(sys::GetCurrentThreadId());
+            if !h_desk.is_null() {
+                let _ = sys::SetSecurityInfo(
+                    h_desk,
+                    sys::SE_WINDOW_OBJECT,
+                    sys::DACL_SECURITY_INFORMATION,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    acl_ptr,
+                    std::ptr::null(),
+                );
+            }
+        }
+    }
 }
 
 /// A child process launched under a verified de-elevated token.
@@ -854,7 +1041,7 @@ pub fn spawn_deelevated(
     command_line: &str,
     hide_window: bool,
 ) -> Result<DeelevatedChild, OctopusSecurityError> {
-    let job = SandboxJobObject::create("osoosi-deelevated-auto-job", 1, 512 * 1024 * 1024)?;
+    let job = SandboxJobObject::create("osoosi-deelevated-auto-job", 8, 512 * 1024 * 1024)?;
     let mut child = spawn_deelevated_in_job(command_line, hide_window, Some(&job))?;
     child._owned_job = Some(job);
     Ok(child)
@@ -876,6 +1063,7 @@ pub fn spawn_deelevated_in_job(
     job: Option<&SandboxJobObject>,
 ) -> Result<DeelevatedChild, OctopusSecurityError> {
     let token = create_deelevated_token()?;
+    allow_deelevated_token_on_current_winsta_and_desktop(token.raw());
 
     let mut si: sys::STARTUPINFOW = unsafe { std::mem::zeroed() };
     si.cb = std::mem::size_of::<sys::STARTUPINFOW>() as u32;

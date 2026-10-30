@@ -631,6 +631,13 @@ describe('Research Swarm Verified Repos, Code Accordion & Steganography (F34-F37
                 assert.strictEqual(buildSafeRepoUrl('https://github.com/NVIDIA/garak'), 'https://github.com/NVIDIA/garak', 'Must accept NVIDIA/garak');
                 assert.strictEqual(buildSafeRepoUrl('https://github.com/ethz-spylab/agentdojo'), 'https://github.com/ethz-spylab/agentdojo', 'Must accept ethz-spylab/agentdojo');
                 assert.strictEqual(buildSafeRepoUrl('https://github.com/UKGovernmentBEIS/inspect_evals'), 'https://github.com/UKGovernmentBEIS/inspect_evals', 'Must accept inspect_evals');
+
+                // Trailing punctuation stripping and fragment/query rejection
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/oyesanyf/OshoosiClaw).'), 'https://github.com/oyesanyf/OshoosiClaw', 'Must strip trailing paren and dot');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/oyesanyf/OshoosiClaw.'), 'https://github.com/oyesanyf/OshoosiClaw', 'Must strip trailing dot');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/oyesanyf/OshoosiClaw, '), 'https://github.com/oyesanyf/OshoosiClaw', 'Must strip trailing comma and space');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/oyesanyf/OshoosiClaw?query=1'), '', 'Must reject query params');
+                assert.strictEqual(buildSafeRepoUrl('https://github.com/oyesanyf/OshoosiClaw#hash'), '', 'Must reject hash fragments');
             });
 
             it('should verify window._researchSwarmState has zero fake URLs and all rules have generated_code_snippet', () => {

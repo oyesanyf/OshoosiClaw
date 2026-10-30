@@ -1149,6 +1149,7 @@ pub fn spawn_tier2_appcontainer_command(
 }
 
 #[cfg(windows)]
+#[allow(non_snake_case)]
 mod win32 {
     use super::*;
 
@@ -1294,24 +1295,80 @@ mod win32 {
         pub IoInfo: IO_COUNTERS,
     }
 
-    #[link(name = "userenv")]
-    extern "system" {
-        pub fn CreateAppContainerProfile(
-            pszAppContainerName: *const u16,
-            pszDisplayName: *const u16,
-            pszDescription: *const u16,
-            pCapabilities: *const SID_AND_ATTRIBUTES,
-            dwCapabilityCount: DWORD,
-            ppSidAppContainer: *mut PSID,
+    pub unsafe fn CreateAppContainerProfile(
+        pszAppContainerName: *const u16,
+        pszDisplayName: *const u16,
+        pszDescription: *const u16,
+        pCapabilities: *const SID_AND_ATTRIBUTES,
+        dwCapabilityCount: DWORD,
+        ppSidAppContainer: *mut PSID,
+    ) -> HRESULT {
+        type FnCreateAppContainerProfile = unsafe extern "system" fn(
+            *const u16,
+            *const u16,
+            *const u16,
+            *const SID_AND_ATTRIBUTES,
+            DWORD,
+            *mut PSID,
         ) -> HRESULT;
+        let userenv = LoadLibraryA(b"userenv.dll\0".as_ptr());
+        if userenv.is_null() {
+            return -2147467259i32;
+        }
+        let addr = GetProcAddress(userenv, b"CreateAppContainerProfile\0".as_ptr());
+        if addr.is_null() {
+            return -2147467259i32;
+        }
+        let func: FnCreateAppContainerProfile = std::mem::transmute(addr);
+        func(
+            pszAppContainerName,
+            pszDisplayName,
+            pszDescription,
+            pCapabilities,
+            dwCapabilityCount,
+            ppSidAppContainer,
+        )
+    }
 
-        pub fn DeriveAppContainerSidFromAppContainerName(
-            pszAppContainerName: *const u16,
-            ppsidAppContainerSid: *mut PSID,
-        ) -> HRESULT;
+    pub unsafe fn DeriveAppContainerSidFromAppContainerName(
+        pszAppContainerName: *const u16,
+        ppsidAppContainerSid: *mut PSID,
+    ) -> HRESULT {
+        type FnDerive = unsafe extern "system" fn(*const u16, *mut PSID) -> HRESULT;
+        let userenv = LoadLibraryA(b"userenv.dll\0".as_ptr());
+        if userenv.is_null() {
+            return -2147467259i32;
+        }
+        let mut addr = GetProcAddress(
+            userenv,
+            b"DeriveAppContainerSidFromAppContainerName\0".as_ptr(),
+        );
+        if addr.is_null() {
+            addr = GetProcAddress(
+                userenv,
+                b"DeriveAppContainerSidFromAppContainerProfileName\0".as_ptr(),
+            );
+        }
+        if addr.is_null() {
+            return -2147467259i32;
+        }
+        let func: FnDerive = std::mem::transmute(addr);
+        func(pszAppContainerName, ppsidAppContainerSid)
+    }
 
-        #[allow(dead_code)]
-        pub fn DeleteAppContainerProfile(pszAppContainerName: *const u16) -> HRESULT;
+    #[allow(dead_code)]
+    pub unsafe fn DeleteAppContainerProfile(pszAppContainerName: *const u16) -> HRESULT {
+        type FnDelete = unsafe extern "system" fn(*const u16) -> HRESULT;
+        let userenv = LoadLibraryA(b"userenv.dll\0".as_ptr());
+        if userenv.is_null() {
+            return -2147467259i32;
+        }
+        let addr = GetProcAddress(userenv, b"DeleteAppContainerProfile\0".as_ptr());
+        if addr.is_null() {
+            return -2147467259i32;
+        }
+        let func: FnDelete = std::mem::transmute(addr);
+        func(pszAppContainerName)
     }
 
     #[link(name = "advapi32")]
@@ -1335,6 +1392,8 @@ mod win32 {
 
     #[link(name = "kernel32")]
     extern "system" {
+        pub fn LoadLibraryA(lpLibFileName: *const u8) -> *mut c_void;
+        pub fn GetProcAddress(hModule: *mut c_void, lpProcName: *const u8) -> *mut c_void;
         pub fn LocalFree(hMem: *mut c_void) -> *mut c_void;
         pub fn CloseHandle(hObject: HANDLE) -> BOOL;
         pub fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
