@@ -15,6 +15,7 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -49,8 +50,11 @@ pub struct VaultStatus {
     pub target_path: Option<PathBuf>,
     pub sealed_at_epoch: Option<u64>,
     pub sealed_variables: Vec<String>,
+    #[serde(default)]
+    pub standin_mappings: Vec<(String, String)>,
     pub dacl_protected: bool,
     pub payload_size: u64,
+    pub original_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +63,14 @@ struct VaultPayload {
     epoch: u64,
     sealed_variables: Vec<String>,
     original_bytes: Vec<u8>,
+    #[serde(default)]
+    pub standin_mappings: Vec<(String, String)>,
+    #[serde(default)]
+    pub original_env_vars: Vec<(String, String)>,
+    #[serde(default)]
+    pub target_existed_before: bool,
+    #[serde(default)]
+    pub original_sha256: Option<String>,
 }
 
 pub struct ProtectedEnvBackupVault;
@@ -92,119 +104,16 @@ impl ProtectedEnvBackupVault {
         blake3::derive_key("OSHOOSI_ENV_BACKUP_VAULT_KEY_V1", &seed)
     }
 
-    /// Backs up original `.env` or config content into encrypted, DACL-protected vault,
-    /// and replaces secret values in `env_path` with stand-in tokens.
-    pub fn seal_and_backup(
-        env_path: &Path,
-        vault_path: &Path,
-        grants: &[crate::rea_voter_env_gateway::HardenedSealedGrant],
-    ) -> Result<(), VaultError> {
-        if !env_path.exists() {
-            return Err(VaultError::TargetError(format!(
-                "Target environment file '{}' does not exist",
-                env_path.display()
-            )));
-        }
-
-        let original_bytes = std::fs::read(env_path)?;
-        let canonical_target = std::fs::canonicalize(env_path).unwrap_or_else(|_| env_path.to_path_buf());
-        let epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        let sealed_variables: Vec<String> = grants.iter().map(|g| g.env_var_name.clone()).collect();
-
-        let payload = VaultPayload {
-            target_path: canonical_target.to_string_lossy().to_string(),
-            epoch,
-            sealed_variables,
-            original_bytes: original_bytes.clone(),
-        };
-
-        let serialized_payload = serde_json::to_vec(&payload)
-            .map_err(|e| VaultError::Encryption(e.to_string()))?;
-
-        // Generate salt (16B) and nonce (12B)
-        let mut salt = [0u8; 16];
-        let mut nonce_bytes = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut salt);
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
-
-        let key_bytes = Self::derive_vault_key(&salt);
-        let cipher = ChaCha20Poly1305::new(Key::from_slice(&key_bytes));
-        let ciphertext = cipher
-            .encrypt(Nonce::from_slice(&nonce_bytes), serialized_payload.as_ref())
-            .map_err(|e| VaultError::Encryption(e.to_string()))?;
-
-        // Envelope:
-        // [24B Magic] [16B Salt] [12B Nonce] [8B Epoch BE] [4B Ciphertext Len BE] [Ciphertext] [32B BLAKE3 Tag]
-        let mut envelope = Vec::with_capacity(24 + 16 + 12 + 8 + 4 + ciphertext.len() + 32);
-        envelope.extend_from_slice(VAULT_MAGIC);
-        envelope.extend_from_slice(&salt);
-        envelope.extend_from_slice(&nonce_bytes);
-        envelope.extend_from_slice(&epoch.to_be_bytes());
-        envelope.extend_from_slice(&(ciphertext.len() as u32).to_be_bytes());
-        envelope.extend_from_slice(&ciphertext);
-
-        // Keyed BLAKE3 MAC over header + ciphertext
-        let tag = blake3::keyed_hash(&key_bytes, &envelope);
-        envelope.extend_from_slice(tag.as_bytes());
-
-        // Ensure parent directory exists
-        if let Some(parent) = vault_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        // Write vault file
-        let mut f = File::create(vault_path)?;
-        f.write_all(&envelope)?;
-        f.sync_all()?;
-        drop(f);
-
-        // Apply Win32 Protected NTFS DACL / Unix 0600
-        apply_protected_ntfs_dacl(vault_path)?;
-
-        // Update target file in-place: replace raw secrets with stand-in tokens
-        let mut content_str = String::from_utf8_lossy(&original_bytes).to_string();
-        for grant in grants {
-            let secret_str = String::from_utf8_lossy(grant.secret.as_slice());
-            if !secret_str.is_empty() && content_str.contains(&*secret_str) {
-                content_str = content_str.replace(&*secret_str, &grant.standin_token);
-            } else {
-                // If the exact secret string wasn't found verbatim, check for line `VAR=...`
-                let var_prefix = format!("{}=", grant.env_var_name);
-                let mut lines = Vec::new();
-                let mut matched = false;
-                for line in content_str.lines() {
-                    let trimmed = line.trim_start();
-                    if trimmed.starts_with(&var_prefix) {
-                        lines.push(format!("{}={}", grant.env_var_name, grant.standin_token));
-                        matched = true;
-                    } else {
-                        lines.push(line.to_string());
-                    }
-                }
-                if matched {
-                    content_str = lines.join("\n");
-                }
-            }
-        }
-
-        // Write sealed environment back to env_path
-        let mut env_file = File::create(env_path)?;
-        env_file.write_all(content_str.as_bytes())?;
-        env_file.sync_all()?;
-
-        Ok(())
+    /// Generates deterministic stand-in token `OSHOOSI_STANDIN_<KEY>_<16_HEX>`
+    pub fn generate_standin_token(key: &str, secret: &str) -> String {
+        let clean_key = key.trim();
+        let clean_val = secret.trim().trim_matches('"').trim_matches('\'');
+        let token_hash = blake3::hash(format!("{}_{}", clean_key, clean_val).as_bytes()).to_hex();
+        format!("OSHOOSI_STANDIN_{}_{}", clean_key, &token_hash[..16])
     }
 
-    /// Automatically restores the pre-stand-in original configuration file from the vault.
-    pub fn auto_revert(vault_path: &Path) -> Result<(), VaultError> {
-        if !vault_path.exists() {
-            return Ok(());
-        }
-
+    /// Decrypts and deserializes a vault file returning the payload and envelope length.
+    fn read_vault_payload(vault_path: &Path) -> Result<(VaultPayload, usize), VaultError> {
         let mut envelope = Vec::new();
         let mut f = File::open(vault_path)?;
         f.read_to_end(&mut envelope)?;
@@ -250,11 +159,165 @@ impl ProtectedEnvBackupVault {
         let payload: VaultPayload = serde_json::from_slice(&decrypted)
             .map_err(|e| VaultError::Decryption(e.to_string()))?;
 
-        // Restore original bytes to target path
+        Ok((payload, envelope.len()))
+    }
+
+    /// Encrypts and writes a vault payload to disk with keyed BLAKE3 MAC and NTFS DACL.
+    fn write_vault_payload(vault_path: &Path, payload: &VaultPayload) -> Result<(), VaultError> {
+        let serialized_payload = serde_json::to_vec(payload)
+            .map_err(|e| VaultError::Encryption(e.to_string()))?;
+
+        // Generate salt (16B) and nonce (12B)
+        let mut salt = [0u8; 16];
+        let mut nonce_bytes = [0u8; 12];
+        rand::thread_rng().fill_bytes(&mut salt);
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+
+        let key_bytes = Self::derive_vault_key(&salt);
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&key_bytes));
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce_bytes), serialized_payload.as_ref())
+            .map_err(|e| VaultError::Encryption(e.to_string()))?;
+
+        // Envelope:
+        // [24B Magic] [16B Salt] [12B Nonce] [8B Epoch BE] [4B Ciphertext Len BE] [Ciphertext] [32B BLAKE3 Tag]
+        let mut envelope = Vec::with_capacity(24 + 16 + 12 + 8 + 4 + ciphertext.len() + 32);
+        envelope.extend_from_slice(VAULT_MAGIC);
+        envelope.extend_from_slice(&salt);
+        envelope.extend_from_slice(&nonce_bytes);
+        envelope.extend_from_slice(&payload.epoch.to_be_bytes());
+        envelope.extend_from_slice(&(ciphertext.len() as u32).to_be_bytes());
+        envelope.extend_from_slice(&ciphertext);
+
+        // Keyed BLAKE3 MAC over header + ciphertext
+        let tag = blake3::keyed_hash(&key_bytes, &envelope);
+        envelope.extend_from_slice(tag.as_bytes());
+
+        // Ensure parent directory exists
+        if let Some(parent) = vault_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+
+        // Write vault file
+        let mut f = File::create(vault_path)?;
+        f.write_all(&envelope)?;
+        f.sync_all()?;
+        drop(f);
+
+        // Apply Win32 Protected NTFS DACL / Unix 0600
+        apply_protected_ntfs_dacl(vault_path)?;
+        Ok(())
+    }
+
+    /// Backs up original `.env` or config content into encrypted, DACL-protected vault,
+    /// replaces secret values in `env_path` with stand-in tokens, and updates active process memory.
+    pub fn seal_and_backup(
+        env_path: &Path,
+        vault_path: &Path,
+        grants: &[crate::rea_voter_env_gateway::HardenedSealedGrant],
+    ) -> Result<(), VaultError> {
+        if !env_path.exists() {
+            return Err(VaultError::TargetError(format!(
+                "Target environment file '{}' does not exist",
+                env_path.display()
+            )));
+        }
+
+        let original_bytes = std::fs::read(env_path)?;
+        let canonical_target = std::fs::canonicalize(env_path).unwrap_or_else(|_| env_path.to_path_buf());
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let sealed_variables: Vec<String> = grants.iter().map(|g| g.env_var_name.clone()).collect();
+        let standin_mappings: Vec<(String, String)> = grants.iter().map(|g| (g.env_var_name.clone(), g.standin_token.clone())).collect();
+        let original_env_vars: Vec<(String, String)> = grants.iter().map(|g| (g.env_var_name.clone(), String::from_utf8_lossy(g.secret.as_slice()).to_string())).collect();
+
+        let mut hasher = Sha256::new();
+        hasher.update(&original_bytes);
+        let original_sha256 = Some(format!("{:x}", hasher.finalize()));
+
+        let payload = VaultPayload {
+            target_path: canonical_target.to_string_lossy().to_string(),
+            epoch,
+            sealed_variables,
+            original_bytes: original_bytes.clone(),
+            standin_mappings,
+            original_env_vars,
+            target_existed_before: true,
+            original_sha256,
+        };
+
+        Self::write_vault_payload(vault_path, &payload)?;
+
+        // Update active process memory for each grant
+        for grant in grants {
+            std::env::set_var(&grant.env_var_name, &grant.standin_token);
+        }
+
+        // Update target file in-place: replace raw secrets with stand-in tokens
+        let mut content_str = String::from_utf8_lossy(&original_bytes).to_string();
+        for grant in grants {
+            let secret_str = String::from_utf8_lossy(grant.secret.as_slice());
+            if !secret_str.is_empty() && content_str.contains(&*secret_str) {
+                content_str = content_str.replace(&*secret_str, &grant.standin_token);
+            } else {
+                // If the exact secret string wasn't found verbatim, check for line `VAR=...`
+                let var_prefix = format!("{}=", grant.env_var_name);
+                let mut lines = Vec::new();
+                let mut matched = false;
+                for line in content_str.lines() {
+                    let trimmed = line.trim_start();
+                    if trimmed.starts_with(&var_prefix) {
+                        lines.push(format!("{}={}", grant.env_var_name, grant.standin_token));
+                        matched = true;
+                    } else {
+                        lines.push(line.to_string());
+                    }
+                }
+                if matched {
+                    content_str = lines.join("\n");
+                }
+            }
+        }
+
+        // Write sealed environment back to env_path
+        let mut env_file = File::create(env_path)?;
+        env_file.write_all(content_str.as_bytes())?;
+        env_file.sync_all()?;
+
+        Ok(())
+    }
+
+    /// Automatically restores the pre-stand-in original configuration file and process memory from the vault.
+    pub fn auto_revert(vault_path: &Path) -> Result<(), VaultError> {
+        if !vault_path.exists() {
+            return Ok(());
+        }
+
+        let (payload, _) = Self::read_vault_payload(vault_path)?;
+
+        // 1. Restore process memory for all original environment variables
+        for (k, orig_v) in &payload.original_env_vars {
+            std::env::set_var(k, orig_v);
+        }
+
         let target = PathBuf::from(&payload.target_path);
-        let mut target_file = File::create(&target)?;
-        target_file.write_all(&payload.original_bytes)?;
-        target_file.sync_all()?;
+
+        // 2. Restore file state
+        if payload.target_existed_before || !payload.original_bytes.is_empty() {
+            let mut target_file = File::create(&target)?;
+            target_file.write_all(&payload.original_bytes)?;
+            target_file.sync_all()?;
+        } else {
+            // Target did not exist prior to sealing: remove synthetic target file
+            if target.exists() {
+                let _ = std::fs::remove_file(&target);
+            }
+            // And shred & unlink temporary backup vault
+            let _ = Self::remove_backup(vault_path, true);
+        }
 
         Ok(())
     }
@@ -303,51 +366,24 @@ impl ProtectedEnvBackupVault {
                 target_path: None,
                 sealed_at_epoch: None,
                 sealed_variables: Vec::new(),
+                standin_mappings: Vec::new(),
                 dacl_protected: false,
                 payload_size: 0,
+                original_sha256: None,
             });
         }
 
-        let mut envelope = Vec::new();
-        let mut f = File::open(vault_path)?;
-        f.read_to_end(&mut envelope)?;
+        let (payload, env_len) = Self::read_vault_payload(vault_path)?;
 
-        if envelope.len() < 112 || &envelope[..24] != VAULT_MAGIC {
-            return Err(VaultError::InvalidFormat);
-        }
-
-        let salt: [u8; 16] = envelope[24..40]
-            .try_into()
-            .map_err(|_| VaultError::InvalidFormat)?;
-        let nonce_bytes: [u8; 12] = envelope[40..52]
-            .try_into()
-            .map_err(|_| VaultError::InvalidFormat)?;
-
-        let ct_len_bytes: [u8; 4] = envelope[60..64]
-            .try_into()
-            .map_err(|_| VaultError::InvalidFormat)?;
-        let ct_len = u32::from_be_bytes(ct_len_bytes) as usize;
-
-        if envelope.len() < 64 + ct_len + 32 {
-            return Err(VaultError::InvalidFormat);
-        }
-
-        let ciphertext = &envelope[64..64 + ct_len];
-        let provided_tag = &envelope[64 + ct_len..64 + ct_len + 32];
-
-        let key_bytes = Self::derive_vault_key(&salt);
-        let expected_tag = blake3::keyed_hash(&key_bytes, &envelope[..64 + ct_len]);
-        if subtle::ConstantTimeEq::ct_eq(expected_tag.as_bytes().as_slice(), provided_tag).unwrap_u8() == 0 {
-            return Err(VaultError::IntegrityFailure);
-        }
-
-        let cipher = ChaCha20Poly1305::new(Key::from_slice(&key_bytes));
-        let decrypted = cipher
-            .decrypt(Nonce::from_slice(&nonce_bytes), ciphertext)
-            .map_err(|e| VaultError::Decryption(e.to_string()))?;
-
-        let payload: VaultPayload = serde_json::from_slice(&decrypted)
-            .map_err(|e| VaultError::Decryption(e.to_string()))?;
+        let sha256_hex = if let Some(ref sha) = payload.original_sha256 {
+            Some(sha.clone())
+        } else if !payload.original_bytes.is_empty() {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload.original_bytes);
+            Some(format!("{:x}", hasher.finalize()))
+        } else {
+            None
+        };
 
         Ok(VaultStatus {
             exists: true,
@@ -355,53 +391,264 @@ impl ProtectedEnvBackupVault {
             target_path: Some(PathBuf::from(payload.target_path)),
             sealed_at_epoch: Some(payload.epoch),
             sealed_variables: payload.sealed_variables,
+            standin_mappings: payload.standin_mappings,
             dacl_protected: true,
-            payload_size: envelope.len() as u64,
+            payload_size: env_len as u64,
+            original_sha256: sha256_hex,
         })
     }
 
-    /// Dynamically scans target env file using LlmFusionApiKeyEnumerator,
-    /// creates ZeroizingLockedSecret grants for all consensus-selected API keys,
-    /// backs up the original env to the encrypted vault, and replaces selected keys with stand-ins.
-    pub fn seal_and_backup_dynamic(
+    /// Internal joint dynamic sealing engine: handles .env + std::env::vars(), gateway registration,
+    /// process memory replacement, and backup preservation.
+    fn seal_and_register_internal(
         env_path: &Path,
         vault_path: &Path,
+        gateway: Option<&crate::rea_voter_env_gateway::ReaVoterEnvGateway>,
     ) -> Result<LlmFusionEnumerationResult, VaultError> {
-        let content = std::fs::read_to_string(env_path)?;
-        let mut pairs = Vec::new();
-        for line in content.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('#') || !trimmed.contains('=') {
-                continue;
+        let target_existed_before = env_path.exists();
+
+        // If vault already exists, load existing payload so we never clobber genuine secrets
+        // if variables are already replaced with stand-in tokens!
+        let existing_vault = if vault_path.exists() {
+            Self::read_vault_payload(vault_path).ok().map(|(p, _)| p)
+        } else {
+            None
+        };
+
+        let (original_bytes, mut content_str) = if target_existed_before {
+            let bytes = std::fs::read(env_path)?;
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            (bytes, text)
+        } else {
+            (Vec::new(), String::new())
+        };
+
+        let vault_original_bytes = if let Some(ref ex) = existing_vault {
+            if ex.target_existed_before {
+                if !ex.original_bytes.is_empty() {
+                    ex.original_bytes.clone()
+                } else {
+                    original_bytes.clone()
+                }
+            } else {
+                Vec::new()
             }
-            let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
-            pairs.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
+        } else {
+            original_bytes.clone()
+        };
+
+        let vault_target_existed_before = if let Some(ref ex) = existing_vault {
+            ex.target_existed_before
+        } else {
+            target_existed_before
+        };
+
+        // Jointly enumerate lines from .env AND std::env::vars()
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        let mut seen_keys = std::collections::HashSet::new();
+
+        if !content_str.is_empty() {
+            for line in content_str.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with('#') || !trimmed.contains('=') {
+                    continue;
+                }
+                let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+                let k = parts[0].trim().to_string();
+                let mut v = parts[1].trim().to_string();
+
+                // If already a stand-in and existing vault has the real secret, recover it for evaluation
+                if v.starts_with("OSHOOSI_STANDIN_") {
+                    if let Some(ref ex) = existing_vault {
+                        if let Some((_, orig_v)) = ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k) {
+                            v = orig_v.clone();
+                        }
+                    }
+                }
+                seen_keys.insert(k.clone());
+                pairs.push((k, v));
+            }
         }
 
-        let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&pairs);
-        let mut grants = Vec::new();
-
-        for cand in &result.candidates {
-            if cand.selected {
-                if let Some(ref standin) = cand.standin_token {
-                    if let Some((_, val)) = pairs.iter().find(|(k, _)| k == &cand.key) {
-                        let clean_val = val.trim().trim_matches('"').trim_matches('\'');
-                        let grant = crate::rea_voter_env_gateway::HardenedSealedGrant::new(
-                            &cand.key,
-                            standin,
-                            [0u8; 32],
-                            None,
-                            "api.provider.internal",
-                            crate::rea_voter_env_gateway::ZeroizingLockedSecret::new(clean_val.as_bytes()),
-                        );
-                        grants.push(grant);
+        for (k, mut v) in std::env::vars() {
+            if v.starts_with("OSHOOSI_STANDIN_") {
+                if let Some(ref ex) = existing_vault {
+                    if let Some((_, orig_v)) = ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k) {
+                        v = orig_v.clone();
+                    }
+                }
+            }
+            if !seen_keys.contains(&k) {
+                seen_keys.insert(k.clone());
+                pairs.push((k, v));
+            } else {
+                // If it was seen from .env but .env had a stand-in or was empty and std::env has real value
+                if let Some(existing_pair) = pairs.iter_mut().find(|(ek, _)| ek == &k) {
+                    if existing_pair.1.starts_with("OSHOOSI_STANDIN_") && !v.starts_with("OSHOOSI_STANDIN_") {
+                        existing_pair.1 = v;
                     }
                 }
             }
         }
 
-        Self::seal_and_backup(env_path, vault_path, &grants)?;
+        let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&pairs);
+
+        let mut sealed_variables = Vec::new();
+        let mut standin_mappings = Vec::new();
+        let mut original_env_vars = Vec::new();
+
+        // Preserve any previously sealed variables from existing vault if still valid
+        if let Some(ref ex) = existing_vault {
+            for (old_k, old_s) in &ex.standin_mappings {
+                if !standin_mappings.iter().any(|(k, _)| k == old_k) {
+                    standin_mappings.push((old_k.clone(), old_s.clone()));
+                }
+            }
+            for (old_k, old_orig) in &ex.original_env_vars {
+                if !original_env_vars.iter().any(|(k, _)| k == old_k) {
+                    original_env_vars.push((old_k.clone(), old_orig.clone()));
+                }
+            }
+            for old_var in &ex.sealed_variables {
+                if !sealed_variables.contains(old_var) {
+                    sealed_variables.push(old_var.clone());
+                }
+            }
+        }
+
+        let mut modified_env_file = false;
+
+        for cand in &result.candidates {
+            if cand.selected && !cand.vetoed_by_safety_guard && cand.fusion_confidence_bp >= 8500 {
+                if let Some((_, raw_val)) = pairs.iter().find(|(k, _)| k == &cand.key) {
+                    let clean_val = raw_val.trim().trim_matches('"').trim_matches('\'').to_string();
+                    let standin = cand.standin_token.clone().unwrap_or_else(|| {
+                        Self::generate_standin_token(&cand.key, &clean_val)
+                    });
+
+                    // a) Replace in active process memory via std::env::set_var
+                    std::env::set_var(&cand.key, &standin);
+
+                    // b) Register into gateway if provided
+                    if let Some(gw) = gateway {
+                        let grant = crate::rea_voter_env_gateway::HardenedSealedGrant::new(
+                            &cand.key,
+                            &standin,
+                            [0u8; 32],
+                            None,
+                            "api.provider.internal",
+                            crate::rea_voter_env_gateway::ZeroizingLockedSecret::new(clean_val.as_bytes()),
+                        );
+                        gw.register_grant(grant);
+                    }
+
+                    // Update tracking lists
+                    if !sealed_variables.contains(&cand.key) {
+                        sealed_variables.push(cand.key.clone());
+                    }
+                    if let Some(pos) = standin_mappings.iter().position(|(k, _)| k == &cand.key) {
+                        standin_mappings[pos] = (cand.key.clone(), standin.clone());
+                    } else {
+                        standin_mappings.push((cand.key.clone(), standin.clone()));
+                    }
+                    if let Some(pos) = original_env_vars.iter().position(|(k, _)| k == &cand.key) {
+                        original_env_vars[pos] = (cand.key.clone(), clean_val.clone());
+                    } else {
+                        original_env_vars.push((cand.key.clone(), clean_val.clone()));
+                    }
+
+                    // Replace or add in .env content
+                    let var_prefix = format!("{}=", cand.key);
+                    let mut matched = false;
+                    let mut lines = Vec::new();
+                    for line in content_str.lines() {
+                        let trimmed = line.trim_start();
+                        if trimmed.starts_with(&var_prefix) {
+                            lines.push(format!("{}={}", cand.key, standin));
+                            matched = true;
+                        } else {
+                            lines.push(line.to_string());
+                        }
+                    }
+                    if matched {
+                        content_str = lines.join("\n");
+                    } else {
+                        if !content_str.is_empty() && !content_str.ends_with('\n') {
+                            content_str.push('\n');
+                        }
+                        content_str.push_str(&format!("{}={}\n", cand.key, standin));
+                    }
+                    modified_env_file = true;
+                }
+            }
+        }
+
+        // If .env file needs writing/updating
+        if modified_env_file || !target_existed_before {
+            if let Some(parent) = env_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            let mut env_file = File::create(env_path)?;
+            env_file.write_all(content_str.as_bytes())?;
+            env_file.sync_all()?;
+        }
+
+        // Compute original sha256
+        let original_sha256 = if !vault_original_bytes.is_empty() {
+            let mut hasher = Sha256::new();
+            hasher.update(&vault_original_bytes);
+            Some(format!("{:x}", hasher.finalize()))
+        } else {
+            None
+        };
+
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let canonical_target = if vault_target_existed_before {
+            std::fs::canonicalize(env_path).unwrap_or_else(|_| env_path.to_path_buf())
+        } else {
+            env_path.to_path_buf()
+        };
+
+        let payload = VaultPayload {
+            target_path: canonical_target.to_string_lossy().to_string(),
+            epoch,
+            sealed_variables,
+            original_bytes: vault_original_bytes,
+            standin_mappings,
+            original_env_vars,
+            target_existed_before: vault_target_existed_before,
+            original_sha256,
+        };
+
+        Self::write_vault_payload(vault_path, &payload)?;
+
         Ok(result)
+    }
+
+    /// Dynamically scans target env file and process environment using LlmFusionApiKeyEnumerator,
+    /// creates ZeroizingLockedSecret grants for all consensus-selected API keys,
+    /// backs up the original env to the encrypted vault, replaces selected keys with stand-ins in .env and process memory.
+    pub fn seal_and_backup_dynamic(
+        env_path: &Path,
+        vault_path: &Path,
+    ) -> Result<LlmFusionEnumerationResult, VaultError> {
+        Self::seal_and_register_internal(env_path, vault_path, None)
+    }
+
+    /// Dynamically scans target env file and process environment, registers grants into `ReaVoterEnvGateway`,
+    /// backs up original secrets into encrypted vault, and replaces selected keys with stand-in tokens in .env and process memory.
+    pub fn seal_and_register_with_gateway(
+        env_path: &Path,
+        vault_path: &Path,
+        gateway: &crate::rea_voter_env_gateway::ReaVoterEnvGateway,
+    ) -> Result<LlmFusionEnumerationResult, VaultError> {
+        Self::seal_and_register_internal(env_path, vault_path, Some(gateway))
     }
 }
 
@@ -495,6 +742,16 @@ impl LlmFusionApiKeyEnumerator {
                 | "ALLUSERSPROFILE"
         );
 
+        let has_ide_or_build_prefix = key_upper.starts_with("ANTIGRAVITY_")
+            || key_upper.starts_with("VSCODE_")
+            || key_upper.starts_with("CARGO_")
+            || key_upper.starts_with("RUST_")
+            || key_upper.starts_with("TERM_")
+            || key_upper.starts_with("NPM_")
+            || key_upper.starts_with("SSH_")
+            || key_upper.starts_with("GPG_")
+            || key_upper.starts_with("GIT_");
+
         let has_system_suffix = key_upper.ends_with("_HOME")
             || key_upper.ends_with("_DIR")
             || key_upper.ends_with("_PATH")
@@ -517,6 +774,8 @@ impl LlmFusionApiKeyEnumerator {
 
         let veto_reason = if is_system_name {
             Some("VETOED: Protected system environment variable (PATH / system invariant)".to_string())
+        } else if has_ide_or_build_prefix {
+            Some("VETOED: Protected IDE, developer toolchain, or build environment prefix".to_string())
         } else if has_system_suffix {
             Some("VETOED: Non-secret system configuration or path suffix".to_string())
         } else if has_path_delimiters {
@@ -597,8 +856,7 @@ impl LlmFusionApiKeyEnumerator {
 
         let selected = fusion_confidence_bp >= 8500;
         let standin_token = if selected {
-            let token_hash = blake3::hash(format!("{}_{}", clean_key, clean_val).as_bytes()).to_hex();
-            Some(format!("OSHOOSI_STANDIN_{}_{}", clean_key, &token_hash[..16]))
+            Some(ProtectedEnvBackupVault::generate_standin_token(clean_key, clean_val))
         } else {
             None
         };
@@ -861,9 +1119,13 @@ pub fn unlock_protected_ntfs_dacl(_path: &Path) -> Result<(), VaultError> {
 mod tests {
     use super::*;
     use crate::rea_voter_env_gateway::{HardenedSealedGrant, ZeroizingLockedSecret};
+    use std::time::Duration;
+
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn test_vault_seal_auto_revert_roundtrip() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let temp_dir = tempfile::tempdir().expect("create tempdir");
         let env_file = temp_dir.path().join(".env");
         let vault_file = temp_dir.path().join("test.vault");
@@ -916,6 +1178,7 @@ mod tests {
 
     #[test]
     fn test_llm_fusion_api_key_enumeration_and_zero_touch_path() {
+        let _guard = ENV_MUTEX.lock().unwrap();
         let test_vars = vec![
             ("GEMINI_API_KEY".to_string(), "AIzaSyD-FakeGeminiApiKeyExample12345678".to_string()),
             ("HF_TOKEN".to_string(), "hf_FakeHuggingFaceTokenExampleToken123".to_string()),
@@ -963,7 +1226,9 @@ mod tests {
 
         let dyn_res = ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
             .expect("seal_and_backup_dynamic must succeed");
-        assert_eq!(dyn_res.total_selected, 2);
+        assert!(dyn_res.total_selected >= 2);
+        assert!(dyn_res.candidates.iter().any(|c| c.key == "GEMINI_API_KEY" && c.selected));
+        assert!(dyn_res.candidates.iter().any(|c| c.key == "HF_TOKEN" && c.selected));
 
         // Check sealed content: GEMINI_API_KEY and HF_TOKEN replaced with stand-in tokens, Path & system variables intact
         let sealed_text = std::fs::read_to_string(&env_file).expect("read sealed text");
@@ -978,5 +1243,91 @@ mod tests {
         ProtectedEnvBackupVault::auto_revert(&vault_file).expect("auto revert must succeed");
         let restored_text = std::fs::read_to_string(&env_file).expect("read restored text");
         assert_eq!(restored_text, env_content);
+    }
+
+    #[test]
+    fn test_ide_and_build_prefixes_are_hard_vetoed() {
+        let ide_vars = vec![
+            ("ANTIGRAVITY_CSRF_TOKEN".to_string(), "sec_antigravity_token_abc123456789".to_string()),
+            ("VSCODE_GIT_IPC_HANDLE".to_string(), "\\\\.\\pipe\\vscode-git-ipc-1234".to_string()),
+            ("CARGO_PKG_NAME".to_string(), "osoosi-core".to_string()),
+            ("RUST_BACKTRACE".to_string(), "full".to_string()),
+            ("TERM_PROGRAM".to_string(), "vscode".to_string()),
+            ("NPM_CONFIG_TOKEN".to_string(), "npm_secret_token_1234567890".to_string()),
+            ("SSH_AUTH_SOCK".to_string(), "/tmp/ssh-auth-sock-12345".to_string()),
+            ("GPG_AGENT_INFO".to_string(), "/run/user/1000/gnupg/S.gpg-agent:1234:1".to_string()),
+            ("GIT_EXEC_PATH".to_string(), "C:\\Program Files\\Git\\bin".to_string()),
+        ];
+
+        let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&ide_vars);
+        assert_eq!(result.total_selected, 0, "No IDE/build variables should ever be selected");
+        assert_eq!(result.total_vetoed, ide_vars.len());
+
+        for (k, _) in &ide_vars {
+            let cand = result.candidates.iter().find(|c| c.key == *k).unwrap();
+            assert!(!cand.selected, "{} must not be selected", k);
+            assert!(cand.vetoed_by_safety_guard, "{} must be vetoed", k);
+            assert_eq!(cand.fusion_confidence_bp, 0, "{} confidence must be 0", k);
+        }
+    }
+
+    #[test]
+    fn test_seal_and_register_with_gateway_nonexistent_env_and_double_seal() {
+        let _guard = ENV_MUTEX.lock().unwrap();
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let env_file = temp_dir.path().join(".env");
+        let vault_file = temp_dir.path().join("gateway_test.vault");
+
+        // Set process environment variables
+        let test_key = "GEMINI_API_KEY";
+        let test_val = "AIzaSyD-RealSecretProductionTestValue99999";
+        std::env::set_var(test_key, test_val);
+
+        let gateway = crate::rea_voter_env_gateway::ReaVoterEnvGateway::new(Duration::from_secs(300));
+
+        // .env does NOT exist initially
+        assert!(!env_file.exists());
+
+        // 1. Seal and register with gateway
+        let res = ProtectedEnvBackupVault::seal_and_register_with_gateway(&env_file, &vault_file, &gateway)
+            .expect("must succeed even without preexisting .env");
+        assert!(res.total_selected >= 1);
+
+        // Verify gateway grant was created
+        assert!(gateway.grant_count() >= 1);
+
+        // Verify process memory was replaced with stand-in token
+        let current_proc_val = std::env::var(test_key).expect("proc var must exist");
+        assert!(current_proc_val.starts_with("OSHOOSI_STANDIN_GEMINI_API_KEY_"));
+
+        // Verify .env was created and contains stand-in
+        assert!(env_file.exists());
+        let env_text = std::fs::read_to_string(&env_file).expect("read .env");
+        assert!(env_text.contains(&current_proc_val));
+
+        // Verify vault status
+        let status = ProtectedEnvBackupVault::get_status(&vault_file).expect("get status");
+        assert!(status.exists);
+        assert!(!status.standin_mappings.is_empty());
+        assert!(status.standin_mappings.iter().any(|(k, s)| k == test_key && s == &current_proc_val));
+
+        // 2. Double-seal test: sealing again must NOT clobber original secret with stand-in token
+        let res2 = ProtectedEnvBackupVault::seal_and_register_with_gateway(&env_file, &vault_file, &gateway)
+            .expect("double-sealing must succeed");
+        assert!(res2.total_selected >= 1);
+
+        // Verify vault still holds the true original secret
+        let (payload, _) = ProtectedEnvBackupVault::read_vault_payload(&vault_file).expect("read vault payload");
+        let orig_pair = payload.original_env_vars.iter().find(|(k, _)| k == test_key).expect("must find key");
+        assert_eq!(orig_pair.1, test_val, "Vault must preserve original secret, not stand-in!");
+
+        // 3. Auto revert restores process memory and removes temporary .env and vault
+        ProtectedEnvBackupVault::auto_revert(&vault_file).expect("auto revert must succeed");
+        assert_eq!(std::env::var(test_key).unwrap(), test_val, "Process memory must be restored to original secret");
+        assert!(!env_file.exists(), "Temporary .env should be removed on revert since it didn't exist before");
+        assert!(!vault_file.exists(), "Vault should be shredded and unlinked on revert since target didn't exist before");
+
+        // Clean up process env
+        std::env::remove_var(test_key);
     }
 }
