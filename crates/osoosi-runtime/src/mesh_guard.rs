@@ -648,6 +648,71 @@ impl HitlCognitiveFirewall {
             }
         }
     }
+
+    /// Evaluates a HITL approval card by inspecting BOTH summary and raw_command for
+    /// Unicode zero-width characters, RTLO, ANSI escapes, and confusable homographs.
+    pub fn evaluate_hitl_card(summary: &str, raw_command: &str) -> HitlCardEvaluation {
+        let is_zero_width = |c: char| {
+            matches!(
+                c,
+                '\u{00AD}' | '\u{200B}'..='\u{200D}' | '\u{FEFF}' | '\u{2060}' | '\u{180E}'
+            )
+        };
+        let is_rtlo = |c: char| {
+            matches!(
+                c,
+                '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{200E}' | '\u{200F}'
+            )
+        };
+
+        let has_rtlo = summary.chars().any(is_rtlo) || raw_command.chars().any(is_rtlo);
+        let has_zero_width = summary.chars().any(is_zero_width) || raw_command.chars().any(is_zero_width);
+        let has_ansi_escape = summary.contains('\x1b')
+            || summary.contains('\u{009b}')
+            || raw_command.contains('\x1b')
+            || raw_command.contains('\u{009b}');
+
+        let summary_indicators = Self::scan_for_visual_deception(summary);
+        let cmd_indicators = Self::scan_for_visual_deception(raw_command);
+        let has_confusable = summary_indicators.iter().any(|i| matches!(i, HitlDeceptionIndicator::UnicodeConfusableHomograph(_)))
+            || cmd_indicators.iter().any(|i| matches!(i, HitlDeceptionIndicator::UnicodeConfusableHomograph(_)));
+
+        let mut indicators = summary_indicators;
+        for ind in cmd_indicators {
+            if !indicators.contains(&ind) {
+                indicators.push(ind);
+            }
+        }
+
+        let is_deceptive = has_rtlo || has_zero_width || has_ansi_escape || has_confusable || !indicators.is_empty();
+        let recommended_action = if is_deceptive {
+            "AUTO_VETO_BLOCK"
+        } else {
+            "PERMIT_REVIEW"
+        };
+
+        HitlCardEvaluation {
+            is_deceptive,
+            has_rtlo,
+            has_zero_width,
+            has_ansi_escape,
+            has_confusable_homograph: has_confusable,
+            indicators,
+            recommended_action,
+        }
+    }
+}
+
+/// Evaluation result for a HITL approval card.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HitlCardEvaluation {
+    pub is_deceptive: bool,
+    pub has_rtlo: bool,
+    pub has_zero_width: bool,
+    pub has_ansi_escape: bool,
+    pub has_confusable_homograph: bool,
+    pub indicators: Vec<HitlDeceptionIndicator>,
+    pub recommended_action: &'static str,
 }
 
 #[cfg(test)]

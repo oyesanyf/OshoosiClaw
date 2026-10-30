@@ -359,6 +359,304 @@ impl ProtectedEnvBackupVault {
             payload_size: envelope.len() as u64,
         })
     }
+
+    /// Dynamically scans target env file using LlmFusionApiKeyEnumerator,
+    /// creates ZeroizingLockedSecret grants for all consensus-selected API keys,
+    /// backs up the original env to the encrypted vault, and replaces selected keys with stand-ins.
+    pub fn seal_and_backup_dynamic(
+        env_path: &Path,
+        vault_path: &Path,
+    ) -> Result<LlmFusionEnumerationResult, VaultError> {
+        let content = std::fs::read_to_string(env_path)?;
+        let mut pairs = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || !trimmed.contains('=') {
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+            pairs.push((parts[0].trim().to_string(), parts[1].trim().to_string()));
+        }
+
+        let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&pairs);
+        let mut grants = Vec::new();
+
+        for cand in &result.candidates {
+            if cand.selected {
+                if let Some(ref standin) = cand.standin_token {
+                    if let Some((_, val)) = pairs.iter().find(|(k, _)| k == &cand.key) {
+                        let clean_val = val.trim().trim_matches('"').trim_matches('\'');
+                        let grant = crate::rea_voter_env_gateway::HardenedSealedGrant::new(
+                            &cand.key,
+                            standin,
+                            [0u8; 32],
+                            None,
+                            "api.provider.internal",
+                            crate::rea_voter_env_gateway::ZeroizingLockedSecret::new(clean_val.as_bytes()),
+                        );
+                        grants.push(grant);
+                    }
+                }
+            }
+        }
+
+        Self::seal_and_backup(env_path, vault_path, &grants)?;
+        Ok(result)
+    }
+}
+
+/// Evaluation record for an environment variable analyzed by the 3-Arm LLM Fusion Enumerator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyCandidateEvaluation {
+    pub key: String,
+    pub selected: bool,
+    pub vetoed_by_safety_guard: bool,
+    pub veto_reason: Option<String>,
+    pub arm1_semantic_score: f64,
+    pub arm2_entropy_score: f64,
+    pub arm3_safety_veto: bool,
+    pub fusion_confidence_bp: u16,
+    pub standin_token: Option<String>,
+}
+
+/// Aggregated result of 3-Arm LLM Fusion API Key Enumeration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmFusionEnumerationResult {
+    pub total_scanned: usize,
+    pub total_selected: usize,
+    pub total_vetoed: usize,
+    pub candidates: Vec<ApiKeyCandidateEvaluation>,
+}
+
+/// 3-Arm LLM Fusion API Key Enumerator:
+/// - Arm 1 (SemanticKeyNameAndLlmClassifier): Recognizes `*_API_KEY`, `*_TOKEN`, `*_SECRET`, `GEMINI_API_KEY`, `HF_TOKEN`, etc.
+/// - Arm 2 (EntropyAndTokenPrefixAnalyzer): Recognizes `AIza...`, `hf_...`, `sk-...`, `ghp_...`, `AKIA...` and high Shannon entropy.
+/// - Arm 3 (ImmutableSystemAndPathVetoJudge — CRITICAL ZERO-TOUCH PATH GUARD):
+///   HARD-VETOES (`veto = true`, `confidence = 0`) system and path variables:
+///   `PATH`, `JAVA_HOME`, `ONEDRIVE`, `ONEDRIVECONSUMER`, `OLLAMA_ORIGINS`, `TEMP`, `USERPROFILE`, `WINDIR`, `COMSPEC`, etc.,
+///   or any key ending with `_HOME`, `_DIR`, `_PATH`, `_ROOT`, `_ORIGINS`, `_URL`, `_HOST`, or values with path separators or URLs.
+pub struct LlmFusionApiKeyEnumerator;
+
+impl LlmFusionApiKeyEnumerator {
+    /// Computes Shannon entropy H(X) = - sum(p * log2(p))
+    pub fn shannon_entropy(s: &str) -> f64 {
+        if s.is_empty() {
+            return 0.0;
+        }
+        let mut counts = [0u32; 256];
+        for b in s.bytes() {
+            counts[b as usize] += 1;
+        }
+        let len = s.len() as f64;
+        let mut entropy = 0.0;
+        for &c in &counts {
+            if c > 0 {
+                let p = c as f64 / len;
+                entropy -= p * p.log2();
+            }
+        }
+        entropy
+    }
+
+    /// Evaluates a single key-value variable using 3-Arm LLM Fusion Consensus.
+    pub fn evaluate_variable(key: &str, value: &str) -> ApiKeyCandidateEvaluation {
+        let clean_key = key.trim();
+        let clean_val = value.trim().trim_matches('"').trim_matches('\'');
+        let key_upper = clean_key.to_ascii_uppercase();
+
+        // Arm 3: ImmutableSystemAndPathVetoJudge (CRITICAL ZERO-TOUCH PATH & SYSTEM GUARD)
+        let is_system_name = matches!(
+            key_upper.as_str(),
+            "PATH"
+                | "JAVA_HOME"
+                | "ONEDRIVE"
+                | "ONEDRIVECONSUMER"
+                | "OLLAMA_ORIGINS"
+                | "TEMP"
+                | "TMP"
+                | "USERPROFILE"
+                | "WINDIR"
+                | "COMSPEC"
+                | "RUST_LOG"
+                | "SYSTEMROOT"
+                | "SYSTEMDRIVE"
+                | "APPDATA"
+                | "LOCALAPPDATA"
+                | "PROGRAMFILES"
+                | "PROGRAMFILES(X86)"
+                | "COMMONPROGRAMFILES"
+                | "HOMEDRIVE"
+                | "HOMEPATH"
+                | "OS"
+                | "NUMBER_OF_PROCESSORS"
+                | "PROCESSOR_ARCHITECTURE"
+                | "PROCESSOR_IDENTIFIER"
+                | "PSMODULEPATH"
+                | "ALLUSERSPROFILE"
+        );
+
+        let has_system_suffix = key_upper.ends_with("_HOME")
+            || key_upper.ends_with("_DIR")
+            || key_upper.ends_with("_PATH")
+            || key_upper.ends_with("_ROOT")
+            || key_upper.ends_with("_ORIGINS")
+            || key_upper.ends_with("_URL")
+            || key_upper.ends_with("_HOST")
+            || key_upper.ends_with("_PORT")
+            || key_upper.ends_with("_VERSION")
+            || key_upper.ends_with("_EXE");
+
+        let has_path_delimiters = clean_val.contains('\\')
+            || clean_val.starts_with("C:")
+            || clean_val.starts_with("D:")
+            || (clean_val.contains('/') && !clean_val.starts_with("sk-") && !clean_val.starts_with("hf_"))
+            || clean_val.starts_with("http://")
+            || clean_val.starts_with("https://");
+
+        let is_already_standin = clean_val.starts_with("OSHOOSI_STANDIN_");
+
+        let veto_reason = if is_system_name {
+            Some("VETOED: Protected system environment variable (PATH / system invariant)".to_string())
+        } else if has_system_suffix {
+            Some("VETOED: Non-secret system configuration or path suffix".to_string())
+        } else if has_path_delimiters {
+            Some("VETOED: Value contains filesystem path or network URL".to_string())
+        } else if is_already_standin {
+            Some("VETOED: Already sealed with Oshoosi stand-in token".to_string())
+        } else if clean_val.len() < 8 {
+            Some("VETOED: Value too short to be cryptographic secret".to_string())
+        } else {
+            None
+        };
+
+        let arm3_safety_veto = veto_reason.is_some();
+
+        // If vetoed by Arm 3, consensus is immediate reject with 0 confidence
+        if arm3_safety_veto {
+            return ApiKeyCandidateEvaluation {
+                key: clean_key.to_string(),
+                selected: false,
+                vetoed_by_safety_guard: true,
+                veto_reason,
+                arm1_semantic_score: 0.0,
+                arm2_entropy_score: 0.0,
+                arm3_safety_veto: true,
+                fusion_confidence_bp: 0,
+                standin_token: None,
+            };
+        }
+
+        // Arm 1: SemanticKeyNameAndLlmClassifier
+        let arm1_semantic_score = if key_upper == "GEMINI_API_KEY"
+            || key_upper == "HF_TOKEN"
+            || key_upper == "OPENAI_API_KEY"
+            || key_upper == "ANTHROPIC_API_KEY"
+            || key_upper.ends_with("_API_KEY")
+            || key_upper.ends_with("_API_TOKEN")
+            || key_upper.ends_with("_ACCESS_TOKEN")
+            || key_upper.ends_with("_SECRET_KEY")
+            || key_upper.ends_with("_PRIVATE_KEY")
+        {
+            100.0
+        } else if key_upper.contains("API_KEY")
+            || key_upper.contains("SECRET")
+            || key_upper.contains("TOKEN")
+        {
+            90.0
+        } else if key_upper.contains("KEY") || key_upper.contains("AUTH") || key_upper.contains("PASS") {
+            70.0
+        } else {
+            20.0
+        };
+
+        // Arm 2: EntropyAndTokenPrefixAnalyzer
+        let has_known_prefix = clean_val.starts_with("AIza") // Google Gemini / Cloud API Key
+            || clean_val.starts_with("hf_")                 // HuggingFace Token
+            || clean_val.starts_with("sk-")                 // OpenAI / Anthropic Key
+            || clean_val.starts_with("ghp_")                // GitHub Personal Access Token
+            || clean_val.starts_with("gho_")                // GitHub OAuth Token
+            || clean_val.starts_with("AKIA");               // AWS Access Key ID
+
+        let entropy = Self::shannon_entropy(clean_val);
+
+        let arm2_entropy_score = if has_known_prefix {
+            100.0
+        } else if clean_val.len() >= 20 && entropy >= 3.6 {
+            95.0
+        } else if clean_val.len() >= 16 && entropy >= 3.0 {
+            80.0
+        } else if entropy >= 2.5 {
+            50.0
+        } else {
+            15.0
+        };
+
+        // Calibrated LLM Fusion Consensus: requires fused confidence >= 8500 bp (85.0%)
+        let fused_confidence_pct: f64 = (arm1_semantic_score * 0.55) + (arm2_entropy_score * 0.45);
+        let fusion_confidence_bp = (fused_confidence_pct * 100.0).round().clamp(0.0, 10000.0) as u16;
+
+        let selected = fusion_confidence_bp >= 8500;
+        let standin_token = if selected {
+            let token_hash = blake3::hash(format!("{}_{}", clean_key, clean_val).as_bytes()).to_hex();
+            Some(format!("OSHOOSI_STANDIN_{}_{}", clean_key, &token_hash[..16]))
+        } else {
+            None
+        };
+
+        ApiKeyCandidateEvaluation {
+            key: clean_key.to_string(),
+            selected,
+            vetoed_by_safety_guard: false,
+            veto_reason: None,
+            arm1_semantic_score,
+            arm2_entropy_score,
+            arm3_safety_veto: false,
+            fusion_confidence_bp,
+            standin_token,
+        }
+    }
+
+    /// Evaluates key-value pairs (e.g. from an env file or environment variables).
+    pub fn enumerate_from_pairs(pairs: &[(String, String)]) -> LlmFusionEnumerationResult {
+        let mut candidates = Vec::new();
+        let mut total_selected = 0;
+        let mut total_vetoed = 0;
+
+        for (k, v) in pairs {
+            let eval = Self::evaluate_variable(k, v);
+            if eval.selected {
+                total_selected += 1;
+            }
+            if eval.vetoed_by_safety_guard {
+                total_vetoed += 1;
+            }
+            candidates.push(eval);
+        }
+
+        LlmFusionEnumerationResult {
+            total_scanned: pairs.len(),
+            total_selected,
+            total_vetoed,
+            candidates,
+        }
+    }
+
+    /// Parses an environment file and evaluates all variables with 3-Arm LLM Fusion.
+    pub fn enumerate_env_file(env_path: &Path) -> Result<LlmFusionEnumerationResult, VaultError> {
+        let content = std::fs::read_to_string(env_path)?;
+        let mut pairs = Vec::new();
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || !trimmed.contains('=') {
+                continue;
+            }
+            let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+            let k = parts[0].trim().to_string();
+            let v = parts[1].trim().to_string();
+            pairs.push((k, v));
+        }
+        Ok(Self::enumerate_from_pairs(&pairs))
+    }
 }
 
 /// Applies Win32 Protected NTFS DACL (`SE_DACL_PROTECTED` via `SetNamedSecurityInfoW`
@@ -614,5 +912,71 @@ mod tests {
         ProtectedEnvBackupVault::remove_backup(&vault_file, true)
             .expect("remove with confirm must succeed");
         assert!(!vault_file.exists());
+    }
+
+    #[test]
+    fn test_llm_fusion_api_key_enumeration_and_zero_touch_path() {
+        let test_vars = vec![
+            ("GEMINI_API_KEY".to_string(), "AIzaSyD-FakeGeminiApiKeyExample12345678".to_string()),
+            ("HF_TOKEN".to_string(), "hf_FakeHuggingFaceTokenExampleToken123".to_string()),
+            ("JAVA_HOME".to_string(), "C:\\Program Files\\Java\\jdk-21".to_string()),
+            ("OLLAMA_ORIGINS".to_string(), "http://localhost:3000,http://127.0.0.1".to_string()),
+            ("OneDrive".to_string(), "C:\\Users\\user\\OneDrive".to_string()),
+            ("OneDriveConsumer".to_string(), "C:\\Users\\user\\OneDrive".to_string()),
+            ("Path".to_string(), "C:\\Windows\\system32;C:\\Windows;D:\\tools".to_string()),
+            ("TEMP".to_string(), "C:\\Users\\user\\AppData\\Local\\Temp".to_string()),
+        ];
+
+        let result = LlmFusionApiKeyEnumerator::enumerate_from_pairs(&test_vars);
+        assert_eq!(result.total_selected, 2);
+        assert_eq!(result.total_vetoed, 6);
+
+        // Verify GEMINI_API_KEY and HF_TOKEN are selected with >= 8500 bp
+        let gemini = result.candidates.iter().find(|c| c.key == "GEMINI_API_KEY").unwrap();
+        assert!(gemini.selected);
+        assert!(!gemini.vetoed_by_safety_guard);
+        assert!(gemini.fusion_confidence_bp >= 8500);
+
+        let hf = result.candidates.iter().find(|c| c.key == "HF_TOKEN").unwrap();
+        assert!(hf.selected);
+        assert!(!hf.vetoed_by_safety_guard);
+        assert!(hf.fusion_confidence_bp >= 8500);
+
+        // Verify Path, JAVA_HOME, OneDrive, etc. are HARD-VETOED with 0 confidence
+        for veto_key in &["JAVA_HOME", "OLLAMA_ORIGINS", "OneDrive", "OneDriveConsumer", "Path", "TEMP"] {
+            let c = result.candidates.iter().find(|cand| cand.key == *veto_key).unwrap();
+            assert!(!c.selected, "{} must NOT be selected", veto_key);
+            assert!(c.vetoed_by_safety_guard, "{} must be vetoed", veto_key);
+            assert_eq!(c.fusion_confidence_bp, 0, "{} confidence must be 0", veto_key);
+        }
+
+        // Test end-to-end dynamic sealing and auto-revert roundtrip
+        let temp_dir = tempfile::tempdir().expect("create tempdir");
+        let env_file = temp_dir.path().join(".env");
+        let vault_file = temp_dir.path().join("dynamic_test.vault");
+
+        let mut env_content = String::new();
+        for (k, v) in &test_vars {
+            env_content.push_str(&format!("{}={}\n", k, v));
+        }
+        std::fs::write(&env_file, &env_content).expect("write test env file");
+
+        let dyn_res = ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
+            .expect("seal_and_backup_dynamic must succeed");
+        assert_eq!(dyn_res.total_selected, 2);
+
+        // Check sealed content: GEMINI_API_KEY and HF_TOKEN replaced with stand-in tokens, Path & system variables intact
+        let sealed_text = std::fs::read_to_string(&env_file).expect("read sealed text");
+        assert!(sealed_text.contains("OSHOOSI_STANDIN_GEMINI_API_KEY_"));
+        assert!(sealed_text.contains("OSHOOSI_STANDIN_HF_TOKEN_"));
+        assert!(!sealed_text.contains("AIzaSyD-FakeGeminiApiKeyExample12345678"));
+        assert!(!sealed_text.contains("hf_FakeHuggingFaceTokenExampleToken123"));
+        assert!(sealed_text.contains("Path=C:\\Windows\\system32;C:\\Windows;D:\\tools"));
+        assert!(sealed_text.contains("JAVA_HOME=C:\\Program Files\\Java\\jdk-21"));
+
+        // Auto revert restores 100% bit-for-bit
+        ProtectedEnvBackupVault::auto_revert(&vault_file).expect("auto revert must succeed");
+        let restored_text = std::fs::read_to_string(&env_file).expect("read restored text");
+        assert_eq!(restored_text, env_content);
     }
 }

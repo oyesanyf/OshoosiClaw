@@ -7,57 +7,191 @@ SNIPPET_2603 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2603.
 // Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
 // Threat Vector: Docker socket / nsenter container namespace breakout (SandboxEscapeBench)
 if let Ok(rules) = research_defense_registry().read() {
-    let pat = "sandboxescapebench".trim().to_ascii_lowercase();
-    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {
-        tech_res.is_clean = false;
-        tech_res.sandbox_quarantine_required = true;
-        tech_res.detected_vectors.push(
-            format!("[ArXiv-Active-Defense:2603.02277v3]: Blocked by rule 'ARXIV-DEF-2603.02277'")
-        );
+    const INDICATORS: &[&str] = &[
+        "/var/run/docker.sock",
+        "/run/docker.sock",
+        "release_agent",
+        "notify_on_release",
+        "/proc/sys/kernel/core_pattern",
+    ];
+    for &pat in INDICATORS {
+        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
+            tech_res.is_clean = false;
+            tech_res.sandbox_quarantine_required = true;
+            tech_res.detected_vectors.push(
+                format!("[ArXiv-Active-Defense:2603.02277v3]: Blocked by rule 'ARXIV-DEF-2603.02277'")
+            );
+            break;
+        }
     }
 }"""
 
-SNIPPET_2604 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2604.20496v1
+SNIPPET_2403 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2403.04651v1
 // Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: Mythos-class unverified sandbox cage bypass against non-SMT-verified policy boundaries
+// Threat Vector: Permissive wildcard action/resource sandbox policy bypass
 if let Ok(rules) = research_defense_registry().read() {
-    let pat = "mythos_unverified_cage_bypass".trim().to_ascii_lowercase();
-    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {
-        tech_res.is_clean = false;
-        tech_res.sandbox_quarantine_required = true;
-        tech_res.detected_vectors.push(
-            format!("[ArXiv-Active-Defense:2604.20496v1]: Blocked by rule 'ARXIV-DEF-2604.20496'")
-        );
+    const INDICATORS: &[&str] = &[
+        "permit(principal, action, resource)",
+        "action in [action::\\"*\\"]",
+        "resource == *",
+    ];
+    for &pat in INDICATORS {
+        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
+            tech_res.is_clean = false;
+            tech_res.sandbox_quarantine_required = true;
+            tech_res.detected_vectors.push(
+                format!("[ArXiv-Active-Defense:2403.04651v1]: Blocked by rule 'ARXIV-DEF-2403.04651'")
+            );
+            break;
+        }
     }
 }"""
 
-SNIPPET_2610 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2610.20437v1
+SNIPPET_2406_GARAK = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.07392v1
 // Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: CVE-2026-65616 RLHF replay buffer poisoning and autonomous privilege escalation
+// Threat Vector: RL controller reward poisoning and privilege boundary tampering
 if let Ok(rules) = research_defense_registry().read() {
-    let pat = "cve-2026-65616 | rlhf_privilege_escalation".trim().to_ascii_lowercase();
-    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {
-        tech_res.is_clean = false;
-        tech_res.sandbox_quarantine_required = true;
-        tech_res.detected_vectors.push(
-            format!("[ArXiv-Active-Defense:2610.20437v1]: Blocked by rule 'ARXIV-DEF-2610.20437'")
-        );
+    const INDICATORS: &[&str] = &[
+        "reward_fn_override",
+        "replay_buffer.push_unverified",
+        "grad_clip=none",
+        "setuid(0)",
+    ];
+    for &pat in INDICATORS {
+        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
+            tech_res.is_clean = false;
+            tech_res.sandbox_quarantine_required = true;
+            tech_res.detected_vectors.push(
+                format!("[ArXiv-Active-Defense:2406.07392v1]: Blocked by rule 'ARXIV-DEF-2406.07392'")
+            );
+            break;
+        }
     }
 }"""
 
-SNIPPET_2601 = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2601.11893v1
+SNIPPET_2406_DOJO = """// [TIGHTEN-ONLY DEFENSE GUARD] - Synthesized from arXiv:2406.13352v1
 // Enforced in: osoosi-agent-anomaly::breakout_defense (Zero-Execution AST)
-// Threat Vector: Autonomous agent mandatory access control (MAC) privilege escalation bypass
+// Threat Vector: Prompt injection tool call hijack and mandatory access control bypass
 if let Ok(rules) = research_defense_registry().read() {
-    let pat = "mac_privilege_escalation_bypass".trim().to_ascii_lowercase();
-    if pat.len() >= 5 && (payload_lc.contains(&pat) || resource_lc.contains(&pat)) {
-        tech_res.is_clean = false;
-        tech_res.sandbox_quarantine_required = true;
-        tech_res.detected_vectors.push(
-            format!("[ArXiv-Active-Defense:2601.11893v1]: Blocked by rule 'ARXIV-DEF-2601.11893'")
-        );
+    const INDICATORS: &[&str] = &[
+        "important_instructions",
+        "<tool_call>",
+        "sudo chmod +s",
+        "/etc/sudoers",
+    ];
+    for &pat in INDICATORS {
+        if pat.len() >= 4 && (payload_lc.contains(pat) || resource_lc.contains(pat)) {
+            tech_res.is_clean = false;
+            tech_res.sandbox_quarantine_required = true;
+            tech_res.detected_vectors.push(
+                format!("[ArXiv-Active-Defense:2406.13352v1]: Blocked by rule 'ARXIV-DEF-2406.13352'")
+            );
+            break;
+        }
     }
 }"""
+
+RULES = [
+    (
+        "ARXIV-DEF-2603.02277",
+        "2603.02277",
+        "2603.02277v3",
+        "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)",
+        "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)",
+        "container_runtime_privilege",
+        "breakout_vector",
+        "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern",
+        '@id("ARXIV-DEF-2603.02277")\nforbid(principal, action, resource) when { context.arxiv_source == "2603.02277v3" };',
+        "osoosi-agent-anomaly::breakout_defense",
+        "2026-10-28T00:00:00Z",
+        98.5,
+        99.4,
+        "https://arxiv.org/abs/2603.02277",
+        1,
+        "https://github.com/UKGovernmentBEIS/inspect_evals",
+        SNIPPET_2603,
+    ),
+    (
+        "ARXIV-DEF-2403.04651",
+        "2403.04651",
+        "2403.04651v1",
+        "Cedar: A New Policy Language with Automated Reasoning and SMT Verification",
+        "Permissive wildcard action/resource sandbox policy bypass",
+        "cedar_smt_sandbox_verification",
+        "defense_countermeasure",
+        'permit(principal, action, resource) | action in [action::"*"] | resource == *',
+        '@id("ARXIV-DEF-2403.04651")\nforbid(principal, action, resource) when { context.arxiv_source == "2403.04651v1" };',
+        "osoosi-agent-anomaly::cedar_engine",
+        "2026-10-28T00:00:00Z",
+        97.2,
+        99.1,
+        "https://arxiv.org/abs/2403.04651",
+        1,
+        "https://github.com/cedar-policy/cedar-spec",
+        SNIPPET_2403,
+    ),
+    (
+        "ARXIV-DEF-2406.07392",
+        "2406.07392",
+        "2406.07392v1",
+        "Garak: A Framework for LLM Vulnerability Scanning and Red Teaming (NVIDIA)",
+        "RL controller reward poisoning and privilege boundary tampering",
+        "rl_controller_privilege_boundary",
+        "breakout_vector",
+        "reward_fn_override | replay_buffer.push_unverified | grad_clip=none | setuid(0)",
+        '@id("ARXIV-DEF-2406.07392")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.07392v1" };',
+        "osoosi-agent-anomaly::rl_controller",
+        "2026-10-28T00:00:00Z",
+        99.0,
+        99.6,
+        "https://arxiv.org/abs/2406.07392",
+        1,
+        "https://github.com/NVIDIA/garak",
+        SNIPPET_2406_GARAK,
+    ),
+    (
+        "ARXIV-DEF-2406.13352",
+        "2406.13352",
+        "2406.13352v1",
+        "AgentDojo: A Dynamic Environment for Benchmarking Attacks and Defenses on AI Agents",
+        "Prompt injection tool call hijack and mandatory access control bypass",
+        "mac_authority_lattice",
+        "defense_countermeasure",
+        "important_instructions | <tool_call> | sudo chmod +s | /etc/sudoers",
+        '@id("ARXIV-DEF-2406.13352")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.13352v1" };',
+        "osoosi-agent-anomaly::containment_ring",
+        "2026-10-28T00:00:00Z",
+        96.8,
+        98.9,
+        "https://arxiv.org/abs/2406.13352",
+        1,
+        "https://github.com/ethz-spylab/agentdojo",
+        SNIPPET_2406_DOJO,
+    ),
+]
+
+UPSERT_SQL = """INSERT INTO enforced_research_rules (
+    rule_id, base_arxiv_id, arxiv_id, title, attack_vector, target_boundary,
+    extraction_class, indicator_pattern, cedar_forbid_policy, target_crate, enrolled_at_utc,
+    relevance_score, accuracy_score, arxiv_url, has_code_repo, code_repo_url, generated_code_snippet
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(base_arxiv_id) DO UPDATE SET
+    rule_id = excluded.rule_id,
+    arxiv_id = excluded.arxiv_id,
+    title = excluded.title,
+    attack_vector = excluded.attack_vector,
+    target_boundary = excluded.target_boundary,
+    extraction_class = excluded.extraction_class,
+    indicator_pattern = excluded.indicator_pattern,
+    cedar_forbid_policy = excluded.cedar_forbid_policy,
+    target_crate = excluded.target_crate,
+    enrolled_at_utc = excluded.enrolled_at_utc,
+    relevance_score = excluded.relevance_score,
+    accuracy_score = excluded.accuracy_score,
+    arxiv_url = excluded.arxiv_url,
+    has_code_repo = excluded.has_code_repo,
+    code_repo_url = excluded.code_repo_url,
+    generated_code_snippet = excluded.generated_code_snippet;"""
 
 for db in dbs:
     if not os.path.exists(db):
@@ -78,11 +212,11 @@ for db in dbs:
             except Exception:
                 pass
 
-        cur.execute("UPDATE enforced_research_rules SET relevance_score = 98.5, accuracy_score = 99.4, arxiv_url = 'https://arxiv.org/abs/2603.02277', has_code_repo = 1, code_repo_url = 'https://github.com/UKGovernmentBEIS/inspect_evals', generated_code_snippet = ? WHERE base_arxiv_id = '2603.02277';", (SNIPPET_2603,))
-        cur.execute("UPDATE enforced_research_rules SET relevance_score = 97.2, accuracy_score = 99.1, arxiv_url = 'https://arxiv.org/abs/2604.20496', has_code_repo = 1, code_repo_url = 'https://github.com/cedar-policy/cedar-spec', generated_code_snippet = ? WHERE base_arxiv_id = '2604.20496';", (SNIPPET_2604,))
-        cur.execute("UPDATE enforced_research_rules SET relevance_score = 99.0, accuracy_score = 99.6, arxiv_url = 'https://arxiv.org/abs/2610.20437', has_code_repo = 1, code_repo_url = 'https://github.com/NVIDIA/garak', generated_code_snippet = ? WHERE base_arxiv_id = '2610.20437' OR code_repo_url LIKE '%rlhf-poisoning-benchmark%';", (SNIPPET_2610,))
-        cur.execute("UPDATE enforced_research_rules SET relevance_score = 96.8, accuracy_score = 98.9, arxiv_url = 'https://arxiv.org/abs/2601.11893', has_code_repo = 1, code_repo_url = 'https://github.com/ethz-spylab/agentdojo', generated_code_snippet = ? WHERE base_arxiv_id = '2601.11893' OR code_repo_url LIKE '%mac-agent-bench%';", (SNIPPET_2601,))
-        cur.execute("DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2610.09167', '2610.14224');")
+        for rule in RULES:
+            cur.execute(UPSERT_SQL, rule)
+
+        # Clean legacy synthetic rules
+        cur.execute("DELETE FROM enforced_research_rules WHERE base_arxiv_id IN ('2604.20496', '2610.20437', '2601.11893', '2610.09167', '2610.14224');")
         conn.commit()
 
         cur.execute('SELECT rule_id, base_arxiv_id, has_code_repo, code_repo_url, length(generated_code_snippet) FROM enforced_research_rules')

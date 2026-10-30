@@ -437,6 +437,51 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Manage REA Voter Environment Gateway and Protected Env Backup Vault
+    #[command(
+        name = "env-gateway",
+        alias = "env_gateway",
+        alias = "vault",
+        about = "Manage REA Voter Environment Gateway and Protected Env Backup Vault"
+    )]
+    EnvGateway {
+        #[command(subcommand)]
+        action: EnvGatewayAction,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum EnvGatewayAction {
+    /// Display current status of REA Voter Environment Gateway and Protected Vault
+    Status {
+        /// Optional path to backup vault file (defaults to database/protected_env_backup.vault)
+        #[arg(short, long)]
+        vault_path: Option<PathBuf>,
+    },
+    /// Seal and backup target .env file into encrypted DACL-protected vault, replacing secrets with stand-in tokens
+    Seal {
+        /// Target environment file to seal (defaults to .env)
+        #[arg(short, long, default_value = ".env")]
+        env_file: PathBuf,
+        /// Optional path to backup vault file (defaults to database/protected_env_backup.vault)
+        #[arg(short, long)]
+        vault_path: Option<PathBuf>,
+    },
+    /// Revert target environment file from backup vault to original unsealed state
+    Revert {
+        /// Optional path to backup vault file (defaults to database/protected_env_backup.vault)
+        #[arg(short, long)]
+        vault_path: Option<PathBuf>,
+    },
+    /// Safely shred and remove the protected backup vault from disk
+    RemoveBackup {
+        /// Confirmation flag required to remove the protected backup vault
+        #[arg(long)]
+        confirm: bool,
+        /// Optional path to backup vault file (defaults to database/protected_env_backup.vault)
+        #[arg(short, long)]
+        vault_path: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -2827,6 +2872,104 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 || !scorecard.os_oracle_report.all_os_invariants_verified
             {
                 std::process::exit(1);
+            }
+        }
+        Some(Commands::EnvGateway { ref action }) => {
+            use osoosi_core::protected_env_backup::ProtectedEnvBackupVault;
+            match action {
+                EnvGatewayAction::Status { vault_path } => {
+                    let path = vault_path
+                        .clone()
+                        .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
+                    match ProtectedEnvBackupVault::get_status(&path) {
+                        Ok(status) => {
+                            println!("============================================================");
+                            println!("  OpenỌ̀ṣọ́ọ̀sì Environment Gateway & Protected Vault Status");
+                            println!("============================================================");
+                            println!("Vault Exists:       {}", if status.exists { "✅ Yes" } else { "❌ No" });
+                            println!("Vault Path:         {}", status.vault_path.display());
+                            if let Some(ref target) = status.target_path {
+                                println!("Target Path:        {}", target.display());
+                            }
+                            if let Some(epoch) = status.sealed_at_epoch {
+                                println!("Sealed Epoch:       {}", epoch);
+                            }
+                            println!("DACL Protected:     {}", if status.dacl_protected { "✅ Active (SE_DACL_PROTECTED)" } else { "No" });
+                            println!("Sealed Variables:   {:?}", status.sealed_variables);
+                            println!("Payload Size:       {} bytes", status.payload_size);
+                            println!("============================================================");
+                        }
+                        Err(e) => {
+                            eprintln!("[-] Failed to query vault status: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                EnvGatewayAction::Seal { env_file, vault_path } => {
+                    let v_path = vault_path
+                        .clone()
+                        .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
+                    println!("[*] Scanning and dynamically sealing environment file '{}' into vault '{}'...", env_file.display(), v_path.display());
+                    match ProtectedEnvBackupVault::seal_and_backup_dynamic(env_file, &v_path) {
+                        Ok(enum_res) => {
+                            println!("=========================================================================================");
+                            println!("  OpenỌ̀ṣọ́ọ̀sì 3-Arm LLM Fusion API Key Discovery & Zero-Touch Protection");
+                            println!("=========================================================================================");
+                            println!("Scanned Variables:  {}", enum_res.total_scanned);
+                            println!("Sealed Secrets:     {} (Protected in DACL Vault)", enum_res.total_selected);
+                            println!("Vetoed Safe Vars:   {} (PATH & System Variables Preserved)", enum_res.total_vetoed);
+                            println!("-----------------------------------------------------------------------------------------");
+                            println!("{:<24} | {:<10} | {:<15} | {:<30}", "Variable Name", "Status", "Confidence", "Analysis / Safety Reason");
+                            println!("-----------------------------------------------------------------------------------------");
+                            for c in &enum_res.candidates {
+                                let status_str = if c.selected { "✅ SEALED" } else { "🛡️ VETOED" };
+                                let conf_str = format!("{} bp", c.fusion_confidence_bp);
+                                let reason_str = if c.selected {
+                                    "LLM Fusion Consensus Confirmed".to_string()
+                                } else {
+                                    c.veto_reason.clone().unwrap_or_else(|| "Low secret confidence".to_string())
+                                };
+                                println!("{:<24} | {:<10} | {:<15} | {:<30}", c.key, status_str, conf_str, reason_str);
+                            }
+                            println!("=========================================================================================");
+                            println!("✅ Successfully sealed {} variables into DACL-protected vault.", enum_res.total_selected);
+                        }
+                        Err(e) => {
+                            eprintln!("[-] Dynamic seal failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                EnvGatewayAction::Revert { vault_path } => {
+                    let v_path = vault_path
+                        .clone()
+                        .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
+                    println!("[*] Reverting environment file from vault '{}'...", v_path.display());
+                    match ProtectedEnvBackupVault::auto_revert(&v_path) {
+                        Ok(()) => println!("✅ Target environment restored to original pre-stand-in state."),
+                        Err(e) => {
+                            eprintln!("[-] Revert failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+                EnvGatewayAction::RemoveBackup { confirm, vault_path } => {
+                    let v_path = vault_path
+                        .clone()
+                        .unwrap_or_else(ProtectedEnvBackupVault::default_vault_path);
+                    if !confirm {
+                        eprintln!("[-] Error: Backup removal requires explicit confirmation via --confirm flag.");
+                        std::process::exit(1);
+                    }
+                    println!("[*] Unlocking Protected DACL, shredding with 0x00, and unlinking '{}'...", v_path.display());
+                    match ProtectedEnvBackupVault::remove_backup(&v_path, *confirm) {
+                        Ok(()) => println!("✅ Protected backup vault securely shredded (0x00 overwrite + sync_all) and removed."),
+                        Err(e) => {
+                            eprintln!("[-] Removal failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
             }
         }
         None => {
@@ -9309,6 +9452,74 @@ mod tests {
                 assert!(all);
             }
             _ => panic!("Expected Commands::Research Approve"),
+        }
+    }
+
+    #[test]
+    fn test_cli_env_gateway_subcommands_parse_correctly() {
+        let cli_status = Cli::try_parse_from(["osoosi", "env-gateway", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::EnvGateway {
+                action: EnvGatewayAction::Status { vault_path },
+            }) => {
+                assert!(vault_path.is_none());
+            }
+            _ => panic!("Expected Commands::EnvGateway Status"),
+        }
+
+        let cli_seal = Cli::try_parse_from([
+            "osoosi",
+            "env-gateway",
+            "seal",
+            "--env-file",
+            ".env.prod",
+            "--vault-path",
+            "custom.vault",
+        ])
+        .unwrap();
+        match cli_seal.command {
+            Some(Commands::EnvGateway {
+                action:
+                    EnvGatewayAction::Seal {
+                        env_file,
+                        vault_path,
+                    },
+            }) => {
+                assert_eq!(env_file, PathBuf::from(".env.prod"));
+                assert_eq!(vault_path, Some(PathBuf::from("custom.vault")));
+            }
+            _ => panic!("Expected Commands::EnvGateway Seal"),
+        }
+
+        let cli_revert = Cli::try_parse_from(["osoosi", "env-gateway", "revert"]).unwrap();
+        match cli_revert.command {
+            Some(Commands::EnvGateway {
+                action: EnvGatewayAction::Revert { vault_path },
+            }) => {
+                assert!(vault_path.is_none());
+            }
+            _ => panic!("Expected Commands::EnvGateway Revert"),
+        }
+
+        let cli_remove = Cli::try_parse_from([
+            "osoosi",
+            "env-gateway",
+            "remove-backup",
+            "--confirm",
+        ])
+        .unwrap();
+        match cli_remove.command {
+            Some(Commands::EnvGateway {
+                action:
+                    EnvGatewayAction::RemoveBackup {
+                        confirm,
+                        vault_path,
+                    },
+            }) => {
+                assert!(confirm);
+                assert!(vault_path.is_none());
+            }
+            _ => panic!("Expected Commands::EnvGateway RemoveBackup"),
         }
     }
 }

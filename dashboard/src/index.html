@@ -5294,7 +5294,13 @@
                                 Every rule below is actively evaluated inside <code>BreakoutDefenseCoordinator::evaluate_action</code> on live agent tool calls, shell commands, and network egress.
                             </div>
                         </div>
-                        <div style="display: flex; align-items: center; gap: 8px;">
+                        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <button type="button" id="btn-test-research-accuracy" class="btn-primary" onclick="window.testResearchAccuracy()" style="padding: 5px 12px; font-size: 11px; font-weight: 700; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; background: linear-gradient(135deg, #06b6d4, #0284c7); border: none; color: #ffffff;">
+                                🎯 Verify Accuracy (Paper2Agent)
+                            </button>
+                            <button type="button" id="btn-regenerate-research-code" class="btn" onclick="window.regenerateResearchCode()" style="padding: 5px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; background: rgba(168,85,247,0.18); border: 1px solid #a855f7; color: #d8b4fe;">
+                                ⚡ In-Place Code Regenerate
+                            </button>
                             <button type="button" id="btn-clear-all-research" class="btn" onclick="clearAllResearchAndSynthesizedCode()" style="padding: 5px 12px; font-size: 11px; font-weight: 600; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px; background: rgba(239,68,68,0.18); border: 1px solid #ef4444; color: #fca5a5;">
                                 🗑️ Clear All Research &amp; Synthesized Code
                             </button>
@@ -5304,6 +5310,8 @@
                             <span id="research-active-rules-badge" class="badge green" style="font-size: 10.5px;">4 ACTIVE RULES ENFORCED</span>
                         </div>
                     </div>
+                    <!-- Paper2Agent Accuracy & LLM Fusion Results Panel -->
+                    <div id="research-accuracy-results" style="display: none; margin-bottom: 14px; padding: 14px; background: rgba(15, 23, 42, 0.95); border-radius: 8px; border: 1px solid rgba(6, 182, 212, 0.4); box-shadow: 0 4px 16px rgba(0,0,0,0.4);"></div>
                     <div style="overflow-x: auto; border: 1px solid var(--glass-border); border-radius: 8px;">
                         <table class="data-table" style="width: 100%; font-size: 12px; border-collapse: collapse;">
                             <thead>
