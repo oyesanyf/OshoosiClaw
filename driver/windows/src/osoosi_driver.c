@@ -176,7 +176,7 @@ static const PCWSTR g_KnownByovdDrivers[] = {
 
 // Known BYOVD SHA-256 Authenticode / image hashes (LOLDrivers / Microsoft Vulnerable Driver Blocklist)
 // Enforced even when the attacker renames the driver on disk (e.g. gdrv.sys -> legit_audio.sys) (F11).
-static const UCHAR g_KnownByovdHashes[][OSOOSI_SHA256_LEN] = {
+static const UCHAR g_KnownByovdHashes[][OSOOSI_HASH_SIZE] = {
     // GDRV.SYS: 3626A6917A00F77B0F3F2F1253457A0F7E0A2BF6FB5DB8F9A5576211EB71616F
     {
         0x36, 0x26, 0xA6, 0x91, 0x7A, 0x00, 0xF7, 0x7B,
@@ -938,14 +938,14 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) 
     return FALSE;
 }
 
-static BOOLEAN OsoosiIsByovdHashBlockedLocked(_In_reads_bytes_(OSOOSI_SHA256_LEN) const UCHAR *ImageHash) {
+static BOOLEAN OsoosiIsByovdHashBlockedLocked(_In_ const UCHAR *ImageHash) {
     if (ImageHash == NULL) {
         return FALSE;
     }
 
     // 1. Check built-in Microsoft Vulnerable Driver Blocklist SHA-256 hashes (F11)
     for (ULONG i = 0; i < sizeof(g_KnownByovdHashes) / sizeof(g_KnownByovdHashes[0]); ++i) {
-        if (RtlCompareMemory(ImageHash, g_KnownByovdHashes[i], OSOOSI_SHA256_LEN) == OSOOSI_SHA256_LEN) {
+        if (RtlCompareMemory(ImageHash, g_KnownByovdHashes[i], OSOOSI_HASH_SIZE) == OSOOSI_HASH_SIZE) {
             return TRUE;
         }
     }
@@ -955,7 +955,7 @@ static BOOLEAN OsoosiIsByovdHashBlockedLocked(_In_reads_bytes_(OSOOSI_SHA256_LEN
     while (curr != &g_State.ByovdRuleList) {
         POSOOSI_BYOVD_RULE rule = CONTAINING_RECORD(curr, OSOOSI_BYOVD_RULE, ListEntry);
         if (rule->HasHash &&
-            RtlCompareMemory(ImageHash, rule->Sha256Hash, OSOOSI_SHA256_LEN) == OSOOSI_SHA256_LEN) {
+            RtlCompareMemory(ImageHash, rule->Sha256, OSOOSI_HASH_SIZE) == OSOOSI_HASH_SIZE) {
             return TRUE;
         }
         curr = curr->Flink;
@@ -969,6 +969,15 @@ static BOOLEAN OsoosiIsByovdHashBlockedLocked(_In_reads_bytes_(OSOOSI_SHA256_LEN
  * Verifies that PspCreateProcessNotifyRoutine, PspLoadImageNotifyRoutine, and ObRegisterCallbacks
  * handles remain active and have not been unlinked or zeroed by DKOM.
  */
+static VOID OsoosiEnqueueInterceptEventLocked(
+    _In_ ULONG pid,
+    _In_ ULONG parentPid,
+    _In_ ULONG blocked,
+    _In_ ULONG interceptType,
+    _In_opt_ PCUNICODE_STRING imagePath,
+    _In_opt_ PCUNICODE_STRING commandLine
+);
+
 static BOOLEAN OsoosiVerifyCallbackSelfIntegrityLocked(VOID) {
     if (!g_State.NotifyRoutineRegistered ||
         !g_State.ImageNotifyRegistered ||
@@ -977,7 +986,7 @@ static BOOLEAN OsoosiVerifyCallbackSelfIntegrityLocked(VOID) {
             0,
             0,
             1,
-            OSOOSI_INTERCEPT_SELF_DEFENSE,
+            OSOOSI_INTERCEPT_MINIFILTER_TAMPER,
             NULL,
             NULL
         );
@@ -1015,7 +1024,7 @@ static BOOLEAN OsoosiIsByovdDriverLocked(_In_ PCUNICODE_STRING ImageFileName) {
             OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, rule->DriverName, rule->NameLength)) {
             return TRUE;
         }
-        if (rule->HasHash && OsoosiIsByovdHashBlockedLocked(rule->Sha256Hash)) {
+        if (rule->HasHash && OsoosiIsByovdHashBlockedLocked(rule->Sha256)) {
             return TRUE;
         }
         curr = curr->Flink;
