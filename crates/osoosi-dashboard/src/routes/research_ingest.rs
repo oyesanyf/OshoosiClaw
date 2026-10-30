@@ -796,25 +796,106 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
 /// Detects a verified public code repository URL (GitHub/GitLab) from extraction fields or canonical mappings.
 const BLOCKED_FAKE_REPO_SUBSTRINGS: &[&str] = &["rlhf-poisoning-benchmark", "mac-agent-bench"];
 
-fn is_valid_verified_repo_url(url: &str) -> bool {
+/// Trims leading and trailing punctuation (brackets, parentheses, quotes, sentence punctuation)
+/// that frequently attach to URLs in academic text, Markdown, or scraped metadata.
+pub fn trim_repo_url_punctuation(raw: &str) -> &str {
+    raw.trim().trim_matches(|c: char| {
+        matches!(
+            c,
+            '(' | ')'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '<'
+                | '>'
+                | '"'
+                | '\''
+                | '`'
+                | ','
+                | '.'
+                | ';'
+                | ':'
+                | '!'
+                | '?'
+        )
+    })
+}
+
+/// Validates whether a URL is a valid, clean, verified GitHub or GitLab public repository URL.
+/// Strictly enforces owner and repository slug character rules and rejects malformed URLs,
+/// query parameters, hashes, subpaths, fake repos, and SSRF targets.
+pub fn is_valid_verified_repo_url(url: &str) -> bool {
     let clean = url.trim();
+    if clean.is_empty() {
+        return false;
+    }
     for blocked in BLOCKED_FAKE_REPO_SUBSTRINGS {
         if clean.contains(blocked) {
             return false;
         }
     }
-    if let Some(rest) = clean
-        .strip_prefix("https://github.com/")
-        .or_else(|| clean.strip_prefix("https://gitlab.com/"))
-    {
-        let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
-        if parts.len() >= 2 {
-            let owner = parts[0];
-            let repo = parts[1].trim_end_matches(".git");
-            return !owner.is_empty() && !repo.is_empty() && owner != "dummy" && repo != "dummy";
-        }
+    // Reject query parameters, fragments, or path traversal
+    if clean.contains('?') || clean.contains('#') || clean.contains("..") {
+        return false;
     }
-    false
+    let rest = if let Some(r) = clean.strip_prefix("https://github.com/") {
+        r
+    } else if let Some(r) = clean.strip_prefix("https://gitlab.com/") {
+        r
+    } else {
+        return false;
+    };
+
+    let rest_clean = rest.strip_suffix('/').unwrap_or(rest);
+    let parts: Vec<&str> = rest_clean.split('/').collect();
+
+    // Must have exactly two path components: owner and repository name
+    if parts.len() != 2 {
+        return false;
+    }
+
+    let owner = parts[0];
+    let repo_raw = parts[1];
+    let repo = repo_raw.strip_suffix(".git").unwrap_or(repo_raw);
+
+    // Validate owner slug: alphanumeric start/end, allows '-', '_', '.', no 'dummy', length 1..=100
+    if owner.is_empty() || owner == "dummy" || owner.len() > 100 {
+        return false;
+    }
+    if !owner.starts_with(|c: char| c.is_ascii_alphanumeric())
+        || !owner.ends_with(|c: char| c.is_ascii_alphanumeric())
+    {
+        return false;
+    }
+    if !owner
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return false;
+    }
+
+    // Validate repo slug: alphanumeric start, no trailing '.' or '-', can end in alphanumeric or '_', no 'dummy', length 1..=100
+    if repo.is_empty() || repo == "dummy" || repo.len() > 100 {
+        return false;
+    }
+    if !repo.starts_with(|c: char| c.is_ascii_alphanumeric()) {
+        return false;
+    }
+    if repo.ends_with('.') || repo.ends_with('-') {
+        return false;
+    }
+    if !repo.ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+        return false;
+    }
+    if !repo
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return false;
+    }
+
+    true
 }
 
 pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String) {
@@ -841,9 +922,10 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
 
     if let Some(true) = item.has_code_repo {
         if let Some(ref url) = item.code_repo_url {
-            let u = url.trim();
-            if is_valid_verified_repo_url(u) {
-                return (true, u.to_string());
+            let u = trim_repo_url_punctuation(url);
+            let u_canonical = u.strip_suffix('/').unwrap_or(u);
+            if is_valid_verified_repo_url(u_canonical) {
+                return (true, u_canonical.to_string());
             }
         }
     }
@@ -858,19 +940,10 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
 
     for text in candidates {
         for word in text.split_whitespace() {
-            let clean = word.trim_matches(|c: char| {
-                c == '('
-                    || c == ')'
-                    || c == '['
-                    || c == ']'
-                    || c == '<'
-                    || c == '>'
-                    || c == '"'
-                    || c == '\''
-                    || c == ','
-            });
-            if is_valid_verified_repo_url(clean) {
-                return (true, clean.to_string());
+            let clean = trim_repo_url_punctuation(word);
+            let clean_canonical = clean.strip_suffix('/').unwrap_or(clean);
+            if is_valid_verified_repo_url(clean_canonical) {
+                return (true, clean_canonical.to_string());
             }
         }
     }

@@ -118,10 +118,9 @@ fn challenge_detect_verified_code_repo_baseline_and_valid_repos_acceptance() {
 }
 
 #[test]
-#[ignore = "repro test for trailing sentence punctuation leak in detect_verified_code_repo; unignore once worker fixes research_ingest.rs"]
 fn challenge_detect_verified_code_repo_trailing_punctuation_leak() {
     // Edge case: Sentence ending in parenthetical repo citation: (https://github.com/oyesanyf/OshoosiClaw).
-    // Tests whether trim_matches properly strips trailing '.' and ')' or leaks them into the URL.
+    // Tests whether trim_repo_url_punctuation properly strips trailing '.' and ')' and resolves canonical URL.
     let item_punct = ResearchExtractionItem {
         arxiv_id: Some("2609.55556".to_string()),
         title: Some("Novel Container Defense".to_string()),
@@ -132,16 +131,17 @@ fn challenge_detect_verified_code_repo_trailing_punctuation_leak() {
     };
 
     let (has_repo, resolved_url) = detect_verified_code_repo(&item_punct);
-    // Observe exact behavior for challenger report
-    println!(
-        "Trailing punctuation extraction result: has_repo={}, resolved_url='{}'",
-        has_repo, resolved_url
+    assert!(
+        has_repo,
+        "Extracted repo URL must be detected from parenthetical citation"
     );
-    if has_repo {
-        assert!(
-            !resolved_url.ends_with('.') && !resolved_url.ends_with(')'),
-            "Punctuation leak detected: '{}' ends with trailing punctuation!",
-            resolved_url
-        );
-    }
+    assert_eq!(
+        resolved_url, "https://github.com/oyesanyf/OshoosiClaw",
+        "Must strip trailing punctuation cleanly to canonical URL"
+    );
+    assert!(
+        !resolved_url.ends_with('.') && !resolved_url.ends_with(')'),
+        "Punctuation leak detected: '{}' ends with trailing punctuation!",
+        resolved_url
+    );
 }

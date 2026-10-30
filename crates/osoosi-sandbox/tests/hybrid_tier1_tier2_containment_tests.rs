@@ -374,7 +374,7 @@ fn test_tier2_deelevated_child_denies_sam_and_physical_drive_with_error_5() {
         "\"{}\" --exact posture_child_probe --nocapture",
         exe.display()
     );
-    let job = SandboxJobObject::create("OsoosiChildProbeJob", 4, 64 * 1024 * 1024)
+    let job = SandboxJobObject::create("OsoosiChildProbeJob", 4, 512 * 1024 * 1024)
         .expect("SandboxJobObject::create");
     let child = osoosi_sandbox::spawn_deelevated_in_job(&cmd, true, Some(&job))
         .expect("spawn_deelevated_in_job must succeed");

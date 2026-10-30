@@ -13267,17 +13267,23 @@ function buildSafeArxivUrl(arxivId, type = 'abs') {
 window.buildSafeArxivUrl = buildSafeArxivUrl;
 
 /**
-/**
  * Builds a secure, strictly validated public code repository URL (GitHub/GitLab).
- * Filters out 404/broken repositories.
+ * Filters out 404/broken repositories, strips trailing markdown punctuation,
+ * and enforces strict owner and repository slug rules.
  */
 function buildSafeRepoUrl(url) {
     if (!url || typeof url !== 'string') return '';
-    const clean = url.trim();
+    let clean = url.trim();
     if (clean.includes('rlhf-poisoning-benchmark') || clean.includes('mac-agent-bench')) {
         return '';
     }
-    const repoRegex = /^https:\/\/(github\.com|gitlab\.com)\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(\/)?$/i;
+    if (clean.includes('?') || clean.includes('#') || clean.includes('..')) {
+        return '';
+    }
+    // Strip trailing sentence punctuation or closing delimiters leaked from markdown
+    clean = clean.replace(/[.,;:!?\)>\]}"'`]+$/, '');
+    // Ensure strict owner and repo slug validation: alphanumeric start, no trailing dot/hyphen
+    const repoRegex = /^https:\/\/(github\.com|gitlab\.com)\/[a-zA-Z0-9](?:[a-zA-Z0-9_.-]*[a-zA-Z0-9])?\/[a-zA-Z0-9](?:[a-zA-Z0-9_.-]*[a-zA-Z0-9_])?(\/)?$/i;
     if (!repoRegex.test(clean)) return '';
     return clean;
 }
