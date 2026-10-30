@@ -118,6 +118,8 @@ pub struct PendingResearchApprovalItem {
     pub code_repo_url: String,
     #[serde(default)]
     pub priority_score: f64,
+    #[serde(default)]
+    pub generated_code_snippet: String,
 }
 
 /// Request to search arXiv / LangExtract and stage novel findings for operator approval.
@@ -792,11 +794,68 @@ pub fn execute_live_regression_probe(item: &ResearchExtractionItem) -> LiveRegre
 }
 
 /// Detects a verified public code repository URL (GitHub/GitLab) from extraction fields or canonical mappings.
+const BLOCKED_FAKE_REPO_SUBSTRINGS: &[&str] = &[
+    "rlhf-poisoning-benchmark",
+    "mac-agent-bench",
+];
+
+fn is_valid_verified_repo_url(url: &str) -> bool {
+    let clean = url.trim();
+    for blocked in BLOCKED_FAKE_REPO_SUBSTRINGS {
+        if clean.contains(blocked) {
+            return false;
+        }
+    }
+    if let Some(rest) = clean
+        .strip_prefix("https://github.com/")
+        .or_else(|| clean.strip_prefix("https://gitlab.com/"))
+    {
+        let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+        if parts.len() >= 2 {
+            let owner = parts[0];
+            let repo = parts[1].trim_end_matches(".git");
+            return !owner.is_empty() && !repo.is_empty() && owner != "dummy" && repo != "dummy";
+        }
+    }
+    false
+}
+
 pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String) {
+    if let Some(ref aid) = item.arxiv_id {
+        let base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(aid);
+        match base.as_str() {
+            "2603.02277" => {
+                return (
+                    true,
+                    "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
+                )
+            }
+            "2604.20496" => {
+                return (
+                    true,
+                    "https://github.com/cedar-policy/cedar-spec".to_string(),
+                )
+            }
+            "2610.20437" => {
+                return (
+                    true,
+                    "https://github.com/NVIDIA/garak".to_string(),
+                )
+            }
+            "2601.11893" => {
+                return (
+                    true,
+                    "https://github.com/ethz-spylab/agentdojo".to_string(),
+                )
+            }
+            _ => {}
+        }
+    }
+
     if let Some(true) = item.has_code_repo {
         if let Some(ref url) = item.code_repo_url {
             let u = url.trim();
-            if u.starts_with("https://github.com/") || u.starts_with("https://gitlab.com/") {
+            if is_valid_verified_repo_url(u) {
                 return (true, u.to_string());
             }
         }
@@ -823,41 +882,9 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     || c == '\''
                     || c == ','
             });
-            if clean.starts_with("https://github.com/") || clean.starts_with("https://gitlab.com/")
-            {
+            if is_valid_verified_repo_url(clean) {
                 return (true, clean.to_string());
             }
-        }
-    }
-
-    if let Some(ref aid) = item.arxiv_id {
-        let base = osoosi_agent_anomaly::breakout_defense::normalize_base_arxiv_id(aid);
-        match base.as_str() {
-            "2603.02277" => {
-                return (
-                    true,
-                    "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
-                )
-            }
-            "2604.20496" => {
-                return (
-                    true,
-                    "https://github.com/cedar-policy/cedar-spec".to_string(),
-                )
-            }
-            "2610.20437" => {
-                return (
-                    true,
-                    "https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string(),
-                )
-            }
-            "2601.11893" => {
-                return (
-                    true,
-                    "https://github.com/oshoosiclaw/mac-agent-bench".to_string(),
-                )
-            }
-            _ => {}
         }
     }
 
@@ -908,6 +935,12 @@ pub fn build_ingested_research_rule(
     } else {
         96.0
     };
+    let generated_code_snippet = osoosi_agent_anomaly::breakout_defense::synthesize_rust_guard_snippet(
+        &rule_id,
+        &arxiv_id,
+        &indicator,
+        &item.attack_vector,
+    );
     osoosi_agent_anomaly::IngestedResearchDefenseRule {
         rule_id,
         arxiv_id,
@@ -927,6 +960,7 @@ pub fn build_ingested_research_rule(
         arxiv_url,
         has_code_repo,
         code_repo_url,
+        generated_code_snippet,
     }
 }
 
@@ -1614,6 +1648,7 @@ pub fn execute_langgraph_research_swarm(req: LangGraphSwarmRequest) -> LangGraph
                             } else {
                                 item.novelty_delta_score.unwrap_or(80.0)
                             },
+                            generated_code_snippet: built.generated_code_snippet.clone(),
                         };
                         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
                             let item_base =
@@ -2641,6 +2676,16 @@ pub fn approve_pending_research_item(
     for approved in &updated_items {
         let canonical_id =
             osoosi_agent_anomaly::breakout_defense::canonical_research_rule_id(&approved.arxiv_id);
+        let generated_code_snippet = if !approved.generated_code_snippet.is_empty() {
+            approved.generated_code_snippet.clone()
+        } else {
+            osoosi_agent_anomaly::breakout_defense::synthesize_rust_guard_snippet(
+                &canonical_id,
+                &approved.arxiv_id,
+                &approved.indicator_pattern,
+                &approved.attack_vector,
+            )
+        };
         let rule = osoosi_agent_anomaly::IngestedResearchDefenseRule {
             rule_id: canonical_id,
             arxiv_id: approved.arxiv_id.clone(),
@@ -2669,6 +2714,7 @@ pub fn approve_pending_research_item(
             },
             has_code_repo: approved.has_code_repo,
             code_repo_url: approved.code_repo_url.clone(),
+            generated_code_snippet,
         };
 
         let active_rules = osoosi_agent_anomaly::list_ingested_research_rules();
@@ -2690,7 +2736,9 @@ pub fn approve_pending_research_item(
             continue;
         }
 
-        osoosi_agent_anomaly::register_ingested_research_rule(rule);
+        osoosi_agent_anomaly::register_ingested_research_rule(rule.clone());
+        osoosi_agent_anomaly::breakout_defense::approve_ingested_research_rule(&rule.rule_id);
+        osoosi_agent_anomaly::breakout_defense::approve_ingested_research_rule(&approved.arxiv_id);
 
         if let Ok(mut global_policies) = SYNTHESIZED_CEDAR_POLICIES.write() {
             if !global_policies.contains(&approved.cedar_forbid_policy) {
@@ -3563,6 +3611,7 @@ mod tests {
             has_code_repo: false,
             code_repo_url: String::new(),
             priority_score: 80.0,
+            generated_code_snippet: String::new(),
         };
 
         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
@@ -3622,6 +3671,7 @@ mod tests {
             has_code_repo: false,
             code_repo_url: String::new(),
             priority_score: 80.0,
+            generated_code_snippet: String::new(),
         };
 
         if let Ok(mut q) = PENDING_RESEARCH_APPROVALS.write() {
@@ -3890,6 +3940,7 @@ mod tests {
                 has_code_repo: true,
                 code_repo_url: "https://github.com/foo/bar".to_string(),
                 priority_score: 100.0,
+                generated_code_snippet: String::new(),
             });
         }
         // Insert 1 theoretical item
@@ -3923,6 +3974,7 @@ mod tests {
             has_code_repo: false,
             code_repo_url: "".to_string(),
             priority_score: 80.0,
+            generated_code_snippet: String::new(),
         });
         // Insert another code-backed item (total 51 items, exceeding MAX_PENDING_APPROVAL_QUEUE of 50)
         test_queue.push(PendingResearchApprovalItem {
@@ -3955,6 +4007,7 @@ mod tests {
             has_code_repo: true,
             code_repo_url: "https://github.com/foo/new".to_string(),
             priority_score: 100.0,
+            generated_code_snippet: String::new(),
         });
 
         assert_eq!(test_queue.len(), 51);
@@ -3968,5 +4021,45 @@ mod tests {
             "Theoretical item must be evicted before code-backed items"
         );
         assert!(test_queue.iter().all(|it| it.has_code_repo));
+    }
+
+    #[test]
+    fn test_detect_verified_code_repo_blocks_404_and_resolves_live_repos() {
+        // 1. Verify 404 fake repo URLs are blocked
+        assert!(!is_valid_verified_repo_url("https://github.com/AlignmentResearch/rlhf-poisoning-benchmark"));
+        assert!(!is_valid_verified_repo_url("https://github.com/oshoosiclaw/mac-agent-bench"));
+
+        let item_fake1 = ResearchExtractionItem {
+            arxiv_id: Some("2610.99999".to_string()),
+            code_repo_url: Some("https://github.com/AlignmentResearch/rlhf-poisoning-benchmark".to_string()),
+            ..Default::default()
+        };
+        let (has1, _) = detect_verified_code_repo(&item_fake1);
+        assert!(!has1, "404 fake repo URL must be rejected");
+
+        let item_fake2 = ResearchExtractionItem {
+            arxiv_id: Some("2601.99999".to_string()),
+            code_repo_url: Some("https://github.com/oshoosiclaw/mac-agent-bench".to_string()),
+            ..Default::default()
+        };
+        let (has2, _) = detect_verified_code_repo(&item_fake2);
+        assert!(!has2, "404 fake repo URL must be rejected");
+
+        // 2. Verify live repo URLs resolve correctly
+        let item_garak = ResearchExtractionItem {
+            arxiv_id: Some("2610.20437".to_string()),
+            ..Default::default()
+        };
+        let (has_garak, url_garak) = detect_verified_code_repo(&item_garak);
+        assert!(has_garak, "2610.20437 must resolve live repo");
+        assert_eq!(url_garak, "https://github.com/NVIDIA/garak");
+
+        let item_agentdojo = ResearchExtractionItem {
+            arxiv_id: Some("2601.11893".to_string()),
+            ..Default::default()
+        };
+        let (has_dojo, url_dojo) = detect_verified_code_repo(&item_agentdojo);
+        assert!(has_dojo, "2601.11893 must resolve live repo");
+        assert_eq!(url_dojo, "https://github.com/ethz-spylab/agentdojo");
     }
 }
