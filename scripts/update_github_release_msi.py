@@ -410,7 +410,7 @@ def main():
     print("    [+] Binary signature (.sig) verified successfully with gpg --verify")
 
     # Save canonical MSI signatures to disk and remove duplicate OshoosiClaw-1.2.0.msi* files
-    for dest_dir in [repo_root, os.path.join(repo_root, "deploy")]:
+    for dest_dir in [repo_root, os.path.join(repo_root, "deploy"), os.path.join(repo_root, "deploy", "windows")]:
         os.makedirs(dest_dir, exist_ok=True)
         with open(os.path.join(dest_dir, "OshoosiClaw.msi.asc"), "wb") as f:
             f.write(asc_bytes)
@@ -463,7 +463,7 @@ def main():
     )
     print("    [+] DSSE envelope created and PAE signed with GPG key.")
 
-    for dest_dir in [repo_root, os.path.join(repo_root, "deploy")]:
+    for dest_dir in [repo_root, os.path.join(repo_root, "deploy"), os.path.join(repo_root, "deploy", "windows")]:
         with open(os.path.join(dest_dir, "OshoosiClaw.msi.intoto.jsonl"), "wb") as f:
             f.write(dsse_intoto_bytes)
     linux_deploy_dir = os.path.join(repo_root, "deploy", "linux")

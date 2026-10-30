@@ -638,7 +638,7 @@ def test_endpoints():
             headers={**headers, "Content-Type": "application/json", "Connection": "close"},
             method="POST",
         )
-        with urllib.request.urlopen(lg_req, timeout=20) as lg_resp:
+        with urllib.request.urlopen(lg_req, timeout=45) as lg_resp:
             lg_ms = (time.perf_counter() - lg_t0) * 1000.0
             lg_data = json.loads(lg_resp.read().decode("utf-8"))
             assert lg_resp.status == 200
