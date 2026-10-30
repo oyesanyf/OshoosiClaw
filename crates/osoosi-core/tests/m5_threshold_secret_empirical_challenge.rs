@@ -5,8 +5,7 @@
 
 use osoosi_core::threshold_secret::{
     gf256_inv, gf256_mul, verify_anti_rollback_epoch, KeyShare, MicroPerimeterCrypto,
-    ShamirThresholdScheme, ThresholdSecretError, VolatilePeerShareEntry,
-    VolatilePeerShareRegistry,
+    ShamirThresholdScheme, ThresholdSecretError, VolatilePeerShareEntry, VolatilePeerShareRegistry,
 };
 use rand::RngCore;
 
@@ -28,7 +27,10 @@ fn test_empirical_gf256_axiomatic_and_boundary_correctness() {
     // In GF(2^8) mod x^8 + x^4 + x^3 + x + 1 (0x11B),
     // (x^7 + ... + 1)^2 = x^14 + x^12 + x^10 + x^8 + x^6 + x^4 + x^2 + 1 = x^4 + x + 1 = 19 (0x13).
     let prod_255 = gf256_mul(255, 255);
-    assert_eq!(prod_255, 19, "255 * 255 in GF(2^8) mod 0x11B must be 19 (0x13)");
+    assert_eq!(
+        prod_255, 19,
+        "255 * 255 in GF(2^8) mod 0x11B must be 19 (0x13)"
+    );
 
     // 4. Commutativity across all 65,536 pairs
     for a in 0..=255u8 {
@@ -44,11 +46,7 @@ fn test_empirical_gf256_axiomatic_and_boundary_correctness() {
     // 5. Fermat's Little Theorem Multiplicative Inversion: a * a^-1 == 1 for all a in 1..=255
     for a in 1..=255u8 {
         let inv = gf256_inv(a).expect("Inversion must succeed for all non-zero field elements");
-        assert_eq!(
-            gf256_mul(a, inv),
-            1,
-            "Inversion failed for {a}: inv={inv}"
-        );
+        assert_eq!(gf256_mul(a, inv), 1, "Inversion failed for {a}: inv={inv}");
         // Double inversion property
         let inv_inv = gf256_inv(inv).expect("Double inversion must succeed");
         assert_eq!(inv_inv, a, "Double inversion must return original element");
@@ -197,7 +195,10 @@ fn test_empirical_shamir_adversarial_error_cases() {
         &[zero_coord, shares[1].clone(), shares[2].clone()],
         3,
     );
-    assert_eq!(zero_res, Err(ThresholdSecretError::ZeroCoordinateNotAllowed));
+    assert_eq!(
+        zero_res,
+        Err(ThresholdSecretError::ZeroCoordinateNotAllowed)
+    );
 
     // 4. Inconsistent share length (truncated data)
     let mut corrupt_len = shares[0].clone();
@@ -228,7 +229,11 @@ fn test_empirical_shamir_adversarial_error_cases() {
     rng.fill_bytes(&mut other_secret);
     let other_shares = ShamirThresholdScheme::split_secret(&other_secret, 3, 5).unwrap();
     let mixed_res = ShamirThresholdScheme::reconstruct_secret(
-        &[shares[0].clone(), shares[1].clone(), other_shares[2].clone()],
+        &[
+            shares[0].clone(),
+            shares[1].clone(),
+            other_shares[2].clone(),
+        ],
         3,
     );
     assert_eq!(mixed_res, Err(ThresholdSecretError::FingerprintMismatch));
@@ -255,23 +260,15 @@ fn test_empirical_micro_perimeter_crypto_adversarial_tampering() {
     .expect("Encryption must succeed");
 
     // 1. Valid roundtrip
-    let (decrypted, epoch) = MicroPerimeterCrypto::decrypt_envelope(
-        &envelope,
-        &master_key,
-        target_path,
-        host_did,
-    )
-    .expect("Valid envelope must decrypt cleanly");
+    let (decrypted, epoch) =
+        MicroPerimeterCrypto::decrypt_envelope(&envelope, &master_key, target_path, host_did)
+            .expect("Valid envelope must decrypt cleanly");
     assert_eq!(decrypted, plaintext);
     assert_eq!(epoch, commit_epoch);
 
     // 2. Anti-transposition: wrong target path
-    let trans_path_res = MicroPerimeterCrypto::decrypt_envelope(
-        &envelope,
-        &master_key,
-        "osoosi.toml",
-        host_did,
-    );
+    let trans_path_res =
+        MicroPerimeterCrypto::decrypt_envelope(&envelope, &master_key, "osoosi.toml", host_did);
     assert!(trans_path_res.is_err());
     if let Err(ThresholdSecretError::AeadAuthenticationFailed(msg)) = trans_path_res {
         assert!(msg.contains("Anti-transposition violation"));
@@ -292,44 +289,28 @@ fn test_empirical_micro_perimeter_crypto_adversarial_tampering() {
     let mut tampered_ct = envelope.clone();
     let ct_pos = tampered_ct.len() - 35; // Inside ciphertext region
     tampered_ct[ct_pos] ^= 0x01;
-    let ct_err = MicroPerimeterCrypto::decrypt_envelope(
-        &tampered_ct,
-        &master_key,
-        target_path,
-        host_did,
-    );
+    let ct_err =
+        MicroPerimeterCrypto::decrypt_envelope(&tampered_ct, &master_key, target_path, host_did);
     assert!(ct_err.is_err());
 
     // 5. Nonce 1-bit flip tampering
     let mut tampered_nonce = envelope.clone();
     tampered_nonce[35] ^= 0x02; // Inside nonce region [32..44]
-    let nonce_err = MicroPerimeterCrypto::decrypt_envelope(
-        &tampered_nonce,
-        &master_key,
-        target_path,
-        host_did,
-    );
+    let nonce_err =
+        MicroPerimeterCrypto::decrypt_envelope(&tampered_nonce, &master_key, target_path, host_did);
     assert!(nonce_err.is_err());
 
     // 6. Magic corruption
     let mut bad_magic = envelope.clone();
     bad_magic[0] = b'X';
-    let magic_err = MicroPerimeterCrypto::decrypt_envelope(
-        &bad_magic,
-        &master_key,
-        target_path,
-        host_did,
-    );
+    let magic_err =
+        MicroPerimeterCrypto::decrypt_envelope(&bad_magic, &master_key, target_path, host_did);
     assert!(magic_err.is_err());
 
     // 7. Truncation
     let truncated = &envelope[0..40];
-    let trunc_err = MicroPerimeterCrypto::decrypt_envelope(
-        truncated,
-        &master_key,
-        target_path,
-        host_did,
-    );
+    let trunc_err =
+        MicroPerimeterCrypto::decrypt_envelope(truncated, &master_key, target_path, host_did);
     assert!(trunc_err.is_err());
 }
 
