@@ -109,7 +109,7 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         vertical_name="Direct EDR & Detection Engineering",
         wave=1,
         category_focus="Telemetry Collection, YARA/Sigma Rule Synthesis & Agentic Triage",
-        target_sections=["Tools", "Endpoint", "Detection Engines", "YARA", "Automation"],
+        target_sections=["Logging, Monitoring & Data Sources", "Detection Content & Signatures", "Tools", "Endpoint"],
         entry_markdown=(
             "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Rust detection engineering and EDR "
             "platform combining kernel telemetry (eBPF/ETW), automated YARA-X signature synthesis, "
@@ -122,7 +122,7 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
             "### Key Detection Engineering Capabilities\n"
             "- **Telemetry + Detection Pipeline**: Streams eBPF (Linux), ETW/Minifilter (Windows), and EndpointSecurity (macOS) telemetry through a deterministic MITRE ATT&CK behavioral engine.\n"
             "- **Automated YARA-X Rule Synthesis & Verification**: Extracts grounded indicators and synthesizes validated YARA-X and Cedar policies with false-positive calibration.\n"
-            "- **Agentic Alert Triage & Reproducible Live Probing**: Continuously tests detection rules against live breakout and attack payloads with full SQLite & OpenLineage audit provenance."
+            "- **Agentic Alert Triage & Reproducible Live Probing**: Continuously tests detection rules against live breakout and attack payloads with full SQLite & OpenLineage audit provenance.\n\n## Affiliation\n- [x] I am the author, maintainer, or otherwise affiliated with this project."
         ),
     ),
     AwesomeListTarget(
@@ -227,7 +227,7 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         vertical_name="Broad Blue Team, DFIR, Forensics & Reverse Engineering",
         wave=2,
         category_focus="General Security & Endpoint Defense",
-        target_sections=["Endpoint", "Monitoring", "System", "Network", "Tools"],
+        target_sections=["Anti-Virus / Anti-Malware", "Endpoint", "Monitoring", "System"],
         entry_markdown=(
             "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Rust-based Endpoint Detection & "
             "Response (EDR), Host IPS, and kernel telemetry framework using eBPF, Windows ETW, and YARA-X."
@@ -267,7 +267,7 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         vertical_name="Broad Blue Team, DFIR, Forensics & Reverse Engineering",
         wave=2,
         category_focus="Deep Binary, Memory & Artifact Forensics",
-        target_sections=["Tools", "Frameworks", "Memory Forensics", "Executable Analysis"],
+        target_sections=["Live Forensics", "Frameworks", "Tools"],
         entry_markdown=(
             "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Rust forensic inspection and EDR suite "
             "supporting PE/ELF/Mach-O/WASM/EVM/.NET/APK/SQLite/HAR/PCAP artifact analysis, live memory "
@@ -283,12 +283,12 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         ),
     ),
     AwesomeListTarget(
-        repo="dsopas/awesome-reverse-engineering",
+        repo="wtsxDev/reverse-engineering",
         vertical=2,
         vertical_name="Broad Blue Team, DFIR, Forensics & Reverse Engineering",
         wave=2,
         category_focus="Universal Binary & Bytecode Reverse Engineering (REA)",
-        target_sections=["Disassemblers", "Binary Analysis", "Tools", "Multi-platform"],
+        target_sections=["Binary Analysis", "Bytecode Analysis", "Disassemblers"],
         entry_markdown=(
             "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Autonomous Reverse Engineer Anything "
             "(REA) engine in Rust for inspecting PE/ELF/Mach-O binaries, Rust `cargo-auditable` & Go `BuildInfo` "
@@ -330,12 +330,12 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         ),
     ),
     AwesomeListTarget(
-        repo="osirislab/awesome-rust-security",
+        repo="tylerha97/awesome-reversing",
         vertical=3,
         vertical_name="Rust & eBPF Systems Directories",
         wave=3,
         category_focus="Rust Security Tools & Defensive Engines",
-        target_sections=["Defensive", "Blue Team", "Monitoring", "Malware Analysis", "Tools"],
+        target_sections=["Binary Analysis", "Bytecode Analysis", "Disassemblers/Decompilers"],
         entry_markdown=(
             "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Memory-safe Rust EDR, Host IPS, "
             "Universal Binary Inspector, and 7-Ring capability sandbox with eBPF/ETW kernel telemetry and YARA-X."
@@ -469,16 +469,16 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         ),
     ),
     AwesomeListTarget(
-        repo="corca-ai/awesome-ai-security",
+        repo="corca-ai/awesome-llm-security",
         vertical=4,
         vertical_name="Specialized Signature (YARA) & Agentic AI Security Lists",
         wave=4,
         category_focus="Agentic AI Security, 7-Ring Cedar Containment & Breakout Prevention",
-        target_sections=["Tools", "Agent Security", "Frameworks", "Defense", "Guardrails"],
+        target_sections=["Tools", "Defense", "Platform Security"],
         entry_markdown=(
-            "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - 7-Ring AI Agent Containment and "
-            "Breakout Prevention runtime in Rust enforcing formal Cedar + SMT policies, 5-level MAC authority "
-            "lattices, OS capability sandboxing (AppContainer/Landlock/WASM), and autonomous arXiv security research ingestion."
+            "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw): 7-Ring AI agent containment and "
+            "breakout prevention runtime in Rust enforcing formal Cedar policies, OS capability sandboxing "
+            "(AppContainer/Landlock/WASM), and YARA-X scanning. ![GitHub Repo stars](https://img.shields.io/github/stars/oyesanyf/OshoosiClaw?style=social)"
         ),
         pr_title="Add OshoosiClaw (7-Ring AI Agent Containment & Breakout Prevention Platform)",
         pr_body=(
@@ -491,16 +491,17 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
         ),
     ),
     AwesomeListTarget(
-        repo="requie/awesome-ai-cybersecurity",
+        repo="ottosulin/awesome-ai-security",
         vertical=4,
         vertical_name="Specialized Signature (YARA) & Agentic AI Security Lists",
         wave=4,
-        category_focus="AI-Driven Cybersecurity, Autonomous EDR & Multi-Agent Consensus",
-        target_sections=["Tools", "Endpoint", "Defensive AI", "Autonomous Agents", "Frameworks"],
+        category_focus="Agent Runtime Security, Sandboxing & Autonomous EDR",
+        target_sections=["Agent Runtime Security & Sandboxing", "Defense & Security Controls", "Tools"],
         entry_markdown=(
-            "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Autonomous AI-driven EDR and "
-            "cybersecurity mesh in Rust combining multi-voter Bayesian consensus, reinforcement learning active "
-            "defense, 4-Arm LangGraph arXiv research ingestion, and 7-Ring agent sandbox containment."
+            "* [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - _OpenClaw-inspired autonomous security "
+            "agent and 7-Ring AI agent containment runtime in Rust. Enforces formal Cedar + SMT policies, "
+            "OS-level capability sandboxing (Windows AppContainer, Linux Landlock v3 + seccomp-bpf, Wasmtime), "
+            "eBPF/ETW kernel telemetry, and YARA-X scanning._"
         ),
         pr_title="Add OshoosiClaw (Autonomous AI-Driven Rust EDR & Agent Containment Mesh)",
         pr_body=(
@@ -582,8 +583,11 @@ def insert_entry_into_readme(readme_text: str, target: AwesomeListTarget) -> Tup
                     stripped = lines[j].strip()
                     if stripped.startswith("#"):
                         break
-                    if stripped.startswith(("- [", "* [", "- **[", "* **[")):
+                    if (not lines[j].startswith(("  ", "\t"))) and stripped.startswith(("- [", "* [", "- **[", "* **[", "- :")):
                         last_bullet_idx = j
+                        while j + 1 < len(lines) and (lines[j + 1].startswith("  ") or lines[j + 1].startswith("\t")):
+                            j += 1
+                            last_bullet_idx = j
                     j += 1
                 insert_idx = (last_bullet_idx + 1) if last_bullet_idx is not None else (i + 1)
                 break
