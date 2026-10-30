@@ -12,6 +12,7 @@ pub mod mesh_guard;
 pub mod mitigations;
 pub mod sleeper;
 pub mod tarpit;
+pub mod tpm_ratchet;
 
 pub use canary_cage::*;
 pub use deception::*;
@@ -21,3 +22,4 @@ pub use mesh_guard::*;
 pub use mitigations::*;
 pub use sleeper::*;
 pub use tarpit::*;
+pub use tpm_ratchet::*;

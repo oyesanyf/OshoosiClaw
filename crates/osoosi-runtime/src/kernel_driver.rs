@@ -133,6 +133,59 @@ pub fn is_known_byovd_driver(path_or_name: &str) -> bool {
         .any(|&drv| basename == drv || lower.ends_with(&format!("\\{}", drv)))
 }
 
+/// Pre-load static driver verification verdict (F32).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PreLoadDriverVerdict {
+    /// Safe driver with valid imports and no arbitrary kernel memory read/write primitives.
+    Permit,
+    /// Vulnerable driver exhibiting arbitrary physical/virtual R/W sinks or known BYOVD signature.
+    QuarantineBlockByovd,
+    /// Inconclusive static analysis; requires micro-VM IOCTL fuzzing probe before execution.
+    FuzzingRequired,
+}
+
+/// Static analysis report produced before a driver is allowed to load into Ring 0 (F32).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreLoadDriverAnalysisReport {
+    pub driver_path: String,
+    pub sha256: [u8; 32],
+    pub sha256_hex: String,
+    pub verdict: PreLoadDriverVerdict,
+    pub dangerous_imports: Vec<String>,
+    pub arbitrary_rw_primitives_found: bool,
+    pub reasons: Vec<String>,
+}
+
+/// Dangerous Windows kernel imports that expose raw physical memory mapping,
+/// unrestricted section mapping, direct port I/O, or Model-Specific Register (MSR) access.
+pub const DANGEROUS_KERNEL_IMPORTS: &[&str] = &[
+    "MmMapIoSpace",
+    "MmMapLockedPages",
+    "MmMapLockedPagesSpecifyCache",
+    "ZwMapViewOfSection",
+    "HalDispatchTable",
+    "READ_PORT_UCHAR",
+    "WRITE_PORT_UCHAR",
+    "READ_PORT_ULONG",
+    "WRITE_PORT_ULONG",
+    "__readmsr",
+    "__writemsr",
+];
+
+/// Known vulnerable driver SHA-256 hashes (matching `g_KnownByovdHashes` in `osoosi_driver.c`).
+pub const KNOWN_BYOVD_SHA256_HASHES: &[&str] = &[
+    "3626a6917a00f77b0f3f2f1253457a0f7e0a2bf6fb5db8f9a5576211eb71616f", // GDRV.SYS
+    "f497e6a901be9c8ffde0f9b464db3e2916f4f5ebdd708ce94c2b4da1ee01f529", // RTCore64.SYS
+    "d2e689eb05af6c035c2b2956794695d5c6de65f6fb1e5b6b8640c4b82725ff05", // DBUtil_2_3.SYS
+    "2364d9d682404b7914bb5344415fa9d1e37fa0ab9cae142e05f03dd28b8cfeb5", // procexp152.sys
+    "74ca70a1a8e97426e25f7717be54e7aa1bc9c470eebe6042db643a65492d4b00", // iqvw64e.sys
+    "c1d5cfba19dde9e4a1b9442f23e202c578434732c5f8b77b15d9f6a35f019f12", // capcom.sys
+    "1cb47a32dd58adab7252da3f6eeaa4ba0e0bf90f111e8ff5f3ae77762a45d045", // asio64.sys
+    "0466e92bf6136063bb9545f0f8051ffb562f43d5b98d41e79217623430043852", // mhyprot2.sys
+    "cb3b44b63309a4eb392f4460ec0e7e1784f479865ccb80105ccfc73ae2862d55", // kprocesshacker.sys
+    "05e1c0d45300b9db8d7d9e48f76fa7ccf0e53a7a972f4e4e94b2931122a6136f", // winring0x64.sys
+];
+
 static KERNEL_DACL_HARDENED: AtomicBool = AtomicBool::new(false);
 static ELAM_CERT_REGISTERED: AtomicBool = AtomicBool::new(false);
 
@@ -884,6 +937,36 @@ impl KernelDriverClient {
             driver_name
         );
         Ok(())
+    }
+
+    /// Add a Bring Your Own Vulnerable Driver (BYOVD) rule using SHA-256 hash and optional cert thumbprint.
+    pub fn add_byovd_rule_with_cert(
+        &self,
+        hash_sha256: [u8; 32],
+        cert_thumbprint: &[u8],
+    ) -> anyhow::Result<()> {
+        let hash_hex = hex::encode(hash_sha256);
+        let _ = cert_thumbprint;
+        self.add_byovd_rule(&hash_hex, Some(&hash_sha256))
+    }
+
+    /// Evaluates pre-load static driver analysis on newly encountered driver PE bytes.
+    /// If arbitrary memory read/write primitives or dangerous unprobed IOCTL sinks are found,
+    /// the driver hash is automatically submitted to Ring-0 `add_byovd_rule`.
+    pub fn inspect_and_quarantine_driver(
+        &self,
+        driver_path: &str,
+        driver_bytes: &[u8],
+    ) -> anyhow::Result<PreLoadDriverAnalysisReport> {
+        let report = analyze_driver_pe_bytes(driver_bytes, Some(driver_path));
+        if report.verdict == PreLoadDriverVerdict::QuarantineBlockByovd {
+            let basename = driver_path
+                .rsplit(&['/', '\\'][..])
+                .next()
+                .unwrap_or(driver_path);
+            self.add_byovd_rule(basename, Some(&report.sha256))?;
+        }
+        Ok(report)
     }
 
     /// Set driver autonomy mode (Audit, Active, Lockdown).

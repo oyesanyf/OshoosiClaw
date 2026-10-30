@@ -487,6 +487,7 @@ impl HitlCognitiveFirewall {
         let clean_tool = tool_name.trim().to_ascii_uppercase();
         let basename = canonical_resource
             .trim()
+            .trim_end_matches(['/', '\\'])
             .rsplit(['/', '\\'])
             .next()
             .unwrap_or(canonical_resource.trim())

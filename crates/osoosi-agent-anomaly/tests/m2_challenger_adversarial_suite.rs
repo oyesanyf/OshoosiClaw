@@ -2,12 +2,12 @@
 //!
 //! Rigorous stress tests probing:
 //! 1. F05: Dogwood MFOTL sliding window exact boundary (7200s vs 7201s vs 7199s),
-//!        causal trajectory ordering, intermediate supervisor declassification,
-//!        re-taint after declassification, multi-session isolation, and Ring 7 Authorizer integration.
+//!    causal trajectory ordering, intermediate supervisor declassification,
+//!    re-taint after declassification, multi-session isolation, and Ring 7 Authorizer integration.
 //! 2. F06: ExecutionEnvironmentGuard coverage of all 15 hijacking variables (case-insensitive),
-//!        inline CLI overrides, config targets embedded in env values, workspace config tampering
-//!        (.cargo/config.toml, legacy config, build.rs, .pth), UTF-16 sorting and double-null termination,
-//!        and BreakoutDefenseCoordinator operational interception.
+//!    inline CLI overrides, config targets embedded in env values, workspace config tampering
+//!    (.cargo/config.toml, legacy config, build.rs, .pth), UTF-16 sorting and double-null termination,
+//!    and BreakoutDefenseCoordinator operational interception.
 
 use osoosi_agent_anomaly::breakout_defense::{
     sanitize_and_validate_subprocess_env, BreakoutDefenseCoordinator, BreakoutDefenseError,
