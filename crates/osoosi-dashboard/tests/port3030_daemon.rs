@@ -27,11 +27,22 @@ async fn run_live_port_3030_daemon() {
 
     println!("[+] OSHOOSI_DASHBOARD_READY_PORT={}", bound);
 
-    // Keep running for up to 600 seconds or until parent process exits
+    // Keep running for up to 600 seconds when invoked as a standalone daemon harness
+    // (--nocapture / explicit test filter / OSOOSI_DASHBOARD_PORT), or 1 second during
+    // normal `cargo test --workspace` execution.
+    let default_duration = if std::env::args()
+        .any(|a| a == "--nocapture" || a == "run_live_port_3030_daemon")
+        || std::env::var("OSOOSI_DASHBOARD_PORT").is_ok()
+        || std::env::var("OSOOSI_DASHBOARD_BIND_ALL").is_ok()
+    {
+        600
+    } else {
+        1
+    };
     let duration_secs: u64 = std::env::var("OSOOSI_DAEMON_DURATION_SECS")
         .ok()
         .and_then(|d| d.parse().ok())
-        .unwrap_or(600);
+        .unwrap_or(default_duration);
 
     tokio::time::sleep(Duration::from_secs(duration_secs)).await;
     println!(

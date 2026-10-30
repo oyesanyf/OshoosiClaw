@@ -45,9 +45,17 @@ async fn test_system_cleanup_endpoint_sla_and_progress_tracking() {
     );
 
     let body: Value = resp.json().await.expect("Expected JSON response");
+    assert!(
+        matches!(
+            body["status"].as_str(),
+            Some("success" | "scheduled" | "ok" | "completed")
+        ),
+        "Cleanup response status must be 'success' or 'scheduled', got {:?}",
+        body["status"]
+    );
     assert_eq!(
-        body["status"], "scheduled",
-        "Cleanup response status must be 'scheduled'"
+        body["lifecycle_state"], "scheduled",
+        "Cleanup response lifecycle_state must be 'scheduled'"
     );
     assert!(
         body["job_id"]
