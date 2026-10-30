@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
-pub const MICRO_PERIMETER_MAGIC: &[u8; 16] = b"OSHOOSI_CRYPT_V1\0";
+pub const MICRO_PERIMETER_MAGIC: &[u8; 16] = b"OSHOOSI_CRYPT_V1";
 pub const GF256_POLY: u16 = 0x11B; // X^8 + X^4 + X^3 + X + 1 (Rijndael irreducible polynomial)
 
 type HmacSha256 = Hmac<Sha256>;
@@ -240,15 +240,15 @@ impl ShamirThresholdScheme {
         let xs: Vec<u8> = quorum.iter().map(|s| s.index).collect();
         let mut lagrange_weights = Vec::with_capacity(threshold as usize);
 
-        for j in 0..threshold as usize {
+        for (j, &x_j) in xs.iter().enumerate() {
             let mut num = 1u8;
             let mut den = 1u8;
-            for m in 0..threshold as usize {
+            for (m, &x_m) in xs.iter().enumerate() {
                 if m == j {
                     continue;
                 }
-                num = gf256_mul(num, xs[m]);
-                den = gf256_mul(den, xs[j] ^ xs[m]);
+                num = gf256_mul(num, x_m);
+                den = gf256_mul(den, x_j ^ x_m);
             }
             let weight = gf256_mul(num, gf256_inv(den)?);
             lagrange_weights.push(weight);
@@ -256,12 +256,12 @@ impl ShamirThresholdScheme {
 
         // 4. Interpolate each byte: s_k = XOR_{j=0}^{t-1} (y_{k,j} * L_j(0))
         let mut secret = [0u8; 32];
-        for k in 0..32 {
+        for (k, secret_byte) in secret.iter_mut().enumerate() {
             let mut s = 0u8;
-            for j in 0..threshold as usize {
-                s ^= gf256_mul(quorum[j].data[k], lagrange_weights[j]);
+            for (j, &weight) in lagrange_weights.iter().enumerate() {
+                s ^= gf256_mul(quorum[j].data[k], weight);
             }
-            secret[k] = s;
+            *secret_byte = s;
         }
 
         // 5. Verify reconstructed secret against fingerprint
@@ -290,7 +290,7 @@ impl MicroPerimeterCrypto {
     /// Encrypts sensitive configuration or database bytes at rest.
     ///
     /// Envelope format:
-    /// `[16B Magic: OSHOOSI_CRYPT_V1\0] [16B Salt] [12B Nonce] [8B Epoch BE] [4B AD Len BE] [AD JSON] [Ciphertext] [32B HMAC-SHA256 Tag]`
+    /// `[16B Magic: OSHOOSI_CRYPT_V1] [16B Salt] [12B Nonce] [8B Epoch BE] [4B AD Len BE] [AD JSON] [Ciphertext] [32B HMAC-SHA256 Tag]`
     pub fn encrypt_envelope(
         plaintext: &[u8],
         master_key: &[u8; 32],
@@ -337,14 +337,17 @@ impl MicroPerimeterCrypto {
         let mut offset = 0;
         while offset < plaintext.len() {
             let mut block_hasher = Sha256::new();
-            block_hasher.update(&k_enc);
+            block_hasher.update(k_enc);
             block_hasher.update(nonce);
-            block_hasher.update(&counter.to_be_bytes());
+            block_hasher.update(counter.to_be_bytes());
             let keystream_block = block_hasher.finalize();
 
             let take = (plaintext.len() - offset).min(32);
-            for i in 0..take {
-                ciphertext.push(plaintext[offset + i] ^ keystream_block[i]);
+            for (&p_byte, &k_byte) in plaintext[offset..offset + take]
+                .iter()
+                .zip(keystream_block.iter())
+            {
+                ciphertext.push(p_byte ^ k_byte);
             }
             offset += take;
             counter = counter.wrapping_add(1);
@@ -454,14 +457,17 @@ impl MicroPerimeterCrypto {
         let mut offset = 0;
         while offset < ciphertext.len() {
             let mut block_hasher = Sha256::new();
-            block_hasher.update(&k_enc);
+            block_hasher.update(k_enc);
             block_hasher.update(nonce);
-            block_hasher.update(&counter.to_be_bytes());
+            block_hasher.update(counter.to_be_bytes());
             let keystream_block = block_hasher.finalize();
 
             let take = (ciphertext.len() - offset).min(32);
-            for i in 0..take {
-                plaintext.push(ciphertext[offset + i] ^ keystream_block[i]);
+            for (&c_byte, &k_byte) in ciphertext[offset..offset + take]
+                .iter()
+                .zip(keystream_block.iter())
+            {
+                plaintext.push(c_byte ^ k_byte);
             }
             offset += take;
             counter = counter.wrapping_add(1);
