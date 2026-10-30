@@ -4752,7 +4752,8 @@ mod tests {
         assert!(is_current_research_arxiv_id("arXiv:2604.20496v1"));
         assert!(!is_current_research_arxiv_id("2403.02277v1"));
         assert!(!is_current_research_arxiv_id("2310.12345"));
-        assert!(!is_current_research_arxiv_id("arXiv:2512.99999"));
+        assert!(!is_current_research_arxiv_id("arXiv:2412.99999"));
+        assert!(is_current_research_arxiv_id("arXiv:2512.99999"));
 
         let outdated_rule = IngestedResearchDefenseRule {
             rule_id: "test_outdated".to_string(),
@@ -4845,10 +4846,13 @@ mod tests {
                 r.rule_id
             );
         }
-        assert_eq!(seeded[2].code_repo_url, "https://github.com/NVIDIA/garak");
+        assert_eq!(
+            seeded[2].code_repo_url,
+            "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent"
+        );
         assert_eq!(
             seeded[3].code_repo_url,
-            "https://github.com/ethz-spylab/agentdojo"
+            "https://github.com/sleeepeer/PISanitizer"
         );
     }
 
