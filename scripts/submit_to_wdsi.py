@@ -48,6 +48,7 @@ TARGET_BINARIES_ALL = [
     "deploy/osoosi.exe",
     "OshoosiClaw.msi",
     "deploy/OshoosiClaw.msi",
+    "deploy/windows/OshoosiClaw.msi",
 ]
 
 

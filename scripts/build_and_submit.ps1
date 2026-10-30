@@ -446,6 +446,8 @@ if (Test-Path $AuditLog) {
 # =============================================================================
 $RootMsi = Join-Path $ProjectRoot "OshoosiClaw.msi"
 $DeployMsi = Join-Path $DeployDir "OshoosiClaw.msi"
+$DeployWinDir = Join-Path $DeployDir "windows"
+$DeployWinMsi = Join-Path $DeployWinDir "OshoosiClaw.msi"
 
 if (-not $SkipWix) {
     Write-Host "`n>>> [4/8] Building WiX MSI Installer Package..." -ForegroundColor Yellow
@@ -456,6 +458,7 @@ if (-not $SkipWix) {
         if ($WixCmd) {
             Test-And-Handle-LockedFile -FilePath $RootMsi
             Test-And-Handle-LockedFile -FilePath $DeployMsi
+            Test-And-Handle-LockedFile -FilePath $DeployWinMsi
 
             # Pack the Browser DLP Sensor CRX for Chromium enterprise force-install. Non-fatal:
             # when packing is unavailable the MSI still ships the unpacked extension + policy script.
@@ -475,7 +478,9 @@ if (-not $SkipWix) {
                 exit 1
             }
             Copy-Item -Path $RootMsi -Destination $DeployMsi -Force
-            Write-Host "       -> MSI built and synchronized successfully: $DeployMsi" -ForegroundColor Green
+            if (-not (Test-Path $DeployWinDir)) { New-Item -ItemType Directory -Path $DeployWinDir -Force | Out-Null }
+            Copy-Item -Path $RootMsi -Destination $DeployWinMsi -Force
+            Write-Host "       -> MSI built and synchronized successfully: $DeployMsi and $DeployWinMsi" -ForegroundColor Green
         } else {
             Write-Warning "WiX toolset not found. MSI generation skipped."
         }
@@ -494,7 +499,8 @@ $TargetBinaries = @(
     $TargetExe,
     $DeployExe,
     $RootMsi,
-    $DeployMsi
+    $DeployMsi,
+    $DeployWinMsi
 ) | Where-Object { Test-Path $_ }
 
 # Compile and sign Ring-0 Windows Kernel Drivers (osoosi_driver.sys & osoosi_elam.sys)
@@ -535,6 +541,9 @@ if (-not $SkipSigning) {
     # Ensure signed MSI is synchronized if RootMsi was signed
     if ((Test-Path $RootMsi) -and (Test-Path $DeployMsi)) {
         Copy-Item -Path $RootMsi -Destination $DeployMsi -Force
+    }
+    if ((Test-Path $RootMsi) -and (Test-Path $DeployWinMsi)) {
+        Copy-Item -Path $RootMsi -Destination $DeployWinMsi -Force
     }
     # Ensure target/release/osoosi.exe and deploy/osoosi.exe have the exact same clean signature
     if ((Test-Path $DeployExe) -and (Test-Path $TargetExe)) {
