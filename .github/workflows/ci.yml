@@ -110,7 +110,10 @@ jobs:
           cargo test --no-run -p osoosi-dashboard --test port3030_daemon
 
           # Start daemon in background
-          $daemonJob = Start-Job -ScriptBlock {
+          $repoRoot = (Get-Location).Path
+          $daemonJob = Start-Job -ArgumentList $repoRoot -ScriptBlock {
+            param($workDir)
+            Set-Location -LiteralPath $workDir
             $env:OSOOSI_DASHBOARD_PORT = "3030"
             $env:OSOOSI_DASHBOARD_BIND_ALL = "1"
             $env:OSOOSI_PORT3030_HOLD_SECS = "600"

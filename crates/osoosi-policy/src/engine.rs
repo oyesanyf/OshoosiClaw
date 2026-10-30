@@ -649,7 +649,7 @@ pub fn detect_deterministic_asymmetric_veto(
     }
 }
 
-fn orchestrate_evidence(
+pub fn orchestrate_evidence(
     votes: &[EvidenceVote],
     event: &HostSecurityEvent,
     config: &osoosi_types::PolicyConfig,
