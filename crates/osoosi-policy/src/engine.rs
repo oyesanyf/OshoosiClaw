@@ -405,6 +405,250 @@ fn classify_vote(
     }
 }
 
+/// The 5 Deterministic Invariant Violation Families governed by the Asymmetric Veto.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum InvariantViolationFamily {
+    /// 1. Cedar Reference Monitor forbid rules & self-protection violations
+    CedarForbid,
+    /// 2. Ring 0 kernel tamper, BYOVD, ETW/AMSI patch, DKOM differential, or SPRT anomaly
+    Ring0Tamper,
+    /// 3. Process token manipulation, privilege escalation, or LSASS/credential theft
+    ProcessTokenPrivilege,
+    /// 4. Cryptographic mesh signature mismatch, epoch replay, or Merkle/TPM row integrity violation
+    CryptographicMeshMismatch,
+    /// 5. Lateral containment breach, canary trip, or sacrificial fracture
+    LateralContainmentBreach,
+}
+
+/// Structured assessment of deterministic invariant violations.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct DeterministicAsymmetricVeto {
+    pub is_violated: bool,
+    pub families: Vec<InvariantViolationFamily>,
+    pub primary_reason: String,
+    pub causal_rule: String,
+}
+
+impl DeterministicAsymmetricVeto {
+    pub fn none() -> Self {
+        Self {
+            is_violated: false,
+            families: Vec::new(),
+            primary_reason: String::new(),
+            causal_rule: String::new(),
+        }
+    }
+}
+
+/// Evaluates both event telemetry and evidence votes for deterministic invariant violations across all 5 families.
+pub fn detect_deterministic_asymmetric_veto(
+    event: &HostSecurityEvent,
+    votes: &[EvidenceVote],
+) -> DeterministicAsymmetricVeto {
+    let mut families = Vec::new();
+    let mut reasons = Vec::new();
+
+    // -------------------------------------------------------------
+    // Family 1: Cedar Forbid Rules
+    // -------------------------------------------------------------
+    let has_cedar_forbid = event.data.get("CedarDecision").and_then(|v| v.as_str()) == Some("Deny")
+        || event.data.get("CedarDecision").and_then(|v| v.as_str()) == Some("Forbid")
+        || event
+            .data
+            .get("CedarForbidTripped")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || votes.iter().any(|v| {
+            let r = &v.result.reason;
+            r.contains("Cedar-Ring7-Forbid")
+                || r.contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
+                || r.contains("CEDAR-FORBID")
+                || r.contains("Self-Protection Violation")
+                || r.contains("DENY_ESCALATED_OR_FORBIDDEN")
+                || r.contains("DENY_MODEL_MANIPULATION_OVERRIDE")
+        });
+
+    if has_cedar_forbid {
+        families.push(InvariantViolationFamily::CedarForbid);
+        reasons.push("Cedar Reference Monitor forbid / self-protection violation");
+    }
+
+    // -------------------------------------------------------------
+    // Family 2: Ring 0 Tamper Detections
+    // -------------------------------------------------------------
+    let has_ring0_tamper = event
+        .data
+        .get("KernelTamperDetected")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || event
+            .data
+            .get("HvciTamperDetected")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || event
+            .data
+            .get("DkomTamperDetected")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || (matches!(event.event_id, 8 | 10 | 25)
+            && (event
+                .data
+                .get("KernelTamperDetected")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                || !votes.is_empty()))
+        || votes.iter().any(|v| {
+            let r = &v.result.reason;
+            r.contains("BYOVD")
+                || r.contains("ETW_USERMODE_PATCH_DETECTED")
+                || r.contains("AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED")
+                || r.contains("NTDLL_DETOUR_UNHOOKED")
+                || r.contains("KERNEL_CALLBACK_TAMPER_DETECTED")
+                || r.contains("Kernel Callback Self-Integrity")
+                || r.contains("DKOM_TAMPER_DETECTED")
+                || r.contains("Cross-View DKOM Differential")
+                || r.contains("SPRT_REJECT_ANOMALY")
+                || r.contains("RejectAnomaly")
+                || r.contains("HVCI_INACTIVE_OR_TAMPERED")
+                || r.contains("ProcessHollowing")
+                || r.contains("VULNERABLE_DRIVER_BLOCKED")
+        });
+
+    if has_ring0_tamper {
+        families.push(InvariantViolationFamily::Ring0Tamper);
+        reasons.push("Ring 0 kernel tamper / BYOVD / watchdog hook alteration detected");
+    }
+
+    // -------------------------------------------------------------
+    // Family 3: Process Token & Privilege Escalation
+    // -------------------------------------------------------------
+    let has_token_privilege = event
+        .data
+        .get("PrivilegeEscalationDetected")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || event
+            .data
+            .get("TokenElevationViolation")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || votes.iter().any(|v| {
+            let r = &v.result.reason;
+            (v.strong_action
+                && v.reliability >= 0.85
+                && (matches!(v.class, EvidenceClass::Memory) || v.result.confidence >= 0.85))
+                && (r.contains("CredentialGuard")
+                    || r.contains("TokenElevation")
+                    || r.contains("TokenElevationType")
+                    || r.contains("PrivilegeEscalation")
+                    || r.contains("Privilege-Escalation")
+                    || r.contains("SE_DEBUG_PRIVILEGE_ABUSE")
+                    || r.contains("SeDebugPrivilege")
+                    || r.contains("LSASSMemoryDump")
+                    || r.contains("lsass.dmp")
+                    || r.contains("lsass")
+                    || r.contains("comsvcs")
+                    || r.contains("comsvcs.dll")
+                    || r.contains("keymgr")
+                    || r.contains("sekurlsa")
+                    || r.contains("mimikatz"))
+        });
+
+    if has_token_privilege {
+        families.push(InvariantViolationFamily::ProcessTokenPrivilege);
+        reasons.push("Process token privilege escalation / LSASS credential dump detected");
+    }
+
+    // -------------------------------------------------------------
+    // Family 4: Cryptographic Signature Mismatch
+    // -------------------------------------------------------------
+    let has_crypto_mismatch = event
+        .data
+        .get("CryptoSignatureMismatch")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || event
+            .data
+            .get("EpochSpoofingDetected")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || votes.iter().any(|v| {
+            let r = &v.result.reason;
+            r.contains("Cryptographic mesh signature mismatch")
+                || r.contains("IdentitySpoofingDetected")
+                || r.contains("EpochSpoofing")
+                || r.contains("MerkleIntegrityViolation")
+                || r.contains("RowIntegrityViolation")
+                || r.contains("LAW1_STICKY_TAINT_VETO")
+                || r.contains("HMAC signature verification failure")
+                || r.contains("HMAC_VERIFICATION_FAILED")
+                || r.contains("TaintLevel::UntrustedExternal")
+        });
+
+    if has_crypto_mismatch {
+        families.push(InvariantViolationFamily::CryptographicMeshMismatch);
+        reasons.push("Cryptographic mesh HMAC/Merkle/TPM signature or epoch mismatch");
+    }
+
+    // -------------------------------------------------------------
+    // Family 5: Lateral Containment Breach & Canary Traps
+    // -------------------------------------------------------------
+    let has_lateral_canary = event
+        .data
+        .get("CanaryTrapTripped")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || event.data.get("CanaryAlert").is_some()
+        || event
+            .data
+            .get("LateralMovementBreach")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        || votes.iter().any(|v| {
+            let r = &v.result.reason;
+            r.contains("CanaryTrapTripped")
+                || r.contains("CanaryCage")
+                || r.contains("CanaryAlert")
+                || r.contains("Canary Trap Breach")
+                || r.contains("LateralContainmentBreach")
+                || r.contains("LATERAL_SINK_VIOLATION")
+                || r.contains("SacrificialFracture")
+                || r.contains("PromptInjectionExfil")
+                || r.contains("SpiderWeb")
+                || r.contains("SpiderWeb-Containment")
+                || (v.result.confidence >= 0.85
+                    && (r.contains("Escape-Detector") || r.contains("Agentic-Escape-Detector")))
+        });
+
+    if has_lateral_canary {
+        families.push(InvariantViolationFamily::LateralContainmentBreach);
+        reasons.push("Lateral containment breach / honeypot canary trap tripped");
+    }
+
+    let is_violated = !families.is_empty();
+    let primary_reason = if is_violated {
+        format!(
+            "AsymmetricVeto [Deterministic Invariant Violation]: {}",
+            reasons.join("; ")
+        )
+    } else {
+        String::new()
+    };
+    let causal_rule = families
+        .iter()
+        .map(|f| format!("{:?}", f))
+        .collect::<Vec<_>>()
+        .join("+");
+
+    DeterministicAsymmetricVeto {
+        is_violated,
+        families,
+        primary_reason,
+        causal_rule,
+    }
+}
+
 fn orchestrate_evidence(
     votes: &[EvidenceVote],
     event: &HostSecurityEvent,
@@ -438,6 +682,10 @@ fn orchestrate_evidence(
         2 => 0.82,
         _ => 1.0,
     };
+
+    // Evaluate deterministic asymmetric veto across the 5 invariant families
+    let asymmetric_veto = detect_deterministic_asymmetric_veto(event, votes);
+
     let has_deterministic_credential_or_memory_guard = votes.iter().any(|v| {
         v.strong_action
             && v.reliability >= 0.90
@@ -448,30 +696,6 @@ fn orchestrate_evidence(
                 || v.result.reason.contains("comsvcs"))
     });
 
-    let has_canary_trap_tripped = event
-        .data
-        .get("CanaryTrapTripped")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-        || event.data.get("CanaryAlert").is_some()
-        || votes.iter().any(|v| {
-            v.result.reason.contains("CanaryTrapTripped")
-                || v.result.reason.contains("CanaryCage")
-                || v.result.reason.contains("CanaryAlert")
-                || v.result.reason.contains("Canary Trap Breach")
-        });
-
-    let has_deterministic_canary_guard = has_canary_trap_tripped
-        || votes.iter().any(|v| {
-            v.result.confidence >= 0.95
-                && (v.result.reason.contains("canary")
-                    || v.result.reason.contains("Canary")
-                    || v.result.reason.contains("SacrificialFracture")
-                    || v.result.reason.contains("PromptInjectionExfil")
-                    || v.result.reason.contains("SpiderWeb")
-                    || v.result.reason.contains("Escape-Detector"))
-        });
-
     let has_sigma_or_lolbin_guard = votes.iter().any(|v| {
         v.strong_action
             && v.result.confidence >= 0.85
@@ -480,66 +704,27 @@ fn orchestrate_evidence(
                 || v.result.reason.contains("Suspicious Child Payload Spawn"))
     });
 
-    let has_deterministic_cryptographic_guard = votes.iter().any(|v| {
-        v.result
-            .reason
-            .contains("Cryptographic mesh signature mismatch")
-            || v.result.reason.contains("IdentitySpoofingDetected")
-            || v.result.reason.contains("EpochSpoofing")
-            || v.result.reason.contains("MerkleIntegrityViolation")
-            || v.result.reason.contains("RowIntegrityViolation")
-            || v.result.reason.contains("LAW1_STICKY_TAINT_VETO")
-    });
+    let has_deterministic_guard = asymmetric_veto.is_violated
+        || has_deterministic_credential_or_memory_guard
+        || has_sigma_or_lolbin_guard;
 
-    let has_deterministic_kernel_behavioral_guard = matches!(event.event_id, 8 | 10 | 25)
-        || votes.iter().any(|v| {
-            v.result.reason.contains("BYOVD")
-                || v.result.reason.contains("ETW_USERMODE_PATCH_DETECTED")
-                || v.result
-                    .reason
-                    .contains("AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED")
-                || v.result.reason.contains("NTDLL_DETOUR_UNHOOKED")
-                || v.result.reason.contains("ProcessHollowing")
-                || v.result.reason.contains("LSASSMemoryDump")
-        });
+    let corroboration =
+        if asymmetric_veto.is_violated || has_deterministic_credential_or_memory_guard {
+            1.0f32
+        } else if has_sigma_or_lolbin_guard {
+            corroboration.max(0.96f32)
+        } else {
+            corroboration
+        };
 
-    let has_cedar_ring7_forbid_guard = votes.iter().any(|v| {
-        v.result.reason.contains("Cedar-Ring7-Forbid")
-            || v.result
-                .reason
-                .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
-            || v.result.reason.contains("Self-Protection Violation")
-    });
-
-    let has_deterministic_guard = has_deterministic_credential_or_memory_guard
-        || has_deterministic_canary_guard
-        || has_sigma_or_lolbin_guard
-        || has_deterministic_cryptographic_guard
-        || has_deterministic_kernel_behavioral_guard
-        || has_cedar_ring7_forbid_guard;
-
-    let corroboration = if has_deterministic_canary_guard
-        || has_deterministic_cryptographic_guard
-        || has_deterministic_kernel_behavioral_guard
-        || has_cedar_ring7_forbid_guard
-    {
-        1.0f32
-    } else if has_sigma_or_lolbin_guard {
-        corroboration.max(0.96f32)
-    } else if has_deterministic_credential_or_memory_guard {
-        corroboration.max(0.92f32)
-    } else {
-        corroboration
-    };
-    let mut confidence = if has_deterministic_canary_guard
-        || has_deterministic_cryptographic_guard
-        || has_deterministic_kernel_behavioral_guard
-        || has_cedar_ring7_forbid_guard
-    {
-        1.0f32
-    } else {
-        (base * corroboration + max_single.min(1.0) * 0.12).min(1.0)
-    };
+    // INVARIANT F20: When asymmetric_veto or deterministic credential/memory guard is triggered,
+    // confidence MUST be saturated to 1.0f32 unconditionally, overriding any benign ML/probabilistic voter scores that diluted `base`.
+    let mut confidence =
+        if asymmetric_veto.is_violated || has_deterministic_credential_or_memory_guard {
+            1.0f32
+        } else {
+            (base * corroboration + max_single.min(1.0) * 0.12).min(1.0)
+        };
     if has_sigma_or_lolbin_guard {
         confidence = confidence.max(0.88);
     }
@@ -555,7 +740,7 @@ fn orchestrate_evidence(
     let trusted_operational_tool = is_trusted_operational_tool(event, config);
     let is_dev_or_signed_target = is_event_dev_or_signed(event);
 
-    if threat_intel_only {
+    if threat_intel_only && !asymmetric_veto.is_violated {
         confidence = confidence.min(0.49);
     }
     if !has_deterministic_guard {
@@ -581,12 +766,18 @@ fn orchestrate_evidence(
     let nvd_negative = votes
         .iter()
         .any(|v| v.result.reason.contains("No matching CVEs found") && v.result.weight < 0.0);
-    if nvd_negative && !has_behavior && !has_memory && !has_live_network {
+    if nvd_negative
+        && !has_behavior
+        && !has_memory
+        && !has_live_network
+        && !asymmetric_veto.is_violated
+    {
         confidence = confidence.min(0.35);
     }
 
     let require_approval = confidence >= 0.70 && independent < 2 && !has_deterministic_guard;
-    let action = if (confidence >= 0.94 && independent >= 3 && strong_action)
+    let action = if asymmetric_veto.is_violated
+        || (confidence >= 0.94 && independent >= 3 && strong_action)
         || (confidence >= 0.90 && has_deterministic_guard)
         || (confidence >= 0.85 && has_sigma_or_lolbin_guard)
     {
@@ -601,11 +792,14 @@ fn orchestrate_evidence(
         ResponseAction::Alert
     };
 
-    EvidenceDecision {
-        confidence,
-        action,
-        require_approval,
-        summary: format!(
+    let summary = if asymmetric_veto.is_violated {
+        format!(
+            "EvidenceOrchestrator: ASYMMETRIC_VETO_ISOLATE (families=[{}]) confidence=1.00 action=Isolate reason={}",
+            asymmetric_veto.causal_rule,
+            asymmetric_veto.primary_reason
+        )
+    } else {
+        format!(
             "EvidenceOrchestrator: classes={} independent={} strong_action={} base={:.2} confidence={:.2}",
             classes
                 .iter()
@@ -616,7 +810,18 @@ fn orchestrate_evidence(
             strong_action,
             base,
             confidence
-        ),
+        )
+    };
+
+    EvidenceDecision {
+        confidence,
+        action,
+        require_approval: if asymmetric_veto.is_violated {
+            false
+        } else {
+            require_approval
+        },
+        summary,
     }
 }
 
@@ -912,6 +1117,19 @@ impl PolicyEngine {
         }
     }
 
+    /// Sets and clamps a voter's dynamic weight multiplier to [0.50, 2.50], handling NaN / infinite inputs.
+    pub fn set_voter_weight(&self, name: &str, weight: f32) -> f32 {
+        let clamped = if weight.is_nan() {
+            1.0f32
+        } else {
+            weight.clamp(0.50, 2.50)
+        };
+        self.voter_weight_multipliers
+            .insert(name.to_string(), clamped);
+        let _ = self.memory.save_voter_weight(name, clamped);
+        clamped
+    }
+
     pub async fn scan_event(&self, raw_event: &HostSecurityEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
@@ -1144,12 +1362,16 @@ impl PolicyEngine {
 
         for (vname, res_opt) in results {
             if let Some(mut res) = res_opt {
-                let mult = self
+                let raw_mult = self
                     .voter_weight_multipliers
                     .get(&vname)
                     .map(|v| *v)
-                    .unwrap_or(1.0)
-                    .clamp(0.50, 2.5);
+                    .unwrap_or(1.0);
+                let mult = if raw_mult.is_nan() {
+                    1.0f32
+                } else {
+                    raw_mult.clamp(0.50, 2.5)
+                };
                 if res.weight > 0.0 {
                     res.weight *= mult;
                 }
@@ -1240,6 +1462,30 @@ impl PolicyEngine {
             }
         }
 
+        // Evaluate deterministic asymmetric veto across the 5 invariant families early
+        let early_veto_analysis = detect_deterministic_asymmetric_veto(event, &evidence_votes);
+        if early_veto_analysis.is_violated
+            && !evidence_votes
+                .iter()
+                .any(|v| v.result.reason.contains("Asymmetric-Veto"))
+        {
+            let reason = format!("[Asymmetric-Veto]: {}", early_veto_analysis.primary_reason);
+            total_score += 3.0;
+            vote_count += 1;
+            signature.add_reason(reason.clone());
+            is_threat = true;
+            evidence_votes.push(EvidenceVote {
+                result: VoteResult {
+                    confidence: 1.0,
+                    reason,
+                    weight: 3.0,
+                },
+                class: EvidenceClass::Behavior,
+                reliability: 1.0,
+                strong_action: true,
+            });
+        }
+
         // Deterministic active behavioral/exploit threats (Sigma, CredentialGuard, ProcessInjection, live C2 network, Cedar forbid)
         // override NSRL/Trusted-Vendor/Merkle/REA static known-good, whereas uncorroborated statistical heuristics alone do not.
         let is_statistical_only_vote = |reason: &str| -> bool {
@@ -1268,7 +1514,8 @@ impl PolicyEngine {
             .iter()
             .filter(|v| !is_statistical_only_vote(&v.result.reason))
             .count();
-        let has_deterministic_active_attack = matches!(event.event_id, 8 | 10 | 25)
+        let has_deterministic_active_attack = early_veto_analysis.is_violated
+            || matches!(event.event_id, 8 | 10 | 25)
             || evidence_votes.iter().any(|v| {
                 !is_statistical_only_vote(&v.result.reason)
                     && v.strong_action
@@ -1300,6 +1547,9 @@ impl PolicyEngine {
             if let Some(ref mut r) = signature.reason {
                 *r = r.replace("Veto [", "OverriddenVeto [");
             }
+            // Asymmetric Veto: Reset veto flags so NSRL cannot abort the round
+            vetoed = false;
+            nsrl_vetoed = false;
         }
 
         if (vetoed || nsrl_vetoed) && !has_deterministic_active_attack {
@@ -1435,6 +1685,8 @@ impl PolicyEngine {
         }
 
         let decision = orchestrate_evidence(&evidence_votes, event, &self.config);
+        let is_asymmetric_veto =
+            detect_deterministic_asymmetric_veto(event, &evidence_votes).is_violated;
         signature.confidence = decision.confidence;
 
         // Apply suppression for noisy/trusted paths by capping confidence
@@ -1446,7 +1698,7 @@ impl PolicyEngine {
                     EvidenceClass::Memory | EvidenceClass::Behavior | EvidenceClass::LiveNetwork
                 )
         });
-        if is_noisy && !has_strong_behavioral_or_memory {
+        if is_noisy && !has_strong_behavioral_or_memory && !is_asymmetric_veto {
             signature.confidence = signature.confidence.min(0.15);
             signature
                 .add_reason("Suppressed: Matches consensus_noisy_stems or consensus_trusted_paths");
@@ -1456,7 +1708,10 @@ impl PolicyEngine {
         signature.require_approval = decision.require_approval;
         signature.add_reason(decision.summary);
 
-        if signature.confidence < 0.20 && is_trusted_operational_tool(event, &self.config) {
+        if !is_asymmetric_veto
+            && signature.confidence < 0.20
+            && is_trusted_operational_tool(event, &self.config)
+        {
             info!(
                 target: CONSENSUS_LOG_TARGET,
                 event_id = ?event.event_id,
@@ -1487,18 +1742,22 @@ impl PolicyEngine {
             }
             // 2. If it's a known FALSE positive, suppress
             else if let Ok(true) = self.memory.is_false_positive_pattern(proc, hash) {
-                signature.confidence = (signature.confidence * 0.05).max(0.0);
-                signature.add_reason("Suppressed: matches federated false positive pattern");
-                // If confidence is now very low, drop the finding completely.
-                if signature.confidence < 0.2 {
-                    info!(
-                        target: CONSENSUS_LOG_TARGET,
-                        event_id = ?event.event_id,
-                        process = ?proc,
-                        hash = ?hash,
-                        "[CONSENSUS] suppressed false-positive pattern"
-                    );
-                    return None;
+                if !is_asymmetric_veto {
+                    signature.confidence = (signature.confidence * 0.05).max(0.0);
+                    signature.add_reason("Suppressed: matches federated false positive pattern");
+                    // If confidence is now very low, drop the finding completely.
+                    if signature.confidence < 0.2 {
+                        info!(
+                            target: CONSENSUS_LOG_TARGET,
+                            event_id = ?event.event_id,
+                            process = ?proc,
+                            hash = ?hash,
+                            "[CONSENSUS] suppressed false-positive pattern"
+                        );
+                        return None;
+                    }
+                } else {
+                    signature.add_reason("Preserved: federated false-positive suppression rejected by deterministic asymmetric veto");
                 }
             }
         }
@@ -1608,7 +1867,14 @@ impl PolicyEngine {
         };
         let proc_clean = signature.process_name.as_deref().unwrap_or("").trim();
         let combined_reason = signature.reason.as_deref().unwrap_or("");
-        if proc_clean.is_empty()
+        if (proc_clean.is_empty()
+            || proc_clean.eq_ignore_ascii_case("unknown")
+            || proc_clean.eq_ignore_ascii_case("unknown process"))
+            && is_asymmetric_veto
+        {
+            // Guarantee process name for invariant isolation to prevent dropping
+            signature.process_name = Some("[Deterministic-Containment-Veto]".to_string());
+        } else if proc_clean.is_empty()
             || proc_clean.eq_ignore_ascii_case("unknown")
             || proc_clean.eq_ignore_ascii_case("unknown process")
             || combined_reason.contains("Execution Of Non-Existing File")

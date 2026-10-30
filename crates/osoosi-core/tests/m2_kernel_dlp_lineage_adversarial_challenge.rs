@@ -67,7 +67,8 @@ fn test_adversarial_parent_to_child_taint_and_baggage_inheritance() {
     let parent_rec = tracker
         .active_processes
         .get(&parent_key)
-        .expect("Parent process must exist");
+        .expect("Parent process must exist")
+        .clone();
     assert!(parent_rec.tainted, "Parent process must be tainted");
     assert_eq!(
         parent_rec.classification,
@@ -227,7 +228,8 @@ fn test_adversarial_parent_to_child_taint_and_baggage_inheritance() {
     let derived_art = tracker
         .active_artifacts
         .get(&derived_key)
-        .expect("Derived artifact must be tracked");
+        .expect("Derived artifact must be tracked")
+        .clone();
     assert!(
         derived_art.tainted,
         "Derived artifact must be marked tainted"
@@ -430,7 +432,8 @@ fn test_adversarial_concurrent_child_spawns_stress() {
             let proc = tracker
                 .active_processes
                 .get(&key)
-                .expect("Child must exist in active_processes");
+                .expect("Child must exist in active_processes")
+                .clone();
             assert!(proc.tainted, "Child {} must be tainted", child_pid);
             assert_eq!(proc.policy, PolicyLattice::Quarantine);
         }
@@ -509,7 +512,8 @@ fn test_adversarial_file_rename_tracking_and_egress_blocking() {
     let renamed_art = tracker
         .active_artifacts
         .get(&renamed_key)
-        .expect("Renamed artifact must exist");
+        .expect("Renamed artifact must exist")
+        .clone();
     assert!(
         renamed_art.tainted,
         "Renamed artifact must retain tainted state"
@@ -600,7 +604,8 @@ fn test_adversarial_multi_hop_file_rename_chain() {
     let rec_d = tracker
         .active_artifacts
         .get(&key_d)
-        .expect("Final artifact D must exist");
+        .expect("Final artifact D must exist")
+        .clone();
     assert!(rec_d.tainted, "Artifact D must be tainted");
     assert_eq!(rec_d.classification, ClassificationLattice::CrownJewel);
     assert_eq!(rec_d.policy, PolicyLattice::Quarantine);
@@ -720,7 +725,8 @@ async fn test_adversarial_event_pipeline_kernel_telemetry_ingestion() {
     let child_rec = tracker
         .active_processes
         .get(&child_key)
-        .expect("Child process 9111 must be registered in global tracker");
+        .expect("Child process 9111 must be registered in global tracker")
+        .clone();
     assert!(
         child_rec.tainted,
         "Child process 9111 must inherit taint via Sysmon 1 ingestion"
@@ -784,7 +790,7 @@ fn test_adversarial_child_shell_boundary_1_taint_drop_vulnerability() {
     );
     tracker.on_file_read(parent_key, "tainted_app.exe", "C:\\app.exe", secret_key);
 
-    let parent_rec = tracker.active_processes.get(&parent_key).unwrap();
+    let parent_rec = tracker.active_processes.get(&parent_key).unwrap().clone();
     assert!(parent_rec.tainted);
     assert!(
         !parent_rec.read_history.is_empty(),
