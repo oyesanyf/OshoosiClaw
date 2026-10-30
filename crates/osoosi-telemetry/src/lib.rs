@@ -6,6 +6,7 @@
 pub mod canary;
 pub mod discovery;
 pub mod file_watch;
+pub mod genai_otel_monitor;
 pub mod hash;
 pub mod hollowing;
 pub mod host_events;
@@ -18,6 +19,7 @@ pub mod timing_shear;
 pub use canary::*;
 pub use discovery::*;
 pub use file_watch::*;
+pub use genai_otel_monitor::*;
 pub use hash::*;
 pub use hollowing::*;
 pub use host_events::*;

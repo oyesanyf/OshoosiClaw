@@ -37,6 +37,7 @@ pub use routes::dlp::{
     get_global_dlp_state, inspect_and_record_internal, DlpCrownJewelRecord, DlpDashboardState,
     DlpInspectionEventRecord,
 };
+pub use routes::genai_monitor::get_global_genai_monitor;
 pub use routes::har::{
     ensure_continuous_har_collector_started, refresh_live_har_cache_now, LIVE_HAR_CACHE,
 };
