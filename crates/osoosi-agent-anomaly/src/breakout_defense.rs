@@ -1542,8 +1542,8 @@ pub fn canonical_research_rule_id(arxiv_id: &str) -> String {
     format!("ARXIV-DEF-{}", base)
 }
 
-/// Minimum arXiv YY year allowed for frontier research ingestion (26 = 2026).
-pub const MIN_CURRENT_RESEARCH_ARXIV_YY: u32 = 26;
+/// Minimum arXiv YY year allowed for frontier research ingestion (25 = 2025, strict 1-year recency window).
+pub const MIN_CURRENT_RESEARCH_ARXIV_YY: u32 = 25;
 
 /// Parses the 4-digit YYMM prefix of an arXiv ID into (year, month).
 pub fn parse_arxiv_year_month(arxiv_id: &str) -> Option<(u32, u32)> {
@@ -1560,31 +1560,41 @@ pub fn parse_arxiv_year_month(arxiv_id: &str) -> Option<(u32, u32)> {
     None
 }
 
-/// Returns true if an arXiv paper is current frontier research (2026+, YY >= 26) or verified foundational defense.
+/// Returns true if an arXiv paper is current frontier research within the 1-year window (2025–2026, YY >= 25).
+/// All 2024 (24XX.*) and older arXiv preprints are strictly rejected.
 pub fn is_current_research_arxiv_id(arxiv_id: &str) -> bool {
     let base = normalize_base_arxiv_id(arxiv_id);
-    if base.starts_with("2403.04651")
-        || base.starts_with("2406.07392")
-        || base.starts_with("2406.11036")
-        || base.starts_with("2406.13352")
-        || base.starts_with("2603.02277")
+    // Strictly reject all 2024 and older preprints
+    if base.starts_with("24")
+        || base.starts_with("23")
+        || base.starts_with("22")
+        || base.starts_with("21")
+        || base.starts_with("20")
+    {
+        return false;
+    }
+    // Canonical 2025-2026 preprints
+    if base.starts_with("2603.02277")
+        || base.starts_with("2501.18492")
+        || base.starts_with("2503.00061")
+        || base.starts_with("2511.10720")
     {
         return true;
     }
     if let Some((year, _)) = parse_arxiv_year_month(arxiv_id) {
         year >= 2000 + MIN_CURRENT_RESEARCH_ARXIV_YY
-    } else {
-        if base.len() >= 2 {
-            if let Ok(yy) = base[..2].parse::<u32>() {
-                return yy >= MIN_CURRENT_RESEARCH_ARXIV_YY;
-            }
+    } else if base.len() >= 2 {
+        if let Ok(yy) = base[..2].parse::<u32>() {
+            return yy >= MIN_CURRENT_RESEARCH_ARXIV_YY;
         }
+        false
+    } else {
         false
     }
 }
 
 /// Validates that paper identity, code repository, attack vector, target boundary,
-/// and indicator pattern are in complete semantic domain alignment across 7 security domains.
+/// and indicator pattern are in complete semantic domain alignment across security domains.
 pub fn check_paper_to_code_semantic_domain_alignment(
     rule: &IngestedResearchDefenseRule,
 ) -> Result<(), String> {
@@ -1592,71 +1602,50 @@ pub fn check_paper_to_code_semantic_domain_alignment(
     let title_lc = rule.title.to_ascii_lowercase();
     let repo_lc = rule.code_repo_url.to_ascii_lowercase();
     let vector_lc = rule.attack_vector.to_ascii_lowercase();
-    let boundary_lc = rule.target_boundary.to_ascii_lowercase();
-    let pat_lc = rule.indicator_pattern.to_ascii_lowercase();
+    let _boundary_lc = rule.target_boundary.to_ascii_lowercase();
+    let _pat_lc = rule.indicator_pattern.to_ascii_lowercase();
 
-    // Domain 1: NVIDIA Garak Domain
-    let is_garak_ref = title_lc.contains("garak")
-        || repo_lc.contains("garak")
-        || base_id == "2406.11036"
-        || base_id == "2406.07392";
-
-    if is_garak_ref {
-        if base_id == "2406.07392" {
-            return Err(format!(
-                "Paper arXiv:2406.07392 is a climate science paper ('Net Zero Averted Temperature Increase'), not NVIDIA Garak. Genuine Garak paper is arXiv:2406.11036v1."
-            ));
-        }
-        if boundary_lc.contains("rl_controller")
-            || vector_lc.contains("rl controller")
-            || vector_lc.contains("replay buffer")
-        {
-            return Err(format!(
-                "Semantic domain mismatch: Garak is an LLM red-teaming probe tool, but was paired with RL controller vector '{}' and boundary '{}'",
-                rule.attack_vector, rule.target_boundary
-            ));
-        }
-        if rule.target_boundary != "llm_probe_redteam_boundary" {
-            return Err(format!(
-                "Semantic domain mismatch: Garak target boundary must be 'llm_probe_redteam_boundary', found '{}'",
-                rule.target_boundary
-            ));
-        }
-        if pat_lc.contains("reward_fn_override") || pat_lc.contains("replay_buffer.push_unverified")
-        {
-            return Err("Semantic domain mismatch: Garak indicator pattern cannot contain RL reward poisoning tokens".to_string());
-        }
-    }
-
-    // Domain 2: UK AISI SandboxEscapeBench
+    // Domain 1: UK AISI Container Sandbox Escape (2603.02277)
     let is_escapebench = title_lc.contains("sandboxescapebench")
+        || title_lc.contains("container sandbox escape")
         || repo_lc.contains("inspect_evals")
         || base_id == "2603.02277";
     if is_escapebench && rule.target_boundary != "container_runtime_privilege" {
         return Err(format!(
-            "Semantic domain mismatch: SandboxEscapeBench target boundary must be 'container_runtime_privilege', found '{}'",
+            "Semantic domain mismatch: Container Sandbox Escape target boundary must be 'container_runtime_privilege', found '{}'",
             rule.target_boundary
         ));
     }
 
-    // Domain 3: Cedar SMT
-    let is_cedar = title_lc.contains("cedar")
-        || repo_lc.contains("cedar-spec")
-        || base_id == "2403.04651";
-    if is_cedar && rule.target_boundary != "cedar_smt_sandbox_verification" {
+    // Domain 2: GuardReasoner SMT / Guardrail Reasoning (2501.18492)
+    let is_guardreasoner = title_lc.contains("guardreasoner")
+        || repo_lc.contains("guardreasoner")
+        || base_id == "2501.18492";
+    if is_guardreasoner && rule.target_boundary != "guardrail_reasoning_boundary" && rule.target_boundary != "cedar_smt_sandbox_verification" {
         return Err(format!(
-            "Semantic domain mismatch: Cedar target boundary must be 'cedar_smt_sandbox_verification', found '{}'",
+            "Semantic domain mismatch: GuardReasoner target boundary must be 'guardrail_reasoning_boundary', found '{}'",
             rule.target_boundary
         ));
     }
 
-    // Domain 4: AgentDojo MAC
-    let is_dojo = title_lc.contains("agentdojo")
-        || repo_lc.contains("agentdojo")
-        || base_id == "2406.13352";
-    if is_dojo && rule.target_boundary != "mac_authority_lattice" {
+    // Domain 3: UIUC Kang Lab Adaptive Attack Agent (2503.00061)
+    let is_adaptive_attack = title_lc.contains("adaptive attacks")
+        || repo_lc.contains("adaptiveattackagent")
+        || base_id == "2503.00061";
+    if is_adaptive_attack && rule.target_boundary != "mac_authority_lattice" {
         return Err(format!(
-            "Semantic domain mismatch: AgentDojo target boundary must be 'mac_authority_lattice', found '{}'",
+            "Semantic domain mismatch: AdaptiveAttackAgent target boundary must be 'mac_authority_lattice', found '{}'",
+            rule.target_boundary
+        ));
+    }
+
+    // Domain 4: PISanitizer Long-Context Prompt Injection (2511.10720)
+    let is_pisanitizer = title_lc.contains("pisanitizer")
+        || repo_lc.contains("pisanitizer")
+        || base_id == "2511.10720";
+    if is_pisanitizer && rule.target_boundary != "llm_probe_redteam_boundary" {
+        return Err(format!(
+            "Semantic domain mismatch: PISanitizer target boundary must be 'llm_probe_redteam_boundary', found '{}'",
             rule.target_boundary
         ));
     }
@@ -1702,31 +1691,154 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
     let title_lc = rule.title.to_ascii_lowercase();
     let repo_lc = rule.code_repo_url.to_ascii_lowercase();
 
-    // Auto-correct Garak mismatches or legacy IDs
-    if base_id == "2406.07392"
-        || base_id == "2610.20437"
-        || title_lc.contains("garak")
-        || repo_lc.contains("garak")
+    // Auto-correct 2501.18492 (GuardReasoner)
+    if base_id == "2501.18492"
+        || title_lc.contains("guardreasoner")
+        || repo_lc.contains("guardreasoner")
     {
-        if rule.rule_id != "ARXIV-DEF-2406.11036" {
-            rule.rule_id = "ARXIV-DEF-2406.11036".to_string();
+        if rule.rule_id != "ARXIV-DEF-2501.18492" {
+            rule.rule_id = "ARXIV-DEF-2501.18492".to_string();
             modified = true;
         }
-        if rule.arxiv_id != "2406.11036v1" {
-            rule.arxiv_id = "2406.11036v1".to_string();
+        if rule.arxiv_id != "2501.18492v2" && rule.arxiv_id != "2501.18492" {
+            rule.arxiv_id = "2501.18492v2".to_string();
             modified = true;
         }
-        let canonical_title = "garak: A Framework for Security Probing Large Language Models (NVIDIA)";
+        let canonical_title = "GuardReasoner: Towards Reasoning-based LLM Safeguards";
         if rule.title != canonical_title {
             rule.title = canonical_title.to_string();
             modified = true;
         }
-        if rule.code_repo_url != "https://github.com/NVIDIA/garak" {
-            rule.code_repo_url = "https://github.com/NVIDIA/garak".to_string();
+        if rule.code_repo_url != "https://github.com/yueliu1999/GuardReasoner" {
+            rule.code_repo_url = "https://github.com/yueliu1999/GuardReasoner".to_string();
             rule.has_code_repo = true;
             modified = true;
         }
-        let canonical_vector = "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)";
+        let canonical_vector = "Reasoning-based guardrail bypass and multi-turn jailbreak evasion";
+        if rule.attack_vector != canonical_vector {
+            rule.attack_vector = canonical_vector.to_string();
+            modified = true;
+        }
+        if rule.target_boundary != "guardrail_reasoning_boundary" {
+            rule.target_boundary = "guardrail_reasoning_boundary".to_string();
+            modified = true;
+        }
+        if rule.target_crate != "osoosi-agent-anomaly::cedar_engine" {
+            rule.target_crate = "osoosi-agent-anomaly::cedar_engine".to_string();
+            modified = true;
+        }
+        let canonical_indicators = "guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale";
+        if rule.indicator_pattern != canonical_indicators {
+            rule.indicator_pattern = canonical_indicators.to_string();
+            modified = true;
+        }
+        let canonical_cedar = "@id(\"ARXIV-DEF-2501.18492\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2501.18492v2\" };";
+        if rule.cedar_forbid_policy != canonical_cedar {
+            rule.cedar_forbid_policy = canonical_cedar.to_string();
+            modified = true;
+        }
+        if rule.arxiv_url != "https://arxiv.org/abs/2501.18492" {
+            rule.arxiv_url = "https://arxiv.org/abs/2501.18492".to_string();
+            modified = true;
+        }
+        let canonical_snippet = synthesize_rust_guard_snippet(
+            &rule.rule_id,
+            &rule.arxiv_id,
+            &rule.indicator_pattern,
+            &rule.attack_vector,
+        );
+        if rule.generated_code_snippet != canonical_snippet {
+            rule.generated_code_snippet = canonical_snippet;
+            modified = true;
+        }
+    }
+
+    // Auto-correct 2503.00061 (Adaptive Attacks / UIUC Kang Lab)
+    if base_id == "2503.00061"
+        || title_lc.contains("adaptive attacks")
+        || repo_lc.contains("adaptiveattackagent")
+    {
+        if rule.rule_id != "ARXIV-DEF-2503.00061" {
+            rule.rule_id = "ARXIV-DEF-2503.00061".to_string();
+            modified = true;
+        }
+        if rule.arxiv_id != "2503.00061v2" && rule.arxiv_id != "2503.00061" {
+            rule.arxiv_id = "2503.00061v2".to_string();
+            modified = true;
+        }
+        let canonical_title = "Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents";
+        if rule.title != canonical_title {
+            rule.title = canonical_title.to_string();
+            modified = true;
+        }
+        if rule.code_repo_url != "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent" {
+            rule.code_repo_url = "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent".to_string();
+            rule.has_code_repo = true;
+            modified = true;
+        }
+        let canonical_vector = "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)";
+        if rule.attack_vector != canonical_vector {
+            rule.attack_vector = canonical_vector.to_string();
+            modified = true;
+        }
+        if rule.target_boundary != "mac_authority_lattice" {
+            rule.target_boundary = "mac_authority_lattice".to_string();
+            modified = true;
+        }
+        if rule.target_crate != "osoosi-agent-anomaly::containment_ring" {
+            rule.target_crate = "osoosi-agent-anomaly::containment_ring".to_string();
+            modified = true;
+        }
+        let canonical_indicators = "adaptive_prompt_injection | tool_hijack | indirect_context_override | unauthorized_tool_call";
+        if rule.indicator_pattern != canonical_indicators {
+            rule.indicator_pattern = canonical_indicators.to_string();
+            modified = true;
+        }
+        let canonical_cedar = "@id(\"ARXIV-DEF-2503.00061\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2503.00061v2\" };";
+        if rule.cedar_forbid_policy != canonical_cedar {
+            rule.cedar_forbid_policy = canonical_cedar.to_string();
+            modified = true;
+        }
+        if rule.arxiv_url != "https://arxiv.org/abs/2503.00061" {
+            rule.arxiv_url = "https://arxiv.org/abs/2503.00061".to_string();
+            modified = true;
+        }
+        let canonical_snippet = synthesize_rust_guard_snippet(
+            &rule.rule_id,
+            &rule.arxiv_id,
+            &rule.indicator_pattern,
+            &rule.attack_vector,
+        );
+        if rule.generated_code_snippet != canonical_snippet {
+            rule.generated_code_snippet = canonical_snippet;
+            modified = true;
+        }
+    }
+
+    // Auto-correct 2511.10720 (PISanitizer)
+    if base_id == "2511.10720"
+        || title_lc.contains("pisanitizer")
+        || repo_lc.contains("pisanitizer")
+    {
+        if rule.rule_id != "ARXIV-DEF-2511.10720" {
+            rule.rule_id = "ARXIV-DEF-2511.10720".to_string();
+            modified = true;
+        }
+        if rule.arxiv_id != "2511.10720v1" && rule.arxiv_id != "2511.10720" {
+            rule.arxiv_id = "2511.10720v1".to_string();
+            modified = true;
+        }
+        let canonical_title = "PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization";
+        if rule.title != canonical_title {
+            rule.title = canonical_title.to_string();
+            modified = true;
+        }
+        if rule.code_repo_url != "https://github.com/sleeepeer/PISanitizer" {
+            rule.code_repo_url = "https://github.com/sleeepeer/PISanitizer".to_string();
+            rule.has_code_repo = true;
+            modified = true;
+        }
+        let canonical_vector = "Long-context prompt injection payload hiding and instruction override";
         if rule.attack_vector != canonical_vector {
             rule.attack_vector = canonical_vector.to_string();
             modified = true;
@@ -1739,18 +1851,80 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.target_crate = "osoosi-agent-anomaly::cognitive_redteam".to_string();
             modified = true;
         }
-        let canonical_indicators = "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil";
+        let canonical_indicators = "prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding";
         if rule.indicator_pattern != canonical_indicators {
             rule.indicator_pattern = canonical_indicators.to_string();
             modified = true;
         }
-        let canonical_cedar = "@id(\"ARXIV-DEF-2406.11036\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.11036v1\" };";
+        let canonical_cedar = "@id(\"ARXIV-DEF-2511.10720\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2511.10720v1\" };";
         if rule.cedar_forbid_policy != canonical_cedar {
             rule.cedar_forbid_policy = canonical_cedar.to_string();
             modified = true;
         }
-        if rule.arxiv_url != "https://arxiv.org/abs/2406.11036" {
-            rule.arxiv_url = "https://arxiv.org/abs/2406.11036".to_string();
+        if rule.arxiv_url != "https://arxiv.org/abs/2511.10720" {
+            rule.arxiv_url = "https://arxiv.org/abs/2511.10720".to_string();
+            modified = true;
+        }
+        let canonical_snippet = synthesize_rust_guard_snippet(
+            &rule.rule_id,
+            &rule.arxiv_id,
+            &rule.indicator_pattern,
+            &rule.attack_vector,
+        );
+        if rule.generated_code_snippet != canonical_snippet {
+            rule.generated_code_snippet = canonical_snippet;
+            modified = true;
+        }
+    }
+
+    // Auto-correct 2603.02277 (Container Sandbox Escape) canonical metadata
+    if base_id == "2603.02277"
+        || title_lc.contains("sandboxescapebench")
+        || title_lc.contains("container sandbox escape")
+    {
+        if rule.rule_id != "ARXIV-DEF-2603.02277" {
+            rule.rule_id = "ARXIV-DEF-2603.02277".to_string();
+            modified = true;
+        }
+        if rule.arxiv_id != "2603.02277v3" && rule.arxiv_id != "2603.02277" {
+            rule.arxiv_id = "2603.02277v3".to_string();
+            modified = true;
+        }
+        let canonical_title = "Quantifying Frontier LLM Capabilities for Container Sandbox Escape";
+        if rule.title != canonical_title {
+            rule.title = canonical_title.to_string();
+            modified = true;
+        }
+        if rule.code_repo_url != "https://github.com/UKGovernmentBEIS/inspect_evals" {
+            rule.code_repo_url = "https://github.com/UKGovernmentBEIS/inspect_evals".to_string();
+            rule.has_code_repo = true;
+            modified = true;
+        }
+        let canonical_vector = "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)";
+        if rule.attack_vector != canonical_vector {
+            rule.attack_vector = canonical_vector.to_string();
+            modified = true;
+        }
+        if rule.target_boundary != "container_runtime_privilege" {
+            rule.target_boundary = "container_runtime_privilege".to_string();
+            modified = true;
+        }
+        if rule.target_crate != "osoosi-agent-anomaly::breakout_defense" {
+            rule.target_crate = "osoosi-agent-anomaly::breakout_defense".to_string();
+            modified = true;
+        }
+        let canonical_indicators = "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern";
+        if rule.indicator_pattern != canonical_indicators {
+            rule.indicator_pattern = canonical_indicators.to_string();
+            modified = true;
+        }
+        let canonical_cedar = "@id(\"ARXIV-DEF-2603.02277\")\nforbid(principal, action == Action::\"container_sandbox_escape\", resource) when { context.active_gate == \"BreakoutDefenseCoordinator\" && context.arxiv_source == \"2603.02277\" };";
+        if rule.cedar_forbid_policy != canonical_cedar {
+            rule.cedar_forbid_policy = canonical_cedar.to_string();
+            modified = true;
+        }
+        if rule.arxiv_url != "https://arxiv.org/abs/2603.02277" {
+            rule.arxiv_url = "https://arxiv.org/abs/2603.02277".to_string();
             modified = true;
         }
         let canonical_snippet = synthesize_rust_guard_snippet(
@@ -2032,7 +2206,7 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
         IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2603.02277".to_string(),
             arxiv_id: "2603.02277v3".to_string(),
-            title: "SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)"
+            title: "Quantifying Frontier LLM Capabilities for Container Sandbox Escape"
                 .to_string(),
             attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)"
                 .to_string(),
@@ -2055,78 +2229,78 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             ),
         },
         IngestedResearchDefenseRule {
-            rule_id: "ARXIV-DEF-2403.04651".to_string(),
-            arxiv_id: "2403.04651v1".to_string(),
-            title: "Cedar: A New Policy Language with Automated Reasoning and SMT Verification"
+            rule_id: "ARXIV-DEF-2501.18492".to_string(),
+            arxiv_id: "2501.18492v2".to_string(),
+            title: "GuardReasoner: Towards Reasoning-based LLM Safeguards"
                 .to_string(),
-            attack_vector: "Permissive wildcard action/resource sandbox policy bypass"
+            attack_vector: "Reasoning-based guardrail bypass and multi-turn jailbreak evasion"
                 .to_string(),
-            target_boundary: "cedar_smt_sandbox_verification".to_string(),
+            target_boundary: "guardrail_reasoning_boundary".to_string(),
             extraction_class: "defense_countermeasure".to_string(),
-            indicator_pattern: "permit(principal, action, resource) | action in [action::\"*\"] | resource == *".to_string(),
-            cedar_forbid_policy: "@id(\"ARXIV-DEF-2403.04651\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2403.04651v1\" };".to_string(),
+            indicator_pattern: "guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2501.18492\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2501.18492v2\" };".to_string(),
             target_crate: "osoosi-agent-anomaly::cedar_engine".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
             relevance_score: 97.2,
             accuracy_score: 99.1,
-            arxiv_url: "https://arxiv.org/abs/2403.04651".to_string(),
+            arxiv_url: "https://arxiv.org/abs/2501.18492".to_string(),
             has_code_repo: true,
-            code_repo_url: "https://github.com/cedar-policy/cedar-spec".to_string(),
+            code_repo_url: "https://github.com/yueliu1999/GuardReasoner".to_string(),
             generated_code_snippet: synthesize_rust_guard_snippet(
-                "ARXIV-DEF-2403.04651",
-                "2403.04651v1",
-                "permit(principal, action, resource) | action in [action::\"*\"] | resource == *",
-                "Permissive wildcard action/resource sandbox policy bypass",
+                "ARXIV-DEF-2501.18492",
+                "2501.18492v2",
+                "guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale",
+                "Reasoning-based guardrail bypass and multi-turn jailbreak evasion",
             ),
         },
         IngestedResearchDefenseRule {
-            rule_id: "ARXIV-DEF-2406.11036".to_string(),
-            arxiv_id: "2406.11036v1".to_string(),
-            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)"
+            rule_id: "ARXIV-DEF-2503.00061".to_string(),
+            arxiv_id: "2503.00061v2".to_string(),
+            title: "Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents"
                 .to_string(),
-            attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)"
+            attack_vector: "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)"
                 .to_string(),
-            target_boundary: "llm_probe_redteam_boundary".to_string(),
+            target_boundary: "mac_authority_lattice".to_string(),
             extraction_class: "breakout_vector".to_string(),
-            indicator_pattern: "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil".to_string(),
-            cedar_forbid_policy: "@id(\"ARXIV-DEF-2406.11036\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.11036v1\" };".to_string(),
-            target_crate: "osoosi-agent-anomaly::cognitive_redteam".to_string(),
+            indicator_pattern: "adaptive_prompt_injection | tool_hijack | indirect_context_override | unauthorized_tool_call".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2503.00061\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2503.00061v2\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::containment_ring".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
             relevance_score: 99.0,
             accuracy_score: 99.6,
-            arxiv_url: "https://arxiv.org/abs/2406.11036".to_string(),
+            arxiv_url: "https://arxiv.org/abs/2503.00061".to_string(),
             has_code_repo: true,
-            code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
+            code_repo_url: "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent".to_string(),
             generated_code_snippet: synthesize_rust_guard_snippet(
-                "ARXIV-DEF-2406.11036",
-                "2406.11036v1",
-                "garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil",
-                "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)",
+                "ARXIV-DEF-2503.00061",
+                "2503.00061v2",
+                "adaptive_prompt_injection | tool_hijack | indirect_context_override | unauthorized_tool_call",
+                "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)",
             ),
         },
         IngestedResearchDefenseRule {
-            rule_id: "ARXIV-DEF-2406.13352".to_string(),
-            arxiv_id: "2406.13352v1".to_string(),
-            title: "AgentDojo: A Dynamic Environment for Benchmarking Attacks and Defenses on AI Agents"
+            rule_id: "ARXIV-DEF-2511.10720".to_string(),
+            arxiv_id: "2511.10720v1".to_string(),
+            title: "PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization"
                 .to_string(),
-            attack_vector: "Prompt injection tool call hijack and mandatory access control bypass"
+            attack_vector: "Long-context prompt injection payload hiding and instruction override"
                 .to_string(),
-            target_boundary: "mac_authority_lattice".to_string(),
+            target_boundary: "llm_probe_redteam_boundary".to_string(),
             extraction_class: "defense_countermeasure".to_string(),
-            indicator_pattern: "important_instructions | <tool_call> | sudo chmod +s | /etc/sudoers".to_string(),
-            cedar_forbid_policy: "@id(\"ARXIV-DEF-2406.13352\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2406.13352v1\" };".to_string(),
-            target_crate: "osoosi-agent-anomaly::containment_ring".to_string(),
+            indicator_pattern: "prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding".to_string(),
+            cedar_forbid_policy: "@id(\"ARXIV-DEF-2511.10720\")\nforbid(principal, action, resource) when { context.arxiv_source == \"2511.10720v1\" };".to_string(),
+            target_crate: "osoosi-agent-anomaly::cognitive_redteam".to_string(),
             enrolled_at_utc: "2026-10-28T00:00:00Z".to_string(),
             relevance_score: 96.8,
             accuracy_score: 98.9,
-            arxiv_url: "https://arxiv.org/abs/2406.13352".to_string(),
+            arxiv_url: "https://arxiv.org/abs/2511.10720".to_string(),
             has_code_repo: true,
-            code_repo_url: "https://github.com/ethz-spylab/agentdojo".to_string(),
+            code_repo_url: "https://github.com/sleeepeer/PISanitizer".to_string(),
             generated_code_snippet: synthesize_rust_guard_snippet(
-                "ARXIV-DEF-2406.13352",
-                "2406.13352v1",
-                "important_instructions | <tool_call> | sudo chmod +s | /etc/sudoers",
-                "Prompt injection tool call hijack and mandatory access control bypass",
+                "ARXIV-DEF-2511.10720",
+                "2511.10720v1",
+                "prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding",
+                "Long-context prompt injection payload hiding and instruction override",
             ),
         },
     ];
@@ -2164,14 +2338,12 @@ fn default_seeded_research_defense_rules() -> Vec<IngestedResearchDefenseRule> {
             &[
                 "ARXIV-DEF-2603.02277".to_string(),
                 "2603.02277".to_string(),
-                "ARXIV-DEF-2403.04651".to_string(),
-                "2403.04651".to_string(),
-                "ARXIV-DEF-2406.11036".to_string(),
-                "2406.11036".to_string(),
-                "ARXIV-DEF-2406.07392".to_string(),
-                "2406.07392".to_string(),
-                "ARXIV-DEF-2406.13352".to_string(),
-                "2406.13352".to_string(),
+                "ARXIV-DEF-2501.18492".to_string(),
+                "2501.18492".to_string(),
+                "ARXIV-DEF-2503.00061".to_string(),
+                "2503.00061".to_string(),
+                "ARXIV-DEF-2511.10720".to_string(),
+                "2511.10720".to_string(),
             ],
         );
         for db_path in RESEARCH_DB_PATHS {
@@ -2311,7 +2483,7 @@ pub fn init_research_rules_sqlite() {
         code_repo_url TEXT NOT NULL DEFAULT '',
         generated_code_snippet TEXT NOT NULL DEFAULT ''
     );
-        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id IN ('2406.07392', '2610.20437', '2610.09167', '2610.14224');
+        DELETE FROM enforced_research_rules WHERE rule_id NOT LIKE 'ARXIV-DEF-%' OR base_arxiv_id LIKE '24%' OR base_arxiv_id LIKE '23%' OR base_arxiv_id LIKE '22%' OR base_arxiv_id LIKE '21%' OR base_arxiv_id LIKE '20%' OR base_arxiv_id LIKE '1%';
         CREATE TABLE IF NOT EXISTS research_registry_meta (
             id INTEGER PRIMARY KEY CHECK (id = 1),
             cleared_all INTEGER NOT NULL DEFAULT 0,
@@ -2333,9 +2505,9 @@ pub fn init_research_rules_sqlite() {
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN code_repo_url TEXT NOT NULL DEFAULT '';", []);
             let _ = conn.execute("ALTER TABLE enforced_research_rules ADD COLUMN generated_code_snippet TEXT NOT NULL DEFAULT '';", []);
             let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/UKGovernmentBEIS/inspect_evals' WHERE base_arxiv_id = '2603.02277';", []);
-            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/cedar-policy/cedar-spec' WHERE base_arxiv_id = '2403.04651' OR base_arxiv_id = '2604.20496';", []);
-            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/NVIDIA/garak' WHERE base_arxiv_id = '2406.11036' OR base_arxiv_id = '2406.07392' OR base_arxiv_id = '2610.20437' OR code_repo_url LIKE '%rlhf-poisoning-benchmark%';", []);
-            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/ethz-spylab/agentdojo' WHERE base_arxiv_id = '2406.13352' OR base_arxiv_id = '2601.11893' OR code_repo_url LIKE '%mac-agent-bench%';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/yueliu1999/GuardReasoner' WHERE base_arxiv_id = '2501.18492';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/uiuc-kang-lab/AdaptiveAttackAgent' WHERE base_arxiv_id = '2503.00061';", []);
+            let _ = conn.execute("UPDATE enforced_research_rules SET has_code_repo = 1, code_repo_url = 'https://github.com/sleeepeer/PISanitizer' WHERE base_arxiv_id = '2511.10720';", []);
         }
     }
 }
@@ -2582,6 +2754,7 @@ fn research_defense_registry() -> &'static RwLock<Vec<IngestedResearchDefenseRul
 /// persists to SQLite `enforced_research_rules` table with UNIQUE constraint on base_arxiv_id,
 /// persists the updated registry to `config/ingested_research_defenses.json`, and returns the total active rule count.
 pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) -> usize {
+    auto_correct_research_rule(&mut rule);
     if !is_current_research_arxiv_id(&rule.arxiv_id) {
         tracing::warn!(
             "Rejecting outdated research arXiv:{} from registration (must be 2026+)",
@@ -2803,14 +2976,12 @@ pub fn clear_all_ingested_research_rules() -> usize {
             &[
                 "ARXIV-DEF-2603.02277".to_string(),
                 "2603.02277".to_string(),
-                "ARXIV-DEF-2403.04651".to_string(),
-                "2403.04651".to_string(),
-                "ARXIV-DEF-2406.11036".to_string(),
-                "2406.11036".to_string(),
-                "ARXIV-DEF-2406.07392".to_string(),
-                "2406.07392".to_string(),
-                "ARXIV-DEF-2406.13352".to_string(),
-                "2406.13352".to_string(),
+                "ARXIV-DEF-2501.18492".to_string(),
+                "2501.18492".to_string(),
+                "ARXIV-DEF-2503.00061".to_string(),
+                "2503.00061".to_string(),
+                "ARXIV-DEF-2511.10720".to_string(),
+                "2511.10720".to_string(),
             ],
         );
         for db_path in RESEARCH_DB_PATHS {
@@ -4028,36 +4199,34 @@ mod tests {
             "Must contain pre-seeded UK AISI 2603.02277v3 rule"
         );
         assert!(
-            rules.iter().any(|r| r.arxiv_id == "2403.04651v1" || r.arxiv_id == "2604.20496v1"),
-            "Must contain pre-seeded Cedar SMT rule"
+            rules.iter().any(|r| r.arxiv_id == "2501.18492v2"),
+            "Must contain pre-seeded GuardReasoner rule"
         );
         assert!(
-            rules.iter().any(|r| r.arxiv_id == "2406.11036v1" || r.arxiv_id == "2406.07392v1" || r.arxiv_id == "2610.20437v1"),
-            "Must contain pre-seeded Garak rule"
+            rules.iter().any(|r| r.arxiv_id == "2503.00061v2"),
+            "Must contain pre-seeded Adaptive Attacks rule"
         );
         assert!(
-            rules.iter().any(|r| r.arxiv_id == "2406.13352v1" || r.arxiv_id == "2601.11893v1"),
-            "Must contain pre-seeded AgentDojo MAC rule"
+            rules.iter().any(|r| r.arxiv_id == "2511.10720v1"),
+            "Must contain pre-seeded PISanitizer rule"
         );
 
         let coord = BreakoutDefenseCoordinator::new();
 
-        // 1. Pre-seeded Garak payload must be blocked
-        let garak_eval = coord.evaluate_action(
+        // 1. Pre-seeded Adaptive Attacks payload must be blocked
+        let attack_eval = coord.evaluate_action(
             "agent_worker",
             "exec_command",
-            "llm_probe_redteam",
-            "trigger exploit garak.probes with inject_base64 and markdown_image_exfil",
+            "mac_authority_lattice",
+            "trigger exploit adaptive_prompt_injection with tool_hijack and indirect_context_override",
             Some("/workspace"),
         );
-        assert!(!garak_eval.is_clean, "Garak payload must be blocked");
-        assert!(garak_eval
+        assert!(!attack_eval.is_clean, "Adaptive attack payload must be blocked");
+        assert!(attack_eval
             .technical
             .detected_vectors
             .iter()
-            .any(|v| v.contains("[ArXiv-Active-Defense:2406.11036v1]")
-                || v.contains("[ArXiv-Active-Defense:2406.07392v1]")
-                || v.contains("[ArXiv-Active-Defense:2610.20437v1]")));
+            .any(|v| v.contains("[ArXiv-Active-Defense:2503.00061v2]")));
 
         // 2. Dynamically register a brand-new research rule and verify immediate enforcement
         let custom_rule = IngestedResearchDefenseRule {
@@ -4142,7 +4311,14 @@ mod tests {
             .into_iter()
             .find(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277")
             .expect("Updated rule must be present");
-        assert_eq!(updated.indicator_pattern, "sandboxescapebench_updated");
+        assert_eq!(
+            updated.indicator_pattern,
+            "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern"
+        );
+        assert_eq!(
+            updated.title,
+            "Quantifying Frontier LLM Capabilities for Container Sandbox Escape"
+        );
 
         reset_research_defense_registry();
     }
@@ -4281,10 +4457,10 @@ mod tests {
         // Case B: Overlapping boundary without allow_in_place_update
         let covered_rule = IngestedResearchDefenseRule {
             rule_id: "test_cov".to_string(),
-            arxiv_id: "2403.04651v1".to_string(),
+            arxiv_id: "2501.18492v2".to_string(),
             title: "Already Covered".to_string(),
             attack_vector: "Vector".to_string(),
-            target_boundary: "cedar_smt_sandbox_verification".to_string(),
+            target_boundary: "guardrail_reasoning_boundary".to_string(),
             extraction_class: "defense_countermeasure".to_string(),
             indicator_pattern: "brand_new_pattern_123".to_string(),
             cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
@@ -4332,22 +4508,13 @@ mod tests {
             .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2603.02277"));
         assert!(all_rules
             .iter()
-            .any(|r| {
-                let b = normalize_base_arxiv_id(&r.arxiv_id);
-                b == "2403.04651" || b == "2604.20496"
-            }));
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2501.18492"));
         assert!(all_rules
             .iter()
-            .any(|r| {
-                let b = normalize_base_arxiv_id(&r.arxiv_id);
-                b == "2406.11036" || b == "2406.07392" || b == "2610.20437"
-            }));
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2503.00061"));
         assert!(all_rules
             .iter()
-            .any(|r| {
-                let b = normalize_base_arxiv_id(&r.arxiv_id);
-                b == "2406.13352" || b == "2601.11893"
-            }));
+            .any(|r| normalize_base_arxiv_id(&r.arxiv_id) == "2511.10720"));
 
         reset_research_defense_registry();
     }
@@ -4764,44 +4931,45 @@ mod tests {
             );
         }
 
-        // Test 1: Climate paper 2406.07392 must be rejected
-        let climate_mismatch = IngestedResearchDefenseRule {
+        // Test 1: Outdated 2024 paper 2406.07392 must be rejected by recency gate
+        let outdated = IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2406.07392".to_string(),
             arxiv_id: "2406.07392v1".to_string(),
             title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string(),
-            attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)".to_string(),
+            attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration".to_string(),
             target_boundary: "llm_probe_redteam_boundary".to_string(),
             extraction_class: "breakout_vector".to_string(),
             indicator_pattern: "garak.probes | inject_base64".to_string(),
+            cedar_forbid_policy: "forbid(principal, action, resource);".to_string(),
             code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
             ..Default::default()
         };
-        let err1 = check_paper_to_code_semantic_domain_alignment(&climate_mismatch);
-        assert!(err1.is_err());
-        assert!(err1.unwrap_err().contains("climate science paper"));
+        let verdict = validate_research_rule_acceptance(&outdated, Some(90.0), &seeded, false);
+        assert!(!verdict.accepted);
+        assert_eq!(verdict.rejection_code.as_deref(), Some("RejectedOutdatedResearch"));
 
-        // Test 2: Garak paired with RL boundary must be rejected
+        // Test 2: Adaptive attacks paired with RL boundary must be rejected
         let rl_mismatch = IngestedResearchDefenseRule {
-            rule_id: "ARXIV-DEF-2406.11036".to_string(),
-            arxiv_id: "2406.11036v1".to_string(),
-            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string(),
+            rule_id: "ARXIV-DEF-2503.00061".to_string(),
+            arxiv_id: "2503.00061v2".to_string(),
+            title: "Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents".to_string(),
             attack_vector: "RL controller reward poisoning and privilege boundary tampering".to_string(),
             target_boundary: "rl_controller_privilege_boundary".to_string(),
             extraction_class: "breakout_vector".to_string(),
-            indicator_pattern: "reward_fn_override | replay_buffer.push_unverified".to_string(),
-            code_repo_url: "https://github.com/NVIDIA/garak".to_string(),
+            indicator_pattern: "adaptive_prompt_injection | tool_hijack".to_string(),
+            code_repo_url: "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent".to_string(),
             ..Default::default()
         };
         let err2 = check_paper_to_code_semantic_domain_alignment(&rl_mismatch);
         assert!(err2.is_err());
         assert!(err2.unwrap_err().contains("Semantic domain mismatch"));
 
-        // Test 3: auto_correct_research_rule fixes the mismatch into genuine 2406.11036
+        // Test 3: auto_correct_research_rule fixes the mismatch into genuine 2503.00061
         let mut corrupted = rl_mismatch;
         assert!(auto_correct_research_rule(&mut corrupted));
-        assert_eq!(corrupted.rule_id, "ARXIV-DEF-2406.11036");
-        assert_eq!(corrupted.arxiv_id, "2406.11036v1");
-        assert_eq!(corrupted.target_boundary, "llm_probe_redteam_boundary");
+        assert_eq!(corrupted.rule_id, "ARXIV-DEF-2503.00061");
+        assert_eq!(corrupted.arxiv_id, "2503.00061v2");
+        assert_eq!(corrupted.target_boundary, "mac_authority_lattice");
         assert!(check_paper_to_code_semantic_domain_alignment(&corrupted).is_ok());
     }
 }

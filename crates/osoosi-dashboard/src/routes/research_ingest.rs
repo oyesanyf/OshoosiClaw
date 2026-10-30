@@ -6,15 +6,18 @@
 
 use axum::{
     extract::Json,
+    response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
     Router,
 };
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::RwLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use tokio_stream::Stream;
 
 use crate::DashboardState;
 
@@ -908,14 +911,24 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
                 )
             }
-            "2403.04651" | "2604.20496" => {
+            "2501.18492" => {
                 return (
                     true,
-                    "https://github.com/cedar-policy/cedar-spec".to_string(),
+                    "https://github.com/yueliu1999/GuardReasoner".to_string(),
                 )
             }
-            "2406.11036" | "2406.07392" | "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
-            "2406.13352" | "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
+            "2503.00061" => {
+                return (
+                    true,
+                    "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent".to_string(),
+                )
+            }
+            "2511.10720" => {
+                return (
+                    true,
+                    "https://github.com/sleeepeer/PISanitizer".to_string(),
+                )
+            }
             _ => {}
         }
     }
@@ -2601,7 +2614,7 @@ pub fn search_and_stage_research_for_approval(
         if !is_already_active("2603.02277v3") {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some("2603.02277v3".to_string()),
-                title: Some("SandboxEscapeBench: A Benchmark for AI Agent Container Sandbox Escape (UK AISI)".to_string()),
+                title: Some("Quantifying Frontier LLM Capabilities for Container Sandbox Escape".to_string()),
                 extraction_class: Some("breakout_vector".to_string()),
                 attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)".to_string(),
                 target_boundary: "container_runtime_privilege".to_string(),
@@ -2612,20 +2625,18 @@ pub fn search_and_stage_research_for_approval(
                 ..Default::default()
             });
         }
-        if !is_already_active("2406.11036v1")
-            && !is_already_active("2406.11036")
-            && !is_already_active("2406.07392")
-            && !is_already_active("2610.20437")
+        if !is_already_active("2503.00061v2")
+            && !is_already_active("2503.00061")
         {
             candidate_items.push(ResearchExtractionItem {
-                arxiv_id: Some("2406.11036v1".to_string()),
-                title: Some("garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string()),
+                arxiv_id: Some("2503.00061v2".to_string()),
+                title: Some("Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents".to_string()),
                 extraction_class: Some("breakout_vector".to_string()),
-                attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)".to_string(),
-                target_boundary: "llm_probe_redteam_boundary".to_string(),
+                attack_vector: "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)".to_string(),
+                target_boundary: "mac_authority_lattice".to_string(),
                 source_char_start: Some(24),
                 source_char_end: Some(96),
-                source_quote: Some("garak probes LLM vulnerability boundaries via encoding injection".to_string()),
+                source_quote: Some("AdaptiveAttackAgent evaluates automated evasion of indirect prompt injection defenses".to_string()),
                 novelty_delta_score: Some(94.0),
                 ..Default::default()
             });
@@ -3161,6 +3172,29 @@ pub fn routes() -> Router<DashboardState> {
             "/research/verify-accuracy",
             post(post_research_verify_accuracy),
         )
+        .route("/api/research/active-rules", get(get_research_active_rules))
+        .route("/research/active-rules", get(get_research_active_rules))
+        .route("/api/v1/research/stream", get(get_research_stream))
+        .route("/api/research/stream", get(get_research_stream))
+        .route("/research/stream", get(get_research_stream))
+}
+
+/// GET /api/research/active-rules and /research/active-rules
+pub async fn get_research_active_rules(
+) -> Json<Vec<osoosi_agent_anomaly::breakout_defense::IngestedResearchDefenseRule>> {
+    Json(osoosi_agent_anomaly::list_ingested_research_rules())
+}
+
+/// GET /api/v1/research/stream, /api/research/stream, and /research/stream
+pub async fn get_research_stream(
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let rules = osoosi_agent_anomaly::list_ingested_research_rules();
+    let payload = serde_json::to_string(&rules).unwrap_or_else(|_| "[]".to_string());
+    let initial_event = Event::default().event("active_rules").data(payload);
+    let heartbeat_event = Event::default().event("heartbeat").data(r#"{"status":"streaming","stream":"research_events"}"#);
+
+    let stream = tokio_stream::iter(vec![Ok(initial_event), Ok(heartbeat_event)]);
+    Sse::new(stream).keep_alive(KeepAlive::default().interval(Duration::from_secs(15)))
 }
 
 /// POST /api/v1/research/verify-accuracy, /api/research/verify-accuracy, and /research/verify-accuracy
@@ -4152,13 +4186,13 @@ mod tests {
         assert!(!has2, "404 fake repo URL must be rejected");
 
         // 2. Verify live repo URLs resolve correctly
-        let item_garak = ResearchExtractionItem {
-            arxiv_id: Some("2406.11036".to_string()),
+        let item_guardreasoner = ResearchExtractionItem {
+            arxiv_id: Some("2501.18492".to_string()),
             ..Default::default()
         };
-        let (has_garak, url_garak) = detect_verified_code_repo(&item_garak);
-        assert!(has_garak, "2406.11036 must resolve live repo");
-        assert_eq!(url_garak, "https://github.com/NVIDIA/garak");
+        let (has_guard, url_guard) = detect_verified_code_repo(&item_guardreasoner);
+        assert!(has_guard, "2501.18492 must resolve live repo");
+        assert_eq!(url_guard, "https://github.com/yueliu1999/GuardReasoner");
 
         let item_agentdojo = ResearchExtractionItem {
             arxiv_id: Some("2601.11893".to_string()),

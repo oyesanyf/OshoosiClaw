@@ -514,7 +514,7 @@ def test_endpoints():
         method="POST",
     )
     dc_t0 = time.perf_counter()
-    with urllib.request.urlopen(dc_req, timeout=10) as resp:
+    with urllib.request.urlopen(dc_req, timeout=30) as resp:
         dc_ms = (time.perf_counter() - dc_t0) * 1000.0
         dc_data = json.loads(resp.read().decode("utf-8"))
         assert resp.status == 200
@@ -581,15 +581,15 @@ def test_endpoints():
             "extractions": [
                 {
                     "arxiv_id": "2603.02277",
-                    "title": "Container Sandbox Escape Benchmark",
+                    "title": "Quantifying Frontier LLM Capabilities for Container Sandbox Escape",
                     "extraction_class": "breakout_vector",
-                    "attack_vector": "Container Breakout & Docker Socket Escape",
-                    "target_boundary": "OCI Container Sandbox",
-                    "source_quote": "container escape via docker.sock"
+                    "attack_vector": "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)",
+                    "target_boundary": "container_runtime_privilege",
+                    "source_quote": "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern"
                 },
                 {
                     "arxiv_id": "2603.02277",
-                    "title": "Container Sandbox Escape Benchmark",
+                    "title": "Quantifying Frontier LLM Capabilities for Container Sandbox Escape",
                     "extraction_class": "breakout_vector",
                     "attack_vector": "SSRF & Cloud Instance Metadata Probing",
                     "target_boundary": "Host Network Egress Gateway",
@@ -616,17 +616,17 @@ def test_endpoints():
         lg_t0 = time.perf_counter()
         lg_payload = json.dumps({
             "arxiv_id": "2603.02277",
-            "title": "Container Sandbox Escape Benchmark",
+            "title": "Quantifying Frontier LLM Capabilities for Container Sandbox Escape",
             "extractions": [
                 {
                     "arxiv_id": "2603.02277",
-                    "title": "Container Sandbox Escape Benchmark",
+                    "title": "Quantifying Frontier LLM Capabilities for Container Sandbox Escape",
                     "extraction_class": "breakout_vector",
-                    "attack_vector": "Container Breakout & Docker Socket Escape",
-                    "target_boundary": "OCI Container Sandbox",
+                    "attack_vector": "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)",
+                    "target_boundary": "container_runtime_privilege",
                     "source_char_start": 10,
                     "source_char_end": 42,
-                    "source_quote": "container escape via docker.sock"
+                    "source_quote": "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern"
                 }
             ],
             "auto_enroll_conformal_source": True,

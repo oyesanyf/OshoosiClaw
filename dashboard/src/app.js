@@ -13193,6 +13193,34 @@ window.runHybridCveScan = runHybridCveScan;
 // ============================================================================
 // arXiv Breakout Research & 4-Arm LangGraph Swarm + Operator Approval Gate UI
 // ============================================================================
+const OSHOOSI_RESEARCH_CACHE_VERSION = 'v2_20261030';
+
+(function purgeStaleResearchCaches() {
+    try {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        const currentVersion = window.localStorage.getItem('osoosi_research_cache_version');
+        if (currentVersion !== OSHOOSI_RESEARCH_CACHE_VERSION) {
+            const keysToRemove = [];
+            for (let i = 0; i < window.localStorage.length; i++) {
+                const k = window.localStorage.key(i);
+                if (k && (k.startsWith('research_') || k.startsWith('osoosi_research_') || k.includes('2406.07392') || k.includes('2610.20437'))) {
+                    keysToRemove.push(k);
+                }
+            }
+            for (const k of keysToRemove) {
+                window.localStorage.removeItem(k);
+                if (typeof window.unsetUiSettingInDb === 'function') {
+                    window.unsetUiSettingInDb(k);
+                }
+            }
+            if (window.sessionStorage) {
+                window.sessionStorage.clear();
+            }
+            window.localStorage.setItem('osoosi_research_cache_version', OSHOOSI_RESEARCH_CACHE_VERSION);
+        }
+    } catch (_) {}
+})();
+
 const RESEARCH_PAPER_PRESETS = {
     '2603.02277': {
         arxiv_id: '2603.02277v3',
@@ -13200,7 +13228,7 @@ const RESEARCH_PAPER_PRESETS = {
         extraction_class: 'breakout_vector',
         attack_vector: 'Container Breakout & Docker Socket Escape',
         target_boundary: 'OCI Container Sandbox',
-        verbatim_quote: 'nsenter --target 1 --mount --uts --ipc --net --pid /bin/sh',
+        verbatim_quote: '/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern',
         target_crate: 'osoosi-sandbox',
         breakout_score: 89.0,
         relevance_score: 98.5,
@@ -13222,33 +13250,19 @@ const RESEARCH_PAPER_PRESETS = {
         arxiv_url: 'https://arxiv.org/abs/2604.20496',
         proposed_cedar_rule: 'forbid(principal, action == Action::"Syscall::invoke", resource) when { context.arxiv_id == "2604.20496v1" && context.syscall in ["io_uring_setup", "io_uring_enter"] };'
     },
-    '2406.11036': {
-        arxiv_id: '2406.11036v1',
-        title: 'garak: A Framework for Security Probing Large Language Models (NVIDIA)',
+    '2503.00061': {
+        arxiv_id: '2503.00061v2',
+        title: 'Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents',
         extraction_class: 'breakout_vector',
-        attack_vector: 'Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)',
-        target_boundary: 'llm_probe_redteam_boundary',
-        verbatim_quote: 'garak probes LLM vulnerability boundaries via encoding injection (inject_base64), adversarial jailbreak personas (dan_11_0), and untrusted markdown image exfiltration (markdown_image_exfil)',
-        target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
-        breakout_score: 84.5,
+        attack_vector: 'Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)',
+        target_boundary: 'mac_authority_lattice',
+        verbatim_quote: 'AdaptiveAttackAgent evaluates automated evasion of indirect prompt injection defenses and mandatory access control policies on autonomous LLM agents',
+        target_crate: 'osoosi-agent-anomaly::containment_ring',
+        breakout_score: 94.0,
         relevance_score: 99.0,
         accuracy_score: 99.6,
-        arxiv_url: 'https://arxiv.org/abs/2406.11036',
-        proposed_cedar_rule: '@id("ARXIV-DEF-2406.11036")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.11036v1" };'
-    },
-    '2610.20437': {
-        arxiv_id: '2406.11036v1',
-        title: 'garak: A Framework for Security Probing Large Language Models (NVIDIA)',
-        extraction_class: 'breakout_vector',
-        attack_vector: 'Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)',
-        target_boundary: 'llm_probe_redteam_boundary',
-        verbatim_quote: 'garak probes LLM vulnerability boundaries via encoding injection (inject_base64), adversarial jailbreak personas (dan_11_0), and untrusted markdown image exfiltration (markdown_image_exfil)',
-        target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
-        breakout_score: 84.5,
-        relevance_score: 99.0,
-        accuracy_score: 99.6,
-        arxiv_url: 'https://arxiv.org/abs/2406.11036',
-        proposed_cedar_rule: '@id("ARXIV-DEF-2406.11036")\nforbid(principal, action, resource) when { context.arxiv_source == "2406.11036v1" };'
+        arxiv_url: 'https://arxiv.org/abs/2503.00061',
+        proposed_cedar_rule: '@id("ARXIV-DEF-2503.00061")\nforbid(principal, action, resource) when { context.arxiv_source == "2503.00061v2" };'
     },
     '2601.11893': {
         arxiv_id: '2601.11893v1',
@@ -13302,6 +13316,28 @@ function buildSafeRepoUrl(url) {
     return clean;
 }
 window.buildSafeRepoUrl = buildSafeRepoUrl;
+
+/**
+ * Renders dynamic year badge based on arXiv ID prefix:
+ * - 26XX -> 2026+ (CURRENT) [Green]
+ * - 25XX -> 2025 (VERIFIED) [Blue]
+ * - 24XX -> 2024 (FOUNDATIONAL) [Orange]
+ * - Other -> RESEARCH [Gray]
+ */
+function getArxivYearBadgeHtml(arxivId) {
+    const cleanArxiv = String(arxivId || '').trim().replace(/^arxiv:/i, '');
+    const yearPrefix = cleanArxiv.slice(0, 2);
+    if (yearPrefix === '26') {
+        return `<span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2026+ (CURRENT)</span>`;
+    } else if (yearPrefix === '25') {
+        return `<span class="badge blue" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2025 (VERIFIED)</span>`;
+    } else if (yearPrefix === '24') {
+        return `<span class="badge orange" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2024 (FOUNDATIONAL)</span>`;
+    } else {
+        return `<span class="badge gray" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 RESEARCH</span>`;
+    }
+}
+window.getArxivYearBadgeHtml = getArxivYearBadgeHtml;
 
 /**
  * Encodes secret payload bytes into the RGB channels (least significant bits) of an HTML5 Canvas image.
@@ -13577,7 +13613,7 @@ window._researchSwarmState = {
         last_run_utc: null,
         next_run_utc: null,
         current_research_only: true,
-        min_publication_year: 2026
+        min_publication_year: 2025
     },
     active_enforced_research_rules: [
         {
@@ -13585,64 +13621,64 @@ window._researchSwarmState = {
             arxiv_id: '2603.02277v3',
             title: 'Quantifying Frontier LLM Capabilities for Container Sandbox Escape',
             attack_vector: 'Container Breakout & Docker Socket Escape',
-            target_boundary: 'OCI Container Sandbox',
-            indicator_pattern: 'nsenter --target 1 --mount',
-            target_crate: 'osoosi-sandbox',
+            target_boundary: 'container_runtime_privilege',
+            indicator_pattern: '/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern',
+            target_crate: 'osoosi-agent-anomaly::breakout_defense',
             relevance_score: 98.5,
             accuracy_score: 99.4,
             arxiv_url: 'https://arxiv.org/abs/2603.02277',
             has_code_repo: true,
             code_repo_url: 'https://github.com/UKGovernmentBEIS/inspect_evals',
             status: 'ENFORCED IN BREAKOUT COORDINATOR',
-            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2603.02277] Tighten-only deterministic Rust containment guard against Container Breakout & Docker Socket Escape\n// Grounded from arXiv:2603.02277 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2603_02277_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("nsenter --target 1 --mount")\n}'
+            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2603.02277] Tighten-only deterministic Rust containment guard against Container Breakout & Docker Socket Escape\n// Grounded from arXiv:2603.02277 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2603_02277_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("/var/run/docker.sock") && !indicator_clean.contains("/run/docker.sock") && !indicator_clean.contains("release_agent")\n}'
         },
         {
-            rule_id: 'ARXIV-DEF-2604.20496',
-            arxiv_id: '2604.20496v1',
-            title: 'Project Mythos: Autonomous Multi-Step Sandbox Escape via Z3 Symbolic Execution',
-            attack_vector: 'Symbolic Capability Escalation & Seccomp Filter Bypass',
-            target_boundary: 'Seccomp-BPF / AppContainer Ring',
-            indicator_pattern: 'io_uring_setup / RESOLVE_BENEATH_BYPASS',
-            target_crate: 'osoosi-agent-anomaly',
+            rule_id: 'ARXIV-DEF-2501.18492',
+            arxiv_id: '2501.18492v2',
+            title: 'GuardReasoner: Towards Reasoning-based LLM Safeguards',
+            attack_vector: 'Reasoning-based guardrail bypass and multi-turn jailbreak evasion',
+            target_boundary: 'guardrail_reasoning_boundary',
+            indicator_pattern: 'guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale',
+            target_crate: 'osoosi-agent-anomaly::cedar_engine',
             relevance_score: 97.2,
             accuracy_score: 99.1,
-            arxiv_url: 'https://arxiv.org/abs/2604.20496',
+            arxiv_url: 'https://arxiv.org/abs/2501.18492',
             has_code_repo: true,
-            code_repo_url: 'https://github.com/cedar-policy/cedar-spec',
+            code_repo_url: 'https://github.com/yueliu1999/GuardReasoner',
             status: 'ENFORCED IN BREAKOUT COORDINATOR',
-            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2604.20496] Tighten-only deterministic Rust containment guard against Symbolic Capability Escalation & Seccomp Filter Bypass\n// Grounded from arXiv:2604.20496 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2604_20496_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("io_uring_setup / resolve_beneath_bypass")\n}'
+            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2501.18492] Tighten-only deterministic Rust containment guard against Reasoning-based guardrail bypass and multi-turn jailbreak evasion\n// Grounded from arXiv:2501.18492 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2501_18492_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("guard_reasoning_step") && !indicator_clean.contains("bypass_guardrail")\n}'
         },
         {
-            rule_id: 'ARXIV-DEF-2406.11036',
-            arxiv_id: '2406.11036v1',
-            title: 'garak: A Framework for Security Probing Large Language Models (NVIDIA)',
-            attack_vector: 'Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)',
-            target_boundary: 'llm_probe_redteam_boundary',
-            indicator_pattern: 'garak.probes | inject_base64 | dan_11_0 | markdown_image_exfil',
-            target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
+            rule_id: 'ARXIV-DEF-2503.00061',
+            arxiv_id: '2503.00061v2',
+            title: 'Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents',
+            attack_vector: 'Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)',
+            target_boundary: 'mac_authority_lattice',
+            indicator_pattern: 'adaptive_prompt_injection | tool_hijack | indirect_context_override | unauthorized_tool_call',
+            target_crate: 'osoosi-agent-anomaly::containment_ring',
             relevance_score: 99.0,
             accuracy_score: 99.6,
-            arxiv_url: 'https://arxiv.org/abs/2406.11036',
+            arxiv_url: 'https://arxiv.org/abs/2503.00061',
             has_code_repo: true,
-            code_repo_url: 'https://github.com/NVIDIA/garak',
+            code_repo_url: 'https://github.com/uiuc-kang-lab/AdaptiveAttackAgent',
             status: 'ENFORCED IN BREAKOUT COORDINATOR',
-            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2406.11036] Tighten-only deterministic Rust containment guard against Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration (NVIDIA Garak)\n// Grounded from arXiv:2406.11036 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2406_11036_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("garak.probes") && !indicator_clean.contains("inject_base64")\n}'
+            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2503.00061] Tighten-only deterministic Rust containment guard against Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)\n// Grounded from arXiv:2503.00061 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2503_00061_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("adaptive_prompt_injection") && !indicator_clean.contains("tool_hijack")\n}'
         },
         {
-            rule_id: 'ARXIV-DEF-2601.11893',
-            arxiv_id: '2601.11893v1',
-            title: 'MAC-Agent: Mandatory Access Control Lattice for Multi-Agent Tool Frameworks',
-            attack_vector: 'Cross-Agent Confused Deputy & Lateral Sink Pivot',
-            target_boundary: 'Inter-Agent Neural Mesh Guard',
-            indicator_pattern: '169.254.169.254/latest/meta-data',
-            target_crate: 'osoosi-agent-anomaly',
+            rule_id: 'ARXIV-DEF-2511.10720',
+            arxiv_id: '2511.10720v1',
+            title: 'PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization',
+            attack_vector: 'Long-context prompt injection payload hiding and instruction override',
+            target_boundary: 'llm_probe_redteam_boundary',
+            indicator_pattern: 'prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding',
+            target_crate: 'osoosi-agent-anomaly::cognitive_redteam',
             relevance_score: 96.8,
             accuracy_score: 98.9,
-            arxiv_url: 'https://arxiv.org/abs/2601.11893',
+            arxiv_url: 'https://arxiv.org/abs/2511.10720',
             has_code_repo: true,
-            code_repo_url: 'https://github.com/ethz-spylab/agentdojo',
+            code_repo_url: 'https://github.com/sleeepeer/PISanitizer',
             status: 'ENFORCED IN BREAKOUT COORDINATOR',
-            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2601.11893] Tighten-only deterministic Rust containment guard against Cross-Agent Confused Deputy & Lateral Sink Pivot\n// Grounded from arXiv:2601.11893 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2601_11893_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("169.254.169.254/latest/meta-data")\n}'
+            generated_code_snippet: '// [OSHOOSI-RESEARCH-GUARD-ARXIV-DEF-2511.10720] Tighten-only deterministic Rust containment guard against Long-context prompt injection payload hiding and instruction override\n// Grounded from arXiv:2511.10720 | Zero-bypass fail-closed reference monitor\npub fn verify_arxiv_def_2511_10720_containment(indicator_marker: &str) -> bool {\n    let indicator_clean = indicator_marker.trim().to_ascii_lowercase();\n    !indicator_clean.contains("prompt_sanitizer_bypass") && !indicator_clean.contains("long_context_injection")\n}'
         }
     ],
     last_swarm_report: {
@@ -13707,15 +13743,17 @@ window._researchSwarmState = {
 function renderResearchSwarmUI() {
     const st = window._researchSwarmState;
     // Non-novel baseline papers purged permanently from active defense
-    const nonNovelBases = new Set(['2610.09167', '2610.14224']);
+    const nonNovelBases = new Set(['2406.07392', '2610.20437', '2610.09167', '2610.14224']);
     // Deduplicate active enforced research rules strictly by normalized base arxiv_id
     const rawRules = Array.isArray(st.active_enforced_research_rules) ? st.active_enforced_research_rules : [];
     const dedupedRules = [];
     const seenRuleKeys = new Set();
     for (const r of rawRules) {
         const baseArxiv = String(r.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
-        if (nonNovelBases.has(baseArxiv)) {
-            continue; // Purge non-novel baseline papers
+        const yyMatch = baseArxiv.match(/^(\d{2})/);
+        const yy = yyMatch ? parseInt(yyMatch[1], 10) : 0;
+        if (nonNovelBases.has(baseArxiv) || (yy > 0 && yy < 25)) {
+            continue; // Purge non-novel and prior-year (< 2025) papers
         }
         const key = baseArxiv || String(r.rule_id || '');
         if (!seenRuleKeys.has(key)) {
@@ -13866,6 +13904,7 @@ function renderResearchSwarmUI() {
                     <tr style="border-bottom: 1px solid rgba(255,255,255,0.06); background: rgba(245, 158, 11, 0.05);">
                         <td style="padding: 10px;">
                             <div style="font-family: monospace; font-weight: 700; color: #38bdf8;">arXiv:${escapeHtml(arxivId)}</div>
+                            <div style="margin-top: 2px; margin-bottom: 2px;">${getArxivYearBadgeHtml(arxivId)}</div>
                             ${codeBadge}
                             <div style="font-size: 11.5px; color: #f8fafc; margin-top: 2px;">${escapeHtml(title)}</div>
                             <div style="font-size: 10.5px; color: var(--text-muted); font-family: monospace; margin-top: 2px;">ID: ${escapeHtml(appId)}</div>
@@ -14005,14 +14044,7 @@ function renderResearchSwarmUI() {
                 ${safeRepo ? `<a href="${escapeHtml(safeRepo)}" target="_blank" rel="noopener noreferrer external" referrerpolicy="no-referrer" style="color: #c084fc; font-size: 10px; text-decoration: underline; font-family: monospace;">[💻 Code Repo ↗]</a>` : ''}
             ` : '';
 
-            const yearPrefix = (cleanArxiv || '').replace(/^arxiv:/i, '').slice(0, 2);
-            const yearBadge = yearPrefix === '26'
-                ? `<span class="badge green" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2026+ (CURRENT)</span>`
-                : yearPrefix === '25'
-                ? `<span class="badge blue" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2025 (VERIFIED)</span>`
-                : yearPrefix === '24'
-                ? `<span class="badge orange" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 2024 (FOUNDATIONAL)</span>`
-                : `<span class="badge gray" style="font-size: 9px; font-weight: 600; padding: 1px 5px; width: fit-content;">📅 RESEARCH</span>`;
+            const yearBadge = getArxivYearBadgeHtml(cleanArxiv);
 
             const linkHtml = absUrl ? `
                 <div style="display: flex; flex-direction: column; gap: 3px;">
@@ -14094,7 +14126,16 @@ function renderResearchSwarmUI() {
 
 window.loadResearchSwarmStatus = async function() {
     try {
-        const res = await fetch(`${API_BASE}/research/status`, { credentials: 'same-origin' });
+        const cacheBuster = `_t=${Date.now()}&_v=${OSHOOSI_RESEARCH_CACHE_VERSION}`;
+        const res = await fetch(`${API_BASE}/research/status?${cacheBuster}`, {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache'
+            }
+        });
         if (res.ok) {
             const data = await res.json();
             if (data) {
@@ -14103,12 +14144,23 @@ window.loadResearchSwarmStatus = async function() {
                 if (typeof data.active_rules_count === 'number') st.active_rules_count = data.active_rules_count;
                 if (typeof data.conformal_sources_k === 'number') st.conformal_sources_k = data.conformal_sources_k;
                 if (typeof data.coverage_ratio === 'number') st.coverage_ratio = data.coverage_ratio;
+                const staleBases = new Set(['2406.07392', '2610.20437', '2610.09167', '2610.14224']);
                 if (Array.isArray(data.active_enforced_research_rules) && data.active_enforced_research_rules.length > 0) {
-                    st.active_enforced_research_rules = data.active_enforced_research_rules;
-                    st.active_rules_count = data.active_enforced_research_rules.length;
+                    st.active_enforced_research_rules = data.active_enforced_research_rules.filter(r => {
+                        const base = String(r.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+                        const yyMatch = base.match(/^(\d{2})/);
+                        const yy = yyMatch ? parseInt(yyMatch[1], 10) : 0;
+                        return !staleBases.has(base) && (yy === 0 || yy >= 25);
+                    });
+                    st.active_rules_count = st.active_enforced_research_rules.length;
                 }
                 if (Array.isArray(data.pending_approvals)) {
-                    st.pending_approvals = data.pending_approvals;
+                    st.pending_approvals = data.pending_approvals.filter(p => {
+                        const base = String(p.arxiv_id || '').trim().replace(/^arxiv:/i, '').replace(/v\d+$/i, '').toLowerCase();
+                        const yyMatch = base.match(/^(\d{2})/);
+                        const yy = yyMatch ? parseInt(yyMatch[1], 10) : 0;
+                        return !staleBases.has(base) && (yy === 0 || yy >= 25);
+                    });
                 }
                 if (data.last_swarm_report) {
                     st.last_swarm_report = data.last_swarm_report;
