@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use thiserror::Error;
 use url::Url;
 
@@ -1498,6 +1498,102 @@ pub fn is_current_research_arxiv_id(arxiv_id: &str) -> bool {
     }
 }
 
+/// Representative clean baseline host & developer telemetry corpus used by the Canary Benign-Corpus
+/// Acceptance Gate (`F18`). Any candidate research rule whose indicator pattern matches a clean
+/// baseline event is rejected with `RejectedCanaryFalsePositive` (0 false positives permitted).
+pub const CANARY_BENIGN_TELEMETRY_CORPUS: &[&str] = &[
+    "C:\\Windows\\System32\\svchost.exe -k netsvcs -p -s Schedule",
+    "C:\\Windows\\System32\\lsass.exe",
+    "C:\\Windows\\System32\\services.exe",
+    "C:\\Windows\\Explorer.EXE",
+    "cargo build --workspace --release",
+    "cargo test -p osoosi-core --lib",
+    "rustc --edition 2021 src/lib.rs --crate-type lib",
+    "git status -s && git diff --stat",
+    "python -m unittest discover -s tests",
+    "node --test dashboard/tests/webui_parity.test.mjs",
+    "http://127.0.0.1:11434/api/tags",
+    "http://127.0.0.1:3030/api/health",
+];
+
+/// Verifies that a candidate research defense rule produces 0 false positives against
+/// `CANARY_BENIGN_TELEMETRY_CORPUS` (`F18`).
+pub fn verify_rule_against_canary_benign_corpus(
+    rule: &IngestedResearchDefenseRule,
+) -> Option<String> {
+    let pat_lc = rule.indicator_pattern.trim().to_ascii_lowercase();
+    if pat_lc.is_empty() {
+        return Some("Empty indicator pattern rejected by canary gate".to_string());
+    }
+    for &sample in CANARY_BENIGN_TELEMETRY_CORPUS {
+        let sample_lc = sample.to_ascii_lowercase();
+        if sample_lc.contains(&pat_lc) {
+            return Some(format!(
+                "Candidate pattern '{}' triggered false positive on canary benign telemetry sample '{}'",
+                rule.indicator_pattern.trim(),
+                sample
+            ));
+        }
+    }
+    None
+}
+
+static PINNED_RESEARCH_RULE_IDS: OnceLock<RwLock< std::collections::HashSet<String>>> =
+    OnceLock::new();
+static OPERATOR_APPROVED_RESEARCH_RULE_IDS: OnceLock<RwLock<std::collections::HashSet<String>>> =
+    OnceLock::new();
+
+fn pinned_research_rule_set() -> &'static RwLock<std::collections::HashSet<String>> {
+    PINNED_RESEARCH_RULE_IDS.get_or_init(|| RwLock::new(std::collections::HashSet::new()))
+}
+
+fn operator_approved_research_rule_set() -> &'static RwLock<std::collections::HashSet<String>> {
+    OPERATOR_APPROVED_RESEARCH_RULE_IDS
+        .get_or_init(|| RwLock::new(std::collections::HashSet::new()))
+}
+
+/// Pins a research rule so it can never be evicted by capacity rotation (`F19`).
+pub fn pin_ingested_research_rule(rule_id_or_arxiv_id: &str) {
+    let base = normalize_base_arxiv_id(rule_id_or_arxiv_id);
+    let canon = canonical_research_rule_id(&base);
+    let mut set = pinned_research_rule_set()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    set.insert(base);
+    set.insert(canon);
+    set.insert(rule_id_or_arxiv_id.trim().to_string());
+}
+
+/// Checks whether a research rule is pinned against capacity eviction (`F19`).
+pub fn is_research_rule_pinned(rule: &IngestedResearchDefenseRule) -> bool {
+    let base = normalize_base_arxiv_id(&rule.arxiv_id);
+    let set = pinned_research_rule_set()
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
+    set.contains(&rule.rule_id) || set.contains(&base) || set.contains(rule.arxiv_id.trim())
+}
+
+/// Records operator approval for a dynamically synthesized research rule (`F19`).
+pub fn approve_ingested_research_rule(rule_id_or_arxiv_id: &str) {
+    let base = normalize_base_arxiv_id(rule_id_or_arxiv_id);
+    let canon = canonical_research_rule_id(&base);
+    let mut set = operator_approved_research_rule_set()
+        .write()
+        .unwrap_or_else(|e| e.into_inner());
+    set.insert(base);
+    set.insert(canon);
+    set.insert(rule_id_or_arxiv_id.trim().to_string());
+}
+
+/// Checks whether a research rule has explicit operator approval (`F19`).
+pub fn is_research_rule_operator_approved(rule: &IngestedResearchDefenseRule) -> bool {
+    let base = normalize_base_arxiv_id(&rule.arxiv_id);
+    let set = operator_approved_research_rule_set()
+        .read()
+        .unwrap_or_else(|e| e.into_inner());
+    set.contains(&rule.rule_id) || set.contains(&base) || set.contains(rule.arxiv_id.trim())
+}
+
 /// Deterministic 3-Gate Research Acceptance Validator.
 /// Evaluates whether an ingested research rule is acceptable into live EDR enforcement:
 /// - Gate 1: Not Novel (`RejectedNotNovel` / `RejectedOutdatedResearch`): checks recency (2026+), known implemented baseline papers, non-positive novelty delta score, or already enrolled identical rules.
@@ -1556,6 +1652,13 @@ pub fn validate_research_rule_acceptance(
             accepted: false,
             rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
             rejection_reason: Some(format!("Indicator pattern '{}' conflicts with core protected system binary or service allowlist", pat)),
+        };
+    }
+    if let Some(canary_err) = verify_rule_against_canary_benign_corpus(rule) {
+        return ResearchAcceptanceVerdict {
+            accepted: false,
+            rejection_code: Some("RejectedConflictsWithExistingProtection".to_string()),
+            rejection_reason: Some(canary_err),
         };
     }
 
@@ -2159,31 +2262,52 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
             // evict the lowest-relevance theoretical rule (!r.has_code_repo) from memory and SQLite.
             // Otherwise, evict the oldest dynamic rule (index 4).
             if guard.len() >= MAX_ACTIVE_RESEARCH_RULES && guard.len() > 4 {
-                let evicted_rule: IngestedResearchDefenseRule = if rule.has_code_repo {
+                let evict_idx_opt: Option<usize> = if rule.has_code_repo {
                     let mut lowest_idx = None;
                     let mut lowest_rel = f64::MAX;
                     for (idx, r) in guard.iter().enumerate().skip(4) {
+                        if is_research_rule_pinned(r) || is_research_rule_operator_approved(r) {
+                            continue;
+                        }
                         if !r.has_code_repo && r.relevance_score < lowest_rel {
                             lowest_rel = r.relevance_score;
                             lowest_idx = Some(idx);
                         }
                     }
-                    if let Some(idx) = lowest_idx {
-                        guard.remove(idx)
-                    } else {
-                        guard.remove(4)
-                    }
+                    lowest_idx.or_else(|| {
+                        guard
+                            .iter()
+                            .enumerate()
+                            .skip(4)
+                            .find(|(_, r)| {
+                                !is_research_rule_pinned(r)
+                                    && !is_research_rule_operator_approved(r)
+                            })
+                            .map(|(idx, _)| idx)
+                    })
                 } else {
-                    guard.remove(4)
+                    guard
+                        .iter()
+                        .enumerate()
+                        .skip(4)
+                        .find(|(_, r)| {
+                            !is_research_rule_pinned(r) && !is_research_rule_operator_approved(r)
+                        })
+                        .map(|(idx, _)| idx)
                 };
 
-                let ev_base = normalize_base_arxiv_id(&evicted_rule.arxiv_id);
-                let ev_sql =
-                    "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR base_arxiv_id = ?2;";
-                for db_path in RESEARCH_DB_PATHS {
-                    if let Ok(conn) = rusqlite::Connection::open(db_path) {
-                        let _ =
-                            conn.execute(ev_sql, rusqlite::params![evicted_rule.rule_id, ev_base]);
+                if let Some(ev_idx) = evict_idx_opt {
+                    let evicted_rule = guard.remove(ev_idx);
+                    let ev_base = normalize_base_arxiv_id(&evicted_rule.arxiv_id);
+                    let ev_sql =
+                        "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR base_arxiv_id = ?2;";
+                    for db_path in RESEARCH_DB_PATHS {
+                        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+                            let _ = conn.execute(
+                                ev_sql,
+                                rusqlite::params![evicted_rule.rule_id, ev_base],
+                            );
+                        }
                     }
                 }
             }

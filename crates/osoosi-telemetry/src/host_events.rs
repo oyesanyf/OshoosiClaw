@@ -122,14 +122,16 @@ impl HostEventReader for LinuxEbpfReader {
 
 #[cfg(target_os = "windows")]
 pub struct NativeETWReader {
+    rx_critical: tokio::sync::mpsc::Receiver<HostSecurityEvent>,
     rx: tokio::sync::mpsc::Receiver<HostSecurityEvent>,
 }
 
 #[cfg(target_os = "windows")]
 impl NativeETWReader {
     pub fn new() -> anyhow::Result<Self> {
+        let (tx_critical, rx_critical) = tokio::sync::mpsc::channel(4_096);
         let (tx, rx) = tokio::sync::mpsc::channel(10_000);
-        let engine = super::native::NativeTelemetryEngine::new(tx);
+        let engine = super::native::NativeTelemetryEngine::new_prioritized(tx_critical, tx);
 
         // Spawn the native engine in a background task
         tokio::spawn(async move {
@@ -138,7 +140,7 @@ impl NativeETWReader {
             }
         });
 
-        Ok(Self { rx })
+        Ok(Self { rx_critical, rx })
     }
 }
 
@@ -146,7 +148,11 @@ impl NativeETWReader {
 impl HostEventReader for NativeETWReader {
     fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
         let mut out = Vec::new();
-        // Drain the channel buffer
+        // Drain high-priority critical channel first so flood events never starve critical alerts
+        while let Ok(event) = self.rx_critical.try_recv() {
+            out.push(event);
+        }
+        // Drain bulk channel buffer
         while let Ok(event) = self.rx.try_recv() {
             out.push(event);
         }

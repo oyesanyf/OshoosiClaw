@@ -174,6 +174,32 @@ static const PCWSTR g_KnownByovdDrivers[] = {
     L"naldrv.sys"
 };
 
+// Known BYOVD SHA-256 Authenticode / image hashes (LOLDrivers / Microsoft Vulnerable Driver Blocklist)
+// Enforced even when the attacker renames the driver on disk (e.g. gdrv.sys -> legit_audio.sys) (F11).
+static const UCHAR g_KnownByovdHashes[][OSOOSI_SHA256_LEN] = {
+    // GDRV.SYS: 3626A6917A00F77B0F3F2F1253457A0F7E0A2BF6FB5DB8F9A5576211EB71616F
+    {
+        0x36, 0x26, 0xA6, 0x91, 0x7A, 0x00, 0xF7, 0x7B,
+        0x0F, 0x3F, 0x2F, 0x12, 0x53, 0x45, 0x7A, 0x0F,
+        0x7E, 0x0A, 0x2B, 0xF6, 0xFB, 0x5D, 0xB8, 0xF9,
+        0xA5, 0x57, 0x62, 0x11, 0xEB, 0x71, 0x61, 0x6F
+    },
+    // RTCore64.SYS: F497E6A901BE9C8FFDE0F9B464DB3E2916F4F5EBDD708CE94C2B4DA1EE01F529
+    {
+        0xF4, 0x97, 0xE6, 0xA9, 0x01, 0xBE, 0x9C, 0x8F,
+        0xFD, 0xE0, 0xF9, 0xB4, 0x64, 0xDB, 0x3E, 0x29,
+        0x16, 0xF4, 0xF5, 0xEB, 0xDD, 0x70, 0x8C, 0xE9,
+        0x4C, 0x2B, 0x4D, 0xA1, 0xEE, 0x01, 0xF5, 0x29
+    },
+    // DBUtil_2_3.SYS: D2E689EB05AF6C035C2B2956794695D5C6DE65F6FB1E5B6B8640C4B82725FF05
+    {
+        0xD2, 0xE6, 0x89, 0xEB, 0x05, 0xAF, 0x6C, 0x03,
+        0x5C, 0x2B, 0x29, 0x56, 0x79, 0x46, 0x95, 0xD5,
+        0xC6, 0xDE, 0x65, 0xF6, 0xFB, 0x1E, 0x5B, 0x6B,
+        0x86, 0x40, 0xC4, 0xB8, 0x27, 0x25, 0xFF, 0x05
+    }
+};
+
 // Protected OshoosiClaw assets guarded by Minifilter / IRP Self-Defense
 static const PCWSTR g_SelfDefenseAssets[] = {
     L"\\osoosi.exe",
@@ -912,10 +938,61 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) 
     return FALSE;
 }
 
+static BOOLEAN OsoosiIsByovdHashBlockedLocked(_In_reads_bytes_(OSOOSI_SHA256_LEN) const UCHAR *ImageHash) {
+    if (ImageHash == NULL) {
+        return FALSE;
+    }
+
+    // 1. Check built-in Microsoft Vulnerable Driver Blocklist SHA-256 hashes (F11)
+    for (ULONG i = 0; i < sizeof(g_KnownByovdHashes) / sizeof(g_KnownByovdHashes[0]); ++i) {
+        if (RtlCompareMemory(ImageHash, g_KnownByovdHashes[i], OSOOSI_SHA256_LEN) == OSOOSI_SHA256_LEN) {
+            return TRUE;
+        }
+    }
+
+    // 2. Check dynamic BYOVD SHA-256 rules added via IOCTL_OSOOSI_ADD_BYOVD_RULE
+    PLIST_ENTRY curr = g_State.ByovdRuleList.Flink;
+    while (curr != &g_State.ByovdRuleList) {
+        POSOOSI_BYOVD_RULE rule = CONTAINING_RECORD(curr, OSOOSI_BYOVD_RULE, ListEntry);
+        if (rule->HasHash &&
+            RtlCompareMemory(ImageHash, rule->Sha256Hash, OSOOSI_SHA256_LEN) == OSOOSI_SHA256_LEN) {
+            return TRUE;
+        }
+        curr = curr->Flink;
+    }
+
+    return FALSE;
+}
+
+/*
+ * Periodic Kernel Callback Self-Integrity Verification (F12):
+ * Verifies that PspCreateProcessNotifyRoutine, PspLoadImageNotifyRoutine, and ObRegisterCallbacks
+ * handles remain active and have not been unlinked or zeroed by DKOM.
+ */
+static BOOLEAN OsoosiVerifyCallbackSelfIntegrityLocked(VOID) {
+    if (!g_State.NotifyRoutineRegistered ||
+        !g_State.ImageNotifyRegistered ||
+        g_State.ObRegistrationHandle == NULL) {
+        OsoosiEnqueueInterceptEventLocked(
+            0,
+            0,
+            1,
+            OSOOSI_INTERCEPT_SELF_DEFENSE,
+            NULL,
+            NULL
+        );
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static BOOLEAN OsoosiIsByovdDriverLocked(_In_ PCUNICODE_STRING ImageFileName) {
     if (ImageFileName == NULL || ImageFileName->Buffer == NULL || ImageFileName->Length == 0) {
         return FALSE;
     }
+
+    // Verify kernel callback registration integrity on driver load / section sync transitions (F12)
+    (VOID)OsoosiVerifyCallbackSelfIntegrityLocked();
 
     ULONG imgChars = ImageFileName->Length / sizeof(WCHAR);
 
@@ -930,12 +1007,15 @@ static BOOLEAN OsoosiIsByovdDriverLocked(_In_ PCUNICODE_STRING ImageFileName) {
         }
     }
 
-    // 2. Check dynamic BYOVD rules added via IOCTL_OSOOSI_ADD_BYOVD_RULE
+    // 2. Check dynamic BYOVD rules added via IOCTL_OSOOSI_ADD_BYOVD_RULE (both filename & SHA-256 hash)
     PLIST_ENTRY curr = g_State.ByovdRuleList.Flink;
     while (curr != &g_State.ByovdRuleList) {
         POSOOSI_BYOVD_RULE rule = CONTAINING_RECORD(curr, OSOOSI_BYOVD_RULE, ListEntry);
         if (rule->NameLength > 0 &&
             OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, rule->DriverName, rule->NameLength)) {
+            return TRUE;
+        }
+        if (rule->HasHash && OsoosiIsByovdHashBlockedLocked(rule->Sha256Hash)) {
             return TRUE;
         }
         curr = curr->Flink;

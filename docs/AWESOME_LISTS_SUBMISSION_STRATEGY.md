@@ -1,6 +1,6 @@
 # OshoosiClaw — 4-Vertical Awesome Lists Community Traction & Submission Strategy
 
-To maximize discovery and engineering adoption across both the **defensive security community** and the **systems programming ecosystem**, OshoosiClaw targets 20 curated Awesome Lists organized across **four distinct verticals**.
+To maximize discovery and engineering adoption across both the **defensive security community** and the **systems programming ecosystem**, OshoosiClaw targets 21 curated Awesome Lists organized across **four distinct verticals**.
 
 ```mermaid
 flowchart TD
@@ -32,6 +32,7 @@ flowchart TD
     V4 --> R18["pedramamini/awesome-yara"]
     V4 --> R19["corca-ai/awesome-ai-security"]
     V4 --> R20["requie/awesome-ai-cybersecurity"]
+    V4 --> R21["machinae/awesome-claws (PR #46)"]
 ```
 
 ---
@@ -73,6 +74,7 @@ Sub-component directories matching OshoosiClaw's YARA-X engine, 7-Ring Cedar Ref
 18. **`pedramamini/awesome-yara`**: *Tools* section for YARA scanning and automated signature synthesis.
 19. **`corca-ai/awesome-ai-security`**: 7-Ring Continuous Cedar Reference Monitor, OS capability sandboxes (AppContainer/Landlock/WASM), and code-backed arXiv breakout defense ingestion.
 20. **`requie/awesome-ai-cybersecurity`**: Autonomous multi-voter Bayesian consensus, reinforcement learning active defense, and 4-Arm LangGraph Research Swarm.
+21. **`machinae/awesome-claws`** ([PR #46](https://github.com/machinae/awesome-claws/pull/46)): *Security & Sandboxing* section — 7-Ring Cedar Reference Monitor, OS capability sandboxes (AppContainer/Landlock/WASM), and autonomous multi-agent mesh defense for Claw/autonomous agents.
 
 ---
 
