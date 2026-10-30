@@ -661,13 +661,12 @@ impl ArmContainmentRing {
             let own = role_trust_tier(&self.role);
             (taint.0.min(own), taint.1.clone())
         };
-        let effective_taint_level = if taint_floor == TrustTier::Untrusted
-            && !taint_level.is_untrusted_or_worse()
-        {
-            crate::rasp::TaintLevel::UntrustedExternal
-        } else {
-            taint_level
-        };
+        let effective_taint_level =
+            if taint_floor == TrustTier::Untrusted && !taint_level.is_untrusted_or_worse() {
+                crate::rasp::TaintLevel::UntrustedExternal
+            } else {
+                taint_level
+            };
         if effective_taint_level.is_untrusted_or_worse() {
             taint_floor = TrustTier::Untrusted;
         }

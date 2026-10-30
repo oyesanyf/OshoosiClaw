@@ -140,8 +140,8 @@ fn test_challenge2_job_object_kill_on_job_close_terminates_child() {
     {
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
-            GetExitCodeProcess, OpenProcess, WaitForSingleObject, PROCESS_QUERY_LIMITED_INFORMATION,
-            PROCESS_SYNCHRONIZE,
+            GetExitCodeProcess, OpenProcess, WaitForSingleObject,
+            PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
         };
 
         // 1. Create a dedicated SandboxJobObject with KILL_ON_JOB_CLOSE
@@ -176,7 +176,8 @@ fn test_challenge2_job_object_kill_on_job_close_terminates_child() {
         // 4. Because JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE was set, the Windows kernel MUST terminate child
         let wait_res = unsafe { WaitForSingleObject(h_proc, 3000) };
         assert_eq!(
-            wait_res.0, 0x00000000, // WAIT_OBJECT_0
+            wait_res.0,
+            0x00000000, // WAIT_OBJECT_0
             "Child process must be terminated by kernel within 3s of Job Object close"
         );
 
@@ -184,7 +185,8 @@ fn test_challenge2_job_object_kill_on_job_close_terminates_child() {
         let ok = unsafe { GetExitCodeProcess(h_proc, &mut exit_code) };
         assert!(ok.is_ok(), "GetExitCodeProcess should succeed");
         assert_ne!(
-            exit_code, 259, // STILL_ACTIVE
+            exit_code,
+            259, // STILL_ACTIVE
             "Process must not be STILL_ACTIVE after job close"
         );
 
@@ -354,7 +356,11 @@ async fn test_challenge4_dns_rebinding_and_socketaddr_pinning() {
         }
 
         let sync_res = build_ssrf_safe_http_client_sync(u);
-        assert!(sync_res.is_err(), "Sync host '{}' must be rejected as SSRF", u);
+        assert!(
+            sync_res.is_err(),
+            "Sync host '{}' must be rejected as SSRF",
+            u
+        );
     }
 
     // 2. Benign public host resolution and pinning

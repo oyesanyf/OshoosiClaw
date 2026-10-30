@@ -286,12 +286,8 @@ impl ExecutionEnvironmentGuard {
         "DYLD_LIBRARY_PATH",
     ];
 
-    pub const FORBIDDEN_CONFIG_FILES: &'static [&'static str] = &[
-        ".cargo/config.toml",
-        ".cargo/config",
-        "build.rs",
-        ".pth",
-    ];
+    pub const FORBIDDEN_CONFIG_FILES: &'static [&'static str] =
+        &[".cargo/config.toml", ".cargo/config", "build.rs", ".pth"];
 
     pub fn new() -> Self {
         Self
@@ -314,7 +310,10 @@ impl ExecutionEnvironmentGuard {
                 .iter()
                 .any(|&cfg| v_norm.ends_with(cfg) || v_norm.contains(cfg))
             {
-                violations.push(format!("Forbidden configuration target in env {}: {}", k, v_norm));
+                violations.push(format!(
+                    "Forbidden configuration target in env {}: {}",
+                    k, v_norm
+                ));
             }
         }
 
@@ -349,7 +348,10 @@ impl ExecutionEnvironmentGuard {
     }
 
     /// Inspects payload text for embedded environment hijacking tokens
-    pub fn inspect_execution_environment_hijacking_str(&self, payload: &str) -> (bool, Vec<String>) {
+    pub fn inspect_execution_environment_hijacking_str(
+        &self,
+        payload: &str,
+    ) -> (bool, Vec<String>) {
         let mut violations = Vec::new();
         let upper = payload.to_ascii_uppercase();
         for &var in Self::HIJACK_ENV_VARS {
@@ -571,7 +573,11 @@ pub fn sanitize_and_validate_subprocess_env(
     working_dir: &Path,
     command_line: &str,
 ) -> Result<Vec<u16>, BreakoutDefenseError> {
-    ExecutionEnvironmentGuard::new().sanitize_and_validate_subprocess_env(env_vars, working_dir, command_line)
+    ExecutionEnvironmentGuard::new().sanitize_and_validate_subprocess_env(
+        env_vars,
+        working_dir,
+        command_line,
+    )
 }
 
 /// Behavioral Breakout Verdict
@@ -1538,7 +1544,7 @@ pub fn verify_rule_against_canary_benign_corpus(
     None
 }
 
-static PINNED_RESEARCH_RULE_IDS: OnceLock<RwLock< std::collections::HashSet<String>>> =
+static PINNED_RESEARCH_RULE_IDS: OnceLock<RwLock<std::collections::HashSet<String>>> =
     OnceLock::new();
 static OPERATOR_APPROVED_RESEARCH_RULE_IDS: OnceLock<RwLock<std::collections::HashSet<String>>> =
     OnceLock::new();
@@ -2303,10 +2309,8 @@ pub fn register_ingested_research_rule(mut rule: IngestedResearchDefenseRule) ->
                         "DELETE FROM enforced_research_rules WHERE rule_id = ?1 OR base_arxiv_id = ?2;";
                     for db_path in RESEARCH_DB_PATHS {
                         if let Ok(conn) = rusqlite::Connection::open(db_path) {
-                            let _ = conn.execute(
-                                ev_sql,
-                                rusqlite::params![evicted_rule.rule_id, ev_base],
-                            );
+                            let _ = conn
+                                .execute(ev_sql, rusqlite::params![evicted_rule.rule_id, ev_base]);
                         }
                     }
                 }
@@ -2566,8 +2570,9 @@ impl BreakoutDefenseCoordinator {
         let mut oper_res = self.operational.evaluate_context_leakage(payload);
 
         // Execution environment & interpreter hijacking inspection
-        let (has_env_hijack_pay, env_violations_pay) =
-            self.env_guard.inspect_execution_environment_hijacking_str(payload);
+        let (has_env_hijack_pay, env_violations_pay) = self
+            .env_guard
+            .inspect_execution_environment_hijacking_str(payload);
         if has_env_hijack_pay {
             oper_res.is_clean = false;
             oper_res.detected_leaks.extend(env_violations_pay);
@@ -2577,8 +2582,9 @@ impl BreakoutDefenseCoordinator {
             );
         }
 
-        let (has_env_hijack_res, env_violations_res) =
-            self.env_guard.inspect_execution_environment_hijacking_str(resource);
+        let (has_env_hijack_res, env_violations_res) = self
+            .env_guard
+            .inspect_execution_environment_hijacking_str(resource);
         if has_env_hijack_res {
             oper_res.is_clean = false;
             oper_res.detected_leaks.extend(env_violations_res);
@@ -2589,8 +2595,9 @@ impl BreakoutDefenseCoordinator {
         }
 
         let empty_env = HashMap::new();
-        let (has_cmd_hijack_res, cmd_violations_res) =
-            self.env_guard.inspect_execution_environment_hijacking(&empty_env, resource);
+        let (has_cmd_hijack_res, cmd_violations_res) = self
+            .env_guard
+            .inspect_execution_environment_hijacking(&empty_env, resource);
         if has_cmd_hijack_res {
             oper_res.is_clean = false;
             oper_res.detected_leaks.extend(cmd_violations_res);
@@ -2600,8 +2607,9 @@ impl BreakoutDefenseCoordinator {
             );
         }
 
-        let (has_cmd_hijack_pay, cmd_violations_pay) =
-            self.env_guard.inspect_execution_environment_hijacking(&empty_env, payload);
+        let (has_cmd_hijack_pay, cmd_violations_pay) = self
+            .env_guard
+            .inspect_execution_environment_hijacking(&empty_env, payload);
         if has_cmd_hijack_pay {
             oper_res.is_clean = false;
             oper_res.detected_leaks.extend(cmd_violations_pay);
@@ -2621,11 +2629,15 @@ impl BreakoutDefenseCoordinator {
                 } else {
                     format!("{} {}", resource, payload)
                 };
-                let env_res = self.env_guard.inspect_environment_and_configs(&[], &combined_cmd, ws_p);
+                let env_res =
+                    self.env_guard
+                        .inspect_environment_and_configs(&[], &combined_cmd, ws_p);
                 if !env_res.is_clean {
                     oper_res.is_clean = false;
                     oper_res.detected_leaks.extend(env_res.prohibited_variables);
-                    oper_res.detected_leaks.extend(env_res.prohibited_configurations);
+                    oper_res
+                        .detected_leaks
+                        .extend(env_res.prohibited_configurations);
                     oper_res.description = format!(
                         "Operational containment defect: {} leak(s)/hijack(s) intercepted",
                         oper_res.detected_leaks.len()

@@ -1253,7 +1253,6 @@ fn enumerate_loaded_kernel_drivers_linux() -> Vec<LoadedDriverInfo> {
     results
 }
 
-
 // ============================================================================
 // F25 & F26: Zero-Day Kernel & Hypervisor Integrity Innovations
 // - F25: Hardware HVCI / VBS / VTL1 Posture Verifier (arXiv:2409.07508 SafeBPF)
@@ -1309,9 +1308,8 @@ pub fn verify_hardware_hvci_vbs_posture() -> HvciVbsPostureReport {
             return_length: *mut u32,
         ) -> i32;
 
-        let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleA(
-            windows::core::s!("ntdll.dll"),
-        );
+        let ntdll =
+            windows::Win32::System::LibraryLoader::GetModuleHandleA(windows::core::s!("ntdll.dll"));
         if let Ok(hmod) = ntdll {
             if !hmod.is_invalid() {
                 if let Some(proc) = windows::Win32::System::LibraryLoader::GetProcAddress(
@@ -1358,8 +1356,7 @@ pub fn detect_cross_view_dkom_discrepancy(
     view_a_active_links: &[u32],
     view_b_handle_or_scheduler_pids: &[u32],
 ) -> CrossViewDkomFinding {
-    let active_set: std::collections::HashSet<u32> =
-        view_a_active_links.iter().copied().collect();
+    let active_set: std::collections::HashSet<u32> = view_a_active_links.iter().copied().collect();
     let mut hidden: Vec<u32> = view_b_handle_or_scheduler_pids
         .iter()
         .copied()
@@ -1435,8 +1432,8 @@ impl KernelSprtCallbackMonitor {
         let lambda_1 = 1.0 / self.anomaly_interval_ms;
         // Log-likelihood ratio for Exponential(lambda_1) vs Exponential(lambda_0)
         let step_llr = (lambda_1 / lambda_0).ln() + (lambda_0 - lambda_1) * dt;
-        self.log_likelihood_ratio =
-            (self.log_likelihood_ratio + step_llr).clamp(self.lower_threshold_a * 2.0, self.upper_threshold_b * 2.0);
+        self.log_likelihood_ratio = (self.log_likelihood_ratio + step_llr)
+            .clamp(self.lower_threshold_a * 2.0, self.upper_threshold_b * 2.0);
         self.samples_observed += 1;
 
         if self.log_likelihood_ratio >= self.upper_threshold_b {
@@ -1504,6 +1501,9 @@ mod f25_f26_tests {
                 break;
             }
         }
-        assert!(detected, "SPRT must detect callback blinding within bounded samples");
+        assert!(
+            detected,
+            "SPRT must detect callback blinding within bounded samples"
+        );
     }
 }

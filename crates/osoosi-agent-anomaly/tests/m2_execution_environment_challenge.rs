@@ -9,8 +9,8 @@
 //! 5. Unified BreakoutDefenseCoordinator integrates environment defense into operational containment.
 
 use osoosi_agent_anomaly::breakout_defense::{
-    BreakoutDefenseCoordinator, BreakoutDefenseError, ExecutionEnvironmentGuard,
-    sanitize_and_validate_subprocess_env,
+    sanitize_and_validate_subprocess_env, BreakoutDefenseCoordinator, BreakoutDefenseError,
+    ExecutionEnvironmentGuard,
 };
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -24,11 +24,15 @@ fn test_execution_environment_guard_blocks_all_forbidden_env_vars() {
 
     for &forbidden_var in ExecutionEnvironmentGuard::HIJACK_ENV_VARS {
         let mut env_vars = HashMap::new();
-        env_vars.insert(forbidden_var.to_string(), "malicious_payload_or_path".to_string());
+        env_vars.insert(
+            forbidden_var.to_string(),
+            "malicious_payload_or_path".to_string(),
+        );
         env_vars.insert("PATH".to_string(), "C:\\Windows\\System32".to_string());
 
         // 1. inspect_execution_environment_hijacking must flag violation
-        let (has_hijack, violations) = guard.inspect_execution_environment_hijacking(&env_vars, "cargo check");
+        let (has_hijack, violations) =
+            guard.inspect_execution_environment_hijacking(&env_vars, "cargo check");
         assert!(
             has_hijack,
             "Guard must detect forbidden env var '{}'",
@@ -76,7 +80,8 @@ fn test_execution_environment_guard_blocks_inline_command_line_hijacking() {
     ];
 
     for cmd in malicious_cmds {
-        let (has_hijack, violations) = guard.inspect_execution_environment_hijacking(&empty_env, cmd);
+        let (has_hijack, violations) =
+            guard.inspect_execution_environment_hijacking(&empty_env, cmd);
         assert!(
             has_hijack,
             "Inline command line hijack must be detected for command: {}",
@@ -93,19 +98,27 @@ fn test_execution_environment_guard_blocks_inline_command_line_hijacking() {
 #[test]
 fn test_execution_environment_guard_blocks_workspace_config_tampering() {
     let guard = ExecutionEnvironmentGuard::new();
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_test_configs_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_test_configs_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     // 1. Clean workspace passes
     let clean_inspection = guard.inspect_environment_and_configs(&[], "cargo build", &temp_dir);
-    assert!(clean_inspection.is_clean, "Clean workspace must pass inspection");
+    assert!(
+        clean_inspection.is_clean,
+        "Clean workspace must pass inspection"
+    );
 
     // 2. Workspace containing unauthorized .cargo/config.toml with rustc-wrapper
     let cargo_dir = temp_dir.join(".cargo");
     fs::create_dir_all(&cargo_dir).unwrap();
     let config_path = cargo_dir.join("config.toml");
     let mut f = File::create(&config_path).unwrap();
-    writeln!(f, "[build]\nrustc-wrapper = \"/usr/local/bin/sccache_evil\"").unwrap();
+    writeln!(
+        f,
+        "[build]\nrustc-wrapper = \"/usr/local/bin/sccache_evil\""
+    )
+    .unwrap();
     drop(f);
 
     let config_inspection = guard.inspect_environment_and_configs(&[], "cargo build", &temp_dir);
@@ -128,7 +141,11 @@ fn test_execution_environment_guard_blocks_workspace_config_tampering() {
     // 3. Workspace containing unverified build.rs
     let build_rs_path = temp_dir.join("build.rs");
     let mut f2 = File::create(&build_rs_path).unwrap();
-    writeln!(f2, "fn main() {{ println!(\"cargo:rerun-if-changed=src\"); }}").unwrap();
+    writeln!(
+        f2,
+        "fn main() {{ println!(\"cargo:rerun-if-changed=src\"); }}"
+    )
+    .unwrap();
     drop(f2);
 
     let build_rs_inspection = guard.inspect_environment_and_configs(&[], "cargo build", &temp_dir);
@@ -185,7 +202,11 @@ fn test_clean_environment_produces_sorted_utf16_block() {
 
     let block_utf16 = result.unwrap();
     assert!(!block_utf16.is_empty());
-    assert_eq!(*block_utf16.last().unwrap(), 0, "Environment block must end with null terminator");
+    assert_eq!(
+        *block_utf16.last().unwrap(),
+        0,
+        "Environment block must end with null terminator"
+    );
 
     // Decode UTF-16 block into strings
     let decoded = String::from_utf16_lossy(&block_utf16);
@@ -204,7 +225,8 @@ fn test_breakout_defense_coordinator_blocks_environment_hijacking_in_payload() {
     let coordinator = BreakoutDefenseCoordinator::new();
 
     // Payload containing environment variable poisoning
-    let hostile_payload = "Attempting build with RUSTC_WRAPPER=/tmp/evil_wrapper.exe for optimization";
+    let hostile_payload =
+        "Attempting build with RUSTC_WRAPPER=/tmp/evil_wrapper.exe for optimization";
     let eval = coordinator.evaluate_action(
         "agent-worker-1",
         "execute_command",

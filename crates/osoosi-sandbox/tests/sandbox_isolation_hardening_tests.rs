@@ -203,7 +203,12 @@ fn test_f03_reparse_point_and_toctou_read_write_confined() {
             "read_confined must reject drive-letter absolute path"
         );
         assert!(
-            open_confined(&scratch_dir, r"C:\Windows\System32\drivers\etc\hosts", false).is_err(),
+            open_confined(
+                &scratch_dir,
+                r"C:\Windows\System32\drivers\etc\hosts",
+                false
+            )
+            .is_err(),
             "open_confined must reject drive-letter absolute path"
         );
     }

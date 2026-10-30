@@ -10,13 +10,13 @@
 //!        and BreakoutDefenseCoordinator operational interception.
 
 use osoosi_agent_anomaly::breakout_defense::{
-    BreakoutDefenseCoordinator, BreakoutDefenseError, ExecutionEnvironmentGuard,
-    sanitize_and_validate_subprocess_env,
+    sanitize_and_validate_subprocess_env, BreakoutDefenseCoordinator, BreakoutDefenseError,
+    ExecutionEnvironmentGuard,
 };
 use osoosi_policy::breakout_gate::{
-    AuthorityLevel, CedarAction, CedarContext, CedarPrincipal, CedarResource,
-    DataClassification, DogwoodTemporalPolicyEvaluator, EnforcementStage,
-    Ring7CapabilityEffectAuthorizer, TemporalEventType, TemporalTraceAtom,
+    AuthorityLevel, CedarAction, CedarContext, CedarPrincipal, CedarResource, DataClassification,
+    DogwoodTemporalPolicyEvaluator, EnforcementStage, Ring7CapabilityEffectAuthorizer,
+    TemporalEventType, TemporalTraceAtom,
 };
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -59,7 +59,9 @@ fn test_challenger_dogwood_mfotl_boundary_7200s_vs_7201s() {
         "Event exactly at t - 7200s MUST be within sliding window [t-7200, t] and trigger forbid"
     );
     assert!(
-        reason.unwrap().contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"),
+        reason
+            .unwrap()
+            .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"),
         "Must emit CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"
     );
 
@@ -118,10 +120,7 @@ fn test_challenger_dogwood_mfotl_boundary_7200s_vs_7201s() {
     });
 
     let (forbid_inside, _) = evaluator.evaluate_taint_flow(session, now, Some(7200));
-    assert!(
-        forbid_inside,
-        "Event at t - 7199s MUST trigger forbid"
-    );
+    assert!(forbid_inside, "Event at t - 7199s MUST trigger forbid");
 }
 
 // ============================================================================
@@ -183,7 +182,10 @@ fn test_challenger_dogwood_causal_order_and_declassification_lifecycle() {
     });
 
     let (pre_declass_forbid, _) = evaluator.evaluate_taint_flow(session, now - 50, None);
-    assert!(pre_declass_forbid, "Prior to declassification, taint flow must be forbidden");
+    assert!(
+        pre_declass_forbid,
+        "Prior to declassification, taint flow must be forbidden"
+    );
 
     // Cryptographic supervisor declassification recorded at now - 40
     evaluator.record_atom(TemporalTraceAtom {
@@ -225,11 +227,9 @@ fn test_challenger_dogwood_causal_order_and_declassification_lifecycle() {
         retainted_forbid,
         "New taint sequence occurring AFTER declassification MUST trigger forbid"
     );
-    assert!(
-        retainted_reason
-            .unwrap()
-            .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
-    );
+    assert!(retainted_reason
+        .unwrap()
+        .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"));
 }
 
 // ============================================================================
@@ -258,12 +258,8 @@ fn test_challenger_dogwood_session_isolation_and_file_touch() {
     });
 
     // Session B attempts to execute a clean subprocess
-    let (touch_b, reason_b) = evaluator.evaluate_scratch_file_touch(
-        session_b,
-        "python safe_script.py",
-        now,
-        None,
-    );
+    let (touch_b, reason_b) =
+        evaluator.evaluate_scratch_file_touch(session_b, "python safe_script.py", now, None);
     assert!(!touch_b, "Session B must not inherit Session A's taint");
     assert!(reason_b.is_none());
 
@@ -278,20 +274,17 @@ fn test_challenger_dogwood_session_isolation_and_file_touch() {
         touch_a,
         "Session A touching C:\\temp\\payload.sh must be intercepted by scratch file touch detector"
     );
-    assert!(
-        reason_a
-            .unwrap()
-            .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
-    );
+    assert!(reason_a
+        .unwrap()
+        .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION"));
 
     // Session A referencing unrelated binary is NOT a scratch file touch
-    let (touch_a_safe, _) = evaluator.evaluate_scratch_file_touch(
-        session_a,
-        "git status",
-        now,
-        None,
+    let (touch_a_safe, _) =
+        evaluator.evaluate_scratch_file_touch(session_a, "git status", now, None);
+    assert!(
+        !touch_a_safe,
+        "Safe command not touching scratch file must pass scratch touch check"
     );
-    assert!(!touch_a_safe, "Safe command not touching scratch file must pass scratch touch check");
 }
 
 // ============================================================================
@@ -375,7 +368,8 @@ fn test_challenger_ring7_authorizer_temporal_forbid_and_declassification() {
 #[test]
 fn test_challenger_execution_environment_all_15_vars_and_case_variants() {
     let guard = ExecutionEnvironmentGuard::new();
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_challenger_env_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_challenger_env_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     let all_15_vars = [
@@ -400,7 +394,8 @@ fn test_challenger_execution_environment_all_15_vars_and_case_variants() {
         // Test 1: Exact uppercase
         let mut env_exact = HashMap::new();
         env_exact.insert(var_name.to_string(), "/opt/evil_injector.so".to_string());
-        let (hijack_exact, violations_exact) = guard.inspect_execution_environment_hijacking(&env_exact, "make");
+        let (hijack_exact, violations_exact) =
+            guard.inspect_execution_environment_hijacking(&env_exact, "make");
         assert!(
             hijack_exact,
             "Guard must detect exact uppercase variable: {}",
@@ -417,7 +412,10 @@ fn test_challenger_execution_environment_all_15_vars_and_case_variants() {
 
         // Test 2: Lowercase variant
         let mut env_lower = HashMap::new();
-        env_lower.insert(var_name.to_ascii_lowercase(), "/opt/evil_injector.so".to_string());
+        env_lower.insert(
+            var_name.to_ascii_lowercase(),
+            "/opt/evil_injector.so".to_string(),
+        );
         let (hijack_lower, _) = guard.inspect_execution_environment_hijacking(&env_lower, "make");
         assert!(
             hijack_lower,
@@ -429,7 +427,13 @@ fn test_challenger_execution_environment_all_15_vars_and_case_variants() {
         let mixed = var_name
             .chars()
             .enumerate()
-            .map(|(i, c)| if i % 2 == 0 { c.to_ascii_lowercase() } else { c.to_ascii_uppercase() })
+            .map(|(i, c)| {
+                if i % 2 == 0 {
+                    c.to_ascii_lowercase()
+                } else {
+                    c.to_ascii_uppercase()
+                }
+            })
             .collect::<String>();
         let mut env_mixed = HashMap::new();
         env_mixed.insert(mixed.clone(), "/opt/evil_injector.so".to_string());
@@ -451,7 +455,8 @@ fn test_challenger_execution_environment_all_15_vars_and_case_variants() {
 #[test]
 fn test_challenger_env_values_pointing_to_forbidden_configs_and_inline_cli() {
     let guard = ExecutionEnvironmentGuard::new();
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_challenger_cfg_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_challenger_cfg_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     // Even if the variable name is benign (e.g. INI_FILE, CUSTOM_HOOK),
@@ -460,21 +465,27 @@ fn test_challenger_env_values_pointing_to_forbidden_configs_and_inline_cli() {
         ("CUSTOM_CFG", "C:\\projects\\agent\\.cargo\\config.toml"),
         ("LEGACY_CFG", "D:/repos/target/.cargo/config"),
         ("BUILD_HOOK", "/workspace/crates/app/build.rs"),
-        ("PYTHON_SITE", "/usr/lib/python3.11/site-packages/malicious_entry.pth"),
+        (
+            "PYTHON_SITE",
+            "/usr/lib/python3.11/site-packages/malicious_entry.pth",
+        ),
     ];
 
     for (k, v) in config_traps {
         let mut env = HashMap::new();
         env.insert(k.to_string(), v.to_string());
 
-        let (has_hijack, violations) = guard.inspect_execution_environment_hijacking(&env, "cargo build");
+        let (has_hijack, violations) =
+            guard.inspect_execution_environment_hijacking(&env, "cargo build");
         assert!(
             has_hijack,
             "Environment variable value targeting forbidden config '{}' must be detected",
             v
         );
         assert!(
-            violations.iter().any(|viol| viol.contains("Forbidden configuration target")),
+            violations
+                .iter()
+                .any(|viol| viol.contains("Forbidden configuration target")),
             "Violation must cite forbidden configuration target: {:?}",
             violations
         );
@@ -525,7 +536,8 @@ fn test_challenger_env_values_pointing_to_forbidden_configs_and_inline_cli() {
 #[test]
 fn test_challenger_workspace_configuration_tampering_coverage() {
     let guard = ExecutionEnvironmentGuard::new();
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_challenger_ws_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_challenger_ws_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     // Clean workspace check
@@ -538,10 +550,17 @@ fn test_challenger_workspace_configuration_tampering_coverage() {
     let legacy_config = cargo_dir.join("config");
     {
         let mut f = File::create(&legacy_config).unwrap();
-        writeln!(f, "[target.x86_64-pc-windows-msvc]\nrunner = \"evil_runner.exe\"").unwrap();
+        writeln!(
+            f,
+            "[target.x86_64-pc-windows-msvc]\nrunner = \"evil_runner.exe\""
+        )
+        .unwrap();
     }
     let legacy_res = guard.inspect_environment_and_configs(&[], "cargo test", &temp_dir);
-    assert!(!legacy_res.is_clean, "Legacy .cargo/config must be intercepted");
+    assert!(
+        !legacy_res.is_clean,
+        "Legacy .cargo/config must be intercepted"
+    );
     assert!(
         legacy_res
             .prohibited_configurations
@@ -556,7 +575,11 @@ fn test_challenger_workspace_configuration_tampering_coverage() {
     let build_rs = temp_dir.join("build.rs");
     {
         let mut f = File::create(&build_rs).unwrap();
-        writeln!(f, "fn main() {{ std::process::Command::new(\"calc.exe\").spawn().unwrap(); }}").unwrap();
+        writeln!(
+            f,
+            "fn main() {{ std::process::Command::new(\"calc.exe\").spawn().unwrap(); }}"
+        )
+        .unwrap();
     }
     let build_res = guard.inspect_environment_and_configs(&[], "cargo build", &temp_dir);
     assert!(!build_res.is_clean, "build.rs must be intercepted");
@@ -597,7 +620,8 @@ fn test_challenger_workspace_configuration_tampering_coverage() {
 
 #[test]
 fn test_challenger_lp_environment_utf16_sorting_and_null_terminators() {
-    let temp_dir = std::env::temp_dir().join(format!("osoosi_challenger_utf16_{}", uuid::Uuid::new_v4()));
+    let temp_dir =
+        std::env::temp_dir().join(format!("osoosi_challenger_utf16_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&temp_dir).unwrap();
 
     // Test 1: Empty environment -> valid double null terminator
@@ -605,7 +629,11 @@ fn test_challenger_lp_environment_utf16_sorting_and_null_terminators() {
     let empty_res = sanitize_and_validate_subprocess_env(&empty_env, &temp_dir, "whoami");
     assert!(empty_res.is_ok(), "Empty environment must be valid");
     let empty_block = empty_res.unwrap();
-    assert_eq!(empty_block, vec![0], "Empty environment block must be single null u16 (double null overall)");
+    assert_eq!(
+        empty_block,
+        vec![0],
+        "Empty environment block must be single null u16 (double null overall)"
+    );
 
     // Test 2: Unsorted keys with mixed case -> Must produce strictly sorted uppercase order
     let mut complex_env = HashMap::new();

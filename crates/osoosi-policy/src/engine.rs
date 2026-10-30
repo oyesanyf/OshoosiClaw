@@ -481,7 +481,9 @@ fn orchestrate_evidence(
     });
 
     let has_deterministic_cryptographic_guard = votes.iter().any(|v| {
-        v.result.reason.contains("Cryptographic mesh signature mismatch")
+        v.result
+            .reason
+            .contains("Cryptographic mesh signature mismatch")
             || v.result.reason.contains("IdentitySpoofingDetected")
             || v.result.reason.contains("EpochSpoofing")
             || v.result.reason.contains("MerkleIntegrityViolation")
@@ -493,7 +495,9 @@ fn orchestrate_evidence(
         || votes.iter().any(|v| {
             v.result.reason.contains("BYOVD")
                 || v.result.reason.contains("ETW_USERMODE_PATCH_DETECTED")
-                || v.result.reason.contains("AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED")
+                || v.result
+                    .reason
+                    .contains("AMSI_SCANBUFFER_BYPASS_PATCH_DETECTED")
                 || v.result.reason.contains("NTDLL_DETOUR_UNHOOKED")
                 || v.result.reason.contains("ProcessHollowing")
                 || v.result.reason.contains("LSASSMemoryDump")
@@ -501,7 +505,9 @@ fn orchestrate_evidence(
 
     let has_cedar_ring7_forbid_guard = votes.iter().any(|v| {
         v.result.reason.contains("Cedar-Ring7-Forbid")
-            || v.result.reason.contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
+            || v.result
+                .reason
+                .contains("CEDAR-FORBID-TEMPORAL-TAINT-FRAGMENTATION")
             || v.result.reason.contains("Self-Protection Violation")
     });
 

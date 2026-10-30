@@ -485,7 +485,10 @@ pub fn inspect_prologue_for_evasion(
         // ret (0xC3), ret imm16 (0xC2), xor eax,eax; ret (33 C0 C3 / 31 C0 C3), xor rax,rax; ret (48 33 C0 C3 / 48 31 C0 C3)
         if bytes[0] == 0xC3
             || bytes[0] == 0xC2
-            || (bytes.len() >= 3 && (bytes[0] == 0x33 || bytes[0] == 0x31) && bytes[1] == 0xC0 && bytes[2] == 0xC3)
+            || (bytes.len() >= 3
+                && (bytes[0] == 0x33 || bytes[0] == 0x31)
+                && bytes[1] == 0xC0
+                && bytes[2] == 0xC3)
             || (bytes.len() >= 4
                 && bytes[0] == 0x48
                 && (bytes[1] == 0x33 || bytes[1] == 0x31)
@@ -507,7 +510,10 @@ pub fn inspect_prologue_for_evasion(
                 && bytes[2] == 0x00
                 && bytes[3] == 0x07
                 && bytes[4] == 0x80)
-            || (bytes.len() >= 3 && (bytes[0] == 0x31 || bytes[0] == 0x33) && bytes[1] == 0xC0 && bytes[2] == 0xC3)
+            || (bytes.len() >= 3
+                && (bytes[0] == 0x31 || bytes[0] == 0x33)
+                && bytes[1] == 0xC0
+                && bytes[2] == 0xC3)
         {
             return Some(EvasionDetectionEvent {
                 target_symbol: symbol,
