@@ -912,6 +912,13 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                 )
             }
             "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
+            "2604.20496" => {
+                return (
+                    true,
+                    "https://github.com/cedar-policy/cedar-spec".to_string(),
+                )
+            }
+            "2610.20437" => return (true, "https://github.com/NVIDIA/garak".to_string()),
             "2501.18492" => {
                 return (
                     true,
