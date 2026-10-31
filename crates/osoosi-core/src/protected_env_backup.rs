@@ -68,6 +68,8 @@ struct VaultPayload {
     #[serde(default)]
     pub original_env_vars: Vec<(String, String)>,
     #[serde(default)]
+    pub original_hkcu_vars: Vec<(String, String)>,
+    #[serde(default)]
     pub target_existed_before: bool,
     #[serde(default)]
     pub original_sha256: Option<String>,
@@ -260,6 +262,7 @@ impl ProtectedEnvBackupVault {
             original_bytes: original_bytes.clone(),
             standin_mappings,
             original_env_vars,
+            original_hkcu_vars: Vec::new(),
             target_existed_before: true,
             original_sha256,
         };
@@ -316,6 +319,13 @@ impl ProtectedEnvBackupVault {
         // 1. Restore process memory for all original environment variables
         for (k, orig_v) in &payload.original_env_vars {
             std::env::set_var(k, orig_v);
+        }
+
+        // 1b. Restore Windows User Environment (HKCU\Environment) for any verified API keys
+        // that were sealed from HKCU\Environment (strictly excluding PATH and system vars)
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) && !payload.original_hkcu_vars.is_empty() {
+            restore_hkcu_original_vars(&payload.original_hkcu_vars)?;
         }
 
         let target = PathBuf::from(&payload.target_path);
@@ -456,9 +466,35 @@ impl ProtectedEnvBackupVault {
             target_existed_before
         };
 
-        // Jointly enumerate lines from .env AND std::env::vars()
+        // Jointly enumerate lines from HKCU\Environment (if production vault), .env, AND std::env::vars()
         let mut pairs: Vec<(String, String)> = Vec::new();
         let mut seen_keys = std::collections::HashSet::new();
+        let mut hkcu_keys_seen = std::collections::HashSet::new();
+
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) {
+            for (k, mut v) in read_hkcu_environment_vars() {
+                hkcu_keys_seen.insert(k.clone());
+                if v.starts_with("OSHOOSI_STANDIN_") {
+                    if let Some(ref ex) = existing_vault {
+                        if let Some((_, orig_v)) = ex
+                            .original_hkcu_vars
+                            .iter()
+                            .find(|(orig_k, _)| orig_k == &k)
+                            .or_else(|| {
+                                ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k)
+                            })
+                        {
+                            v = orig_v.clone();
+                        }
+                    }
+                }
+                if !seen_keys.contains(&k) {
+                    seen_keys.insert(k.clone());
+                    pairs.push((k, v));
+                }
+            }
+        }
 
         if !content_str.is_empty() {
             for line in content_str.lines() {
@@ -480,8 +516,16 @@ impl ProtectedEnvBackupVault {
                         }
                     }
                 }
-                seen_keys.insert(k.clone());
-                pairs.push((k, v));
+                if !seen_keys.contains(&k) {
+                    seen_keys.insert(k.clone());
+                    pairs.push((k, v));
+                } else if let Some(existing_pair) = pairs.iter_mut().find(|(ek, _)| ek == &k) {
+                    if existing_pair.1.starts_with("OSHOOSI_STANDIN_")
+                        && !v.starts_with("OSHOOSI_STANDIN_")
+                    {
+                        existing_pair.1 = v;
+                    }
+                }
             }
         }
 
@@ -499,7 +543,7 @@ impl ProtectedEnvBackupVault {
                 seen_keys.insert(k.clone());
                 pairs.push((k, v));
             } else {
-                // If it was seen from .env but .env had a stand-in or was empty and std::env has real value
+                // If it was seen from .env/HKCU with a stand-in and std::env has real value
                 if let Some(existing_pair) = pairs.iter_mut().find(|(ek, _)| ek == &k) {
                     if existing_pair.1.starts_with("OSHOOSI_STANDIN_")
                         && !v.starts_with("OSHOOSI_STANDIN_")
@@ -515,6 +559,7 @@ impl ProtectedEnvBackupVault {
         let mut sealed_variables = Vec::new();
         let mut standin_mappings = Vec::new();
         let mut original_env_vars = Vec::new();
+        let mut original_hkcu_vars = Vec::new();
 
         // Preserve any previously sealed variables from existing vault if still valid
         if let Some(ref ex) = existing_vault {
@@ -526,6 +571,11 @@ impl ProtectedEnvBackupVault {
             for (old_k, old_orig) in &ex.original_env_vars {
                 if !original_env_vars.iter().any(|(k, _)| k == old_k) {
                     original_env_vars.push((old_k.clone(), old_orig.clone()));
+                }
+            }
+            for (old_k, old_orig) in &ex.original_hkcu_vars {
+                if !original_hkcu_vars.iter().any(|(k, _)| k == old_k) {
+                    original_hkcu_vars.push((old_k.clone(), old_orig.clone()));
                 }
             }
             for old_var in &ex.sealed_variables {
@@ -545,6 +595,11 @@ impl ProtectedEnvBackupVault {
                         .trim_matches('"')
                         .trim_matches('\'')
                         .to_string();
+                    if is_hard_protected_non_secret_key(&cand.key, &clean_val)
+                        || clean_val.starts_with("OSHOOSI_STANDIN_")
+                    {
+                        continue;
+                    }
                     let standin = cand
                         .standin_token
                         .clone()
@@ -582,6 +637,15 @@ impl ProtectedEnvBackupVault {
                     } else {
                         original_env_vars.push((cand.key.clone(), clean_val.clone()));
                     }
+                    if hkcu_keys_seen.contains(&cand.key) {
+                        if let Some(pos) =
+                            original_hkcu_vars.iter().position(|(k, _)| k == &cand.key)
+                        {
+                            original_hkcu_vars[pos] = (cand.key.clone(), clean_val.clone());
+                        } else {
+                            original_hkcu_vars.push((cand.key.clone(), clean_val.clone()));
+                        }
+                    }
 
                     // Replace or add in .env content
                     let var_prefix = format!("{}=", cand.key);
@@ -609,18 +673,6 @@ impl ProtectedEnvBackupVault {
             }
         }
 
-        // If .env file needs writing/updating
-        if modified_env_file || !target_existed_before {
-            if let Some(parent) = env_path.parent() {
-                if !parent.as_os_str().is_empty() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-            }
-            let mut env_file = File::create(env_path)?;
-            env_file.write_all(content_str.as_bytes())?;
-            env_file.sync_all()?;
-        }
-
         // Compute original sha256
         let original_sha256 = if !vault_original_bytes.is_empty() {
             let mut hasher = Sha256::new();
@@ -646,15 +698,118 @@ impl ProtectedEnvBackupVault {
             epoch,
             sealed_variables,
             original_bytes: vault_original_bytes,
-            standin_mappings,
+            standin_mappings: standin_mappings.clone(),
             original_env_vars,
+            original_hkcu_vars,
             target_existed_before: vault_target_existed_before,
             original_sha256,
         };
 
+        // Write encrypted DACL-protected vault FIRST and verify decryption before rewriting .env or HKCU\Environment
         Self::write_vault_payload(vault_path, &payload)?;
+        let (verified_payload, _) = Self::read_vault_payload(vault_path)?;
+
+        // If .env file needs writing/updating
+        if modified_env_file || !target_existed_before {
+            if let Some(parent) = env_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+            }
+            let mut env_file = File::create(env_path)?;
+            env_file.write_all(content_str.as_bytes())?;
+            env_file.sync_all()?;
+        }
+
+        // Rewrite verified API keys (e.g. GEMINI_API_KEY, HF_TOKEN) in HKCU\Environment to stand-in tokens
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) && !verified_payload.original_hkcu_vars.is_empty() {
+            write_hkcu_standin_vars(&standin_mappings, &verified_payload)?;
+        }
 
         Ok(result)
+    }
+
+    /// Enumerates the current environment state (recovering true secrets from `vault_path` when variables
+    /// are already sealed as `OSHOOSI_STANDIN_*`) so `status` accurately reports active sealed secrets.
+    pub fn enumerate_current_state(
+        env_path: &Path,
+        vault_path: &Path,
+    ) -> LlmFusionEnumerationResult {
+        let existing_vault = if vault_path.exists() {
+            Self::read_vault_payload(vault_path).ok().map(|(p, _)| p)
+        } else {
+            None
+        };
+
+        let mut pairs: Vec<(String, String)> = Vec::new();
+        let mut seen_keys = std::collections::HashSet::new();
+
+        #[cfg(windows)]
+        if is_production_vault_path(vault_path) {
+            for (k, mut v) in read_hkcu_environment_vars() {
+                if v.starts_with("OSHOOSI_STANDIN_") {
+                    if let Some(ref ex) = existing_vault {
+                        if let Some((_, orig_v)) = ex
+                            .original_hkcu_vars
+                            .iter()
+                            .find(|(orig_k, _)| orig_k == &k)
+                            .or_else(|| {
+                                ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k)
+                            })
+                        {
+                            v = orig_v.clone();
+                        }
+                    }
+                }
+                seen_keys.insert(k.clone());
+                pairs.push((k, v));
+            }
+        }
+
+        if env_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(env_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if !trimmed.starts_with('#') && trimmed.contains('=') {
+                        let parts: Vec<&str> = trimmed.splitn(2, '=').collect();
+                        let k = parts[0].trim().to_string();
+                        let mut v = parts[1].trim().to_string();
+                        if v.starts_with("OSHOOSI_STANDIN_") {
+                            if let Some(ref ex) = existing_vault {
+                                if let Some((_, orig_v)) =
+                                    ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k)
+                                {
+                                    v = orig_v.clone();
+                                }
+                            }
+                        }
+                        if !seen_keys.contains(&k) {
+                            seen_keys.insert(k.clone());
+                            pairs.push((k, v));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (k, mut v) in std::env::vars() {
+            if v.starts_with("OSHOOSI_STANDIN_") {
+                if let Some(ref ex) = existing_vault {
+                    if let Some((_, orig_v)) =
+                        ex.original_env_vars.iter().find(|(orig_k, _)| orig_k == &k)
+                    {
+                        v = orig_v.clone();
+                    }
+                }
+            }
+            if !seen_keys.contains(&k) {
+                seen_keys.insert(k.clone());
+                pairs.push((k, v));
+            }
+        }
+
+        LlmFusionApiKeyEnumerator::enumerate_from_pairs(&pairs)
     }
 
     /// Dynamically scans target env file and process environment using LlmFusionApiKeyEnumerator,
@@ -1161,6 +1316,228 @@ pub fn apply_protected_ntfs_dacl(_path: &Path) -> Result<(), VaultError> {
 #[cfg(not(any(windows, unix)))]
 pub fn unlock_protected_ntfs_dacl(_path: &Path) -> Result<(), VaultError> {
     Ok(())
+}
+
+/// Returns true ONLY when `vault_path` is the canonical production vault (`database/protected_env_backup.vault`)
+/// and never during `#[cfg(test)]` or inside temporary directories (`\Temp\` / `/tmp/`).
+pub fn is_production_vault_path(vault_path: &Path) -> bool {
+    #[cfg(test)]
+    {
+        let _ = vault_path;
+        return false;
+    }
+    #[cfg(not(test))]
+    {
+        let s = vault_path
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .replace('/', "\\");
+        if s.contains("\\temp\\")
+            || s.contains("\\tmp\\")
+            || vault_path.starts_with(std::env::temp_dir())
+        {
+            return false;
+        }
+        s == "database\\protected_env_backup.vault"
+            || s.ends_with("\\database\\protected_env_backup.vault")
+    }
+}
+
+/// Hard mathematical non-secret and `PATH` guard: returns `true` for `PATH`/`Path`, `JAVA_HOME`,
+/// `OneDrive`, `OneDriveConsumer`, `OLLAMA_ORIGINS`, `TEMP`, `TMP`, system/IDE prefixes, path suffixes,
+/// or values containing filesystem path separators or URLs.
+pub fn is_hard_protected_non_secret_key(key: &str, val: &str) -> bool {
+    let clean_key = key.trim();
+    let clean_val = val.trim().trim_matches('"').trim_matches('\'');
+    let key_upper = clean_key.to_ascii_uppercase();
+    if matches!(
+        key_upper.as_str(),
+        "PATH"
+            | "JAVA_HOME"
+            | "ONEDRIVE"
+            | "ONEDRIVECONSUMER"
+            | "OLLAMA_ORIGINS"
+            | "TEMP"
+            | "TMP"
+            | "USERPROFILE"
+            | "WINDIR"
+            | "COMSPEC"
+            | "RUST_LOG"
+            | "SYSTEMROOT"
+            | "SYSTEMDRIVE"
+            | "APPDATA"
+            | "LOCALAPPDATA"
+            | "PROGRAMFILES"
+            | "PROGRAMFILES(X86)"
+            | "COMMONPROGRAMFILES"
+            | "HOMEDRIVE"
+            | "HOMEPATH"
+            | "OS"
+            | "NUMBER_OF_PROCESSORS"
+            | "PROCESSOR_ARCHITECTURE"
+            | "PROCESSOR_IDENTIFIER"
+            | "PSMODULEPATH"
+            | "ALLUSERSPROFILE"
+            | "PATHEXT"
+            | "PUBLIC"
+            | "DRIVERDATA"
+    ) {
+        return true;
+    }
+    if key_upper.starts_with("ANTIGRAVITY_")
+        || key_upper.starts_with("VSCODE_")
+        || key_upper.starts_with("CARGO_")
+        || key_upper.starts_with("RUST_")
+        || key_upper.starts_with("TERM_")
+        || key_upper.starts_with("NPM_")
+        || key_upper.starts_with("SSH_")
+        || key_upper.starts_with("GPG_")
+        || key_upper.starts_with("GIT_")
+        || key_upper.starts_with("OSOOSI_")
+    {
+        return true;
+    }
+    if key_upper.ends_with("_HOME")
+        || key_upper.ends_with("_DIR")
+        || key_upper.ends_with("_PATH")
+        || key_upper.ends_with("_ROOT")
+        || key_upper.ends_with("_ORIGINS")
+        || key_upper.ends_with("_URL")
+        || key_upper.ends_with("_HOST")
+        || key_upper.ends_with("_PORT")
+        || key_upper.ends_with("_VERSION")
+        || key_upper.ends_with("_EXE")
+    {
+        return true;
+    }
+    if clean_val.contains('\\')
+        || clean_val.contains(';')
+        || clean_val.starts_with("C:")
+        || clean_val.starts_with("D:")
+        || clean_val.starts_with("http://")
+        || clean_val.starts_with("https://")
+    {
+        return true;
+    }
+    false
+}
+
+#[cfg(windows)]
+fn read_hkcu_environment_vars() -> Vec<(String, String)> {
+    use winreg::types::FromRegValue;
+    let mut out = Vec::new();
+    if let Ok(env_key) =
+        winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER).open_subkey("Environment")
+    {
+        for item in env_key.enum_values().flatten() {
+            let (k, reg_val) = item;
+            if let Ok(s) = String::from_reg_value(&reg_val) {
+                out.push((k, s));
+            }
+        }
+    }
+    out
+}
+
+#[cfg(windows)]
+fn write_hkcu_standin_vars(
+    standin_mappings: &[(String, String)],
+    verified_vault: &VaultPayload,
+) -> Result<(), VaultError> {
+    let env_key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey_with_flags(
+            "Environment",
+            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
+        )
+        .map_err(VaultError::Io)?;
+
+    let mut any_updated = false;
+    for (k, standin) in standin_mappings {
+        // Hard double-guard: NEVER touch PATH or any protected system/path variable
+        if k.eq_ignore_ascii_case("PATH") || is_hard_protected_non_secret_key(k, "") {
+            continue;
+        }
+        // Only rewrite if this key originally existed in HKCU\Environment and its true secret
+        // is confirmed backed up in `verified_vault.original_hkcu_vars`
+        let backed_up = verified_vault
+            .original_hkcu_vars
+            .iter()
+            .any(|(hk, orig_v)| {
+                hk == k
+                    && !orig_v.is_empty()
+                    && !orig_v.starts_with("OSHOOSI_STANDIN_")
+                    && !is_hard_protected_non_secret_key(hk, orig_v)
+            });
+        if backed_up {
+            env_key.set_value(k, standin).map_err(VaultError::Io)?;
+            any_updated = true;
+        }
+    }
+
+    if any_updated {
+        broadcast_wm_settingchange_environment();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn restore_hkcu_original_vars(original_hkcu_vars: &[(String, String)]) -> Result<(), VaultError> {
+    let env_key = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER)
+        .open_subkey_with_flags(
+            "Environment",
+            winreg::enums::KEY_READ | winreg::enums::KEY_WRITE,
+        )
+        .map_err(VaultError::Io)?;
+
+    let mut any_restored = false;
+    for (k, orig_v) in original_hkcu_vars {
+        if k.eq_ignore_ascii_case("PATH")
+            || is_hard_protected_non_secret_key(k, orig_v)
+            || orig_v.is_empty()
+            || orig_v.starts_with("OSHOOSI_STANDIN_")
+        {
+            continue;
+        }
+        env_key.set_value(k, orig_v).map_err(VaultError::Io)?;
+        any_restored = true;
+    }
+
+    if any_restored {
+        broadcast_wm_settingchange_environment();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn broadcast_wm_settingchange_environment() {
+    #[link(name = "user32")]
+    extern "system" {
+        fn SendMessageTimeoutW(
+            hWnd: isize,
+            Msg: u32,
+            wParam: usize,
+            lParam: isize,
+            fuFlags: u32,
+            uTimeout: u32,
+            lpdwResult: *mut usize,
+        ) -> isize;
+    }
+    const HWND_BROADCAST: isize = 0xffff;
+    const WM_SETTINGCHANGE: u32 = 0x001A;
+    const SMTO_ABORTIFHUNG: u32 = 0x0002;
+    let wide_env: Vec<u16> = "Environment\0".encode_utf16().collect();
+    let mut result: usize = 0;
+    unsafe {
+        let _ = SendMessageTimeoutW(
+            HWND_BROADCAST,
+            WM_SETTINGCHANGE,
+            0,
+            wide_env.as_ptr() as isize,
+            SMTO_ABORTIFHUNG,
+            100,
+            &mut result,
+        );
+    }
 }
 
 #[cfg(test)]

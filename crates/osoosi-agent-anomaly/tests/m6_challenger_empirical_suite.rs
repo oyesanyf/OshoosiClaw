@@ -21,6 +21,9 @@ use osoosi_agent_anomaly::breakout_defense::{
     restore_default_research_rules, verify_rule_against_canary_benign_corpus,
     IngestedResearchDefenseRule, CANARY_BENIGN_TELEMETRY_CORPUS,
 };
+use std::sync::Mutex;
+
+static M6_REGISTRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn create_test_rule(arxiv_id: &str, has_code: bool, rel_score: f64) -> IngestedResearchDefenseRule {
     IngestedResearchDefenseRule {
@@ -53,6 +56,9 @@ fn create_test_rule(arxiv_id: &str, has_code: bool, rel_score: f64) -> IngestedR
 
 #[test]
 fn challenge_70_rules_capacity_clamp_and_pinned_immunity() {
+    let _guard = M6_REGISTRY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     // Reset to default seeded state (4 pinned baseline rules)
     restore_default_research_rules();
     let initial_rules = list_ingested_research_rules();
@@ -111,6 +117,7 @@ fn challenge_70_rules_capacity_clamp_and_pinned_immunity() {
             id
         );
     }
+    restore_default_research_rules();
 }
 
 // ============================================================================
@@ -119,6 +126,9 @@ fn challenge_70_rules_capacity_clamp_and_pinned_immunity() {
 
 #[test]
 fn challenge_operator_approved_rule_never_evicted() {
+    let _guard = M6_REGISTRY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     restore_default_research_rules();
 
     // Register a dynamic rule
@@ -152,6 +162,7 @@ fn challenge_operator_approved_rule_never_evicted() {
         "CRITICAL BUG: Operator-approved rule {} was evicted!",
         approved_aid
     );
+    restore_default_research_rules();
 }
 
 // ============================================================================
@@ -160,6 +171,9 @@ fn challenge_operator_approved_rule_never_evicted() {
 
 #[test]
 fn challenge_fail_closed_rejection_at_full_pinned_capacity() {
+    let _guard = M6_REGISTRY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     restore_default_research_rules();
 
     // Fill all 64 slots
@@ -200,6 +214,7 @@ fn challenge_fail_closed_rejection_at_full_pinned_capacity() {
         !candidate_found,
         "CRITICAL BUG: Unapproved candidate was accepted when all rules were protected!"
     );
+    restore_default_research_rules();
 }
 
 // ============================================================================
@@ -208,6 +223,9 @@ fn challenge_fail_closed_rejection_at_full_pinned_capacity() {
 
 #[test]
 fn challenge_canary_0_false_positive_rejection_and_threat_acceptance() {
+    let _guard = M6_REGISTRY_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     // Part A: Every sample in CANARY_BENIGN_TELEMETRY_CORPUS must trigger rejection
     // if a candidate rule attempts to match on its exact tokens.
     for &sample in CANARY_BENIGN_TELEMETRY_CORPUS {
