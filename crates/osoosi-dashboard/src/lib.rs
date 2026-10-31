@@ -1021,43 +1021,48 @@ pub fn constant_time_eq_token(a: &str, b: &str) -> bool {
 
 /// Resolve or generate the dashboard API token for authenticating state-changing requests.
 pub fn get_or_init_dashboard_api_token() -> String {
-    if let Ok(tok) = std::env::var("OSOOSI_DASHBOARD_API_TOKEN") {
-        let trimmed = tok.trim().to_string();
-        if !trimmed.is_empty() {
-            return trimmed;
-        }
-    }
-
-    let token_path = osoosi_types::resolve_project_root()
-        .map(|p| p.join("config").join("dashboard_token.key"))
-        .unwrap_or_else(|| PathBuf::from("config").join("dashboard_token.key"));
-
-    if token_path.is_file() {
-        if let Ok(content) = std::fs::read_to_string(&token_path) {
-            let trimmed = content.trim().to_string();
-            if !trimmed.is_empty() {
-                return trimmed;
+    static CACHED_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHED_TOKEN
+        .get_or_init(|| {
+            if let Ok(tok) = std::env::var("OSOOSI_DASHBOARD_API_TOKEN") {
+                let trimmed = tok.trim().to_string();
+                if !trimmed.is_empty() {
+                    return trimmed;
+                }
             }
-        }
-    }
 
-    use rand::RngCore;
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    let token = hex::encode(bytes);
+            let token_path = osoosi_types::resolve_project_root()
+                .map(|p| p.join("config").join("dashboard_token.key"))
+                .unwrap_or_else(|| PathBuf::from("config").join("dashboard_token.key"));
 
-    if let Some(parent) = token_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&token_path, &token);
+            if token_path.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&token_path) {
+                    let trimmed = content.trim().to_string();
+                    if !trimmed.is_empty() {
+                        return trimmed;
+                    }
+                }
+            }
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600));
-    }
+            use rand::RngCore;
+            let mut bytes = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            let token = hex::encode(bytes);
 
-    token
+            if let Some(parent) = token_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&token_path, &token);
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600));
+            }
+
+            token
+        })
+        .clone()
 }
 
 /// HTTP Request Framing Defense Middleware:
