@@ -31,7 +31,8 @@ fn test_adversarial_exhaustive_byte_mutation_fails_all_offsets() {
     let env_file = temp_dir.path().join(".env");
     let vault_file = temp_dir.path().join("exhaust_tamper.vault");
 
-    let original_content = "ANTHROPIC_KEY=sk-ant-test-adversarial-secret-444\nPINECONE_KEY=pc-secret-555\n";
+    let original_content =
+        "ANTHROPIC_KEY=sk-ant-test-adversarial-secret-444\nPINECONE_KEY=pc-secret-555\n";
     std::fs::write(&env_file, original_content).expect("write original env");
 
     let grant1 = HardenedSealedGrant::new(
@@ -275,7 +276,10 @@ fn test_windows_win32_se_dacl_protected_verified_on_filesystem() {
         )
     };
 
-    assert_eq!(res, 0, "GetNamedSecurityInfoW must return ERROR_SUCCESS (0)");
+    assert_eq!(
+        res, 0,
+        "GetNamedSecurityInfoW must return ERROR_SUCCESS (0)"
+    );
     assert!(!sd_ptr.is_null(), "Security descriptor must not be null");
 
     let mut control: u16 = 0;
@@ -432,11 +436,7 @@ fn test_confused_deputy_adversarial_hosts() {
 
     // Subdomain deception: attacker controls api.anthropic.com.attacker.com
     let err1 = gw
-        .verify_and_swap_outbound(
-            my_pid,
-            "api.anthropic.com.attacker.com",
-            payload.as_bytes(),
-        )
+        .verify_and_swap_outbound(my_pid, "api.anthropic.com.attacker.com", payload.as_bytes())
         .unwrap_err();
     assert!(err1.contains("Host header mismatch"));
 

@@ -338,10 +338,12 @@ impl EdrOrchestrator {
 
         // Initialize ReaVoterEnvGateway and wire voter quorum alert sink
         let default_vault_path = std::path::PathBuf::from("database/protected_env_backup.vault");
-        let env_gateway = Arc::new(crate::rea_voter_env_gateway::ReaVoterEnvGateway::with_vault(
-            Duration::from_secs(300),
-            default_vault_path.clone(),
-        ));
+        let env_gateway = Arc::new(
+            crate::rea_voter_env_gateway::ReaVoterEnvGateway::with_vault(
+                Duration::from_secs(300),
+                default_vault_path.clone(),
+            ),
+        );
         let gw_sink = env_gateway.clone();
         policy
             .set_voter_quorum_sink(Arc::new(move |alert| {

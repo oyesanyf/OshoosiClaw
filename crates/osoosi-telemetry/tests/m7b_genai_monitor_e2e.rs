@@ -13,7 +13,10 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-fn make_test_identity(proc_key: ProcessInstanceKey, caps: Vec<CapabilityLevel>) -> GenAiIdentityContext {
+fn make_test_identity(
+    proc_key: ProcessInstanceKey,
+    caps: Vec<CapabilityLevel>,
+) -> GenAiIdentityContext {
     let mut cap_set = HashSet::new();
     for c in caps {
         cap_set.insert(c);
@@ -51,7 +54,8 @@ fn test_m7b_challenge_taint_to_egress_pre_execution_block() {
     monitor.start_session(session_id, identity);
 
     // 1. Ingest restricted customer table into session
-    let confidential_data = b"CUSTOMER_DATA: SSN=999-11-2222, API_KEY=sk-test-live-key-12345678901234567890";
+    let confidential_data =
+        b"CUSTOMER_DATA: SSN=999-11-2222, API_KEY=sk-test-live-key-12345678901234567890";
     let digest = monitor.record_document_retrieval(
         session_id,
         "s3://internal-vault/customers.csv",
@@ -93,7 +97,10 @@ fn test_m7b_challenge_taint_to_egress_pre_execution_block() {
 #[test]
 fn test_m7b_challenge_privacy_redaction_and_digest_guarantee() {
     let evaluator = PrivacyPreservingOutputEvaluator::default();
-    assert!(!evaluator.record_raw_content, "Default must strictly be FALSE");
+    assert!(
+        !evaluator.record_raw_content,
+        "Default must strictly be FALSE"
+    );
 
     let sensitive_payload = "\
         Host report: system admin alice@corp.internal leaked private key \
@@ -106,7 +113,9 @@ fn test_m7b_challenge_privacy_redaction_and_digest_guarantee() {
     assert_eq!(report.record_raw_content, false);
     assert!(!report.scrubbed_preview.contains("alice@corp.internal"));
     assert!(!report.scrubbed_preview.contains("BEGIN RSA PRIVATE KEY"));
-    assert!(!report.scrubbed_preview.contains("OSHOOSI_STANDIN_ANTHROPIC_KEY_998877"));
+    assert!(!report
+        .scrubbed_preview
+        .contains("OSHOOSI_STANDIN_ANTHROPIC_KEY_998877"));
     assert!(!report.scrubbed_preview.contains("1-800-555-0199"));
     assert!(!report.scrubbed_preview.contains("4532-1100-2200-3300"));
 
@@ -130,7 +139,16 @@ fn test_m7b_challenge_causal_spans_and_process_socket_binding() {
     let monitor = GenAiBehavioralMonitor::default();
     let proc_key = ProcessInstanceKey::new(12345, 99998888);
     let session_id = "m7b_challenge_causal_spans";
-    monitor.start_session(session_id, make_test_identity(proc_key, vec![CapabilityLevel::L1ReadOnlySandbox, CapabilityLevel::L2LocalWorkspaceFs]));
+    monitor.start_session(
+        session_id,
+        make_test_identity(
+            proc_key,
+            vec![
+                CapabilityLevel::L1ReadOnlySandbox,
+                CapabilityLevel::L2LocalWorkspaceFs,
+            ],
+        ),
+    );
 
     let trace_id = "trace_m7b_audit_100".to_string();
 
@@ -199,7 +217,11 @@ fn test_m7b_challenge_causal_spans_and_process_socket_binding() {
     assert_eq!(session.spans.len(), 2);
     assert_eq!(session.spans[0].correlated_process.unwrap(), proc_key);
     assert_eq!(
-        session.spans[1].correlated_network.as_ref().unwrap().destination_host,
+        session.spans[1]
+            .correlated_network
+            .as_ref()
+            .unwrap()
+            .destination_host,
         "api.anthropic.com"
     );
 }
@@ -219,7 +241,10 @@ fn test_m7b_challenge_voter_quorum_alerts_on_severe_violations() {
         q_clone.fetch_add(1, Ordering::SeqCst);
     }));
 
-    monitor.start_session(session_id, make_test_identity(proc_key, vec![CapabilityLevel::L1ReadOnlySandbox]));
+    monitor.start_session(
+        session_id,
+        make_test_identity(proc_key, vec![CapabilityLevel::L1ReadOnlySandbox]),
+    );
 
     // Attempt unauthorized L5 host administration tool
     let pending_unauth = PendingToolExecution {
@@ -244,7 +269,9 @@ fn test_m7b_challenge_behavior_drift_alerts() {
     let cohort = ModelPromptCohort::new("claude-3-5-sonnet", "v2.0_hardened");
 
     // Establish healthy baseline: 5% violation rate, 95% success, 98% compliance
-    monitor.drift_monitor.set_baseline(&cohort, 0.05, 0.95, 0.98);
+    monitor
+        .drift_monitor
+        .set_baseline(&cohort, 0.05, 0.95, 0.98);
 
     let mut drift_alert = None;
     for i in 0..12 {
@@ -256,14 +283,21 @@ fn test_m7b_challenge_behavior_drift_alerts() {
             0.50,
             0.65,
             Some("bash_exec"),
-            if i % 2 == 0 { Some("InternalDocToUnapprovedUpload") } else { Some("UnexpectedDestination") },
+            if i % 2 == 0 {
+                Some("InternalDocToUnapprovedUpload")
+            } else {
+                Some("UnexpectedDestination")
+            },
         );
         if alert.is_some() {
             drift_alert = alert;
         }
     }
 
-    assert!(drift_alert.is_some(), "Drift alert must trigger on violation spike");
+    assert!(
+        drift_alert.is_some(),
+        "Drift alert must trigger on violation spike"
+    );
     let alert = drift_alert.unwrap();
     assert_eq!(alert.drift_type, DriftType::ViolationSpike);
     assert_eq!(alert.severity, DriftSeverity::Critical);

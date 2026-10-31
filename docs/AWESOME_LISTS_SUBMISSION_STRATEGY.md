@@ -4,10 +4,21 @@ To maximize discovery and engineering adoption across both the **defensive secur
 
 ```mermaid
 flowchart TD
-    OC["OshoosiClaw v1.2.0<br/>https://github.com/oyesanyf/OshoosiClaw"] --> V1["Vertical 1 (Wave 1)<br/>Direct EDR & Detection Engineering"]
+    OC["OshoosiClaw v1.2.0<br/>https://github.com/oyesanyf/OshoosiClaw"] --> M15["Milestone M15<br/>Ecosystem & Agent Control Plane Registries"]
+    OC --> V1["Vertical 1 (Wave 1)<br/>Direct EDR & Detection Engineering"]
     OC --> V2["Vertical 2 (Wave 2)<br/>Blue Team, DFIR, Forensics & Reverse Engineering"]
     OC --> V3["Vertical 3 (Wave 3)<br/>Rust & eBPF Systems Directories"]
     OC --> V4["Vertical 4 (Wave 4)<br/>Specialized YARA & Agentic AI Security"]
+
+    M15 --> M1["Ar9av/awesome-agent-control-plane (PR #15)"]
+    M15 --> M2["scadastrangelove/awesome-ai-security-tools (PR #208)"]
+    M15 --> M3["aloth/awesome-ai-agents (PR #126)"]
+    M15 --> M4["ottosulin/awesome-ai-security (PR #616)"]
+    M15 --> M5["andar1an/awesome-rust-security-vendor (PR #3)"]
+    M15 --> M6["andrijdavid/awesome-claw (PR #4)"]
+    M15 --> M7["LLMSecurity/awesome-agent-skills-security (PR #106)"]
+    M15 --> M8["VoltAgent/awesome-openclaw-skills (PR #604)"]
+    M15 --> M9["vincentkoc/awesome-openclaw (PR #143)"]
 
     V1 --> R1["shadawck/awesome-endpoint-detection-and-response (PR #4)"]
     V1 --> R2["infosecB/awesome-detection-engineering (PR #55)"]
@@ -35,9 +46,27 @@ flowchart TD
     V4 --> R21["machinae/awesome-claws (PR #46)"]
 ```
 
+> **Curated Master Awesome List**: For the official directory indexing all 34 crates, kernel drivers, grounded research preprints, and ecosystem comparisons, see **[`AWESOME_OSHOOSICLAW.md`](../AWESOME_OSHOOSICLAW.md)** and **[`docs/AWESOME_LIST_SUBMISSIONS.md`](AWESOME_LIST_SUBMISSIONS.md)**.
+
 ---
 
-## Live Upstream Pull Requests Tracker (19 Active Entries / 17 Unique Upstream PRs Across All 4 Verticals)
+## Live Upstream Pull Requests Tracker (26+ Active Entries Across All Verticals & Registries)
+
+### Milestone M15: Ecosystem & Agent Control Plane Registries (All 9 Live)
+
+| # | Target Repository | Section | Upstream PR | Status | `oyesanyf` Fork (SEO Synced) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 1 | `Ar9av/awesome-agent-control-plane` | `## 🚧 Policy Enforcement & Runtime Control` & `## 📦 Sandboxing & Isolation` | **[PR #15](https://github.com/Ar9av/awesome-agent-control-plane/pull/15)** | `open` | [`oyesanyf/awesome-agent-control-plane`](https://github.com/oyesanyf/awesome-agent-control-plane) |
+| 2 | `scadastrangelove/awesome-ai-security-tools` | `### Runtime Protection & Enforcement` | **[PR #208](https://github.com/scadastrangelove/awesome-ai-security-tools/pull/208)** | `open` | [`oyesanyf/awesome-ai-security-tools`](https://github.com/oyesanyf/awesome-ai-security-tools) |
+| 3 | `aloth/awesome-ai-agents` | `### Sandboxing & Execution` | **[PR #126](https://github.com/aloth/awesome-ai-agents/pull/126)** | `open` | [`oyesanyf/awesome-ai-agents`](https://github.com/oyesanyf/awesome-ai-agents) |
+| 4 | `ottosulin/awesome-ai-security` | `### Agent Runtime Security & Sandboxing` | **[PR #616](https://github.com/ottosulin/awesome-ai-security/pull/616)** | `open` | [`oyesanyf/awesome-ai-security`](https://github.com/oyesanyf/awesome-ai-security) |
+| 5 | `andar1an/awesome-rust-security-vendor` | `## Threat Detection and Forensics` | **[PR #3](https://github.com/andar1an/awesome-rust-security-vendor/pull/3)** | `open` | [`oyesanyf/awesome-rust-security`](https://github.com/oyesanyf/awesome-rust-security) |
+| 6 | `andrijdavid/awesome-claw` | `data/repos.json` (`openclawForks`) & `README.md` (`### OpenClaw Forks`) | **[PR #4](https://github.com/andrijdavid/awesome-claw/pull/4)** | `open` | [`oyesanyf/awesome-claw`](https://github.com/oyesanyf/awesome-claw) |
+| 7 | `LLMSecurity/awesome-agent-skills-security` | `## Tools & Frameworks` (Markdown Table) | **[PR #106](https://github.com/LLMSecurity/awesome-agent-skills-security/pull/106)** | `open` | [`oyesanyf/awesome-agent-skills-security`](https://github.com/oyesanyf/awesome-agent-skills-security) |
+| 8 | `VoltAgent/awesome-openclaw-skills` | `## Security Notice` -> `**Recommended tools:**` | **[PR #604](https://github.com/VoltAgent/awesome-openclaw-skills/pull/604)** | `open` | [`oyesanyf/awesome-openclaw-skills`](https://github.com/oyesanyf/awesome-openclaw-skills) |
+| 9 | `vincentkoc/awesome-openclaw` | `## Alternative Architectures` | **[PR #143](https://github.com/vincentkoc/awesome-openclaw/pull/143)** | `open` | [`oyesanyf/awesome-openclaw`](https://github.com/oyesanyf/awesome-openclaw) |
+
+### Verticals 1–4 Curated Registry Tracker
 
 | # | Vertical | Target Repository | Section | Upstream Pull Request | Status |
 | :--- | :--- | :--- | :--- | :--- | :--- |

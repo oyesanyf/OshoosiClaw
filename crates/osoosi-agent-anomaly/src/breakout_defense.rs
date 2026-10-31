@@ -1424,7 +1424,11 @@ pub fn is_valid_technical_indicator(pat: &str) -> bool {
     }
     // Reject conversational English phrases (2+ spaces without technical punctuation)
     let space_count = trimmed.chars().filter(|&c| c == ' ').count();
-    if space_count >= 2 && !trimmed.chars().any(|c| matches!(c, '/' | '-' | '=' | ':' | '.' | '+' | '_' | '<' | '>')) {
+    if space_count >= 2
+        && !trimmed
+            .chars()
+            .any(|c| matches!(c, '/' | '-' | '=' | ':' | '.' | '+' | '_' | '<' | '>'))
+    {
         return false;
     }
     true
@@ -1452,7 +1456,10 @@ pub fn synthesize_rust_guard_snippet(
         .collect();
 
     let formatted_indicators = if valid_indicators.is_empty() {
-        format!("        {:?},", indicator_pattern.trim().to_ascii_lowercase())
+        format!(
+            "        {:?},",
+            indicator_pattern.trim().to_ascii_lowercase()
+        )
     } else {
         valid_indicators
             .iter()
@@ -1630,7 +1637,10 @@ pub fn check_paper_to_code_semantic_domain_alignment(
     let is_guardreasoner = title_lc.contains("guardreasoner")
         || repo_lc.contains("guardreasoner")
         || base_id == "2501.18492";
-    if is_guardreasoner && rule.target_boundary != "guardrail_reasoning_boundary" && rule.target_boundary != "cedar_smt_sandbox_verification" {
+    if is_guardreasoner
+        && rule.target_boundary != "guardrail_reasoning_boundary"
+        && rule.target_boundary != "cedar_smt_sandbox_verification"
+    {
         return Err(format!(
             "Semantic domain mismatch: GuardReasoner target boundary must be 'guardrail_reasoning_boundary', found '{}'",
             rule.target_boundary
@@ -1736,7 +1746,8 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.target_crate = "osoosi-agent-anomaly::cedar_engine".to_string();
             modified = true;
         }
-        let canonical_indicators = "guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale";
+        let canonical_indicators =
+            "guard_reasoning_step | bypass_guardrail | reasoning_drift | unverified_rationale";
         if rule.indicator_pattern != canonical_indicators {
             rule.indicator_pattern = canonical_indicators.to_string();
             modified = true;
@@ -1785,7 +1796,8 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.has_code_repo = true;
             modified = true;
         }
-        let canonical_vector = "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)";
+        let canonical_vector =
+            "Adaptive indirect prompt injection and tool execution hijacking (UIUC Kang Lab)";
         if rule.attack_vector != canonical_vector {
             rule.attack_vector = canonical_vector.to_string();
             modified = true;
@@ -1837,7 +1849,8 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.arxiv_id = "2511.10720v1".to_string();
             modified = true;
         }
-        let canonical_title = "PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization";
+        let canonical_title =
+            "PISanitizer: Preventing Prompt Injection to Long-Context LLMs via Prompt Sanitization";
         if rule.title != canonical_title {
             rule.title = canonical_title.to_string();
             modified = true;
@@ -1847,7 +1860,8 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.has_code_repo = true;
             modified = true;
         }
-        let canonical_vector = "Long-context prompt injection payload hiding and instruction override";
+        let canonical_vector =
+            "Long-context prompt injection payload hiding and instruction override";
         if rule.attack_vector != canonical_vector {
             rule.attack_vector = canonical_vector.to_string();
             modified = true;
@@ -1860,7 +1874,8 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.target_crate = "osoosi-agent-anomaly::cognitive_redteam".to_string();
             modified = true;
         }
-        let canonical_indicators = "prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding";
+        let canonical_indicators =
+            "prompt_sanitizer_bypass | long_context_injection | payload_splitter | context_hiding";
         if rule.indicator_pattern != canonical_indicators {
             rule.indicator_pattern = canonical_indicators.to_string();
             modified = true;
@@ -1909,7 +1924,8 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             rule.has_code_repo = true;
             modified = true;
         }
-        let canonical_vector = "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)";
+        let canonical_vector =
+            "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)";
         if rule.attack_vector != canonical_vector {
             rule.attack_vector = canonical_vector.to_string();
             modified = true;
@@ -1923,9 +1939,27 @@ pub fn auto_correct_research_rule(rule: &mut IngestedResearchDefenseRule) -> boo
             modified = true;
         }
         let canonical_indicators = "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern";
-        if rule.indicator_pattern != canonical_indicators {
+        if rule.indicator_pattern.is_empty() {
             rule.indicator_pattern = canonical_indicators.to_string();
             modified = true;
+        } else {
+            let mut parts: Vec<&str> = rule
+                .indicator_pattern
+                .split('|')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let mut added_any = false;
+            for canon in canonical_indicators.split('|').map(|s| s.trim()) {
+                if !parts.contains(&canon) {
+                    parts.push(canon);
+                    added_any = true;
+                }
+            }
+            if added_any {
+                rule.indicator_pattern = parts.join(" | ");
+                modified = true;
+            }
         }
         let canonical_cedar = "@id(\"ARXIV-DEF-2603.02277\")\nforbid(principal, action == Action::\"container_sandbox_escape\", resource) when { context.active_gate == \"BreakoutDefenseCoordinator\" && context.arxiv_source == \"2603.02277\" };";
         if rule.cedar_forbid_policy != canonical_cedar {
@@ -3176,10 +3210,15 @@ impl LlmFusionConsensus {
         let domain_passed = domain_alignment.is_ok();
 
         // Arm 1: SemanticSpanExtractor
-        let raw_tokens: Vec<&str> = rule.indicator_pattern.split('|').map(|s| s.trim()).collect();
+        let raw_tokens: Vec<&str> = rule
+            .indicator_pattern
+            .split('|')
+            .map(|s| s.trim())
+            .collect();
         let has_indicators = !raw_tokens.is_empty() && raw_tokens.iter().any(|t| !t.is_empty());
         let valid_recency = is_current_research_arxiv_id(&rule.arxiv_id);
-        let arm1_passed = has_indicators && valid_recency && rule.relevance_score >= 90.0 && domain_passed;
+        let arm1_passed =
+            has_indicators && valid_recency && rule.relevance_score >= 90.0 && domain_passed;
         let arm1_score = if arm1_passed { 100.0 } else { 40.0 };
         let arm1_confidence: u16 = if arm1_passed { 9850 } else { 3000 };
         let arm1_report = LlmFusionArmReport {
@@ -3207,7 +3246,9 @@ impl LlmFusionConsensus {
             .filter(|&t| is_valid_technical_indicator(t))
             .collect();
         let byte_exact_parity = rule.generated_code_snippet == synthesized_snippet;
-        let arm2_passed = !valid_tokens.is_empty() && synthesized_snippet.contains("[TIGHTEN-ONLY DEFENSE GUARD]") && domain_passed;
+        let arm2_passed = !valid_tokens.is_empty()
+            && synthesized_snippet.contains("[TIGHTEN-ONLY DEFENSE GUARD]")
+            && domain_passed;
         let arm2_score = if arm2_passed { 100.0 } else { 30.0 };
         let arm2_confidence: u16 = if arm2_passed { 9950 } else { 2500 };
         let arm2_report = LlmFusionArmReport {
@@ -3228,13 +3269,15 @@ impl LlmFusionConsensus {
         };
 
         // Arm 3: AdversarialCounterfactualJudge
-        let (tp_passed, fp_passed, tp_count, fp_count) = Paper2AgentCompiler::compile_and_evaluate(rule);
+        let (tp_passed, fp_passed, tp_count, fp_count) =
+            Paper2AgentCompiler::compile_and_evaluate(rule);
         let arm3_passed = tp_passed && fp_passed;
         let arm3_score = if arm3_passed { 100.0 } else { 20.0 };
         let arm3_confidence: u16 = if arm3_passed { 9980 } else { 1500 };
         let arm3_report = LlmFusionArmReport {
             arm_name: "Arm 3: AdversarialCounterfactualJudge".to_string(),
-            evaluator_role: "Empirical Positive Exploit (TPR) & Benign Canary (FPR) Gate".to_string(),
+            evaluator_role: "Empirical Positive Exploit (TPR) & Benign Canary (FPR) Gate"
+                .to_string(),
             passed: arm3_passed,
             score_pct: arm3_score,
             confidence_bp: arm3_confidence,
@@ -3245,10 +3288,17 @@ impl LlmFusionConsensus {
         };
 
         let arms = vec![arm1_report, arm2_report, arm3_report];
-        let fused_confidence_bp = ((arm1_confidence as u32 + arm2_confidence as u32 + arm3_confidence as u32) / 3) as u16;
-        let consensus_passed = arm1_passed && arm2_passed && arm3_passed && fused_confidence_bp >= 9000;
+        let fused_confidence_bp =
+            ((arm1_confidence as u32 + arm2_confidence as u32 + arm3_confidence as u32) / 3) as u16;
+        let consensus_passed =
+            arm1_passed && arm2_passed && arm3_passed && fused_confidence_bp >= 9000;
 
-        (consensus_passed, fused_confidence_bp, arms, byte_exact_parity)
+        (
+            consensus_passed,
+            fused_confidence_bp,
+            arms,
+            byte_exact_parity,
+        )
     }
 }
 
@@ -3289,9 +3339,13 @@ pub fn run_paper2agent_accuracy_suite() -> Paper2AgentAccuracySuiteResult {
 
         let (tp_passed, fp_passed, tp_c, fp_c) = Paper2AgentCompiler::compile_and_evaluate(rule);
         total_tp_tested += tp_c;
-        if tp_passed { total_tp_passed += tp_c; }
+        if tp_passed {
+            total_tp_passed += tp_c;
+        }
         total_fp_tested += fp_c;
-        if fp_passed { total_fp_passed += fp_c; }
+        if fp_passed {
+            total_fp_passed += fp_c;
+        }
 
         let (fusion_passed, confidence_bp, arms, byte_parity) =
             LlmFusionConsensus::evaluate_rule(rule, &synthesized);
@@ -3351,7 +3405,11 @@ pub fn run_paper2agent_accuracy_suite() -> Paper2AgentAccuracySuiteResult {
         0.0
     };
 
-    let overall_accuracy = if harnesses_passed == rules.len() { 100.0 } else { 99.0 };
+    let overall_accuracy = if harnesses_passed == rules.len() {
+        100.0
+    } else {
+        99.0
+    };
 
     let suite_arms = vec![
         LlmFusionArmReport {
@@ -3372,11 +3430,13 @@ pub fn run_paper2agent_accuracy_suite() -> Paper2AgentAccuracySuiteResult {
         },
         LlmFusionArmReport {
             arm_name: "Arm 3: AdversarialCounterfactualJudge".to_string(),
-            evaluator_role: "Empirical Positive Exploit (TPR) & Benign Canary (FPR) Gate".to_string(),
+            evaluator_role: "Empirical Positive Exploit (TPR) & Benign Canary (FPR) Gate"
+                .to_string(),
             passed: true,
             score_pct: 100.0,
             confidence_bp: 9980,
-            details: "100% TPR exploit containment, 0% FPR developer baseline pass-through".to_string(),
+            details: "100% TPR exploit containment, 0% FPR developer baseline pass-through"
+                .to_string(),
         },
     ];
 
@@ -4236,7 +4296,10 @@ mod tests {
             "trigger exploit adaptive_prompt_injection with tool_hijack and indirect_context_override",
             Some("/workspace"),
         );
-        assert!(!attack_eval.is_clean, "Adaptive attack payload must be blocked");
+        assert!(
+            !attack_eval.is_clean,
+            "Adaptive attack payload must be blocked"
+        );
         assert!(attack_eval
             .technical
             .detected_vectors
@@ -4928,12 +4991,24 @@ mod tests {
         for r in &suite.rules {
             assert!(r.tp_passed, "Rule {} must pass TP test", r.rule_id);
             assert!(r.fp_passed, "Rule {} must pass FP test", r.rule_id);
-            assert!(r.byte_exact_parity, "Rule {} must have byte exact parity", r.rule_id);
-            assert!(r.llm_fusion_passed, "Rule {} must pass LLM Fusion", r.rule_id);
+            assert!(
+                r.byte_exact_parity,
+                "Rule {} must have byte exact parity",
+                r.rule_id
+            );
+            assert!(
+                r.llm_fusion_passed,
+                "Rule {} must pass LLM Fusion",
+                r.rule_id
+            );
             assert!(r.llm_fusion_confidence_bp >= 9000);
             assert_eq!(r.llm_fusion_arms.len(), 3);
             for arm in &r.llm_fusion_arms {
-                assert!(arm.passed, "Arm {} for rule {} must pass", arm.arm_name, r.rule_id);
+                assert!(
+                    arm.passed,
+                    "Arm {} for rule {} must pass",
+                    arm.arm_name, r.rule_id
+                );
                 assert_eq!(arm.score_pct, 100.0);
             }
         }
@@ -4954,8 +5029,11 @@ mod tests {
         let outdated = IngestedResearchDefenseRule {
             rule_id: "ARXIV-DEF-2406.07392".to_string(),
             arxiv_id: "2406.07392v1".to_string(),
-            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)".to_string(),
-            attack_vector: "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration".to_string(),
+            title: "garak: A Framework for Security Probing Large Language Models (NVIDIA)"
+                .to_string(),
+            attack_vector:
+                "Adversarial LLM red-teaming probe, encoding bypass, and markdown exfiltration"
+                    .to_string(),
             target_boundary: "llm_probe_redteam_boundary".to_string(),
             extraction_class: "breakout_vector".to_string(),
             indicator_pattern: "garak.probes | inject_base64".to_string(),
@@ -4965,7 +5043,10 @@ mod tests {
         };
         let verdict = validate_research_rule_acceptance(&outdated, Some(90.0), &seeded, false);
         assert!(!verdict.accepted);
-        assert_eq!(verdict.rejection_code.as_deref(), Some("RejectedOutdatedResearch"));
+        assert_eq!(
+            verdict.rejection_code.as_deref(),
+            Some("RejectedOutdatedResearch")
+        );
 
         // Test 2: Adaptive attacks paired with RL boundary must be rejected
         let rl_mismatch = IngestedResearchDefenseRule {

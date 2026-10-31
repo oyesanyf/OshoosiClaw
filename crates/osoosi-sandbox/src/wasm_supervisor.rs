@@ -163,10 +163,10 @@ impl Drop for EpochTicker {
 /// Configuration options for the dual-plane supervisor.
 #[derive(Debug, Clone)]
 pub struct WasmSupervisorConfig {
-    pub hot_epoch_deadline_ticks: u64, // e.g. 10 ticks = 10ms
-    pub scraper_default_fuel: u64,      // e.g. 5,000,000 instructions
+    pub hot_epoch_deadline_ticks: u64,     // e.g. 10 ticks = 10ms
+    pub scraper_default_fuel: u64,         // e.g. 5,000,000 instructions
     pub scraper_epoch_deadline_ticks: u64, // e.g. 5,000 ticks = 5s
-    pub epoch_tick_interval: Duration, // 1ms
+    pub epoch_tick_interval: Duration,     // 1ms
     pub cache_dir: Option<PathBuf>,
 }
 
@@ -359,7 +359,10 @@ impl WasmSupervisor {
     }
 
     /// Deserializes a precompiled `.cwasm` module safely from cache.
-    pub unsafe fn deserialize_cached_module(&self, hash: &[u8; 32]) -> Result<Module, WasmSupervisorError> {
+    pub unsafe fn deserialize_cached_module(
+        &self,
+        hash: &[u8; 32],
+    ) -> Result<Module, WasmSupervisorError> {
         let lock = self.cwasm_cache.read().unwrap_or_else(|p| p.into_inner());
         if let Some(cwasm) = lock.get(hash) {
             Module::deserialize(&self.hot_engine, cwasm)
@@ -367,8 +370,9 @@ impl WasmSupervisor {
         } else if let Some(ref dir) = self.config.cache_dir {
             let path = dir.join(format!("{}.cwasm", hex::encode(hash)));
             if path.exists() {
-                Module::deserialize_file(&self.hot_engine, path)
-                    .map_err(|e| WasmSupervisorError::Compilation(format!("File deserialization: {}", e)))
+                Module::deserialize_file(&self.hot_engine, path).map_err(|e| {
+                    WasmSupervisorError::Compilation(format!("File deserialization: {}", e))
+                })
             } else {
                 Err(WasmSupervisorError::Compilation("Cache miss".to_string()))
             }
@@ -491,7 +495,10 @@ impl WasmSupervisor {
 
         match run_fn.call(&mut store, ()) {
             Ok(0) => Ok(store.into_data().sanitized_doc),
-            Ok(err) => Err(WasmSupervisorError::Trap(format!("Scraper error code {}", err))),
+            Ok(err) => Err(WasmSupervisorError::Trap(format!(
+                "Scraper error code {}",
+                err
+            ))),
             Err(e) => {
                 if e.to_string().contains("fuel") {
                     Err(WasmSupervisorError::FuelExhausted {
@@ -508,85 +515,115 @@ impl WasmSupervisor {
         }
     }
 
-    fn bind_p2p_frame_imports(linker: &mut Linker<P2pFrameHostState>) -> Result<(), WasmSupervisorError> {
+    fn bind_p2p_frame_imports(
+        linker: &mut Linker<P2pFrameHostState>,
+    ) -> Result<(), WasmSupervisorError> {
         linker
-            .func_wrap("p2p_env", "read_payload", |mut caller: Caller<'_, P2pFrameHostState>, ptr: u32, max_len: u32| -> i32 {
-                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m,
-                    None => return -1,
-                };
-                let raw_data = caller.data().raw_data.clone();
-                let copy_len = raw_data.len().min(max_len as usize);
-                if memory.write(&mut caller, ptr as usize, &raw_data[..copy_len]).is_err() {
-                    return -2;
-                }
-                copy_len as i32
-            })
-            .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
-
-        linker
-            .func_wrap("p2p_env", "emit_sanitized", |mut caller: Caller<'_, P2pFrameHostState>, ptr: u32, len: u32| -> i32 {
-                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m,
-                    None => return -1,
-                };
-                let mut buf = vec![0u8; len as usize];
-                if memory.read(&caller, ptr as usize, &mut buf).is_err() {
-                    return -2;
-                }
-                caller.data_mut().output_data = buf;
-                0
-            })
-            .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
-
-        linker
-            .func_wrap("p2p_env", "reject_frame", |mut caller: Caller<'_, P2pFrameHostState>, ptr: u32, len: u32| -> i32 {
-                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m,
-                    None => return -1,
-                };
-                let mut buf = vec![0u8; len as usize];
-                if memory.read(&caller, ptr as usize, &mut buf).is_ok() {
-                    if let Ok(s) = std::str::from_utf8(&buf) {
-                        caller.data_mut().rejection_reason = Some(s.to_string());
+            .func_wrap(
+                "p2p_env",
+                "read_payload",
+                |mut caller: Caller<'_, P2pFrameHostState>, ptr: u32, max_len: u32| -> i32 {
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let raw_data = caller.data().raw_data.clone();
+                    let copy_len = raw_data.len().min(max_len as usize);
+                    if memory
+                        .write(&mut caller, ptr as usize, &raw_data[..copy_len])
+                        .is_err()
+                    {
+                        return -2;
                     }
-                }
-                0
-            })
+                    copy_len as i32
+                },
+            )
+            .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
+
+        linker
+            .func_wrap(
+                "p2p_env",
+                "emit_sanitized",
+                |mut caller: Caller<'_, P2pFrameHostState>, ptr: u32, len: u32| -> i32 {
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let mut buf = vec![0u8; len as usize];
+                    if memory.read(&caller, ptr as usize, &mut buf).is_err() {
+                        return -2;
+                    }
+                    caller.data_mut().output_data = buf;
+                    0
+                },
+            )
+            .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
+
+        linker
+            .func_wrap(
+                "p2p_env",
+                "reject_frame",
+                |mut caller: Caller<'_, P2pFrameHostState>, ptr: u32, len: u32| -> i32 {
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let mut buf = vec![0u8; len as usize];
+                    if memory.read(&caller, ptr as usize, &mut buf).is_ok() {
+                        if let Ok(s) = std::str::from_utf8(&buf) {
+                            caller.data_mut().rejection_reason = Some(s.to_string());
+                        }
+                    }
+                    0
+                },
+            )
             .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
 
         Ok(())
     }
 
-    fn bind_scraper_imports(linker: &mut Linker<MeteredScraperHostState>) -> Result<(), WasmSupervisorError> {
+    fn bind_scraper_imports(
+        linker: &mut Linker<MeteredScraperHostState>,
+    ) -> Result<(), WasmSupervisorError> {
         linker
-            .func_wrap("scraper_env", "read_doc", |mut caller: Caller<'_, MeteredScraperHostState>, ptr: u32, max_len: u32| -> i32 {
-                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m,
-                    None => return -1,
-                };
-                let input = caller.data().input_doc.clone();
-                let copy_len = input.len().min(max_len as usize);
-                if memory.write(&mut caller, ptr as usize, &input[..copy_len]).is_err() {
-                    return -2;
-                }
-                copy_len as i32
-            })
+            .func_wrap(
+                "scraper_env",
+                "read_doc",
+                |mut caller: Caller<'_, MeteredScraperHostState>, ptr: u32, max_len: u32| -> i32 {
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let input = caller.data().input_doc.clone();
+                    let copy_len = input.len().min(max_len as usize);
+                    if memory
+                        .write(&mut caller, ptr as usize, &input[..copy_len])
+                        .is_err()
+                    {
+                        return -2;
+                    }
+                    copy_len as i32
+                },
+            )
             .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
 
         linker
-            .func_wrap("scraper_env", "emit_doc", |mut caller: Caller<'_, MeteredScraperHostState>, ptr: u32, len: u32| -> i32 {
-                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
-                    Some(m) => m,
-                    None => return -1,
-                };
-                let mut buf = vec![0u8; len as usize];
-                if memory.read(&caller, ptr as usize, &mut buf).is_err() {
-                    return -2;
-                }
-                caller.data_mut().sanitized_doc = buf;
-                0
-            })
+            .func_wrap(
+                "scraper_env",
+                "emit_doc",
+                |mut caller: Caller<'_, MeteredScraperHostState>, ptr: u32, len: u32| -> i32 {
+                    let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                        Some(m) => m,
+                        None => return -1,
+                    };
+                    let mut buf = vec![0u8; len as usize];
+                    if memory.read(&caller, ptr as usize, &mut buf).is_err() {
+                        return -2;
+                    }
+                    caller.data_mut().sanitized_doc = buf;
+                    0
+                },
+            )
             .map_err(|e| WasmSupervisorError::EngineInit(e.to_string()))?;
 
         Ok(())

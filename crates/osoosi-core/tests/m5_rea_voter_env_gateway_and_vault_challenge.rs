@@ -14,10 +14,9 @@
 
 use osoosi_core::protected_env_backup::{ProtectedEnvBackupVault, VaultError};
 use osoosi_core::rea_voter_env_gateway::{
-    hash_file_sha256_nofollow, normalize_host,
-    resolve_pid_exe, resolve_process_instance_key, verify_clean_process_env,
-    HardenedSealedGrant, ProcessInstanceKey, ReaForensicVerdict, ReaVoterEnvGateway,
-    VoterQuorumAlert, ZeroizingLockedSecret,
+    hash_file_sha256_nofollow, normalize_host, resolve_pid_exe, resolve_process_instance_key,
+    verify_clean_process_env, HardenedSealedGrant, ProcessInstanceKey, ReaForensicVerdict,
+    ReaVoterEnvGateway, VoterQuorumAlert, ZeroizingLockedSecret,
 };
 use std::time::Duration;
 
@@ -40,7 +39,10 @@ fn test_zeroizing_locked_secret_wipes_allocation() {
 fn test_host_normalization_and_defense() {
     assert_eq!(normalize_host("API.ANTHROPIC.COM:443"), "api.anthropic.com");
     assert_eq!(normalize_host("api.anthropic.com."), "api.anthropic.com");
-    assert_eq!(normalize_host("https://api.anthropic.com"), "https://api.anthropic.com");
+    assert_eq!(
+        normalize_host("https://api.anthropic.com"),
+        "https://api.anthropic.com"
+    );
 }
 
 #[test]
@@ -56,7 +58,10 @@ fn test_current_process_resolution_and_clean_env() {
 
     // Clean env check for current process
     let clean = verify_clean_process_env(my_pid);
-    assert!(clean.is_ok(), "Current test process environment should be clean");
+    assert!(
+        clean.is_ok(),
+        "Current test process environment should be clean"
+    );
 }
 
 #[test]
@@ -264,7 +269,9 @@ fn test_voter_freeze_and_rea_revocation_lifecycle() {
         "malware-c2-channel.darkweb",
         b"GET / HTTP/1.1\r\n\r\n",
     );
-    assert!(c2_attempt.unwrap_err().contains("matches C2 domain extracted by REA"));
+    assert!(c2_attempt
+        .unwrap_err()
+        .contains("matches C2 domain extracted by REA"));
 }
 
 #[test]

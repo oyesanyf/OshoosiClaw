@@ -24,9 +24,9 @@ use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
 #[cfg(windows)]
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
-    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ, OPEN_EXISTING,
+    CreateFileW, GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY,
+    FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+    FILE_SHARE_READ, OPEN_EXISTING,
 };
 #[cfg(windows)]
 use windows::Win32::System::Threading::{
@@ -160,7 +160,8 @@ impl ReaVoterEnvGateway {
     }
 
     fn write_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
-        lock.write().unwrap_or_else(|poisoned| poisoned.into_inner())
+        lock.write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn register_grant(&self, grant: HardenedSealedGrant) {
@@ -319,7 +320,9 @@ impl ReaVoterEnvGateway {
             let mut q_pids = Self::write_lock(&self.quarantined_pids);
             if let Some(hold) = q_pids.get(&caller_key) {
                 if Instant::now() < hold.expires_at {
-                    return Err("Blocked: Caller PID quarantined by consensus voters pending REA verdict");
+                    return Err(
+                        "Blocked: Caller PID quarantined by consensus voters pending REA verdict",
+                    );
                 } else {
                     // REA analysis timed out: fail closed for this request and evict expired hold
                     q_pids.remove(&caller_key);
@@ -333,7 +336,9 @@ impl ReaVoterEnvGateway {
                 }
             }) {
                 if is_active {
-                    return Err("Blocked: Caller PID quarantined by consensus voters pending REA verdict");
+                    return Err(
+                        "Blocked: Caller PID quarantined by consensus voters pending REA verdict",
+                    );
                 } else {
                     q_pids.remove(&matching_key);
                     return Err("Blocked: REA inspection TTL expired (fail-closed)");
@@ -354,7 +359,9 @@ impl ReaVoterEnvGateway {
         {
             let revoked = Self::read_lock(&self.revoked_identities);
             if revoked.contains(&caller_composite) || revoked.contains(&bin_hash) {
-                return Err("Blocked: Workload identity permanently revoked by REA forensic verdict");
+                return Err(
+                    "Blocked: Workload identity permanently revoked by REA forensic verdict",
+                );
             }
         }
 
@@ -377,11 +384,7 @@ impl ReaVoterEnvGateway {
             while let Some(rel_pos) = find_subslice(&http_payload[search_from..], token_bytes) {
                 let start = search_from + rel_pos;
                 let end = start + token_bytes.len();
-                matches.push(TokenMatch {
-                    start,
-                    end,
-                    grant,
-                });
+                matches.push(TokenMatch { start, end, grant });
                 search_from = end;
             }
         }
@@ -451,10 +454,7 @@ pub fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-pub fn compute_composite_identity(
-    bin_hash: &[u8; 32],
-    script_hash: Option<&[u8; 32]>,
-) -> [u8; 32] {
+pub fn compute_composite_identity(bin_hash: &[u8; 32], script_hash: Option<&[u8; 32]>) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(bin_hash);
     if let Some(sh) = script_hash {
@@ -520,7 +520,9 @@ pub fn hash_file_sha256_nofollow(path: &Path) -> Result<[u8; 32], &'static str> 
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 8192];
         loop {
-            let n = file.read(&mut buf).map_err(|_| "Read error during hashing")?;
+            let n = file
+                .read(&mut buf)
+                .map_err(|_| "Read error during hashing")?;
             if n == 0 {
                 break;
             }
@@ -567,7 +569,9 @@ pub fn hash_file_sha256_nofollow(path: &Path) -> Result<[u8; 32], &'static str> 
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 8192];
         loop {
-            let n = file.read(&mut buf).map_err(|_| "Read error during hashing")?;
+            let n = file
+                .read(&mut buf)
+                .map_err(|_| "Read error during hashing")?;
             if n == 0 {
                 break;
             }
@@ -578,7 +582,8 @@ pub fn hash_file_sha256_nofollow(path: &Path) -> Result<[u8; 32], &'static str> 
 
     #[cfg(not(any(windows, unix)))]
     {
-        let meta = std::fs::symlink_metadata(path).map_err(|_| "Cannot stat target binary/script")?;
+        let meta =
+            std::fs::symlink_metadata(path).map_err(|_| "Cannot stat target binary/script")?;
         if meta.file_type().is_symlink() {
             return Err("Blocked: Target binary or script is a symbolic link / reparse point");
         }
@@ -586,7 +591,9 @@ pub fn hash_file_sha256_nofollow(path: &Path) -> Result<[u8; 32], &'static str> 
         let mut hasher = Sha256::new();
         let mut buf = [0u8; 8192];
         loop {
-            let n = file.read(&mut buf).map_err(|_| "Read error during hashing")?;
+            let n = file
+                .read(&mut buf)
+                .map_err(|_| "Read error during hashing")?;
             if n == 0 {
                 break;
             }
@@ -620,15 +627,8 @@ pub fn resolve_process_instance_key(pid: u32) -> Result<ProcessInstanceKey, &'st
         let mut kernel = windows::Win32::Foundation::FILETIME::default();
         let mut user = windows::Win32::Foundation::FILETIME::default();
 
-        let ok = unsafe {
-            GetProcessTimes(
-                handle,
-                &mut creation,
-                &mut exit,
-                &mut kernel,
-                &mut user,
-            )
-        };
+        let ok =
+            unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
 
         if pid != std::process::id() {
             let _ = unsafe { CloseHandle(handle) };
@@ -786,7 +786,9 @@ pub fn verify_clean_process_env(pid: u32) -> Result<(), &'static str> {
             for forbidden in FORBIDDEN_KEYS {
                 let prefix = format!("{}=", forbidden);
                 if entry.starts_with(prefix.as_bytes()) {
-                    return Err("Blocked: Caller environment contains interpreter/loader hijack variable");
+                    return Err(
+                        "Blocked: Caller environment contains interpreter/loader hijack variable",
+                    );
                 }
             }
         }
@@ -849,7 +851,16 @@ pub fn resolve_pid_script_hash(
     }
 
     const SAFE_NO_ARG_FLAGS: &[&str] = &[
-        "-u", "-B", "-O", "-OO", "-s", "-S", "-E", "-I", "--no-warnings", "--trace-warnings",
+        "-u",
+        "-B",
+        "-O",
+        "-OO",
+        "-s",
+        "-S",
+        "-E",
+        "-I",
+        "--no-warnings",
+        "--trace-warnings",
     ];
 
     #[cfg(windows)]

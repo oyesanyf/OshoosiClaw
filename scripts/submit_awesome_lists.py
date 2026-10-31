@@ -56,6 +56,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
+
 CANONICAL_REPO_URL = "https://github.com/oyesanyf/OshoosiClaw"
 CANONICAL_RELEASE_URL = "https://github.com/oyesanyf/OshoosiClaw/releases/latest"
 
@@ -533,29 +537,210 @@ AWESOME_LIST_TARGETS: List[AwesomeListTarget] = [
             "- **Independent Open-Source Project**: Written in Rust (`Apache-2.0`), actively maintained with multi-platform releases (`v1.2.0`)."
         ),
     ),
+
+    # =========================================================================
+    # VERTICAL 5: OpenClaw & Agent Control Plane Ecosystem Registries (Wave 5 / M15)
+    # =========================================================================
+    AwesomeListTarget(
+        repo="andrijdavid/awesome-claw",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="OpenClaw Forks & AI Coding Assistant Tools",
+        target_sections=["OpenClaw Forks", "Catalog"],
+        entry_markdown=(
+            "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) ![GitHub Repo stars](https://img.shields.io/github/stars/oyesanyf/OshoosiClaw?style=flat-square) - "
+            "Hardened AI agent security engine with 7-ring Cedar reference monitor, zero-overhead Wasmtime sandboxing, eBPF/WFP containment, and verified 2025-2026 research defenses."
+        ),
+        pr_title="Add OshoosiClaw to OpenClaw Forks",
+        pr_body=(
+            "### Summary\n"
+            "Adds [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) to `data/repos.json` and `README.md` under **OpenClaw Forks**.\n\n"
+            "### About OshoosiClaw\n"
+            "- **Project**: [OshoosiClaw (OpenỌ̀ṣọ́ọ̀sì)](https://github.com/oyesanyf/OshoosiClaw)\n"
+            "- **Description**: Hardened AI agent security engine with 7-ring Cedar reference monitor, zero-overhead Wasmtime sandboxing, eBPF/WFP containment, and verified 2025-2026 research defenses.\n"
+            "- **License**: Apache-2.0\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="Ar9av/awesome-agent-control-plane",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="Agent Control Plane, Sandboxing & Policy Enforcement",
+        target_sections=["Sandboxing & Isolation", "Policy Enforcement & Runtime Control"],
+        entry_markdown=(
+            "- **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** - OS-enforced dual-plane Wasmtime sandbox "
+            "(pooling allocator, zero-fuel hot path <50µs, 64MiB limit), eBPF CO-RE, and Windows AppContainer/Job Objects."
+        ),
+        pr_title="Add OshoosiClaw (7-Ring Cedar Policy Enforcement & Capability Sandboxing)",
+        pr_body=(
+            "### Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** under **Sandboxing & Isolation** and **Policy Enforcement & Runtime Control**.\n\n"
+            "### About OshoosiClaw\n"
+            "OshoosiClaw is a decentralized, high-performance Rust AI agent security and runtime control plane:\n"
+            "- **Continuous 7-Ring Cedar Reference Monitor**: Enforces formal Cedar authorization and past-only metric first-order temporal policies (Dogwood) on every tool invocation.\n"
+            "- **Dual-Plane Wasmtime Sandbox**: Hot-path capability isolation with pooling allocator (<50µs overhead), 64MiB linear memory limit, and out-of-sandbox secret sealing.\n"
+            "- **OS-Level Containment**: Windows AppContainer & Job Objects, Linux seccomp-bpf & Landlock v3, and eBPF CO-RE sensor mesh.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="andar1an/awesome-rust-security-vendor",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="Threat Detection and Forensics",
+        target_sections=["Threat Detection and Forensics"],
+        entry_markdown=(
+            "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - High-performance Rust EDR and agent containment "
+            "engine featuring 34 workspace crates, Windows kernel driver/ELAM, Linux eBPF CO-RE telemetry, YARA-X rules, and libp2p BFT consensus."
+        ),
+        pr_title="Add OshoosiClaw to Threat Detection and Forensics",
+        pr_body=(
+            "### Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** to **Threat Detection and Forensics**.\n\n"
+            "### About OshoosiClaw\n"
+            "- High-performance Rust EDR and agent containment runtime across 34 workspace crates.\n"
+            "- Multi-OS telemetry via Windows kernel driver/ELAM, Linux eBPF CO-RE, and macOS Endpoint Security.\n"
+            "- Native YARA-X scanning, libp2p Byzantine fault-tolerant mesh gossip, and formal Cedar capability enforcement.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="LLMSecurity/awesome-agent-skills-security",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="AI Agent Skills Security & Defense Tools",
+        target_sections=["Tools & Frameworks"],
+        entry_markdown=(
+            "| **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** | Multi-ring agent containment runtime enforcing formal Cedar policies, zero-overhead Wasmtime + OS capability sandboxes (Windows AppContainer / Linux Landlock v3 + seccomp-bpf), out-of-sandbox credential sealing, and automated arXiv breakout defense | [![GitHub](https://img.shields.io/github/stars/oyesanyf/OshoosiClaw)](https://github.com/oyesanyf/OshoosiClaw) |"
+        ),
+        pr_title="Add OshoosiClaw to Tools & Frameworks",
+        pr_body=(
+            "### Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** to the **Tools & Frameworks** table.\n\n"
+            "### About OshoosiClaw\n"
+            "- Multi-ring agent containment runtime enforcing formal Cedar authorization on every agent skill execution.\n"
+            "- Zero-overhead Wasmtime sandbox and OS-level capability cages (Windows AppContainer / Linux Landlock v3 + seccomp-bpf).\n"
+            "- Out-of-sandbox boundary credential sealing, prompt injection firewalls, and automated 2025-2026 arXiv breakout vector defenses.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="VoltAgent/awesome-openclaw-skills",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="OpenClaw Skills & Recommended Security Tools",
+        target_sections=["Security Notice", "Recommended tools:"],
+        entry_markdown=(
+            "- [OshoosiClaw (OpenOsoosi)](https://github.com/oyesanyf/OshoosiClaw) - Defense-in-depth agent containment engine for OpenClaw with host-mediated WIT capability gates and SSRF prevention."
+        ),
+        pr_title="Add OshoosiClaw to Security Notice Recommended Tools",
+        pr_body=(
+            "### Summary\n"
+            "Adds **[OshoosiClaw (OpenOsoosi)](https://github.com/oyesanyf/OshoosiClaw)** under `**Recommended tools:**` in the Security Notice.\n\n"
+            "### About OshoosiClaw\n"
+            "- Defense-in-depth agent containment engine for OpenClaw skills.\n"
+            "- Host-mediated WebAssembly WIT capability gates, SSRF prevention, and out-of-band API key sealing.\n"
+            "- Real-time YARA-X scanning of skill payloads and memory before execution.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="vincentkoc/awesome-openclaw",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="OpenClaw Alternative Architectures",
+        target_sections=["Alternative Architectures"],
+        entry_markdown=(
+            "- [oyesanyf/OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - Enterprise-grade security-first OpenClaw architecture with eBPF/WFP network isolation, Wasm sandbox, and hardware TPM 2.0 attestation. ![GitHub stars](https://img.shields.io/github/stars/oyesanyf/OshoosiClaw?style=social)"
+        ),
+        pr_title="Add OshoosiClaw to Alternative Architectures",
+        pr_body=(
+            "### Summary\n"
+            "Adds **[oyesanyf/OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** under **Alternative Architectures**.\n\n"
+            "### About OshoosiClaw\n"
+            "- Enterprise-grade, security-first OpenClaw architecture in Rust.\n"
+            "- eBPF and Windows Filtering Platform (WFP) network isolation.\n"
+            "- Zero-overhead Wasm sandbox, 7-ring Cedar capability monitor, and hardware TPM 2.0 attestation.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="scadastrangelove/awesome-ai-security-tools",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="AI Agent Security & Runtime Protection",
+        target_sections=["Runtime Protection & Enforcement", "AI Agent & Coding-Agent Security"],
+        entry_markdown=(
+            "- **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** 🟢 — Decentralized Rust EDR and 7-Ring AI agent containment engine enforcing formal Cedar policies, zero-overhead Wasmtime and OS capability sandboxes (Windows AppContainer, Linux Landlock v3 + seccomp-bpf), out-of-sandbox credential sealing, and YARA-X scanning. *(oyesanyf)* — **note:** cross-platform (Windows, Linux, macOS), open-source (Apache-2.0), signed releases with SLSA provenance."
+        ),
+        pr_title="Add OshoosiClaw to Runtime Protection & Enforcement",
+        pr_body=(
+            "## Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** under `### Runtime Protection & Enforcement`.\n\n"
+            "### Highlights\n"
+            "- **7-Ring Containment**: Continuous Cedar policy reference monitor preventing prompt injection breakouts and unauthorized tool invocations.\n"
+            "- **Kernel & Sandbox Confinement**: Native Windows AppContainer / Job Objects and Linux Landlock v3 / seccomp-bpf containment with out-of-band credential sealing.\n"
+            "- **Cross-Platform & Signed**: Production Rust engine with ETW/Minifilter and eBPF CO-RE sensors, YARA-X memory scanning, and SLSA provenance attestations.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="aloth/awesome-ai-agents",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="Agent Sandboxing & Execution Infrastructure",
+        target_sections=["Sandboxing & Execution", "Agent Infrastructure"],
+        entry_markdown=(
+            "- [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) — Decentralized Rust EDR and 7-Ring AI agent containment engine with AppContainer / Landlock v3 + seccomp-bpf sandboxing, out-of-sandbox credential sealing, and formal Cedar policies. Apache-2.0."
+        ),
+        pr_title="Add OshoosiClaw to Sandboxing & Execution",
+        pr_body=(
+            "## Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** to `### Sandboxing & Execution`.\n\n"
+            "### Features\n"
+            "- Sandboxing runtime for AI agents with Windows AppContainer and Linux Landlock v3 / seccomp-bpf isolation.\n"
+            "- 7-Ring Continuous Cedar Reference Monitor for tool call authorization and credential sealing.\n"
+            "- Open source (Apache-2.0), written in high-performance Rust.\n"
+        ),
+    ),
+    AwesomeListTarget(
+        repo="ottosulin/awesome-ai-security",
+        vertical=5,
+        vertical_name="OpenClaw & Agent Control Plane Ecosystem Registries",
+        wave=5,
+        category_focus="AI Agent Runtime Security & Sandboxing",
+        target_sections=["Agent Runtime Security & Sandboxing", "Defense & Security Controls"],
+        entry_markdown=(
+            "* [OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw) - _OpenClaw-inspired autonomous security agent and 7-Ring AI agent containment runtime in Rust. Enforces formal Cedar + SMT policies, OS-level capability sandboxing (Windows AppContainer, Linux Landlock v3 + seccomp-bpf, Wasmtime), eBPF/ETW kernel telemetry, and YARA-X scanning._"
+        ),
+        pr_title="Add OshoosiClaw (Autonomous AI-Driven Rust EDR & Agent Containment Mesh)",
+        pr_body=(
+            "## Summary\n"
+            "Adds **[OshoosiClaw](https://github.com/oyesanyf/OshoosiClaw)** under `### Agent Runtime Security & Sandboxing`.\n\n"
+            "### Key AI + Cybersecurity Capabilities\n"
+            "- **7-Ring Agentic Breakout Prevention**: Protects AI coding and automation agents against prompt injection, SSRF, and container sandbox escape.\n"
+            "- **Multi-Voter Bayesian Consensus**: Combines local LLM/ONNX anomaly voters, YARA-X, and kernel behavioral telemetry.\n"
+        ),
+    ),
 ]
 
 
 def run_gh_api(endpoint: str, method: str = "GET", payload: Optional[Dict] = None) -> Tuple[int, str]:
     cmd = ["gh", "api", endpoint, "-X", method]
+    kwargs = {
+        "text": True,
+        "capture_output": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
     if payload is not None:
         cmd.extend(["--input", "-"])
-        proc = subprocess.run(
-            cmd,
-            input=json.dumps(payload),
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        kwargs["input"] = json.dumps(payload)
     else:
-        proc = subprocess.run(
-            cmd,
-            text=True,
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        kwargs["stdin"] = subprocess.DEVNULL
+    proc = subprocess.run(cmd, **kwargs)
     return proc.returncode, proc.stdout.strip() or proc.stderr.strip()
 
 
@@ -779,6 +964,7 @@ def generate_bundle(output_path: Path, verify_remote: bool = False) -> Dict:
             "2": "Broad Blue Team, DFIR, Forensics & Reverse Engineering",
             "3": "Rust & eBPF Systems Directories",
             "4": "Specialized Signature (YARA) & Agentic AI Security Lists",
+            "5": "OpenClaw & Agent Control Plane Ecosystem Registries",
         },
         "targets": entries,
     }
@@ -789,13 +975,13 @@ def generate_bundle(output_path: Path, verify_remote: bool = False) -> Dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="OshoosiClaw 4-Vertical Awesome Lists Traction & PR Automation Script"
+        description="OshoosiClaw Awesome Lists Traction & PR Automation Script"
     )
-    parser.add_argument("--list", action="store_true", help="List all 20 target Awesome Lists across 4 verticals")
+    parser.add_argument("--list", action="store_true", help="List all target Awesome Lists across 5 verticals")
     parser.add_argument("--verify-remote", action="store_true", help="Verify remote GitHub repository reachability and existing PR status")
     parser.add_argument("--generate-bundle", action="store_true", help="Generate deploy/awesome-lists-submissions.json")
     parser.add_argument("--submit", action="store_true", help="Prepare or submit PRs to Awesome Lists")
-    parser.add_argument("--vertical", type=int, choices=[1, 2, 3, 4], help="Filter by vertical (1..4)")
+    parser.add_argument("--vertical", type=int, choices=[1, 2, 3, 4, 5], help="Filter by vertical (1..5)")
     parser.add_argument("--repo", type=str, help="Target a single repository (owner/name)")
     parser.add_argument("--dry-run", action="store_true", default=True, help="Simulate README insertion without opening remote PRs (default)")
     parser.add_argument("--execute", action="store_true", help="Actually fork, commit, and open Pull Requests via GitHub API")
@@ -808,9 +994,9 @@ def main() -> int:
         selected = [t for t in selected if t.repo.lower() == args.repo.lower()]
 
     if args.list or (not args.verify_remote and not args.generate_bundle and not args.submit):
-        print(f"OshoosiClaw Awesome Lists Traction Matrix ({len(selected)} repositories across 4 verticals)")
+        print(f"OshoosiClaw Awesome Lists Traction Matrix ({len(selected)} repositories across 5 verticals)")
         print("=" * 100)
-        for v in (1, 2, 3, 4):
+        for v in (1, 2, 3, 4, 5):
             v_items = [t for t in selected if t.vertical == v]
             if not v_items:
                 continue

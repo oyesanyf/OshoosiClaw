@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -938,7 +938,15 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     osoosi_core::spawn_autonomous_disk_cleanup_watchdog();
     let cors = CorsLayer::new()
         .allow_methods(Any)
-        .allow_origin(Any)
+        .allow_origin(tower_http::cors::AllowOrigin::predicate(
+            |origin: &axum::http::HeaderValue, _parts| {
+                if let Ok(s) = origin.to_str() {
+                    is_valid_loopback_origin(s)
+                } else {
+                    false
+                }
+            },
+        ))
         .allow_headers(Any);
 
     let safe_serve = SafeServeDir::new(asset_path);
@@ -953,6 +961,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
                 rate_limiter::rate_limit_middleware,
             ))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
+            .layer(axum::middleware::from_fn(
+                loopback_only_host_guard_middleware,
+            ))
             .layer(axum::middleware::from_fn(no_cache_header_middleware))
     } else {
         Router::new()
@@ -964,6 +975,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
                 rate_limiter::rate_limit_middleware,
             ))
             .layer(axum::middleware::from_fn(http_framing_defense_middleware))
+            .layer(axum::middleware::from_fn(
+                loopback_only_host_guard_middleware,
+            ))
             .layer(axum::middleware::from_fn(no_cache_header_middleware))
     }
 }
@@ -1160,12 +1174,352 @@ async fn http_framing_defense_middleware(
     Ok(next.run(req).await)
 }
 
+/// Determines if an IP address is strictly a local host loopback address (Milestone M14).
+/// Satisfies: 127.0.0.0/8, ::1, or ::ffff:127.x.x.x (IPv4-mapped IPv6 loopback).
+pub fn is_strict_loopback_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback(),
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() {
+                return true;
+            }
+            // Check IPv4-mapped IPv6 loopback: ::ffff:127.0.0.0/104
+            let octets = v6.octets();
+            if octets[0..10] == [0; 10] && octets[10] == 0xff && octets[11] == 0xff {
+                let v4 = std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+                return v4.is_loopback();
+            }
+            false
+        }
+    }
+}
+
+/// Helper to determine if a Host header resolves strictly to local loopback (Milestone M14).
+/// Blocks DNS rebinding, external domain spoofing, and remote host routing.
+pub fn is_strict_loopback_host(host_header: &str) -> bool {
+    let trimmed = host_header.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let host_part = if trimmed.starts_with('[') {
+        if let Some(end_idx) = trimmed.find(']') {
+            &trimmed[1..end_idx]
+        } else {
+            return false;
+        }
+    } else {
+        trimmed.split(':').next().unwrap_or(trimmed)
+    };
+
+    if host_part.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if let Ok(ip) = host_part.parse::<IpAddr>() {
+        return is_strict_loopback_ip(&ip);
+    }
+    false
+}
+
+/// Helper to determine if a Referer header originates from local loopback (Milestone M14).
+pub fn is_valid_loopback_referer(referer: &str) -> bool {
+    let trimmed = referer.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+        if let Some(host) = parsed.host_str() {
+            if host.eq_ignore_ascii_case("localhost") {
+                return true;
+            }
+            let host_clean = host.trim_start_matches('[').trim_end_matches(']');
+            if let Ok(ip) = host_clean.parse::<IpAddr>() {
+                return is_strict_loopback_ip(&ip);
+            }
+        }
+        false
+    } else {
+        is_valid_loopback_origin(trimmed)
+    }
+}
+
+/// Validates that no reverse proxy headers specify non-loopback hops (Milestone M14 Layer B).
+pub fn validate_no_remote_proxy_headers(headers: &HeaderMap) -> Result<(), &'static str> {
+    // 1. X-Forwarded-For: check every comma-separated hop
+    if let Some(val) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        for part in val.split(',') {
+            let hop = part.trim();
+            if hop.is_empty() {
+                continue;
+            }
+            let ip_str = if hop.starts_with('[') {
+                if let Some(end) = hop.find(']') {
+                    &hop[1..end]
+                } else {
+                    return Err("Malformed IPv6 literal in X-Forwarded-For");
+                }
+            } else {
+                hop.split(':').next().unwrap_or(hop)
+            };
+            match ip_str.parse::<IpAddr>() {
+                Ok(ip) => {
+                    if !is_strict_loopback_ip(&ip) {
+                        return Err("Non-loopback hop detected in X-Forwarded-For");
+                    }
+                }
+                Err(_) => {
+                    if !ip_str.eq_ignore_ascii_case("localhost") {
+                        return Err("Unparseable or non-loopback hop in X-Forwarded-For");
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. X-Real-IP
+    if let Some(val) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let hop = val.trim();
+        if !hop.is_empty() {
+            let clean = hop.trim_start_matches('[').trim_end_matches(']');
+            let ip_str = clean.split(':').next().unwrap_or(clean);
+            match ip_str.parse::<IpAddr>() {
+                Ok(ip) => {
+                    if !is_strict_loopback_ip(&ip) {
+                        return Err("Non-loopback IP in X-Real-IP");
+                    }
+                }
+                Err(_) => {
+                    if !ip_str.eq_ignore_ascii_case("localhost") {
+                        return Err("Unparseable hop in X-Real-IP");
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. CF-Connecting-IP
+    if let Some(val) = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+    {
+        let hop = val.trim();
+        if !hop.is_empty() {
+            match hop.parse::<IpAddr>() {
+                Ok(ip) => {
+                    if !is_strict_loopback_ip(&ip) {
+                        return Err("Non-loopback IP in CF-Connecting-IP");
+                    }
+                }
+                Err(_) => return Err("Unparseable hop in CF-Connecting-IP"),
+            }
+        }
+    }
+
+    // 4. True-Client-IP
+    if let Some(val) = headers.get("true-client-ip").and_then(|v| v.to_str().ok()) {
+        let hop = val.trim();
+        if !hop.is_empty() {
+            match hop.parse::<IpAddr>() {
+                Ok(ip) => {
+                    if !is_strict_loopback_ip(&ip) {
+                        return Err("Non-loopback IP in True-Client-IP");
+                    }
+                }
+                Err(_) => return Err("Unparseable hop in True-Client-IP"),
+            }
+        }
+    }
+
+    // 5. Forwarded (RFC 7239)
+    if let Some(val) = headers.get("forwarded").and_then(|v| v.to_str().ok()) {
+        for element in val.split(';') {
+            for param in element.split(',') {
+                let p = param.trim();
+                if let Some(for_val) = p.strip_prefix("for=") {
+                    let unquoted = for_val.trim_matches('"');
+                    let host_or_ip = unquoted.trim_start_matches('[').trim_end_matches(']');
+                    let clean = host_or_ip.split(':').next().unwrap_or(host_or_ip);
+                    match clean.parse::<IpAddr>() {
+                        Ok(ip) => {
+                            if !is_strict_loopback_ip(&ip) {
+                                return Err("Non-loopback hop in Forwarded header");
+                            }
+                        }
+                        Err(_) => {
+                            if !clean.eq_ignore_ascii_case("localhost") {
+                                return Err("Non-loopback hop in Forwarded header");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 6. X-Forwarded-Host
+    if let Some(val) = headers
+        .get("x-forwarded-host")
+        .and_then(|v| v.to_str().ok())
+    {
+        let host = val.trim();
+        if !host.is_empty() && !is_strict_loopback_host(host) {
+            return Err("Non-loopback host in X-Forwarded-Host");
+        }
+    }
+
+    Ok(())
+}
+
+/// Multi-Layer Loopback Host Guard Middleware (Milestone M14).
+/// Completely isolates the WebUI to local host only:
+/// - Layer A: Peer TCP IP must be 127.0.0.0/8, ::1, or ::ffff:127.x.x.x
+/// - Layer B: Reverse proxy headers (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, True-Client-IP, Forwarded, X-Forwarded-Host)
+///            must not declare non-loopback hops
+/// - Layer C: Host header must resolve strictly to localhost, ::1, or 127.0.0.0/8
+/// - Layer D: Origin and Referer must resolve strictly to loopback
+#[allow(clippy::result_large_err)]
+pub async fn loopback_only_host_guard_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, Response> {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let headers = req.headers();
+
+    // Layer A: Peer TCP Check
+    let peer_ip = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip())
+        .or_else(|| {
+            headers
+                .get("x-test-client-ip")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<IpAddr>().ok())
+        });
+
+    if let Some(ref ip) = peer_ip {
+        if !is_strict_loopback_ip(ip) {
+            warn!(
+                "M14 Security: Rejected non-loopback peer TCP connection from {}",
+                ip
+            );
+            let resp = api_error(
+                StatusCode::FORBIDDEN,
+                "REMOTE_HOST_ACCESS_FORBIDDEN",
+                format!("Access denied: Peer IP '{}' is not a local loopback address", ip),
+                "OshoosiClaw WebUI is strictly isolated to the local host (127.0.0.1 / ::1). Remote network access is prohibited (Milestone M14).",
+            ).into_response();
+            return Err(resp);
+        }
+    } else {
+        #[cfg(not(test))]
+        {
+            let resp = api_error(
+                StatusCode::FORBIDDEN,
+                "REMOTE_HOST_ACCESS_FORBIDDEN",
+                "Access denied: Missing peer connection info (fail-closed)",
+                "OshoosiClaw WebUI requires direct local loopback connections.",
+            )
+            .into_response();
+            return Err(resp);
+        }
+    }
+
+    // Layer B: Reverse Proxy Header Rejection
+    if let Err(reason) = validate_no_remote_proxy_headers(headers) {
+        warn!(
+            "M14 Security: Rejected proxy headers from request: {}",
+            reason
+        );
+        let resp = api_error(
+            StatusCode::FORBIDDEN,
+            "REMOTE_PROXY_ACCESS_FORBIDDEN",
+            format!("Access denied: {}", reason),
+            "Direct remote proxying to the OshoosiClaw WebUI is prohibited (Milestone M14). Access must originate directly on loopback.",
+        ).into_response();
+        return Err(resp);
+    }
+
+    // Layer C: Host Header & DNS Rebinding Check
+    if let Some(host_val) = headers
+        .get(axum::http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+    {
+        if !is_strict_loopback_host(host_val) {
+            warn!(
+                "M14 Security: Rejected non-loopback Host header: {}",
+                host_val
+            );
+            let resp = api_error(
+                StatusCode::FORBIDDEN,
+                "NON_LOOPBACK_HOST_FORBIDDEN",
+                format!("Access denied: Host header '{}' is not a permitted loopback destination", host_val),
+                "The WebUI Host header must resolve strictly to localhost, [::1], or 127.0.0.0/8 to prevent DNS rebinding attacks.",
+            ).into_response();
+            return Err(resp);
+        }
+    }
+
+    // Layer D: Origin & Referer Checks (except OPTIONS preflight and browser sensor)
+    let is_browser_sensor = path.starts_with("/api/browser-sensor/");
+    if method != Method::OPTIONS && !is_browser_sensor {
+        if let Some(origin_val) = headers
+            .get(axum::http::header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+        {
+            let trimmed = origin_val.trim();
+            if !is_valid_loopback_origin(trimmed) {
+                warn!("M14 Security: Rejected external Origin: {}", origin_val);
+                let resp = api_error(
+                    StatusCode::FORBIDDEN,
+                    "CSRF_ORIGIN_MISMATCH",
+                    format!("Access denied: Origin '{}' is not a permitted loopback origin", origin_val),
+                    "Only local loopback origins (http://127.0.0.1, http://localhost, http://[::1]) are permitted.",
+                ).into_response();
+                return Err(resp);
+            }
+        }
+
+        if let Some(referer_val) = headers
+            .get(axum::http::header::REFERER)
+            .and_then(|v| v.to_str().ok())
+        {
+            let trimmed = referer_val.trim();
+            if !is_valid_loopback_referer(trimmed) {
+                warn!("M14 Security: Rejected external Referer: {}", referer_val);
+                let resp = api_error(
+                    StatusCode::FORBIDDEN,
+                    "REMOTE_REFERER_FORBIDDEN",
+                    format!("Access denied: Referer '{}' does not originate from a loopback address", referer_val),
+                    "Referer header must originate from local loopback (127.0.0.1, localhost, [::1]).",
+                ).into_response();
+                return Err(resp);
+            }
+        }
+    }
+
+    Ok(next.run(req).await)
+}
+
 /// Helper to determine if an Origin header is a valid local loopback origin.
 /// Strictly enforces that any port specified after the loopback address is a valid numeric u16,
 /// blocking subdomain-spoofed origins like `http://127.0.0.1:3030.evil.com`.
 pub fn is_valid_loopback_origin(trimmed: &str) -> bool {
     if trimmed == "null" {
         return true;
+    }
+    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
+        if let Some(host) = parsed.host_str() {
+            if host.eq_ignore_ascii_case("localhost") {
+                return true;
+            }
+            let host_clean = host.trim_start_matches('[').trim_end_matches(']');
+            if let Ok(ip) = host_clean.parse::<IpAddr>() {
+                if is_strict_loopback_ip(&ip) {
+                    return true;
+                }
+            }
+        }
     }
     const TRUSTED_PREFIXES: &[&str] = &[
         "http://127.0.0.1",
@@ -1411,11 +1765,10 @@ pub async fn spawn_dashboard_with_backend(
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let bind_ip = if bind_all {
-        [0, 0, 0, 0]
-    } else {
-        [127, 0, 0, 1]
-    };
+    if bind_all {
+        warn!("M14 Security Warning: OSOOSI_DASHBOARD_BIND_ALL is set, but external WebUI access is strictly prohibited (Milestone M14). Enforcing loopback-only 127.0.0.1 bind.");
+    }
+    let bind_ip = [127, 0, 0, 1];
     let addr = SocketAddr::from((bind_ip, port));
     let std_listener = std::net::TcpListener::bind(addr)?;
     std_listener.set_nonblocking(true)?;
@@ -2603,11 +2956,10 @@ pub async fn start_dashboard_with_backend(
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let bind_ip = if bind_all {
-        [0, 0, 0, 0]
-    } else {
-        [127, 0, 0, 1]
-    };
+    if bind_all {
+        warn!("M14 Security Warning: OSOOSI_DASHBOARD_BIND_ALL is set, but external WebUI access is strictly prohibited (Milestone M14). Enforcing loopback-only 127.0.0.1 bind.");
+    }
+    let bind_ip = [127, 0, 0, 1];
     let addr = SocketAddr::from((bind_ip, port));
     info!(
         "OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})",

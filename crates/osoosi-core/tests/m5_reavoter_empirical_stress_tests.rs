@@ -34,7 +34,10 @@ fn test_empirical_host_normalization_matrix() {
     assert_eq!(normalize_host("api.openai.com.:443"), "api.openai.com");
 
     // 3. Leading and trailing whitespace
-    assert_eq!(normalize_host("   api.anthropic.com:443   "), "api.anthropic.com");
+    assert_eq!(
+        normalize_host("   api.anthropic.com:443   "),
+        "api.anthropic.com"
+    );
 
     // 4. Non-443 ports MUST be preserved
     assert_eq!(normalize_host("api.openai.com:8443"), "api.openai.com:8443");
@@ -105,22 +108,16 @@ fn test_empirical_multi_token_host_mismatch_atomic_rejection() {
     );
 
     // Call upstream api.openai.com -> MUST FAIL CLOSED because token3 expects api.anthropic.com
-    let res = gw.verify_and_swap_outbound(
-        my_pid,
-        "api.openai.com:443",
-        original_payload.as_bytes(),
-    );
+    let res =
+        gw.verify_and_swap_outbound(my_pid, "api.openai.com:443", original_payload.as_bytes());
     assert_eq!(
         res.unwrap_err(),
         "Blocked: Confused-deputy Host header mismatch against pinned grant"
     );
 
     // Call upstream api.anthropic.com -> MUST FAIL CLOSED because token1 and token2 expect api.openai.com
-    let res2 = gw.verify_and_swap_outbound(
-        my_pid,
-        "api.anthropic.com",
-        original_payload.as_bytes(),
-    );
+    let res2 =
+        gw.verify_and_swap_outbound(my_pid, "api.anthropic.com", original_payload.as_bytes());
     assert_eq!(
         res2.unwrap_err(),
         "Blocked: Confused-deputy Host header mismatch against pinned grant"
@@ -159,7 +156,10 @@ fn test_empirical_overlapping_tokens_rejection_matrix() {
     let err_overlap = gw
         .verify_and_swap_outbound(my_pid, "example.com", payload_overlap)
         .unwrap_err();
-    assert_eq!(err_overlap, "Blocked: Overlapping stand-in tokens in payload");
+    assert_eq!(
+        err_overlap,
+        "Blocked: Overlapping stand-in tokens in payload"
+    );
 
     // Scenario B: Substring containment (TOKEN_SUB inside TOKEN_SUPER)
     let token_sub = "SUB_TOKEN";
@@ -188,10 +188,7 @@ fn test_empirical_overlapping_tokens_rejection_matrix() {
     assert_eq!(err_sub, "Blocked: Overlapping stand-in tokens in payload");
 
     // Scenario C: Repeated identical token in payload (Non-overlapping) -> MUST SUCCEED
-    let repeated_payload = format!(
-        "Header: {}\r\nBody: {}",
-        token_a1, token_a1
-    );
+    let repeated_payload = format!("Header: {}\r\nBody: {}", token_a1, token_a1);
     let swapped = gw
         .verify_and_swap_outbound(my_pid, "example.com", repeated_payload.as_bytes())
         .expect("repeated identical token must succeed");
@@ -227,7 +224,13 @@ fn test_empirical_toctou_reparse_point_rejection() {
 
         // Create directory junction via cmd mklink /J
         let output = std::process::Command::new("cmd")
-            .args(["/c", "mklink", "/J", &junction_path.to_string_lossy(), &target_subdir.to_string_lossy()])
+            .args([
+                "/c",
+                "mklink",
+                "/J",
+                &junction_path.to_string_lossy(),
+                &target_subdir.to_string_lossy(),
+            ])
             .output();
 
         if let Ok(out) = output {
@@ -286,7 +289,11 @@ fn test_empirical_quorum_freeze_sub_microsecond_latency() {
         ITERATIONS
     );
     println!("Min:    {} ns ({:.3} µs)", min_ns, min_ns as f64 / 1000.0);
-    println!("Median: {} ns ({:.3} µs)", median_ns, median_ns as f64 / 1000.0);
+    println!(
+        "Median: {} ns ({:.3} µs)",
+        median_ns,
+        median_ns as f64 / 1000.0
+    );
     println!("Mean:   {} ns ({:.3} µs)", mean_ns, mean_ns as f64 / 1000.0);
     println!("p95:    {} ns ({:.3} µs)", p95_ns, p95_ns as f64 / 1000.0);
     println!("p99:    {} ns ({:.3} µs)", p99_ns, p99_ns as f64 / 1000.0);
@@ -322,7 +329,11 @@ fn test_empirical_rea_verdict_revocation_and_c2_blacklist() {
     let target_key = ProcessInstanceKey::new(4321, 87654);
 
     // 1. Quorum alert quarantines target
-    gw.ingest_voter_quorum(VoterQuorumAlert::new(target_key, 8000, "suspicious behavior"));
+    gw.ingest_voter_quorum(VoterQuorumAlert::new(
+        target_key,
+        8000,
+        "suspicious behavior",
+    ));
 
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let bin_path = temp_dir.path().join("compromised_agent.exe");

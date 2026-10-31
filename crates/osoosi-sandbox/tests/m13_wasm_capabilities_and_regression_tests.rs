@@ -98,8 +98,12 @@ fn test_m13_warm_pooled_instantiation_latency_p99_under_50us() {
     for _ in 0..100 {
         let mut store = Store::new(&engine, ());
         store.set_epoch_deadline(100);
-        let instance = instance_pre.instantiate(&mut store).expect("Warmup instantiate");
-        let func = instance.get_typed_func::<(), i32>(&mut store, "execute").expect("Get func");
+        let instance = instance_pre
+            .instantiate(&mut store)
+            .expect("Warmup instantiate");
+        let func = instance
+            .get_typed_func::<(), i32>(&mut store, "execute")
+            .expect("Get func");
         assert_eq!(func.call(&mut store, ()).expect("Execute"), 42);
     }
 
@@ -109,11 +113,15 @@ fn test_m13_warm_pooled_instantiation_latency_p99_under_50us() {
         let mut store = Store::new(&engine, ());
         store.set_epoch_deadline(100);
         let t0 = Instant::now();
-        let instance = instance_pre.instantiate(&mut store).expect("Pooled instantiate");
+        let instance = instance_pre
+            .instantiate(&mut store)
+            .expect("Pooled instantiate");
         let elapsed_us = t0.elapsed().as_micros() as u64;
         latencies_us.push(elapsed_us);
 
-        let func = instance.get_typed_func::<(), i32>(&mut store, "execute").expect("Get func");
+        let func = instance
+            .get_typed_func::<(), i32>(&mut store, "execute")
+            .expect("Get func");
         assert_eq!(func.call(&mut store, ()).expect("Execute"), 42);
     }
 
@@ -176,7 +184,9 @@ fn test_m13_zero_physical_rss_leaks_over_1000_instantiations() {
         let mut store = Store::new(&engine, ());
         store.set_epoch_deadline(100);
         let instance = instance_pre.instantiate(&mut store).unwrap();
-        let func = instance.get_typed_func::<i32, i32>(&mut store, "touch_memory").unwrap();
+        let func = instance
+            .get_typed_func::<i32, i32>(&mut store, "touch_memory")
+            .unwrap();
         assert_eq!(func.call(&mut store, i).unwrap(), i);
     }
 
@@ -186,7 +196,9 @@ fn test_m13_zero_physical_rss_leaks_over_1000_instantiations() {
         let mut store = Store::new(&engine, ());
         store.set_epoch_deadline(100);
         let instance = instance_pre.instantiate(&mut store).unwrap();
-        let func = instance.get_typed_func::<i32, i32>(&mut store, "touch_memory").unwrap();
+        let func = instance
+            .get_typed_func::<i32, i32>(&mut store, "touch_memory")
+            .unwrap();
         assert_eq!(func.call(&mut store, i).unwrap(), i);
     }
 
@@ -232,7 +244,9 @@ fn test_m13_epoch_preemption_infinite_loop_trapped_without_fuel() {
     let mut store = Store::new(&engine, ());
     store.set_epoch_deadline(1);
 
-    let instance = linker.instantiate(&mut store, &module).expect("Instantiate");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("Instantiate");
     let runaway_fn = instance
         .get_typed_func::<(), ()>(&mut store, "runaway")
         .expect("Get runaway func");
@@ -250,7 +264,10 @@ fn test_m13_epoch_preemption_infinite_loop_trapped_without_fuel() {
 
     handle.join().expect("Ticker join");
 
-    assert!(res.is_err(), "Runaway loop must trap via epoch interruption");
+    assert!(
+        res.is_err(),
+        "Runaway loop must trap via epoch interruption"
+    );
     let full_err = format!("{:#}", res.unwrap_err());
     assert!(
         full_err.contains("interrupt") || full_err.contains("epoch"),
@@ -298,12 +315,16 @@ fn test_m13_64mib_linear_memory_cap_and_fuel_budget_trapping() {
     store.set_epoch_deadline(100);
     store.set_fuel(1_000_000).expect("Set fuel");
 
-    let instance = linker.instantiate(&mut store, &module).expect("Instantiate");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("Instantiate");
     let grow_fn = instance
         .get_typed_func::<(), i32>(&mut store, "try_grow_past_cap")
         .expect("Get func");
 
-    let res = grow_fn.call(&mut store, ()).expect("Call must succeed with -1");
+    let res = grow_fn
+        .call(&mut store, ())
+        .expect("Call must succeed with -1");
     assert_eq!(
         res, -1,
         "memory.grow past 64 MiB must return -1 according to Wasm spec and StoreLimits"
@@ -329,7 +350,9 @@ fn test_m13_64mib_linear_memory_cap_and_fuel_budget_trapping() {
     // Set a deliberately tiny fuel budget (100 units)
     fuel_store.set_fuel(100).expect("Set tiny fuel");
 
-    let fuel_instance = fuel_linker.instantiate(&mut fuel_store, &fuel_module).expect("Instantiate");
+    let fuel_instance = fuel_linker
+        .instantiate(&mut fuel_store, &fuel_module)
+        .expect("Instantiate");
     let compute_fn = fuel_instance
         .get_typed_func::<(), ()>(&mut fuel_store, "heavy_compute")
         .expect("Get compute func");
@@ -386,7 +409,9 @@ async fn test_m13_host_capability_gate_ssrf_and_zero_secret_bytes_in_guest_ram()
             target
         );
         match res.unwrap_err() {
-            GateError::DomainDenied(_) | GateError::SsrfBlocked(_) | GateError::DnsRebindingBlocked(_) => {}
+            GateError::DomainDenied(_)
+            | GateError::SsrfBlocked(_)
+            | GateError::DnsRebindingBlocked(_) => {}
             other => panic!("Unexpected error type for target '{}': {:?}", target, other),
         }
     }
@@ -395,14 +420,18 @@ async fn test_m13_host_capability_gate_ssrf_and_zero_secret_bytes_in_guest_ram()
     let ollama_url = "http://127.0.0.1:11434/api/tags";
     // Disabled gate must reject
     assert!(
-        gate.dispatch_request("GET", ollama_url, &[], None).await.is_err(),
+        gate.dispatch_request("GET", ollama_url, &[], None)
+            .await
+            .is_err(),
         "Ollama endpoint must be rejected when ollama_bridge_enabled is false"
     );
 
     // Enabled gate permits Ollama domain in allowlist
     let enabled_gate = HostCapabilityGate::new(true, std::process::id());
     assert!(
-        enabled_gate.verify_domain_allowlist("127.0.0.1", 11434).is_ok(),
+        enabled_gate
+            .verify_domain_allowlist("127.0.0.1", 11434)
+            .is_ok(),
         "Domain allowlist must permit 127.0.0.1:11434 when Ollama bridge is enabled"
     );
 
@@ -418,22 +447,30 @@ async fn test_m13_host_capability_gate_ssrf_and_zero_secret_bytes_in_guest_ram()
     let module = Module::new(&engine, wat).expect("Compile WAT");
     let linker: Linker<()> = Linker::new(&engine);
     let mut store = Store::new(&engine, ());
-    let instance = linker.instantiate(&mut store, &module).expect("Instantiate");
+    let instance = linker
+        .instantiate(&mut store, &module)
+        .expect("Instantiate");
 
     // Read guest RAM
-    let memory = instance.get_memory(&mut store, "memory").expect("Get memory");
+    let memory = instance
+        .get_memory(&mut store, "memory")
+        .expect("Get memory");
     let guest_ram = memory.data(&store);
 
     // Assert: Standin token exists in guest memory
     let standin_bytes = standin.as_bytes();
     assert!(
-        guest_ram.windows(standin_bytes.len()).any(|w| w == standin_bytes),
+        guest_ram
+            .windows(standin_bytes.len())
+            .any(|w| w == standin_bytes),
         "Guest RAM must contain standin token"
     );
 
     // Assert: Real secret has ZERO raw bytes in guest RAM
     assert!(
-        !guest_ram.windows(real_secret.len()).any(|w| w == real_secret),
+        !guest_ram
+            .windows(real_secret.len())
+            .any(|w| w == real_secret),
         "FAIL-CLOSED INVARIANT VIOLATION: Real API secret bytes found in guest linear memory!"
     );
 }

@@ -9,9 +9,7 @@
 //! Author: Challenger 1 (Milestone M9 - Defect 1 Remediation)
 //! Roles: critic, specialist
 
-use osoosi_core::protected_env_backup::{
-    LlmFusionApiKeyEnumerator, ProtectedEnvBackupVault,
-};
+use osoosi_core::protected_env_backup::{LlmFusionApiKeyEnumerator, ProtectedEnvBackupVault};
 use osoosi_core::rea_voter_env_gateway::ReaVoterEnvGateway;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -37,17 +35,29 @@ fn test_challenge_1_dynamic_seal_without_preexisting_env_file() {
     let enum_res = ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
         .expect("seal_and_backup_dynamic must not fail with OS error 2 when .env is missing");
 
-    assert!(enum_res.total_selected >= 1, "Must select GEMINI_API_KEY from process environment");
+    assert!(
+        enum_res.total_selected >= 1,
+        "Must select GEMINI_API_KEY from process environment"
+    );
     assert!(vault_file.exists(), "Vault file must be created");
     assert!(env_file.exists(), "Synthetic .env file must be created");
 
     // Status query verification
     let status = ProtectedEnvBackupVault::get_status(&vault_file).expect("get_status");
     assert!(status.exists);
-    assert!(status.sealed_variables.contains(&test_key.to_string()), "Sealed variables must contain {}", test_key);
+    assert!(
+        status.sealed_variables.contains(&test_key.to_string()),
+        "Sealed variables must contain {}",
+        test_key
+    );
     assert!(status.standin_mappings.iter().any(|(k, _)| k == test_key));
 
-    let standin = status.standin_mappings.iter().find(|(k, _)| k == test_key).map(|(_, s)| s).unwrap();
+    let standin = status
+        .standin_mappings
+        .iter()
+        .find(|(k, _)| k == test_key)
+        .map(|(_, s)| s)
+        .unwrap();
     assert!(standin.starts_with("OSHOOSI_STANDIN_GEMINI_API_KEY_"));
 
     // Verify .env file content contains the stand-in token and NOT the raw secret
@@ -68,9 +78,18 @@ fn test_challenge_2_process_memory_replacement_hides_raw_secret() {
     let vault_file = temp_dir.path().join("mem_test.vault");
 
     let keys_and_secrets = [
-        ("OPENAI_API_KEY", "sk-proj-RealProductionSecretKeyForOpenAI1234567890"),
-        ("ANTHROPIC_API_KEY", "sk-ant-api03-RealAnthropicKeyExample987654321012345"),
-        ("HF_TOKEN", "hf_RealProductionHuggingFaceTokenExample555666777"),
+        (
+            "OPENAI_API_KEY",
+            "sk-proj-RealProductionSecretKeyForOpenAI1234567890",
+        ),
+        (
+            "ANTHROPIC_API_KEY",
+            "sk-ant-api03-RealAnthropicKeyExample987654321012345",
+        ),
+        (
+            "HF_TOKEN",
+            "hf_RealProductionHuggingFaceTokenExample555666777",
+        ),
     ];
 
     for (k, v) in &keys_and_secrets {
@@ -80,8 +99,9 @@ fn test_challenge_2_process_memory_replacement_hides_raw_secret() {
     let gateway = ReaVoterEnvGateway::new(Duration::from_secs(60));
 
     // Dynamic seal with gateway registration
-    let res = ProtectedEnvBackupVault::seal_and_register_with_gateway(&env_file, &vault_file, &gateway)
-        .expect("seal and register with gateway");
+    let res =
+        ProtectedEnvBackupVault::seal_and_register_with_gateway(&env_file, &vault_file, &gateway)
+            .expect("seal and register with gateway");
 
     assert!(res.total_selected >= 3);
 
@@ -94,8 +114,14 @@ fn test_challenge_2_process_memory_replacement_hides_raw_secret() {
             k,
             current_val
         );
-        assert_ne!(current_val, *raw_v, "Process memory MUST NOT match raw secret");
-        assert!(!current_val.contains(*raw_v), "Process memory MUST NOT contain raw secret");
+        assert_ne!(
+            current_val, *raw_v,
+            "Process memory MUST NOT match raw secret"
+        );
+        assert!(
+            !current_val.contains(*raw_v),
+            "Process memory MUST NOT contain raw secret"
+        );
     }
 
     // Verify std::env::vars() iterator also sees only stand-in values
@@ -147,15 +173,22 @@ fn test_challenge_3_double_seal_and_multi_seal_idempotency_preserves_original_se
     assert!(res3.total_selected >= 1);
 
     // PASS 4: Introduce a SECOND secret in the environment while the first is already sealed!
-    std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-SecondSecretKey22222222222222222222");
+    std::env::set_var(
+        "ANTHROPIC_API_KEY",
+        "sk-ant-SecondSecretKey22222222222222222222",
+    );
     let res4 = ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
         .expect("pass 4 seal with newly introduced secret");
     assert!(res4.total_selected >= 2);
 
     // Check status: both variables should be tracked
     let status = ProtectedEnvBackupVault::get_status(&vault_file).expect("status after pass 4");
-    assert!(status.sealed_variables.contains(&"GEMINI_API_KEY".to_string()));
-    assert!(status.sealed_variables.contains(&"ANTHROPIC_API_KEY".to_string()));
+    assert!(status
+        .sealed_variables
+        .contains(&"GEMINI_API_KEY".to_string()));
+    assert!(status
+        .sealed_variables
+        .contains(&"ANTHROPIC_API_KEY".to_string()));
 
     // Verify auto_revert restores BOTH original raw secrets bit-for-bit
     ProtectedEnvBackupVault::auto_revert(&vault_file).expect("auto_revert after multi-seal");
@@ -172,7 +205,10 @@ fn test_challenge_3_double_seal_and_multi_seal_idempotency_preserves_original_se
     );
 
     let restored_file = std::fs::read_to_string(&env_file).expect("read restored file");
-    assert_eq!(restored_file, initial_content, "Original .env content must be 100% bit-exact");
+    assert_eq!(
+        restored_file, initial_content,
+        "Original .env content must be 100% bit-exact"
+    );
 
     std::env::remove_var("GEMINI_API_KEY");
     std::env::remove_var("ANTHROPIC_API_KEY");
@@ -191,7 +227,8 @@ fn test_challenge_4_auto_revert_precision_existed_vs_nonexisted() {
         std::fs::write(&env_file, original_data).expect("write original data");
         std::env::set_var("OPENAI_API_KEY", "sk-orig-open-ai-secret-val-9999");
 
-        ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file).expect("seal case a");
+        ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
+            .expect("seal case a");
         assert!(vault_file.exists());
 
         ProtectedEnvBackupVault::auto_revert(&vault_file).expect("revert case a");
@@ -199,7 +236,10 @@ fn test_challenge_4_auto_revert_precision_existed_vs_nonexisted() {
         // env_file MUST still exist and match original_data
         assert!(env_file.exists());
         assert_eq!(std::fs::read_to_string(&env_file).unwrap(), original_data);
-        assert_eq!(std::env::var("OPENAI_API_KEY").unwrap(), "sk-orig-open-ai-secret-val-9999");
+        assert_eq!(
+            std::env::var("OPENAI_API_KEY").unwrap(),
+            "sk-orig-open-ai-secret-val-9999"
+        );
         // Vault file remains unless explicitly removed or target didn't exist
         assert!(vault_file.exists());
         ProtectedEnvBackupVault::remove_backup(&vault_file, true).expect("clean vault");
@@ -214,16 +254,23 @@ fn test_challenge_4_auto_revert_precision_existed_vs_nonexisted() {
 
         std::env::set_var("GEMINI_API_KEY", "AIzaSyD-CaseBSecretKeyForNonExistentFile");
 
-        ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file).expect("seal case b");
+        ProtectedEnvBackupVault::seal_and_backup_dynamic(&env_file, &vault_file)
+            .expect("seal case b");
         assert!(env_file.exists(), "Synthetic .env must exist while sealed");
         assert!(vault_file.exists(), "Vault file must exist while sealed");
 
         ProtectedEnvBackupVault::auto_revert(&vault_file).expect("revert case b");
 
         // Crucial invariant: synthetic .env file MUST be removed on auto_revert!
-        assert!(!env_file.exists(), "Synthetic .env must be deleted on auto_revert when target_existed_before == false");
+        assert!(
+            !env_file.exists(),
+            "Synthetic .env must be deleted on auto_revert when target_existed_before == false"
+        );
         // Crucial invariant: temporary backup vault MUST be shredded and deleted!
-        assert!(!vault_file.exists(), "Temporary vault must be shredded on auto_revert when target_existed_before == false");
+        assert!(
+            !vault_file.exists(),
+            "Temporary vault must be shredded on auto_revert when target_existed_before == false"
+        );
 
         assert_eq!(
             std::env::var("GEMINI_API_KEY").unwrap(),
@@ -237,7 +284,10 @@ fn test_challenge_4_auto_revert_precision_existed_vs_nonexisted() {
     {
         let nonexistent_vault = temp_dir.path().join("never_created.vault");
         let res = ProtectedEnvBackupVault::auto_revert(&nonexistent_vault);
-        assert!(res.is_ok(), "auto_revert on missing vault must be a harmless no-op");
+        assert!(
+            res.is_ok(),
+            "auto_revert on missing vault must be a harmless no-op"
+        );
     }
 }
 
@@ -245,7 +295,10 @@ fn test_challenge_4_auto_revert_precision_existed_vs_nonexisted() {
 fn test_challenge_5_arm3_prefix_and_system_vetoes_exhaustive() {
     let prefix_and_system_candidates = [
         // Antigravity & IDE prefixes
-        ("ANTIGRAVITY_CSRF_TOKEN", "sec_antigravity_token_abc123456789"),
+        (
+            "ANTIGRAVITY_CSRF_TOKEN",
+            "sec_antigravity_token_abc123456789",
+        ),
         ("antigravity_session_id", "sess_antigravity_lowercase_99999"),
         ("VSCODE_GIT_IPC_HANDLE", "\\\\.\\pipe\\vscode-git-ipc-1234"),
         ("vscode_pid", "1234567890"),

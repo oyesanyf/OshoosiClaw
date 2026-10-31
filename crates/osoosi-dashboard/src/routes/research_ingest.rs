@@ -911,6 +911,7 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     "https://github.com/UKGovernmentBEIS/inspect_evals".to_string(),
                 )
             }
+            "2601.11893" => return (true, "https://github.com/ethz-spylab/agentdojo".to_string()),
             "2501.18492" => {
                 return (
                     true,
@@ -923,12 +924,7 @@ pub fn detect_verified_code_repo(item: &ResearchExtractionItem) -> (bool, String
                     "https://github.com/uiuc-kang-lab/AdaptiveAttackAgent".to_string(),
                 )
             }
-            "2511.10720" => {
-                return (
-                    true,
-                    "https://github.com/sleeepeer/PISanitizer".to_string(),
-                )
-            }
+            "2511.10720" => return (true, "https://github.com/sleeepeer/PISanitizer".to_string()),
             _ => {}
         }
     }
@@ -2614,9 +2610,14 @@ pub fn search_and_stage_research_for_approval(
         if !is_already_active("2603.02277v3") {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some("2603.02277v3".to_string()),
-                title: Some("Quantifying Frontier LLM Capabilities for Container Sandbox Escape".to_string()),
+                title: Some(
+                    "Quantifying Frontier LLM Capabilities for Container Sandbox Escape"
+                        .to_string(),
+                ),
                 extraction_class: Some("breakout_vector".to_string()),
-                attack_vector: "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)".to_string(),
+                attack_vector:
+                    "Docker socket / nsenter container namespace breakout (SandboxEscapeBench)"
+                        .to_string(),
                 target_boundary: "container_runtime_privilege".to_string(),
                 source_char_start: Some(12),
                 source_char_end: Some(84),
@@ -2625,9 +2626,7 @@ pub fn search_and_stage_research_for_approval(
                 ..Default::default()
             });
         }
-        if !is_already_active("2503.00061v2")
-            && !is_already_active("2503.00061")
-        {
+        if !is_already_active("2503.00061v2") && !is_already_active("2503.00061") {
             candidate_items.push(ResearchExtractionItem {
                 arxiv_id: Some("2503.00061v2".to_string()),
                 title: Some("Adaptive Attacks Break Defenses Against Indirect Prompt Injection Attacks on LLM Agents".to_string()),
@@ -3186,12 +3185,13 @@ pub async fn get_research_active_rules(
 }
 
 /// GET /api/v1/research/stream, /api/research/stream, and /research/stream
-pub async fn get_research_stream(
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+pub async fn get_research_stream() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let rules = osoosi_agent_anomaly::list_ingested_research_rules();
     let payload = serde_json::to_string(&rules).unwrap_or_else(|_| "[]".to_string());
     let initial_event = Event::default().event("active_rules").data(payload);
-    let heartbeat_event = Event::default().event("heartbeat").data(r#"{"status":"streaming","stream":"research_events"}"#);
+    let heartbeat_event = Event::default()
+        .event("heartbeat")
+        .data(r#"{"status":"streaming","stream":"research_events"}"#);
 
     let stream = tokio_stream::iter(vec![Ok(initial_event), Ok(heartbeat_event)]);
     Sse::new(stream).keep_alive(KeepAlive::default().interval(Duration::from_secs(15)))
@@ -3212,7 +3212,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_verify_accuracy_endpoint_llm_fusion() {
-        let _guard = TEST_RESEARCH_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = TEST_RESEARCH_MUTEX
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let res = post_research_verify_accuracy().await;
         assert_eq!(res.status, "verified");
         assert_eq!(res.overall_accuracy_pct, 100.0);
