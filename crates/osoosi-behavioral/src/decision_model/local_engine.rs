@@ -95,6 +95,9 @@ impl Default for LocalClefWeights {
         benign.insert("msmpeng.exe".to_string(), 3.5);
         benign.insert("sysmon64.exe".to_string(), 4.0);
         benign.insert("osoosi.exe".to_string(), 4.5);
+        benign.insert("velociraptor.exe".to_string(), 4.0);
+        benign.insert("rust-lld.exe".to_string(), 3.5);
+        benign.insert("lld-link.exe".to_string(), 3.5);
         benign.insert("windowsapps".to_string(), 2.5);
         benign.insert("target: file".to_string(), 1.5);
         benign.insert(".pyd".to_string(), 3.0);

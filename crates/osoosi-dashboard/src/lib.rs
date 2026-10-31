@@ -6013,9 +6013,51 @@ pub async fn get_consensus_findings(
     match &state.backend {
         Some(orch) => match orch.memory().get_consensus_findings(limit) {
             Ok(findings) => {
+                let rea = osoosi_core::rea::global_rea_engine();
                 let enriched: Vec<Value> = findings
                     .into_iter()
-                    .map(|f| {
+                    .map(|mut f| {
+                        if f.verdict.eq_ignore_ascii_case("malicious") {
+                            let target_label = f
+                                .file_path
+                                .as_deref()
+                                .filter(|s| !s.is_empty())
+                                .or(f.process_name.as_deref())
+                                .unwrap_or("");
+                            let (rea_should_veto, rea_reason, rea_hash) = rea
+                                .adjudicate_process_or_binary_alert(
+                                    f.process_name.as_deref().or(Some(target_label)),
+                                    f.file_path.as_deref(),
+                                    Some(&f.voters_summary),
+                                );
+                            if rea_should_veto
+                                || osoosi_core::rea::is_rea_benign_system_or_dev_process(
+                                    target_label,
+                                    Some(&f.voters_summary),
+                                )
+                            {
+                                f.verdict = "benign".to_string();
+                                f.confidence = 0.01;
+                                f.detector_count = 0;
+                                f.action_taken = "ignored_and_allowed".to_string();
+                                f.voters_summary = format!(
+                                    "Veto [REA-Voter + All-Voter Consensus]: {}",
+                                    rea_reason
+                                );
+                                let clean_hash = rea_hash
+                                    .filter(|h| !h.is_empty())
+                                    .unwrap_or_else(|| f.hash_blake3.clone());
+                                if !clean_hash.is_empty() {
+                                    let _ = orch.memory().mark_hash_clean_ignored(
+                                        &clean_hash,
+                                        f.process_name.as_deref(),
+                                        f.file_path.as_deref(),
+                                        "rea_consensus_ledger_adjudication",
+                                    );
+                                }
+                                let _ = orch.memory().record_consensus_finding(&f);
+                            }
+                        }
                         json!({
                             "id": f.id,
                             "hash_blake3": f.hash_blake3,

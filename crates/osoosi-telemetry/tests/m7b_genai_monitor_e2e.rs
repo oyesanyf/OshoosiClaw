@@ -110,7 +110,7 @@ fn test_m7b_challenge_privacy_redaction_and_digest_guarantee() {
 
     let report = evaluator.evaluate_output(sensitive_payload, &[]);
 
-    assert_eq!(report.record_raw_content, false);
+    assert!(!report.record_raw_content);
     assert!(!report.scrubbed_preview.contains("alice@corp.internal"));
     assert!(!report.scrubbed_preview.contains("BEGIN RSA PRIVATE KEY"));
     assert!(!report

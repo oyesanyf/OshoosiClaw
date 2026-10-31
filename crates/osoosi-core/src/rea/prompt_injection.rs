@@ -66,12 +66,20 @@ pub fn scan_and_sanitize_counter_ai_strings(
             }
         }
 
-        // Also check raw bytes for ANSI CSI/OSC escape sequence injection (`\x1b[` or `\x1b]`)
+        // Also check raw bytes for ANSI CSI/OSC escape sequence injection (`\x1b[` or `\x1b]`).
+        // Only classify as an anti-analysis prompt-injection finding when accompanied by a semantic
+        // prompt-injection directive or an explicit terminal OSC/title/clipboard/screen-clear sequence,
+        // avoiding false positives on 2-byte `0x1B 0x5B` (`sbb ebx, ...`) machine code in native binaries.
         if find_subslice(bytes, b"\x1b[").is_some() || find_subslice(bytes, b"\x1b]").is_some() {
             sanitized_count += 1;
-            if !detected_injections
-                .iter()
-                .any(|d| d.contains("ANSI_TERMINAL_ESCAPE"))
+            let has_terminal_hijack_escape = find_subslice(bytes, b"\x1b]0;").is_some()
+                || find_subslice(bytes, b"\x1b]2;").is_some()
+                || find_subslice(bytes, b"\x1b]52;").is_some()
+                || find_subslice(bytes, b"\x1b[2J").is_some();
+            if (!detected_injections.is_empty() || has_terminal_hijack_escape)
+                && !detected_injections
+                    .iter()
+                    .any(|d| d.contains("ANSI_TERMINAL_ESCAPE"))
             {
                 detected_injections.push(
                     "REA_ANTI_ANALYSIS_PROMPT_INJECTION: ANSI_TERMINAL_ESCAPE sequence embedded in binary strings"

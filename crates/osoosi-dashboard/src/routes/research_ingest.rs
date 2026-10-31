@@ -3211,6 +3211,7 @@ mod tests {
     pub(crate) static TEST_RESEARCH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_verify_accuracy_endpoint_llm_fusion() {
         let _guard = TEST_RESEARCH_MUTEX
             .lock()

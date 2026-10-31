@@ -4265,7 +4265,7 @@ mod tests {
 
     #[test]
     fn test_ingested_arxiv_research_rules_actively_enforced_by_coordinator() {
-        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_research_defense_registry();
 
         let rules = list_ingested_research_rules();
@@ -4345,7 +4345,7 @@ mod tests {
 
     #[test]
     fn test_research_rule_idempotent_deduplication() {
-        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_research_defense_registry();
 
         let initial_len = list_ingested_research_rules().len();
@@ -4358,7 +4358,7 @@ mod tests {
 
     #[test]
     fn test_research_rule_deduplication_by_base_arxiv_and_boundary() {
-        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_research_defense_registry();
 
         let initial_rules = list_ingested_research_rules();
@@ -4391,7 +4391,7 @@ mod tests {
             .expect("Updated rule must be present");
         assert_eq!(
             updated.indicator_pattern,
-            "/var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern"
+            "sandboxescapebench_updated | /var/run/docker.sock | /run/docker.sock | release_agent | notify_on_release | /proc/sys/kernel/core_pattern"
         );
         assert_eq!(
             updated.title,
@@ -4553,7 +4553,7 @@ mod tests {
 
     #[test]
     fn test_bounded_capacity_max_64_rules() {
-        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_research_defense_registry();
 
         for i in 0..70 {
@@ -4599,7 +4599,7 @@ mod tests {
 
     #[test]
     fn test_code_backed_priority_and_capacity_tie_breaker() {
-        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_research_defense_registry();
 
         // Verify seeded rules have verified code repos
@@ -4971,7 +4971,7 @@ mod tests {
 
     #[test]
     fn test_paper2agent_accuracy_suite_and_llm_fusion_consensus() {
-        let _lock = TEST_REGISTRY_LOCK.lock().unwrap();
+        let _lock = TEST_REGISTRY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         reset_research_defense_registry();
 
         let suite = run_paper2agent_accuracy_suite();
