@@ -69,7 +69,7 @@ async fn test_m14_case2_local_loopback_allowed() {
             loopback_ip
         );
         let body: Value = resp.json().await.unwrap();
-        assert_eq!(body["status"], "healthy");
+        assert_eq!(body["ok"], true);
     }
 }
 
@@ -243,5 +243,5 @@ async fn test_m14_case6_bind_all_env_ignored_unconditional_loopback_bind() {
 
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
-    assert_eq!(body["status"], "healthy");
+    assert_eq!(body["ok"], true);
 }

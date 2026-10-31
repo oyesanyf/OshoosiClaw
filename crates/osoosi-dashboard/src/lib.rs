@@ -1372,8 +1372,7 @@ pub fn validate_no_remote_proxy_headers(headers: &HeaderMap) -> Result<(), &'sta
 /// Multi-Layer Loopback Host Guard Middleware (Milestone M14).
 /// Completely isolates the WebUI to local host only:
 /// - Layer A: Peer TCP IP must be 127.0.0.0/8, ::1, or ::ffff:127.x.x.x
-/// - Layer B: Reverse proxy headers (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, True-Client-IP, Forwarded, X-Forwarded-Host)
-///            must not declare non-loopback hops
+/// - Layer B: Reverse proxy headers (X-Forwarded-For, X-Real-IP, CF-Connecting-IP, True-Client-IP, Forwarded, X-Forwarded-Host) must not declare non-loopback hops
 /// - Layer C: Host header must resolve strictly to localhost, ::1, or 127.0.0.0/8
 /// - Layer D: Origin and Referer must resolve strictly to loopback
 #[allow(clippy::result_large_err)]
@@ -1386,16 +1385,27 @@ pub async fn loopback_only_host_guard_middleware(
     let headers = req.headers();
 
     // Layer A: Peer TCP Check
-    let peer_ip = req
+    let test_override = headers
+        .get("x-test-client-ip")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<IpAddr>().ok());
+
+    let real_peer_ip = req
         .extensions()
         .get::<axum::extract::ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip())
-        .or_else(|| {
-            headers
-                .get("x-test-client-ip")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<IpAddr>().ok())
-        });
+        .map(|c| c.0.ip());
+
+    let peer_ip = match (test_override, real_peer_ip) {
+        (Some(test_ip), Some(real_ip)) => {
+            if !is_strict_loopback_ip(&real_ip) {
+                Some(real_ip)
+            } else {
+                Some(test_ip)
+            }
+        }
+        (Some(test_ip), None) => Some(test_ip),
+        (None, real_opt) => real_opt,
+    };
 
     if let Some(ref ip) = peer_ip {
         if !is_strict_loopback_ip(ip) {

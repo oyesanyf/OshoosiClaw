@@ -462,7 +462,7 @@ fn test_adversarial_m13_ollama_port_and_host_pinning_invariants() {
 async fn test_adversarial_m13_credential_confused_deputy_host_pinning() {
     let gate = HostCapabilityGate::new(false, std::process::id());
 
-    let github_secret = b"ghp_ADVERSARIAL_CRITICAL_TOKEN_9876543210_XYZ";
+    let github_secret = b"test_token_ADVERSARIAL_CRITICAL_9876543210_XYZ";
     let standin = "OSHOOSI_STANDIN_GITHUB_TOKEN_0123456789ABCDEF";
 
     let grant = HardenedSealedGrant::new(
@@ -518,8 +518,8 @@ fn test_adversarial_m13_exhaustive_guest_linear_memory_forensic_scan() {
     let config = Config::new();
     let engine = Engine::new(&config).expect("engine init");
 
-    let secret_1 = b"ghp_SUPER_SECRET_TOKEN_ALPHA_0000000000000001";
-    let secret_2 = b"sk-ant-SECRET_KEY_BETA_999999999999999999999";
+    let secret_1 = b"test_token_SUPER_SECRET_ALPHA_0000000000000001";
+    let secret_2 = b"test_key_SECRET_BETA_999999999999999999999";
     let standin_1 = "OSHOOSI_STANDIN_GITHUB_TOKEN_0123456789ABCDEF";
     let standin_2 = "OSHOOSI_STANDIN_ANTHROPIC_KEY_ABCDEF0123456789";
 
