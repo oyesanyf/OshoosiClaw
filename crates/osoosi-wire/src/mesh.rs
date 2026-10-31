@@ -120,10 +120,8 @@ pub fn validate_wire_frame(topic: &str, raw_data: &[u8]) -> Result<(), String> {
         return Ok(());
     }
     // Allow valid UTF-8 for text topics like audit proofs
-    if topic.contains("audit-proof") {
-        if std::str::from_utf8(raw_data).is_ok() {
-            return Ok(());
-        }
+    if topic.contains("audit-proof") && std::str::from_utf8(raw_data).is_ok() {
+        return Ok(());
     }
     Err("Wire frame rejected: invalid envelope or malformed payload".to_string())
 }

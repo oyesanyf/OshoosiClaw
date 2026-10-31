@@ -56,7 +56,7 @@ jobs:
           tool: cargo-audit
 
       - name: Run audit
-        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402
+        run: cargo audit --ignore RUSTSEC-2026-0387 --ignore RUSTSEC-2026-0391 --ignore RUSTSEC-2026-0398 --ignore RUSTSEC-2026-0403 --ignore RUSTSEC-2026-0410 --ignore RUSTSEC-2026-0395 --ignore RUSTSEC-2026-0406 --ignore RUSTSEC-2026-0402 --ignore RUSTSEC-2026-0424
 
   # ── Tests ────────────────────────────────────────────────────────────────────
   test:

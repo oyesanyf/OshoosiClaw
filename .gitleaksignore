@@ -7,3 +7,5 @@ crates/osoosi-agent-anomaly/src/agentjacking_guard.rs:generic-api-key:581
 # Chromium extension ID; it is not a secret (no private key is committed).
 2782b824add69ecf5217a98831f6580e8c87cac2:browser-extension/manifest.json:generic-api-key:7
 browser-extension/manifest.json:generic-api-key:7
+# Synthetic credential isolation tests for M13 Wasmtime sandbox
+crates/osoosi-sandbox/tests/challenger_m13_empirical_tests.rs

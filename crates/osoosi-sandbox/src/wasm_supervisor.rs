@@ -359,6 +359,9 @@ impl WasmSupervisor {
     }
 
     /// Deserializes a precompiled `.cwasm` module safely from cache.
+    ///
+    /// # Safety
+    /// Caller must ensure the precompiled bytes originated from trusted Wasmtime compilation.
     pub unsafe fn deserialize_cached_module(
         &self,
         hash: &[u8; 32],
@@ -413,7 +416,7 @@ impl WasmSupervisor {
 
         let result = validate_fn.call(&mut store, (0, raw_payload.len() as u32));
         match result {
-            Ok(code) if code == 0 => {
+            Ok(0) => {
                 let duration_us = start_time.elapsed().as_micros() as u64;
                 let data = store.into_data();
                 let hash = data.canonical_hash.unwrap_or_else(|| {
