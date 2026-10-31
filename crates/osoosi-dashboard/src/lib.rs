@@ -1524,19 +1524,6 @@ pub fn is_valid_loopback_origin(trimmed: &str) -> bool {
     if trimmed == "null" {
         return true;
     }
-    if let Ok(parsed) = reqwest::Url::parse(trimmed) {
-        if let Some(host) = parsed.host_str() {
-            if host.eq_ignore_ascii_case("localhost") {
-                return true;
-            }
-            let host_clean = host.trim_start_matches('[').trim_end_matches(']');
-            if let Ok(ip) = host_clean.parse::<IpAddr>() {
-                if is_strict_loopback_ip(&ip) {
-                    return true;
-                }
-            }
-        }
-    }
     const TRUSTED_PREFIXES: &[&str] = &[
         "http://127.0.0.1",
         "https://127.0.0.1",
